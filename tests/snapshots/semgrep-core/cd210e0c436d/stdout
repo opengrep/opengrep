@@ -22,28 +22,28 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
             3┆ sink(v)
 
              Taint comes from:
-               5┆     leak(source())
+               5┆ leak(source())
 
              This is how taint reaches the sink:
-               5┆     leak(source())
+               5┆ leak(source())
 
              Taint flows through these intermediate variables:
                2┆ def leak(v):
 
              then reaches:
-               3┆     sink(v)
+               3┆ sink(v)
             ⋮┆----------------------------------------
             3┆ sink(v)
 
              Taint comes from:
-               8┆     leak(source())
+               8┆ leak(source())
 
              This is how taint reaches the sink:
-               8┆     leak(source())
+               8┆ leak(source())
 
              Taint flows through these intermediate variables:
                2┆ def leak(v):
 
              then reaches:
-               3┆     sink(v)
+               3┆ sink(v)
 

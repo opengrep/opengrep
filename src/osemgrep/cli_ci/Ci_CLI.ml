@@ -121,6 +121,7 @@ let cmdline_term : conf Term.t =
           | Some (Info | Debug) -> true
           | _else_ -> false);
         max_log_list_entries;
+        skin = Skins.default;
         is_ci_invocation = true;
       }
     in

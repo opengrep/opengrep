@@ -13,10 +13,6 @@ val pp_cli_output :
   Semgrep_output_v1_t.cli_output ->
   unit
 
-(* whether a match's rule metadata marks it as blocking a ci scan;
- * used also by Ci_subcommand.ml to count blocking findings *)
-val is_blocking : Yojson.Basic.t -> bool
-
 (* internals, used also for incremental display of matches *)
 val pp_text_outputs :
   max_chars_per_line:int ->

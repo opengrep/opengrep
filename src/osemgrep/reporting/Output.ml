@@ -50,6 +50,8 @@ type conf = {
   skipped_files : bool;
   (* alt: in CLI_common.conf *)
   max_log_list_entries : int;
+  (* which skin renders the report; --skin *)
+  skin : Skin.name;
   (* true for 'opengrep ci': the Text format then keeps blocking and
    * non-blocking findings in separate groups and appends the
    * "RULES FIRED" sections (python: FormatContext.is_ci_invocation) *)
@@ -70,6 +72,7 @@ let default : conf =
     fixed_lines = false;
     skipped_files = false;
     max_log_list_entries = 100;
+    skin = Skin.Legacy;
     is_ci_invocation = false;
   }
 
@@ -80,6 +83,23 @@ let too_much_data =
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
+
+(* What the skins draw on. The colours and the tty were decided once, by
+ * CLI_common.setup_logging, for every output of the run. *)
+let skin_ctx (conf : conf) : Skin.ctx =
+  {
+    Skin.color =
+      (match Console.get_highlight () with
+      | Console.On -> true
+      | Console.Off -> false);
+    is_tty = !ANSITerminal.isatty Unix.stdout;
+    verbose = conf.skipped_files;
+    width = Findings_layout.text_width;
+    max_chars_per_line = conf.max_chars_per_line;
+    max_lines_per_finding = conf.max_lines_per_finding;
+    show_dataflow_traces = conf.show_dataflow_traces;
+    is_ci_invocation = conf.is_ci_invocation;
+  }
 
 let string_of_severity (severity : Out.match_severity) : string =
   Out.string_of_match_severity severity
@@ -213,20 +233,17 @@ let for_output_format (conf : conf) (kind : Output_format.t)
  * Returns None when there is nothing to output (e.g., Incremental, whose
  * matches have already been displayed in a file_match_results_hook).
  *)
-let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
-    (kind : Output_format.t) (cli_output : Out.cli_output) : string option =
+let render ~(skin : (module Skin.S)) (conf : conf) (profiler : Profiler.t)
+    ~(hrules : Rule.hrules) (kind : Output_format.t)
+    (cli_output : Out.cli_output) : string option =
   match kind with
   | Incremental -> None
   | Text ->
+      let module Sk = (val skin : Skin.S) in
+      (* a buffer formatter carries no style renderer, which is what keeps
+         the escapes out of a file *)
       Some
-        (Format.asprintf "%a"
-           (Matches_report.pp_cli_output
-              ~max_chars_per_line:conf.max_chars_per_line
-              ~max_lines_per_finding:conf.max_lines_per_finding
-              ~color_output:false
-              ~show_dataflow_traces:conf.show_dataflow_traces
-              ~is_ci_invocation:conf.is_ci_invocation)
-           cli_output)
+        (Format.asprintf "%a" (Sk.pp_findings (skin_ctx conf)) cli_output)
   | Sarif ->
       let engine_label =
         match cli_output.engine_requested with
@@ -299,6 +316,7 @@ let check_destinations (conf : conf) : unit =
          Option.iter check_destination dest)
 
 let dispatch_output_format
+    ~(skin : (module Skin.S))
     (caps : < Cap.stdout >)
     (profiler : Profiler.t)
     (conf : conf)
@@ -309,18 +327,15 @@ let dispatch_output_format
       =
     match kind with
     | Text ->
+        let module Sk = (val skin : Skin.S) in
         (* TODO: we should switch to Fmt_.with_buffer_to_string +
          * some CapConsole.print_no_nl, but then is_atty fail on
          * a string buffer and we lose the colors
          *)
-        Matches_report.pp_cli_output ~max_chars_per_line:conf.max_chars_per_line
-          ~max_lines_per_finding:conf.max_lines_per_finding
-            (* nosemgrep: forbid-console *)
-          ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
-          ~is_ci_invocation:conf.is_ci_invocation
-          Format.std_formatter cli_output
+        (* nosemgrep: forbid-console *)
+        Sk.pp_findings (skin_ctx conf) Format.std_formatter cli_output
     | kind -> (
-        match render conf profiler ~hrules kind cli_output with
+        match render ~skin conf profiler ~hrules kind cli_output with
         | Some str -> print str
         | None -> ())
   in
@@ -333,7 +348,7 @@ let dispatch_output_format
         (* a format with nothing to say still gets its file, so that a caller
          * reading the destination back does not meet an ENOENT after a scan
          * that simply found nothing *)
-        let str = render conf profiler ~hrules kind cli_output ||| "" in
+        let str = render ~skin conf profiler ~hrules kind cli_output ||| "" in
         let file = Fpath.v dest in
         let parent = Fpath.parent file |> Fpath.rem_empty_seg in
         (* a destination we cannot write to is the user's mistake, not ours,
@@ -390,9 +405,8 @@ let preprocess_result ~fixed_lines ~keep_ignored (res : Core_runner.result) :
 (* python: mix of output.OutputSettings(), output.OutputHandler(), and
  * output.output() all at once.
  *)
-let output_result ~(keep_ignored : bool) (caps : < Cap.stdout >) (conf : conf)
-    (profiler : Profiler.t)
-    (res : Core_runner.result) : Out.cli_output =
+let cli_output_of_result ~(keep_ignored : bool) (conf : conf)
+    (profiler : Profiler.t) (res : Core_runner.result) : Out.cli_output =
   (* In theory, we should build the JSON CLI output only for the
    * Json conf.output_format, but cli_output contains lots of data-structures
    * that are useful for the other formats (e.g., Vim, Emacs), so we build
@@ -428,8 +442,19 @@ let output_result ~(keep_ignored : bool) (caps : < Cap.stdout >) (conf : conf)
       }
     else cli_output
   in
-  (* the actual output on stdout *)
-  dispatch_output_format caps profiler conf cli_output res.hrules;
+  cli_output
+
+(* the actual output on stdout, and the file destinations *)
+let dispatch ~(skin : (module Skin.S)) (caps : < Cap.stdout >)
+    (profiler : Profiler.t) (conf : conf) (cli_output : Out.cli_output)
+    (hrules : Rule.hrules) : unit =
+  dispatch_output_format ~skin caps profiler conf cli_output hrules
+
+let output_result ~(skin : (module Skin.S)) ~(keep_ignored : bool)
+    (caps : < Cap.stdout >) (conf : conf) (profiler : Profiler.t)
+    (res : Core_runner.result) : Out.cli_output =
+  let cli_output = cli_output_of_result ~keep_ignored conf profiler res in
+  dispatch ~skin caps profiler conf cli_output res.hrules;
   (* we return cli_output as the caller might use it *)
   cli_output
 [@@profiling]
