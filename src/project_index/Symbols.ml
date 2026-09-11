@@ -58,9 +58,12 @@ let qualified_name_of ~(module_path : Names.Module_qn.t)
     (outer_to_inner : scope_kind list) (bare_name : string) : string =
   let buf = Buffer.create 64 in
   Buffer.add_string buf (Names.Module_qn.to_string module_path);
+  let add_separator () : unit =
+    if Buffer.length buf > 0 then Buffer.add_char buf '.'
+  in
   let prev_was_fn =
     List.fold_left (fun prev_was_fn scope ->
-      Buffer.add_char buf '.';
+      add_separator ();
       if prev_was_fn then Buffer.add_string buf "<locals>.";
       (match scope with
        | Sc_class { name; _ } -> Buffer.add_string buf name
@@ -69,7 +72,7 @@ let qualified_name_of ~(module_path : Names.Module_qn.t)
       (match scope with Sc_function _ -> true | _ -> false)
     ) false outer_to_inner
   in
-  Buffer.add_char buf '.';
+  add_separator ();
   if prev_was_fn then Buffer.add_string buf "<locals>.";
   Buffer.add_string buf bare_name;
   Buffer.contents buf
@@ -384,7 +387,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
      real [module_path] for require-relative / indexing. *)
   let root_namespace_qn =
     match cfg.Index_lang_rules.unqualified_scope with
-    | `Per_package -> true
+    | `Per_package
+    | `Per_namespace -> true
     | `Per_file
     | `Per_directory -> cfg.Index_lang_rules.class_identity_is_constant_path
   in

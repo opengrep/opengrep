@@ -169,6 +169,7 @@ type t = {
      union and gives up on the tie. *)
   overload_groups : bool;
   scope_table : scope_table;
+  own_modules : Names.Module_qn.t list;
   module_attributes : module_attributes;
   resolution_orders : resolution_orders;
   class_qn_by_definition : class_qn_by_definition;
@@ -176,6 +177,8 @@ type t = {
 }
 
 let overload_groups (t : t) : bool = t.overload_groups
+
+let own_modules (t : t) : Names.Module_qn.t list = t.own_modules
 
 let resolve_in_scope (t : t) (name : string) : scope_entry list =
   Option.value (Common.SMap.find_opt name t.scope_table) ~default:[]
@@ -252,6 +255,7 @@ let empty = {
   project_constructors = None;
   overload_groups = false;
   scope_table = empty_scope_table;
+  own_modules = [];
   module_attributes = Common.SMap.empty;
   resolution_orders = Common.SMap.empty;
   class_qn_by_definition = Common.SMap.empty;
@@ -264,6 +268,7 @@ let create
     ?same_file_funcs_by_name ?funcs_by_package ?file_module_qn
     ?local_imports ?class_aliases ?constructors ?project_constructors
     ?(overload_groups = false)
+    ?(own_modules : Names.Module_qn.t list = [])
     ~(module_attributes : module_attributes)
     ~(resolution_orders : resolution_orders)
     ~(class_qn_by_definition : class_qn_by_definition)
@@ -282,6 +287,7 @@ let create
     project_constructors;
     overload_groups;
     scope_table;
+    own_modules;
     module_attributes;
     resolution_orders;
     class_qn_by_definition;

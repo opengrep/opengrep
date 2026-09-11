@@ -113,7 +113,8 @@ let build_attributes_by_module
   in
   let imports_bind_attributes =
     match cfg.Index_lang_rules.unqualified_scope with
-    | `Per_package -> false
+    | `Per_package
+    | `Per_namespace -> false
     | `Per_file
     | `Per_directory -> true
   in

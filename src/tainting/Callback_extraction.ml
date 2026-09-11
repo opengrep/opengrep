@@ -84,6 +84,89 @@ let dotted_reference_of_method_reference (e : G.expr) : G.expr option =
     | _ -> None)
   | _ -> None
 
+let name_of_qualified_segments (segments : G.ident list) : G.name option =
+  match List.rev segments with
+  | [] -> None
+  | (last : G.ident) :: (rev_middle : G.ident list) ->
+    Some
+      (G.IdQualified
+         { G.name_last = (last, None);
+           name_middle =
+             (match List.rev rev_middle with
+              | [] -> None
+              | (middle : G.ident list) ->
+                Some (G.QDots (List.map (fun (id : G.ident) -> (id, None))
+                                 middle)));
+           name_top = Some (snd last);
+           name_info = G.empty_id_info () })
+
+let segments_of_written_name ~(tok : Tok.t) (written : string) : G.ident list =
+  String.split_on_char '\\' written
+  |> List.filter (fun (segment : string) -> String.length segment > 0)
+  |> List.map (fun (segment : string) -> (segment, tok))
+
+let scope_operator_at (written : string) : int option =
+  let last = String.length written - 1 in
+  let rec search (from : int) : int option =
+    if from >= last then None
+    else
+      match String.index_from_opt written from ':' with
+      | Some (at : int) when at < last && Char.equal written.[at + 1] ':' ->
+        Some at
+      | Some (at : int) -> search (at + 1)
+      | None -> None
+  in
+  search 0
+
+let reference_of_written_callable ~(tok : Tok.t) (written : string)
+    : G.expr option =
+  match scope_operator_at written with
+  | Some (at : int) ->
+    let class_written = String.sub written 0 at in
+    let method_written =
+      String.sub written (at + 2) (String.length written - at - 2)
+    in
+    if Int.equal (String.length method_written) 0 then None
+    else
+      Option.map
+        (fun (class_name : G.name) ->
+          dotted_reference ~tok (G.N class_name |> G.e) (method_written, tok)
+            (G.empty_id_info ()))
+        (name_of_qualified_segments
+           (segments_of_written_name ~tok class_written))
+  | None ->
+    Option.map
+      (fun (qualified : G.name) -> G.N qualified |> G.e)
+      (name_of_qualified_segments (segments_of_written_name ~tok written))
+
+let is_closure_from_callable (callee : G.expr) : bool =
+  match callee.G.e with
+  | G.N (G.IdQualified
+           { G.name_last = (("fromCallable", _), None);
+             name_middle = Some (G.QDots [ (("Closure", _), None) ]); _ }) ->
+    true
+  | _ -> false
+
+let reference_of_callable_literal ~(lang : Lang.t) (e : G.expr)
+    : G.expr option =
+  if not (Lang_config.get lang).Lang_config.callables_written_as_literals then
+    None
+  else
+    match e.G.e with
+    | G.L (G.String (_, ((written : string), (tok : Tok.t)), _)) ->
+      reference_of_written_callable ~tok written
+    | G.Container
+        ( (G.List | G.Array),
+          (_, [ (receiver : G.expr);
+                { G.e = G.L (G.String (_, ((method_written : string),
+                                           (tok : Tok.t)), _)); _ } ], _) ) ->
+      Some
+        (dotted_reference ~tok receiver (method_written, tok)
+           (G.empty_id_info ()))
+    | G.Call ((callee : G.expr), (_, [ G.Arg (inner : G.expr) ], _))
+      when is_closure_from_callable callee -> Some inner
+    | _ -> None
+
 let rec extract_callbacks_from_arg ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
     (IL.name * Tok.t * IL.name option * callback_scope) list =
@@ -137,6 +220,16 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       | Some reference ->
           extract_callbacks_from_arg ~lang ~func_lookup reference
       | None -> [])
+  | G.L (G.String _) -> (
+      match reference_of_callable_literal ~lang arg_expr with
+      | Some reference ->
+          extract_callbacks_from_arg ~lang ~func_lookup reference
+      | None -> [])
+  | G.Call (callee, _) when is_closure_from_callable callee -> (
+      match reference_of_callable_literal ~lang arg_expr with
+      | Some reference ->
+          extract_callbacks_from_arg ~lang ~func_lookup reference
+      | None -> [])
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
@@ -184,6 +277,16 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
               extract_callbacks_from_arg ~lang ~func_lookup v
           | _ -> [])
         kvs
+  | G.Container
+      ((G.List | G.Array), (_, [ _; { G.e = G.L (G.String _); _ } ], _)) -> (
+      match reference_of_callable_literal ~lang arg_expr with
+      | Some reference ->
+          extract_callbacks_from_arg ~lang ~func_lookup reference
+      | None ->
+          List.concat_map (extract_callbacks_from_arg ~lang ~func_lookup)
+            (match arg_expr.G.e with
+             | G.Container (_, (_, xs, _)) -> xs
+             | _ -> []))
   (* List/Tuple/Array/Set literal: recurse into each element *)
   | G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)) ->
       List.concat_map (extract_callbacks_from_arg ~lang ~func_lookup) xs
@@ -441,6 +544,9 @@ let try_identify_callback_args ~lang
   let resolve_in_expr expr =
     let expr =
       Option.value (dotted_reference_of_method_reference expr) ~default:expr
+    in
+    let expr =
+      Option.value (reference_of_callable_literal ~lang expr) ~default:expr
     in
     (* Also handle this.foo pattern *)
     let direct_this =

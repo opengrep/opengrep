@@ -22,7 +22,8 @@ type t = {
   walks_inheritance : bool;
   has_reexports : bool;
   include_anonymous_funcs : bool;
-  unqualified_scope : [ `Per_file | `Per_directory | `Per_package ];
+  unqualified_scope :
+    [ `Per_file | `Per_directory | `Per_package | `Per_namespace ];
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
      C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
      qualified by the region open at its definition, so several or nested
@@ -437,6 +438,21 @@ let php_strip_field_sigil (field : string) : string =
   then String.sub field 1 (String.length field - 1)
   else field
 
+let php_namespace_decl (ast : G.program) : string option =
+  Some (Option.value (extract_package_decl ast) ~default:"")
+
+let php_class_body_extra_parents (cdef : G.class_definition)
+  : string list list =
+  List.filter_map
+    (fun (ty : G.type_) ->
+      match ty.G.t with
+      | G.TyN (name : G.name) -> (
+        match name_to_path name with
+        | [] -> None
+        | (path : string list) -> Some path)
+      | _ -> None)
+    cdef.G.cmixins
+
 let php : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
@@ -444,7 +460,9 @@ let php : t = { default with
   ctor_param_promotion = true;
   (* PHP [namespace App\Svc;] parses to [Package]/[PackageEnd]. *)
   package_directive_is_namespace = true;
-  narrow_methods_by_required_files = true;
+  unqualified_scope = `Per_namespace;
+  module_path_from_ast = php_namespace_decl;
+  class_body_extra_parents = php_class_body_extra_parents;
 }
 
 (* Scala [package a.b] (and nested [package a { package b {..} }]) parse to

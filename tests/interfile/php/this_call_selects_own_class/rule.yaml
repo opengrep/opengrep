@@ -1,0 +1,15 @@
+rules:
+  - id: this-call-selects-own-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      `$this->handle` names the method of the class the call is written in, so
+      the sinking `App\\Store::handle` runs and the same-named
+      `Lib\\Store::handle` does not.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

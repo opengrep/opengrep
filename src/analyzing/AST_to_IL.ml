@@ -1366,7 +1366,10 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                     Call (res, method_, args')) in
                 (ss_args @ aux_ss @ call_ss, call_exp)))
   | G.Call
-      ( ({ e = G.IdSpecial ((G.This | G.Super | G.Self | G.Parent), tok); _ } as
+      ( ({ e =
+             G.IdSpecial
+               ((G.This | G.Super | G.Self | G.Parent | G.LateStatic), tok);
+           _ } as
          e),
         args ) ->
       call_generic env ~void tok eorig e args
@@ -2285,6 +2288,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
         | G.Super -> Some Super
         | G.Self -> Some Self
         | G.Parent -> Some Parent
+        | G.LateStatic -> Some Self
         | _ -> None
       in
       match opt_var_special with
@@ -2659,6 +2663,7 @@ and call_special _env (x, tok) : call_special * Tok.t =
     | G.Super
     | G.Self
     | G.Parent
+    | G.LateStatic
     | G.InterpolatedElement ->
         impossible (G.E (G.IdSpecial (x, tok) |> G.e))
     (* should be intercepted before *)

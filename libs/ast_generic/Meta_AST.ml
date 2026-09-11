@@ -573,6 +573,7 @@ and vof_special = function
       let v = vof_inc_dec v in
       OCaml.VSum ("IncrDecr", [ v ])
   | NextArrayIndex -> OCaml.VSum ("NextArrayIndex", [])
+  | LateStatic -> OCaml.VSum ("LateStatic", [])
   | Require -> OCaml.VSum ("Require", [])
 
 and vof_interpolated_kind = function
@@ -797,6 +798,7 @@ and vof_keyword_attribute = function
   | DefaultImpl -> OCaml.VSum ("DefaultImpl", [])
   | Throws -> OCaml.VSum ("Throws", [])
   | Rethrows -> OCaml.VSum ("Rethrows", [])
+  | Callable -> OCaml.VSum ("Callable", [])
   | GlobalScope -> OCaml.VSum ("GlobalScope", [])
 
 and vof_attribute = function

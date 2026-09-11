@@ -143,6 +143,7 @@ let should_match_call = function
   | G.Super
   | G.Self
   | G.Parent
+  | G.LateStatic
   (* JS `require("fs")` *)
   | G.Require
   | G.Eval ->
@@ -1502,6 +1503,7 @@ and m_special a b =
   | G.Super, B.Super -> return ()
   | G.Self, B.Self -> return ()
   | G.Parent, B.Parent -> return ()
+  | G.LateStatic, B.LateStatic -> return ()
   | G.Eval, B.Eval -> return ()
   | G.Typeof, B.Typeof -> return ()
   | G.Instanceof, B.Instanceof -> return ()
@@ -1522,6 +1524,7 @@ and m_special a b =
   | G.Super, _
   | G.Self, _
   | G.Parent, _
+  | G.LateStatic, _
   | G.Eval, _
   | G.Typeof, _
   | G.Instanceof, _

@@ -1,0 +1,15 @@
+rules:
+  - id: rooted-global-function
+    languages: [php]
+    severity: ERROR
+    message: >
+      A fully qualified name of one segment names the global function of that
+      name, so `\helper($x)` calls the global `helper` and not the
+      same-named `App\helper` that the current namespace defines.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

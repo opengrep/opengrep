@@ -120,11 +120,14 @@ type ident = string wrap [@@deriving show]
 (* the string contains the $ prefix *)
 type var = string wrap [@@deriving show]
 
-(* The keyword 'namespace' can be in a leading position. The special
- * ident 'ROOT' can also be leading.
+(* The keyword 'namespace' can be in a leading position. The leading
+ * backslash of a fully qualified name is the typed field [n_root] of
+ * [name], not a segment of [qualified_ident].
  *)
 type qualified_ident = ident list [@@deriving show]
-type name = qualified_ident [@@deriving show]
+
+type name = { n_root : tok option; n_parts : qualified_ident }
+[@@deriving show]
 
 (*****************************************************************************)
 (* Expression *)
@@ -236,6 +239,7 @@ and special =
   | Self
   (* represents the "parent" keyword expression in a class *)
   | Parent
+  | LateStatic
   | FuncLike of funclike
 
 (* language constructs that look like functions *)
@@ -314,12 +318,14 @@ and stmt =
   (* the qualified_ident below can not have a leading '\', it can also
    * be the root namespace *)
   | NamespaceDef of tok * qualified_ident * stmt list bracket
-  | NamespaceUse of tok * qualified_ident * ident option (* when alias *)
+  | NamespaceUse of tok * use_kind * name * ident option
   (* Note that there is no LocalVars constructor. Variables in PHP are
    * declared when they are first assigned. *)
   | StaticVars of tok * (var * expr option) list
   (* expr is most of the time a simple variable name *)
   | Global of tok * expr list
+
+and use_kind = Use_class | Use_function | Use_constant
 
 and case = Case of tok * expr * stmt list | Default of tok * stmt list | CaseEllipsis of (* ... *) tok 
 
@@ -529,16 +535,27 @@ let tok_of_ident (_, x) = x
 
 exception TodoNamespace of tok
 
-let str_of_name = function
+let name_of_ids (n_parts : qualified_ident) : name =
+  { n_root = None; n_parts }
+
+let expr_id (n_parts : qualified_ident) : expr = Id (name_of_ids n_parts)
+
+let rooted_name_of_ids (root : tok) (n_parts : qualified_ident) : name =
+  { n_root = Some root; n_parts }
+
+let str_of_name (n : name) =
+  match n.n_parts with
   | [ id ] -> str_of_ident id
   | [] -> raise Common.Impossible
   | x :: _xs -> raise (TodoNamespace (tok_of_ident x))
 
-let tok_of_name = function
-  | [ id ] -> tok_of_ident id
-  | [] -> raise Common.Impossible
+let tok_of_name (n : name) =
+  match (n.n_root, n.n_parts) with
+  | Some root, _ -> root
+  | None, [ id ] -> tok_of_ident id
+  | None, [] -> raise Common.Impossible
   (* pick first one *)
-  | x :: _xs -> tok_of_ident x
+  | None, x :: _xs -> tok_of_ident x
 
 (* we sometimes need to remove the '$' prefix *)
 let remove_first_char s = String.sub s 1 (String.length s - 1)
@@ -550,7 +567,7 @@ let str_of_class_name x =
 
 let name_of_class_name x =
   match x with
-  | Hint [ name ] -> name
-  | Hint [] -> raise Common.Impossible
+  | Hint { n_root = None; n_parts = [ name ] } -> name
+  | Hint { n_parts = []; _ } -> raise Common.Impossible
   | Hint name -> raise (TodoNamespace (tok_of_name name))
   | _ -> raise Common.Impossible

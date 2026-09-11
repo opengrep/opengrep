@@ -1074,6 +1074,7 @@ and special =
   (* less: how different self/parent is from this/super? *)
   | Self
   | Parent
+  | LateStatic
   (* for Lua, todo: just remove it, create Dict without key *)
   | NextArrayIndex
   (* special calls *)
@@ -1689,6 +1690,7 @@ and keyword_attribute =
   | Static (* a.k.a Intern in Solidity *)
   | Extern (* less: of string? like extern "C" in C++ or Rust *)
   | GlobalScope
+  | Callable
   | Volatile
   (* the classic C++ modifiers for fields/methods *)
   | Public

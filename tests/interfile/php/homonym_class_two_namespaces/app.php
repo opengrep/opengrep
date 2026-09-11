@@ -1,5 +1,7 @@
 <?php
-require_once "widget_b.php";
+namespace App;
+
+use Lib\Widget;
 
 function run() {
     $w = new Widget();

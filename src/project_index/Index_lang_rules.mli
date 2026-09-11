@@ -24,7 +24,8 @@ type t = {
   walks_inheritance : bool;
   has_reexports : bool;
   include_anonymous_funcs : bool;
-  unqualified_scope : [ `Per_file | `Per_directory | `Per_package ];
+  unqualified_scope :
+    [ `Per_file | `Per_directory | `Per_package | `Per_namespace ];
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
      blocks / package clauses), not the file's module identity (contrast Go). *)
   package_directive_is_namespace : bool;
@@ -48,7 +49,7 @@ type t = {
   narrow_methods_by_import_files : bool;
 
   (* When true, restrict same-named colliding methods to the files the caller
-     itself requires (Ruby [require_relative], PHP [require]/[include]). *)
+     itself requires (Ruby [require_relative]). *)
   narrow_methods_by_required_files : bool;
 
   strip_field_sigil : string -> string;

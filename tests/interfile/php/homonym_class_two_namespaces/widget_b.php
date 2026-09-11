@@ -1,7 +1,9 @@
 <?php
+namespace Lib;
+
 class Widget {
     public function process($x) {
-        // ruleid: homonym-class-require
+        // ruleid: homonym-class-two-namespaces
         sink($x);
     }
 }

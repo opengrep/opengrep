@@ -631,16 +631,34 @@ let build_project_call_graph (caps : < Cap.fork >)
                 by_class))
       definitions_by_qn Func_lookup.Class_qn_map.empty
   in
+  let attributes_by_module =
+    timed "call graph: attributes by module" (fun () ->
+      Func_index.build_attributes_by_module ~cfg ~dunder_all
+        ~definitions_by_qn ~file_infos:indexed_files)
+  in
   let pipeline_ctx : Pipeline.ctx =
     { Pipeline.lang;
       cfg;
       type_state;
       required_files_narrowing;
       definitions_by_qn;
-      attributes_by_module =
-        timed "call graph: attributes by module" (fun () ->
-          Func_index.build_attributes_by_module ~cfg ~dunder_all
-            ~definitions_by_qn ~file_infos:indexed_files);
+      attributes_by_module;
+      php_region_bindings =
+        timed "call graph: namespace bindings" (fun () ->
+          match cfg.Index_lang_rules.unqualified_scope with
+          | `Per_namespace ->
+            Scope_php.build_region_bindings ~attributes_by_module
+              ~file_infos:indexed_files
+          | `Per_file
+          | `Per_directory
+          | `Per_package -> Common.SMap.empty);
+      php_global_bindings =
+        (match cfg.Index_lang_rules.unqualified_scope with
+         | `Per_namespace ->
+           Scope_php.global_function_bindings ~attributes_by_module
+         | `Per_file
+         | `Per_directory
+         | `Per_package -> []);
       dunder_all;
       resolution_orders;
       class_qn_by_definition;

@@ -34,6 +34,7 @@ type t = {
   collection_configs : collection_model_kind list;
   constructor_names : string list;
   uses_new_keyword : bool;
+  callables_written_as_literals : bool;
   (* Methods invoking `self` as a function (Runnable.run, Proc#call): a Fun-shaped receiver call becomes a direct lambda invocation. *)
   invoke_methods : string list;
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
@@ -45,6 +46,7 @@ let empty = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -64,6 +66,7 @@ let python = {
   ];
   constructor_names = ["__init__"];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -90,6 +93,7 @@ let ruby = {
   ];
   constructor_names = ["initialize"];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = ["call"];
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
@@ -118,6 +122,7 @@ let javascript = {
   ];
   constructor_names = ["constructor"];
   uses_new_keyword = true;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -143,6 +148,7 @@ let java = {
   ];
   constructor_names = ["<init>"];
   uses_new_keyword = true;
+  callables_written_as_literals = false;
   invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
   skip_nested_in_extract_calls = false;
 }
@@ -171,6 +177,7 @@ let kotlin = {
   ];
   constructor_names = ["<init>"; "init"; "constructor"];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = ["invoke"];
   skip_nested_in_extract_calls = false;
 }
@@ -192,6 +199,7 @@ let scala = {
   ];
   constructor_names = ["<init>"];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -214,6 +222,7 @@ let csharp = {
   ];
   constructor_names = [".ctor"];
   uses_new_keyword = true;
+  callables_written_as_literals = false;
   invoke_methods = ["Invoke"];
   skip_nested_in_extract_calls = false;
 }
@@ -228,6 +237,7 @@ let go = {
   ];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -249,6 +259,7 @@ let rust = {
   ];
   constructor_names = ["new"];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -270,6 +281,7 @@ let swift = {
   ];
   constructor_names = ["init"];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -282,6 +294,7 @@ let php = {
   collection_configs = [];
   constructor_names = ["__construct"];
   uses_new_keyword = true;
+  callables_written_as_literals = true;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -294,6 +307,7 @@ let cpp = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -308,6 +322,7 @@ let ocaml_lang = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -317,6 +332,7 @@ let lua = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -348,6 +364,7 @@ let dart = {
      covers via the class-name equality check *)
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   (* Function objects: f.call(args) invokes the closure f *)
   invoke_methods = ["call"];
   skip_nested_in_extract_calls = false;
@@ -366,6 +383,7 @@ let elixir = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -377,6 +395,7 @@ let julia = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -400,6 +419,7 @@ let clojure = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -409,6 +429,7 @@ let apex = {
   collection_configs = [];
   constructor_names = ["<init>"];
   uses_new_keyword = true;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -418,6 +439,7 @@ let vb = {
   collection_configs = [];
   constructor_names = ["New"];
   uses_new_keyword = true;
+  callables_written_as_literals = false;
   invoke_methods = [];
   skip_nested_in_extract_calls = false;
 }

@@ -985,7 +985,7 @@ let lookup_signature_with_object_context env fun_exp arity =
           lookup_bare_function_name env db name arity
       | Fetch
           {
-            base = VarSpecial ((Self | This), _);
+            base = VarSpecial ((Self | This | Parent | Super), _);
             rev_offset = [ { o = Dot method_name; _ } ];
           }
         when Option.is_some env.class_name -> (
@@ -1060,15 +1060,17 @@ let lookup_signature_with_object_context env fun_exp arity =
               try_builtin_fallback env (fst method_name.ident) arity result)
       | Fetch
           {
-            base = VarSpecial ((Self | This), _);
+            base = VarSpecial ((Self | This | Parent | Super), _);
             rev_offset = [ { o = Dot method_name; _ } ];
           } -> (
-          (* For a direct [self]/[this] method call such as [this.handle (x)],
-             the lookup uses the stamp on the bare method name, then the graph
-             edge anchored at the method token, as the self-field branch below
-             does. There is no name-keyed database fallback, because a bare
-             method-name lookup would match a method of that name on any
-             class. *)
+          (* A call written [parent::handle($x)] or [super.handle(x)] calls the
+             parent class's method on the current object, and one written
+             [this.handle(x)] or [self::handle($x)] calls a method of the
+             enclosing class on it. The lookup uses the stamp on the bare method
+             name, then the graph edge anchored at the method token, as the
+             self-field branch below does; there is no name-keyed database
+             fallback, because a bare method-name lookup would match a method of
+             that name on any class. *)
           match
             signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
@@ -1090,7 +1092,7 @@ let lookup_signature_with_object_context env fun_exp arity =
               | None -> None))
       | Fetch
           {
-            base = VarSpecial ((Self | This), _);
+            base = VarSpecial ((Self | This | Parent | Super), _);
             rev_offset = { o = Dot method_name; _ } :: _ :: _;
           } -> (
           (* For a call through a self field such as [self.worker.work(x)],

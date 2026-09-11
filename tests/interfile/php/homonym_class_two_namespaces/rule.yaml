@@ -1,0 +1,17 @@
+rules:
+  - id: homonym-class-two-namespaces
+    languages: [php]
+    severity: ERROR
+    message: >
+      Taint reaches a sink through a method of a class whose name is shared
+      by an unrelated class in another namespace.  The caller writes
+      `use Lib\Widget;`, so the unqualified name `Widget` names `Lib\Widget`
+      and the same-arity method of `Other\Widget` must neither be called nor
+      drop the call.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)

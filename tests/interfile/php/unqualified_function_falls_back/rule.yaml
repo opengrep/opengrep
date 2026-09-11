@@ -1,0 +1,15 @@
+rules:
+  - id: unqualified-function-falls-back
+    languages: [php]
+    severity: ERROR
+    message: >
+      An unqualified function name that the current namespace does not define
+      falls back to the global function of that name, which is PHP's rule for
+      the function table and not for the class table.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

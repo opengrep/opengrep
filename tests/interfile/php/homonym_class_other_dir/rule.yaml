@@ -1,0 +1,16 @@
+rules:
+  - id: homonym-class-other-dir
+    languages: [php]
+    severity: ERROR
+    message: >
+      Two directories hold a file of the same name with a same-named class
+      and method, one class per namespace.  The caller writes
+      `use Sub\Store;`, so the unqualified name `Store` names `Sub\Store`
+      and `Other\Store::save` is not called.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)

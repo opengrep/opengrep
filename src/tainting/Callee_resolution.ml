@@ -948,26 +948,36 @@ type binding_target =
   | Bound_class of Names.Class_qn.t
   | Bound_functions of func_info list
 
-let rec dotted_chain_of_expr (e : G.expr) : string list option =
+type dotted_chain = {
+  dc_rooted : bool;
+  dc_segments : string list;
+}
+
+let rec dotted_chain_of_expr (e : G.expr) : dotted_chain option =
   match e.G.e with
   | G.N name -> dotted_chain_of_name name
   | G.DotAccess (receiver, _, G.FN (G.Id ((segment, _), _))) ->
     Option.map
-      (fun (chain : string list) -> chain @ [ segment ])
+      (fun (chain : dotted_chain) ->
+        { chain with dc_segments = chain.dc_segments @ [ segment ] })
       (dotted_chain_of_expr receiver)
   | _ -> None
 
-and dotted_chain_of_name (name : G.name) : string list option =
+and dotted_chain_of_name (name : G.name) : dotted_chain option =
   match name with
-  | G.Id ((segment, _), _) -> Some [ segment ]
+  | G.Id ((segment, _), _) ->
+    Some { dc_rooted = false; dc_segments = [ segment ] }
   | G.IdQualified { name_last = ((last, _), _); name_middle = None;
-                    name_top = None; _ } -> Some [ last ]
+                    name_top; _ } ->
+    Some { dc_rooted = Option.is_some name_top; dc_segments = [ last ] }
   | G.IdQualified { name_last = ((last, _), _);
                     name_middle = Some (G.QDots middle);
-                    name_top = None; _ } ->
+                    name_top; _ } ->
     Some
-      (List.map (fun (((segment, _), _) : G.ident * _) -> segment) middle
-       @ [ last ])
+      { dc_rooted = Option.is_some name_top;
+        dc_segments =
+          List.map (fun (((segment, _), _) : G.ident * _) -> segment) middle
+          @ [ last ] }
   | G.IdQualified _ -> None
 
 let entries_in_scope ~(func_lookup : Func_lookup.t)
@@ -1031,6 +1041,23 @@ let longest_accepted_prefix ~(accept : string list -> bool)
   in
   search [] chain None
 
+let global_attribute_binding ~(func_lookup : Func_lookup.t)
+    (chain : string list) : (binding_target * string list) option =
+  match chain with
+  | [ (segment : string) ] -> (
+    match
+      Func_lookup.module_attribute func_lookup Names.Module_qn.empty segment
+    with
+    | Some (Func_lookup.Attr_functions (funcs : func_info list)) ->
+      Some (Bound_functions funcs, [])
+    | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) ->
+      Some (Bound_class class_qn, [])
+    | Some (Func_lookup.Attr_module (module_qn : Names.Module_qn.t)) ->
+      Some (Bound_module module_qn, [])
+    | None -> None)
+  | []
+  | _ :: _ :: _ -> None
+
 let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
     (chain : string list) : (binding_target * string list) option =
   match
@@ -1051,16 +1078,35 @@ let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
              (Names.Module_qn.of_parts prefix))
          chain)
 
+let in_own_modules ~(func_lookup : Func_lookup.t) (chain : string list)
+    : (binding_target * string list) option =
+  List.find_map
+    (fun (region : Names.Module_qn.t) ->
+      if Names.Module_qn.is_empty region then None
+      else
+        qualified_prefix_binding ~func_lookup
+          (Names.Module_qn.parts region @ chain))
+    (Func_lookup.own_modules func_lookup)
+
 let follow_chain ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (chain : string list)
+    ~(caller_parent_path : IL.name option list) (chain : dotted_chain)
     : binding_target option =
+  let segments_of_chain = chain.dc_segments in
   let start =
-    match chain with
+    match segments_of_chain with
     | [] -> None
-    | head :: segments -> (
-      match head_binding ~func_lookup ~caller_parent_path head with
-      | Some (target : binding_target) -> Some (target, segments)
-      | None -> qualified_prefix_binding ~func_lookup chain)
+    | head :: segments ->
+      if chain.dc_rooted then
+        match qualified_prefix_binding ~func_lookup segments_of_chain with
+        | Some _ as bound -> bound
+        | None -> global_attribute_binding ~func_lookup segments_of_chain
+      else (
+        match head_binding ~func_lookup ~caller_parent_path head with
+        | Some (target : binding_target) -> Some (target, segments)
+        | None -> (
+          match in_own_modules ~func_lookup segments_of_chain with
+          | Some _ as bound -> bound
+          | None -> qualified_prefix_binding ~func_lookup segments_of_chain))
   in
   match start with
   | None -> None
@@ -1145,6 +1191,16 @@ let class_qn_of_type_name ~(func_lookup : Func_lookup.t)
         | Some _ as resolved -> resolved
         | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name)
 
+let return_type_class_qn ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (funcs : func_info list)
+    : Names.Class_qn.t option =
+  List.find_map
+    (fun (f : func_info) ->
+      Option.bind f.fdef.G.frettype (fun (ty : G.type_) ->
+        Option.bind (Ty_bare_name.qualified_class_name_of_ty ty)
+          (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)))
+    funcs
+
 let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     ~(type_state : Type_state.t)
     ~(caller_parent_path : IL.name option list) (receiver : G.expr)
@@ -1152,7 +1208,7 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
   let of_receiver = receiver_class_qn ~lang ~func_lookup ~type_state
       ~caller_parent_path in
   match receiver.G.e with
-  | G.IdSpecial ((G.This | G.Self), _) ->
+  | G.IdSpecial ((G.This | G.Self | G.LateStatic), _) ->
     enclosing_class_qn ~func_lookup caller_parent_path
   | G.N (G.Id ((name, _), id_info)) ->
     if Receiver.is_self_name lang name then
@@ -1168,6 +1224,10 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
         (follow_chain ~func_lookup ~caller_parent_path)
     with
     | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
+    | Some (Bound_functions (funcs : func_info list))
+      when Option.is_some
+             (return_type_class_qn ~func_lookup ~caller_parent_path funcs) ->
+      return_type_class_qn ~func_lookup ~caller_parent_path funcs
     | Some (Bound_functions _)
     | Some (Bound_module _)
     | None -> (
@@ -1181,6 +1241,9 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
             (class_qn_of_type_name ~func_lookup ~caller_parent_path
                ~owner:(Some owner)))
       | _ -> None))
+  | G.New (_, (ty : G.type_), _, _) ->
+    Option.bind (Ty_bare_name.qualified_class_name_of_ty ty)
+      (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
   | G.DotAccess (inner, _, G.FN (G.Id ((field_name, _), _))) ->
     Option.bind (of_receiver inner) (fun (owner : Names.Class_qn.t) ->
       Option.bind
@@ -1222,14 +1285,15 @@ let extension_functions ~(func_lookup : Func_lookup.t)
 let is_super_call (e : G.expr) : bool =
   match e.G.e with
   | G.Call ({ G.e = G.N (G.Id (("super", _), _)); _ }, _) -> true
-  | G.IdSpecial (G.Super, _) -> true
+  | G.IdSpecial ((G.Super | G.Parent), _) -> true
   | _ -> false
 
 let identify_callee_interfile ~(lang : Lang.t)
     ~(type_state : Type_state.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ?(caller_parent_path : IL.name option list = [])
-    ?(call_arity : int option) ?(allow_constructor = true)
+    ?(call_arity : int option)
+    ?(allow_constructor = not (uses_new_keyword lang))
     (callee : G.expr) : fn_id option =
   let pick (matches : func_info list) : fn_id option =
     pick_by_arity
@@ -1275,8 +1339,8 @@ let identify_callee_interfile ~(lang : Lang.t)
       | _ :: after_self ->
         pick (Func_lookup.find_along_order func_lookup after_self
                 (fun _ -> [ method_name ]))))
-  | G.DotAccess ({ G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
-                 G.FN (G.Id ((method_name, _), _))) -> (
+  | G.DotAccess ({ G.e = G.IdSpecial ((G.This | G.Self | G.LateStatic), _); _ },
+                 _, G.FN (G.Id ((method_name, _), _))) -> (
     match enclosing_class_qn ~func_lookup caller_parent_path with
     | None -> None
     | Some (class_qn : Names.Class_qn.t) -> along_order class_qn method_name)

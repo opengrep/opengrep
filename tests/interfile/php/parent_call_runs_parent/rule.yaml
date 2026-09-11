@@ -1,0 +1,15 @@
+rules:
+  - id: parent-call-runs-parent
+    languages: [php]
+    severity: ERROR
+    message: >
+      `parent::handle` names the method of the parent class along the child's
+      resolution order with the head dropped, so the parent's sinking body
+      runs and the child's own override does not shadow it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

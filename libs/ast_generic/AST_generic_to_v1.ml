@@ -479,6 +479,7 @@ and map_special x =
   | Spread -> `Spread
   | HashSplat -> `HashSplat
   | NextArrayIndex -> `OtherSpecial "NextArrayIndex"
+  | LateStatic -> `OtherSpecial "LateStatic"
   | Require -> `Require
   | Op v1 ->
       let v1 = map_arithmetic_operator v1 in
@@ -690,6 +691,7 @@ and map_keyword_attribute = function
   | Volatile -> Left `Volatile
   | Extern -> Left `Extern
   | GlobalScope -> Right "global"
+  | Callable -> Right "function"
   | Public -> Left `Public
   | Private -> Left `Private
   | Protected -> Left `Protected

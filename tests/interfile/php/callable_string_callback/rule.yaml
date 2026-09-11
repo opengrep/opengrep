@@ -1,0 +1,19 @@
+rules:
+  - id: callable-string-callback
+    languages: [php]
+    severity: ERROR
+    message: >
+      A callable written as the string `'App\\handle'` names the function of
+      that qualified name, so the sinking `App\\handle` runs and the
+      same-named `Lib\\handle` does not.
+      The call graph carries the callback edge to `App\\handle`. The taint
+      layer instantiates a callback named at a call site only when it is
+      written as a lambda, so no finding is produced and the sink is marked
+      todoruleid.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

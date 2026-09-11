@@ -1901,16 +1901,20 @@ namespace_use_declaration:
    TANTISLASH? namespace_name TANTISLASH
    "{" listc2(namespace_use_group_clause) "}"
   ";"
-   { $7 |> List.map (fun (_use_kwd_opt_TODO, name, alias_opt) ->
+   { $7 |> List.map (fun (clause_kwd_opt, name, alias_opt) ->
        let full_name = (qiopt $3 $4) @ name in
-       NamespaceUse ($1, $2, [Left (full_name, alias_opt)], $9)
+       let kwd_opt = match clause_kwd_opt with
+         | Some _ -> clause_kwd_opt
+         | None -> $2
+       in
+       NamespaceUse ($1, kwd_opt, [Left (full_name, alias_opt)], $9)
       )
    }
 
 
 use_keyword:
-  | T_CONST { $1 }
-  | T_FUNCTION { $1 }
+  | T_CONST { Use_const_keyword $1 }
+  | T_FUNCTION { Use_function_keyword $1 }
 
 namespace_name:
  | ident_in_name                           { [QI (Name $1)] }

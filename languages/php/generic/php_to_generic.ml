@@ -65,11 +65,14 @@ let qualified_ident v = list ident v
 
 (* Note, Funtions and Classes are case insensitive, variables are case
  * sensitive. *)
-let name_of_qualified_ident ~case_insensitive xs =
-  let xs = qualified_ident xs in
-  H.name_of_ids ~case_insensitive xs
+let name_of_qualified_ident ~case_insensitive (n : name) =
+  let xs = qualified_ident n.n_parts in
+  match n.n_root with
+  | None -> H.name_of_ids ~case_insensitive xs
+  | Some (root : tok) ->
+      H.name_of_ids ~case_insensitive ~name_top:(info root) xs
 
-let name v = qualified_ident v
+
 let fixOp x = x
 
 let binaryOp (x, t) =
@@ -177,13 +180,19 @@ let rec stmt_aux = function
       [ G.DirectiveStmt (G.Package (t, v1) |> G.d) |> G.s ]
       @ v2
       @ [ G.DirectiveStmt (G.PackageEnd t2 |> G.d) |> G.s ]
-  | NamespaceUse (t, v1, v2) -> (
-      let v1 = qualified_ident v1 in
+  | NamespaceUse (t, kind, v1, v2) -> (
+      let v1 = qualified_ident v1.n_parts in
+      let d_attrs =
+        match kind with
+        | Use_class -> []
+        | Use_function -> [ G.KeywordAttr (G.Callable, t) ]
+        | Use_constant -> [ G.KeywordAttr (G.Const, t) ]
+      in
       match v2 with
       | Some x ->
           [
             G.DirectiveStmt
-              (G.ImportAs (t, G.DottedName v1, Some (alias x)) |> G.d)
+              { G.d = G.ImportAs (t, G.DottedName v1, Some (alias x)); d_attrs }
             |> G.s;
           ]
       (* A use declaration such as `use A\B\C;` brings `C` into scope as `C` *)
@@ -192,9 +201,10 @@ let rec stmt_aux = function
           | name :: path ->
               [
                 G.DirectiveStmt
-                  (G.ImportFrom
-                     (t, G.DottedName (List.rev path), [ (name, None) ])
-                  |> G.d)
+                  { G.d =
+                      G.ImportFrom
+                        (t, G.DottedName (List.rev path), [ (name, None) ]);
+                    d_attrs }
                 |> G.s;
               ]
           | [] -> raise Impossible))
@@ -213,7 +223,7 @@ let rec stmt_aux = function
              (* [global $x;] — the tree-sitter converter emits UseOuterDecl
               * for this too; naming plants the outer binding in the
               * function scope so later [$x = ...] rebinds the global. *)
-             | Id [ id ] -> use_outer_decl t id
+             | Id { n_root = None; n_parts = [ id ] } -> use_outer_decl t id
              | Var v -> use_outer_decl t (var v)
              | _ ->
                  let e = expr e in
@@ -235,7 +245,7 @@ and opt_expr_to_label_ident = function
               let e = expr e in
               G.LDynamic e
           | Some i -> G.LInt (i, tok))
-      | Id [ label ] -> G.LId label
+      | Id { n_root = None; n_parts = [ label ] } -> G.LId label
       | _ ->
           let e = expr e in
           G.LDynamic e)
@@ -292,7 +302,7 @@ and expr e : G.expr =
   | Array_get (v1, (t1, None, _)) ->
       let v1 = expr v1 in
       G.OtherExpr (("ArrayAppend", t1), [ G.E v1 ]) |> G.e
-  | Obj_get (v1, t, Id [ v2 ]) ->
+  | Obj_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
       let v1 = expr v1 and v2 = ident v2 in
       G.DotAccess (v1, t, G.FN (G.Id (v2, G.empty_id_info ()))) |> G.e
   | Obj_get (v1, _tdot, Ellipsis tdots) ->
@@ -301,7 +311,7 @@ and expr e : G.expr =
   | Obj_get (v1, t, v2) ->
       let v1 = expr v1 and v2 = expr v2 in
       G.DotAccess (v1, t, G.FDynamic v2) |> G.e
-  | Class_get (v1, t, Id [ v2 ]) ->
+  | Class_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
       let v1 = expr v1 and v2 = ident v2 in
       G.DotAccess (v1, t, G.FN (G.Id (v2, G.empty_id_info ()))) |> G.e
   | Class_get (v1, t, v2) ->
@@ -374,10 +384,11 @@ and expr e : G.expr =
       let callable_arg =
         match callable_expr with
         (* strlen(...) → Closure::fromCallable('strlen') *)
-        | Id [ name ] ->
+        | Id { n_root = None; n_parts = [ name ] } ->
             G.Arg (G.L (G.String (fb name)) |> G.e)
         (* $obj->method(...) → Closure::fromCallable([$obj, 'method']) *)
-        | Obj_get (obj, _arrow, Id [ method_name ]) ->
+        | Obj_get (obj, _arrow,
+                   Id { n_root = None; n_parts = [ method_name ] }) ->
             let obj_expr = expr obj in
             let method_str =
               G.L (G.String (fb method_name)) |> G.e
@@ -385,7 +396,8 @@ and expr e : G.expr =
             G.Arg
               (G.Container (G.Array, fb [ obj_expr; method_str ]) |> G.e)
         (* Foo::bar(...) → Closure::fromCallable([Foo::class, 'bar']) *)
-        | Class_get (class_ref, _colons, Id [ method_name ]) ->
+        | Class_get (class_ref, _colons,
+                     Id { n_root = None; n_parts = [ method_name ] }) ->
             let class_expr = expr class_ref in
             let method_str =
               G.L (G.String (fb  method_name)) |> G.e
@@ -558,6 +570,7 @@ and special (spec, tok) =
   | This -> G.IdSpecial (G.This, tok) |> G.e
   | Self -> G.IdSpecial (G.Self, tok) |> G.e
   | Parent -> G.IdSpecial (G.Parent, tok) |> G.e
+  | LateStatic -> G.IdSpecial (G.LateStatic, tok) |> G.e
   | FuncLike Empty -> G.N (G.Id (("empty", tok), G.empty_id_info ())) |> G.e
   | FuncLike Eval -> G.IdSpecial (G.Eval, tok) |> G.e
   | FuncLike Exit -> G.N (G.Id (("exit", tok), G.empty_id_info ())) |> G.e
@@ -572,7 +585,6 @@ and array_value v = expr v
 
 and hint_type = function
   | Hint v1 ->
-      let v1 = name v1 in
       G.TyN (name_of_qualified_ident ~case_insensitive:true v1) |> G.t
   | HintArray t -> G.ty_builtin ("array", t)
   | HintQuestion (t, v1) ->

@@ -1,0 +1,15 @@
+rules:
+  - id: qualified-relative-to-namespace
+    languages: [php]
+    severity: ERROR
+    message: >
+      A qualified name whose first segment no import binds takes the current
+      namespace as its prefix, so `Svc\Store::run` inside `namespace App`
+      names `App\Svc\Store::run` and never the global `Svc\Store::run`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

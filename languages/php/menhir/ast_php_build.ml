@@ -174,54 +174,62 @@ and toplevel env st =
       let qi =
         match qu_opt with
         | Some qu -> qualified_ident env qu
-        | None -> [ (A.special "ROOT", wrap tok) ]
+        | None -> []
       in
       [ A.NamespaceDef (tok, qi, (t1, toplevels env xs, t2)) ]
-  | NamespaceUse (tok, _kwdopt, xs, _) ->
+  | NamespaceUse (tok, kwdopt, xs, _) ->
+      let kind =
+        match kwdopt with
+        | Some (Use_function_keyword _) -> A.Use_function
+        | Some (Use_const_keyword _) -> A.Use_constant
+        | None -> A.Use_class
+      in
       xs |> uncomma
       |> List_.map (fun (qu, alias_opt) ->
-             let qu = qualified_ident env qu in
+             let qu = qualified_name env qu in
              let alias_opt =
                match alias_opt with
                | None -> None
                | Some (_t, id) -> Some (ident env id)
              in
-             A.NamespaceUse (tok, qu, alias_opt))
+             A.NamespaceUse (tok, kind, qu, alias_opt))
 
 (* ------------------------------------------------------------------------- *)
 (* Names *)
 (* ------------------------------------------------------------------------- *)
 and name_hint_type env = function
-  | XName [ QI (Name ("class", tok)) ] -> [ (A.special "class", wrap tok) ]
-  | XName qi -> qualified_ident env qi
-  | Self tok -> [ (A.special "self", wrap tok) ]
-  | Parent tok -> [ (A.special "parent", wrap tok) ]
-  | LateStatic tok -> [ (A.special "static", wrap tok) ]
+  | XName [ QI (Name ("class", tok)) ] ->
+      A.name_of_ids [ (A.special "class", wrap tok) ]
+  | XName qi -> qualified_name env qi
+  | Self tok -> A.name_of_ids [ (A.special "self", wrap tok) ]
+  | Parent tok -> A.name_of_ids [ (A.special "parent", wrap tok) ]
+  | LateStatic tok -> A.name_of_ids [ (A.special "static", wrap tok) ]
 
 and name_expr env = function
-  | XName [ QI (Name ("class", tok)) ] -> A.Id [ (A.special "class", wrap tok) ]
-  | XName qi -> A.Id (qualified_ident env qi)
+  | XName [ QI (Name ("class", tok)) ] ->
+      A.expr_id [ (A.special "class", wrap tok) ]
+  | XName qi -> A.Id (qualified_name env qi)
   | Self tok -> A.IdSpecial (A.Self, tok)
   | Parent tok -> A.IdSpecial (A.Parent, tok)
-  | LateStatic tok -> A.Id [ (A.special "static", wrap tok) ]
+  | LateStatic tok -> A.IdSpecial (A.LateStatic, wrap tok)
 
 and ident _env = function
   | Name (s, tok) -> (s, wrap tok)
 
+and qualified_name env xs : A.name =
+  match xs with
+  | QITok tok :: rest ->
+      A.rooted_name_of_ids (wrap tok) (qualified_ident env rest)
+  | QI (Name ("namespace", tok)) :: rest ->
+      A.name_of_ids
+        ((A.special "namespace", wrap tok) :: qualified_ident env rest)
+  | rest -> A.name_of_ids (qualified_ident env rest)
+
 and qualified_ident env xs =
-  let leading, rest =
-    match xs with
-    (* a leading '\' *)
-    | QITok tok :: rest -> ([ (A.special "ROOT", wrap tok) ], rest)
-    | QI (Name ("namespace", tok)) :: rest ->
-        ([ (A.special "namespace", wrap tok) ], rest)
-    | rest -> ([], rest)
-  in
-  leading
-  @ (rest
-    |> List_.filter_map (function
-         | QITok _ -> None
-         | QI id -> Some (ident env id)))
+  xs
+  |> List_.filter_map (function
+       | QITok _ -> None
+       | QI id -> Some (ident env id))
 (* *)
 
 and dname ?(add_dollar = true) = function
@@ -296,7 +304,7 @@ and stmt env st acc =
   | Echo (tok, el, t) ->
       A.Expr
         ( A.Call
-            ( A.Id [ (A.builtin "echo", wrap tok) ],
+            ( A.expr_id [ (A.builtin "echo", wrap tok) ],
               fb tok (List_.map (fun e -> A.Arg (expr env e)) (comma_list el))
             ),
           t )
@@ -308,7 +316,7 @@ and stmt env st acc =
   | InlineHtml (s, tok) ->
       A.Expr
         ( A.Call
-            ( A.Id [ (A.builtin "echo", wrap tok) ],
+            ( A.expr_id [ (A.builtin "echo", wrap tok) ],
               fb tok [ A.Arg (A.String (s, wrap tok)) ] ),
           tok )
       :: acc
@@ -332,7 +340,7 @@ and stmt env st acc =
       let directive =
         A.Expr
           ( A.Call
-              ( A.Id [ (A.builtin "declare", wrap tok) ],
+              ( A.expr_id [ (A.builtin "declare", wrap tok) ],
                 ( lp,
                   comma_list args
                   |> List_.map (fun (name, (eqtok, v)) ->
@@ -396,7 +404,7 @@ and expr env = function
       let args = comma_list args in
       let args = List_.map (argument env) args in
       A.Call
-        ( A.Id [ ("call_user_func", wrap tok) ],
+        ( A.expr_id [ ("call_user_func", wrap tok) ],
           (lp, A.Arg (A.Obj_get (e1, arrow, fld_ident)) :: args, rp) )
   | Call (e, (lp, args, rp)) ->
       let e = expr env e in
@@ -426,7 +434,7 @@ and expr env = function
   | BraceIdent (_l, e, _r) -> expr env e
   | Deref (tok, e) ->
       A.Call
-        ( A.Id [ (A.builtin "eval_var", wrap tok) ],
+        ( A.expr_id [ (A.builtin "eval_var", wrap tok) ],
           fb tok [ A.Arg (expr env e) ] )
   | Binary (e1, (bop, tok), e2) ->
       let e1 = expr env e1 in
@@ -482,10 +490,11 @@ and expr env = function
       A.NewAnonClass (tok, args, cdef)
   | Clone (tok, e) ->
       A.Call
-        (A.Id [ (A.builtin "clone", wrap tok) ], fb tok [ A.Arg (expr env e) ])
+        ( A.expr_id [ (A.builtin "clone", wrap tok) ],
+          fb tok [ A.Arg (expr env e) ] )
   | CloneWith (tok, (lp, (e1, _, e2), rp)) ->
       A.Call
-        ( A.Id [ (A.builtin "clone", wrap tok) ],
+        ( A.expr_id [ (A.builtin "clone", wrap tok) ],
           (lp, [ A.Arg (expr env e1); A.Arg (expr env e2) ], rp) )
   | AssignRef (e1, tokeq, tokref, e2) ->
       let e1 = lvalue env e1 in
@@ -524,27 +533,31 @@ and expr env = function
       A.Call (id, fb tok arg)
   | At (tok, e) ->
       let arg = A.Arg (expr env e) in
-      A.Call (A.Id [ (A.builtin "at", wrap tok) ], fb tok [ arg ])
+      A.Call (A.expr_id [ (A.builtin "at", wrap tok) ], fb tok [ arg ])
   | Print (tok, e) ->
       A.Call
-        (A.Id [ (A.builtin "print", wrap tok) ], fb tok [ A.Arg (expr env e) ])
+        ( A.expr_id [ (A.builtin "print", wrap tok) ],
+          fb tok [ A.Arg (expr env e) ] )
   | BackQuote (t1, el, t2) ->
       A.Call
-        ( A.Id [ (A.builtin "exec", wrap t1 (* not really an exec token *)) ],
+        ( A.expr_id
+            [ (A.builtin "exec", wrap t1 (* not really an exec token *)) ],
           fb t1 [ A.Arg (A.Guil (t1, List_.map (encaps env) el, t2)) ] )
   | Include (tok, e) ->
       A.Call
-        (A.Id [ (A.builtin "include", wrap tok) ], fb tok [ A.Arg (expr env e) ])
+        ( A.expr_id [ (A.builtin "include", wrap tok) ],
+          fb tok [ A.Arg (expr env e) ] )
   | IncludeOnce (tok, e) ->
       A.Call
-        ( A.Id [ (A.builtin "include_once", wrap tok) ],
+        ( A.expr_id [ (A.builtin "include_once", wrap tok) ],
           fb tok [ A.Arg (expr env e) ] )
   | Require (tok, e) ->
       A.Call
-        (A.Id [ (A.builtin "require", wrap tok) ], fb tok [ A.Arg (expr env e) ])
+        ( A.expr_id [ (A.builtin "require", wrap tok) ],
+          fb tok [ A.Arg (expr env e) ] )
   | RequireOnce (tok, e) ->
       A.Call
-        ( A.Id [ (A.builtin "require_once", wrap tok) ],
+        ( A.expr_id [ (A.builtin "require_once", wrap tok) ],
           fb tok [ A.Arg (expr env e) ] )
   | Empty (tok, (lp, lv, rp)) ->
       let id = A.IdSpecial (A.FuncLike A.Empty, wrap tok) in
@@ -556,23 +569,25 @@ and expr env = function
           (lp, List_.map (fun e -> A.Arg (lvalue env e)) (comma_list lvl), rp)
         )
   | Yield (tok, None) ->
-      A.Call (A.Id [ (A.builtin "yield", wrap tok) ], fb tok [])
+      A.Call (A.expr_id [ (A.builtin "yield", wrap tok) ], fb tok [])
   | Yield (tok, Some e) ->
       A.Call
-        ( A.Id [ (A.builtin "yield", wrap tok) ],
+        ( A.expr_id [ (A.builtin "yield", wrap tok) ],
           fb tok [ A.Arg (array_pair env e) ] )
   | YieldFrom (tok, tok2, e) ->
       A.Call
-        ( A.Id [ (A.builtin "yield_from", wrap tok) ],
+        ( A.expr_id [ (A.builtin "yield_from", wrap tok) ],
           fb tok2 [ A.Arg (expr env e) ] )
   (* todo? merge in one yield_break? *)
   | YieldBreak (tok, tok2) ->
       A.Call
-        ( A.Id [ (A.builtin "yield", wrap tok) ],
-          fb tok [ A.Arg (A.Id [ (A.builtin "yield_break", wrap tok2) ]) ] )
+        ( A.expr_id [ (A.builtin "yield", wrap tok) ],
+          fb tok
+            [ A.Arg (A.expr_id [ (A.builtin "yield_break", wrap tok2) ]) ] )
   | Await (tok, e) ->
       A.Call
-        (A.Id [ (A.builtin "await", wrap tok) ], fb tok [ A.Arg (expr env e) ])
+        ( A.expr_id [ (A.builtin "await", wrap tok) ],
+          fb tok [ A.Arg (expr env e) ] )
   | Ellipsis t -> A.Ellipsis t
   | ParenExpr (_, e, _) -> expr env e
 
@@ -641,14 +656,14 @@ and constant env = function
   | PreProcess (cpp, tok) -> cpp_directive env tok cpp
 
 and cpp_directive _env tok = function
-  | Line -> A.Id [ (A.builtin "__LINE__", wrap tok) ]
-  | File -> A.Id [ (A.builtin "__FILE__", wrap tok) ]
-  | ClassC -> A.Id [ (A.builtin "__CLASS__", wrap tok) ]
-  | MethodC -> A.Id [ (A.builtin "__METHOD__", wrap tok) ]
-  | FunctionC -> A.Id [ (A.builtin "__FUNCTION__", wrap tok) ]
-  | Dir -> A.Id [ (A.builtin "__DIR__", wrap tok) ]
-  | TraitC -> A.Id [ (A.builtin "__TRAIT__", wrap tok) ]
-  | NamespaceC -> A.Id [ (A.builtin "__NAMESPACE__", wrap tok) ]
+  | Line -> A.expr_id [ (A.builtin "__LINE__", wrap tok) ]
+  | File -> A.expr_id [ (A.builtin "__FILE__", wrap tok) ]
+  | ClassC -> A.expr_id [ (A.builtin "__CLASS__", wrap tok) ]
+  | MethodC -> A.expr_id [ (A.builtin "__METHOD__", wrap tok) ]
+  | FunctionC -> A.expr_id [ (A.builtin "__FUNCTION__", wrap tok) ]
+  | Dir -> A.expr_id [ (A.builtin "__DIR__", wrap tok) ]
+  | TraitC -> A.expr_id [ (A.builtin "__TRAIT__", wrap tok) ]
+  | NamespaceC -> A.expr_id [ (A.builtin "__NAMESPACE__", wrap tok) ]
 
 and lvalue env a = expr env a
 
@@ -1150,11 +1165,11 @@ and global_var env = function
   (* this is used only once in our codebase, and it should not ... *)
   | GlobalDollar (tok, lv) ->
       A.Call
-        ( A.Id [ (A.builtin "eval_var", wrap tok) ],
+        ( A.expr_id [ (A.builtin "eval_var", wrap tok) ],
           fb tok [ A.Arg (lvalue env lv) ] )
   | GlobalDollarExpr (tok, (_, e, _)) ->
       A.Call
-        ( A.Id [ (A.builtin "eval_var", wrap tok) ],
+        ( A.expr_id [ (A.builtin "eval_var", wrap tok) ],
           fb tok [ A.Arg (expr env e) ] )
 
 and attributes env = function

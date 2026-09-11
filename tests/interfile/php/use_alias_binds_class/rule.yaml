@@ -1,0 +1,14 @@
+rules:
+  - id: use-alias-binds-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      `use App\\Store as S;` binds the local name `S` to `App\\Store`, so `S::run`
+      names that class and not the same-named `Lib\\Store`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

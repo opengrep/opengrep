@@ -24,12 +24,15 @@ type import_kind =
   | I_named of string
   | I_namespace
 
+type import_binds = Binds_any | Binds_function | Binds_constant
+
 type import = {
   im_local : string;
   im_target : Names.Module_qn.t;
   im_tok : Tok.t;
   im_static : bool;
   im_global : bool;
+  im_binds : import_binds;
 }
 
 type class_info = {

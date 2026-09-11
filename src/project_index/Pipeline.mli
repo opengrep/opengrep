@@ -28,6 +28,7 @@ type required_files_narrowing = {
 type file_scope = {
   scope_table : Func_lookup.scope_table;
   bound_class_files : (Names.Class_name.t * Fpath.t) list;
+  own_modules : Names.Module_qn.t list;
 }
 
 type ctx = {
@@ -43,6 +44,8 @@ type ctx = {
   methods_by_class : Func_lookup.methods_by_class;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
+  php_region_bindings : Scope_php.region_bindings Common.SMap.t;
+  php_global_bindings : Scope_binding.positioned_binding list;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -91,6 +94,8 @@ val build_scope_table :
   extensions_by_module:Func_info.t list Common.SMap.t Common.SMap.t ->
   nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
   global_imports:import list ->
+  php_region_bindings:Scope_php.region_bindings Common.SMap.t ->
+  php_global_bindings:Scope_binding.positioned_binding list ->
   file_info ->
   file_scope option
 

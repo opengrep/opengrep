@@ -31,7 +31,9 @@ let build_dir_index
   let scope_key_opt (fi : Types.file_info) : string option =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_directory -> Some (Fpath.parent fi.Types.fi_file |> Fpath.to_string)
-    | `Per_package -> Some (Names.Module_qn.to_string fi.Types.fi_module_path)
+    | `Per_package
+    | `Per_namespace ->
+      Some (Names.Module_qn.to_string fi.Types.fi_module_path)
     | `Per_file -> None
   in
   List.iter (fun (fi : Types.file_info) ->
@@ -55,6 +57,9 @@ let build_dir_index
    | `Per_package ->
      Log.info (fun m -> m "Per-package scope: %d packages indexed"
        (Hashtbl.length dir_index))
+   | `Per_namespace ->
+     Log.info (fun m -> m "Per-namespace scope: %d namespaces indexed"
+       (Hashtbl.length dir_index))
    | `Per_file -> ());
   dir_index
 
@@ -68,7 +73,9 @@ let for_file
   let scope_key_opt =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_directory -> Some (Fpath.parent fi.Types.fi_file |> Fpath.to_string)
-    | `Per_package -> Some (Names.Module_qn.to_string fi.Types.fi_module_path)
+    | `Per_package
+    | `Per_namespace ->
+      Some (Names.Module_qn.to_string fi.Types.fi_module_path)
     | `Per_file -> None
   in
   (match scope_key_opt with

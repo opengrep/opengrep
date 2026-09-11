@@ -36,7 +36,8 @@ let collect_clojure_ns_form ~(tok : Tok.t)
   let add ((acc, specs) : import list * (string * string * import_kind) list)
       (local : string) (target : Names.Module_qn.t) =
     ({ im_local = local; im_target = target; im_tok = tok;
-       im_static = false; im_global = false } :: acc, specs)
+       im_static = false; im_global = false; im_binds = Binds_any }
+     :: acc, specs)
   in
   let walk_require_vector st vec_items =
     match vec_items with
@@ -93,10 +94,11 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     then (acc, (local, spec, kind) :: specs)
     else (acc, specs)
   in
-  let add ~(tok : Tok.t) ~(static : bool) ~(global : bool) (acc, specs) local
-      target =
+  let add ~(tok : Tok.t) ~(static : bool) ~(global : bool)
+      ~(binds : import_binds) (acc, specs) local target =
     ({ im_local = local; im_target = target; im_tok = tok;
-       im_static = static; im_global = global } :: acc, specs)
+       im_static = static; im_global = global; im_binds = binds }
+     :: acc, specs)
   in
   let is_static_attr (attr : G.attribute) : bool =
     match attr with
@@ -108,10 +110,27 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | G.KeywordAttr (G.GlobalScope, _) -> true
     | _ -> false
   in
+  let binds_of_attrs (attrs : G.attribute list) : import_binds =
+    if List.exists (fun (attr : G.attribute) ->
+         match attr with
+         | G.KeywordAttr (G.Callable, _) -> true
+         | _ -> false)
+         attrs
+    then Binds_function
+    else if
+      List.exists (fun (attr : G.attribute) ->
+        match attr with
+        | G.KeywordAttr (G.Const, _) -> true
+        | _ -> false)
+        attrs
+    then Binds_constant
+    else Binds_any
+  in
   let on_directive st (dir : G.directive) =
     let add =
       add ~static:(List.exists is_static_attr dir.G.d_attrs)
         ~global:(List.exists is_global_attr dir.G.d_attrs)
+        ~binds:(binds_of_attrs dir.G.d_attrs)
     in
     match dir.G.d with
     | G.ImportAs (tok, mn, alias_opt) ->
@@ -200,7 +219,9 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | Some spec, G.EN (G.Id ((local, tok), _))
         when String.length local > 0 ->
         let qn = qn_of_specifier spec in
-        let st = add ~tok ~static:false ~global:false st local qn in
+        let st =
+          add ~tok ~static:false ~global:false ~binds:Binds_any st local qn
+        in
         let st = add_spec st local (mk_filename_mn spec) I_default in
         add_spec st local (mk_filename_mn spec) I_namespace
       | Some spec, G.EPattern (G.PatRecord (_, fields, _)) ->
@@ -221,7 +242,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
               Names.Module_qn.concat (Names.Module_qn.of_string spec) key
             in
             add_spec
-              (add ~tok ~static:false ~global:false st local target)
+              (add ~tok ~static:false ~global:false ~binds:Binds_any st local
+                 target)
               local (mk_filename_mn spec) (I_named key)
           | _ -> st
         ) st fields

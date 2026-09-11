@@ -1,0 +1,15 @@
+rules:
+  - id: trait-method-inserted-into-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      A trait's method is inserted into the using class, so `App\\Store::handle`
+      is the trait's sinking body while the same-named `Lib\\Store` that uses
+      no trait has no such method.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)
