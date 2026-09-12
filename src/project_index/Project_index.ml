@@ -401,6 +401,12 @@ let build_project_call_graph (caps : < Cap.fork >)
   let all_funcs =
     List.concat_map (function Ok fs -> fs | Error _ -> []) per_file_funcs
   in
+  (* Hidden names are parser-generated identities that cannot be called by
+     their synthetic spelling. Keep their bodies in [all_funcs] so they are
+     analysed, but exclude them from every source-level binding index. *)
+  let bindable_funcs =
+    List.filter (fun func -> not (Func_info.is_hidden func)) all_funcs
+  in
   (* Returned to the caller: a failed file's functions are MISSING from the
      graph, which silently loses every finding through them unless the
      failure is surfaced as a scan error. *)
@@ -430,7 +436,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     (Object_initialization.count_class_names project_class_names));
 
   let funcs_by_name : (string, FA.func_info list) Hashtbl.t =
-    Hashtbl.create (List.length all_funcs * 2)
+    Hashtbl.create (List.length bindable_funcs * 2)
   in
   List.iter (fun (func : FA.func_info) ->
     let add_name name =
@@ -455,7 +461,7 @@ let build_project_call_graph (caps : < Cap.fork >)
             add_name entity_name
         | _ -> ())
      | None -> ())
-  ) all_funcs;
+  ) bindable_funcs;
   let project_funcs_by_name = funcs_by_name in
 
   (* Class -> methods index, so a file that knows a class can resolve [d.speak]
@@ -467,7 +473,7 @@ let build_project_call_graph (caps : < Cap.fork >)
         Type_state.add_method state
           (Names.Class_name.of_string (fst cls.IL.ident)) func
       | None -> state
-    ) type_state all_funcs
+    ) type_state bindable_funcs
   in
   let type_state, inherited_by_class, override_pairs, class_resolution_orders =
     timed "call graph: inheritance (Mro)" @@ fun () ->
@@ -529,7 +535,9 @@ let build_project_call_graph (caps : < Cap.fork >)
       Common.SMap.empty indexed_classes
   in
 
-  let type_state = Type_augment.populate_returns_from_decls type_state all_funcs in
+  let type_state =
+    Type_augment.populate_returns_from_decls type_state bindable_funcs
+  in
   let type_state, slice_element_of_field =
     Type_augment.build_fields_by_class_index ~cfg type_state file_infos in
   (* Cross-type inference fixpoint: alternate body-return-types and
@@ -539,7 +547,8 @@ let build_project_call_graph (caps : < Cap.fork >)
   let uses_new_keyword = FA.uses_new_keyword lang in
   let outer_step (ts, _car) =
     let ts =
-      Type_augment.augment_return_types_from_bodies ~uses_new_keyword ~type_state:ts all_funcs
+      Type_augment.augment_return_types_from_bodies ~uses_new_keyword
+        ~type_state:ts bindable_funcs
     in
     let car =
       Type_augment.build_caller_arg_types ~uses_new_keyword ~type_state:ts file_infos
@@ -571,13 +580,13 @@ let build_project_call_graph (caps : < Cap.fork >)
     Type_augment.build_module_singleton_types ~uses_new_keyword type_state file_infos
   in
   let t_indexes_start = Unix.gettimeofday () in
-  let file_funcs_index = Type_augment.build_file_funcs_index all_funcs in
+  let file_funcs_index = Type_augment.build_file_funcs_index bindable_funcs in
   Log.debug (fun m -> m "File-funcs index: %d files"
     (Hashtbl.length file_funcs_index));
 
   (* Project-wide free-function indexes.  See [Func_index]. *)
   let project_funcs_by_module =
-    Func_index.build_by_module ~cfg ~file_infos all_funcs
+    Func_index.build_by_module ~cfg ~file_infos bindable_funcs
   in
   Log.debug (fun m -> m "Per-module func index: %d modules (Per_file only)"
     (Hashtbl.length project_funcs_by_module));
@@ -608,7 +617,7 @@ let build_project_call_graph (caps : < Cap.fork >)
       m "[interfile timing] project index: call graph: indexes (exports, \
          packages, modules, re-exports, visibility): %.2fs"
         (Unix.gettimeofday () -. t_indexes_start));
-  let funcs_by_id = build_funcs_by_id all_funcs in
+  let funcs_by_id = build_funcs_by_id bindable_funcs in
   let (definitions_by_qn : definition Common.SMap.t),
       (companions : Func_lookup.companion_index) =
     timed "call graph: definitions by qualified name" (fun () ->
@@ -1092,7 +1101,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let n_overload =
     timed "call graph: overload dispatch edges" @@ fun () ->
     Structural_dispatch.emit_overload_edges ~lang ~cfg ~graph
-      ~class_qn_by_definition all_funcs
+      ~class_qn_by_definition bindable_funcs
   in
   if n_overload > 0 then
     Log.debug (fun m -> m "Overload dispatch: emitted %d Dispatch edges"

@@ -741,16 +741,26 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
 
 let declare_func env lang (id : ident) id_info (frettype : type_ option) =
   let resolved =
-    match current_scope_entry env FuncName id with
-    | Some resolved -> resolved
-    | None ->
-        let entname =
-          ( resolved_name_kind env lang,
-            SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) )
-        in
-        let resolved = { entname; enttype = frettype } in
-        add_func_ident_current_scope id resolved env.names;
-        resolved
+    if IdFlags.is_hidden !(id_info.id_flags) then
+      (* A synthetic accessor has its own identity, but does not introduce a
+         callable source-level name. Its token still spells [get] or [set],
+         so use the synthetic identifier for the function's definition site. *)
+      let sid =
+        SId.of_tok ~name:(fst id) ~binding:(fresh_binding env)
+          ~file:env.file (snd id)
+      in
+      { entname = (resolved_name_kind env lang, sid); enttype = frettype }
+    else
+      match current_scope_entry env FuncName id with
+      | Some resolved -> resolved
+      | None ->
+          let entname =
+            ( resolved_name_kind env lang,
+              SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) )
+          in
+          let resolved = { entname; enttype = frettype } in
+          add_func_ident_current_scope id resolved env.names;
+          resolved
   in
   set_resolved env id_info resolved
 
@@ -1016,7 +1026,9 @@ class ['self] resolve_visitor env lang =
            * import came later, breaking
            *   semgrep-rules/python/django/security/audit/raw-query.py.
            * But do we need a special scope for imported functions? *)
-          (if has_function_namespace lang then
+          (if
+             has_function_namespace lang || IdFlags.is_hidden !(id_info.id_flags)
+           then
              declare_func env lang id id_info frettype
            else if is_resolvable_name_ctx env lang then (
               (* The scope a definition binds its name in: the file's imported
