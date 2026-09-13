@@ -43,3 +43,9 @@ val own_alias_bindings :
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->
   fi_file_str:string ->
   positioned_binding list
+
+val bindings_of_attributes :
+  pos:Pos.t option ->
+  keep:(string -> Func_lookup.module_attribute -> bool) ->
+  Func_lookup.module_attribute Common.SMap.t ->
+  positioned_binding list

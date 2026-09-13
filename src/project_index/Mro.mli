@@ -26,6 +26,7 @@ val resolve_parent_by_scope :
    the same arity — the source for nominal override dispatch edges. *)
 val inherit_into_type_state :
   lang:Lang.t ->
+  cfg:Index_lang_rules.t ->
   reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
   class_infos:class_info list ->
   func_def_file:(Graph_from_AST.func_info -> string option) ->

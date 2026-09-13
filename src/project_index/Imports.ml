@@ -52,7 +52,7 @@ let collect_clojure_ns_form ~(tok : Tok.t)
   let is_kwd name expr = match kwd_name expr with Some str -> String.equal str name | None -> false in
   let add ((acc, specs) : import list * (string * string * import_kind) list)
       (local : string) (target : Names.Module_qn.t) =
-    ({ im_local = local; im_target = target; im_tok = tok;
+    ({ im_local = local; im_alias = None; im_target = target; im_tok = tok;
        im_static = false; im_global = false; im_binds = Binds_any;
        im_role = Role_binds }
      :: acc, specs)
@@ -113,6 +113,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | `Per_module -> (acc, specs)
     | `Per_file
     | `Per_directory
+    | `Per_go_package
     | `Per_package
     | `Per_namespace ->
       let spec = raw_specifier mn in
@@ -121,8 +122,9 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       else (acc, specs)
   in
   let add ~(tok : Tok.t) ~(static : bool) ~(global : bool)
-      ~(binds : import_binds) ~(role : import_role) (acc, specs) local target =
-    ({ im_local = local; im_target = target; im_tok = tok;
+      ~(binds : import_binds) ~(role : import_role)
+      ~(alias : string option) (acc, specs) local target =
+    ({ im_local = local; im_alias = alias; im_target = target; im_tok = tok;
        im_static = static; im_global = global; im_binds = binds;
        im_role = role }
      :: acc, specs)
@@ -165,18 +167,19 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | None -> None
   in
   let on_directive st (dir : G.directive) =
-    let add ~(binds : import_binds) =
+    let add ~(binds : import_binds) ~(alias : string option) =
       add ~static:(List.exists is_static_attr dir.G.d_attrs)
         ~global:(List.exists is_global_attr dir.G.d_attrs)
-        ~binds
+        ~binds ~alias
         ~role:(role_of_attrs dir.G.d_attrs)
     in
     let attr_binds = binds_of_attrs dir.G.d_attrs in
     match dir.G.d with
     | G.ImportAs (tok, mn, alias_opt) ->
+      let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
       let local =
-        match alias_opt with
-        | Some ((alias, _), _) -> alias
+        match alias with
+        | Some (alias : string) -> alias
         | None ->
           (match mn with
            | G.DottedName ((seg, _) :: _) -> seg
@@ -185,7 +188,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
               segment as local; other langs keep the raw specifier. *)
            | G.FileName (spec, _) ->
              (match cfg.Index_lang_rules.unqualified_scope with
-              | `Per_directory ->
+              | `Per_directory
+              | `Per_go_package ->
                 (match Fpath.of_string spec with
                  | Ok path -> Fpath.basename path
                  | Error _ -> spec)
@@ -199,7 +203,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | Binds_type, _ -> Binds_type
         | (Binds_any | Binds_function | Binds_constant | Binds_module),
           `Per_module -> Binds_module
-        | _, (`Per_file | `Per_directory | `Per_package | `Per_namespace) ->
+        | _, (`Per_file | `Per_directory | `Per_go_package | `Per_package
+             | `Per_namespace) ->
           attr_binds
       in
       (match
@@ -208,7 +213,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
        | Some (qn : Names.Module_qn.t), true ->
          (* TS/JS default and namespace imports are indistinguishable here;
             treat both as [I_namespace]. *)
-         add_spec (add ~binds ~tok st local qn) local mn I_namespace
+         add_spec (add ~binds ~alias ~tok st local qn) local mn I_namespace
        | Some _, false
        | None, _ -> st)
     | G.ImportFrom (tok, mn, names) -> (
@@ -216,17 +221,15 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | None -> st
       | Some (qn : Names.Module_qn.t) ->
         List.fold_left (fun st ((name, _), alias_opt) ->
-          let local =
-            match alias_opt with
-            | Some ((alias, _), _) -> alias
-            | None -> name
-          in
+          let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
+          let local = Option.value alias ~default:name in
           let target = Names.Module_qn.concat qn name in
           let kind =
             if String.equal name "default" then I_default
             else I_named name
           in
-          add_spec (add ~binds:attr_binds ~tok st local target) local mn kind
+          add_spec (add ~binds:attr_binds ~alias ~tok st local target) local
+            mn kind
         ) st names)
     (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs.
        The raw specifier is kept under the same "*" sentinel so file-target
@@ -237,7 +240,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       match module_name_of mn with
       | None -> st
       | Some (qn : Names.Module_qn.t) ->
-        add_spec (add ~binds:attr_binds ~tok st wildcard_local qn)
+        add_spec (add ~binds:attr_binds ~alias:None ~tok st wildcard_local qn)
           wildcard_local mn I_namespace)
     | G.OtherDirective (("NsDirective", tok), exprs) ->
       List.fold_left (collect_clojure_ns_form ~tok) st exprs
@@ -270,7 +273,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
             (fun st (((key : string), (tok : Tok.t)), (local : string)) ->
               add_spec
                 (add ~tok ~static:false ~global:false ~binds:Binds_any
-                   ~role:Role_binds st local (Names.Module_qn.concat qn key))
+                   ~alias:(Some local) ~role:Role_binds st local
+                   (Names.Module_qn.concat qn key))
                 local (mk_filename_mn spec) (I_named key))
             st names
       in
@@ -282,7 +286,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | Some (qn : Names.Module_qn.t) ->
           let st =
             add ~tok ~static:false ~global:false ~binds:Binds_module
-              ~role:Role_binds st local qn
+              ~alias:(Some local) ~role:Role_binds st local qn
           in
           let st = add_spec st local (mk_filename_mn spec) I_default in
           add_spec st local (mk_filename_mn spec) I_namespace)
@@ -336,3 +340,33 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | _ -> st) ([], []) ast
   in
   (List.rev acc, List.rev specs)
+
+let with_package_clause_locals ~(cfg : Index_lang_rules.t)
+    ~(clause_of_module : Names.Module_qn.t -> string option)
+    ((file_infos : file_info list), (class_infos : class_info list))
+    : file_info list * class_info list =
+  match cfg.Index_lang_rules.unqualified_scope with
+  | `Per_file
+  | `Per_directory
+  | `Per_module
+  | `Per_namespace
+  | `Per_package -> (file_infos, class_infos)
+  | `Per_go_package ->
+    let of_import (imp : import) : import =
+      if String.equal imp.im_local wildcard_local then imp
+      else
+        match imp.im_alias with
+        | Some _ -> imp
+        | None -> (
+          match clause_of_module imp.im_target with
+          | None -> imp
+          | Some (clause : string) -> { imp with im_local = clause })
+    in
+    ( List.map
+        (fun (fi : file_info) ->
+          { fi with fi_imports = List.map of_import fi.fi_imports })
+        file_infos,
+      List.map
+        (fun (ci : class_info) ->
+          { ci with ci_imports = List.map of_import ci.ci_imports })
+        class_infos )

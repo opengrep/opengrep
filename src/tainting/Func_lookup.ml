@@ -51,6 +51,7 @@ type scope_kind =
   | Scope_class of Names.Class_qn.t
   | Scope_extension of Func_info.t
   | Scope_object of Func_info.t list Common.SMap.t
+  | Scope_local_value
 
 type scope_entry = {
   kind : scope_kind;
@@ -69,6 +70,7 @@ let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
       | Scope_class (class_qn : Names.Class_qn.t) -> Some class_qn
       | Scope_function _
       | Scope_object _
+      | Scope_local_value
       | Scope_extension _ -> None)
     entries
 
@@ -79,6 +81,7 @@ let functions_of_entries (entries : scope_entry list) : Func_info.t list =
       | Scope_function (func : Func_info.t) -> Some func
       | Scope_class _
       | Scope_object _
+      | Scope_local_value
       | Scope_extension _ -> None)
     entries
 
@@ -89,6 +92,7 @@ let extensions_of_entries (entries : scope_entry list) : Func_info.t list =
       | Scope_extension (func : Func_info.t) -> Some func
       | Scope_class _
       | Scope_object _
+      | Scope_local_value
       | Scope_function _ -> None)
     entries
 
@@ -100,6 +104,7 @@ let object_of_entries (entries : scope_entry list)
       | Scope_object (members : Func_info.t list Common.SMap.t) -> Some members
       | Scope_class _
       | Scope_function _
+      | Scope_local_value
       | Scope_extension _ -> None)
     entries
 
@@ -168,7 +173,6 @@ type t = {
   funcs_by_module_qn : module_index option;
   alias_to_module_qn : alias_index option;
   same_file_funcs_by_name : bare_name_index option;
-  funcs_by_package : bare_name_index option;
   (* Disambiguates method homonyms across same-basename packages by exact import path. *)
   file_module_qn : file_module_index option;
   local_imports : name_set option;
@@ -258,7 +262,6 @@ let empty = {
   funcs_by_module_qn = None;
   alias_to_module_qn = None;
   same_file_funcs_by_name = None;
-  funcs_by_package = None;
   file_module_qn = None;
   local_imports = None;
   constructors = None;
@@ -275,7 +278,7 @@ let empty = {
 let create
     ?funcs_by_name ?project_funcs_by_name
     ?funcs_by_module_qn ?alias_to_module_qn
-    ?same_file_funcs_by_name ?funcs_by_package ?file_module_qn
+    ?same_file_funcs_by_name ?file_module_qn
     ?local_imports ?constructors ?project_constructors
     ?(overload_groups = false)
     ?(own_modules : Names.Module_qn.t list = [])
@@ -289,7 +292,6 @@ let create
     funcs_by_module_qn;
     alias_to_module_qn;
     same_file_funcs_by_name;
-    funcs_by_package;
     file_module_qn;
     local_imports;
     constructors;
@@ -361,9 +363,4 @@ let imports_indexed t =
 let funcs_in_module t qn =
   match t.funcs_by_module_qn with
   | Some idx -> (Option.value (Hashtbl.find_opt idx qn) ~default:[])
-  | None -> []
-
-let funcs_in_package t pkg =
-  match t.funcs_by_package with
-  | Some idx -> find_in_index idx pkg
   | None -> []

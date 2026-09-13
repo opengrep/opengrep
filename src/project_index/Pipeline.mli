@@ -48,6 +48,7 @@ type ctx = {
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
   module_scope : Scope_module.project_scope;
+  go_packages : Scope_go.package_index;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -56,7 +57,6 @@ type ctx = {
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
   file_module_qn : (string, Names.Module_qn.t) Hashtbl.t;
-  project_funcs_by_package : (string, Func_info.t list) Hashtbl.t;
   project_class_names : G.name list;
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
@@ -92,6 +92,7 @@ val build_scope_table :
   php_region_bindings:Scope_php.region_bindings Common.SMap.t ->
   php_global_bindings:Scope_binding.positioned_binding list ->
   module_scope:Scope_module.project_scope ->
+  go_packages:Scope_go.package_index ->
   file_info ->
   file_scope option
 

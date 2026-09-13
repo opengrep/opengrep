@@ -77,11 +77,18 @@ let dotted_class_name_of_ty (ty : G.type_) : G.name option =
 let class_name_of_ty (ty : G.type_) : G.name option =
   Option.bind (qualified_class_name_of_ty ty) bare_name_of_qname
 
-let rec inner_class_name_of_ty ?(through_funty = false) (ty : G.type_)
-  : G.name option =
-  let recur = inner_class_name_of_ty ~through_funty in
+let rec inner_named_type ?(through_funty = false) (ty : G.type_) : G.type_ =
+  let recur = inner_named_type ~through_funty in
   match ty.G.t with
   | G.TyApply (inner, _) -> recur inner
   | G.TyFun (_, ret) when through_funty -> recur ret
   | G.TyPointer (_, inner) | G.TyRef (_, inner) -> recur inner
-  | _ -> class_name_of_ty ty
+  | _ -> ty
+
+let inner_class_name_of_ty ?(through_funty = false) (ty : G.type_)
+  : G.name option =
+  class_name_of_ty (inner_named_type ~through_funty ty)
+
+let inner_qualified_class_name_of_ty ?(through_funty = false) (ty : G.type_)
+  : G.name option =
+  qualified_class_name_of_ty (inner_named_type ~through_funty ty)

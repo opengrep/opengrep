@@ -813,16 +813,6 @@ let rec identify_callee ~(lang : Lang.t)
                     (match module_match with
                     | Some _ as r -> r
                     | None ->
-                      let pkg_match =
-                        let candidates =
-                          Func_lookup.funcs_in_package func_lookup obj_name
-                          |> List.filter (fun f -> is_free_named f method_name_str)
-                        in
-                        pick_by_arity ~lang call_arity candidates
-                      in
-                      (match pkg_match with
-                       | Some _ as r -> r
-                       | None ->
                          let ctor_via_new =
                            if String.equal method_name_str "new"
                               && Lang.(lang =*= Ruby || lang =*= Crystal) then
@@ -835,7 +825,7 @@ let rec identify_callee ~(lang : Lang.t)
                          (match resolve_constructor ~lang ~all_funcs obj_name with
                           | Some _ as r -> r
                           | None ->
-                            try_unique_method_call ~method_name:method_name_str))))))
+                            try_unique_method_call ~method_name:method_name_str)))))
         (* Chained call: Constructor(...).method() — receiver is a constructor.
            Python/Kotlin/Scala: ClassName(args).method()
            Java/JS/TS/C#:       new ClassName(args).method()

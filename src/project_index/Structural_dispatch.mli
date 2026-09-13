@@ -11,6 +11,7 @@ val emit_dispatch_edges :
   cfg:Index_lang_rules.t ->
   type_state:Type_state.t ->
   func_def_file:(Graph_from_AST.func_info -> string option) ->
+  type_key:(file:string option -> AST_generic.type_ -> string option) ->
   class_infos:Types.class_info list ->
   graph:Call_graph.G.t ->
   int

@@ -181,3 +181,20 @@ let own_alias_bindings
          | Some _
          | None -> [])
        | _ -> [])
+
+let bindings_of_attributes ~(pos : Pos.t option)
+    ~(keep : string -> Func_lookup.module_attribute -> bool)
+    (attributes : Func_lookup.module_attribute Common.SMap.t)
+    : positioned_binding list =
+  Common.SMap.fold
+    (fun (name : string) (attribute : Func_lookup.module_attribute)
+         (bindings : positioned_binding list) ->
+      if not (keep name attribute) then bindings
+      else
+        match attribute with
+        | Func_lookup.Attr_functions (funcs : Func_info.t list) ->
+          function_binding_of ~pos ~parent_path:[] name funcs @ bindings
+        | Func_lookup.Attr_class (class_qn : Names.Class_qn.t) ->
+          class_binding_of ~pos ~parent_path:[] name class_qn :: bindings
+        | Func_lookup.Attr_module _ -> bindings)
+    attributes []

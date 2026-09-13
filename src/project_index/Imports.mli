@@ -25,3 +25,9 @@ type binding =
   | Named_binding of { local : string; target : Names.Module_qn.t }
 
 val binding_of : Types.import -> binding
+
+val with_package_clause_locals :
+  cfg:Index_lang_rules.t ->
+  clause_of_module:(Names.Module_qn.t -> string option) ->
+  Types.file_info list * Types.class_info list ->
+  Types.file_info list * Types.class_info list

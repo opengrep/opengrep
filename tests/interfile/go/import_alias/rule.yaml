@@ -1,0 +1,14 @@
+rules:
+  - id: import-alias
+    languages: [go]
+    severity: ERROR
+    message: >
+      An aliased import binds the alias the source writes, not the package
+      clause and not the path's last segment.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

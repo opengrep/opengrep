@@ -40,6 +40,7 @@ type scope_kind =
   | Scope_class of Names.Class_qn.t
   | Scope_extension of Func_info.t
   | Scope_object of Func_info.t list Common.SMap.t
+  | Scope_local_value
 
 type scope_entry = {
   kind : scope_kind;
@@ -94,7 +95,6 @@ val create :
   ?funcs_by_module_qn : module_index ->
   ?alias_to_module_qn : alias_index ->
   ?same_file_funcs_by_name : bare_name_index ->
-  ?funcs_by_package : bare_name_index ->
   ?file_module_qn : file_module_index ->
   ?local_imports : name_set ->
   ?constructors : constructor_index ->
@@ -160,7 +160,5 @@ val resolve_alias : t -> string -> Names.Module_qn.t option
 val imports_indexed : t -> bool
 
 val funcs_in_module : t -> Names.Module_qn.t -> Func_info.t list
-
-val funcs_in_package : t -> string -> Func_info.t list
 
 val module_qn_of_file : t -> string -> Names.Module_qn.t option

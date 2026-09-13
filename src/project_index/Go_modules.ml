@@ -1,6 +1,6 @@
 type module_ = {
   root : Fpath.t;
-  path : string;
+  path : Go_import_path.t;
 }
 
 type t = {
@@ -27,7 +27,7 @@ let find_sub (hay : string) (needle : string) : int option =
    location, not by fetched dependency, so a rewrite would not change any
    in-tree package's own identity. (Go also honours [replace] only in the
    main module, which projidx cannot single out without a go.work.) *)
-let parse_go_mod (content : string) : string option =
+let parse_go_mod (content : string) : Go_import_path.t option =
   String.split_on_char '\n' content
   |> List.find_map (fun raw ->
     let line =
@@ -37,7 +37,8 @@ let parse_go_mod (content : string) : string option =
     in
     if String.length line >= 7
        && String.equal (String.sub line 0 7) "module " then
-      Some (String.trim (String.sub line 7 (String.length line - 7)))
+      Some (Go_import_path.of_string
+              (String.trim (String.sub line 7 (String.length line - 7))))
     else None)
 
 module SSet = Set.Make (String)
@@ -86,19 +87,13 @@ let discover ~(project_root : Fpath.t) (go_files : Fpath.t list) : t =
   let depth (m : module_) = List.length (Fpath.segs m.root) in
   { modules = List.sort (fun l r -> compare (depth r) (depth l)) modules }
 
-let import_path_of_dir (t : t) (dir : Fpath.t) : string option =
+let import_path_of_dir (t : t) (dir : Fpath.t) : Go_import_path.t option =
   let dir = Fpath.normalize dir in
   List.find_opt (fun module_ -> Fpath.is_prefix module_.root dir) t.modules
   |> Option.map (fun module_ ->
     match Fpath.relativize ~root:module_.root dir with
     | None -> module_.path
     | Some rel ->
-      let segs =
-        Fpath.segs (Fpath.normalize rel)
-        |> List.filter (fun seg -> seg <> "" && seg <> ".")
-      in
-      (* "/" here is the Go import-path separator (always forward slash,
-         OS-independent), not an OS file-path separator; deliberately kept as
-         "/" regardless of platform. *)
-      if segs = [] then module_.path
-      else module_.path ^ "/" ^ String.concat "/" segs)
+      Go_import_path.of_segments
+        (Go_import_path.segments module_.path
+         @ Fpath.segs (Fpath.normalize rel)))

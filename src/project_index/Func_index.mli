@@ -1,9 +1,3 @@
-(* Bucket free funcs by def-file directory basename; empty unless [`Per_directory]. *)
-val build_by_package :
-  cfg:Index_lang_rules.t ->
-  Graph_from_AST.func_info list ->
-  (string, Graph_from_AST.func_info list) Hashtbl.t
-
 type exported_names =
   | Every_definition_is_an_attribute
   | Only_exported_names of unit Common.SMap.t Common.SMap.t

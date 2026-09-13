@@ -1,0 +1,14 @@
+rules:
+  - id: package-clause-differs-from-dir
+    languages: [go]
+    severity: ERROR
+    message: >
+      An unaliased import binds the imported package's clause, which here is
+      client while the directory is httpclient.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

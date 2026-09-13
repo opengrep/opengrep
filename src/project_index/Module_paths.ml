@@ -122,16 +122,32 @@ let module_qn_of_file ~(cfg : Index_lang_rules.t)
     ~(go_modules : Go_modules.t) ~(project_root : Fpath.t)
     ~(ast : G.program option) (file : Fpath.t) : Names.Module_qn.t =
   match Go_modules.import_path_of_dir go_modules (Fpath.parent file) with
-  | Some import_path -> Names.Module_qn.of_string import_path
+  | Some (import_path : Go_import_path.t) ->
+    Names.Module_qn.of_string (Go_import_path.to_string import_path)
   | None -> (
-    match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
-    | Some module_str -> Names.Module_qn.of_string module_str
-    | None ->
-      let rel = Discover.relative_to ~project_root file in
-      let path_str = Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string in
-      let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_go_package ->
       Names.Module_qn.of_string
-        (String.concat "." (Fpath.segs (Fpath.v path_str))))
+        (Go_import_path.to_string
+           (Go_import_path.of_segments
+              (Fpath.segs
+                 (Fpath.normalize
+                    (Discover.relative_to ~project_root (Fpath.parent file))))))
+    | `Per_file
+    | `Per_directory
+    | `Per_module
+    | `Per_namespace
+    | `Per_package -> (
+      match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
+      | Some module_str -> Names.Module_qn.of_string module_str
+      | None ->
+        let rel = Discover.relative_to ~project_root file in
+        let path_str =
+          Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string
+        in
+        let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
+        Names.Module_qn.of_string
+          (String.concat "." (Fpath.segs (Fpath.v path_str)))))
 
 let specifier_resolution_of_files ~(cfg : Index_lang_rules.t)
     ~(project_root : Fpath.t) ~(paths : (string * string list) list)

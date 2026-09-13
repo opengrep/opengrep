@@ -29,7 +29,7 @@ type t = {
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module ];
+    | `Per_module | `Per_go_package ];
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
      C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
      qualified by the region open at its definition, so several or nested
@@ -63,6 +63,10 @@ type t = {
   (* PHP 8 ctor property promotion: typed ctor params are candidate fields. *)
   ctor_param_promotion : bool;
   interface_dispatch_uses_export_visibility : bool;
+  parents_resolve_by_binding : bool;
+  package_clause_of_ast : G.program -> string option;
+  method_owner_of_funcdef : G.function_definition -> string option;
+  name_is_exported : string -> bool;
 }
 
 let decorator_simple_name (attr : G.attribute) : string option =
@@ -259,6 +263,10 @@ let default : t = {
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
   interface_dispatch_uses_export_visibility = false;
+  parents_resolve_by_binding = false;
+  package_clause_of_ast = (fun _ -> None);
+  method_owner_of_funcdef = (fun _ -> None);
+  name_is_exported = (fun _ -> true);
 }
 
 let string_contains (str : string) (sub : string) : bool =
@@ -388,6 +396,15 @@ let ruby : t = { default with
   narrow_methods_by_required_files = true;
 }
 
+let go_class_of_fields (kind : G.class_kind) (fk : Tok.t)
+    (fields : G.field list) : G.definition_kind =
+  G.ClassDef {
+    G.ckind = (kind, fk);
+    cextends = []; cimplements = []; cmixins = [];
+    cparams = (fk, [], fk);
+    cbody = (fk, fields, fk);
+  }
+
 let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
   : (G.entity * G.definition_kind) option =
   match def_kind with
@@ -395,19 +412,59 @@ let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
       { G.tbody = G.NewType
           { G.t = G.TyRecordAnon ((kind, fk), (_, fields, _)); _ } }
     when (match kind with G.Class | G.Interface -> true | _ -> false) ->
-    let cdef = G.ClassDef {
-      G.ckind = (kind, fk);
-      cextends = []; cimplements = []; cmixins = [];
-      cparams = (fk, [], fk);
-      cbody = (fk, fields, fk);
-    } in
-    Some (ent, cdef)
+    Some (ent, go_class_of_fields kind fk fields)
+  | G.TypeDef { G.tbody = G.NewType (ty : G.type_) } ->
+    let fk =
+      match AST_generic_helpers.range_of_any_opt (G.T ty) with
+      | Some ((start_tok : Tok.location), _) -> Tok.tok_of_loc start_tok
+      | None -> Tok.unsafe_fake_tok "type"
+    in
+    Some (ent, go_class_of_fields G.Class fk [])
   | _ -> None
+
+let go_class_body_extra_parents (cdef : G.class_definition) : string list list =
+  Tok.unbracket cdef.G.cbody
+  |> List.filter_map (fun (field : G.field) ->
+    match field with
+    | G.F { G.s = G.ExprStmt (
+        { G.e = G.Call ({ G.e = G.IdSpecial (G.Spread, _); _ },
+                        (_, [ G.Arg { G.e = G.N (name : G.name); _ } ], _)); _ },
+        _); _ } -> (
+      match name_to_path name with
+      | [] -> None
+      | (path : string list) -> Some path)
+    | _ -> None)
+
+let go_method_owner_of_funcdef (fdef : G.function_definition) : string option =
+  match Tok.unbracket fdef.G.fparams with
+  | G.ParamReceiver { G.ptype = Some (ty : G.type_); _ } :: _ ->
+    Option.bind (Ty_bare_name.inner_class_name_of_ty ty)
+      Ty_bare_name.bare_name_of_name
+  | _ -> None
+
+let is_ascii_lower (char : char) : bool =
+  Char.equal char (Char.lowercase_ascii char)
+  && not (Char.equal char (Char.uppercase_ascii char))
+
+let go_name_is_exported (name : string) : bool =
+  String.length name > 0
+  &&
+  let first = Uchar.utf_decode_uchar (String.get_utf_8_uchar name 0) in
+  if Uchar.is_char first then
+    let char = Uchar.to_char first in
+    (not (is_ascii_lower char)) && not (Char.equal char '_')
+  else true
 
 let go : t = { default with
   include_anonymous_funcs = false;
-  unqualified_scope = `Per_directory;
+  name_is_exported = go_name_is_exported;
+  unqualified_scope = `Per_go_package;
+  method_owner_of_funcdef = go_method_owner_of_funcdef;
   class_def_reshape = go_class_def_reshape;
+  class_body_extra_parents = go_class_body_extra_parents;
+  walks_inheritance = true;
+  parents_resolve_by_binding = true;
+  package_clause_of_ast = extract_package_decl;
   interface_dispatch_uses_export_visibility = true;
 }
 

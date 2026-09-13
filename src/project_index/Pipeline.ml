@@ -56,6 +56,7 @@ type ctx = {
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
   module_scope : Scope_module.project_scope;
+  go_packages : Scope_go.package_index;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -64,7 +65,6 @@ type ctx = {
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
   file_module_qn : (string, Names.Module_qn.t) Hashtbl.t;
-  project_funcs_by_package : (string, Func_info.t list) Hashtbl.t;
   project_class_names : G.name list;
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
@@ -202,7 +202,8 @@ let build_alias_to_module_qn
     ~(cfg : Index_lang_rules.t) (fi : file_info)
   : (string, Names.Module_qn.t) Hashtbl.t option =
   match cfg.Index_lang_rules.unqualified_scope with
-  | `Per_module -> None
+  | `Per_module
+  | `Per_go_package -> None
   | `Per_file | `Per_directory | `Per_namespace ->
     let tbl : (string, Names.Module_qn.t) Hashtbl.t = Hashtbl.create 16 in
     List.iter (fun (imp : import) ->
@@ -225,46 +226,6 @@ let build_alias_to_module_qn
     ) fi.fi_imports;
     if Int.equal (Hashtbl.length tbl) 0 then None else Some tbl
   | _ -> None
-
-let build_file_funcs_by_package
-    ~(cfg : Index_lang_rules.t)
-    ~(project_funcs_by_package : (string, Func_info.t list) Hashtbl.t)
-    ~(project_funcs_by_module :
-        (Names.Module_qn.t, Func_info.t list) Hashtbl.t)
-    (fi : file_info)
-  : Func_lookup.bare_name_index option =
-  (* Import aliases in a per-file table; the shared project table is read
-     only. *)
-  let over_project (alias_extra : (string * Func_info.t list) list) =
-    let aliases = Hashtbl.create (List.length alias_extra) in
-    List.iter (fun (key, funcs) -> Hashtbl.replace aliases key funcs) alias_extra;
-    Func_lookup.bare_name_index_override
-      ~front:(Func_lookup.bare_name_index_of_hashtbl aliases)
-      ~back:(Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
-  in
-  let alias_extra =
-    match cfg.Index_lang_rules.unqualified_scope with
-    | `Per_directory ->
-      List.filter_map (fun (imp : import) ->
-        let target_str = Names.Module_qn.to_string imp.im_target in
-        let basename = Filename.basename target_str in
-        if String.equal imp.im_local basename then None
-        else
-          match Hashtbl.find_opt project_funcs_by_package basename with
-          | Some fs -> Some (imp.im_local, fs)
-          | None -> None
-      ) fi.fi_imports
-    | `Per_module -> []
-    | `Per_file | `Per_package | `Per_namespace ->
-      List.filter_map (fun (imp : import) ->
-        match Hashtbl.find_opt project_funcs_by_module imp.im_target with
-        | Some fs -> Some (imp.im_local, fs)
-        | None -> None
-      ) fi.fi_imports
-  in
-  match alias_extra with
-  | [] -> Some (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
-  | _ :: _ -> Some (over_project alias_extra)
 
 (* Restrict colliding methods to files the caller itself requires (whole-file
    "*" import specifiers, Ruby [require_relative]) or the caller's own file.
@@ -310,7 +271,7 @@ let resolves_by_binding (lang : Lang.t) : bool =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
-  | Lang.Js | Lang.Ts -> true
+  | Lang.Js | Lang.Ts | Lang.Go -> true
   | _ -> false
 
 let definition_of_target
@@ -349,6 +310,7 @@ let build_scope_table
     ~(php_region_bindings : Scope_php.region_bindings Common.SMap.t)
     ~(php_global_bindings : Scope_binding.positioned_binding list)
     ~(module_scope : Scope_module.project_scope)
+    ~(go_packages : Scope_go.package_index)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
@@ -365,6 +327,15 @@ let build_scope_table
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files; own_modules = []; module_aliases = None }
+    | `Per_go_package ->
+      let bindings, module_aliases =
+        Scope_go.build ~lang ~cfg ~package_index:go_packages
+          ~attributes_by_module ~classes_by_file ~class_parent_paths
+          ~file_funcs_index fi
+      in
+      Some { scope_table = Func_lookup.scope_table_of_map bindings;
+             bound_class_files = []; own_modules = [];
+             module_aliases = Some module_aliases }
     | `Per_namespace ->
       let bindings, own_modules =
         Scope_php.build ~definitions_by_qn
@@ -565,11 +536,11 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         attributes_by_module; dunder_all;
         resolution_orders; class_qn_by_definition; methods_by_class;
         extensions_by_module; nested_types_by_class;
-        php_region_bindings; php_global_bindings; module_scope;
+        php_region_bindings; php_global_bindings; module_scope; go_packages;
         classes_by_file; class_parent_paths; global_imports;
         project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
-        project_funcs_by_package; project_class_names;
+        project_class_names;
         file_funcs_index;
         slice_element_of_field;
         top_level_node_for; visible_names_for_file;
@@ -598,7 +569,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
-        ~php_region_bindings ~php_global_bindings ~module_scope fi
+        ~php_region_bindings ~php_global_bindings ~module_scope ~go_packages fi
     in
     let alias_to_module_qn =
       staged "alias to module map" @@ fun () ->
@@ -611,13 +582,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let funcs_by_module_qn
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
       match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file | `Per_directory -> Some project_funcs_by_module
+      | `Per_file | `Per_directory | `Per_go_package ->
+        Some project_funcs_by_module
       | `Per_package | `Per_namespace | `Per_module -> None
-    in
-    let file_funcs_by_package =
-      staged "file funcs by package" @@ fun () ->
-      build_file_funcs_by_package ~cfg ~project_funcs_by_package
-        ~project_funcs_by_module fi
     in
     let file_type_state =
       staged "narrow methods by imports/required files" @@ fun () ->
@@ -667,7 +634,6 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~same_file_funcs_by_name:
           (Func_lookup.bare_name_index_of_hashtbl same_file_funcs_by_name)
         ~overload_groups:(Lang_config.overloads_by_type lang)
-        ?funcs_by_package:file_funcs_by_package
         ~file_module_qn:
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
         ?constructors:
@@ -739,7 +705,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                 match param with
                 | G.ParamReceiver { G.pname = Some pn; ptype = Some pty; _ }
                 | G.Param { G.pname = Some pn; ptype = Some pty; _ } ->
-                  (match Ty_bare_name.inner_class_name_of_ty pty with
+                  (match Ty_bare_name.inner_qualified_class_name_of_ty pty with
                    | Some cls -> Some (G.Id (pn, G.empty_id_info ()), cls)
                    | None -> None)
                 | _ -> None)

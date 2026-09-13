@@ -9,31 +9,19 @@ let region_keys (regions : Names.Module_qn.t list) : unit Common.SMap.t =
       Common.SMap.add (Names.Module_qn.to_string region) () keys)
     Common.SMap.empty regions
 
-let bindings_of_attributes ~(keep : Func_lookup.module_attribute -> bool)
+let bindings_of_attributes ~(keep : string -> Func_lookup.module_attribute -> bool)
     (attributes : Func_lookup.module_attribute Common.SMap.t)
     : Scope_binding.positioned_binding list =
-  Common.SMap.fold
-    (fun (name : string) (attribute : Func_lookup.module_attribute)
-         (bindings : Scope_binding.positioned_binding list) ->
-      if not (keep attribute) then bindings
-      else
-        match attribute with
-        | Func_lookup.Attr_functions (funcs : Func_info.t list) ->
-          Scope_binding.function_binding_of ~pos:None ~parent_path:[] name funcs
-          @ bindings
-        | Func_lookup.Attr_class (class_qn : Names.Class_qn.t) ->
-          Scope_binding.class_binding_of ~pos:None ~parent_path:[] name class_qn
-          :: bindings
-        | Func_lookup.Attr_module _ -> bindings)
-    attributes []
+  Scope_binding.bindings_of_attributes ~pos:None ~keep attributes
 
-let is_function_attribute (attribute : Func_lookup.module_attribute) : bool =
+let is_function_attribute (_ : string)
+    (attribute : Func_lookup.module_attribute) : bool =
   match attribute with
   | Func_lookup.Attr_functions _ -> true
   | Func_lookup.Attr_class _
   | Func_lookup.Attr_module _ -> false
 
-let every_attribute (_ : Func_lookup.module_attribute) : bool = true
+let every_attribute (_ : string) (_ : Func_lookup.module_attribute) : bool = true
 
 type region_bindings = {
   rb_in_region : Scope_binding.positioned_binding list;

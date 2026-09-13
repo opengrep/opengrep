@@ -135,8 +135,20 @@ let resolve_parent_lexical
       (fun qn -> Names.Module_qn.of_string (Names.Class_qn.to_string qn))
       (try_scopes enclosing)
 
+let resolve_parent_in_own_scope
+    ~(known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t)
+    (ci : class_info) (path : string list) : Names.Module_qn.t option =
+  match Names.Class_qn.split_last ci.ci_qn with
+  | None -> None
+  | Some ((owner : Names.Class_qn.t), _) ->
+    let candidate = List.fold_left Names.Class_qn.concat owner path in
+    if Hashtbl.mem known_class_qns candidate then
+      Some (Names.Module_qn.of_string (Names.Class_qn.to_string candidate))
+    else None
+
 let inherit_into_type_state
     ~(lang : Lang.t)
+    ~(cfg : Index_lang_rules.t)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(class_infos : class_info list)
     ~(func_def_file : FA.func_info -> string option)
@@ -180,6 +192,9 @@ let inherit_into_type_state
             ~reexport_map ~known_class_qns p_path with
     | Some _ as resolved -> resolved
     | None ->
+      if cfg.Index_lang_rules.parents_resolve_by_binding then
+        resolve_parent_in_own_scope ~known_class_qns ci p_path
+      else
       match resolve_parent_lexical ~by_qn ci p_path with
       | Some _ as resolved -> resolved
       | None ->

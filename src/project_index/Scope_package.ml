@@ -31,6 +31,7 @@ let is_extension_binding (binding : Scope_binding.positioned_binding) : bool =
       | Func_lookup.Scope_extension _ -> true
       | Func_lookup.Scope_function _
       | Func_lookup.Scope_object _
+      | Func_lookup.Scope_local_value
       | Func_lookup.Scope_class _ -> false)
     binding.Scope_binding.pb_kinds
 
@@ -175,19 +176,8 @@ let build
   in
   let bindings_of_module ~(pos : Pos.t option) (target : Names.Module_qn.t)
       : Scope_binding.positioned_binding list =
-    Common.SMap.fold
-      (fun (name : string) (attribute : Func_lookup.module_attribute)
-           (bindings : Scope_binding.positioned_binding list) ->
-        match attribute with
-        | Func_lookup.Attr_functions (funcs : Func_info.t list) ->
-          Scope_binding.function_binding_of ~pos ~parent_path:[] name funcs
-          @ bindings
-        | Func_lookup.Attr_class (class_qn : Names.Class_qn.t) ->
-          Scope_binding.class_binding_of ~pos ~parent_path:[] name class_qn
-          :: bindings
-        | Func_lookup.Attr_module _ -> bindings)
+    Scope_binding.bindings_of_attributes ~pos ~keep:(fun _ _ -> true)
       (Func_lookup.attributes_of_module attributes_by_module target)
-      []
   in
   let bindings_of_class_members ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)

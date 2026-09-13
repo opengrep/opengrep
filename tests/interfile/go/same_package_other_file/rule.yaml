@@ -1,0 +1,14 @@
+rules:
+  - id: same-package-other-file
+    languages: [go]
+    severity: ERROR
+    message: >
+      The package block holds every top level declaration of every file of the
+      package, so a.go calls the helper that b.go declares.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

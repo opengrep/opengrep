@@ -197,6 +197,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     ~(ncores : int) ~(entries : entry list)
     ?(class_infos = [])
     ?(reexport_map = Hashtbl.create 0)
+    ~(go_packages : Scope_go.package_index)
     (file_infos : file_info list)
     : Call_graph.G.t * class_fun_info list * Core_error.t list =
   let skip_anon (opt_ent : G.entity option) =
@@ -277,22 +278,10 @@ let build_project_call_graph (caps : < Cap.fork >)
       fdef = placeholder_fdef tok }
   in
   let phase1_per_file (fi : file_info) : FA.func_info list =
-    let acc =
-      List.fold_left (fun (acc : FA.func_info list) obs ->
-        match obs with
-        | Walker.Observation.Func_def { opt_ent; parent_path; fdef } ->
-          if skip_anon opt_ent then acc
-          else
-            (match FA.fn_id_of_entity ~lang opt_ent parent_path fdef with
-             | Some fn_id -> { FA.fn_id; entity = opt_ent; fdef } :: acc
-             | None -> acc)
-        | _ -> acc
-      ) [] fi.fi_observations
-    in
     (* Go interface methods come as a [TypeDef] with [TyRecordAnon(Interface)],
        not a [ClassDef], so attribute them to the interface. *)
-    let acc =
-      if not (Lang.equal lang Lang.Go) then acc
+    let interface_methods =
+      if not (Lang.equal lang Lang.Go) then []
       else
         List.fold_left (fun acc obs ->
           match obs with
@@ -320,7 +309,32 @@ let build_project_call_graph (caps : < Cap.fork >)
                 | _ -> acc)
              | _ -> acc)
           | _ -> acc
-        ) acc fi.fi_observations
+        ) [] fi.fi_observations
+    in
+    let attributed_to_interface (fn_id : FA.fn_id) : bool =
+      match Func_info.bare_name fn_id with
+      | None -> false
+      | Some (name : IL.name) ->
+        List.exists
+          (fun (method_ : FA.func_info) ->
+            match Func_info.bare_name method_.FA.fn_id with
+            | None -> false
+            | Some (other : IL.name) -> Function_id.equal_il_name name other)
+          interface_methods
+    in
+    let acc =
+      List.fold_left (fun (acc : FA.func_info list) obs ->
+        match obs with
+        | Walker.Observation.Func_def { opt_ent; parent_path; fdef } ->
+          if skip_anon opt_ent then acc
+          else
+            (match FA.fn_id_of_entity ~lang opt_ent parent_path fdef with
+             | Some fn_id when not (attributed_to_interface fn_id) ->
+               { FA.fn_id; entity = opt_ent; fdef } :: acc
+             | Some _
+             | None -> acc)
+        | _ -> acc
+      ) interface_methods fi.fi_observations
     in
     List.fold_left (fun acc obs ->
       match obs with
@@ -415,13 +429,10 @@ let build_project_call_graph (caps : < Cap.fork >)
       | None -> state
     ) type_state all_funcs
   in
-  let type_state =
-    Go_inheritance.lift_embedded_interfaces ~lang file_infos type_state
-  in
   let type_state, inherited_by_class, override_pairs, class_resolution_orders =
     timed "call graph: inheritance (Mro)" @@ fun () ->
     if cfg.Index_lang_rules.walks_inheritance then
-      Mro.inherit_into_type_state ~lang ~reexport_map
+      Mro.inherit_into_type_state ~lang ~cfg ~reexport_map
         ~class_infos:indexed_classes
         ~func_def_file:Type_augment.func_def_file type_state
     else (type_state, [], [], [])
@@ -500,9 +511,6 @@ let build_project_call_graph (caps : < Cap.fork >)
     (Hashtbl.length file_funcs_index));
 
   (* Project-wide free-function indexes.  See [Func_index]. *)
-  let project_funcs_by_package = Func_index.build_by_package ~cfg all_funcs in
-  Log.debug (fun m -> m "Per-package func index: %d packages (Per_directory only)"
-    (Hashtbl.length project_funcs_by_package));
   let project_funcs_by_module =
     Func_index.build_by_module ~cfg ~file_infos all_funcs
   in
@@ -608,6 +616,7 @@ let build_project_call_graph (caps : < Cap.fork >)
           ~file_infos:indexed_files)
     | `Per_file
     | `Per_directory
+    | `Per_go_package
     | `Per_package
     | `Per_namespace -> Scope_module.no_project_scope
   in
@@ -635,6 +644,7 @@ let build_project_call_graph (caps : < Cap.fork >)
                   (Scope_module.exports_of module_scope))
            | `Per_file
            | `Per_directory
+           | `Per_go_package
            | `Per_package
            | `Per_namespace -> Func_index.Every_definition_is_an_attribute)
         ~definitions_by_qn ~file_infos:indexed_files)
@@ -654,6 +664,7 @@ let build_project_call_graph (caps : < Cap.fork >)
               ~file_infos:indexed_files
           | `Per_file
           | `Per_directory
+          | `Per_go_package
           | `Per_module
           | `Per_package -> Common.SMap.empty);
       php_global_bindings =
@@ -662,9 +673,11 @@ let build_project_call_graph (caps : < Cap.fork >)
            Scope_php.global_function_bindings ~attributes_by_module
          | `Per_file
          | `Per_directory
+         | `Per_go_package
          | `Per_module
          | `Per_package -> []);
       module_scope;
+      go_packages;
       dunder_all;
       resolution_orders;
       class_qn_by_definition;
@@ -686,7 +699,6 @@ let build_project_call_graph (caps : < Cap.fork >)
       project_funcs_by_name;
       project_funcs_by_module;
       file_module_qn;
-      project_funcs_by_package;
       project_class_names;
       file_funcs_index;
       slice_element_of_field;
@@ -800,12 +812,75 @@ let build_project_call_graph (caps : < Cap.fork >)
         Some (Core_error.exn_to_error ~file:fi.fi_file exn))
       per_file_edges
   in
+  let type_key : file:string option -> G.type_ -> string option =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_file
+    | `Per_directory
+    | `Per_module
+    | `Per_namespace
+    | `Per_package ->
+      fun ~file:_ (ty : G.type_) ->
+        Option.bind (Ty_bare_name.class_name_of_ty ty)
+          Ty_bare_name.bare_name_of_name
+    | `Per_go_package ->
+      let known : (string, unit) Hashtbl.t =
+        Hashtbl.create (List.length indexed_classes)
+      in
+      List.iter
+        (fun (ci : class_info) ->
+          Hashtbl.replace known (Names.Class_qn.to_string ci.ci_qn) ())
+        indexed_classes;
+      let scope_of_file : (string * Names.Module_qn.t Common.SMap.t)
+                            Common.SMap.t =
+        List.fold_left
+          (fun (by_file :
+                  (string * Names.Module_qn.t Common.SMap.t) Common.SMap.t)
+               (fi : file_info) ->
+            Common.SMap.add (Fpath.to_string fi.fi_file)
+              (Names.Module_qn.to_string fi.fi_module_path,
+               Scope_go.import_aliases fi)
+              by_file)
+          Common.SMap.empty indexed_files
+      in
+      fun ~(file : string option) (ty : G.type_) ->
+        Option.bind (Ty_bare_name.qualified_class_name_of_ty ty)
+          (fun (name : G.name) ->
+            Option.bind (Ty_bare_name.bare_name_of_name name)
+              (fun (bare_name : string) ->
+                let scope =
+                  Option.bind file
+                    (fun (file : string) ->
+                      Common.SMap.find_opt file scope_of_file)
+                in
+                match (Ty_bare_name.qualifier_of_name name, scope) with
+                | None, Some ((package : string), _) ->
+                  let candidate =
+                    Names.Class_qn.to_string
+                      (Names.Class_qn.concat
+                         (Names.Class_qn.of_string package) bare_name)
+                  in
+                  if Hashtbl.mem known candidate then Some candidate
+                  else Some bare_name
+                | None, None -> Some bare_name
+                | Some (qualifier : string), Some (_, (aliases : _)) -> (
+                  match Common.SMap.find_opt qualifier aliases with
+                  | Some (target : Names.Module_qn.t) ->
+                    Some
+                      (Names.Class_qn.to_string
+                         (Names.Class_qn.concat
+                            (Names.Class_qn.of_string
+                               (Names.Module_qn.to_string target))
+                            bare_name))
+                  | None -> Some (qualifier ^ "." ^ bare_name))
+                | Some (qualifier : string), None ->
+                  Some (qualifier ^ "." ^ bare_name)))
+  in
   (* Interface dispatch edges.  See [Structural_dispatch]. *)
   let n_dispatch =
     timed "call graph: interface dispatch edges" @@ fun () ->
     Structural_dispatch.emit_dispatch_edges
       ~lang ~cfg ~type_state ~func_def_file:Type_augment.func_def_file
-      ~class_infos ~graph
+      ~type_key ~class_infos ~graph
   in
   if n_dispatch > 0 then
     Log.debug (fun m -> m "Interface dispatch: emitted %d Dispatch edges"
@@ -876,12 +951,11 @@ let run_pipeline (caps : < Cap.fork >)
   let n_total = List.length files in
   Log.info (fun m -> m "Discovered %d %s files. Parsing with %d domain(s)..."
     n_total (Lang.to_string lang) ncores);
-  (* Rust-only: rewrite [impl Foo {...}] ([OtherDef("Impl")]) into a [ClassDef]
-     so the walkers see the methods. *)
-  (* Rust only: impl methods must look like class methods to every later
-     pass, so the STORED ast is reshaped too ([cfg.class_def_reshape]).
-     Go also wires the hook but reshapes only the collector's view —
-     its stored TypeDefs must survive for the embedding walk. *)
+  (* Rust only: [impl Foo {...}] ([OtherDef("Impl")]) is rewritten into a
+     [ClassDef] in the STORED ast ([cfg.class_def_reshape]) so that every
+     later pass sees the methods as class methods; every other language that
+     wires the hook, Go among them, applies it to the collector's view alone
+     and keeps the stored ast as the parser produced it. *)
   let reshape_class_defs (ast : G.program) : G.program =
     if not (Lang.equal lang Lang.Rust) then ast
     else
@@ -917,6 +991,7 @@ let run_pipeline (caps : < Cap.fork >)
         (List.map absolutize files)
     | `Per_file
     | `Per_directory
+    | `Per_go_package
     | `Per_package
     | `Per_namespace -> Module_paths.Specifier_is_module_name
   in
@@ -971,6 +1046,16 @@ let run_pipeline (caps : < Cap.fork >)
     ) (0, 0, [], [], [], []) results
   in
   let parse_failures = List.rev parse_failures in
+  let go_packages =
+    timed "Go package index" @@ fun () ->
+    Scope_go.build_package_index ~cfg ~file_infos:all_files
+  in
+  let all_files, all_classes =
+    timed "Go import local names" @@ fun () ->
+    Imports.with_package_clause_locals ~cfg
+      ~clause_of_module:(Scope_go.importable_clause go_packages)
+      (all_files, all_classes)
+  in
   let reexport_map =
     timed "re-export map" @@ fun () ->
     Reexports.build_reexport_map ~cfg all_files
@@ -995,7 +1080,7 @@ let run_pipeline (caps : < Cap.fork >)
   let graph, inherited_by_class, worker_failures =
     timed "call graph (edges + fixpoint)" @@ fun () ->
     build_project_call_graph caps ~cfg ~lang ~ncores ~entries:entries_pre_mro
-      ~class_infos:all_classes ~reexport_map all_files
+      ~class_infos:all_classes ~reexport_map ~go_packages all_files
   in
   (* Inherited-method entry rows, derived from the same C3 linearisation
      callee resolution reads, so the diagnostic dump matches what resolution

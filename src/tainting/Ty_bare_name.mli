@@ -22,3 +22,6 @@ val class_name_of_ty : G.type_ -> G.name option
    [~through_funty:true] walks function types to their return. *)
 val inner_class_name_of_ty :
   ?through_funty:bool -> G.type_ -> G.name option
+
+val inner_qualified_class_name_of_ty :
+  ?through_funty:bool -> G.type_ -> G.name option

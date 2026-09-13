@@ -1,34 +1,6 @@
 module G = AST_generic
 module FA = Graph_from_AST
 
-let build_by_package
-    ~(cfg : Index_lang_rules.t)
-    (all_funcs : FA.func_info list)
-  : (string, FA.func_info list) Hashtbl.t =
-  (* Keyed by directory basename: bounded by the function count. *)
-  let h : (string, FA.func_info list) Hashtbl.t =
-    Hashtbl.create (List.length all_funcs) in
-  if cfg.Index_lang_rules.unqualified_scope <> `Per_directory then h
-  else begin
-    List.iter (fun (func : FA.func_info) ->
-      if Option.is_some (Func_info.as_free func.FA.fn_id) then
-        match Func_info.def_file_opt func with
-        | Some file ->
-          (* Key is directory basename, deliberately non-unique; [identify_callee]
-             narrows by same-file/dir. Widen to full package path if that goes. *)
-          (* [Fpath.basename] is "" only for a file directly under the
-             filesystem root; lookups use source package names, so that
-             bucket is unreachable and needs no sentinel. *)
-          let pkg = Fpath.parent file |> Fpath.basename in
-          let cur =
-            Option.value (Hashtbl.find_opt h pkg) ~default:[]
-          in
-          Hashtbl.replace h pkg (func :: cur)
-        | None -> ()
-    ) all_funcs;
-    h
-  end
-
 let build_by_module
     ~(cfg : Index_lang_rules.t)
     ~(file_infos : Types.file_info list)
@@ -39,7 +11,7 @@ let build_by_module
     Hashtbl.create (List.length file_infos)
   in
   match cfg.Index_lang_rules.unqualified_scope with
-  | `Per_file | `Per_directory -> begin
+  | `Per_file | `Per_directory | `Per_go_package -> begin
     let file_to_module : (string, Names.Module_qn.t) Hashtbl.t =
       Hashtbl.create (List.length file_infos)
     in
@@ -120,7 +92,8 @@ let build_attributes_by_module
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package
     | `Per_namespace
-    | `Per_module -> false
+    | `Per_module
+    | `Per_go_package -> false
     | `Per_file
     | `Per_directory -> true
   in

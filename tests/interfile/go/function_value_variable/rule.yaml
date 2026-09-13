@@ -1,0 +1,14 @@
+rules:
+  - id: function-value-variable
+    languages: [go]
+    severity: ERROR
+    message: >
+      A variable that one assignment binds to a function name calls that
+      declaration.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

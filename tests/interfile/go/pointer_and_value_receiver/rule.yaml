@@ -1,0 +1,14 @@
+rules:
+  - id: pointer-and-value-receiver
+    languages: [go]
+    severity: ERROR
+    message: >
+      A call through a variable reaches the one declaration of the method on
+      the base type, whether the receiver is declared as T or as a pointer.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

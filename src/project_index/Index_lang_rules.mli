@@ -31,7 +31,7 @@ type t = {
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module ];
+    | `Per_module | `Per_go_package ];
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
      blocks / package clauses), not the file's module identity (contrast Go). *)
   package_directive_is_namespace : bool;
@@ -59,6 +59,10 @@ type t = {
   (* PHP 8 ctor property promotion: typed ctor params are candidate fields. *)
   ctor_param_promotion : bool;
   interface_dispatch_uses_export_visibility : bool;
+  parents_resolve_by_binding : bool;
+  package_clause_of_ast : G.program -> string option;
+  method_owner_of_funcdef : G.function_definition -> string option;
+  name_is_exported : string -> bool;
 }
 
 val decorator_simple_name : G.attribute -> string option

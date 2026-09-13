@@ -31,6 +31,7 @@ let build_dir_index
   let scope_key_opt (fi : Types.file_info) : string option =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_directory -> Some (Fpath.parent fi.Types.fi_file |> Fpath.to_string)
+    | `Per_go_package
     | `Per_package
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
@@ -61,6 +62,9 @@ let build_dir_index
    | `Per_namespace ->
      Log.info (fun m -> m "Per-namespace scope: %d namespaces indexed"
        (Hashtbl.length dir_index))
+   | `Per_go_package ->
+     Log.info (fun m -> m "Per-package scope: %d Go packages indexed"
+       (Hashtbl.length dir_index))
    | `Per_file
    | `Per_module -> ());
   dir_index
@@ -75,6 +79,7 @@ let for_file
   let scope_key_opt =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_directory -> Some (Fpath.parent fi.Types.fi_file |> Fpath.to_string)
+    | `Per_go_package
     | `Per_package
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)

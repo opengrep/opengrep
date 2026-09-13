@@ -1,0 +1,14 @@
+rules:
+  - id: qualified-parameter-type
+    languages: [kotlin]
+    severity: ERROR
+    message: >
+      A parameter whose declared type is written with a qualifier names the
+      class that qualifier binds, not the same named class of another package.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,14 @@
+rules:
+  - id: promoted-method-struct-embedding
+    languages: [go]
+    severity: ERROR
+    message: >
+      A struct field with no name promotes the method set of the embedded type
+      into the embedding type.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

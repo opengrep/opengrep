@@ -254,18 +254,32 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                         (Visit_function_defs.synth_lambda_il_name fdef))
             | _ -> function_id_of_entity ent
           in
+          let method_owner =
+            match def_kind with
+            | G.FuncDef (fdef : G.function_definition) ->
+              cfg.Index_lang_rules.method_owner_of_funcdef fdef
+            | _ -> None
+          in
           match entity_simple_name ent, fid_opt with
           | None, _ | _, None -> super#visit_definition scope (ent, def_kind)
           | Some name, Some fn_id ->
             let defining_class_id = immediate_enclosing_class_id scope in
             let kind =
-              if Option.is_some defining_class_id then K_method
+              if Option.is_some defining_class_id || Option.is_some method_owner
+              then K_method
               else K_function
             in
-            entries := mk_entry ~id:fn_id ~name
-                         ~qn:(Names.Def_qn.of_string
-                                (qualified_name_of ~module_path
-                                   (List.rev scope) name))
+            let owner_qn =
+              Names.Def_qn.of_string
+                (qualified_name_of ~module_path (List.rev scope)
+                   (Option.value method_owner ~default:name))
+            in
+            let qn =
+              match method_owner with
+              | Some _ -> Names.Def_qn.concat owner_qn name
+              | None -> owner_qn
+            in
+            entries := mk_entry ~id:fn_id ~name ~qn
                          ~kind
                          ~range:(entity_range ent)
                          ~defining_class_id :: !entries;
@@ -393,6 +407,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_namespace -> true
     | `Per_file
     | `Per_directory
+    | `Per_go_package
     | `Per_module -> cfg.Index_lang_rules.class_identity_is_constant_path
   in
   let qn_module_path =
@@ -405,6 +420,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       else Names.Module_qn.parts module_path
     | `Per_file
     | `Per_directory
+    | `Per_go_package
     | `Per_package
     | `Per_namespace -> []
   in
@@ -458,6 +474,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_module -> module_path :: opened
     | `Per_file
     | `Per_directory
+    | `Per_go_package
     | `Per_package
     | `Per_namespace -> (
       match opened with
@@ -465,6 +482,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       | regions -> regions)
   in
   let fi = { fi_file = file; fi_module_path = module_path;
+             fi_package_clause = cfg.Index_lang_rules.package_clause_of_ast ast;
              fi_module_regions = module_regions;
              fi_imports = imports;
              fi_import_specifiers = import_specifiers;

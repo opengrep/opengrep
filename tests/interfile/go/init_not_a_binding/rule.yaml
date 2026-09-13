@@ -1,0 +1,14 @@
+rules:
+  - id: init-not-a-binding
+    languages: [go]
+    severity: ERROR
+    message: >
+      The name init is not in the package block, so several init declarations
+      in one package are not a redeclaration and bind nothing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

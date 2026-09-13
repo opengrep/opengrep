@@ -1,0 +1,14 @@
+rules:
+  - id: method-expression
+    languages: [go]
+    severity: ERROR
+    message: >
+      A method expression names the method as a function whose first parameter
+      is the receiver.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
