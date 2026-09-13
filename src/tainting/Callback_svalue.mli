@@ -9,20 +9,15 @@
 
 (* [(param_sid, value)] stamping decisions computed over a set of ASTs;
    sids are positional, so decisions computed on one parse apply to any
-   other parse of the same bytes (interfile's extraction vs dispatch ASTs). *)
+   other parse of the same bytes. *)
 val collect_stamps :
   AST_generic.program list -> (AST_generic.SId.t * AST_generic.expr) list
 
-(* Every [Sym] svalue in the AST, keyed by the carrying id's sid: mirrors
-   projidx-published svalues onto fresh parses of the same bytes. *)
-val collect_sym_stamps :
-  AST_generic.program -> (AST_generic.SId.t * AST_generic.expr) list
-
-(* Returns the number of identifiers stamped: a file with a non-zero count
-   may now match formulas its raw text cannot, so content-based prefilters
-   must not skip it. *)
+(* Returns whether the AST carries a [Sym] svalue after stamping: such a
+   file may match formulas its raw text cannot, so content-based
+   prefilters must not skip it. *)
 val apply_stamps :
-  (AST_generic.SId.t * AST_generic.expr) list -> AST_generic.program -> int
+  (AST_generic.SId.t * AST_generic.expr) list -> AST_generic.program -> bool
 
 (* [stamp_program ast] = same-file collection and application in one step. *)
 val stamp_program : AST_generic.program -> unit

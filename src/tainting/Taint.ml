@@ -87,8 +87,8 @@ let length_of_call_trace ct =
   loop 0 ct
 
 let compare_metavar_env env1 env2 =
-  (* It's important that we only return 0 if the two bindings are
-     structurally equal. Otherwise, there will be many duplicates. *)
+  (* Returns 0 only for bindings that [Metavariable.equal_bindings] treats
+     as equal. Otherwise, there will be many duplicates. *)
   Metavariable.compare_bindings env1 env2
 
 let compare_matches pm1 pm2 =

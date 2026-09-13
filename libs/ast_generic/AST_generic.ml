@@ -721,12 +721,13 @@ and id_info = {
    *   because the first `foo` has type `Foo` but that `Foo` has SId.t "n",
    *   whereas the second `foo` has type `Foo` but with SId.t "m".
    *)
-  id_type : type_ option ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_type : type_ option ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   id_instance_type : type_ option ref;
-      [@hash.ignore] [@equal fun _a _b -> true]
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* type checker (typing) *)
   id_callee_definition : sid option ref;
-      [@hash.ignore] [@equal fun _a _b -> true]
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* sgrep: this is for sgrep constant propagation hack.
    * todo? associate only with Id?
    * note that we do not use the svalue for equality (hence the adhoc
@@ -734,13 +735,15 @@ and id_info = {
    * meaning the same variable might have different id_svalue value
    * depending where it is used.
    *)
-  id_svalue : svalue option ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_svalue : svalue option ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* ^^^ THINK: Drop option? *)
   (* See module 'IdFlags'. Previously we compared 'id_flags' with 'IdFlags.equal'
    * but, once we added the 'final' flag which is only set at definition site,
    * the same identifier can now have different flags. In fact we did not really
    * have to compare 'id_flags' anyways. *)
-  id_flags : id_flags ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_flags : id_flags ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
 }
 
 (* See explanation for @name where the visitors are generated at the end of

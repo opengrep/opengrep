@@ -16,16 +16,14 @@
  * the local def) and cross-file (projidx writes [id_callee_definition]
  * stamps onto the dispatch ASTs). [G.SId.t] is a binding counted in
  * traversal order within its file, or a definition's site, so stamps
- * computed on one parse apply to any other parse of the same bytes
- * — interfile matches specs on fresh Naming-only parses but runs dataflow
- * on projidx-stamped ASTs, and both must agree on the added matches.
+ * computed on one parse apply to any other parse of the same bytes.
  *
  * Stamps are only written where [id_svalue] is [None], and are inert
  * unless a rule enables [symbolic_propagation].
  *
  * No walk here enters [id_info] payloads.  A stamp value is a subtree of
- * the AST it was collected from (the dispatch AST, when mirrored onto the
- * extraction parse), and it holds occurrences of the stamped sid: a walk
+ * the AST it was collected from, and it holds occurrences of the stamped
+ * sid: a walk
  * that followed the stamp it had just written would reach such an
  * occurrence and stamp it with a value containing itself, and every later
  * traversal of the payload would loop.  [var l []T; l = append(l, x)] is
@@ -216,57 +214,33 @@ let collect_stamps (asts : G.program list) : (G.SId.t * G.expr) list =
       observations []
   end
 
-(* Every [Sym] svalue in [ast], keyed by the carrying id's sid. Used to
-   mirror projidx-published svalues (e.g. import-value aliases) onto the
-   fresh Naming-only extraction parses, which never see projidx payloads;
-   sids are positional so the keys transfer. Svalues naming stamped
-   itself exist identically in both parses, and [apply_stamps] only
-   fills empty slots, so mirroring them is a harmless no-op. *)
-let collect_sym_stamps (ast : G.program) : (G.SId.t * G.expr) list =
-  let acc : (G.SId.t, G.expr) Hashtbl.t = Hashtbl.create 8 in
+(* Returns whether the AST carries a [Sym] svalue after stamping: such a
+   file may match formulas its raw text cannot (the value's name is not in
+   the file), so content-based prefilters must not skip it. *)
+let apply_stamps (stamps : (G.SId.t * G.expr) list) (ast : G.program) : bool =
+  let by_sid : (G.SId.t, G.expr) Hashtbl.t =
+    Hashtbl.create (List.length stamps)
+  in
+  List.iter (fun (sid, v) -> Hashtbl.replace by_sid sid v) stamps;
+  let has_sym = ref false in
   let visitor =
     object
       inherit [_] G.iter_no_id_info
 
       method! visit_id_info () (info : G.id_info) =
-        (match (binding_sid info, !(info.G.id_svalue)) with
-        | Some sid, Some (G.Sym value) ->
-            if not (Hashtbl.mem acc sid) then Hashtbl.replace acc sid value
-        | _ -> ())
+        match (binding_sid info, !(info.G.id_svalue)) with
+        | Some sid, None -> (
+            match Hashtbl.find_opt by_sid sid with
+            | Some value ->
+                info.G.id_svalue := Some (G.Sym value);
+                has_sym := true
+            | None -> ())
+        | Some _, Some (G.Sym _) -> has_sym := true
+        | _ -> ()
     end
   in
   visitor#visit_program () ast;
-  Hashtbl.fold (fun sid v l -> (sid, v) :: l) acc []
-
-(* Returns the number of identifiers stamped: a file with a non-zero count
-   may now match formulas its raw text cannot (the value's name is not in
-   the file), so content-based prefilters must not skip it. *)
-let apply_stamps (stamps : (G.SId.t * G.expr) list) (ast : G.program) : int =
-  match stamps with
-  | [] -> 0
-  | _ ->
-      let by_sid : (G.SId.t, G.expr) Hashtbl.t =
-        Hashtbl.create (List.length stamps)
-      in
-      List.iter (fun (sid, v) -> Hashtbl.replace by_sid sid v) stamps;
-      let stamped = ref 0 in
-      let visitor =
-        object
-          inherit [_] G.iter_no_id_info
-
-          method! visit_id_info () (info : G.id_info) =
-            (match (binding_sid info, !(info.G.id_svalue)) with
-            | Some sid, None -> (
-                match Hashtbl.find_opt by_sid sid with
-                | Some value ->
-                    info.G.id_svalue := Some (G.Sym value);
-                    incr stamped
-                | None -> ())
-            | _ -> ())
-        end
-      in
-      visitor#visit_program () ast;
-      !stamped
+  !has_sym
 
 (* Same-file entry point: collect and stamp within one AST. *)
 let stamp_program (ast : G.program) : unit =

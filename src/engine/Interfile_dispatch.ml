@@ -193,8 +193,8 @@ type rule_specs = {
       (* the source/sink/sanitizer/propagator matches of extraction, by
          normalized absolute path, so [init_file] does not match the rule
          on the file a second time.  Matching is positional, and the
-         extraction AST carries the stamps dispatch matching relies on
-         (see [stamped_files]), so the matches hold for the dispatch AST. *)
+         extraction and dispatch read the same AST (see [stamped_files]),
+         so the matches hold for dispatch. *)
 }
 
 (* Formula cache is per-file to avoid byte-position collisions. *)
@@ -1653,43 +1653,21 @@ let build_rule_states
   let target_ast_lookup =
     build_ast_lookup (batch_asts parsed_target_batches)
   in
-  (* Spec extraction matches on FRESH Naming-only parses: matching is
-     positional (ranges and fids are identical for the same bytes), and
-     the projidx-published [id_instance_type]/svalue payloads inside [id_info]
-     make every generic AST traversal ~2 orders of magnitude slower —
-     on grafana, 188s vs 1s of formula matching for one rule.  The
-     stamped ASTs stay in [target_ast_lookup] for dispatch, whose sid
-     resolution needs them. *)
-  let parsed_extraction_batches : parsed_batch list =
-    timed "parse targets (extraction ASTs)" @@ fun () ->
-    let parsed, failed =
-      run_parmap caps ~ncores ~on_exn:failed_batch
-        (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-          parse_file_batch lang batch)
-        target_batches
-    in
-    parsed @ failed
-  in
-  let extraction_ast_lookup =
-    build_ast_lookup (batch_asts parsed_extraction_batches)
-  in
   (* Issue #499 gap B, cross-file half: compute argument-to-parameter
      symbolic stamps over each language's dispatch ASTs — whose
      [id_callee_definition] stamps (projidx) and file-level [id_resolved]
      bindings (naming, same file) connect call sites to defs — and apply
-     them to BOTH flavors: sids are
-     positional, so decisions from the dispatch parse hold for the fresh
-     extraction parse of the same bytes. Extraction then finds the sink
+     them to those ASTs. Extraction then finds the sink
      match inside the callee body (seeding the subgraph), and dispatch's
      [is_sink] agrees on the range. Stamps are inert for rules without
      [symbolic_propagation]. *)
-  (* Files whose extraction AST received stamps: their raw text need not
-     contain the stamped value's name, so the content prefilter in
+  (* Files whose AST carries a [Sym] svalue: their raw text need not
+     contain the value's name, so the content prefilter in
      [extract_specs_for_rule] must not skip them. *)
   let stamped_files : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 4 in
   (* This loop runs on the coordinator, outside the parmap wrapper that
      contains a failure to its item elsewhere in this function, so a file
-     whose walk fails is contained here: it leaves both AST tables, with a
+     whose walk fails is contained here: it leaves the AST table, with a
      scan error, the way a file whose parse failed does below. *)
   let failed_stamp_files : (Fpath.t * E.t) list ref = ref [] in
   let per_file (file : Fpath.t) (stamp : unit -> unit) : unit =
@@ -1703,9 +1681,6 @@ let build_rule_states
   List.iter
     (fun (lc : lang_context) ->
       let dispatch_tbl = ast_table_for_lang target_ast_lookup lc.lc_lang in
-      let extraction_tbl =
-        ast_table_for_lang extraction_ast_lookup lc.lc_lang
-      in
       let asts =
         Hashtbl.fold (fun _ ast acc -> ast :: acc) dispatch_tbl []
       in
@@ -1723,43 +1698,24 @@ let build_rule_states
             stamp_errors := E.exn_to_error exn :: !stamp_errors;
             []
       in
-      if param_stamps <> [] then
-        Hashtbl.iter
-          (fun file ast ->
-            per_file file (fun () ->
-                ignore (Callback_svalue.apply_stamps param_stamps ast)))
-          dispatch_tbl;
-      (* Extraction parses additionally need the dispatch AST's own [Sym]
-         svalues mirrored: projidx publishes import-value aliases there
-         (see [Pipeline.stamp_import_value_aliases]), and the fresh
-         Naming-only extraction parse never sees projidx payloads. *)
       Hashtbl.iter
         (fun file ast ->
           per_file file (fun () ->
-              let mirrored =
-                match Hashtbl.find_opt dispatch_tbl file with
-                | Some dispatch_ast ->
-                    Callback_svalue.collect_sym_stamps dispatch_ast
-                | None -> []
-              in
-              if
-                Callback_svalue.apply_stamps (mirrored @ param_stamps) ast > 0
-              then Hashtbl.replace stamped_files file ()))
-        extraction_tbl;
+              if Callback_svalue.apply_stamps param_stamps ast then
+                Hashtbl.replace stamped_files file ()))
+        dispatch_tbl;
       List.iter
-        (fun ((file, _) : Fpath.t * E.t) ->
-          Hashtbl.remove dispatch_tbl file;
-          Hashtbl.remove extraction_tbl file)
+        (fun ((file, _) : Fpath.t * E.t) -> Hashtbl.remove dispatch_tbl file)
         !failed_stamp_files)
     lang_contexts;
-  (* A file whose parse failed has no dispatch AST and/or no extraction
-     AST, and a failed stamping walk removes its file from both: such a
+  (* A file whose parse failed has no AST, and a failed stamping walk
+     removes its file from the table: such a
      file can neither be dispatched nor seed the subgraph, so its findings
      would silently vanish. Surface one scan error per file. *)
   let parse_failures : E.t list =
     let seen = Hashtbl.create 16 in
     !failed_stamp_files
-    @ batch_failures (parsed_target_batches @ parsed_extraction_batches)
+    @ batch_failures parsed_target_batches
     |> List_.filter_map (fun ((file, err) : Fpath.t * E.t) ->
            if Hashtbl.mem seen file then None
            else begin
@@ -1839,7 +1795,7 @@ let build_rule_states
           extract_specs_for_rule ~lang:lc.lc_lang ~xconf
             ~prefilter:rule_prefilters.(i)
             ~contents:target_contents ~stamped_files
-            ~ast_table:(ast_table_for_lang extraction_ast_lookup lc.lc_lang)
+            ~ast_table:(ast_table_for_lang target_ast_lookup lc.lc_lang)
             ~matching_targets:chunk rule
         in
         (i, specs))
