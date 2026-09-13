@@ -1,3 +1,6 @@
+use crate::sink::sink;
+use crate::source::source;
+
 fn test4() {
     let x = source();
     let level1 = || {

@@ -1,3 +1,5 @@
+use crate::sink::sink;
+
 fn test4_level1(x: String) {
     let level2 = || {
         let level3 = || {

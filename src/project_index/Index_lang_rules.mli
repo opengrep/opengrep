@@ -29,6 +29,15 @@ type parent_resolution =
   | Parent_by_lexical_scope
   | Parent_by_lexical_scope_then_homonym
 
+type relative_module =
+  | Root_module
+  | Own_module
+  | Parent_module
+
+type reexport_source =
+  | Reexports_from_init_file
+  | Reexports_from_public_directives
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -46,10 +55,13 @@ type t = {
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
   has_reexports : bool;
+  reexport_source : reexport_source;
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module | `Per_go_package | `Per_constant_path ];
+    | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate ];
+  relative_module_names : (string * relative_module) list;
+  import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
      blocks / package clauses), not the file's module identity (contrast Go). *)
   package_directive_is_namespace : bool;
@@ -59,14 +71,6 @@ type t = {
   discover_project : project_root:Fpath.t -> project_discovery;
   class_def_reshape :
     G.entity -> G.definition_kind -> (G.entity * G.definition_kind) option;
-
-  (* Narrow the project [Type_state] by per-file import hints (Rust crate homonyms). *)
-  narrow_methods_by_imports :
-    fi_imports:(string * Names.Module_qn.t) list ->
-    file_of_func:(Func_info.t -> string option) ->
-    Type_state.t ->
-    Type_state.t;
-
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;

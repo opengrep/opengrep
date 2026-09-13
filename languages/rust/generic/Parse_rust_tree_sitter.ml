@@ -2036,12 +2036,13 @@ and map_function_declaration (env : env) (v1, v2, v3, v4, v5) :
   { name; type_params; params; retval }
 
 and map_function_item (env : env) outer_attrs
-    ((_v0TODO, v1, v2, v3, v4, v5, v6, v7, v8) : CST.function_item) : G.stmt =
-  (* TODO v0 visi modifier *)
+    ((v0, v1, v2, v3, v4, v5, v6, v7, v8) : CST.function_item) : G.stmt =
+  (* The visibility modifier is an attribute of the function. *)
   let attrs =
-    match v1 with
-    | Some x -> map_function_modifiers env x @ outer_attrs
-    | None -> outer_attrs
+    map_visibility env v0
+    @ (match v1 with
+      | Some x -> map_function_modifiers env x @ outer_attrs
+      | None -> outer_attrs)
   in
   let id = token env v2 (* "fn" *) in
   let fn_decl = map_function_declaration env (v3, v4, v5, v6, v7) in
@@ -2762,7 +2763,7 @@ and map_scoped_type_identifier_name (env : env)
     ((v1, v2, v3) : CST.scoped_type_identifier) : G.name =
   (* TODO: QTop *)
   let _colons = token env v2 (* "::" *) in
-  let _either_optTODO =
+  let qualifier =
     match v1 with
     | Some x -> (
         match x with
@@ -2777,7 +2778,11 @@ and map_scoped_type_identifier_name (env : env)
   in
   let ident = ident env v3 in
   (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
-  H2.name_of_id ident
+  match qualifier with
+  | Some (Left name) -> H2.add_suffix_to_name ident name
+  | Some (Right (l, type_args, r)) ->
+      H2.add_type_args_to_name (H2.name_of_id ident) (l, type_args, r)
+  | None -> H2.name_of_id ident
 
 and map_scoped_type_identifier_in_expression_position (env : env)
     ((v1, v2, v3) : CST.scoped_type_identifier_in_expression_position) : G.name
@@ -2932,10 +2937,11 @@ and map_type_ (env : env) (x : CST.type_) : G.type_ =
       let name = map_generic_type_name env x in
       G.TyN name |> G.t
   | `Scoped_type_id x ->
-      (*TODO Record the fully-qualified name.
-        We only record `B` for `A::B` right now.
-        We have examples of this sort of pattern
-        in tests/parsing/rust/types.rs *)
+      (* The name carries every segment the source writes, so `A::B` is
+         recorded as the qualified name `A::B`; a bracketed qualifier such
+         as `<A as B>::C` keeps its type arguments and not the trait name.
+         There are examples of this sort of pattern in
+         tests/parsing/rust/types.rs *)
       let n = map_scoped_type_identifier_name env x in
       G.TyN n |> G.t
   | `Tuple_type x -> map_tuple_type env x
@@ -3044,7 +3050,7 @@ and map_use_clause (env : env) (x : CST.use_clause) use : G.directive list =
 and prepend_module_name (scope : G.dotted_ident) (modname : G.module_name) :
     G.module_name =
   match modname with
-  | DottedName modname -> G.DottedName (modname @ scope)
+  | DottedName modname -> G.DottedName (scope @ modname)
   | _ -> modname
 
 and prepend_scope (dir : G.directive) (scope : G.dotted_ident option) :
@@ -3107,6 +3113,13 @@ and map_visibility_quantifier (env : env) (v1, v2, v3) : G.attribute =
   in
   let _rparen = token env v3 (* ")" *) in
   attribute
+
+and map_visibility (env : env) (x : CST.visibility_modifier option) :
+    G.attribute list =
+  match x with
+  | Some (modifier : CST.visibility_modifier) ->
+      map_visibility_modifier env modifier
+  | None -> []
 
 and map_visibility_modifier (env : env) (x : CST.visibility_modifier) :
     G.attribute list =
@@ -3313,7 +3326,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let _semicolon = token env tok in
       (* ";" *)
       []
-  | `Mod_item (_v0TODO, v1, v2, v3) ->
+  | `Mod_item (v0, v1, v2, v3) ->
       let _mod_TODO = token env v1 (* "mod" *) in
       let ident = ident env v2 in
       (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
@@ -3322,7 +3335,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let ent =
         {
           G.name = G.EN (G.Id (ident, G.empty_id_info ()));
-          G.attrs = outer_attrs;
+          G.attrs = map_visibility env v0 @ outer_attrs;
           G.tparams = None;
         }
       in
@@ -3331,7 +3344,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let _externTODO = map_extern_modifier env v1 in
       let blocks = map_decls_or_semi env v2 in
       blocks
-  | `Struct_item (_v0TODO, v1, v2, v3, v4) ->
+  | `Struct_item (v0, v1, v2, v3, v4) ->
       let struct_ = token env v1 (* "struct" *) in
       let ident = ident env v2 in
       (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
@@ -3371,7 +3384,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let ent =
         {
           G.name = G.EN (G.Id (ident, G.empty_id_info ()));
-          attrs = outer_attrs;
+          attrs = map_visibility env v0 @ outer_attrs;
           tparams = type_params;
         }
       in
@@ -3396,7 +3409,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
         }
       in
       [ G.DefStmt (ent, G.TypeDef type_def) |> G.s ]
-  | `Enum_item (_v0TODO, v1, v2, v3, v4, v5) ->
+  | `Enum_item (v0, v1, v2, v3, v4, v5) ->
       let _enumTODO = token env v1 (* "enum" *) in
       let ident = ident env v2 in
       (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
@@ -3407,7 +3420,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let ent =
         {
           G.name = G.EN (G.Id (ident, G.empty_id_info ()));
-          G.attrs = outer_attrs;
+          G.attrs = map_visibility env v0 @ outer_attrs;
           G.tparams = type_params;
         }
       in
@@ -3469,7 +3482,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let attrs = deoptionalize [ unsafe_attr ] @ outer_attrs in
       let impl = ident env v2 (* "impl" *) in
       let tparams = Option.map (map_type_parameters env) v3 in
-      let _trait_typeTODO =
+      let trait_type =
         Option.map
           (fun (v1, v2, v3) ->
             let _v1 =
@@ -3499,7 +3512,15 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let body = map_decls_or_semi env v7 in
       (* TODO not sure what to put for the name *)
       let ent = G.basic_entity ~attrs ?tparams impl in
-      let def = G.OtherDef (("Impl", snd impl), [ G.T ty; G.Ss body ]) in
+      let def =
+        G.OtherDef
+          ( ("Impl", snd impl),
+            [ G.T ty ]
+            @ (match trait_type with
+              | Some (trait_ty : G.type_) -> [ G.T trait_ty ]
+              | None -> [])
+            @ [ G.Ss body ] )
+      in
       [ G.DefStmt (ent, def) |> G.s ]
   | `Trait_item (_v0TODO, v1, v2, v3, v4, v5, v6, v7) ->
       let unsafe_attr =
@@ -3540,11 +3561,15 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
         }
       in
       [ G.DefStmt (ent, G.ClassDef class_def) |> G.s ]
-  | `Use_decl (_v0TODO, v1, v2, v3) ->
+  | `Use_decl (v0, v1, v2, v3) ->
+      let visibility = map_visibility env v0 in
       let use = token env v1 (* "use" *) in
       let use_clauses = map_use_clause env v2 use in
       let _semicolon = token env v3 (* ";" *) in
-      List_.map (fun x -> G.DirectiveStmt x |> G.s) use_clauses
+      List_.map
+        (fun (dir : G.directive) ->
+          G.DirectiveStmt { dir with G.d_attrs = visibility } |> G.s)
+        use_clauses
   | `Extern_crate_decl (_v0TODO, v1, v2, v3, v4, v5) ->
       let extern = token env v1 (* "extern" *) in
       let _crate = token env v2 (* "crate" *) in

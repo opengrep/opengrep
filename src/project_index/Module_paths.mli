@@ -17,9 +17,15 @@ val specifier_resolution_of_files :
 val module_qn_of_file :
   cfg:Index_lang_rules.t ->
   go_modules:Go_modules.t ->
+  rust_crates:Rust_crates.t ->
   project_root:Fpath.t ->
   ast:AST_generic.program option ->
   Fpath.t ->
+  Names.Module_qn.t
+
+val relative_module_qn :
+  current:Names.Module_qn.t ->
+  Index_lang_rules.relative_module ->
   Names.Module_qn.t
 
 val module_name_string :
@@ -27,6 +33,7 @@ val module_name_string :
   resolution:specifier_resolution ->
   current_file:Fpath.t ->
   current_module_path:Names.Module_qn.t ->
+  own_module_names:unit Common.SMap.t ->
   is_init_file:bool ->
   AST_generic.module_name ->
   Names.Module_qn.t option

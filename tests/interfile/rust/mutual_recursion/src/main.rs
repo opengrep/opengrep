@@ -1,6 +1,4 @@
-mod lib;
-
-use lib::p;
+use mutual_recursion::p;
 
 fn main() {
     // The source is injected inside the cycle p -> q -> r -> p and must

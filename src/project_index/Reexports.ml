@@ -26,30 +26,46 @@ let expose_free_as ~(alias : string) (func : FA.func_info) : FA.func_info =
     in
     { func with FA.fn_id = Func_info.free_id alias_name; FA.entity = None }
 
-(* [bound -> target] for every name an [__init__]-style package file
-   re-exports: importing [pkg.local] resolves to the defining module. *)
+(* [bound -> target] for every name a file re-exports: importing
+   [pkg.local] resolves to the defining module. *)
+let reexports_of_file ~(cfg : Index_lang_rules.t) (fi : Types.file_info)
+    : Types.import list =
+  if not cfg.Index_lang_rules.has_reexports then []
+  else
+    match cfg.Index_lang_rules.reexport_source with
+    | Index_lang_rules.Reexports_from_init_file ->
+      if cfg.Index_lang_rules.is_init_file fi.Types.fi_file then
+        fi.Types.fi_imports
+      else []
+    | Index_lang_rules.Reexports_from_public_directives ->
+      List.filter
+        (fun (imp : Types.import) ->
+          match imp.Types.im_role with
+          | Types.Role_reexports -> true
+          | Types.Role_binds -> false)
+        fi.Types.fi_imports
+
 let build_reexport_map ~(cfg : Index_lang_rules.t)
     (file_infos : Types.file_info list)
   : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t =
-  (* Re-exports only come from package files: bounded by the file count. *)
+  (* One entry per re-exported name: bounded by the import count. *)
   let reexport_map = Hashtbl.create (List.length file_infos) in
   if not cfg.Index_lang_rules.has_reexports then reexport_map
   else begin
     List.iter (fun (fi : Types.file_info) ->
-      if cfg.Index_lang_rules.is_init_file fi.fi_file then
-        let pkg = fi.fi_module_path in
-        List.iter (fun (imp : Types.import) ->
-          match Imports.binding_of imp with
-          | Imports.Wildcard_from _ -> ()
-          | Imports.Named_binding { local; target } ->
-            let bound =
-              if Names.Module_qn.is_empty pkg
-              then Names.Module_qn.of_string local
-              else Names.Module_qn.concat pkg local
-            in
-            if not (Names.Module_qn.equal bound target) then
-              Hashtbl.replace reexport_map bound target
-        ) fi.fi_imports
+      let pkg = fi.fi_module_path in
+      List.iter (fun (imp : Types.import) ->
+        match Imports.binding_of imp with
+        | Imports.Wildcard_from _ -> ()
+        | Imports.Named_binding { local; target } ->
+          let bound =
+            if Names.Module_qn.is_empty pkg
+            then Names.Module_qn.of_string local
+            else Names.Module_qn.concat pkg local
+          in
+          if not (Names.Module_qn.equal bound target) then
+            Hashtbl.replace reexport_map bound target
+      ) (reexports_of_file ~cfg fi)
     ) file_infos;
     reexport_map
   end
@@ -136,7 +152,7 @@ let star_exported ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
   | Some (names : (string, unit) Hashtbl.t) -> Hashtbl.mem names name
   | None -> String.length name > 0 && not (Char.equal name.[0] '_')
 
-let resolve_into_module_index
+let resolve_into_module_index ~(cfg : Index_lang_rules.t)
     ~(project_funcs_by_module
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t)
     ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
@@ -198,7 +214,7 @@ let resolve_into_module_index
             (MQMap.add fi.fi_module_path merged overlay,
              n_added + n, n_wildcard)
         | _ -> acc
-      ) acc fi.fi_imports
+      ) acc (reexports_of_file ~cfg fi)
     ) (overlay, 0, 0) file_infos
   in
   (* Iterate to a fixpoint so a chained re-export resolves regardless of

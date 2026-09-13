@@ -19,12 +19,6 @@ let top_level_bindings ~(definitions_by_qn : definition Common.SMap.t)
       | None -> bindings)
     definitions_by_qn []
 
-let classes_by_qn (classes : class_info list) : class_info Common.SMap.t =
-  List.fold_left
-    (fun (by_qn : class_info Common.SMap.t) (ci : class_info) ->
-      Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) ci by_qn)
-    Common.SMap.empty classes
-
 let own_regions (classes : class_info list) : Names.Module_qn.t list =
   List.sort_uniq Names.Module_qn.compare
     (List.map
@@ -46,7 +40,7 @@ let build
   let own_classes =
     Option.value (Common.SMap.find_opt fi_file_str classes_by_file) ~default:[]
   in
-  let own_by_qn = classes_by_qn own_classes in
+  let own_by_qn = Scope_binding.classes_by_qn own_classes in
   let function_bindings =
     Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
   in
@@ -63,29 +57,17 @@ let build
           (Common.SMap.find_opt (Names.Class_qn.to_string owner) own_by_qn))
       own_classes
   in
-  let in_class (ci : class_info)
-      (bindings :
-         pos:Pos.t option -> parent_path:IL.name option list ->
-         Scope_binding.positioned_binding list)
-      : Scope_binding.positioned_binding list =
-    bindings ~pos:(Scope_binding.position_of_tok (Function_id.tok ci.ci_id))
-      ~parent_path:[ Some (Scope_binding.class_il_name_of ci) ]
-  in
   let member_bindings =
-    List.concat_map
-      (fun (ci : class_info) ->
-        in_class ci (fun ~pos ~parent_path ->
-          List.concat_map
-            (fun ((name : string), (funcs : Func_info.t list)) ->
-              Scope_binding.function_binding_of ~pos ~parent_path name funcs)
-            (Scope_package.members_along_order ~resolution_orders
-               ~methods_by_class ci.ci_qn)))
+    Scope_binding.class_member_bindings
+      ~members_of:
+        (Scope_package.members_along_order ~resolution_orders
+           ~methods_by_class)
       own_classes
   in
   let nesting_bindings =
     List.concat_map
       (fun (ci : class_info) ->
-        in_class ci (fun ~pos ~parent_path ->
+        Scope_binding.bindings_in_class ci (fun ~pos ~parent_path ->
           List.concat_map
             (fun (prefix : Names.Class_qn.t) ->
               Common.SMap.fold

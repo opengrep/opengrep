@@ -1,0 +1,12 @@
+rules:
+  - id: trait-method-ambiguous
+    languages: [rust]
+    message: tainted data reaches a sink
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

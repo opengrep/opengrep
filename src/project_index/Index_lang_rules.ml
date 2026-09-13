@@ -27,6 +27,15 @@ type parent_resolution =
   | Parent_by_lexical_scope
   | Parent_by_lexical_scope_then_homonym
 
+type relative_module =
+  | Root_module
+  | Own_module
+  | Parent_module
+
+type reexport_source =
+  | Reexports_from_init_file
+  | Reexports_from_public_directives
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -44,10 +53,13 @@ type t = {
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
   has_reexports : bool;
+  reexport_source : reexport_source;
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module | `Per_go_package | `Per_constant_path ];
+    | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate ];
+  relative_module_names : (string * relative_module) list;
+  import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
      C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
      qualified by the region open at its definition, so several or nested
@@ -64,11 +76,6 @@ type t = {
   discover_project : project_root:Fpath.t -> project_discovery;
   class_def_reshape :
     G.entity -> G.definition_kind -> (G.entity * G.definition_kind) option;
-  narrow_methods_by_imports :
-    fi_imports:(string * Names.Module_qn.t) list ->
-    file_of_func:(Func_info.t -> string option) ->
-    Type_state.t ->
-    Type_state.t;
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;
@@ -266,6 +273,7 @@ let default : t = {
   wrapper_dunders = (fun _ -> []);
   walks_inheritance = false;
   has_reexports = false;
+  reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = true;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
@@ -276,8 +284,8 @@ let default : t = {
   discover_project =
     (fun ~project_root:_ -> { excludes = []; module_paths = [] });
   class_def_reshape = (fun _ _ -> None);
-  narrow_methods_by_imports =
-    (fun ~fi_imports:_ ~file_of_func:_ ts -> ts);
+  relative_module_names = [];
+  import_head_may_be_own_module = false;
   strip_field_sigil = (fun s -> s);
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
@@ -287,46 +295,6 @@ let default : t = {
   method_owner_of_funcdef = (fun _ -> None);
   name_is_exported = (fun _ -> true);
 }
-
-let string_contains (str : string) (sub : string) : bool =
-  let n = String.length str and m = String.length sub in
-  let rec loop i =
-    if i + m > n then false
-    else if String.equal (String.sub str i m) sub then true
-    else loop (i + 1)
-  in
-  m > 0 && loop 0
-
-(* Skips when nothing survives so a wrong crate hint never erases a class. *)
-let rust_narrow_methods_by_imports
-    ~(fi_imports : (string * Names.Module_qn.t) list)
-    ~(file_of_func : Func_info.t -> string option)
-    (ts : Type_state.t) : Type_state.t =
-  let import_hint : (string, string) Hashtbl.t = Hashtbl.create 16 in
-  List.iter (fun (local, target) ->
-    match Names.Module_qn.parts target with
-    | hint :: _ :: _ when String.length hint > 0 ->
-      Hashtbl.replace import_hint local hint
-    | _ -> ()
-  ) fi_imports;
-  if Hashtbl.length import_hint = 0 then ts
-  else
-    Hashtbl.fold (fun cls hint state ->
-      let cls_name = Names.Class_name.of_string cls in
-      match Type_state.get_methods state cls_name with
-      | None -> state
-      | Some methods ->
-        let hint_dash =
-          String.map (fun ch -> if ch = '_' then '-' else ch) hint
-        in
-        let keep (func : Func_info.t) : bool =
-          match file_of_func func with
-          | None -> false
-          | Some file ->
-            string_contains file hint || string_contains file hint_dash
-        in
-        Type_state.set_methods state cls_name (Func_info.prefer ~keep methods)
-    ) import_hint ts
 
 let python : t = { default with
   is_init_file = python_is_init_file;
@@ -340,6 +308,7 @@ let python : t = { default with
   wrapper_dunders = python_wrapper_dunders;
   walks_inheritance = true;
   has_reexports = true;
+  reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = false;
 }
 
@@ -606,20 +575,26 @@ let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
   : (G.entity * G.definition_kind) option =
   match def_kind with
   | G.OtherDef ((kind, _), anys) when String.equal kind "Impl" ->
-    let ty_opt =
-      List.find_map (function G.T ty -> Some ty | _ -> None) anys
+    let types =
+      List.filter_map (function G.T ty -> Some ty | _ -> None) anys
     in
     let stmts =
       List.concat_map (function G.Ss body -> body | _ -> []) anys
     in
-    (match ty_opt with
+    let self_ty, trait_tys =
+      match types with
+      | [] -> (None, [])
+      | self_ty :: traits -> (Some self_ty, traits)
+    in
+    (match self_ty with
      | Some { G.t = G.TyN (G.Id _ as name); _ }
      | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as name); _ }; _ } ->
        let new_ent = { ent with G.name = G.EN name } in
        let fk = Tok.unsafe_fake_tok "impl" in
        let cdef = G.ClassDef {
          G.ckind = (G.Class, fk);
-         cextends = []; cimplements = []; cmixins = [];
+         cextends = List.map (fun (ty : G.type_) -> (ty, None)) trait_tys;
+         cimplements = []; cmixins = [];
          cparams = (fk, [], fk);
          cbody = (fk, List.map (fun stmt -> G.F stmt) stmts, fk);
        } in
@@ -627,9 +602,18 @@ let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
      | _ -> None)
   | _ -> None
 
+let rust_relative_module_names : (string * relative_module) list =
+  [ ("crate", Root_module); ("self", Own_module); ("super", Parent_module) ]
+
 let rust : t = { default with
-  narrow_methods_by_imports = rust_narrow_methods_by_imports;
   class_def_reshape = rust_class_def_reshape;
+  unqualified_scope = `Per_crate;
+  relative_module_names = rust_relative_module_names;
+  import_head_may_be_own_module = true;
+  has_reexports = true;
+  reexport_source = Reexports_from_public_directives;
+  walks_inheritance = true;
+  parent_resolution = Parent_in_own_scope;
 }
 
 (* Package-scoped languages: a type/class lives in a package, resolved by

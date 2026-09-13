@@ -24,6 +24,19 @@ val bindings_of_positioned :
 
 val class_il_name_of : Types.class_info -> IL.name
 
+val classes_by_qn : Types.class_info list -> Types.class_info Common.SMap.t
+
+val bindings_in_class :
+  Types.class_info ->
+  (pos:Pos.t option -> parent_path:IL.name option list ->
+   positioned_binding list) ->
+  positioned_binding list
+
+val class_member_bindings :
+  members_of:(Names.Class_qn.t -> (string * Func_info.t list) list) ->
+  Types.class_info list ->
+  positioned_binding list
+
 val own_class_bindings :
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->

@@ -127,8 +127,15 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | _ -> false)
       attrs
   in
+  let marks_reexport (attrs : G.attribute list) : bool =
+    match cfg.Index_lang_rules.reexport_source with
+    | Index_lang_rules.Reexports_from_init_file -> false
+    | Index_lang_rules.Reexports_from_public_directives ->
+      has_keyword G.Public attrs
+  in
   let role_of_attrs (attrs : G.attribute list) : import_role =
-    if has_keyword G.Reexport attrs then Role_reexports else Role_binds
+    if has_keyword G.Reexport attrs || marks_reexport attrs then Role_reexports
+    else Role_binds
   in
   let binds_of_attrs (attrs : G.attribute list) : import_binds =
     if has_keyword G.TypeOnly attrs then Binds_type
@@ -136,10 +143,23 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     else if has_keyword G.Const attrs then Binds_constant
     else Binds_any
   in
+  let own_module_names : unit Common.SMap.t =
+    if not cfg.Index_lang_rules.import_head_may_be_own_module then
+      Common.SMap.empty
+    else
+      List.fold_left
+        (fun (names : unit Common.SMap.t) (stmt : G.stmt) ->
+          match stmt.G.s with
+          | G.DefStmt ({ G.name = G.EN (G.Id (((name : string), _), _)); _ },
+                       G.ModuleDef { G.mbody = G.ModuleStruct _ }) ->
+            Common.SMap.add name () names
+          | _ -> names)
+        Common.SMap.empty ast
+  in
   let module_name_of (mn : G.module_name) : Names.Module_qn.t option =
     match
       Module_paths.module_name_string ~cfg ~resolution ~current_file
-        ~current_module_path ~is_init_file mn
+        ~current_module_path ~own_module_names ~is_init_file mn
     with
     | Some (qn : Names.Module_qn.t) when not (Names.Module_qn.is_empty qn) ->
       Some qn
@@ -175,6 +195,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
                  | Error _ -> spec)
               | `Per_module -> ""
               | `Per_file
+              | `Per_crate
               | `Per_constant_path
               | `Per_package
               | `Per_namespace -> spec))
@@ -184,7 +205,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | Binds_type, _ -> Binds_type
         | (Binds_any | Binds_function | Binds_constant | Binds_module),
           `Per_module -> Binds_module
-        | _, (`Per_file | `Per_constant_path | `Per_directory
+        | _, (`Per_file | `Per_crate | `Per_constant_path | `Per_directory
              | `Per_go_package | `Per_package | `Per_namespace) ->
           attr_binds
       in
@@ -287,6 +308,7 @@ let with_package_clause_locals ~(cfg : Index_lang_rules.t)
     : file_info list * class_info list =
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_file
+  | `Per_crate
   | `Per_constant_path
   | `Per_directory
   | `Per_module

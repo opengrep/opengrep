@@ -1,3 +1,6 @@
+use crate::sink::sink;
+use crate::source::source;
+
 fn test_builtin_filter() {
     let tainted = source();
     let arr = vec![tainted];

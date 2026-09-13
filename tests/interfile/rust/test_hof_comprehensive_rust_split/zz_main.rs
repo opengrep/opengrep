@@ -1,3 +1,5 @@
+use crate::source::source;
+
 // Comprehensive HOF test for Rust: Custom and built-in higher-order functions
 // All of these should detect taint flow from source() to sink()
 

@@ -11,7 +11,7 @@ let build_by_module
     Hashtbl.create (List.length file_infos)
   in
   match cfg.Index_lang_rules.unqualified_scope with
-  | `Per_file | `Per_directory | `Per_go_package -> begin
+  | `Per_file | `Per_crate | `Per_directory | `Per_go_package -> begin
     let file_to_module : (string, Names.Module_qn.t) Hashtbl.t =
       Hashtbl.create (List.length file_infos)
     in
@@ -96,6 +96,7 @@ let build_attributes_by_module
     | `Per_constant_path
     | `Per_go_package -> false
     | `Per_file
+    | `Per_crate
     | `Per_directory -> true
   in
   let empty_per_module = Common.SMap.map (fun () -> Common.SMap.empty) module_qns in

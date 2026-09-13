@@ -11,7 +11,7 @@ val build_attributes_by_module :
   Func_lookup.module_attributes
 
 (* Bucket free funcs by file [Module_qn]; empty unless the scope is
-   [`Per_file] or [`Per_directory]. *)
+   [`Per_file], [`Per_crate], [`Per_directory] or [`Per_go_package]. *)
 val build_by_module :
   cfg:Index_lang_rules.t ->
   file_infos:Types.file_info list ->

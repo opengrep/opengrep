@@ -1,15 +1,20 @@
-(* [bound -> target] for every name an [__init__]-style package file
-   re-exports; empty unless [cfg.has_reexports]. *)
+(* [bound -> target] for every name a file re-exports, which is every
+   import of an [__init__]-style package file or every import a directive
+   marks public, by [cfg.reexport_source]; empty unless
+   [cfg.has_reexports]. *)
 val build_reexport_map :
   cfg:Index_lang_rules.t ->
   Types.file_info list ->
   (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t
 
-(* [`Per_file]-only: [from .X import name] adds [name] to the importer's
-   module. Pure: reads [project_funcs_by_module], returns the updated
-   per-module func lists for the caller to apply. *)
+(* A re-exported name is added to the re-exporting module: the caller
+   runs this for a language whose [has_reexports] is true, and
+   [cfg.reexport_source] says which imports re-export. Pure: reads
+   [project_funcs_by_module], returns the updated per-module func lists
+   for the caller to apply. *)
 
 val resolve_into_module_index :
+  cfg:Index_lang_rules.t ->
   project_funcs_by_module:
     (Names.Module_qn.t, Graph_from_AST.func_info list) Hashtbl.t ->
   dunder_all:(string, unit) Hashtbl.t Common.SMap.t ->

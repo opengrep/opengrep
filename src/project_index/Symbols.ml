@@ -317,7 +317,9 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
          module is also emitted as a [class_info] so [include M] resolves it as
          a parent — the module's instance methods reach the includer through
          the MRO ([Type_state] already attributes them to [M] via
-         [Visit_function_defs]'s module-as-class-scope handling). *)
+         [Visit_function_defs]'s module-as-class-scope handling).  A module
+         emitted as a class is also what a path segment binds to, so
+         [a::handle] in Rust reaches the definitions of the module [a]. *)
       | G.ModuleDef { G.mbody = G.ModuleStruct (_, items); _ } -> begin
           match entity_simple_name ent, function_id_of_entity ent with
           | None, _ | _, None -> super#visit_definition scope (ent, def_kind)
@@ -416,6 +418,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_package
     | `Per_namespace -> true
     | `Per_file
+    | `Per_crate
     | `Per_constant_path
     | `Per_directory
     | `Per_go_package
@@ -430,6 +433,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       if Names.Module_qn.is_empty module_path then []
       else Names.Module_qn.parts module_path
     | `Per_file
+    | `Per_crate
     | `Per_constant_path
     | `Per_directory
     | `Per_go_package
@@ -485,6 +489,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_module -> module_path :: opened
     | `Per_file
+    | `Per_crate
     | `Per_constant_path
     | `Per_directory
     | `Per_go_package

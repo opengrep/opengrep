@@ -44,6 +44,32 @@ let path_matches_any (matchers : matcher list) (rel_path : Ppath.t) : bool =
     | Glob re -> Re.execp re rel_str
   ) matchers
 
+let manifest_dirs ~(project_root : Fpath.t) ~(manifest : string)
+    (files : Fpath.t list) : Fpath.t list =
+  let root = Fpath.normalize project_root in
+  let rec walk ((seen : Common.SSet.t), (dirs : Fpath.t list))
+      (dir : Fpath.t) : Common.SSet.t * Fpath.t list =
+    let dir = Fpath.normalize dir in
+    let key = Fpath.to_string dir in
+    if Common.SSet.mem key seen then (seen, dirs)
+    else
+      let seen = Common.SSet.add key seen in
+      let dirs =
+        if Sys.file_exists (Fpath.to_string (Fpath.add_seg dir manifest))
+        then dir :: dirs
+        else dirs
+      in
+      let parent = Fpath.parent dir in
+      if Fpath.is_prefix root dir && not (Fpath.equal parent dir)
+      then walk (seen, dirs) parent
+      else (seen, dirs)
+  in
+  snd
+    (List.fold_left
+       (fun (state : Common.SSet.t * Fpath.t list) (file : Fpath.t) ->
+         walk state (Fpath.parent file))
+       (Common.SSet.empty, []) files)
+
 let relative_to ~(project_root : Fpath.t) (file : Fpath.t) : Fpath.t =
   match Fpath.relativize ~root:project_root file with
   | Some rel -> rel

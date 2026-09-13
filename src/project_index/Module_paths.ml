@@ -119,36 +119,42 @@ let module_of_specifier (files : module_files) ~(current_file : Fpath.t)
   else module_of_bare files specifier
 
 let module_qn_of_file ~(cfg : Index_lang_rules.t)
-    ~(go_modules : Go_modules.t) ~(project_root : Fpath.t)
+    ~(go_modules : Go_modules.t) ~(rust_crates : Rust_crates.t)
+    ~(project_root : Fpath.t)
     ~(ast : G.program option) (file : Fpath.t) : Names.Module_qn.t =
   match Go_modules.import_path_of_dir go_modules (Fpath.parent file) with
   | Some (import_path : Go_import_path.t) ->
     Names.Module_qn.of_string (Go_import_path.to_string import_path)
   | None -> (
-    match cfg.Index_lang_rules.unqualified_scope with
-    | `Per_go_package ->
-      Names.Module_qn.of_string
-        (Go_import_path.to_string
-           (Go_import_path.of_segments
-              (Fpath.segs
-                 (Fpath.normalize
-                    (Discover.relative_to ~project_root (Fpath.parent file))))))
-    | `Per_file
-    | `Per_constant_path
-    | `Per_directory
-    | `Per_module
-    | `Per_namespace
-    | `Per_package -> (
-      match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
-      | Some module_str -> Names.Module_qn.of_string module_str
-      | None ->
-        let rel = Discover.relative_to ~project_root file in
-        let path_str =
-          Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string
-        in
-        let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
+    match Rust_crates.module_qn_of_file rust_crates file with
+    | Some (module_qn : Names.Module_qn.t) -> module_qn
+    | None -> (
+      match cfg.Index_lang_rules.unqualified_scope with
+      | `Per_go_package ->
         Names.Module_qn.of_string
-          (String.concat "." (Fpath.segs (Fpath.v path_str)))))
+          (Go_import_path.to_string
+             (Go_import_path.of_segments
+                (Fpath.segs
+                   (Fpath.normalize
+                      (Discover.relative_to ~project_root
+                         (Fpath.parent file))))))
+      | `Per_file
+      | `Per_constant_path
+      | `Per_crate
+      | `Per_directory
+      | `Per_module
+      | `Per_namespace
+      | `Per_package -> (
+        match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
+        | Some module_str -> Names.Module_qn.of_string module_str
+        | None ->
+          let rel = Discover.relative_to ~project_root file in
+          let path_str =
+            Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string
+          in
+          let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
+          Names.Module_qn.of_string
+            (String.concat "." (Fpath.segs (Fpath.v path_str))))))
 
 let specifier_resolution_of_files ~(cfg : Index_lang_rules.t)
     ~(project_root : Fpath.t) ~(paths : (string * string list) list)
@@ -159,7 +165,7 @@ let specifier_resolution_of_files ~(cfg : Index_lang_rules.t)
           (fun (modules : Names.Module_qn.t Common.SMap.t) (file : Fpath.t) ->
             Common.SMap.add (Fpath.to_string file)
               (module_qn_of_file ~cfg ~go_modules:Go_modules.empty
-                 ~project_root ~ast:None file)
+                 ~rust_crates:Rust_crates.empty ~project_root ~ast:None file)
               modules)
           Common.SMap.empty files;
       mf_paths =
@@ -169,22 +175,42 @@ let specifier_resolution_of_files ~(cfg : Index_lang_rules.t)
               pe_targets = List.map pattern_of_string targets })
           paths }
 
+let relative_head ~(cfg : Index_lang_rules.t) (segment : string)
+    : Index_lang_rules.relative_module option =
+  Option.map snd
+    (List.find_opt
+       (fun ((name : string), _) -> String.equal name segment)
+       cfg.Index_lang_rules.relative_module_names)
+
+let qn_parts (module_qn : Names.Module_qn.t) : string list =
+  if Names.Module_qn.is_empty module_qn then []
+  else Names.Module_qn.parts module_qn
+
+let relative_module_qn ~(current : Names.Module_qn.t)
+    (relative : Index_lang_rules.relative_module) : Names.Module_qn.t =
+  match relative with
+  | Index_lang_rules.Own_module -> current
+  | Index_lang_rules.Root_module -> (
+    match qn_parts current with
+    | [] -> Names.Module_qn.empty
+    | root :: _ -> Names.Module_qn.of_parts [ root ])
+  | Index_lang_rules.Parent_module -> (
+    match Names.Module_qn.split_last current with
+    | Some ((parent : Names.Module_qn.t), _) -> parent
+    | None -> Names.Module_qn.empty)
+
 let module_name_string ~(cfg : Index_lang_rules.t)
     ~(resolution : specifier_resolution)
     ~(current_file : Fpath.t)
     ~(current_module_path : Names.Module_qn.t)
+    ~(own_module_names : unit Common.SMap.t)
     ~(is_init_file : bool)
     (mn : G.module_name) : Names.Module_qn.t option =
-  match mn with
-  | G.FileName (spec, _) -> (
-    match resolution with
-    | Specifier_is_module_name ->
-      Some
-        (Names.Module_qn.of_string
-           (cfg.Index_lang_rules.normalize_import_specifier spec))
-    | Specifier_names_file (files : module_files) ->
-      module_of_specifier files ~current_file spec)
-  | G.DottedName parts ->
+  let under_own_module (parts : G.ident list) : Names.Module_qn.t =
+    Names.Module_qn.of_parts
+      (qn_parts current_module_path @ List.map fst parts)
+  in
+  let of_dotted (parts : G.ident list) : Names.Module_qn.t option =
     let prefix_segs, real_parts =
       let rec split acc = function
         | ((part_str, _) as seg) :: rest
@@ -208,14 +234,33 @@ let module_name_string ~(cfg : Index_lang_rules.t)
         ) 0 prefix_segs
       in
       let drops = init_offset + extra_dotdots in
-      let pkg_parts =
-        if Names.Module_qn.is_empty current_module_path then []
-        else Names.Module_qn.parts current_module_path
-      in
+      let pkg_parts = qn_parts current_module_path in
       let n_keep = max 0 (List.length pkg_parts - drops) in
       let kept = List.filteri (fun i _ -> Int.compare i n_keep < 0) pkg_parts in
       Some (Names.Module_qn.of_parts (kept @ real_strs))
     end
+  in
+  match mn with
+  | G.FileName (spec, _) -> (
+    match resolution with
+    | Specifier_is_module_name ->
+      Some
+        (Names.Module_qn.of_string
+           (cfg.Index_lang_rules.normalize_import_specifier spec))
+    | Specifier_names_file (files : module_files) ->
+      module_of_specifier files ~current_file spec)
+  | G.DottedName (((head : string), _) :: (rest : G.ident list) as parts) -> (
+    match relative_head ~cfg head with
+    | Some (relative : Index_lang_rules.relative_module) ->
+      Some
+        (Names.Module_qn.of_parts
+           (qn_parts (relative_module_qn ~current:current_module_path relative)
+            @ List.map fst rest))
+    | None ->
+      if Common.SMap.mem head own_module_names then
+        Some (under_own_module parts)
+      else of_dotted parts)
+  | G.DottedName ([] as parts) -> of_dotted parts
 
 let enclosing_package ~(cfg : Index_lang_rules.t) ~(file : Fpath.t)
     (module_qn : Names.Module_qn.t) : Names.Module_qn.t =

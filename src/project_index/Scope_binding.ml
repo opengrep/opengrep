@@ -109,6 +109,31 @@ let class_il_name_of (ci : class_info) : IL.name =
        sid = AST_generic.SId.unsafe_default;
        id_info = AST_generic.empty_id_info () }
 
+let classes_by_qn (classes : class_info list) : class_info Common.SMap.t =
+  List.fold_left
+    (fun (by_qn : class_info Common.SMap.t) (ci : class_info) ->
+      Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) ci by_qn)
+    Common.SMap.empty classes
+
+let bindings_in_class (ci : class_info)
+    (bindings :
+       pos:Pos.t option -> parent_path:IL.name option list ->
+       positioned_binding list) : positioned_binding list =
+  bindings ~pos:(position_of_tok (Function_id.tok ci.ci_id))
+    ~parent_path:[ Some (class_il_name_of ci) ]
+
+let class_member_bindings
+    ~(members_of : Names.Class_qn.t -> (string * Func_info.t list) list)
+    (classes : class_info list) : positioned_binding list =
+  List.concat_map
+    (fun (ci : class_info) ->
+      bindings_in_class ci (fun ~pos ~parent_path ->
+        List.concat_map
+          (fun ((name : string), (funcs : Func_info.t list)) ->
+            function_binding_of ~pos ~parent_path name funcs)
+          (members_of ci.ci_qn)))
+    classes
+
 let own_class_bindings
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)

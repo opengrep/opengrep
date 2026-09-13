@@ -1,0 +1,13 @@
+mod propagates;
+mod sanitizes;
+mod sink;
+mod source;
+mod test_callback_only_propagating_lambda;
+mod test_callback_only_propagating_named;
+mod test_callback_only_sanitizing_lambda;
+mod test_callback_only_sanitizing_named;
+mod test_direct_flow_propagating_lambda;
+mod test_direct_flow_propagating_named;
+mod test_direct_flow_sanitizing_lambda;
+mod test_direct_flow_sanitizing_named;
+mod zz_main;

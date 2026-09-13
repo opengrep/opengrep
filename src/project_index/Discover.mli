@@ -1,6 +1,9 @@
 (* Read [project-includes]/[project-excludes] arrays from [pyrefly.toml]. *)
 val read_pyrefly_includes_excludes : string -> string list * string list
 
+val manifest_dirs :
+  project_root:Fpath.t -> manifest:string -> Fpath.t list -> Fpath.t list
+
 (* [file] unchanged when it is not under [project_root]. *)
 val relative_to : project_root:Fpath.t -> Fpath.t -> Fpath.t
 

@@ -1,0 +1,4 @@
+[package]
+name = "mod_dir_binding"
+version = "0.1.0"
+edition = "2021"

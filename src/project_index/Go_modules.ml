@@ -10,6 +10,8 @@ type t = {
 
 let empty = { modules = [] }
 
+let go_mod_name : string = "go.mod"
+
 let find_sub (hay : string) (needle : string) : int option =
   let nl = String.length needle and hl = String.length hay in
   if nl = 0 || nl > hl then None
@@ -41,37 +43,10 @@ let parse_go_mod (content : string) : Go_import_path.t option =
               (String.trim (String.sub line 7 (String.length line - 7))))
     else None)
 
-module SSet = Set.Make (String)
-
-let go_mod_dirs ~(project_root : Fpath.t) (go_files : Fpath.t list)
-  : Fpath.t list =
-  let root = Fpath.normalize project_root in
-  let rec walk ((seen, dirs) as st) dir =
-    let dir = Fpath.normalize dir in
-    let key = Fpath.to_string dir in
-    if SSet.mem key seen then st
-    else
-      let seen = SSet.add key seen in
-      let dirs =
-        if Sys.file_exists (Fpath.to_string (Fpath.add_seg dir "go.mod"))
-        then dir :: dirs
-        else dirs
-      in
-      let parent = Fpath.parent dir in
-      if Fpath.is_prefix root dir && not (Fpath.equal parent dir)
-      then walk (seen, dirs) parent
-      else (seen, dirs)
-  in
-  let _seen, dirs =
-    List.fold_left (fun st file -> walk st (Fpath.parent file))
-      (SSet.empty, []) go_files
-  in
-  dirs
-
 let discover ~(project_root : Fpath.t) (go_files : Fpath.t list) : t =
   let modules =
     List.fold_left (fun modules dir ->
-      let go_mod = Fpath.add_seg dir "go.mod" in
+      let go_mod = Fpath.add_seg dir go_mod_name in
       match Nonfatal.catch ~default:None
               (fun () -> Some (UFile.read_file go_mod)) with
       | None -> modules
@@ -79,7 +54,7 @@ let discover ~(project_root : Fpath.t) (go_files : Fpath.t list) : t =
         (match parse_go_mod content with
          | Some path -> { root = Fpath.normalize dir; path } :: modules
          | None -> modules))
-      [] (go_mod_dirs ~project_root go_files)
+      [] (Discover.manifest_dirs ~project_root ~manifest:go_mod_name go_files)
   in
   (* Nearest module first: the deeper root (more path segments) wins.
      Segment count, not string length — a longer module directory name at

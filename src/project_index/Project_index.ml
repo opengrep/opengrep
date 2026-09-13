@@ -519,9 +519,10 @@ let build_project_call_graph (caps : < Cap.fork >)
 
   let dunder_all = Reexports.build_dunder_all ~file_infos in
 
-  (* Re-export pass for [`Per_file] languages.  See [Reexports]. *)
-  if cfg.Index_lang_rules.unqualified_scope = `Per_file then
-    Reexports.resolve_into_module_index
+  (* Re-export pass for the languages whose imports re-export.  See
+     [Reexports]. *)
+  if cfg.Index_lang_rules.has_reexports then
+    Reexports.resolve_into_module_index ~cfg
       ~project_funcs_by_module ~dunder_all file_infos
     |> List.iter (fun (qn, funcs) ->
          Hashtbl.replace project_funcs_by_module qn funcs);
@@ -628,6 +629,7 @@ let build_project_call_graph (caps : < Cap.fork >)
           ~classes_by_file ~class_parent_paths ~file_funcs_index
           ~file_infos:indexed_files)
     | `Per_file
+    | `Per_crate
     | `Per_constant_path
     | `Per_directory
     | `Per_go_package
@@ -657,6 +659,7 @@ let build_project_call_graph (caps : < Cap.fork >)
                (Scope_module.exported_names
                   (Scope_module.exports_of module_scope))
            | `Per_file
+           | `Per_crate
            | `Per_constant_path
            | `Per_directory
            | `Per_go_package
@@ -677,6 +680,7 @@ let build_project_call_graph (caps : < Cap.fork >)
             Scope_php.build_region_bindings ~attributes_by_module
               ~file_infos:indexed_files
           | `Per_file
+          | `Per_crate
           | `Per_constant_path
           | `Per_directory
           | `Per_go_package
@@ -687,6 +691,7 @@ let build_project_call_graph (caps : < Cap.fork >)
          | `Per_namespace ->
            Scope_php.global_function_bindings ~attributes_by_module
          | `Per_file
+         | `Per_crate
          | `Per_constant_path
          | `Per_directory
          | `Per_go_package
@@ -702,6 +707,7 @@ let build_project_call_graph (caps : < Cap.fork >)
               (Scope_binding.bindings_of_positioned
                  (Scope_ruby.top_level_bindings ~definitions_by_qn))
           | `Per_file
+          | `Per_crate
           | `Per_directory
           | `Per_go_package
           | `Per_module
@@ -845,6 +851,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_key : file:string option -> G.type_ -> string option =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_file
+    | `Per_crate
     | `Per_constant_path
     | `Per_directory
     | `Per_module
@@ -987,11 +994,20 @@ let run_pipeline (caps : < Cap.fork >)
      later pass sees the methods as class methods; every other language that
      wires the hook, Go among them, applies it to the collector's view alone
      and keeps the stored ast as the parser produced it. *)
-  let reshape_class_defs (ast : G.program) : G.program =
+  let rec reshape_class_defs (ast : G.program) : G.program =
     if not (Lang.equal lang Lang.Rust) then ast
     else
       List.map (fun (stmt : G.stmt) ->
         match stmt.G.s with
+        | G.DefStmt (ent, G.ModuleDef { G.mbody = G.ModuleStruct (name, items) })
+          ->
+          { stmt with
+            G.s =
+              G.DefStmt
+                (ent,
+                 G.ModuleDef
+                   { G.mbody =
+                       G.ModuleStruct (name, reshape_class_defs items) }) }
         | G.DefStmt (ent, def_kind) ->
           (match cfg.Index_lang_rules.class_def_reshape ent def_kind with
            | Some (new_ent, new_kind) ->
@@ -1012,6 +1028,12 @@ let run_pipeline (caps : < Cap.fork >)
            (List.map absolutize files)
     else Go_modules.empty
   in
+  let rust_crates =
+    if Lang.equal lang Lang.Rust
+    then Rust_crates.discover ~project_root:project_root_abs
+           (List.map absolutize files)
+    else Rust_crates.empty
+  in
   let resolution =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_module ->
@@ -1021,6 +1043,7 @@ let run_pipeline (caps : < Cap.fork >)
         ~paths:discovered.Index_lang_rules.module_paths
         (List.map absolutize files)
     | `Per_file
+    | `Per_crate
     | `Per_constant_path
     | `Per_directory
     | `Per_go_package
@@ -1034,8 +1057,8 @@ let run_pipeline (caps : < Cap.fork >)
     in
     let ast = reshape_class_defs ast in
     let mp =
-      Module_paths.module_qn_of_file ~cfg ~go_modules ~project_root
-        ~ast:(Some ast) file
+      Module_paths.module_qn_of_file ~cfg ~go_modules ~rust_crates
+        ~project_root ~ast:(Some ast) file
     in
     Symbols.collect_in_ast ~cfg ~lang ~resolution ~module_path:mp ~file ast
   in

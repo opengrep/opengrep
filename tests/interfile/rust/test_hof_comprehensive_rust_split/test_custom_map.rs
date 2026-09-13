@@ -1,3 +1,7 @@
+use crate::sink::sink;
+use crate::source::source;
+use crate::zz_main::custom_map;
+
 fn test_custom_map() {
     let tainted = source();
     let arr = vec![tainted];

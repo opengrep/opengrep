@@ -200,7 +200,7 @@ let build_alias_to_module_qn
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_module
   | `Per_go_package -> None
-  | `Per_file | `Per_directory | `Per_namespace ->
+  | `Per_file | `Per_crate | `Per_directory | `Per_namespace ->
     let tbl : (string, Names.Module_qn.t) Hashtbl.t = Hashtbl.create 16 in
     List.iter (fun (imp : import) ->
       let local = imp.im_local in
@@ -227,7 +227,7 @@ let resolves_by_binding (lang : Lang.t) : bool =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
-  | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby -> true
+  | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust -> true
   | _ -> false
 
 let definition_of_target
@@ -315,6 +315,16 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files = []; own_modules;
              module_aliases = None }
+    | `Per_crate ->
+      let bindings, bound_class_files, module_aliases =
+        Scope_rust.build ~cfg ~definitions_by_qn ~attributes_by_module
+          ~classes_by_file ~class_parent_paths ~file_funcs_index
+          ~resolution_orders ~methods_by_class
+          ~import_aliases:(build_alias_to_module_qn ~cfg fi) fi
+      in
+      Some { scope_table = Func_lookup.scope_table_of_map bindings;
+             bound_class_files; own_modules = [];
+             module_aliases = Some module_aliases }
     | `Per_module ->
       let bound =
         Scope_module.build ~scope:module_scope ~classes_by_file
@@ -554,24 +564,19 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let funcs_by_module_qn
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
       match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file | `Per_directory | `Per_go_package ->
+      | `Per_file | `Per_crate | `Per_directory | `Per_go_package ->
         Some project_funcs_by_module
       | `Per_package | `Per_namespace | `Per_module
       | `Per_constant_path -> None
     in
     let file_type_state =
-      staged "narrow methods by imports/required files" @@ fun () ->
+      staged "narrow methods by bound files" @@ fun () ->
       match file_scope with
       | Some (scope : file_scope) ->
         narrow_methods_by_bound_files
           ~bound_class_files:scope.bound_class_files
           ~file_of_func:func_file_opt ~caller_file:fi_file_str type_state
-      | None ->
-        cfg.Index_lang_rules.narrow_methods_by_imports
-          ~fi_imports:
-            (List.map (fun (imp : import) -> (imp.im_local, imp.im_target))
-               fi.fi_imports)
-          ~file_of_func:func_file_opt type_state
+      | None -> type_state
     in
     let same_file_funcs_by_name =
       staged "same-file funcs table" @@ fun () ->

@@ -1,0 +1,4 @@
+[package]
+name = "test_map_destructure_rust_split"
+version = "0.1.0"
+edition = "2021"
