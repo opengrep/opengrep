@@ -10,6 +10,23 @@ type project_discovery = {
   module_paths : (string * string list) list;
 }
 
+type parent_position = Prepended | Appended
+
+type class_parent = {
+  cp_path : string list;
+  cp_position : parent_position;
+}
+
+type singleton_exposure =
+  | No_singleton_exposure
+  | Every_method_is_a_singleton
+  | Named_singleton_methods of string list
+
+type parent_resolution =
+  | Parent_in_own_scope
+  | Parent_by_lexical_scope
+  | Parent_by_lexical_scope_then_homonym
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -21,7 +38,8 @@ type t = {
   synth_call_dunders : G.expr -> string list option;
   inner_class_from_call : G.expr -> (string * string list) option;
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
-  class_body_extra_parents : G.class_definition -> string list list;
+  class_body_extra_parents : G.class_definition -> class_parent list;
+  class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
@@ -29,7 +47,7 @@ type t = {
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module | `Per_go_package ];
+    | `Per_module | `Per_go_package | `Per_constant_path ];
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
      C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
      qualified by the region open at its definition, so several or nested
@@ -51,23 +69,24 @@ type t = {
     file_of_func:(Func_info.t -> string option) ->
     Type_state.t ->
     Type_state.t;
-  (* When true, restrict same-named colliding methods to the files the caller
-     itself requires (whole-file "*" import specifiers — Ruby
-     [require_relative], PHP [require]/[include]).  These languages bind no
-     local name per import, so the narrowing keys on the caller's required
-     files rather than on an imported class name. *)
-  narrow_methods_by_required_files : bool;
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;
   (* PHP 8 ctor property promotion: typed ctor params are candidate fields. *)
   ctor_param_promotion : bool;
   interface_dispatch_uses_export_visibility : bool;
-  parents_resolve_by_binding : bool;
+  parent_resolution : parent_resolution;
   package_clause_of_ast : G.program -> string option;
   method_owner_of_funcdef : G.function_definition -> string option;
   name_is_exported : string -> bool;
 }
+
+let equal_parent_position (left : parent_position) (right : parent_position)
+    : bool =
+  match (left, right) with
+  | Prepended, Prepended
+  | Appended, Appended -> true
+  | (Prepended | Appended), _ -> false
 
 let decorator_simple_name (attr : G.attribute) : string option =
   match attr with
@@ -250,6 +269,7 @@ let default : t = {
   include_anonymous_funcs = true;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
+  class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
   package_directive_is_namespace = false;
   class_identity_is_constant_path = false;
@@ -258,12 +278,11 @@ let default : t = {
   class_def_reshape = (fun _ _ -> None);
   narrow_methods_by_imports =
     (fun ~fi_imports:_ ~file_of_func:_ ts -> ts);
-  narrow_methods_by_required_files = false;
   strip_field_sigil = (fun s -> s);
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
   interface_dispatch_uses_export_visibility = false;
-  parents_resolve_by_binding = false;
+  parent_resolution = Parent_by_lexical_scope_then_homonym;
   package_clause_of_ast = (fun _ -> None);
   method_owner_of_funcdef = (fun _ -> None);
   name_is_exported = (fun _ -> true);
@@ -366,22 +385,65 @@ let ruby_class_body_synth_methods (cdef : G.class_definition)
   in
   scan_class_body names_from_call cdef
 
+let ruby_class_body_singleton_methods (cdef : G.class_definition)
+    : singleton_exposure =
+  let exposure_from_call (expr : G.expr) : singleton_exposure list =
+    match expr.G.e with
+    | G.Call ({ e = G.N (G.Id (("extend", _), _)); _ },
+              (_, [ G.Arg { e = G.IdSpecial (G.Self, _); _ } ], _)) ->
+      [ Every_method_is_a_singleton ]
+    | G.Call ({ e = G.N (G.Id (("module_function", _), _)); _ }, (_, [], _)) ->
+      [ Every_method_is_a_singleton ]
+    | G.Call ({ e = G.N (G.Id (("module_function", _), _)); _ },
+              (_, (_ :: _ as args), _)) ->
+      [ Named_singleton_methods
+          (List.filter_map (fun (arg : G.argument) ->
+             match arg with
+             | G.Arg { e = G.L (G.Atom (_, (name, _))); _ } -> Some name
+             | _ -> None)
+             args) ]
+    | _ -> []
+  in
+  List.fold_left
+    (fun (exposure : singleton_exposure) (found : singleton_exposure) ->
+      match (exposure, found) with
+      | Every_method_is_a_singleton, _
+      | _, Every_method_is_a_singleton -> Every_method_is_a_singleton
+      | No_singleton_exposure, _ -> found
+      | _, No_singleton_exposure -> exposure
+      | Named_singleton_methods (earlier : string list),
+        Named_singleton_methods (later : string list) ->
+        Named_singleton_methods (earlier @ later))
+    No_singleton_exposure
+    (scan_class_body exposure_from_call cdef)
+
+let ruby_mixin_position (macro : string) : parent_position option =
+  match macro with
+  | "prepend" -> Some Prepended
+  | "include"
+  | "extend" -> Some Appended
+  | _ -> None
+
 let ruby_class_body_extra_parents (cdef : G.class_definition)
-  : string list list =
+  : class_parent list =
   let arg_to_path (arg : G.argument) : string list option =
     match arg with
     | G.Arg { e = G.N name; _ } -> Some (name_to_path name)
     | _ -> None
   in
-  let paths_from_call (expr : G.expr) : string list list =
+  let paths_from_call (expr : G.expr) : class_parent list =
     match expr.G.e with
-    | G.Call ({ e = G.N (G.Id ((macro, _), _)); _ }, (_, args, _))
-      when macro = "include" || macro = "extend" || macro = "prepend" ->
-      List.filter_map (fun arg ->
-        match arg_to_path arg with
-        | Some path when path <> [] -> Some path
-        | _ -> None
-      ) args
+    | G.Call ({ e = G.N (G.Id ((macro, _), _)); _ }, (_, args, _)) -> (
+      match ruby_mixin_position macro with
+      | None -> []
+      | Some (position : parent_position) ->
+        List.filter_map (fun arg ->
+          match arg_to_path arg with
+          | Some ((_ :: _) as path) ->
+            Some { cp_path = path; cp_position = position }
+          | Some []
+          | None -> None
+        ) args)
     | _ -> []
   in
   scan_class_body paths_from_call cdef
@@ -391,9 +453,11 @@ let ruby : t = { default with
   include_anonymous_funcs = false;
   class_body_synth_methods = ruby_class_body_synth_methods;
   class_body_extra_parents = ruby_class_body_extra_parents;
+  class_body_singleton_methods = ruby_class_body_singleton_methods;
   (* A Ruby class IS its constant path; files are irrelevant (reopening). *)
   class_identity_is_constant_path = true;
-  narrow_methods_by_required_files = true;
+  unqualified_scope = `Per_constant_path;
+  parent_resolution = Parent_by_lexical_scope;
 }
 
 let go_class_of_fields (kind : G.class_kind) (fk : Tok.t)
@@ -422,7 +486,7 @@ let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
     Some (ent, go_class_of_fields G.Class fk [])
   | _ -> None
 
-let go_class_body_extra_parents (cdef : G.class_definition) : string list list =
+let go_class_body_extra_parents (cdef : G.class_definition) : class_parent list =
   Tok.unbracket cdef.G.cbody
   |> List.filter_map (fun (field : G.field) ->
     match field with
@@ -432,7 +496,8 @@ let go_class_body_extra_parents (cdef : G.class_definition) : string list list =
         _); _ } -> (
       match name_to_path name with
       | [] -> None
-      | (path : string list) -> Some path)
+      | (path : string list) ->
+        Some { cp_path = path; cp_position = Appended })
     | _ -> None)
 
 let go_method_owner_of_funcdef (fdef : G.function_definition) : string option =
@@ -463,7 +528,7 @@ let go : t = { default with
   class_def_reshape = go_class_def_reshape;
   class_body_extra_parents = go_class_body_extra_parents;
   walks_inheritance = true;
-  parents_resolve_by_binding = true;
+  parent_resolution = Parent_in_own_scope;
   package_clause_of_ast = extract_package_decl;
   interface_dispatch_uses_export_visibility = true;
 }
@@ -505,14 +570,15 @@ let php_namespace_decl (ast : G.program) : string option =
   Some (Option.value (extract_package_decl ast) ~default:"")
 
 let php_class_body_extra_parents (cdef : G.class_definition)
-  : string list list =
+  : class_parent list =
   List.filter_map
     (fun (ty : G.type_) ->
       match ty.G.t with
       | G.TyN (name : G.name) -> (
         match name_to_path name with
         | [] -> None
-        | (path : string list) -> Some path)
+        | (path : string list) ->
+          Some { cp_path = path; cp_position = Appended })
       | _ -> None)
     cdef.G.cmixins
 

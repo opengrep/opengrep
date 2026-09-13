@@ -29,6 +29,13 @@ module Class_qn_map : Map.S with type key = Names.Class_qn.t
 
 type methods_by_class = Func_info.t list Common.SMap.t Class_qn_map.t
 
+type method_receiver =
+  | On_class
+  | On_instance
+  | On_any
+
+type singleton_names = unit Common.SMap.t Class_qn_map.t
+
 type class_qn_by_definition =
   (Function_id.t * Names.Class_qn.t) list Common.SMap.t
 
@@ -50,6 +57,8 @@ type scope_entry = {
 type scope_table
 
 val scope_table_of_map : scope_entry list Common.SMap.t -> scope_table
+
+val scope_table_layered : front:scope_table -> back:scope_table -> scope_table
 
 val class_of_entries : scope_entry list -> Names.Class_qn.t option
 
@@ -105,6 +114,8 @@ val create :
   resolution_orders : resolution_orders ->
   class_qn_by_definition : class_qn_by_definition ->
   methods_by_class : methods_by_class ->
+  singleton_names : singleton_names ->
+  method_sets : Lang_config.method_sets ->
   scope_table : scope_table ->
   unit -> t
 
@@ -129,6 +140,7 @@ val class_qn_of_definition : t -> IL.name -> Names.Class_qn.t option
 
 val find_along_order :
   t ->
+  receiver:method_receiver ->
   Names.Class_qn.t list ->
   (Names.Class_qn.t -> string list) ->
   Func_info.t list

@@ -28,11 +28,6 @@ type stamp_var_types =
   G.program ->
   unit
 
-type required_files_narrowing = {
-  narrowable_classes : Names.Class_name.t list;
-  rev_path_segs_by_file : string list Common.SMap.t;
-}
-
 type file_scope = {
   scope_table : Func_lookup.scope_table;
   bound_class_files : (Names.Class_name.t * Fpath.t) list;
@@ -44,19 +39,20 @@ type ctx = {
   lang : Lang.t;
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
-  required_files_narrowing : required_files_narrowing option;
   definitions_by_qn : definition Common.SMap.t;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
   resolution_orders : Func_lookup.resolution_orders;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
+  singleton_names : Func_lookup.singleton_names;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
+  top_level_scope : Func_lookup.scope_table;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -227,51 +223,11 @@ let build_alias_to_module_qn
     if Int.equal (Hashtbl.length tbl) 0 then None else Some tbl
   | _ -> None
 
-(* Restrict colliding methods to files the caller itself requires (whole-file
-   "*" import specifiers, Ruby [require_relative]) or the caller's own file.
-   These languages bind no local name per import, so the required-file set
-   applies to every class rather than to one imported name.  A spec matches a def file by trailing path segments, extensions
-   stripped on the final segment of both sides ("widget_b" and "widget_b.php"
-   both match ".../widget_b.rb"); leading "."/".." segments of a relative
-   spec are dropped rather than resolved.  Callers with no whole-file requires
-   (e.g. autoloaded Rails code) leave every group untouched. *)
-let narrow_methods_by_required_files
-    ~(required_specs : string list)
-    ~(file_of_func : Func_info.t -> string option)
-    ~(caller_file : string)
-    ~(narrowing : required_files_narrowing)
-    (ts : Type_state.t) : Type_state.t =
-  let spec_suffixes =
-    List.filter_map (fun spec ->
-      match
-        Path_segs.rev_no_ext spec
-        |> List.filter (fun seg ->
-             not (String.equal seg "") && not (String.equal seg ".")
-             && not (String.equal seg ".."))
-      with
-      | [] -> None
-      | segs -> Some segs)
-      required_specs
-  in
-  if spec_suffixes = [] then ts
-  else
-    let keep_file (_ : Names.Class_name.t) (file : string) : bool =
-      String.equal file caller_file
-      || (let rev_file_segs =
-            Common.SMap.find file narrowing.rev_path_segs_by_file
-          in
-          List.exists
-            (fun rev_spec -> Path_segs.is_prefix rev_spec rev_file_segs)
-            spec_suffixes)
-    in
-    Type_state.narrow ~classes:narrowing.narrowable_classes ~keep_file
-      ~file_of_func ts
-
 let resolves_by_binding (lang : Lang.t) : bool =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
-  | Lang.Js | Lang.Ts | Lang.Go -> true
+  | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby -> true
   | _ -> false
 
 let definition_of_target
@@ -311,6 +267,7 @@ let build_scope_table
     ~(php_global_bindings : Scope_binding.positioned_binding list)
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
+    ~(top_level_scope : Func_lookup.scope_table)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
@@ -336,6 +293,18 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files = []; own_modules = [];
              module_aliases = Some module_aliases }
+    | `Per_constant_path ->
+      let bindings, own_modules =
+        Scope_ruby.build ~classes_by_file ~class_parent_paths
+          ~file_funcs_index ~resolution_orders ~methods_by_class
+          ~nested_types_by_class fi
+      in
+      Some { scope_table =
+               Func_lookup.scope_table_layered
+                 ~front:(Func_lookup.scope_table_of_map bindings)
+                 ~back:top_level_scope;
+             bound_class_files = []; own_modules;
+             module_aliases = None }
     | `Per_namespace ->
       let bindings, own_modules =
         Scope_php.build ~definitions_by_qn
@@ -532,11 +501,13 @@ let invocation_resolver ~(func_lookup : Func_lookup.t)
 
 let edges_for_file (ctx : ctx) (fi : file_info)
   : (Function_id.t * Function_id.t * Tok.t) list =
-  let { lang; cfg; type_state; required_files_narrowing; definitions_by_qn;
+  let { lang; cfg; type_state; definitions_by_qn;
         attributes_by_module; dunder_all;
         resolution_orders; class_qn_by_definition; methods_by_class;
+        singleton_names;
         extensions_by_module; nested_types_by_class;
         php_region_bindings; php_global_bindings; module_scope; go_packages;
+        top_level_scope;
         classes_by_file; class_parent_paths; global_imports;
         project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
@@ -569,7 +540,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
-        ~php_region_bindings ~php_global_bindings ~module_scope ~go_packages fi
+        ~php_region_bindings ~php_global_bindings ~module_scope ~go_packages
+        ~top_level_scope fi
     in
     let alias_to_module_qn =
       staged "alias to module map" @@ fun () ->
@@ -584,7 +556,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       match cfg.Index_lang_rules.unqualified_scope with
       | `Per_file | `Per_directory | `Per_go_package ->
         Some project_funcs_by_module
-      | `Per_package | `Per_namespace | `Per_module -> None
+      | `Per_package | `Per_namespace | `Per_module
+      | `Per_constant_path -> None
     in
     let file_type_state =
       staged "narrow methods by imports/required files" @@ fun () ->
@@ -594,24 +567,11 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           ~bound_class_files:scope.bound_class_files
           ~file_of_func:func_file_opt ~caller_file:fi_file_str type_state
       | None ->
-      let base =
         cfg.Index_lang_rules.narrow_methods_by_imports
           ~fi_imports:
             (List.map (fun (imp : import) -> (imp.im_local, imp.im_target))
                fi.fi_imports)
           ~file_of_func:func_file_opt type_state
-      in
-      match required_files_narrowing with
-        | Some (narrowing : required_files_narrowing) ->
-          let required_specs =
-            List.filter_map (fun (local, spec, _kind) ->
-              if String.equal local "*" then Some spec else None)
-              fi.fi_import_specifiers
-          in
-          narrow_methods_by_required_files ~required_specs
-            ~file_of_func:func_file_opt ~caller_file:fi_file_str ~narrowing
-            base
-        | None -> base
     in
     let same_file_funcs_by_name =
       staged "same-file funcs table" @@ fun () ->
@@ -644,6 +604,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~resolution_orders
         ~class_qn_by_definition
         ~methods_by_class
+        ~singleton_names
+        ~method_sets:(Lang_config.get lang).Lang_config.method_sets
         ~scope_table:
           (match file_scope with
            | Some (scope : file_scope) -> scope.scope_table
@@ -833,6 +795,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           ~resolution_orders
           ~class_qn_by_definition
           ~methods_by_class
+          ~singleton_names
+          ~method_sets:(Lang_config.get lang).Lang_config.method_sets
           ?alias_to_module_qn:
             (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)
           ~scope_table:

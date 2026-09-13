@@ -117,7 +117,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
   let entries = ref [] in
   let class_infos = ref [] in
   let dc_wrappers = ref [] in
-  let imports, import_specifiers =
+  let imports =
     let is_init_file = cfg.Index_lang_rules.is_init_file file in
     Imports.collect_imports ~cfg ~resolution ~current_file:file
       ~current_module_path:module_path ~is_init_file ast
@@ -217,7 +217,11 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let parent_paths =
               let from_extends =
                 List.filter_map (fun (ty, _) ->
-                  match parent_path ty with [] -> None | path -> Some path
+                  match parent_path ty with
+                  | [] -> None
+                  | path ->
+                    Some { Index_lang_rules.cp_path = path;
+                           cp_position = Index_lang_rules.Appended }
                 ) cdef.G.cextends
               in
               from_extends @ cfg.Index_lang_rules.class_body_extra_parents cdef
@@ -228,6 +232,9 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                              ci_file = file;
                              ci_range = class_range;
                              ci_parent_paths = parent_paths;
+                             ci_singleton_exposure =
+                               cfg.Index_lang_rules.class_body_singleton_methods
+                                 cdef;
                              ci_imports = imports;
                              ci_decorator_names = entity_decorator_names ent }
                            :: !class_infos;
@@ -342,6 +349,9 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                                ci_file = file;
                                ci_range = ns_range;
                                ci_parent_paths = parent_paths;
+                               ci_singleton_exposure =
+                                 cfg.Index_lang_rules
+                                   .class_body_singleton_methods cdef;
                                ci_imports = imports;
                                ci_decorator_names = [] } :: !class_infos
             end;
@@ -406,6 +416,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_package
     | `Per_namespace -> true
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_go_package
     | `Per_module -> cfg.Index_lang_rules.class_identity_is_constant_path
@@ -419,6 +430,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       if Names.Module_qn.is_empty module_path then []
       else Names.Module_qn.parts module_path
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_go_package
     | `Per_package
@@ -473,6 +485,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_module -> module_path :: opened
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_go_package
     | `Per_package
@@ -485,7 +498,6 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
              fi_package_clause = cfg.Index_lang_rules.package_clause_of_ast ast;
              fi_module_regions = module_regions;
              fi_imports = imports;
-             fi_import_specifiers = import_specifiers;
              fi_dataclass_wrappers = !dc_wrappers;
              fi_ast = ast;
              fi_observations = Walker.walk_file ~lang ast } in

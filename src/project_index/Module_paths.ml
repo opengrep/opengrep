@@ -134,6 +134,7 @@ let module_qn_of_file ~(cfg : Index_lang_rules.t)
                  (Fpath.normalize
                     (Discover.relative_to ~project_root (Fpath.parent file))))))
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_module
     | `Per_namespace

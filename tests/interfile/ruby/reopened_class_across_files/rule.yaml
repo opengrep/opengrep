@@ -1,0 +1,12 @@
+rules:
+  - id: reopened-class-across-files
+    languages: [ruby]
+    severity: ERROR
+    message: One constant path names one class however many files define it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

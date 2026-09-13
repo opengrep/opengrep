@@ -1,0 +1,16 @@
+rules:
+  - id: super-with-arguments
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A super with arguments resolves to the method of the next ancestor and
+      yields the edge, but the callee has no identifier at the call site to
+      carry the definition stamp, so no taint flows through it; the method
+      the subclass does not override still resolves along the order.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

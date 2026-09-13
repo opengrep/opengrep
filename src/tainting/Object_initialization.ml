@@ -469,7 +469,7 @@ let constructor_names_of_class ~(lang : Lang.t) ~(class_name : string)
 
 (* Check if language uses 'new' keyword *)
 let uses_new_keyword (lang : Lang.t) : bool =
-  (Lang_config.get lang).uses_new_keyword
+  Lang_config.uses_new_keyword lang
 
 (*****************************************************************************)
 (* Unified Constructor Execution *)

@@ -1,0 +1,12 @@
+rules:
+  - id: attr-accessor-reader-flows
+    languages: [ruby]
+    severity: ERROR
+    message: A reader made by attr_accessor returns the field the constructor set.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

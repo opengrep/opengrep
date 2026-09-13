@@ -1,0 +1,12 @@
+rules:
+  - id: singleton-method-on-constant
+    languages: [ruby]
+    severity: ERROR
+    message: A call on a constant reaches a method defined with self.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

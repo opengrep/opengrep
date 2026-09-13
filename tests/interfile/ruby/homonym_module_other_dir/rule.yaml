@@ -3,9 +3,9 @@ rules:
     languages: [ruby]
     severity: ERROR
     message: >
-      Two directories hold a file of the same name with a same-named class
-      and method. The caller requires the one beside it; the call resolves
-      to that one, not to neither.
+      A constant resolves by its constant path, so the top level Store and
+      Other::Store are two classes and a reference to Store from sub/app.rb
+      names the top level one alone.
     mode: taint
     options:
       taint_interfile: true

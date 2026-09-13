@@ -93,6 +93,7 @@ let build_attributes_by_module
     | `Per_package
     | `Per_namespace
     | `Per_module
+    | `Per_constant_path
     | `Per_go_package -> false
     | `Per_file
     | `Per_directory -> true

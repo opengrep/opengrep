@@ -1,0 +1,12 @@
+rules:
+  - id: implicit-self-calls-module-method
+    languages: [ruby]
+    severity: ERROR
+    message: A bare call reaches a method of a module the enclosing class includes.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

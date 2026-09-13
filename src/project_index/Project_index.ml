@@ -233,8 +233,8 @@ let build_project_call_graph (caps : < Cap.fork >)
       in
       let parent =
         match ci.ci_parent_paths with
-        | first :: _ ->
-          (match List.rev first with
+        | (first : Index_lang_rules.class_parent) :: _ ->
+          (match List.rev first.Index_lang_rules.cp_path with
            | last :: _ -> Some last
            | [] -> None)
         | [] -> None
@@ -554,25 +554,6 @@ let build_project_call_graph (caps : < Cap.fork >)
     timed "call graph: constructors by class" @@ fun () ->
     Func_lookup.constructor_index_of_funcs ~lang all_funcs
   in
-  let required_files_narrowing : Pipeline.required_files_narrowing option =
-    if not cfg.Index_lang_rules.narrow_methods_by_required_files then None
-    else
-      let narrowable_classes =
-        timed "call graph: narrowable classes" @@ fun () ->
-        Type_state.narrowable_classes type_state
-      in
-      let rev_path_segs_by_file =
-        timed "call graph: path segments per definition file" @@ fun () ->
-        List.fold_left
-          (fun (segs_by_file : string list Common.SMap.t) (fi : file_info) ->
-            let file = Fpath.to_string fi.fi_file in
-            Common.SMap.add file (Path_segs.rev_no_ext file) segs_by_file)
-          Common.SMap.empty file_infos
-      in
-      Some
-        { Pipeline.narrowable_classes;
-          rev_path_segs_by_file }
-  in
   let funcs_by_id = build_funcs_by_id all_funcs in
   let definitions_by_qn =
     timed "call graph: definitions by qualified name" (fun () ->
@@ -606,6 +587,38 @@ let build_project_call_graph (caps : < Cap.fork >)
                 by_class))
       definitions_by_qn Func_lookup.Class_qn_map.empty
   in
+  let singleton_names : Func_lookup.singleton_names =
+    timed "call graph: singleton method names by class" @@ fun () ->
+    List.fold_left
+      (fun (by_class : Func_lookup.singleton_names) (ci : class_info) ->
+        let own_names () : unit Common.SMap.t =
+          Common.SMap.map (fun _ -> ())
+            (Option.value
+               (Func_lookup.Class_qn_map.find_opt ci.ci_qn methods_by_class)
+               ~default:Common.SMap.empty)
+        in
+        let exposed : unit Common.SMap.t option =
+          match ci.ci_singleton_exposure with
+          | Index_lang_rules.No_singleton_exposure -> None
+          | Index_lang_rules.Every_method_is_a_singleton -> Some (own_names ())
+          | Index_lang_rules.Named_singleton_methods (names : string list) ->
+            Some
+              (List.fold_left
+                 (fun (set : unit Common.SMap.t) (name : string) ->
+                   Common.SMap.add name () set)
+                 Common.SMap.empty names)
+        in
+        match exposed with
+        | None -> by_class
+        | Some (names : unit Common.SMap.t) ->
+          Func_lookup.Class_qn_map.add ci.ci_qn
+            (Common.SMap.union (fun _ () () -> Some ()) names
+               (Option.value
+                  (Func_lookup.Class_qn_map.find_opt ci.ci_qn by_class)
+                  ~default:Common.SMap.empty))
+            by_class)
+      Func_lookup.Class_qn_map.empty indexed_classes
+  in
   let value_alias_index = Pipeline.build_value_alias_index file_infos in
   let module_scope =
     match cfg.Index_lang_rules.unqualified_scope with
@@ -615,6 +628,7 @@ let build_project_call_graph (caps : < Cap.fork >)
           ~classes_by_file ~class_parent_paths ~file_funcs_index
           ~file_infos:indexed_files)
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_go_package
     | `Per_package
@@ -643,6 +657,7 @@ let build_project_call_graph (caps : < Cap.fork >)
                (Scope_module.exported_names
                   (Scope_module.exports_of module_scope))
            | `Per_file
+           | `Per_constant_path
            | `Per_directory
            | `Per_go_package
            | `Per_package
@@ -653,7 +668,6 @@ let build_project_call_graph (caps : < Cap.fork >)
     { Pipeline.lang;
       cfg;
       type_state;
-      required_files_narrowing;
       definitions_by_qn;
       attributes_by_module;
       php_region_bindings =
@@ -663,6 +677,7 @@ let build_project_call_graph (caps : < Cap.fork >)
             Scope_php.build_region_bindings ~attributes_by_module
               ~file_infos:indexed_files
           | `Per_file
+          | `Per_constant_path
           | `Per_directory
           | `Per_go_package
           | `Per_module
@@ -672,16 +687,31 @@ let build_project_call_graph (caps : < Cap.fork >)
          | `Per_namespace ->
            Scope_php.global_function_bindings ~attributes_by_module
          | `Per_file
+         | `Per_constant_path
          | `Per_directory
          | `Per_go_package
          | `Per_module
          | `Per_package -> []);
       module_scope;
       go_packages;
+      top_level_scope =
+        timed "call graph: top level constants" (fun () ->
+          match cfg.Index_lang_rules.unqualified_scope with
+          | `Per_constant_path ->
+            Func_lookup.scope_table_of_map
+              (Scope_binding.bindings_of_positioned
+                 (Scope_ruby.top_level_bindings ~definitions_by_qn))
+          | `Per_file
+          | `Per_directory
+          | `Per_go_package
+          | `Per_module
+          | `Per_namespace
+          | `Per_package -> Func_lookup.empty_scope_table);
       dunder_all;
       resolution_orders;
       class_qn_by_definition;
       methods_by_class;
+      singleton_names;
       extensions_by_module =
         timed "call graph: extension methods by module" (fun () ->
           Func_index.build_extensions_by_module ~definitions_by_qn);
@@ -815,6 +845,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_key : file:string option -> G.type_ -> string option =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_module
     | `Per_namespace
@@ -990,6 +1021,7 @@ let run_pipeline (caps : < Cap.fork >)
         ~paths:discovered.Index_lang_rules.module_paths
         (List.map absolutize files)
     | `Per_file
+    | `Per_constant_path
     | `Per_directory
     | `Per_go_package
     | `Per_package

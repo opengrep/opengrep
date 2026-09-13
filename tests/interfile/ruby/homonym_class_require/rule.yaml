@@ -3,12 +3,9 @@ rules:
     languages: [ruby]
     severity: ERROR
     message: >
-      Taint reaches a sink through a method of a class whose name is shared
-      by an unrelated class in another file.  Pins homonym handling for
-      require-based languages: the caller's own require_relative names the
-      file its Widget lives in, so the same-arity method collision with the
-      unrelated widget_a.rb must not drop the call (a silent cross-file
-      false negative).
+      A constant resolves by its constant path and a require restricts
+      nothing, so a reference to Widget names the top level Widget and never
+      Other::Widget.
     mode: taint
     options:
       taint_interfile: true

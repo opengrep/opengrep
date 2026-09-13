@@ -1,3 +1,9 @@
+val members_along_order :
+  resolution_orders:Func_lookup.resolution_orders ->
+  methods_by_class:Func_lookup.methods_by_class ->
+  Names.Class_qn.t ->
+  (string * Func_info.t list) list
+
 val build :
   lang:Lang.t ->
   definitions_by_qn:Types.definition Common.SMap.t ->

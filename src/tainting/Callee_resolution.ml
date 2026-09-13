@@ -247,7 +247,7 @@ let fn_id_to_node (fn_id : fn_id) : node option =
 
 (* Helper function to identify the callee fn_id from a call expression's callee *)
 let uses_new_keyword (lang : Lang.t) : bool =
-  (Lang_config.get lang).Lang_config.uses_new_keyword
+  Lang_config.uses_new_keyword lang
 
 (* Resolve a class name to its constructor fn_id using lang config.
    e.g. Foo → Foo#<init> (Java), Foo → Foo#__init__ (Python), Foo → Foo#initialize (Ruby) *)
@@ -977,7 +977,7 @@ let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
     | None -> None)
   | Bound_class (class_qn : Names.Class_qn.t) -> (
     match
-      Func_lookup.find_along_order func_lookup
+      Func_lookup.find_along_order func_lookup ~receiver:Func_lookup.On_class
         (Func_lookup.resolution_order func_lookup class_qn)
         (fun _ -> [ segment ])
     with
@@ -1086,7 +1086,7 @@ let follow_chain ~(func_lookup : Func_lookup.t)
 
 let constructor_of_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     (class_qn : Names.Class_qn.t) : func_info list =
-  Func_lookup.find_along_order func_lookup
+  Func_lookup.find_along_order func_lookup ~receiver:Func_lookup.On_any
     (Func_lookup.resolution_order func_lookup class_qn)
     (fun (ancestor : Names.Class_qn.t) ->
       Object_initialization.constructor_names_of_class ~lang
@@ -1097,25 +1097,79 @@ let enclosing_class_qn ~(func_lookup : Func_lookup.t)
   Option.bind (Func_info.enclosing_class caller_parent_path)
     (Func_lookup.class_qn_of_definition func_lookup)
 
-let caller_file_of_parent_path (caller_parent_path : IL.name option list)
-    : string option =
-  let rec first_located (path : IL.name option list) : string option =
-    match path with
-    | [] -> None
-    | None :: rest -> first_located rest
-    | Some (name : IL.name) :: rest ->
-      let tok = snd name.IL.ident in
-      if Tok.is_fake tok then first_located rest
-      else
-        try Some (Fpath.to_string (Tok.file_of_tok tok))
-        with Tok.NoTokenLocation _ -> first_located rest
-  in
-  first_located caller_parent_path
-
 let id_info_of_name (name : G.name) : G.id_info =
   match name with
   | G.Id (_, id_info) -> id_info
   | G.IdQualified { name_info; _ } -> name_info
+
+let constant_in_nesting ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (chain : dotted_chain)
+    : Names.Class_qn.t option =
+  let known (parts : string list) : Names.Class_qn.t option =
+    let candidate = Names.Class_qn.of_parts parts in
+    if Func_lookup.is_known_class func_lookup candidate then Some candidate
+    else None
+  in
+  let at_top_level () : Names.Class_qn.t option = known chain.dc_segments in
+  if chain.dc_rooted then at_top_level ()
+  else
+    let enclosing = enclosing_class_qn ~func_lookup caller_parent_path in
+    let scopes : string list list =
+      match enclosing with
+      | None -> []
+      | Some (class_qn : Names.Class_qn.t) ->
+        List.map Names.Class_qn.parts
+          (Names.Class_qn.prefixes class_qn
+           @ Func_lookup.resolution_order func_lookup class_qn)
+    in
+    match
+      List.find_map
+        (fun (scope : string list) -> known (scope @ chain.dc_segments))
+        scopes
+    with
+    | Some _ as resolved -> resolved
+    | None -> at_top_level ()
+
+let is_constant_name (name : G.name) : bool =
+  IdFlags.is_constant !((id_info_of_name name).G.id_flags)
+
+let reads_own_class ~(lang : Lang.t) (e : G.expr) : bool =
+  let accessor_of (receiver : G.expr) (name : string) : bool =
+    (match receiver.G.e with
+     | G.IdSpecial ((G.This | G.Self), _) -> true
+     | _ -> false)
+    && List.exists (String.equal name)
+         (Lang_config.get lang).Lang_config.class_accessor_methods
+  in
+  match e.G.e with
+  | G.DotAccess (receiver, _, G.FN (G.Id ((name, _), _))) ->
+    accessor_of receiver name
+  | G.Call ({ G.e = G.DotAccess (receiver, _, G.FN (G.Id ((name, _), _))); _ },
+            _) ->
+    accessor_of receiver name
+  | _ -> false
+
+let class_named_by ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (e : G.expr)
+    : Names.Class_qn.t option =
+  if reads_own_class ~lang e then
+    enclosing_class_qn ~func_lookup caller_parent_path
+  else
+    match e.G.e with
+    | G.N (name : G.name) when is_constant_name name ->
+      Option.bind (dotted_chain_of_name name)
+        (constant_in_nesting ~func_lookup ~caller_parent_path)
+    | _ -> None
+
+let class_constructed_by ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (callee : G.expr)
+    : Names.Class_qn.t option =
+  match callee.G.e with
+  | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _)))
+    when Option.equal String.equal (Lang_config.construction_method lang)
+           (Some method_name) ->
+    class_named_by ~lang ~func_lookup ~caller_parent_path receiver
+  | _ -> None
 
 let class_qn_of_resolution ~(func_lookup : Func_lookup.t) (name : G.name)
     : Names.Class_qn.t option =
@@ -1168,7 +1222,13 @@ let class_qn_of_type_name ~(func_lookup : Func_lookup.t)
               class_qn_in_module_of ~func_lookup ~owner bare_name)
           with
           | Some _ as resolved -> resolved
-          | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name))
+          | None -> (
+            match
+              Option.bind (dotted_chain_of_name name)
+                (constant_in_nesting ~func_lookup ~caller_parent_path)
+            with
+            | Some _ as resolved -> resolved
+            | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name)))
 
 let declared_class_name_of_ty (ty : G.type_) : G.name option =
   match Ty_bare_name.dotted_class_name_of_ty ty with
@@ -1202,6 +1262,11 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
         (Option.bind (Ty_bare_name.instance_or_declared_type id_info)
            declared_class_name_of_ty)
         (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
+  | G.Call (callee, _)
+    when Option.is_some
+           (class_constructed_by ~lang ~func_lookup ~caller_parent_path callee)
+    ->
+    class_constructed_by ~lang ~func_lookup ~caller_parent_path callee
   | G.Call (callee, _) -> (
     match
       Option.bind (dotted_chain_of_expr callee)
@@ -1234,9 +1299,7 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
       Option.bind
         (Type_state.field_type_for_caller type_state
            ~class_name:(Names.Class_qn.bare_name owner) ~field_name
-           ~caller_dir:
-             (Option.map Filename.dirname
-                (caller_file_of_parent_path caller_parent_path)))
+           ~caller_dir:None)
         (class_qn_of_type_name ~func_lookup ~caller_parent_path
                ~owner:(Some owner)))
   | _ -> None
@@ -1278,17 +1341,17 @@ let identify_callee_interfile ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ?(caller_parent_path : IL.name option list = [])
     ?(call_arity : int option)
-    ?(allow_constructor = not (uses_new_keyword lang))
+    ?(allow_constructor = Lang_config.constructs_by_bare_call lang)
     (callee : G.expr) : fn_id option =
   let pick (matches : func_info list) : fn_id option =
     pick_by_arity
       ~overload_groups:(Func_lookup.overload_groups func_lookup)
       ~lang call_arity matches
   in
-  let along_order (class_qn : Names.Class_qn.t) (method_name : string)
-      : fn_id option =
+  let along_order ~(receiver : Func_lookup.method_receiver)
+      (class_qn : Names.Class_qn.t) (method_name : string) : fn_id option =
     pick
-      (Func_lookup.find_along_order func_lookup
+      (Func_lookup.find_along_order func_lookup ~receiver
          (Func_lookup.resolution_order func_lookup class_qn)
          (fun _ -> [ method_name ]))
   in
@@ -1311,6 +1374,21 @@ let identify_callee_interfile ~(lang : Lang.t)
     | None -> pick (Func_lookup.functions_of_entries nearest)
   in
   match callee.G.e with
+  | G.IdSpecial (G.Super, _) -> (
+    match
+      (enclosing_class_qn ~func_lookup caller_parent_path,
+       List.rev caller_parent_path)
+    with
+    | Some (class_qn : Names.Class_qn.t), Some (method_il : IL.name) :: _ -> (
+      match Func_lookup.resolution_order func_lookup class_qn with
+      | []
+      | [ _ ] -> None
+      | _ :: after_self ->
+        pick
+          (Func_lookup.find_along_order func_lookup
+             ~receiver:Func_lookup.On_any after_self
+             (fun _ -> [ fst method_il.IL.ident ])))
+    | _ -> None)
   | G.N (G.Id ((id, _), _id_info)) -> of_bare_name id
   | G.N (G.IdQualified
            { name_last = ((id, _), _typeargs); name_middle = None;
@@ -1323,20 +1401,29 @@ let identify_callee_interfile ~(lang : Lang.t)
       match Func_lookup.resolution_order func_lookup class_qn with
       | [] | [ _ ] -> None
       | _ :: after_self ->
-        pick (Func_lookup.find_along_order func_lookup after_self
+        pick (Func_lookup.find_along_order func_lookup
+                ~receiver:Func_lookup.On_any after_self
                 (fun _ -> [ method_name ]))))
   | G.DotAccess ({ G.e = G.IdSpecial ((G.This | G.Self | G.LateStatic), _); _ },
                  _, G.FN (G.Id ((method_name, _), _))) -> (
     match enclosing_class_qn ~func_lookup caller_parent_path with
     | None -> None
-    | Some (class_qn : Names.Class_qn.t) -> along_order class_qn method_name)
+    | Some (class_qn : Names.Class_qn.t) ->
+      along_order ~receiver:Func_lookup.On_any class_qn method_name)
   | G.DotAccess ({ G.e = G.N (G.Id ((receiver_name, _), _)); _ },
                  _, G.FN (G.Id ((method_name, _), _)))
     when Receiver.is_self_name lang receiver_name -> (
     match enclosing_class_qn ~func_lookup caller_parent_path with
     | None -> None
-    | Some (class_qn : Names.Class_qn.t) -> along_order class_qn method_name)
+    | Some (class_qn : Names.Class_qn.t) ->
+      along_order ~receiver:Func_lookup.On_any class_qn method_name)
   | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) -> (
+    match
+      class_constructed_by ~lang ~func_lookup ~caller_parent_path callee
+    with
+    | Some (class_qn : Names.Class_qn.t) ->
+      pick (constructor_of_class ~lang ~func_lookup class_qn)
+    | None -> (
     match
       of_target
         (Option.bind (dotted_chain_of_expr callee)
@@ -1350,12 +1437,12 @@ let identify_callee_interfile ~(lang : Lang.t)
       with
       | None -> None
       | Some (class_qn : Names.Class_qn.t) -> (
-        match along_order class_qn method_name with
+        match along_order ~receiver:Func_lookup.On_instance class_qn method_name with
         | Some _ as resolved -> resolved
         | None ->
           pick
             (extension_functions ~func_lookup ~caller_parent_path
-               ~receiver_qn:class_qn method_name))))
+               ~receiver_qn:class_qn method_name)))))
   | G.N (G.IdQualified _) ->
     of_target
       (Option.bind (dotted_chain_of_expr callee)

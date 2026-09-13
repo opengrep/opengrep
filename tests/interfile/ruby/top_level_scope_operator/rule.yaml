@@ -1,0 +1,12 @@
+rules:
+  - id: top-level-scope-operator
+    languages: [ruby]
+    severity: ERROR
+    message: A constant written with a leading scope operator skips the nesting.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

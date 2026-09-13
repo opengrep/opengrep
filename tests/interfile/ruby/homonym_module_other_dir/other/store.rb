@@ -1,8 +1,10 @@
-# A file of the same name elsewhere in the project, never required by
-# sub/app.rb: same class, same method, same arity.
-class Store
-  def save(data)
-    # ok: homonym-module-other-dir
-    sink(data)
+# The constant path of this class is Other::Store, so a reference to Store
+# from sub/app.rb never names it.
+module Other
+  class Store
+    def save(data)
+      # ok: homonym-module-other-dir
+      sink(data)
+    end
   end
 end

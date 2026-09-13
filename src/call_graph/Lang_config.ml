@@ -29,14 +29,27 @@ type collection_model_kind =
       arity : int;
     }
 
+type construction_form =
+  | Bare_call
+  | New_keyword
+  | New_method of string
+
+type method_sets =
+  | Shared_by_class_and_instance
+  | Separate_for_class_and_instance
+
 type t = {
   hof_configs : hof_kind list;
   collection_configs : collection_model_kind list;
   constructor_names : string list;
-  uses_new_keyword : bool;
+  construction : construction_form;
+  method_sets : method_sets;
   callables_written_as_literals : bool;
+  block_pass_operator : bool;
   (* Methods invoking `self` as a function (Runnable.run, Proc#call): a Fun-shaped receiver call becomes a direct lambda invocation. *)
   invoke_methods : string list;
+  dynamic_send_methods : string list;
+  class_accessor_methods : string list;
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
 }
@@ -45,9 +58,13 @@ let empty = {
   hof_configs = [];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -65,9 +82,13 @@ let python = {
     ThisTaintsReturn { methods = ["copy"; "keys"; "values"; "items"]; arity = 0 };
   ];
   constructor_names = ["__init__"];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -92,9 +113,13 @@ let ruby = {
     ThisTaintsReturn { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["initialize"];
-  uses_new_keyword = false;
+  construction = New_method "new";
+  method_sets = Separate_for_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = true;
   invoke_methods = ["call"];
+  dynamic_send_methods = ["send"; "public_send"];
+  class_accessor_methods = ["class"];
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
 }
@@ -121,9 +146,13 @@ let javascript = {
     ThisTaintsReturn { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["constructor"];
-  uses_new_keyword = true;
+  construction = New_keyword;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -147,9 +176,13 @@ let java = {
     ThisTaintsReturn { methods = ["next"]; arity = 0 };
   ];
   constructor_names = ["<init>"];
-  uses_new_keyword = true;
+  construction = New_keyword;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -176,9 +209,13 @@ let kotlin = {
     ThisTaintsReturn { methods = ["toString"]; arity = 0 };
   ];
   constructor_names = ["<init>"; "init"; "constructor"];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = ["invoke"];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -198,9 +235,13 @@ let scala = {
     ThisTaintsReturn { methods = ["mkString"; "toString"]; arity = 0 };
   ];
   constructor_names = ["<init>"];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -221,9 +262,13 @@ let csharp = {
     ThisTaintsReturn { methods = ["ToString"]; arity = 0 };
   ];
   constructor_names = [".ctor"];
-  uses_new_keyword = true;
+  construction = New_keyword;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = ["Invoke"];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -236,9 +281,13 @@ let go = {
     ThisTaintsReturn { methods = ["Load"]; arity = 1 };
   ];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -258,9 +307,13 @@ let rust = {
     ThisTaintsReturn { methods = ["into_iter"; "iter"; "iter_mut"]; arity = 0 };
   ];
   constructor_names = ["new"];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -280,9 +333,13 @@ let swift = {
     ThisTaintsReturn { methods = ["remove"]; arity = 1 };
   ];
   constructor_names = ["init"];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -293,9 +350,13 @@ let php = {
   ];
   collection_configs = [];
   constructor_names = ["__construct"];
-  uses_new_keyword = true;
+  construction = New_keyword;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = true;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -306,9 +367,13 @@ let cpp = {
   ];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -321,9 +386,13 @@ let ocaml_lang = {
   hof_configs = [];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -331,9 +400,13 @@ let lua = {
   hof_configs = [];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -363,10 +436,14 @@ let dart = {
   (* Dart constructors are class-named (User.User), which is_constructor
      covers via the class-name equality check *)
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   (* Function objects: f.call(args) invokes the closure f *)
   invoke_methods = ["call"];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -382,9 +459,13 @@ let elixir = {
   ];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -394,9 +475,13 @@ let julia = {
   ];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -418,9 +503,13 @@ let clojure = {
   ];
   collection_configs = [];
   constructor_names = [];
-  uses_new_keyword = false;
+  construction = Bare_call;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -428,9 +517,13 @@ let apex = {
   hof_configs = [];
   collection_configs = [];
   constructor_names = ["<init>"];
-  uses_new_keyword = true;
+  construction = New_keyword;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -438,9 +531,13 @@ let vb = {
   hof_configs = [];
   collection_configs = [];
   constructor_names = ["New"];
-  uses_new_keyword = true;
+  construction = New_keyword;
+  method_sets = Shared_by_class_and_instance;
   callables_written_as_literals = false;
+  block_pass_operator = false;
   invoke_methods = [];
+  dynamic_send_methods = [];
+  class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
 
@@ -470,6 +567,24 @@ let get (lang : Lang.t) : t =
   | Lang.Apex -> apex
   | Lang.Vb -> vb
   | _ -> empty
+
+let uses_new_keyword (lang : Lang.t) : bool =
+  match (get lang).construction with
+  | New_keyword -> true
+  | Bare_call
+  | New_method _ -> false
+
+let constructs_by_bare_call (lang : Lang.t) : bool =
+  match (get lang).construction with
+  | Bare_call -> true
+  | New_keyword
+  | New_method _ -> false
+
+let construction_method (lang : Lang.t) : string option =
+  match (get lang).construction with
+  | New_method (name : string) -> Some name
+  | Bare_call
+  | New_keyword -> None
 
 (* Languages where one scope holds several concrete functions of one name
    and arity told apart by parameter types. Elsewhere such definitions are

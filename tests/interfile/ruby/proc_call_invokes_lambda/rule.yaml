@@ -1,0 +1,12 @@
+rules:
+  - id: proc-call-invokes-lambda
+    languages: [ruby]
+    severity: ERROR
+    message: A proc held in a local variable and invoked with call reaches the method its body calls.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

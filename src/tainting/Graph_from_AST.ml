@@ -287,6 +287,22 @@ let extract_calls ~(lang : Lang.t)
     (Lang_config.get lang).Lang_config.skip_nested_in_extract_calls
   in
   let invoke_methods = (Lang_config.get lang).Lang_config.invoke_methods in
+  let send_methods =
+    (Lang_config.get lang).Lang_config.dynamic_send_methods
+  in
+  let named_by_send (callee : G.expr) (args : G.argument list)
+      : (G.expr * G.argument list) option =
+    match (callee.G.e, args) with
+    | G.DotAccess (receiver, dot, G.FN (G.Id ((name, _), id_info))),
+      G.Arg { G.e = G.L (G.Atom (_, (method_name, method_tok))); _ } :: rest
+      when List.exists (String.equal name) send_methods ->
+      Some
+        (G.DotAccess (receiver, dot,
+                      G.FN (G.Id ((method_name, method_tok), id_info)))
+         |> G.e,
+         rest)
+    | _ -> None
+  in
   let calls, callbacks =
     Walker.fold_exprs_in_fdef ~skip_nested_fdefs:skip_nested
       (fun ((calls, callbacks) as acc) e ->
@@ -304,6 +320,11 @@ let extract_calls ~(lang : Lang.t)
               when Lang.(lang =*= Ruby || lang =*= Crystal || lang =*= Scala) ->
               (inner_callee, inner_args)
             | _ -> (callee, args_list)
+          in
+          let call_callee, call_args_list =
+            match named_by_send call_callee call_args_list with
+            | Some (sent_callee, sent_args) -> (sent_callee, sent_args)
+            | None -> (call_callee, call_args_list)
           in
           let call_arity = List.length call_args_list in
           let calls =
@@ -498,6 +519,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ~resolution_orders:Common.SMap.empty
       ~class_qn_by_definition:Common.SMap.empty
       ~methods_by_class:Func_lookup.Class_qn_map.empty
+      ~singleton_names:Func_lookup.Class_qn_map.empty
+      ~method_sets:(Lang_config.get lang).Lang_config.method_sets
       ~scope_table:Func_lookup.empty_scope_table
       ()
   in

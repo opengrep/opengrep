@@ -1,6 +1,6 @@
 class Store
   def save(data)
-    # ruleid: homonym-class-dir-unique-method
+    # ok: assigned-receiver-keeps-qualifier
     sink(data)
   end
 end

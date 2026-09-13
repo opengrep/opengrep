@@ -21,11 +21,6 @@ type definition =
       class_qn : Names.Class_qn.t;
     }
 
-type import_kind =
-  | I_default
-  | I_named of string  (* name = local pre-alias *)
-  | I_namespace
-
 type import_binds =
   | Binds_any
   | Binds_function
@@ -52,7 +47,8 @@ type class_info = {
   ci_class_kind : G.class_kind;
   ci_file : Fpath.t;
   ci_range : Range.t option;
-  ci_parent_paths : string list list;
+  ci_parent_paths : Index_lang_rules.class_parent list;
+  ci_singleton_exposure : Index_lang_rules.singleton_exposure;
   ci_imports : import list;
   ci_decorator_names : string list;
 }
@@ -69,7 +65,6 @@ type file_info = {
   fi_package_clause : string option;
   fi_module_regions : Names.Module_qn.t list;
   fi_imports : import list;
-  fi_import_specifiers : (string * string * import_kind) list;
   fi_dataclass_wrappers : dataclass_wrapper list;
   fi_ast : G.program;
   fi_observations : Walker.Observation.t list;

@@ -17,6 +17,7 @@ let bitmask_HIDDEN = 0x01
 let bitmask_CASE_INSENSITIVE = 0x02
 let bitmask_FINAL = 0x04
 let bitmask_STATIC = 0x08
+let bitmask_CONSTANT = 0x10
 
 type t = int [@@deriving show, eq, ord, hash]
 
@@ -31,6 +32,7 @@ let is_case_insensitive, set_case_insensitive =
 
 let is_final, set_final = make_flag bitmask_FINAL
 let is_static, set_static = make_flag bitmask_STATIC
+let is_constant, set_constant = make_flag bitmask_CONSTANT
 let union x y = Int.logor x y
 let to_int x = x
 

@@ -34,10 +34,9 @@ let record_field_names (e : G.expr) : (G.ident * string) list =
 
 (* Clojure [(ns x (:require ...))] is one [OtherDirective("NsDirective")] whose
    requires the parser doesn't surface as imports; pull aliases/refers out here. *)
-let collect_clojure_ns_form ~(tok : Tok.t)
-    (st : import list * (string * string * import_kind) list)
+let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
     (expr_arg : G.any)
-  : import list * (string * string * import_kind) list =
+  : import list =
   let id_name (expr : G.expr) : string option =
     match expr.G.e with G.N name -> Ty_bare_name.bare_name_of_name name | _ -> None
   in
@@ -50,12 +49,11 @@ let collect_clojure_ns_form ~(tok : Tok.t)
     | _ -> None
   in
   let is_kwd name expr = match kwd_name expr with Some str -> String.equal str name | None -> false in
-  let add ((acc, specs) : import list * (string * string * import_kind) list)
-      (local : string) (target : Names.Module_qn.t) =
-    ({ im_local = local; im_alias = None; im_target = target; im_tok = tok;
-       im_static = false; im_global = false; im_binds = Binds_any;
-       im_role = Role_binds }
-     :: acc, specs)
+  let add (acc : import list) (local : string) (target : Names.Module_qn.t) =
+    { im_local = local; im_alias = None; im_target = target; im_tok = tok;
+      im_static = false; im_global = false; im_binds = Binds_any;
+      im_role = Role_binds }
+    :: acc
   in
   let walk_require_vector st vec_items =
     match vec_items with
@@ -102,32 +100,14 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     ~(current_file : Fpath.t)
     ~(current_module_path : Names.Module_qn.t)
     ~(is_init_file : bool)
-    (ast : G.program) :
-    import list * (string * string * import_kind) list =
-  let raw_specifier = function
-    | G.FileName (spec, _) -> spec
-    | G.DottedName _ -> ""
-  in
-  let add_spec (acc, specs) local mn kind =
-    match cfg.Index_lang_rules.unqualified_scope with
-    | `Per_module -> (acc, specs)
-    | `Per_file
-    | `Per_directory
-    | `Per_go_package
-    | `Per_package
-    | `Per_namespace ->
-      let spec = raw_specifier mn in
-      if Int.compare (String.length spec) 0 > 0
-      then (acc, (local, spec, kind) :: specs)
-      else (acc, specs)
-  in
+    (ast : G.program) : import list =
   let add ~(tok : Tok.t) ~(static : bool) ~(global : bool)
       ~(binds : import_binds) ~(role : import_role)
-      ~(alias : string option) (acc, specs) local target =
-    ({ im_local = local; im_alias = alias; im_target = target; im_tok = tok;
-       im_static = static; im_global = global; im_binds = binds;
-       im_role = role }
-     :: acc, specs)
+      ~(alias : string option) (acc : import list) local target =
+    { im_local = local; im_alias = alias; im_target = target; im_tok = tok;
+      im_static = static; im_global = global; im_binds = binds;
+      im_role = role }
+    :: acc
   in
   let is_static_attr (attr : G.attribute) : bool =
     match attr with
@@ -195,6 +175,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
                  | Error _ -> spec)
               | `Per_module -> ""
               | `Per_file
+              | `Per_constant_path
               | `Per_package
               | `Per_namespace -> spec))
       in
@@ -203,17 +184,15 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | Binds_type, _ -> Binds_type
         | (Binds_any | Binds_function | Binds_constant | Binds_module),
           `Per_module -> Binds_module
-        | _, (`Per_file | `Per_directory | `Per_go_package | `Per_package
-             | `Per_namespace) ->
+        | _, (`Per_file | `Per_constant_path | `Per_directory
+             | `Per_go_package | `Per_package | `Per_namespace) ->
           attr_binds
       in
       (match
          (module_name_of mn, Int.compare (String.length local) 0 > 0)
        with
        | Some (qn : Names.Module_qn.t), true ->
-         (* TS/JS default and namespace imports are indistinguishable here;
-            treat both as [I_namespace]. *)
-         add_spec (add ~binds ~alias ~tok st local qn) local mn I_namespace
+         add ~binds ~alias ~tok st local qn
        | Some _, false
        | None, _ -> st)
     | G.ImportFrom (tok, mn, names) -> (
@@ -224,24 +203,14 @@ let collect_imports ~(cfg : Index_lang_rules.t)
           let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
           let local = Option.value alias ~default:name in
           let target = Names.Module_qn.concat qn name in
-          let kind =
-            if String.equal name "default" then I_default
-            else I_named name
-          in
-          add_spec (add ~binds:attr_binds ~alias ~tok st local target) local
-            mn kind
+          add ~binds:attr_binds ~alias ~tok st local target
         ) st names)
-    (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs.
-       The raw specifier is kept under the same "*" sentinel so file-target
-       narrowing can resolve a whole-file import (Ruby [require_relative]) to
-       the file(s) it names ([add_spec] drops [DottedName] imports, whose
-       specifier is empty). *)
+    (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs. *)
     | G.ImportAll (tok, mn, _) -> (
       match module_name_of mn with
       | None -> st
       | Some (qn : Names.Module_qn.t) ->
-        add_spec (add ~binds:attr_binds ~alias:None ~tok st wildcard_local qn)
-          wildcard_local mn I_namespace)
+        add ~binds:attr_binds ~alias:None ~tok st wildcard_local qn)
     | G.OtherDirective (("NsDirective", tok), exprs) ->
       List.fold_left (collect_clojure_ns_form ~tok) st exprs
     | _ -> st
@@ -271,11 +240,9 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | Some (qn : Names.Module_qn.t) ->
           List.fold_left
             (fun st (((key : string), (tok : Tok.t)), (local : string)) ->
-              add_spec
-                (add ~tok ~static:false ~global:false ~binds:Binds_any
-                   ~alias:(Some local) ~role:Role_binds st local
-                   (Names.Module_qn.concat qn key))
-                local (mk_filename_mn spec) (I_named key))
+              add ~tok ~static:false ~global:false ~binds:Binds_any
+                ~alias:(Some local) ~role:Role_binds st local
+                (Names.Module_qn.concat qn key))
             st names
       in
       match (extract_require_spec rhs, ent.G.name) with
@@ -284,12 +251,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         match qn_of_specifier spec with
         | None -> st
         | Some (qn : Names.Module_qn.t) ->
-          let st =
-            add ~tok ~static:false ~global:false ~binds:Binds_module
-              ~alias:(Some local) ~role:Role_binds st local qn
-          in
-          let st = add_spec st local (mk_filename_mn spec) I_default in
-          add_spec st local (mk_filename_mn spec) I_namespace)
+          add ~tok ~static:false ~global:false ~binds:Binds_module
+            ~alias:(Some local) ~role:Role_binds st local qn)
       | Some spec, G.EPattern (G.PatRecord (_, fields, _)) ->
         bind_names spec
           (List.filter_map
@@ -309,37 +272,14 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | _ -> st)
       | Some _, _ -> st
   in
-  (* PHP [require]/[include] parse as calls to [__builtin__require*], not
-     import directives; capture them as whole-file "*" imports like Ruby's
-     [require_relative] so file-target narrowing sees them. *)
-  let php_require_spec (expr : G.expr) : string option =
-    match expr.G.e with
-    | G.Call ({ G.e = G.N (G.Id ((callee_name, _), _)); _ }, args)
-      when List.mem callee_name
-             [ "__builtin__require"; "__builtin__require_once";
-               "__builtin__include"; "__builtin__include_once" ] ->
-      (match Tok.unbracket args with
-       | [G.Arg { G.e = G.L (G.String (_, (spec, _), _)); _ }] -> Some spec
-       | _ -> None)
-    | _ -> None
-  in
-  let on_exprstmt st (expr : G.expr) =
-    match php_require_spec expr with
-    (* Spec only — no [("*", qn)] binding, which would opt the file into the
-       re-export bulk-copy pass. *)
-    | Some spec when String.length spec > 0 ->
-      add_spec st wildcard_local (mk_filename_mn spec) I_namespace
-    | _ -> st
-  in
-  let acc, specs =
+  let acc =
     Walker.fold_stmts_in_program (fun st stmt ->
       match stmt.G.s with
       | G.DirectiveStmt dir -> on_directive st dir
       | G.DefStmt (ent, G.VarDef vd) -> on_defstmt st ent vd
-      | G.ExprStmt (expr, _) -> on_exprstmt st expr
-      | _ -> st) ([], []) ast
+      | _ -> st) [] ast
   in
-  (List.rev acc, List.rev specs)
+  List.rev acc
 
 let with_package_clause_locals ~(cfg : Index_lang_rules.t)
     ~(clause_of_module : Names.Module_qn.t -> string option)
@@ -347,6 +287,7 @@ let with_package_clause_locals ~(cfg : Index_lang_rules.t)
     : file_info list * class_info list =
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_file
+  | `Per_constant_path
   | `Per_directory
   | `Per_module
   | `Per_namespace

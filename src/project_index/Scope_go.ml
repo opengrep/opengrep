@@ -61,6 +61,7 @@ let build_package_index ~(cfg : Index_lang_rules.t)
     ~(file_infos : file_info list) : package_index =
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_file
+  | `Per_constant_path
   | `Per_directory
   | `Per_module
   | `Per_namespace

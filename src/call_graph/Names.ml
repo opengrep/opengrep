@@ -11,6 +11,7 @@ module type DOTTED = sig
   val bare_name : t -> string
   val is_empty : t -> bool
   val split_last : t -> (t * string) option
+  val prefixes : t -> t list
   val concat : t -> string -> t
   val equal : t -> t -> bool
   val compare : t -> t -> int
@@ -37,6 +38,12 @@ module Make_dotted () : DOTTED = struct
         let parent = String.sub t 0 i in
         let bare_name = String.sub t (i + 1) (String.length t - i - 1) in
         Some (parent, bare_name)
+  let rec prefixes t =
+    if String.length t = 0 then []
+    else
+      match String.rindex_opt t '.' with
+      | None -> [ t ]
+      | Some i -> t :: prefixes (String.sub t 0 i)
   let concat t part =
     if String.length t = 0 then part
     else if String.length part = 0 then t

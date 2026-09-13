@@ -1712,6 +1712,28 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                  (default + tail) combination; falling through");
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args
+      | G.DotAccess (receiver, dot, G.FN (G.Id (_, send_info))), None
+        when (match method_name with
+              | "send"
+              | "public_send" -> true
+              | _ -> false) -> (
+          match Tok.unbracket args with
+          | G.Arg key_expr :: (_ :: _ as sent_args) -> (
+              match literal_field_ident key_expr with
+              | Some (sent_id : G.ident) ->
+                  expr_aux env ~void
+                    (G.Call
+                       ( G.DotAccess (receiver, dot,
+                                      G.FN (G.Id (sent_id, send_info)))
+                         |> G.e,
+                         Tok.unsafe_fake_bracket sent_args )
+                     |> G.e)
+              | None ->
+                  let tok = G.fake "call" in
+                  call_generic env ~void tok eorig callee args)
+          | _ ->
+              let tok = G.fake "call" in
+              call_generic env ~void tok eorig callee args)
       | _ ->
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args)

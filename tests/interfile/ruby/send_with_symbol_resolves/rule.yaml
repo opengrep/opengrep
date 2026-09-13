@@ -1,0 +1,15 @@
+rules:
+  - id: send-with-symbol-resolves
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A send with a literal symbol calls that method on the receiver. The
+      synthesised method name denotes the same call site as the send, so it
+      shares that node and carries the definition stamp the resolver writes.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

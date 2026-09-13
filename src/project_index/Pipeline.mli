@@ -11,20 +11,6 @@ type stamp_var_types =
   G.program ->
   unit
 
-(* A [required_files_narrowing] holds the project-wide inputs of the
-   narrowing by required files (Ruby, PHP): the classes that the
-   narrowing can change, the reversed path segments of each definition
-   file, and the type state narrowed to each caller directory. One state
-   per directory covers every file of that directory that the
-   required-files pass did not narrow. The reversed segments are held for
-   every file in the list of project files, so the lookup of a definition
-   file always succeeds. The narrowed states cover every directory of that
-   same list, so the lookup of a caller directory always succeeds. *)
-type required_files_narrowing = {
-  narrowable_classes : Names.Class_name.t list;
-  rev_path_segs_by_file : string list Common.SMap.t;
-}
-
 type file_scope = {
   scope_table : Func_lookup.scope_table;
   bound_class_files : (Names.Class_name.t * Fpath.t) list;
@@ -36,19 +22,20 @@ type ctx = {
   lang : Lang.t;
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
-  required_files_narrowing : required_files_narrowing option;
   definitions_by_qn : definition Common.SMap.t;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
   resolution_orders : Func_lookup.resolution_orders;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
+  singleton_names : Func_lookup.singleton_names;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
+  top_level_scope : Func_lookup.scope_table;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -93,6 +80,7 @@ val build_scope_table :
   php_global_bindings:Scope_binding.positioned_binding list ->
   module_scope:Scope_module.project_scope ->
   go_packages:Scope_go.package_index ->
+  top_level_scope:Func_lookup.scope_table ->
   file_info ->
   file_scope option
 

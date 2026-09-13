@@ -167,6 +167,12 @@ let reference_of_callable_literal ~(lang : Lang.t) (e : G.expr)
       when is_closure_from_callable callee -> Some inner
     | _ -> None
 
+let callback_of_atom (atom_ident : G.ident)
+    : (IL.name * Tok.t * IL.name option * callback_scope) list =
+  [ (IL.{ ident = atom_ident; sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () },
+     snd atom_ident, None, Unscoped) ]
+
 let rec extract_callbacks_from_arg ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
     (IL.name * Tok.t * IL.name option * callback_scope) list =
@@ -205,6 +211,12 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
   (* Address-of operator: &foo (C/C++ function pointers) *)
   | G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }) ->
       [ (AST_to_IL.var_of_id_info id id_info, snd id, None, Unscoped) ]
+  | G.Ref (_, { e = G.L (G.Atom (_, atom_ident)); _ })
+    when (Lang_config.get lang).Lang_config.block_pass_operator ->
+      callback_of_atom atom_ident
+  | G.Ref (_, (operand : G.expr))
+    when (Lang_config.get lang).Lang_config.block_pass_operator ->
+      extract_callbacks_from_arg ~lang ~func_lookup operand
   (* Qualified identifier: Module.foo *)
   | G.N (G.IdQualified { name_last = id, _; name_info; _ }) ->
       [ (AST_to_IL.var_of_id_info id name_info, snd id, None, Unscoped) ]
@@ -298,15 +310,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       ( { e = G.N (G.Id (("method", _), _)); _ },
         (_, [ G.Arg { e = G.L (G.Atom (_, atom_ident)); _ } ], _) )
     when lang =*= Lang.Ruby ->
-      let synthetic_name =
-        IL.
-          {
-            ident = atom_ident;
-            sid = G.SId.unsafe_default;
-            id_info = G.empty_id_info ();
-          }
-      in
-      [ (synthetic_name, snd atom_ident, None, Unscoped) ]
+      callback_of_atom atom_ident
   | _ -> []
 
 

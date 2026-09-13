@@ -191,14 +191,17 @@ let inherit_into_type_state
     match resolve_parent_qn ~imports:ci.ci_imports
             ~reexport_map ~known_class_qns p_path with
     | Some _ as resolved -> resolved
-    | None ->
-      if cfg.Index_lang_rules.parents_resolve_by_binding then
+    | None -> (
+      match cfg.Index_lang_rules.parent_resolution with
+      | Index_lang_rules.Parent_in_own_scope ->
         resolve_parent_in_own_scope ~known_class_qns ci p_path
-      else
-      match resolve_parent_lexical ~by_qn ci p_path with
-      | Some _ as resolved -> resolved
-      | None ->
-        resolve_parent_by_scope ~by_qn ~qns_by_bare_name ci p_path
+      | Index_lang_rules.Parent_by_lexical_scope ->
+        resolve_parent_lexical ~by_qn ci p_path
+      | Index_lang_rules.Parent_by_lexical_scope_then_homonym -> (
+        match resolve_parent_lexical ~by_qn ci p_path with
+        | Some _ as resolved -> resolved
+        | None ->
+          resolve_parent_by_scope ~by_qn ~qns_by_bare_name ci p_path))
   in
   let synth_inherited (child_cls_il : IL.name) (parent_method : FA.func_info)
     : FA.func_info option =
@@ -207,18 +210,28 @@ let inherit_into_type_state
         FA.fn_id = Func_info.method_id ~cls:child_cls_il ~meth:m_il })
       (Func_info.as_method parent_method.FA.fn_id)
   in
-  let parents_of (ci : class_info) : class_info list =
-    List.filter_map (fun p_path ->
-      match resolve_parent ci p_path with
-      | None -> None
-      | Some pq ->
-        Hashtbl.find_opt by_qn
-          (Names.Class_qn.of_string (Names.Module_qn.to_string pq)))
+  let parents_at (position : Index_lang_rules.parent_position)
+      (ci : class_info) : class_info list =
+    List.filter_map (fun (parent : Index_lang_rules.class_parent) ->
+      if
+        not
+          (Index_lang_rules.equal_parent_position
+             parent.Index_lang_rules.cp_position position)
+      then None
+      else
+        match resolve_parent ci parent.Index_lang_rules.cp_path with
+        | None -> None
+        | Some pq ->
+          Hashtbl.find_opt by_qn
+            (Names.Class_qn.of_string (Names.Module_qn.to_string pq)))
       ci.ci_parent_paths
   in
   (* C3 linearization; on cycles / inconsistent hierarchies, force the next head so the merge terminates. *)
   let ci_eq (left : class_info) (right : class_info) =
     Function_id.equal left.ci_id right.ci_id
+  in
+  let keep_first (order : class_info list) : class_info list =
+    List_.uniq_by ci_eq order
   in
   let remove_head (head : class_info) (seqs : class_info list list) =
     List.filter_map (fun seq ->
@@ -258,10 +271,14 @@ let inherit_into_type_state
     | None ->
       if List.exists (Function_id.equal ci.ci_id) active then [ci]
       else begin
-        let parents = parents_of ci in
+        let prepended = parents_at Index_lang_rules.Prepended ci in
+        let parents = parents_at Index_lang_rules.Appended ci in
         let seqs = List.map (linearize (ci.ci_id :: active)) parents
                    @ [parents] in
-        let result = ci :: c3_merge seqs in
+        let before =
+          List.concat_map (linearize (ci.ci_id :: active)) prepended
+        in
+        let result = keep_first (before @ (ci :: c3_merge seqs)) in
         Hashtbl.replace lin_cache ci.ci_id result;
         result
       end

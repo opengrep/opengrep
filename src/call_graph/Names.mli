@@ -15,6 +15,7 @@ module type DOTTED = sig
   (* The result is [Some (parent, bare_name)], [Some ("", bare_name)] for a
      single segment, and [None] for an empty name. *)
   val split_last : t -> (t * string) option
+  val prefixes : t -> t list
   val concat : t -> string -> t
   val equal : t -> t -> bool
   val compare : t -> t -> int

@@ -1,0 +1,12 @@
+rules:
+  - id: autoload-path-needs-no-require
+    languages: [ruby]
+    severity: ERROR
+    message: A constant of the project resolves with no require, as the autoload convention makes it reachable.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -37,6 +37,13 @@ end)
 
 type methods_by_class = Func_info.t list Common.SMap.t Class_qn_map.t
 
+type method_receiver =
+  | On_class
+  | On_instance
+  | On_any
+
+type singleton_names = unit Common.SMap.t Class_qn_map.t
+
 type class_qn_by_definition =
   (Function_id.t * Names.Class_qn.t) list Common.SMap.t
 
@@ -58,10 +65,15 @@ type scope_entry = {
   parent_path : IL.name option list;
 }
 
-type scope_table = scope_entry list Common.SMap.t
+type scope_table =
+  | Scope_bindings of scope_entry list Common.SMap.t
+  | Scope_layered of scope_table * scope_table
 
 let scope_table_of_map (bindings : scope_entry list Common.SMap.t)
-    : scope_table = bindings
+    : scope_table = Scope_bindings bindings
+
+let scope_table_layered ~(front : scope_table) ~(back : scope_table)
+    : scope_table = Scope_layered (front, back)
 
 let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
   List.find_map
@@ -108,7 +120,27 @@ let object_of_entries (entries : scope_entry list)
       | Scope_extension _ -> None)
     entries
 
-let empty_scope_table : scope_table = Common.SMap.empty
+let empty_scope_table : scope_table = Scope_bindings Common.SMap.empty
+
+let equal_kind (left : scope_kind) (right : scope_kind) : bool =
+  match (left, right) with
+  | Scope_function (first : Func_info.t), Scope_function (second : Func_info.t)
+  | Scope_extension (first : Func_info.t), Scope_extension (second : Func_info.t)
+    -> Func_info.equal_fn_id first.fn_id second.fn_id
+  | Scope_class (first : Names.Class_qn.t), Scope_class (second : Names.Class_qn.t)
+    -> Names.Class_qn.equal first second
+  | Scope_local_value, Scope_local_value -> true
+  | Scope_object _, Scope_object _ -> false
+  | (Scope_function _ | Scope_extension _ | Scope_class _ | Scope_object _
+    | Scope_local_value), _ -> false
+
+let keep_distinct (entries : scope_entry list) : scope_entry list =
+  List_.uniq_by
+    (fun (left : scope_entry) (right : scope_entry) ->
+      equal_kind left.kind right.kind
+      && List.equal (Option.equal Function_id.equal_il_name) left.parent_path
+           right.parent_path)
+    entries
 
 let bare_name_index_of_hashtbl tbl = Table tbl
 let bare_name_index_layered ~front ~back = Layered (front, back)
@@ -189,6 +221,8 @@ type t = {
   resolution_orders : resolution_orders;
   class_qn_by_definition : class_qn_by_definition;
   methods_by_class : methods_by_class;
+  singleton_names : singleton_names;
+  method_sets : Lang_config.method_sets;
 }
 
 let overload_groups (t : t) : bool = t.overload_groups
@@ -196,7 +230,18 @@ let overload_groups (t : t) : bool = t.overload_groups
 let own_modules (t : t) : Names.Module_qn.t list = t.own_modules
 
 let resolve_in_scope (t : t) (name : string) : scope_entry list =
-  Option.value (Common.SMap.find_opt name t.scope_table) ~default:[]
+  let rec entries (table : scope_table) : scope_entry list =
+    match table with
+    | Scope_bindings (bindings : scope_entry list Common.SMap.t) ->
+      Option.value (Common.SMap.find_opt name bindings) ~default:[]
+    | Scope_layered (front, back) -> (
+      match (entries front, entries back) with
+      | found, [] -> found
+      | [], found -> found
+      | front_entries, back_entries ->
+        keep_distinct (front_entries @ back_entries))
+  in
+  entries t.scope_table
 
 let module_attribute (t : t) (qn : Names.Module_qn.t) (name : string)
     : module_attribute option =
@@ -235,26 +280,53 @@ let class_qn_of_definition (t : t) (definition : IL.name)
            Function_id.equal_name id definition)
          classes)
 
-let find_along_order (t : t) (order : Names.Class_qn.t list)
+let find_along_order (t : t) ~(receiver : method_receiver)
+    (order : Names.Class_qn.t list)
     (names_of : Names.Class_qn.t -> string list) : Func_info.t list =
-  let bound_on (class_qn : Names.Class_qn.t) : Func_info.t list =
+  let bound_on
+      ~(keep : Names.Class_qn.t -> string -> Func_info.t -> bool)
+      (class_qn : Names.Class_qn.t) : Func_info.t list =
     match Class_qn_map.find_opt class_qn t.methods_by_class with
     | None -> []
     | Some (by_name : Func_info.t list Common.SMap.t) ->
       List.concat_map
         (fun (name : string) ->
-          Option.value (Common.SMap.find_opt name by_name) ~default:[])
+          List.filter (keep class_qn name)
+            (Option.value (Common.SMap.find_opt name by_name) ~default:[]))
         (names_of class_qn)
   in
-  let rec first_binder (order : Names.Class_qn.t list) : Func_info.t list =
+  let rec first_binder
+      ~(keep : Names.Class_qn.t -> string -> Func_info.t -> bool)
+      (order : Names.Class_qn.t list) : Func_info.t list =
     match order with
     | [] -> []
     | class_qn :: rest -> (
-      match bound_on class_qn with
-      | [] -> first_binder rest
+      match bound_on ~keep class_qn with
+      | [] -> first_binder ~keep rest
       | (_ :: _) as found -> found)
   in
-  first_binder order
+  let every (_ : Names.Class_qn.t) (_ : string) (_ : Func_info.t) : bool =
+    true
+  in
+  let exposed_by (class_qn : Names.Class_qn.t) (name : string) : bool =
+    match Class_qn_map.find_opt class_qn t.singleton_names with
+    | None -> false
+    | Some (names : unit Common.SMap.t) -> Common.SMap.mem name names
+  in
+  let singleton (class_qn : Names.Class_qn.t) (name : string)
+      (func : Func_info.t) : bool =
+    Receiver.is_static func.entity || exposed_by class_qn name
+  in
+  let instance (_ : Names.Class_qn.t) (_ : string) (func : Func_info.t) : bool =
+    not (Receiver.is_static func.entity)
+  in
+  match t.method_sets with
+  | Lang_config.Shared_by_class_and_instance -> first_binder ~keep:every order
+  | Lang_config.Separate_for_class_and_instance -> (
+    match receiver with
+    | On_any -> first_binder ~keep:every order
+    | On_instance -> first_binder ~keep:instance order
+    | On_class -> first_binder ~keep:singleton order)
 
 let empty = {
   funcs_by_name = None;
@@ -273,6 +345,8 @@ let empty = {
   resolution_orders = Common.SMap.empty;
   class_qn_by_definition = Common.SMap.empty;
   methods_by_class = Class_qn_map.empty;
+  singleton_names = Class_qn_map.empty;
+  method_sets = Lang_config.Shared_by_class_and_instance;
 }
 
 let create
@@ -286,6 +360,8 @@ let create
     ~(resolution_orders : resolution_orders)
     ~(class_qn_by_definition : class_qn_by_definition)
     ~(methods_by_class : methods_by_class)
+    ~(singleton_names : singleton_names)
+    ~(method_sets : Lang_config.method_sets)
     ~(scope_table : scope_table) () =
   { funcs_by_name;
     project_funcs_by_name;
@@ -302,7 +378,9 @@ let create
     module_attributes;
     resolution_orders;
     class_qn_by_definition;
-    methods_by_class }
+    methods_by_class;
+    singleton_names;
+    method_sets }
 
 let with_local_imports t local_imports : t =
   { t with local_imports }

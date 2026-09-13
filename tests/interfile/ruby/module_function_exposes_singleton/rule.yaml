@@ -1,0 +1,15 @@
+rules:
+  - id: module-function-exposes-singleton
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A module that writes extend self or module_function exposes the methods
+      it names as singleton methods, so a call on the module constant reaches
+      them.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

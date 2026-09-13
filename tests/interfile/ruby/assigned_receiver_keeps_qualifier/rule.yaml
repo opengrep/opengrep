@@ -1,0 +1,12 @@
+rules:
+  - id: assigned-receiver-keeps-qualifier
+    languages: [ruby]
+    severity: ERROR
+    message: A variable assigned from a qualified constant keeps the qualifier at the call on it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

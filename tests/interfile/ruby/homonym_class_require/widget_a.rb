@@ -1,8 +1,10 @@
-# Unrelated homonym: same class name and method arity as widget_b.rb,
-# but never required by app.rb.  Its presence must not suppress the
-# finding through widget_b's Widget#process.
-class Widget
-  def process(x)
-    x.to_s
+# The constant path of this class is Other::Widget, so a reference to Widget
+# from app.rb never names it, whatever app.rb requires.
+module Other
+  class Widget
+    def process(x)
+      # ok: homonym-class-require
+      sink(x)
+    end
   end
 end

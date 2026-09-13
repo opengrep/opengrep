@@ -36,6 +36,7 @@ let build_dir_index
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
     | `Per_file
+    | `Per_constant_path
     | `Per_module -> None
   in
   List.iter (fun (fi : Types.file_info) ->
@@ -66,6 +67,7 @@ let build_dir_index
      Log.info (fun m -> m "Per-package scope: %d Go packages indexed"
        (Hashtbl.length dir_index))
    | `Per_file
+   | `Per_constant_path
    | `Per_module -> ());
   dir_index
 
@@ -84,6 +86,7 @@ let for_file
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
     | `Per_file
+    | `Per_constant_path
     | `Per_module -> None
   in
   (match scope_key_opt with
