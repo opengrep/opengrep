@@ -7,10 +7,12 @@ type include_form =
   | Angle_include of string
 
 type t = {
-  im_visible : Func_info.t list Common.SMap.t Common.SMap.t;
+  im_direct : string list Common.SMap.t;
+  im_declared : Func_info.t list Common.SMap.t Common.SMap.t;
 }
 
-let empty : t = { im_visible = Common.SMap.empty }
+let empty : t =
+  { im_direct = Common.SMap.empty; im_declared = Common.SMap.empty }
 
 let include_form_of (specifier : string) : include_form =
   let last = String.length specifier - 1 in
@@ -81,39 +83,20 @@ let direct_includes ~(by_path : string Common.SMap.t)
        (fun (key : string) -> not (String.equal key own_key))
        (List.filter_map resolved (specifiers_of_file fi)))
 
-let rec reachable_from ~(direct : string list Common.SMap.t)
-    ~(active : unit Common.SMap.t)
-    (memo : unit Common.SMap.t Common.SMap.t) (file : string)
-    : unit Common.SMap.t Common.SMap.t * unit Common.SMap.t =
-  match Common.SMap.find_opt file memo with
-  | Some (reached : unit Common.SMap.t) -> (memo, reached)
-  | None ->
-    if Common.SMap.mem file active then (memo, Common.SMap.empty)
-    else
-      let active = Common.SMap.add file () active in
-      let memo, reached =
-        List.fold_left
-          (fun ((memo : unit Common.SMap.t Common.SMap.t),
-                (reached : unit Common.SMap.t)) (included : string) ->
-            let memo, deeper =
-              reachable_from ~direct ~active memo included
-            in
-            ( memo,
-              Common.SMap.union
-                (fun _ () () -> Some ())
-                (Common.SMap.add included () reached)
-                deeper ))
-          (memo, Common.SMap.empty)
-          (Option.value (Common.SMap.find_opt file direct) ~default:[])
-      in
-      (Common.SMap.add file reached memo, reached)
-
-let closures ~(direct : string list Common.SMap.t) (files : string list)
-    : unit Common.SMap.t Common.SMap.t =
-  List.fold_left
-    (fun (memo : unit Common.SMap.t Common.SMap.t) (file : string) ->
-      fst (reachable_from ~direct ~active:Common.SMap.empty memo file))
-    Common.SMap.empty files
+let reachable_from ~(direct : string list Common.SMap.t) (file : string)
+    : unit Common.SMap.t =
+  let rec walk (reached : unit Common.SMap.t) (pending : string list)
+      : unit Common.SMap.t =
+    match pending with
+    | [] -> reached
+    | (next : string) :: rest ->
+      if Common.SMap.mem next reached then walk reached rest
+      else
+        walk (Common.SMap.add next () reached)
+          (Option.value (Common.SMap.find_opt next direct) ~default:[] @ rest)
+  in
+  walk Common.SMap.empty
+    (Option.value (Common.SMap.find_opt file direct) ~default:[])
 
 let external_names (funcs : Func_info.t list) : (string * Func_info.t) list =
   List.filter_map
@@ -125,17 +108,16 @@ let external_names (funcs : Func_info.t list) : (string * Func_info.t) list =
           (Func_info.as_free func.Func_info.fn_id))
     funcs
 
-let file_scope_declarations (ast : G.program) : string list =
-  List.filter_map
-    (fun (stmt : G.stmt) ->
-      match stmt.G.s with
-      | G.DefStmt
-          (({ G.name = G.EN (G.Id (((name : string), _), _)); _ } as ent),
-           G.VarDef
-             { G.vtype = Some { G.t = G.TyFun _; _ }; vinit = None; _ })
-        when not (Receiver.is_static (Some (ent : G.entity))) -> Some name
-      | _ -> None)
-    ast
+let defined_names (named : (string * Func_info.t) list)
+    : (string * Func_info.t) list =
+  List.filter
+    (fun ((_ : string), (func : Func_info.t)) ->
+      match func.Func_info.fdef.G.fbody with
+      | G.FBDecl _
+      | G.FBNothing -> false
+      | G.FBStmt _
+      | G.FBExpr _ -> true)
+    named
 
 let merge_funcs (kept : Func_info.t list) (added : Func_info.t list)
     : Func_info.t list =
@@ -157,65 +139,55 @@ let merge_by_name (kept : Func_info.t list Common.SMap.t)
       Some (merge_funcs first second))
     kept added
 
-let declared_at ~(closure : unit Common.SMap.t Common.SMap.t)
+let declared_at ~(direct : string list Common.SMap.t)
     ~(declarers : string list Common.SMap.t)
     (exports : (string * Func_info.t) list Common.SMap.t)
     : Func_info.t list Common.SMap.t Common.SMap.t =
-  let reaches (declaring : string) (defining : string) : bool =
-    String.equal declaring defining
-    || Common.SMap.mem declaring
-         (Option.value (Common.SMap.find_opt defining closure)
-            ~default:Common.SMap.empty)
-  in
   Common.SMap.fold
     (fun (defining : string) (named : (string * Func_info.t) list)
          (declared : Func_info.t list Common.SMap.t Common.SMap.t) ->
+      let reached = reachable_from ~direct defining in
+      let reaches (declaring : string) : bool =
+        String.equal declaring defining || Common.SMap.mem declaring reached
+      in
       List.fold_left
         (fun (declared : Func_info.t list Common.SMap.t Common.SMap.t)
              ((name : string), (func : Func_info.t)) ->
           List.fold_left
             (fun (declared : Func_info.t list Common.SMap.t Common.SMap.t)
                  (declaring : string) ->
-              if not (reaches declaring defining) then declared
+              if not (reaches declaring) then declared
               else
                 Common.SMap.update declaring
                   (fun (bound : Func_info.t list Common.SMap.t option) ->
                     Some
-                      (merge_by_name
-                         (Option.value bound ~default:Common.SMap.empty)
-                         (Common.SMap.singleton name [ func ])))
+                      (Common.SMap.update name
+                         (fun (earlier : Func_info.t list option) ->
+                           Some
+                             (merge_funcs
+                                (Option.value earlier ~default:[]) [ func ]))
+                         (Option.value bound ~default:Common.SMap.empty)))
                   declared)
             declared
             (Option.value (Common.SMap.find_opt name declarers) ~default:[]))
         declared named)
     exports Common.SMap.empty
 
-let rec visible_from ~(direct : string list Common.SMap.t)
-    ~(declared : Func_info.t list Common.SMap.t Common.SMap.t)
-    ~(active : unit Common.SMap.t)
-    (memo : Func_info.t list Common.SMap.t Common.SMap.t) (file : string)
-    : Func_info.t list Common.SMap.t Common.SMap.t
-      * Func_info.t list Common.SMap.t =
-  match Common.SMap.find_opt file memo with
-  | Some (bound : Func_info.t list Common.SMap.t) -> (memo, bound)
-  | None ->
-    if Common.SMap.mem file active then (memo, Common.SMap.empty)
-    else
-      let active = Common.SMap.add file () active in
-      let memo, bound =
-        List.fold_left
-          (fun ((memo : Func_info.t list Common.SMap.t Common.SMap.t),
-                (bound : Func_info.t list Common.SMap.t)) (included : string) ->
-            let memo, deeper =
-              visible_from ~direct ~declared ~active memo included
-            in
-            (memo, merge_by_name bound deeper))
-          (memo,
-           Option.value (Common.SMap.find_opt file declared)
-             ~default:Common.SMap.empty)
-          (Option.value (Common.SMap.find_opt file direct) ~default:[])
-      in
-      (Common.SMap.add file bound memo, bound)
+let closure_of_file (include_map : t) (file : string) : unit Common.SMap.t =
+  reachable_from ~direct:include_map.im_direct file
+
+let visible_in_file (include_map : t) ~(closure : unit Common.SMap.t)
+    (file : string) : Func_info.t list Common.SMap.t =
+  let declared_in (reached : string) : Func_info.t list Common.SMap.t =
+    Option.value
+      (Common.SMap.find_opt reached include_map.im_declared)
+      ~default:Common.SMap.empty
+  in
+  Common.SMap.fold
+    (fun (reached : string) ()
+         (bound : Func_info.t list Common.SMap.t) ->
+      merge_by_name bound (declared_in reached))
+    closure (declared_in file)
 
 let build ~(file_infos : file_info list)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t) : t =
@@ -252,7 +224,6 @@ let build ~(file_infos : file_info list)
           (direct_includes ~by_path ~by_basename fi) direct)
       Common.SMap.empty file_infos
   in
-  let closure = closures ~direct file_keys in
   let exports =
     List.fold_left
       (fun (exports : (string * Func_info.t) list Common.SMap.t)
@@ -263,10 +234,21 @@ let build ~(file_infos : file_info list)
           Common.SMap.add file (external_names funcs) exports)
       Common.SMap.empty file_keys
   in
+  let has_includers : unit Common.SMap.t =
+    Common.SMap.fold
+      (fun _ (included : string list) (targets : unit Common.SMap.t) ->
+        List.fold_left
+          (fun (targets : unit Common.SMap.t) (target : string) ->
+            Common.SMap.add target () targets)
+          targets included)
+      direct Common.SMap.empty
+  in
   let declarers =
     List.fold_left
       (fun (declarers : string list Common.SMap.t) (fi : file_info) ->
         let file = Fpath.to_string fi.fi_file in
+        if not (Common.SMap.mem file has_includers) then declarers
+        else
         List.fold_left
           (fun (declarers : string list Common.SMap.t) (name : string) ->
             Common.SMap.update name
@@ -278,27 +260,26 @@ let build ~(file_infos : file_info list)
                 | None -> Some [ file ])
               declarers)
           declarers
-          (file_scope_declarations fi.fi_ast
-           @ List.map fst
-               (Option.value (Common.SMap.find_opt file exports) ~default:[])))
+          (List.map fst
+             (Option.value (Common.SMap.find_opt file exports) ~default:[])))
       Common.SMap.empty file_infos
   in
-  let declared = declared_at ~closure ~declarers exports in
-  { im_visible =
-      List.fold_left
-        (fun (memo : Func_info.t list Common.SMap.t Common.SMap.t)
-             (file : string) ->
-          fst
-            (visible_from ~direct ~declared ~active:Common.SMap.empty memo file))
-        Common.SMap.empty file_keys }
+  let declared =
+    declared_at ~direct ~declarers (Common.SMap.map defined_names exports)
+  in
+  { im_direct = direct; im_declared = declared }
 
-let bindings_of_file (include_map : t) (file : string)
-    : Scope_binding.positioned_binding list =
+let bindings_of_file (include_map : t) ~(closure : unit Common.SMap.t)
+    (file : string) : Scope_binding.positioned_binding list =
   Common.SMap.fold
     (fun (name : string) (funcs : Func_info.t list)
          (bindings : Scope_binding.positioned_binding list) ->
       Scope_binding.function_binding_of ~pos:None ~parent_path:[] name funcs
       @ bindings)
-    (Option.value (Common.SMap.find_opt file include_map.im_visible)
-       ~default:Common.SMap.empty)
+    (visible_in_file include_map ~closure file)
     []
+
+let files_in_closure (closure : unit Common.SMap.t) : string list =
+  Common.SMap.fold
+    (fun (reached : string) () (files : string list) -> reached :: files)
+    closure []

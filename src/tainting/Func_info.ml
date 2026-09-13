@@ -22,6 +22,13 @@ type t = {
   fdef : G.function_definition;
 }
 
+let entity_qualifier (func : t) : string option =
+  match func.entity with
+  | Some { G.name = G.EN (name : G.name); _ } ->
+    Ty_bare_name.qualifier_of_name name
+  | Some _
+  | None -> None
+
 let as_method : fn_id -> (IL.name * IL.name) option = function
   | [Some cls; Some meth] -> Some (cls, meth)
   | _ -> None

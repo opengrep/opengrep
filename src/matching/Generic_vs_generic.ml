@@ -3243,6 +3243,17 @@ and m_definition_kind a b =
         (fun x -> x.arrow_is_function)
         ~then_:(m_function_definition a1 b1)
         ~else_:(fail ())
+  (* In C and C++ a function declaration at file scope is a [FuncDef] whose
+     body is [FBDecl], while the same text written as a pattern carries the
+     variable shape the conversion gives it everywhere else. *)
+  | G.VarDef { G.vtype = Some { G.t = G.TyFun (a1, a2); _ }; vinit = None; _ },
+    B.FuncDef { B.fparams = b1; frettype = Some b2; fbody = B.FBDecl _; _ } ->
+      with_lang (fun lang ->
+        match lang with
+        | Lang.C
+        | Lang.Cpp ->
+          m_parameter_list a1 (Tok.unbracket b1) >>= fun () -> m_type_ a2 b2
+        | _ -> fail ())
   | G.VarDef a1, B.VarDef b1 -> m_variable_definition a1 b1
   | G.FieldDefColon a1, B.FieldDefColon b1 -> m_variable_definition a1 b1
   | G.ClassDef a1, B.ClassDef b1 -> m_class_definition a1 b1

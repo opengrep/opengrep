@@ -1033,10 +1033,12 @@ let lookup_signature_with_object_context env fun_exp arity =
               (* Try builtin fallback - first with qualified name, then with just method name *)
               let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
-      | Fetch { base = Var _obj; rev_offset = { o = Dot method_name; _ } :: _ } -> (
+      | Fetch { base = Var _ | Mem _;
+                rev_offset = { o = Dot method_name; _ } :: _ } -> (
           (* For a chained call such as [i.Next.G(s)], the stamp on the bare
              method name resolves the callee. The single-offset branch
-             resolves it the same way. *)
+             resolves it the same way. The base may also be a dereferenced
+             receiver, as in the C and C++ call [p->m(x)]. *)
           match
             signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db

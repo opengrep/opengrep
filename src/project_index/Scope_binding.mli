@@ -62,3 +62,20 @@ val bindings_of_attributes :
   keep:(string -> Func_lookup.module_attribute -> bool) ->
   Func_lookup.module_attribute Common.SMap.t ->
   positioned_binding list
+
+val bindings_of_every_attribute :
+  pos:Pos.t option ->
+  Func_lookup.module_attribute Common.SMap.t ->
+  positioned_binding list
+
+type region_bindings = {
+  rb_in_region : positioned_binding list;
+  rb_names : unit Common.SMap.t;
+}
+
+val bindings_in_region : region_bindings -> positioned_binding list
+
+val build_region_bindings :
+  attributes_by_module:Func_lookup.module_attributes ->
+  file_infos:Types.file_info list ->
+  region_bindings Common.SMap.t

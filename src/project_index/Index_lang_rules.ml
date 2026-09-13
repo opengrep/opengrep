@@ -630,8 +630,12 @@ let package_scoped : t = { default with
 let java : t = package_scoped
 let kotlin : t = package_scoped
 let csharp : t = package_scoped
-let cpp : t =
-  { package_scoped with normalize_import_specifier = strip_c_header_ext }
+let cpp : t = { package_scoped with
+  unqualified_scope = `Per_translation_unit;
+  module_path_from_ast = namespace_decl_or_global;
+  normalize_import_specifier = strip_c_header_ext;
+  parent_resolution = Parent_by_lexical_scope;
+}
 
 let c : t = { default with
   unqualified_scope = `Per_translation_unit;

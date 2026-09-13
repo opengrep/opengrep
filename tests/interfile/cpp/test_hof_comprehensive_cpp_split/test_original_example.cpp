@@ -1,3 +1,5 @@
+#include "hof.h"
+
 void test_original_example() {
     std::string history = getHistory("name", "owner");
     std::vector<std::string> vec = {history};

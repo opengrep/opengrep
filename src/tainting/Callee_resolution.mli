@@ -29,6 +29,8 @@ val nearest_scope_entries :
   IL.name option list ->
   Func_lookup.scope_entry list
 
+val prefer_concrete : func_info list -> func_info list
+
 val uses_new_keyword : Lang.t -> bool
 
 val expr_of_type_name : AST_generic.type_ -> AST_generic.expr option

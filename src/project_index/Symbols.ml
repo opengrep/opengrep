@@ -276,9 +276,10 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
               then K_method
               else K_function
             in
+            let qualified_scope = push_qualifier_scopes ent scope in
             let owner_qn =
               Names.Def_qn.of_string
-                (qualified_name_of ~module_path (List.rev scope)
+                (qualified_name_of ~module_path (List.rev qualified_scope)
                    (Option.value method_owner ~default:name))
             in
             let qn =

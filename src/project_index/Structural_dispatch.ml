@@ -48,10 +48,10 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
   else begin
   List.iter
     (fun (func : FA.func_info) ->
-      let scope =
+      let scope : string option option =
         match func.FA.fn_id with
-        | [ Some cls; Some _ ] -> Some (fst cls.IL.ident)
-        | [ None; Some _ ] -> Some ""
+        | [ Some cls; Some _ ] -> Some (Some (fst cls.IL.ident))
+        | [ None; Some _ ] -> Some (Func_info.entity_qualifier func)
         | _ -> None
       in
       let concrete =
@@ -64,7 +64,9 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
       match (scope, Func_info.bare_name func.FA.fn_id, Func_info.def_file_opt func) with
       | Some scope, Some bare_name, Some file when concrete ->
           let key =
-            Printf.sprintf "%s\000%s\000%s\000%d" (Fpath.to_string file) scope
+            Printf.sprintf "%s\000%b\000%s\000%s\000%d"
+              (Fpath.to_string file) (Option.is_some scope)
+              (Option.value scope ~default:"")
               (fst bare_name.IL.ident)
               (List.length (Tok.unbracket func.FA.fdef.G.fparams))
           in

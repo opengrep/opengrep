@@ -1,0 +1,12 @@
+rules:
+  - id: using-namespace
+    languages: [cpp]
+    message: a using directive brings one namespace's function into scope, not the homonym of a second namespace
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

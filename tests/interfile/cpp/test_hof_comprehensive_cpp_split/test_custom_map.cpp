@@ -1,3 +1,5 @@
+#include "hof.h"
+
 void test_custom_map() {
     std::vector<std::string> arr = {source()};
     customMap<std::string>(arr, [](std::string x) {

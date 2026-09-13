@@ -1,3 +1,5 @@
+#include "hof.h"
+
 int main() {
     test_custom_map();
     test_custom_map_builtin();

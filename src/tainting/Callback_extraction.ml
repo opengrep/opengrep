@@ -481,7 +481,7 @@ let identify_callback_interfile ~(lang : Lang.t)
     | Unscoped -> (
         let callback_name_str = fst callback_name.IL.ident in
         let first (candidates : func_info list) : fn_id option =
-          match candidates with
+          match Callee_resolution.prefer_concrete candidates with
           | (f : func_info) :: _ -> Some f.fn_id
           | [] -> None
         in

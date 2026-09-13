@@ -1,3 +1,5 @@
+#include "hof.h"
+
 void test_builtin_transform() {
     std::vector<std::string> arr = {source()};
     std::vector<std::string> result;

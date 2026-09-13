@@ -1,3 +1,22 @@
+type tier =
+  | On_demand
+  | Single_import
+  | Own_scope
+
+type tiered = {
+  tier : tier;
+  binding : Scope_binding.positioned_binding;
+}
+
+val at_tier : tier -> Scope_binding.positioned_binding list -> tiered list
+
+val unambiguous_on_demand :
+  Scope_binding.positioned_binding list ->
+  Scope_binding.positioned_binding list
+
+val keep_strongest :
+  Lang.t -> tiered list -> Scope_binding.positioned_binding list
+
 val members_along_order :
   resolution_orders:Func_lookup.resolution_orders ->
   methods_by_class:Func_lookup.methods_by_class ->

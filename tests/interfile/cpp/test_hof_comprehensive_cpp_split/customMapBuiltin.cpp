@@ -1,3 +1,5 @@
+#include "hof.h"
+
 template<typename T>
 std::vector<T> customMapBuiltin(const std::vector<T>& arr, std::function<T(T)> callback) {
     std::vector<T> result;

@@ -1,0 +1,12 @@
+rules:
+  - id: qualified-nested-namespace
+    languages: [cpp]
+    message: a qualified call inside a namespace binds to the nested namespace's function, not to the homonym of the enclosing one
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

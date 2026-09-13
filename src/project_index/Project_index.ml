@@ -676,11 +676,12 @@ let build_project_call_graph (caps : < Cap.fork >)
       type_state;
       definitions_by_qn;
       attributes_by_module;
-      php_region_bindings =
+      region_bindings =
         timed "call graph: namespace bindings" (fun () ->
           match cfg.Index_lang_rules.unqualified_scope with
-          | `Per_namespace ->
-            Scope_php.build_region_bindings ~attributes_by_module
+          | `Per_namespace
+          | `Per_translation_unit ->
+            Scope_binding.build_region_bindings ~attributes_by_module
               ~file_infos:indexed_files
           | `Per_file
           | `Per_crate
@@ -688,8 +689,7 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_directory
           | `Per_go_package
           | `Per_module
-          | `Per_package
-          | `Per_translation_unit -> Common.SMap.empty);
+          | `Per_package -> Common.SMap.empty);
       php_global_bindings =
         (match cfg.Index_lang_rules.unqualified_scope with
          | `Per_namespace ->

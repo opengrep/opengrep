@@ -14,6 +14,8 @@ type t = {
   fdef : AST_generic.function_definition;
 }
 
+val entity_qualifier : t -> string option
+
 val as_method : fn_id -> (IL.name * IL.name) option
 val as_free : fn_id -> IL.name option
 val is_method_of : class_name:string -> method_name:string -> fn_id -> bool

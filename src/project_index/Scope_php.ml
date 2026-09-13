@@ -21,40 +21,6 @@ let is_function_attribute (_ : string)
   | Func_lookup.Attr_class _
   | Func_lookup.Attr_module _ -> false
 
-let every_attribute (_ : string) (_ : Func_lookup.module_attribute) : bool = true
-
-type region_bindings = {
-  rb_in_region : Scope_binding.positioned_binding list;
-  rb_names : unit Common.SMap.t;
-}
-
-let build_region_bindings
-    ~(attributes_by_module : Func_lookup.module_attributes)
-    ~(file_infos : file_info list) : region_bindings Common.SMap.t =
-  let of_region (region : Names.Module_qn.t) : region_bindings =
-    let in_region =
-      bindings_of_attributes ~keep:every_attribute
-        (Func_lookup.attributes_of_module attributes_by_module region)
-    in
-    { rb_in_region = in_region;
-      rb_names =
-        List.fold_left
-          (fun (names : unit Common.SMap.t)
-               (binding : Scope_binding.positioned_binding) ->
-            Common.SMap.add binding.Scope_binding.pb_name () names)
-          Common.SMap.empty in_region }
-  in
-  List.fold_left
-    (fun (by_region : region_bindings Common.SMap.t) (fi : file_info) ->
-      List.fold_left
-        (fun (by_region : region_bindings Common.SMap.t)
-             (region : Names.Module_qn.t) ->
-          let key = Names.Module_qn.to_string region in
-          if Common.SMap.mem key by_region then by_region
-          else Common.SMap.add key (of_region region) by_region)
-        by_region fi.fi_module_regions)
-    Common.SMap.empty file_infos
-
 let global_function_bindings
     ~(attributes_by_module : Func_lookup.module_attributes)
     : Scope_binding.positioned_binding list =
@@ -75,7 +41,7 @@ let import_binds_kind (imp : import)
 
 let build
     ~(definitions_by_qn : definition Common.SMap.t)
-    ~(region_bindings : region_bindings Common.SMap.t)
+    ~(region_bindings : Scope_binding.region_bindings Common.SMap.t)
     ~(global_bindings : Scope_binding.positioned_binding list)
     ~(classes_by_file : class_info list Common.SMap.t)
     ~(class_parent_paths :
@@ -99,7 +65,7 @@ let build
   let function_bindings =
     Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
   in
-  let own_regions_bindings : region_bindings list =
+  let own_regions_bindings : Scope_binding.region_bindings list =
     List.filter_map
       (fun (region : Names.Module_qn.t) ->
         Common.SMap.find_opt (Names.Module_qn.to_string region)
@@ -108,12 +74,13 @@ let build
   in
   let in_regions =
     List.concat_map
-      (fun (bound : region_bindings) -> bound.rb_in_region)
+      Scope_binding.bindings_in_region
       own_regions_bindings
   in
   let bound_by_regions (name : string) : bool =
     List.exists
-      (fun (bound : region_bindings) -> Common.SMap.mem name bound.rb_names)
+      (fun (bound : Scope_binding.region_bindings) ->
+        Common.SMap.mem name bound.Scope_binding.rb_names)
       own_regions_bindings
   in
   let from_global =

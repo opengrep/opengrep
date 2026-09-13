@@ -9,7 +9,9 @@ let shadowing_order (lang : Lang.t) : tier list =
   match lang with
   | Lang.Java -> [ On_demand; Own_scope; Single_import ]
   | Lang.Kotlin
-  | Lang.Csharp -> [ On_demand; Single_import; Own_scope ]
+  | Lang.Csharp
+  | Lang.Cpp
+  | Lang.C -> [ On_demand; Single_import; Own_scope ]
   | _ -> [ On_demand; Single_import; Own_scope ]
 
 let namespaces_nest (lang : Lang.t) : bool =
@@ -23,6 +25,37 @@ type tiered = {
   tier : tier;
   binding : Scope_binding.positioned_binding;
 }
+
+let at_tier (tier : tier) (bindings : Scope_binding.positioned_binding list)
+    : tiered list =
+  List.map
+    (fun (binding : Scope_binding.positioned_binding) -> { tier; binding })
+    bindings
+
+let unambiguous_on_demand
+    (bindings : Scope_binding.positioned_binding list)
+    : Scope_binding.positioned_binding list =
+  let sources =
+    List.fold_left
+      (fun (sources : Pos.t option list Common.SMap.t)
+           (binding : Scope_binding.positioned_binding) ->
+        Common.SMap.update binding.Scope_binding.pb_name
+          (function
+            | None -> Some [ binding.Scope_binding.pb_pos ]
+            | Some (earlier : Pos.t option list) ->
+              Some (binding.Scope_binding.pb_pos :: earlier))
+          sources)
+      Common.SMap.empty bindings
+  in
+  List.filter
+    (fun (binding : Scope_binding.positioned_binding) ->
+      match Common.SMap.find_opt binding.Scope_binding.pb_name sources with
+      | None -> true
+      | Some (positions : Pos.t option list) ->
+        Int.equal
+          (List.length (List.sort_uniq (Option.compare Pos.compare) positions))
+          1)
+    bindings
 
 let is_extension_binding (binding : Scope_binding.positioned_binding) : bool =
   List.for_all
@@ -176,7 +209,7 @@ let build
   in
   let bindings_of_module ~(pos : Pos.t option) (target : Names.Module_qn.t)
       : Scope_binding.positioned_binding list =
-    Scope_binding.bindings_of_attributes ~pos ~keep:(fun _ _ -> true)
+    Scope_binding.bindings_of_every_attribute ~pos
       (Func_lookup.attributes_of_module attributes_by_module target)
   in
   let bindings_of_class_members ~(pos : Pos.t option)
@@ -316,46 +349,14 @@ let build
           [])
       extension_namespaces
   in
-  let unambiguous_on_demand
-      (bindings : Scope_binding.positioned_binding list)
-      : Scope_binding.positioned_binding list =
-    let sources =
-      List.fold_left
-        (fun (sources : Pos.t option list Common.SMap.t)
-             (binding : Scope_binding.positioned_binding) ->
-          Common.SMap.update binding.Scope_binding.pb_name
-            (function
-              | None -> Some [ binding.Scope_binding.pb_pos ]
-              | Some (earlier : Pos.t option list) ->
-                Some (binding.Scope_binding.pb_pos :: earlier))
-            sources)
-        Common.SMap.empty bindings
-    in
-    List.filter
-      (fun (binding : Scope_binding.positioned_binding) ->
-        match Common.SMap.find_opt binding.Scope_binding.pb_name sources with
-        | None -> true
-        | Some (positions : Pos.t option list) ->
-          Int.equal
-            (List.length
-               (List.sort_uniq (Option.compare Pos.compare) positions))
-            1)
-      bindings
-  in
-  let tiered (tier : tier)
-      (bindings : Scope_binding.positioned_binding list) : tiered list =
-    List.map
-      (fun (binding : Scope_binding.positioned_binding) -> { tier; binding })
-      bindings
-  in
   let bindings =
-    tiered On_demand
+    at_tier On_demand
       (unambiguous_on_demand (global_bindings @ List.rev on_demand)
        @ extension_bindings)
-    @ tiered Own_scope
+    @ at_tier Own_scope
         (own_region_bindings @ function_bindings @ alias_bindings
        @ type_bindings @ member_bindings)
-    @ tiered Single_import (List.rev imported)
+    @ at_tier Single_import (List.rev imported)
   in
   (Scope_binding.bindings_of_positioned (keep_strongest lang bindings),
    bound_class_files)
