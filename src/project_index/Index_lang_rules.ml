@@ -57,7 +57,8 @@ type t = {
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate ];
+    | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
+    | `Per_translation_unit ];
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
@@ -535,7 +536,7 @@ let php_strip_field_sigil (field : string) : string =
   then String.sub field 1 (String.length field - 1)
   else field
 
-let php_namespace_decl (ast : G.program) : string option =
+let namespace_decl_or_global (ast : G.program) : string option =
   Some (Option.value (extract_package_decl ast) ~default:"")
 
 let php_class_body_extra_parents (cdef : G.class_definition)
@@ -559,7 +560,7 @@ let php : t = { default with
   (* PHP [namespace App\Svc;] parses to [Package]/[PackageEnd]. *)
   package_directive_is_namespace = true;
   unqualified_scope = `Per_namespace;
-  module_path_from_ast = php_namespace_decl;
+  module_path_from_ast = namespace_decl_or_global;
   class_body_extra_parents = php_class_body_extra_parents;
 }
 
@@ -633,7 +634,9 @@ let cpp : t =
   { package_scoped with normalize_import_specifier = strip_c_header_ext }
 
 let c : t = { default with
-  unqualified_scope = `Per_directory;
+  unqualified_scope = `Per_translation_unit;
+  package_directive_is_namespace = true;
+  module_path_from_ast = namespace_decl_or_global;
   normalize_import_specifier = strip_c_header_ext;
 }
 

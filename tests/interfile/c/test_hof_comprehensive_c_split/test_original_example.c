@@ -1,3 +1,5 @@
+#include "hof.h"
+
 void test_original_example() {
     char* history = getHistory("name", "owner");
     char* arr[] = {history};

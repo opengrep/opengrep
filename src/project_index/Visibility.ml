@@ -37,6 +37,7 @@ let build_dir_index
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
     | `Per_file
     | `Per_crate
+    | `Per_translation_unit
     | `Per_constant_path
     | `Per_module -> None
   in
@@ -69,6 +70,7 @@ let build_dir_index
        (Hashtbl.length dir_index))
    | `Per_file
    | `Per_crate
+   | `Per_translation_unit
    | `Per_constant_path
    | `Per_module -> ());
   dir_index
@@ -89,6 +91,7 @@ let for_file
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
     | `Per_file
     | `Per_crate
+    | `Per_translation_unit
     | `Per_constant_path
     | `Per_module -> None
   in

@@ -59,7 +59,8 @@ type t = {
   include_anonymous_funcs : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
-    | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate ];
+    | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
+    | `Per_translation_unit ];
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace

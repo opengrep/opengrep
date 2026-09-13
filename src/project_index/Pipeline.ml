@@ -50,6 +50,7 @@ type ctx = {
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
+  include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
   top_level_scope : Func_lookup.scope_table;
@@ -227,7 +228,7 @@ let resolves_by_binding (lang : Lang.t) : bool =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
-  | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust -> true
+  | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C -> true
   | _ -> false
 
 let definition_of_target
@@ -265,6 +266,7 @@ let build_scope_table
     ~(global_imports : import list)
     ~(php_region_bindings : Scope_php.region_bindings Common.SMap.t)
     ~(php_global_bindings : Scope_binding.positioned_binding list)
+    ~(include_map : Include_map.t)
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
     ~(top_level_scope : Func_lookup.scope_table)
@@ -314,6 +316,17 @@ let build_scope_table
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files = []; own_modules;
+             module_aliases = None }
+    | `Per_translation_unit ->
+      let bindings =
+        Scope_c_family.build
+          ~include_bindings:
+            (Include_map.bindings_of_file include_map
+               (Fpath.to_string fi.fi_file))
+          ~file_funcs_index fi
+      in
+      Some { scope_table = Func_lookup.scope_table_of_map bindings;
+             bound_class_files = []; own_modules = [];
              module_aliases = None }
     | `Per_crate ->
       let bindings, bound_class_files, module_aliases =
@@ -516,7 +529,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         resolution_orders; class_qn_by_definition; methods_by_class;
         singleton_names;
         extensions_by_module; nested_types_by_class;
-        php_region_bindings; php_global_bindings; module_scope; go_packages;
+        php_region_bindings; php_global_bindings; include_map;
+        module_scope; go_packages;
         top_level_scope;
         classes_by_file; class_parent_paths; global_imports;
         project_constructors;
@@ -550,8 +564,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
-        ~php_region_bindings ~php_global_bindings ~module_scope ~go_packages
-        ~top_level_scope fi
+        ~php_region_bindings ~php_global_bindings ~include_map ~module_scope
+        ~go_packages ~top_level_scope fi
     in
     let alias_to_module_qn =
       staged "alias to module map" @@ fun () ->
@@ -567,7 +581,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       | `Per_file | `Per_crate | `Per_directory | `Per_go_package ->
         Some project_funcs_by_module
       | `Per_package | `Per_namespace | `Per_module
-      | `Per_constant_path -> None
+      | `Per_constant_path | `Per_translation_unit -> None
     in
     let file_type_state =
       staged "narrow methods by bound files" @@ fun () ->

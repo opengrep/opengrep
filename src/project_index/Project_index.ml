@@ -634,7 +634,8 @@ let build_project_call_graph (caps : < Cap.fork >)
     | `Per_directory
     | `Per_go_package
     | `Per_package
-    | `Per_namespace -> Scope_module.no_project_scope
+    | `Per_namespace
+    | `Per_translation_unit -> Scope_module.no_project_scope
   in
   let methods_by_class : Func_lookup.methods_by_class =
     List.fold_left
@@ -664,7 +665,9 @@ let build_project_call_graph (caps : < Cap.fork >)
            | `Per_directory
            | `Per_go_package
            | `Per_package
-           | `Per_namespace -> Func_index.Every_definition_is_an_attribute)
+           | `Per_namespace
+           | `Per_translation_unit ->
+             Func_index.Every_definition_is_an_attribute)
         ~definitions_by_qn ~file_infos:indexed_files)
   in
   let pipeline_ctx : Pipeline.ctx =
@@ -685,7 +688,8 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_directory
           | `Per_go_package
           | `Per_module
-          | `Per_package -> Common.SMap.empty);
+          | `Per_package
+          | `Per_translation_unit -> Common.SMap.empty);
       php_global_bindings =
         (match cfg.Index_lang_rules.unqualified_scope with
          | `Per_namespace ->
@@ -696,7 +700,21 @@ let build_project_call_graph (caps : < Cap.fork >)
          | `Per_directory
          | `Per_go_package
          | `Per_module
-         | `Per_package -> []);
+         | `Per_package
+         | `Per_translation_unit -> []);
+      include_map =
+        timed "call graph: include closures" (fun () ->
+          match cfg.Index_lang_rules.unqualified_scope with
+          | `Per_translation_unit ->
+            Include_map.build ~file_infos:indexed_files ~file_funcs_index
+          | `Per_file
+          | `Per_crate
+          | `Per_constant_path
+          | `Per_directory
+          | `Per_go_package
+          | `Per_module
+          | `Per_namespace
+          | `Per_package -> Include_map.empty);
       module_scope;
       go_packages;
       top_level_scope =
@@ -712,7 +730,8 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_go_package
           | `Per_module
           | `Per_namespace
-          | `Per_package -> Func_lookup.empty_scope_table);
+          | `Per_package
+          | `Per_translation_unit -> Func_lookup.empty_scope_table);
       dunder_all;
       resolution_orders;
       class_qn_by_definition;
@@ -856,7 +875,8 @@ let build_project_call_graph (caps : < Cap.fork >)
     | `Per_directory
     | `Per_module
     | `Per_namespace
-    | `Per_package ->
+    | `Per_package
+    | `Per_translation_unit ->
       fun ~file:_ (ty : G.type_) ->
         Option.bind (Ty_bare_name.class_name_of_ty ty)
           Ty_bare_name.bare_name_of_name
@@ -1048,7 +1068,8 @@ let run_pipeline (caps : < Cap.fork >)
     | `Per_directory
     | `Per_go_package
     | `Per_package
-    | `Per_namespace -> Module_paths.Specifier_is_module_name
+    | `Per_namespace
+    | `Per_translation_unit -> Module_paths.Specifier_is_module_name
   in
   let process file =
     let file = absolutize file in

@@ -33,6 +33,7 @@ type ctx = {
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
+  include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
   top_level_scope : Func_lookup.scope_table;
@@ -78,6 +79,7 @@ val build_scope_table :
   global_imports:import list ->
   php_region_bindings:Scope_php.region_bindings Common.SMap.t ->
   php_global_bindings:Scope_binding.positioned_binding list ->
+  include_map:Include_map.t ->
   module_scope:Scope_module.project_scope ->
   go_packages:Scope_go.package_index ->
   top_level_scope:Func_lookup.scope_table ->

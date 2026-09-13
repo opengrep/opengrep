@@ -144,6 +144,7 @@ let module_qn_of_file ~(cfg : Index_lang_rules.t)
       | `Per_directory
       | `Per_module
       | `Per_namespace
+      | `Per_translation_unit
       | `Per_package -> (
         match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
         | Some module_str -> Names.Module_qn.of_string module_str

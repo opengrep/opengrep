@@ -94,7 +94,8 @@ let build_attributes_by_module
     | `Per_namespace
     | `Per_module
     | `Per_constant_path
-    | `Per_go_package -> false
+    | `Per_go_package
+    | `Per_translation_unit -> false
     | `Per_file
     | `Per_crate
     | `Per_directory -> true

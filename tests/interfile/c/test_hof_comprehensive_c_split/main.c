@@ -1,3 +1,5 @@
+#include "hof.h"
+
 int main() {
     test_custom_foreach();
     test_direct_call();
