@@ -61,6 +61,50 @@ let line_containing (term : string) (lines : string list) : string =
   | line :: _ -> line
   | [] -> Alcotest.fail (spf "no line containing %S" term)
 
+(* Issue #134 repro: unclosed JS file, pattern mode (-e), temp git repo only. *)
+let issue134_broken_js : string * string =
+  ("test.js", "function add(a, b) {\n    return a + b;\n")
+
+let scan_stderr_pattern_e (caps : Scan_subcommand.caps)
+    ~(target : string * string) (extra_args : string list) : string list =
+  with_env_app_token (fun () ->
+      let target_name, target_content = target in
+      let repo_files : F.t list = [ F.File (target_name, target_content) ] in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let _exit_code, output =
+            Testo.with_capture stderr (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      (Array.of_list
+                         ([
+                            "opengrep-scan";
+                            "--experimental";
+                            "-j";
+                            "1";
+                            "--timeout";
+                            "0";
+                            "-e";
+                            "$A + $B";
+                            "-l";
+                            "javascript";
+                          ]
+                         @ extra_args @ [ target_name ]))))
+          in
+          String.split_on_char '\n' output))
+
+let assert_issue134_stderr ~verbose (lines : string list) : unit =
+  let stderr = String.concat "\n" lines in
+  if String_.contains ~term:"[ERROR]" stderr then
+    Alcotest.fail "stderr must not contain [ERROR]";
+  if String_.contains ~term:"exception during" stderr then
+    Alcotest.fail "stderr must not contain exception during";
+  if not (String_.contains ~term:"Partially scanned:" stderr) then
+    Alcotest.fail "stderr must mention Partially scanned:";
+  if not (String_.contains ~term:"1 files only partially analyzed" stderr) then
+    Alcotest.fail "stderr must count one partially analyzed file";
+  if verbose && not (String_.contains ~term:"[WARN]" stderr) then
+    Alcotest.fail "verbose stderr must contain [WARN]"
+
 (* the size column of a line of the --time report: the four characters the
    report writes after the parenthesis that opens it *)
 let size_in (line : string) : string =
@@ -622,6 +666,16 @@ rules:
     "the summary" "Ran 0 rules on 1 file: 0 findings."
     (String.trim (line_containing "Ran " lines))
 
+let test_issue134_syntax_error_quiet (caps : Scan_subcommand.caps) () =
+  let lines = scan_stderr_pattern_e caps ~target:issue134_broken_js [] in
+  assert_issue134_stderr ~verbose:false lines
+
+let test_issue134_syntax_error_verbose (caps : Scan_subcommand.caps) () =
+  let lines =
+    scan_stderr_pattern_e caps ~target:issue134_broken_js [ "--verbose" ]
+  in
+  assert_issue134_stderr ~verbose:true lines
+
 let tests (caps : < Scan_subcommand.caps >) =
   Testo.categorize "Osemgrep Scan text output (e2e)"
     [
@@ -656,4 +710,8 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "NO_COLOR turns colour off whatever its value" test_no_color_any_value;
       t "INVENTORY rules only: the target is scanned by no rule"
         (test_inventory_rule_text (caps :> Scan_subcommand.caps));
+      t "issue #134: quiet scan of a JS syntax error"
+        (test_issue134_syntax_error_quiet (caps :> Scan_subcommand.caps));
+      t "issue #134: verbose scan of a JS syntax error"
+        (test_issue134_syntax_error_verbose (caps :> Scan_subcommand.caps));
     ]
