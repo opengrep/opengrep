@@ -19,6 +19,10 @@ type class_parent = {
   cp_position : parent_position;
 }
 
+type superclass_position =
+  | Superclass_before_mixins
+  | Superclass_after_mixins
+
 type singleton_exposure =
   | No_singleton_exposure
   | Every_method_is_a_singleton
@@ -54,6 +58,7 @@ type t = {
   inner_class_from_call : G.expr -> (string * string list) option;
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
+  superclass_position : superclass_position;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;

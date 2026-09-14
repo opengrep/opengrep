@@ -7,7 +7,8 @@ type tier =
 
 let shadowing_order (lang : Lang.t) : tier list =
   match lang with
-  | Lang.Java -> [ On_demand; Own_scope; Single_import ]
+  | Lang.Java
+  | Lang.Scala -> [ On_demand; Own_scope; Single_import ]
   | Lang.Kotlin
   | Lang.Csharp
   | Lang.Cpp
@@ -18,7 +19,8 @@ let namespaces_nest (lang : Lang.t) : bool =
   match lang with
   | Lang.Csharp -> true
   | Lang.Java
-  | Lang.Kotlin -> false
+  | Lang.Kotlin
+  | Lang.Scala -> false
   | _ -> false
 
 type tiered = {

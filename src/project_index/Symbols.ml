@@ -243,7 +243,10 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                            cp_position = Index_lang_rules.Appended }
                 ) cdef.G.cextends
               in
-              from_extends @ cfg.Index_lang_rules.class_body_extra_parents cdef
+              let extra = cfg.Index_lang_rules.class_body_extra_parents cdef in
+              match cfg.Index_lang_rules.superclass_position with
+              | Index_lang_rules.Superclass_before_mixins -> from_extends @ extra
+              | Index_lang_rules.Superclass_after_mixins -> extra @ from_extends
             in
             class_infos := { ci_id = class_id;
                              ci_qn = Names.Class_qn.of_string class_qn;

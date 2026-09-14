@@ -1,0 +1,12 @@
+rules:
+  - id: test-companion-object-member
+    languages: [scala]
+    message: A call on the object name reaches the companion object's member, not the class's
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

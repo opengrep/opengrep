@@ -17,6 +17,10 @@ type class_parent = {
   cp_position : parent_position;
 }
 
+type superclass_position =
+  | Superclass_before_mixins
+  | Superclass_after_mixins
+
 type singleton_exposure =
   | No_singleton_exposure
   | Every_method_is_a_singleton
@@ -52,6 +56,7 @@ type t = {
   inner_class_from_call : G.expr -> (string * string list) option;
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
+  superclass_position : superclass_position;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
@@ -284,6 +289,7 @@ let default : t = {
   include_anonymous_funcs = true;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
+  superclass_position = Superclass_before_mixins;
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
   package_directive_is_namespace = false;
@@ -574,10 +580,20 @@ let php : t = { default with
 
 (* Scala [package a.b] (and nested [package a { package b {..} }]) parse to
    [Package]/[PackageEnd].  [object] is a [ClassDef] (kind [Object]), not a
-   [ModuleDef], so [walks_inheritance] only affects classes with [extends]. *)
+   [ModuleDef], so [walks_inheritance] only affects classes with [extends]
+   or [with]; the mixins come before the superclass, in Scala's
+   linearisation order. *)
+let scala_mixins_before_superclass (cdef : G.class_definition)
+  : class_parent list =
+  List.rev (php_class_body_extra_parents cdef)
+
 let scala : t = { default with
   package_directive_is_namespace = true;
   walks_inheritance = true;
+  unqualified_scope = `Per_package;
+  module_path_from_ast = extract_package_decl;
+  class_body_extra_parents = scala_mixins_before_superclass;
+  superclass_position = Superclass_after_mixins;
 }
 
 let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)

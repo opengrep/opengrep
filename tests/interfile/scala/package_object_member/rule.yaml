@@ -1,0 +1,12 @@
+rules:
+  - id: test-package-object-member
+    languages: [scala]
+    message: A package object's member is a member of its package
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
