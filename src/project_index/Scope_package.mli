@@ -36,6 +36,7 @@ val build :
   extensions_by_module:Func_info.t list Common.SMap.t Common.SMap.t ->
   nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
   global_imports:Types.import list ->
+  namespace_object_classes:unit Common.SMap.t ->
   Types.file_info ->
   Func_lookup.scope_entry list Common.SMap.t
   * (Names.Class_name.t * Fpath.t) list

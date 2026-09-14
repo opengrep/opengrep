@@ -54,6 +54,7 @@ type ctx = {
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
   top_level_scope : Func_lookup.scope_table;
+  namespace_object_classes : unit Common.SMap.t;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -230,7 +231,7 @@ let resolves_by_binding (lang : Lang.t) : bool =
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
   | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
   | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala | Lang.Apex
-  | Lang.Swift -> true
+  | Lang.Swift | Lang.Vb -> true
   | _ -> false
 
 let definition_of_target
@@ -272,6 +273,7 @@ let build_scope_table
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
     ~(top_level_scope : Func_lookup.scope_table)
+    ~(namespace_object_classes : unit Common.SMap.t)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
@@ -284,7 +286,7 @@ let build_scope_table
         Scope_package.build ~lang ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
           ~resolution_orders ~methods_by_class ~extensions_by_module
-          ~nested_types_by_class ~global_imports fi
+          ~nested_types_by_class ~global_imports ~namespace_object_classes fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files; own_modules = []; module_aliases = None }
@@ -546,7 +548,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         extensions_by_module; nested_types_by_class;
         region_bindings; php_global_bindings; include_map;
         module_scope; go_packages;
-        top_level_scope;
+        top_level_scope; namespace_object_classes;
         classes_by_file; class_parent_paths; global_imports;
         project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
@@ -580,7 +582,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
         ~region_bindings ~php_global_bindings ~include_map ~module_scope
-        ~go_packages ~top_level_scope fi
+        ~go_packages ~top_level_scope ~namespace_object_classes fi
     in
     let alias_to_module_qn =
       staged "alias to module map" @@ fun () ->

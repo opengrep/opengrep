@@ -77,6 +77,7 @@ type t = {
      directive names the file's module identity instead (Go, via go.mod). *)
   package_directive_is_namespace : bool;
   module_definition_is_namespace : bool;
+  object_members_bind_in_namespace : bool;
   unaliased_import_binds : unaliased_import_local;
   (* A class's identity is its constant path, independent of the file it is
      (re)opened in (Ruby: [::Base], [Svc::Base]).  Drops the file-path prefix
@@ -294,6 +295,7 @@ let default : t = {
   unqualified_scope = `Per_file;
   package_directive_is_namespace = false;
   module_definition_is_namespace = false;
+  object_members_bind_in_namespace = false;
   unaliased_import_binds = First_segment_binds;
   class_identity_is_constant_path = false;
   discover_project =
@@ -688,6 +690,13 @@ let swift : t = { default with
   walks_inheritance = true;
 }
 
+let vb : t = { default with
+  unqualified_scope = `Per_package;
+  walks_inheritance = true;
+  module_definition_is_namespace = true;
+  object_members_bind_in_namespace = true;
+}
+
 let for_lang (lang : Lang.t) : t =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3 -> python
@@ -705,5 +714,6 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Elixir -> elixir
   | Lang.Apex -> apex
   | Lang.Swift -> swift
+  | Lang.Vb -> vb
   | Lang.Scala -> scala
   | _ -> default

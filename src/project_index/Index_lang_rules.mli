@@ -76,6 +76,7 @@ type t = {
      blocks / package clauses), not the file's module identity (contrast Go). *)
   package_directive_is_namespace : bool;
   module_definition_is_namespace : bool;
+  object_members_bind_in_namespace : bool;
   unaliased_import_binds : unaliased_import_local;
   (* Class identity is its constant path, file-independent (Ruby reopening):
      drops the file-path prefix from class qns. *)
@@ -116,6 +117,7 @@ val clojure : t
 val elixir : t
 val apex : t
 val swift : t
+val vb : t
 val default : t
 
 val for_lang : Lang.t -> t

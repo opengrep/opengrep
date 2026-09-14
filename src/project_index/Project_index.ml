@@ -738,6 +738,18 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_namespace
           | `Per_package
           | `Per_translation_unit -> Func_lookup.empty_scope_table);
+      namespace_object_classes =
+        (if cfg.Index_lang_rules.object_members_bind_in_namespace then
+           List.fold_left
+             (fun (objects : unit Common.SMap.t) (ci : class_info) ->
+               match ci.ci_class_kind with
+               | G.Object ->
+                 Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) () objects
+               | G.Class
+               | G.Interface
+               | G.Trait -> objects)
+             Common.SMap.empty indexed_classes
+         else Common.SMap.empty);
       dunder_all;
       resolution_orders;
       class_qn_by_definition;

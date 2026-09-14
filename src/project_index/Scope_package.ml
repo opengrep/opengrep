@@ -11,13 +11,15 @@ let shadowing_order (lang : Lang.t) : tier list =
   | Lang.Scala -> [ On_demand; Own_scope; Single_import ]
   | Lang.Kotlin
   | Lang.Csharp
+  | Lang.Vb
   | Lang.Cpp
   | Lang.C -> [ On_demand; Single_import; Own_scope ]
   | _ -> [ On_demand; Single_import; Own_scope ]
 
 let namespaces_nest (lang : Lang.t) : bool =
   match lang with
-  | Lang.Csharp -> true
+  | Lang.Csharp
+  | Lang.Vb -> true
   | Lang.Java
   | Lang.Kotlin
   | Lang.Scala -> false
@@ -161,6 +163,7 @@ let build
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
+    ~(namespace_object_classes : unit Common.SMap.t)
     (fi : file_info)
     : Func_lookup.scope_entry list Common.SMap.t
       * (Names.Class_name.t * Fpath.t) list =
@@ -209,11 +212,6 @@ let build
           (members_along_order ~resolution_orders ~methods_by_class ci.ci_qn))
       own_classes
   in
-  let bindings_of_module ~(pos : Pos.t option) (target : Names.Module_qn.t)
-      : Scope_binding.positioned_binding list =
-    Scope_binding.bindings_of_every_attribute ~pos
-      (Func_lookup.attributes_of_module attributes_by_module target)
-  in
   let bindings_of_class_members ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)
       : Scope_binding.positioned_binding list =
@@ -221,6 +219,27 @@ let build
       (fun ((name : string), (funcs : Func_info.t list)) ->
         Scope_binding.function_binding_of ~pos ~parent_path:[] name funcs)
       (members_along_order ~resolution_orders ~methods_by_class class_qn)
+  in
+  let bindings_of_module ~(pos : Pos.t option) (target : Names.Module_qn.t)
+      : Scope_binding.positioned_binding list =
+    let attributes =
+      Func_lookup.attributes_of_module attributes_by_module target
+    in
+    let lifted =
+      Common.SMap.fold
+        (fun (_ : string) (attribute : Func_lookup.module_attribute)
+             (lifted : Scope_binding.positioned_binding list) ->
+          match attribute with
+          | Func_lookup.Attr_class (class_qn : Names.Class_qn.t)
+            when Common.SMap.mem (Names.Class_qn.to_string class_qn)
+                   namespace_object_classes ->
+            bindings_of_class_members ~pos class_qn @ lifted
+          | Func_lookup.Attr_class _
+          | Func_lookup.Attr_functions _
+          | Func_lookup.Attr_module _ -> lifted)
+        attributes []
+    in
+    Scope_binding.bindings_of_every_attribute ~pos attributes @ lifted
   in
   let bindings_of_nested_types ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)

@@ -37,6 +37,7 @@ type ctx = {
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
   top_level_scope : Func_lookup.scope_table;
+  namespace_object_classes : unit Common.SMap.t;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -83,6 +84,7 @@ val build_scope_table :
   module_scope:Scope_module.project_scope ->
   go_packages:Scope_go.package_index ->
   top_level_scope:Func_lookup.scope_table ->
+  namespace_object_classes:unit Common.SMap.t ->
   file_info ->
   file_scope option
 
