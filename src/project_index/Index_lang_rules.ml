@@ -47,6 +47,7 @@ type unaliased_import_local =
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
+  project_scope_admits : G.entity option -> bool;
   rewrite_module_path : string -> string;
   module_path_from_ast : G.program -> string option;
   normalize_import_specifier : string -> string;
@@ -275,6 +276,7 @@ let python_wrapper_dunders (wrapper : wrapper) : string list =
 let default : t = {
   is_init_file = (fun _ -> false);
   is_stub_file = (fun _ -> false);
+  project_scope_admits = (fun _ -> true);
   rewrite_module_path = (fun s -> s);
   module_path_from_ast = (fun _ -> None);
   normalize_import_specifier = (fun s -> s);
@@ -690,6 +692,23 @@ let swift : t = { default with
   walks_inheritance = true;
 }
 
+let lua_global_definition (ent : G.entity option) : bool =
+  match ent with
+  | None -> false
+  | Some (ent : G.entity) ->
+    not
+      (List.exists
+         (fun (attr : G.attribute) ->
+           match attr with
+           | G.KeywordAttr (G.Static, _) -> true
+           | _ -> false)
+         ent.G.attrs)
+
+let lua : t = { default with
+  unqualified_scope = `Per_project;
+  project_scope_admits = lua_global_definition;
+}
+
 let vb : t = { default with
   unqualified_scope = `Per_package;
   walks_inheritance = true;
@@ -715,5 +734,6 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Apex -> apex
   | Lang.Swift -> swift
   | Lang.Vb -> vb
+  | Lang.Lua -> lua
   | Lang.Scala -> scala
   | _ -> default

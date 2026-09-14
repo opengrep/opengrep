@@ -729,7 +729,11 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_project ->
             Func_lookup.scope_table_of_map
               (Scope_binding.bindings_of_positioned
-                 (Scope_binding.top_level_bindings ~definitions_by_qn))
+                 (Scope_binding.top_level_bindings
+                    ~keep:(fun (func : Func_info.t) ->
+                      cfg.Index_lang_rules.project_scope_admits
+                        func.Func_info.entity)
+                    ~definitions_by_qn))
           | `Per_file
           | `Per_crate
           | `Per_directory

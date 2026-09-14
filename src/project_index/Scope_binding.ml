@@ -264,7 +264,8 @@ let build_region_bindings
         by_region fi.Types.fi_module_regions)
     Common.SMap.empty file_infos
 
-let top_level_bindings ~(definitions_by_qn : definition Common.SMap.t)
+let top_level_bindings ~(keep : Func_info.t -> bool)
+    ~(definitions_by_qn : definition Common.SMap.t)
     : positioned_binding list =
   Common.SMap.fold
     (fun (qn : string) (definition : definition)
@@ -274,7 +275,9 @@ let top_level_bindings ~(definitions_by_qn : definition Common.SMap.t)
         when Names.Def_qn.is_empty owner -> (
         match definition with
         | Function_definitions (funcs : Func_info.t list) ->
-          function_binding_of ~pos:None ~parent_path:[] name funcs @ bindings
+          function_binding_of ~pos:None ~parent_path:[] name
+            (List.filter keep funcs)
+          @ bindings
         | Class_definition { class_qn; _ } ->
           class_binding_of ~pos:None ~parent_path:[] name class_qn :: bindings)
       | Some _

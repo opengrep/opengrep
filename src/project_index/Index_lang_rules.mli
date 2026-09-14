@@ -49,6 +49,7 @@ type unaliased_import_local =
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
+  project_scope_admits : G.entity option -> bool;
   rewrite_module_path : string -> string;
   module_path_from_ast : G.program -> string option;
   normalize_import_specifier : string -> string;
@@ -118,6 +119,7 @@ val elixir : t
 val apex : t
 val swift : t
 val vb : t
+val lua : t
 val default : t
 
 val for_lang : Lang.t -> t

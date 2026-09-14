@@ -81,5 +81,6 @@ val build_region_bindings :
   region_bindings Common.SMap.t
 
 val top_level_bindings :
+  keep:(Func_info.t -> bool) ->
   definitions_by_qn:Types.definition Common.SMap.t ->
   positioned_binding list
