@@ -2,6 +2,7 @@ type tier =
   | On_demand
   | Single_import
   | Own_scope
+  | Package_members
 
 type tiered = {
   tier : tier;

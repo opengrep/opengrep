@@ -4,17 +4,23 @@ type tier =
   | On_demand
   | Single_import
   | Own_scope
+  | Package_members
 
 let shadowing_order (lang : Lang.t) : tier list =
   match lang with
-  | Lang.Java
-  | Lang.Scala -> [ On_demand; Own_scope; Single_import ]
+  | Lang.Java -> [ On_demand; Own_scope; Single_import ]
+  | Lang.Scala -> [ Package_members; On_demand; Single_import; Own_scope ]
   | Lang.Kotlin
   | Lang.Csharp
   | Lang.Vb
   | Lang.Cpp
   | Lang.C -> [ On_demand; Single_import; Own_scope ]
   | _ -> [ On_demand; Single_import; Own_scope ]
+
+let region_tier (lang : Lang.t) : tier =
+  match lang with
+  | Lang.Scala -> Package_members
+  | _ -> Own_scope
 
 let namespaces_nest (lang : Lang.t) : bool =
   match lang with
@@ -76,8 +82,9 @@ let equal_tier (first : tier) (second : tier) : bool =
   match (first, second) with
   | On_demand, On_demand
   | Single_import, Single_import
-  | Own_scope, Own_scope -> true
-  | (On_demand | Single_import | Own_scope), _ -> false
+  | Own_scope, Own_scope
+  | Package_members, Package_members -> true
+  | (On_demand | Single_import | Own_scope | Package_members), _ -> false
 
 let keep_strongest (lang : Lang.t) (bindings : tiered list)
     : Scope_binding.positioned_binding list =
@@ -378,9 +385,9 @@ let build
     at_tier On_demand
       (unambiguous_on_demand (global_bindings @ List.rev on_demand)
        @ extension_bindings)
+    @ at_tier (region_tier lang) own_region_bindings
     @ at_tier Own_scope
-        (own_region_bindings @ function_bindings @ alias_bindings
-       @ type_bindings @ member_bindings)
+        (function_bindings @ alias_bindings @ type_bindings @ member_bindings)
     @ at_tier Single_import (List.rev imported)
   in
   (Scope_binding.bindings_of_positioned (keep_strongest lang bindings),
