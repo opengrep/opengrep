@@ -67,6 +67,7 @@ let build_package_index ~(cfg : Index_lang_rules.t)
   | `Per_module
   | `Per_namespace
   | `Per_translation_unit
+  | `Per_project
   | `Per_package -> empty_package_index
   | `Per_go_package -> go_package_index ~file_infos
 

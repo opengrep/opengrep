@@ -217,7 +217,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
               | `Per_constant_path
               | `Per_package
               | `Per_namespace
-              | `Per_translation_unit -> spec))
+              | `Per_translation_unit
+              | `Per_project -> spec))
       in
       let binds =
         match (attr_binds, cfg.Index_lang_rules.unqualified_scope) with
@@ -226,7 +227,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
           `Per_module -> Binds_module
         | _, (`Per_file | `Per_crate | `Per_constant_path | `Per_directory
              | `Per_go_package | `Per_package | `Per_namespace
-             | `Per_translation_unit) ->
+             | `Per_translation_unit | `Per_project) ->
           attr_binds
       in
       (match
@@ -335,6 +336,7 @@ let with_package_clause_locals ~(cfg : Index_lang_rules.t)
   | `Per_module
   | `Per_namespace
   | `Per_translation_unit
+  | `Per_project
   | `Per_package -> (file_infos, class_infos)
   | `Per_go_package ->
     let of_import (imp : import) : import =

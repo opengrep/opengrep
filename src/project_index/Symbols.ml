@@ -440,7 +440,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package
     | `Per_namespace
-    | `Per_translation_unit -> true
+    | `Per_translation_unit
+    | `Per_project -> true
     | `Per_file
     | `Per_crate
     | `Per_constant_path
@@ -463,7 +464,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_go_package
     | `Per_package
     | `Per_namespace
-    | `Per_translation_unit -> []
+    | `Per_translation_unit
+    | `Per_project -> []
   in
   let module_path_of_regions (regions : string list list) : Names.Module_qn.t =
     match List.concat (List.rev regions) with
@@ -522,7 +524,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_go_package
     | `Per_package
     | `Per_namespace
-    | `Per_translation_unit -> (
+    | `Per_translation_unit
+    | `Per_project -> (
       match opened with
       | [] -> [ (if package_scoped then qn_module_path else module_path) ]
       | regions -> regions)

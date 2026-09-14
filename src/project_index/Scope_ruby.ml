@@ -1,24 +1,5 @@
 open Types
 
-let top_level_bindings ~(definitions_by_qn : definition Common.SMap.t)
-    : Scope_binding.positioned_binding list =
-  Common.SMap.fold
-    (fun (qn : string) (definition : definition)
-         (bindings : Scope_binding.positioned_binding list) ->
-      match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
-      | Some ((owner : Names.Def_qn.t), (name : string))
-        when Names.Def_qn.is_empty owner -> (
-        match definition with
-        | Function_definitions (funcs : Func_info.t list) ->
-          Scope_binding.function_binding_of ~pos:None ~parent_path:[] name funcs
-          @ bindings
-        | Class_definition { class_qn; _ } ->
-          Scope_binding.class_binding_of ~pos:None ~parent_path:[] name class_qn
-          :: bindings)
-      | Some _
-      | None -> bindings)
-    definitions_by_qn []
-
 let own_regions (classes : class_info list) : Names.Module_qn.t list =
   List.sort_uniq Names.Module_qn.compare
     (List.map

@@ -263,3 +263,20 @@ let build_region_bindings
           else Common.SMap.add key (of_region region) by_region)
         by_region fi.Types.fi_module_regions)
     Common.SMap.empty file_infos
+
+let top_level_bindings ~(definitions_by_qn : definition Common.SMap.t)
+    : positioned_binding list =
+  Common.SMap.fold
+    (fun (qn : string) (definition : definition)
+         (bindings : positioned_binding list) ->
+      match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
+      | Some ((owner : Names.Def_qn.t), (name : string))
+        when Names.Def_qn.is_empty owner -> (
+        match definition with
+        | Function_definitions (funcs : Func_info.t list) ->
+          function_binding_of ~pos:None ~parent_path:[] name funcs @ bindings
+        | Class_definition { class_qn; _ } ->
+          class_binding_of ~pos:None ~parent_path:[] name class_qn :: bindings)
+      | Some _
+      | None -> bindings)
+    definitions_by_qn []

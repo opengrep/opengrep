@@ -5,6 +5,6 @@ val build :
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->
   resolution_orders:Func_lookup.resolution_orders ->
   methods_by_class:Func_lookup.methods_by_class ->
-  nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
+  top_level_scope:Func_lookup.scope_table ->
   Types.file_info ->
-  Func_lookup.scope_entry list Common.SMap.t * Names.Module_qn.t list
+  Func_lookup.scope_table

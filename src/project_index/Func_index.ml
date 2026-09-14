@@ -95,7 +95,8 @@ let build_attributes_by_module
     | `Per_module
     | `Per_constant_path
     | `Per_go_package
-    | `Per_translation_unit -> false
+    | `Per_translation_unit
+    | `Per_project -> false
     | `Per_file
     | `Per_crate
     | `Per_directory -> true

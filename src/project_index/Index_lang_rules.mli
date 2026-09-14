@@ -69,7 +69,7 @@ type t = {
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
-    | `Per_translation_unit ];
+    | `Per_translation_unit | `Per_project ];
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
@@ -114,6 +114,8 @@ val cpp : t
 val c : t
 val clojure : t
 val elixir : t
+val apex : t
+val swift : t
 val default : t
 
 val for_lang : Lang.t -> t

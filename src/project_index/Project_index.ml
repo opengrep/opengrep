@@ -635,7 +635,8 @@ let build_project_call_graph (caps : < Cap.fork >)
     | `Per_go_package
     | `Per_package
     | `Per_namespace
-    | `Per_translation_unit -> Scope_module.no_project_scope
+    | `Per_translation_unit
+    | `Per_project -> Scope_module.no_project_scope
   in
   let methods_by_class : Func_lookup.methods_by_class =
     List.fold_left
@@ -666,7 +667,8 @@ let build_project_call_graph (caps : < Cap.fork >)
            | `Per_go_package
            | `Per_package
            | `Per_namespace
-           | `Per_translation_unit ->
+           | `Per_translation_unit
+           | `Per_project ->
              Func_index.Every_definition_is_an_attribute)
         ~definitions_by_qn ~file_infos:indexed_files)
   in
@@ -689,6 +691,7 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_directory
           | `Per_go_package
           | `Per_module
+          | `Per_project
           | `Per_package -> Common.SMap.empty);
       php_global_bindings =
         (match cfg.Index_lang_rules.unqualified_scope with
@@ -701,7 +704,8 @@ let build_project_call_graph (caps : < Cap.fork >)
          | `Per_go_package
          | `Per_module
          | `Per_package
-         | `Per_translation_unit -> []);
+         | `Per_translation_unit
+         | `Per_project -> []);
       include_map =
         timed "call graph: include closures" (fun () ->
           match cfg.Index_lang_rules.unqualified_scope with
@@ -714,16 +718,18 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_go_package
           | `Per_module
           | `Per_namespace
+          | `Per_project
           | `Per_package -> Include_map.empty);
       module_scope;
       go_packages;
       top_level_scope =
         timed "call graph: top level constants" (fun () ->
           match cfg.Index_lang_rules.unqualified_scope with
-          | `Per_constant_path ->
+          | `Per_constant_path
+          | `Per_project ->
             Func_lookup.scope_table_of_map
               (Scope_binding.bindings_of_positioned
-                 (Scope_ruby.top_level_bindings ~definitions_by_qn))
+                 (Scope_binding.top_level_bindings ~definitions_by_qn))
           | `Per_file
           | `Per_crate
           | `Per_directory
@@ -876,7 +882,8 @@ let build_project_call_graph (caps : < Cap.fork >)
     | `Per_module
     | `Per_namespace
     | `Per_package
-    | `Per_translation_unit ->
+    | `Per_translation_unit
+    | `Per_project ->
       fun ~file:_ (ty : G.type_) ->
         Option.bind (Ty_bare_name.class_name_of_ty ty)
           Ty_bare_name.bare_name_of_name
@@ -1069,7 +1076,8 @@ let run_pipeline (caps : < Cap.fork >)
     | `Per_go_package
     | `Per_package
     | `Per_namespace
-    | `Per_translation_unit -> Module_paths.Specifier_is_module_name
+    | `Per_translation_unit
+    | `Per_project -> Module_paths.Specifier_is_module_name
   in
   let process file =
     let file = absolutize file in

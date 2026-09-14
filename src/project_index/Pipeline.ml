@@ -229,7 +229,8 @@ let resolves_by_binding (lang : Lang.t) : bool =
   | Lang.Python | Lang.Python2 | Lang.Python3
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
   | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
-  | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala -> true
+  | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala | Lang.Apex
+  | Lang.Swift -> true
   | _ -> false
 
 let definition_of_target
@@ -296,6 +297,13 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files = []; own_modules = [];
              module_aliases = Some module_aliases }
+    | `Per_project ->
+      Some { scope_table =
+               Scope_project.build ~classes_by_file ~class_parent_paths
+                 ~file_funcs_index ~resolution_orders ~methods_by_class
+                 ~top_level_scope fi;
+             bound_class_files = []; own_modules = [];
+             module_aliases = None }
     | `Per_constant_path ->
       let bindings, own_modules =
         Scope_ruby.build ~classes_by_file ~class_parent_paths
@@ -585,7 +593,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let funcs_by_module_qn
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
       match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file | `Per_crate | `Per_directory | `Per_go_package ->
+      | `Per_file | `Per_crate | `Per_directory | `Per_go_package
+      | `Per_project ->
         Some project_funcs_by_module
       | `Per_package | `Per_namespace | `Per_module
       | `Per_constant_path | `Per_translation_unit -> None

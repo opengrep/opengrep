@@ -79,3 +79,7 @@ val build_region_bindings :
   attributes_by_module:Func_lookup.module_attributes ->
   file_infos:Types.file_info list ->
   region_bindings Common.SMap.t
+
+val top_level_bindings :
+  definitions_by_qn:Types.definition Common.SMap.t ->
+  positioned_binding list

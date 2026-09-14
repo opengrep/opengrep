@@ -67,7 +67,7 @@ type t = {
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
-    | `Per_translation_unit ];
+    | `Per_translation_unit | `Per_project ];
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
@@ -678,6 +678,16 @@ let elixir : t = { default with
   unaliased_import_binds = Last_segment_binds;
 }
 
+let apex : t = { default with
+  unqualified_scope = `Per_project;
+  walks_inheritance = true;
+}
+
+let swift : t = { default with
+  unqualified_scope = `Per_project;
+  walks_inheritance = true;
+}
+
 let for_lang (lang : Lang.t) : t =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3 -> python
@@ -693,5 +703,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.C -> c
   | Lang.Clojure -> clojure
   | Lang.Elixir -> elixir
+  | Lang.Apex -> apex
+  | Lang.Swift -> swift
   | Lang.Scala -> scala
   | _ -> default

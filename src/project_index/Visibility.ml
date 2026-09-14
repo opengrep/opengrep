@@ -35,6 +35,7 @@ let build_dir_index
     | `Per_package
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
+    | `Per_project -> Some (Names.Module_qn.to_string Names.Module_qn.empty)
     | `Per_file
     | `Per_crate
     | `Per_translation_unit
@@ -71,6 +72,7 @@ let build_dir_index
    | `Per_file
    | `Per_crate
    | `Per_translation_unit
+   | `Per_project
    | `Per_constant_path
    | `Per_module -> ());
   dir_index
@@ -89,6 +91,7 @@ let for_file
     | `Per_package
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
+    | `Per_project -> Some (Names.Module_qn.to_string Names.Module_qn.empty)
     | `Per_file
     | `Per_crate
     | `Per_translation_unit

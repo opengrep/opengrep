@@ -1,0 +1,12 @@
+rules:
+  - id: module-scope-two-files
+    languages: [swift]
+    severity: ERROR
+    message: A bare call reaches the one top level function of the module with that name
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
