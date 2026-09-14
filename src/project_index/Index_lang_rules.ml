@@ -743,6 +743,10 @@ let dart_discover ~(project_root : Fpath.t) : project_discovery =
        | Some (name : string) -> [ ("package:" ^ name ^ "/*", [ lib ]) ]
        | None -> []) }
 
+let julia : t = { default with
+  unqualified_scope = `Per_project;
+}
+
 let dart : t = { default with
   walks_inheritance = true;
   specifiers_name_files = true;
@@ -777,5 +781,6 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Vb -> vb
   | Lang.Lua -> lua
   | Lang.Dart -> dart
+  | Lang.Julia -> julia
   | Lang.Scala -> scala
   | _ -> default

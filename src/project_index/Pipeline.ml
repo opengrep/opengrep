@@ -231,7 +231,7 @@ let resolves_by_binding (lang : Lang.t) : bool =
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
   | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
   | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala | Lang.Apex
-  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart -> true
+  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart | Lang.Julia -> true
   | _ -> false
 
 let definition_of_target

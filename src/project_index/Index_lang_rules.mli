@@ -123,6 +123,7 @@ val swift : t
 val vb : t
 val lua : t
 val dart : t
+val julia : t
 val default : t
 
 val for_lang : Lang.t -> t
