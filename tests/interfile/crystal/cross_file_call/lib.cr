@@ -1,4 +1,4 @@
 def leak(v)
-  # todoruleid: cross-file-call-crystal (no project index rules for Crystal)
+  # ruleid: cross-file-call-crystal
   sink(v)
 end

@@ -747,6 +747,14 @@ let julia : t = { default with
   unqualified_scope = `Per_project;
 }
 
+let crystal : t = { default with
+  walks_inheritance = true;
+  include_anonymous_funcs = false;
+  class_identity_is_constant_path = true;
+  unqualified_scope = `Per_constant_path;
+  parent_resolution = Parent_by_lexical_scope;
+}
+
 let dart : t = { default with
   walks_inheritance = true;
   specifiers_name_files = true;
@@ -782,5 +790,6 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Lua -> lua
   | Lang.Dart -> dart
   | Lang.Julia -> julia
+  | Lang.Crystal -> crystal
   | Lang.Scala -> scala
   | _ -> default
