@@ -5,7 +5,11 @@ type specifier_resolution =
 and module_files
 
 val module_of_specifier :
-  module_files -> current_file:Fpath.t -> string -> Names.Module_qn.t option
+  module_files ->
+  uri:bool ->
+  current_file:Fpath.t ->
+  string ->
+  Names.Module_qn.t option
 
 val specifier_resolution_of_files :
   cfg:Index_lang_rules.t ->

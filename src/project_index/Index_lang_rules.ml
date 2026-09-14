@@ -51,6 +51,8 @@ type t = {
   rewrite_module_path : string -> string;
   module_path_from_ast : G.program -> string option;
   normalize_import_specifier : string -> string;
+  specifiers_name_files : bool;
+  specifiers_are_uris : bool;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -280,6 +282,8 @@ let default : t = {
   rewrite_module_path = (fun s -> s);
   module_path_from_ast = (fun _ -> None);
   normalize_import_specifier = (fun s -> s);
+  specifiers_name_files = false;
+  specifiers_are_uris = false;
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -540,6 +544,7 @@ let typescript_class_constructor_synth_fields
 let typescript : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
+  specifiers_name_files = true;
   discover_project =
     (fun ~(project_root : Fpath.t) ->
       let excludes, module_paths = Ts_modules.discover ~project_root in
@@ -709,6 +714,42 @@ let lua : t = { default with
   project_scope_admits = lua_global_definition;
 }
 
+let dart_package_name ~(project_root : Fpath.t) : string option =
+  let pubspec = Fpath.add_seg project_root "pubspec.yaml" in
+  match
+    Nonfatal.catch ~default:None (fun () -> Some (UFile.read_file pubspec))
+  with
+  | None -> None
+  | Some (content : string) ->
+    List.find_map
+      (fun (line : string) ->
+        if String.starts_with ~prefix:"name:" line then
+          let name =
+            String.trim
+              (String.sub line 5 (String.length line - 5))
+          in
+          if String.length name > 0 then Some name else None
+        else None)
+      (String.split_on_char '\n' content)
+
+let dart_discover ~(project_root : Fpath.t) : project_discovery =
+  let lib =
+    Fpath.add_seg (Fpath.add_seg project_root "lib") "*"
+    |> Fpath.normalize |> Fpath.to_string
+  in
+  { excludes = [];
+    module_paths =
+      (match dart_package_name ~project_root with
+       | Some (name : string) -> [ ("package:" ^ name ^ "/*", [ lib ]) ]
+       | None -> []) }
+
+let dart : t = { default with
+  walks_inheritance = true;
+  specifiers_name_files = true;
+  specifiers_are_uris = true;
+  discover_project = dart_discover;
+}
+
 let vb : t = { default with
   unqualified_scope = `Per_package;
   walks_inheritance = true;
@@ -735,5 +776,6 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Swift -> swift
   | Lang.Vb -> vb
   | Lang.Lua -> lua
+  | Lang.Dart -> dart
   | Lang.Scala -> scala
   | _ -> default

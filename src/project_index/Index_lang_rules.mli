@@ -53,6 +53,8 @@ type t = {
   rewrite_module_path : string -> string;
   module_path_from_ast : G.program -> string option;
   normalize_import_specifier : string -> string;
+  specifiers_name_files : bool;
+  specifiers_are_uris : bool;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -120,6 +122,7 @@ val apex : t
 val swift : t
 val vb : t
 val lua : t
+val dart : t
 val default : t
 
 val for_lang : Lang.t -> t

@@ -1078,22 +1078,13 @@ let run_pipeline (caps : < Cap.fork >)
     else Rust_crates.empty
   in
   let resolution =
-    match cfg.Index_lang_rules.unqualified_scope with
-    | `Per_module ->
+    if cfg.Index_lang_rules.specifiers_name_files then
       timed "specifier resolution" @@ fun () ->
       Module_paths.specifier_resolution_of_files ~cfg
         ~project_root:project_root_abs
         ~paths:discovered.Index_lang_rules.module_paths
         (List.map absolutize files)
-    | `Per_file
-    | `Per_crate
-    | `Per_constant_path
-    | `Per_directory
-    | `Per_go_package
-    | `Per_package
-    | `Per_namespace
-    | `Per_translation_unit
-    | `Per_project -> Module_paths.Specifier_is_module_name
+    else Module_paths.Specifier_is_module_name
   in
   let process file =
     let file = absolutize file in

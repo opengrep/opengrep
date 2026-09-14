@@ -1,0 +1,3 @@
+name: package_specifier
+environment:
+  sdk: ^3.0.0

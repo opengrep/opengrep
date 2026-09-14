@@ -76,7 +76,8 @@ let candidates_of_base (base_path : Fpath.t) : string list =
     | ".mjs" -> [ base; chop ^ ".mts"; chop ^ ".ts" ]
     | ".cjs" -> [ base; chop ^ ".cts"; chop ^ ".ts" ]
     | ".ts" | ".tsx" | ".mts" | ".cts" -> [ base ]
-    | _ -> []
+    | "" -> []
+    | _ -> [ base ]
   in
   extensioned
   @ List.map (fun (ext : string) -> base ^ ext) source_exts
@@ -111,10 +112,13 @@ let module_of_bare (files : module_files) (specifier : string)
           entry.pe_targets)
     files.mf_paths
 
-let module_of_specifier (files : module_files) ~(current_file : Fpath.t)
-    (specifier : string) : Names.Module_qn.t option =
+let module_of_specifier (files : module_files) ~(uri : bool)
+    ~(current_file : Fpath.t) (specifier : string)
+    : Names.Module_qn.t option =
   if String.length specifier = 0 then None
   else if Char.equal specifier.[0] '.' then
+    module_of_relative files ~current_file specifier
+  else if uri && not (String.contains specifier ':') then
     module_of_relative files ~current_file specifier
   else module_of_bare files specifier
 
@@ -250,7 +254,8 @@ let module_name_string ~(cfg : Index_lang_rules.t)
         (Names.Module_qn.of_string
            (cfg.Index_lang_rules.normalize_import_specifier spec))
     | Specifier_names_file (files : module_files) ->
-      module_of_specifier files ~current_file spec)
+      module_of_specifier files
+        ~uri:cfg.Index_lang_rules.specifiers_are_uris ~current_file spec)
   | G.DottedName (((head : string), _) :: (rest : G.ident list) as parts) -> (
     match relative_head ~cfg head with
     | Some (relative : Index_lang_rules.relative_module) ->
@@ -261,7 +266,18 @@ let module_name_string ~(cfg : Index_lang_rules.t)
     | None ->
       if Common.SMap.mem head own_module_names then
         Some (under_own_module parts)
-      else of_dotted parts)
+      else
+        match (cfg.Index_lang_rules.specifiers_are_uris, resolution) with
+        | true, Specifier_names_file (files : module_files) ->
+          let uri =
+            match rest with
+            | [] -> head
+            | _ :: _ ->
+              head ^ ":" ^ String.concat "/" (List.map fst rest)
+          in
+          module_of_specifier files ~uri:true ~current_file uri
+        | true, Specifier_is_module_name
+        | false, _ -> of_dotted parts)
   | G.DottedName ([] as parts) -> of_dotted parts
 
 let enclosing_package ~(cfg : Index_lang_rules.t) ~(file : Fpath.t)
