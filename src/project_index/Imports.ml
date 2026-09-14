@@ -68,8 +68,8 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
              (* wildcard [("*", ns_qn)] tells the re-export pass to copy ns_qn's
                 free fns for [(h/handle ...)]. *)
              let st = match id_name value with
-               | Some alias -> add (add st alias ns_qn) wildcard_local ns_qn
-               | None -> add st wildcard_local ns_qn
+               | Some alias -> add st alias ns_qn
+               | None -> st
              in
              scan st tail
            | kw :: all :: tail when is_kwd ":refer" kw && is_kwd ":all" all ->
