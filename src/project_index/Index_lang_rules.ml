@@ -36,6 +36,10 @@ type reexport_source =
   | Reexports_from_init_file
   | Reexports_from_public_directives
 
+type unaliased_import_local =
+  | First_segment_binds
+  | Last_segment_binds
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -67,6 +71,8 @@ type t = {
      namespaces per file are attributed correctly.  False where a [package]
      directive names the file's module identity instead (Go, via go.mod). *)
   package_directive_is_namespace : bool;
+  module_definition_is_namespace : bool;
+  unaliased_import_binds : unaliased_import_local;
   (* A class's identity is its constant path, independent of the file it is
      (re)opened in (Ruby: [::Base], [Svc::Base]).  Drops the file-path prefix
      from class qns so a class reopened across files shares one qn and parent
@@ -281,6 +287,8 @@ let default : t = {
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
   package_directive_is_namespace = false;
+  module_definition_is_namespace = false;
+  unaliased_import_binds = First_segment_binds;
   class_identity_is_constant_path = false;
   discover_project =
     (fun ~project_root:_ -> { excludes = []; module_paths = [] });
@@ -648,6 +656,12 @@ let clojure : t = { default with
   module_path_from_ast = extract_clojure_ns_decl;
 }
 
+let elixir : t = { default with
+  unqualified_scope = `Per_namespace;
+  module_definition_is_namespace = true;
+  unaliased_import_binds = Last_segment_binds;
+}
+
 let for_lang (lang : Lang.t) : t =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3 -> python
@@ -662,5 +676,6 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Cpp -> cpp
   | Lang.C -> c
   | Lang.Clojure -> clojure
+  | Lang.Elixir -> elixir
   | Lang.Scala -> scala
   | _ -> default

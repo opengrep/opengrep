@@ -38,6 +38,10 @@ type reexport_source =
   | Reexports_from_init_file
   | Reexports_from_public_directives
 
+type unaliased_import_local =
+  | First_segment_binds
+  | Last_segment_binds
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -66,6 +70,8 @@ type t = {
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
      blocks / package clauses), not the file's module identity (contrast Go). *)
   package_directive_is_namespace : bool;
+  module_definition_is_namespace : bool;
+  unaliased_import_binds : unaliased_import_local;
   (* Class identity is its constant path, file-independent (Ruby reopening):
      drops the file-path prefix from class qns. *)
   class_identity_is_constant_path : bool;
@@ -102,6 +108,7 @@ val csharp : t
 val cpp : t
 val c : t
 val clojure : t
+val elixir : t
 val default : t
 
 val for_lang : Lang.t -> t

@@ -1,0 +1,12 @@
+rules:
+  - id: test-alias-multi
+    languages: [elixir]
+    message: Tainted data flows through both modules bound by a grouped alias
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

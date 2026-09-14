@@ -47,6 +47,41 @@ let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~rescue ~def_str =
     in
     S (D (FuncDef [def]))
 
+let bare_keyword_name (keyword : string) : string =
+  String_.strip_wrapping_char ':' keyword
+
+let aliases_of_items (items : expr list) : alias list option =
+  let found =
+    List.filter_map
+      (fun (item : expr) ->
+        match item with
+        | Alias (a : alias) -> Some a
+        | _ -> None)
+      items
+  in
+  if Int.equal (List.length found) (List.length items)
+     && not (Int.equal (List.length found) 0)
+  then Some found
+  else None
+
+let imported_functions_of_pairs (pairs : pair list)
+    : imported_function list option =
+  let found =
+    List.filter_map
+      (fun (p : pair) ->
+        match p with
+        | Kw_expr ((X1 ((name : string), (tname : tok)), _tcolon),
+                   L (G.Int (arity : Parsed_int.t))) ->
+          Some { imf_name = Id (bare_keyword_name name, tname);
+                 imf_arity = arity }
+        | _ -> None)
+      pairs
+  in
+  if Int.equal (List.length found) (List.length pairs)
+     && not (Int.equal (List.length found) 0)
+  then Some found
+  else None
+
 (* In Elixir, we can skip the arg list in function definition if it is empty.
  * We preprocess these cases to avoid code duplication in the visitor. *)
 let normalize_function_header (x : call) : call =
@@ -175,6 +210,63 @@ class ['self] visitor =
             }
           in
           S (D (ModuleDef def))
+      | ( I (Id ("defmodule", tdefmodule)),
+          (_, ([ Alias mname ],
+               [ Kw_expr ((X1 (do_kw, _), _tok_colon), body) ]), _),
+          None) when String.starts_with ~prefix:"do:" do_kw ->
+          let body = self#visit_expr env body in
+          let fake = Tok.unsafe_fake_tok "" in
+          let def =
+            {
+              m_defmodule = tdefmodule;
+              m_name = mname;
+              m_body = (fake, [ body ], fake);
+            }
+          in
+          S (D (ModuleDef def))
+      | ( I (Id ("alias", talias)),
+          (_, ([ Alias mname ], []), _),
+          None ) ->
+          S (Dir (AliasDirective
+                    { ad_alias = talias; ad_module = mname;
+                      ad_binding = BindLastSegment }))
+      | ( I (Id ("alias", talias)),
+          (_, ([ Alias mname ],
+               [ Kw_expr ((X1 (as_kw, _), _tok_colon), Alias local) ]), _),
+          None ) when String.starts_with ~prefix:"as:" as_kw ->
+          S (Dir (AliasDirective
+                    { ad_alias = talias; ad_module = mname;
+                      ad_binding = BindAs local }))
+      | ( I (Id ("alias", talias)),
+          (_, ([ DotTuple (Alias mname, _tdot, (_, (items, []), _)) ], []), _),
+          None ) -> (
+          match aliases_of_items items with
+          | Some (members : alias list) ->
+              S (Dir (AliasDirective
+                        { ad_alias = talias; ad_module = mname;
+                          ad_binding = BindGroup members }))
+          | None ->
+              let x = self#visit_call env x in
+              Call x)
+      | ( I (Id ("import", timport)),
+          (_, ([ Alias mname ], []), _),
+          None ) ->
+          S (Dir (ImportDirective
+                    { imd_import = timport; imd_module = mname;
+                      imd_selection = ImportEveryFunction }))
+      | ( I (Id ("import", timport)),
+          (_, ([ Alias mname ],
+               [ Kw_expr ((X1 (only_kw, _), _tok_colon),
+                          List (_, ([], pairs), _)) ]), _),
+          None ) when String.starts_with ~prefix:"only:" only_kw -> (
+          match imported_functions_of_pairs pairs with
+          | Some (functions : imported_function list) ->
+              S (Dir (ImportDirective
+                        { imd_import = timport; imd_module = mname;
+                          imd_selection = ImportOnly functions }))
+          | None ->
+              let x = self#visit_call env x in
+              Call x)
       (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#case/2
        * case expr do pattern -> body ... end *)
       | ( I (Id ("case", tcase)),

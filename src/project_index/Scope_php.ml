@@ -41,6 +41,7 @@ let import_binds_kind (imp : import)
 
 let build
     ~(definitions_by_qn : definition Common.SMap.t)
+    ~(attributes_by_module : Func_lookup.module_attributes)
     ~(region_bindings : Scope_binding.region_bindings Common.SMap.t)
     ~(global_bindings : Scope_binding.positioned_binding list)
     ~(classes_by_file : class_info list Common.SMap.t)
@@ -96,7 +97,11 @@ let build
     List.concat_map
       (fun (imp : import) ->
         match Imports.binding_of imp with
-        | Imports.Wildcard_from _ -> []
+        | Imports.Wildcard_from (target : Names.Module_qn.t) ->
+          Scope_binding.bindings_of_attributes
+            ~pos:(Scope_binding.position_of_tok imp.im_tok)
+            ~keep:is_function_attribute
+            (Func_lookup.attributes_of_module attributes_by_module target)
         | Imports.Named_binding { local; target } -> (
           match
             Common.SMap.find_opt (Names.Module_qn.to_string target)

@@ -68,9 +68,10 @@ type ident =
   | IdMetavar of string wrap
 [@@deriving show { with_path = false }]
 
-(* uppercase ident; constructs that expand to atoms at compile-time
- * TODO: seems like it contain contains string with dots! Foo.Bar is
- * parsed as a single alias, so maybe we need to inspect it and split it.
+(* uppercase ident; constructs that expand to atoms at compile-time.
+ * Foo.Bar is parsed as a single alias whose string holds the dots.
+ * Elixir_to_generic.dotted_ident_of_alias splits it for the alias and
+ * import directives; the name sites still keep it as one ident.
  *)
 type alias = string wrap [@@deriving show]
 
@@ -317,6 +318,7 @@ and stmt =
   (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#for/1 *)
   | For of tok (* 'for' *) * for_clause list * stmts bracket (* do body *)
   | D of definition
+  | Dir of directive
 
 (* ref: https://hexdocs.pm/elixir/Kernel.SpecialForms.html#for/1
  * A for_clause is either a generator (pattern <- collection) or a filter.
@@ -366,6 +368,36 @@ and module_definition = {
   m_name : alias;
   (* less: we could restrict it maybet to definition list *)
   m_body : stmts bracket;
+}
+
+and directive =
+  | AliasDirective of alias_directive
+  | ImportDirective of import_directive
+
+and alias_directive = {
+  ad_alias : tok;
+  ad_module : alias;
+  ad_binding : alias_binding;
+}
+
+and alias_binding =
+  | BindLastSegment
+  | BindAs of alias
+  | BindGroup of alias list
+
+and import_directive = {
+  imd_import : tok;
+  imd_module : alias;
+  imd_selection : import_selection;
+}
+
+and import_selection =
+  | ImportEveryFunction
+  | ImportOnly of imported_function list
+
+and imported_function = {
+  imf_name : ident;
+  imf_arity : (Parsed_int.t[@name "parsed_int"]);
 }
 
 (*****************************************************************************)

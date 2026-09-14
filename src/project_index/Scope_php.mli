@@ -4,6 +4,7 @@ val global_function_bindings :
 
 val build :
   definitions_by_qn:Types.definition Common.SMap.t ->
+  attributes_by_module:Func_lookup.module_attributes ->
   region_bindings:Scope_binding.region_bindings Common.SMap.t ->
   global_bindings:Scope_binding.positioned_binding list ->
   classes_by_file:Types.class_info list Common.SMap.t ->

@@ -229,7 +229,7 @@ let resolves_by_binding (lang : Lang.t) : bool =
   | Lang.Python | Lang.Python2 | Lang.Python3
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
   | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
-  | Lang.Cpp -> true
+  | Lang.Cpp | Lang.Elixir -> true
   | _ -> false
 
 let definition_of_target
@@ -310,7 +310,7 @@ let build_scope_table
              module_aliases = None }
     | `Per_namespace ->
       let bindings, own_modules =
-        Scope_php.build ~definitions_by_qn
+        Scope_php.build ~definitions_by_qn ~attributes_by_module
           ~region_bindings
           ~global_bindings:php_global_bindings
           ~classes_by_file ~class_parent_paths ~file_funcs_index fi
