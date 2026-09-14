@@ -46,7 +46,7 @@ let build
              ~methods_by_class ci.ci_qn))
       own_classes
   in
-  Func_lookup.scope_table_layered
+  Func_lookup.scope_table_shadowing
     ~front:
       (Func_lookup.scope_table_of_map
          (Scope_binding.bindings_of_positioned

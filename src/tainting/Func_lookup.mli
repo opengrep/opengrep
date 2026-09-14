@@ -60,6 +60,9 @@ val scope_table_of_map : scope_entry list Common.SMap.t -> scope_table
 
 val scope_table_layered : front:scope_table -> back:scope_table -> scope_table
 
+val scope_table_shadowing :
+  front:scope_table -> back:scope_table -> scope_table
+
 val class_of_entries : scope_entry list -> Names.Class_qn.t option
 
 val functions_of_entries : scope_entry list -> Func_info.t list

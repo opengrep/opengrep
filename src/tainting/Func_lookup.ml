@@ -68,12 +68,16 @@ type scope_entry = {
 type scope_table =
   | Scope_bindings of scope_entry list Common.SMap.t
   | Scope_layered of scope_table * scope_table
+  | Scope_shadowing of scope_table * scope_table
 
 let scope_table_of_map (bindings : scope_entry list Common.SMap.t)
     : scope_table = Scope_bindings bindings
 
 let scope_table_layered ~(front : scope_table) ~(back : scope_table)
     : scope_table = Scope_layered (front, back)
+
+let scope_table_shadowing ~(front : scope_table) ~(back : scope_table)
+    : scope_table = Scope_shadowing (front, back)
 
 let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
   List.find_map
@@ -240,6 +244,10 @@ let resolve_in_scope (t : t) (name : string) : scope_entry list =
       | [], found -> found
       | front_entries, back_entries ->
         keep_distinct (front_entries @ back_entries))
+    | Scope_shadowing (front, back) -> (
+      match entries front with
+      | [] -> entries back
+      | found -> found)
   in
   entries t.scope_table
 
