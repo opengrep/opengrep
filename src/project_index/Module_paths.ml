@@ -79,9 +79,12 @@ let candidates_of_base (base_path : Fpath.t) : string list =
     | "" -> []
     | _ -> [ base ]
   in
-  extensioned
-  @ List.map (fun (ext : string) -> base ^ ext) source_exts
-  @ List.map index_under source_exts
+  match Fpath.get_ext base_path with
+  | "" | ".js" | ".jsx" | ".mjs" | ".cjs" | ".ts" | ".tsx" | ".mts" | ".cts" ->
+    extensioned
+    @ List.map (fun (ext : string) -> base ^ ext) source_exts
+    @ List.map index_under source_exts
+  | _ -> extensioned
 
 let module_of_candidates (files : module_files) (candidates : string list)
     : Names.Module_qn.t option =

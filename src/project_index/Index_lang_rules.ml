@@ -698,16 +698,7 @@ let swift : t = { default with
 }
 
 let lua_global_definition (ent : G.entity option) : bool =
-  match ent with
-  | None -> false
-  | Some (ent : G.entity) ->
-    not
-      (List.exists
-         (fun (attr : G.attribute) ->
-           match attr with
-           | G.KeywordAttr (G.Static, _) -> true
-           | _ -> false)
-         ent.G.attrs)
+  Option.is_some ent && not (Receiver.is_static ent)
 
 let lua : t = { default with
   unqualified_scope = `Per_project;
@@ -716,21 +707,39 @@ let lua : t = { default with
 
 let dart_package_name ~(project_root : Fpath.t) : string option =
   let pubspec = Fpath.add_seg project_root "pubspec.yaml" in
-  match
-    Nonfatal.catch ~default:None (fun () -> Some (UFile.read_file pubspec))
-  with
-  | None -> None
-  | Some (content : string) ->
-    List.find_map
-      (fun (line : string) ->
-        if String.starts_with ~prefix:"name:" line then
-          let name =
-            String.trim
-              (String.sub line 5 (String.length line - 5))
-          in
-          if String.length name > 0 then Some name else None
-        else None)
-      (String.split_on_char '\n' content)
+  let unquoted (value : string) : string =
+    let n = String.length value in
+    if n >= 2
+       && (String.equal (String.sub value 0 1) "\""
+           || String.equal (String.sub value 0 1) "'")
+       && String.equal (String.sub value 0 1) (String.sub value (n - 1) 1)
+    then String.sub value 1 (n - 2)
+    else value
+  in
+  let before_comment (value : string) : string =
+    match String.index_opt value '#' with
+    | Some (hash : int) -> String.sub value 0 hash
+    | None -> value
+  in
+  if not (Sys.file_exists (Fpath.to_string pubspec)) then None
+  else
+    match
+      Nonfatal.catch ~default:None (fun () -> Some (UFile.read_file pubspec))
+    with
+    | None -> None
+    | Some (content : string) ->
+      List.find_map
+        (fun (line : string) ->
+          if String.starts_with ~prefix:"name:" line then
+            let name =
+              unquoted
+                (String.trim
+                   (before_comment
+                      (String.sub line 5 (String.length line - 5))))
+            in
+            if String.length name > 0 then Some name else None
+          else None)
+        (String.split_on_char '\n' content)
 
 let dart_discover ~(project_root : Fpath.t) : project_discovery =
   let lib =
