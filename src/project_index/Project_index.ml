@@ -742,17 +742,47 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_namespace
           | `Per_package
           | `Per_translation_unit -> Func_lookup.empty_scope_table);
-      namespace_object_classes =
+      namespace_object_members =
         (if cfg.Index_lang_rules.object_members_bind_in_namespace then
-           List.fold_left
-             (fun (objects : unit Common.SMap.t) (ci : class_info) ->
-               match ci.ci_class_kind with
-               | G.Object ->
-                 Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) () objects
-               | G.Class
-               | G.Interface
-               | G.Trait -> objects)
-             Common.SMap.empty indexed_classes
+           let objects : unit Common.SMap.t =
+             List.fold_left
+               (fun (objects : unit Common.SMap.t) (ci : class_info) ->
+                 match ci.ci_class_kind with
+                 | G.Object ->
+                   Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) ()
+                     objects
+                 | G.Class
+                 | G.Interface
+                 | G.Trait -> objects)
+               Common.SMap.empty indexed_classes
+           in
+           Common.SMap.filter_map
+             (fun (_ : string)
+                  (attributes : Func_lookup.module_attribute Common.SMap.t) ->
+               match
+                 Common.SMap.fold
+                   (fun (_ : string)
+                        (attribute : Func_lookup.module_attribute)
+                        (lifted : Scope_binding.positioned_binding list) ->
+                     match attribute with
+                     | Func_lookup.Attr_class (class_qn : Names.Class_qn.t)
+                       when Common.SMap.mem
+                              (Names.Class_qn.to_string class_qn) objects ->
+                       List.concat_map
+                         (fun ((name : string), (funcs : Func_info.t list)) ->
+                           Scope_binding.function_binding_of ~pos:None
+                             ~parent_path:[] name funcs)
+                         (Scope_package.members_along_order
+                            ~resolution_orders ~methods_by_class class_qn)
+                       @ lifted
+                     | Func_lookup.Attr_class _
+                     | Func_lookup.Attr_functions _
+                     | Func_lookup.Attr_module _ -> lifted)
+                   attributes []
+               with
+               | [] -> None
+               | lifted -> Some lifted)
+             attributes_by_module
          else Common.SMap.empty);
       dunder_all;
       resolution_orders;

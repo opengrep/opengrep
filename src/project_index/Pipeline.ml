@@ -54,7 +54,7 @@ type ctx = {
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
   top_level_scope : Func_lookup.scope_table;
-  namespace_object_classes : unit Common.SMap.t;
+  namespace_object_members : Scope_binding.positioned_binding list Common.SMap.t;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -202,7 +202,7 @@ let build_alias_to_module_qn
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_module
   | `Per_go_package -> None
-  | `Per_file | `Per_crate | `Per_directory | `Per_namespace ->
+  | `Per_file | `Per_crate | `Per_directory | `Per_namespace | `Per_project ->
     let tbl : (string, Names.Module_qn.t) Hashtbl.t = Hashtbl.create 16 in
     List.iter (fun (imp : import) ->
       let local = imp.im_local in
@@ -274,7 +274,8 @@ let build_scope_table
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
     ~(top_level_scope : Func_lookup.scope_table)
-    ~(namespace_object_classes : unit Common.SMap.t)
+    ~(namespace_object_members :
+        Scope_binding.positioned_binding list Common.SMap.t)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
@@ -287,7 +288,7 @@ let build_scope_table
         Scope_package.build ~lang ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
           ~resolution_orders ~methods_by_class ~extensions_by_module
-          ~nested_types_by_class ~global_imports ~namespace_object_classes fi
+          ~nested_types_by_class ~global_imports ~namespace_object_members fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files; own_modules = []; module_aliases = None }
@@ -549,7 +550,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         extensions_by_module; nested_types_by_class;
         region_bindings; php_global_bindings; include_map;
         module_scope; go_packages;
-        top_level_scope; namespace_object_classes;
+        top_level_scope; namespace_object_members;
         classes_by_file; class_parent_paths; global_imports;
         project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
@@ -583,7 +584,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
         ~region_bindings ~php_global_bindings ~include_map ~module_scope
-        ~go_packages ~top_level_scope ~namespace_object_classes fi
+        ~go_packages ~top_level_scope ~namespace_object_members fi
     in
     let alias_to_module_qn =
       staged "alias to module map" @@ fun () ->
@@ -596,10 +597,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let funcs_by_module_qn
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
       match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file | `Per_crate | `Per_directory | `Per_go_package
-      | `Per_project ->
+      | `Per_file | `Per_crate | `Per_directory | `Per_go_package ->
         Some project_funcs_by_module
-      | `Per_package | `Per_namespace | `Per_module
+      | `Per_package | `Per_namespace | `Per_module | `Per_project
       | `Per_constant_path | `Per_translation_unit -> None
     in
     let file_type_state =

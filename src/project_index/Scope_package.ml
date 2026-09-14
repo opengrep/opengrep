@@ -163,7 +163,8 @@ let build
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
-    ~(namespace_object_classes : unit Common.SMap.t)
+    ~(namespace_object_members :
+        Scope_binding.positioned_binding list Common.SMap.t)
     (fi : file_info)
     : Func_lookup.scope_entry list Common.SMap.t
       * (Names.Class_name.t * Fpath.t) list =
@@ -225,21 +226,13 @@ let build
     let attributes =
       Func_lookup.attributes_of_module attributes_by_module target
     in
-    let lifted =
-      Common.SMap.fold
-        (fun (_ : string) (attribute : Func_lookup.module_attribute)
-             (lifted : Scope_binding.positioned_binding list) ->
-          match attribute with
-          | Func_lookup.Attr_class (class_qn : Names.Class_qn.t)
-            when Common.SMap.mem (Names.Class_qn.to_string class_qn)
-                   namespace_object_classes ->
-            bindings_of_class_members ~pos class_qn @ lifted
-          | Func_lookup.Attr_class _
-          | Func_lookup.Attr_functions _
-          | Func_lookup.Attr_module _ -> lifted)
-        attributes []
-    in
-    Scope_binding.bindings_of_every_attribute ~pos attributes @ lifted
+    let bound = Scope_binding.bindings_of_every_attribute ~pos attributes in
+    match
+      Common.SMap.find_opt (Names.Module_qn.to_string target)
+        namespace_object_members
+    with
+    | None -> bound
+    | Some (lifted : Scope_binding.positioned_binding list) -> bound @ lifted
   in
   let bindings_of_nested_types ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)
@@ -277,16 +270,20 @@ let build
       bindings_of_module ~pos:(Scope_binding.position_of_tok imp.im_tok)
         target
   in
-  let imported, on_demand, bound_class_files =
+  let imported, on_demand, bound_class_files, hidden =
     List.fold_left
       (fun ((imported : Scope_binding.positioned_binding list),
             (on_demand : Scope_binding.positioned_binding list),
-            (bound_class_files : (Names.Class_name.t * Fpath.t) list))
+            (bound_class_files : (Names.Class_name.t * Fpath.t) list),
+            (hidden : unit Common.SMap.t))
            (imp : import) ->
         match Imports.binding_of imp with
         | Imports.Wildcard_from (target : Names.Module_qn.t) ->
           (imported, on_demand_bindings imp target @ on_demand,
-           bound_class_files)
+           bound_class_files, hidden)
+        | Imports.Named_binding { local = "_"; target } ->
+          ( imported, on_demand, bound_class_files,
+            Common.SMap.add (Names.Module_qn.bare_name target) () hidden )
         | Imports.Named_binding { local; target } -> (
           match
             Common.SMap.find_opt (Names.Module_qn.to_string target)
@@ -296,7 +293,7 @@ let build
             ( Scope_binding.function_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local funcs
               @ imported,
-              on_demand, bound_class_files )
+              on_demand, bound_class_files, hidden )
           | Some (Class_definition { class_file; class_qn }) ->
             ( Scope_binding.class_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local class_qn
@@ -304,9 +301,16 @@ let build
               on_demand,
               (Names.Class_name.of_string (Names.Module_qn.bare_name target),
                class_file)
-              :: bound_class_files )
-          | None -> (imported, on_demand, bound_class_files)))
-      ([], [], []) fi.fi_imports
+              :: bound_class_files,
+              hidden )
+          | None -> (imported, on_demand, bound_class_files, hidden)))
+      ([], [], [], Common.SMap.empty) fi.fi_imports
+  in
+  let on_demand =
+    List.filter
+      (fun (binding : Scope_binding.positioned_binding) ->
+        not (Common.SMap.mem binding.Scope_binding.pb_name hidden))
+      on_demand
   in
   let global_bindings =
     List.concat_map
