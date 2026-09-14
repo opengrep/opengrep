@@ -398,7 +398,7 @@ let module_import (tok : tok) (parts : G.dotted_ident)
           Option.map
             (fun (id : G.ident) -> (id, G.empty_id_info ()))
             local );
-    G.d_attrs = [] }
+    G.d_attrs = [ G.OtherAttribute (("alias", tok), []) ] }
 
 let map_directive env (v : directive) : G.stmt =
   match v with

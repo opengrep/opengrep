@@ -211,7 +211,7 @@ class ['self] visitor =
           in
           S (D (ModuleDef def))
       | ( I (Id ("defmodule", tdefmodule)),
-          (_, ([ Alias mname ],
+          (_, ([ (Alias mname | I (IdMetavar mname)) ],
                [ Kw_expr ((X1 (do_kw, _), _tok_colon), body) ]), _),
           None) when String.starts_with ~prefix:"do:" do_kw ->
           let body = self#visit_expr env body in
@@ -225,14 +225,15 @@ class ['self] visitor =
           in
           S (D (ModuleDef def))
       | ( I (Id ("alias", talias)),
-          (_, ([ Alias mname ], []), _),
+          (_, ([ (Alias mname | I (IdMetavar mname)) ], []), _),
           None ) ->
           S (Dir (AliasDirective
                     { ad_alias = talias; ad_module = mname;
                       ad_binding = BindLastSegment }))
       | ( I (Id ("alias", talias)),
-          (_, ([ Alias mname ],
-               [ Kw_expr ((X1 (as_kw, _), _tok_colon), Alias local) ]), _),
+          (_, ([ (Alias mname | I (IdMetavar mname)) ],
+               [ Kw_expr ((X1 (as_kw, _), _tok_colon),
+                          (Alias local | I (IdMetavar local))) ]), _),
           None ) when String.starts_with ~prefix:"as:" as_kw ->
           S (Dir (AliasDirective
                     { ad_alias = talias; ad_module = mname;
@@ -249,13 +250,13 @@ class ['self] visitor =
               let x = self#visit_call env x in
               Call x)
       | ( I (Id ("import", timport)),
-          (_, ([ Alias mname ], []), _),
+          (_, ([ (Alias mname | I (IdMetavar mname)) ], []), _),
           None ) ->
           S (Dir (ImportDirective
                     { imd_import = timport; imd_module = mname;
                       imd_selection = ImportEveryFunction }))
       | ( I (Id ("import", timport)),
-          (_, ([ Alias mname ],
+          (_, ([ (Alias mname | I (IdMetavar mname)) ],
                [ Kw_expr ((X1 (only_kw, _), _tok_colon),
                           List (_, ([], pairs), _)) ]), _),
           None ) when String.starts_with ~prefix:"only:" only_kw -> (
