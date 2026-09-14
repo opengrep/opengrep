@@ -1,3 +1,5 @@
+(ns test-hof-comprehensive-clojure-split.test-builtin-reduce-fn)
+
 (defn test-builtin-reduce-fn []
   (reduce (fn [acc x]
             ;; ruleid: test-hof-taint

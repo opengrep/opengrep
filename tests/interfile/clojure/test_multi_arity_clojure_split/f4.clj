@@ -1,3 +1,5 @@
+(ns test-multi-arity-clojure-split.f4)
+
 (defn f4
   ([x]      (foo x))     ; leg 1: len == 1
   ([x y]    (foo x))     ; leg 2: len == 2

@@ -1,3 +1,5 @@
+(ns test-hof-comprehensive-clojure-split.multi-arity-reverse)
+
 (defn multi-arity-reverse
   ([x]
    ;; ruleid: test-hof-taint

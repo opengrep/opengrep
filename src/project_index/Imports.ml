@@ -72,6 +72,8 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
                | None -> add st wildcard_local ns_qn
              in
              scan st tail
+           | kw :: all :: tail when is_kwd ":refer" kw && is_kwd ":all" all ->
+             scan (add st wildcard_local ns_qn) tail
            | kw :: { G.e = G.Container (G.Array, (_, refs, _)); _ } :: tail
              when is_kwd ":refer" kw ->
              let st = List.fold_left (fun st ref_expr ->
@@ -93,6 +95,16 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
          | G.Arg { G.e = G.Container (G.Array, (_, items, _)); _ } ->
            walk_require_vector st items
          | _ -> st) st
+  | G.E { G.e = G.RawExpr
+                  (Raw_tree.Case
+                     ("Quot_lit",
+                      Raw_tree.Tuple
+                        [ _;
+                          Raw_tree.Any
+                            (G.E { G.e = G.Container (G.Array, (_, items, _));
+                                   _ }) ]));
+          _ } ->
+    walk_require_vector st items
   | _ -> st
 
 let collect_imports ~(cfg : Index_lang_rules.t)
@@ -240,7 +252,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | None -> st
       | Some (qn : Names.Module_qn.t) ->
         add ~binds:attr_binds ~alias:None ~tok st wildcard_local qn)
-    | G.OtherDirective (("NsDirective", tok), exprs) ->
+    | G.OtherDirective (("NsDirective", tok), exprs)
+    | G.OtherDirective (("RequireDirective", tok), exprs) ->
       List.fold_left (collect_clojure_ns_form ~tok) st exprs
     | _ -> st
   in
