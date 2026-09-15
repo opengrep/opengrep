@@ -41,6 +41,7 @@ type import = {
   im_global : bool;
   im_binds : import_binds;
   im_role : import_role;
+  im_hidden : string list;
 }
 
 type class_info = {

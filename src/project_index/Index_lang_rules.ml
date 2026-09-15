@@ -84,6 +84,7 @@ type t = {
   object_members_bind_in_namespace : bool;
   companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
+  hiding_alias : string option;
   (* A class's identity is its constant path, independent of the file it is
      (re)opened in (Ruby: [::Base], [Svc::Base]).  Drops the file-path prefix
      from class qns so a class reopened across files shares one qn and parent
@@ -307,6 +308,7 @@ let default : t = {
   object_members_bind_in_namespace = false;
   companion_object_has_own_name = false;
   unaliased_import_binds = First_segment_binds;
+  hiding_alias = None;
   class_identity_is_constant_path = false;
   discover_project =
     (fun ~project_root:_ -> { excludes = []; module_paths = [] });
@@ -639,6 +641,7 @@ let scala : t = { default with
   class_body_extra_parents = scala_mixins_before_superclass;
   superclass_position = Superclass_after_mixins;
   companion_object_has_own_name = true;
+  hiding_alias = Some "_";
 }
 
 let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)

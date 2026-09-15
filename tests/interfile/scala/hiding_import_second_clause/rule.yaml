@@ -1,0 +1,12 @@
+rules:
+  - id: test-hiding-import-second-clause
+    languages: [scala]
+    message: A second import clause binds a name the wildcard of the first clause leaves out.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

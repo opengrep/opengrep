@@ -83,6 +83,7 @@ type t = {
   object_members_bind_in_namespace : bool;
   companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
+  hiding_alias : string option;
   (* Class identity is its constant path, file-independent (Ruby reopening):
      drops the file-path prefix from class qns. *)
   class_identity_is_constant_path : bool;

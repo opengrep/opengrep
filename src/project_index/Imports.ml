@@ -52,7 +52,7 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
   let add (acc : import list) (local : string) (target : Names.Module_qn.t) =
     { im_local = local; im_alias = None; im_target = target; im_tok = tok;
       im_static = false; im_global = false; im_binds = Binds_any;
-      im_role = Role_binds }
+      im_role = Role_binds; im_hidden = [] }
     :: acc
   in
   let walk_require_vector st vec_items =
@@ -107,6 +107,20 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
     walk_require_vector st items
   | _ -> st
 
+type hidden_name = {
+  hn_tok : Tok.t;
+  hn_target : Names.Module_qn.t;
+  hn_name : string;
+}
+
+let same_import_clause (left : Tok.t) (right : Tok.t) : bool =
+  match (Tok.loc_of_tok left, Tok.loc_of_tok right) with
+  | Ok (left_loc : Tok.location), Ok (right_loc : Tok.location) ->
+    Tok.equal_location left_loc right_loc
+  | Ok _, Error _
+  | Error _, Ok _
+  | Error _, Error _ -> false
+
 let collect_imports ~(cfg : Index_lang_rules.t)
     ~(resolution : Module_paths.specifier_resolution)
     ~(current_file : Fpath.t)
@@ -115,10 +129,11 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     (ast : G.program) : import list =
   let add ~(tok : Tok.t) ~(static : bool) ~(global : bool)
       ~(binds : import_binds) ~(role : import_role)
-      ~(alias : string option) (acc : import list) local target =
+      ~(alias : string option) ~(hidden : string list) (acc : import list)
+      local target =
     { im_local = local; im_alias = alias; im_target = target; im_tok = tok;
       im_static = static; im_global = global; im_binds = binds;
-      im_role = role }
+      im_role = role; im_hidden = hidden }
     :: acc
   in
   let is_static_attr (attr : G.attribute) : bool =
@@ -178,11 +193,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | Some _
     | None -> None
   in
-  let on_directive st (dir : G.directive) =
-    let add ~(binds : import_binds) ~(alias : string option) =
+  let on_directive (st : import list) (hiding : hidden_name list)
+      (dir : G.directive) : import list * hidden_name list =
+    let add ~(binds : import_binds) ~(alias : string option)
+        ~(hidden : string list) =
       add ~static:(List.exists is_static_attr dir.G.d_attrs)
         ~global:(List.exists is_global_attr dir.G.d_attrs)
-        ~binds ~alias
+        ~binds ~alias ~hidden
         ~role:(role_of_attrs dir.G.d_attrs)
     in
     let attr_binds = binds_of_attrs dir.G.d_attrs in
@@ -234,29 +251,48 @@ let collect_imports ~(cfg : Index_lang_rules.t)
          (module_name_of mn, Int.compare (String.length local) 0 > 0)
        with
        | Some (qn : Names.Module_qn.t), true ->
-         add ~binds ~alias ~tok st local qn
+         (add ~binds ~alias ~hidden:[] ~tok st local qn, hiding)
        | Some _, false
-       | None, _ -> st)
+       | None, _ -> (st, hiding))
     | G.ImportFrom (tok, mn, names) -> (
       match module_name_of mn with
-      | None -> st
+      | None -> (st, hiding)
       | Some (qn : Names.Module_qn.t) ->
-        List.fold_left (fun st ((name, _), alias_opt) ->
-          let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
-          let local = Option.value alias ~default:name in
-          let target = Names.Module_qn.concat qn name in
-          add ~binds:attr_binds ~alias ~tok st local target
-        ) st names)
+        List.fold_left
+          (fun ((st : import list), (hiding : hidden_name list))
+               ((name, _), alias_opt) ->
+            let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
+            match (alias, cfg.Index_lang_rules.hiding_alias) with
+            | Some (alias_name : string), Some (hiding_alias : string)
+              when String.equal alias_name hiding_alias ->
+              (st, { hn_tok = tok; hn_target = qn; hn_name = name } :: hiding)
+            | _ ->
+              let local = Option.value alias ~default:name in
+              let target = Names.Module_qn.concat qn name in
+              (add ~binds:attr_binds ~alias ~hidden:[] ~tok st local target,
+               hiding))
+          (st, hiding) names)
     (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs. *)
     | G.ImportAll (tok, mn, _) -> (
       match module_name_of mn with
-      | None -> st
+      | None -> (st, hiding)
       | Some (qn : Names.Module_qn.t) ->
-        add ~binds:attr_binds ~alias:None ~tok st wildcard_local qn)
+        let excluded, pending =
+          List.partition
+            (fun (hidden : hidden_name) ->
+              same_import_clause hidden.hn_tok tok
+              && Names.Module_qn.equal hidden.hn_target qn)
+            hiding
+        in
+        (add ~binds:attr_binds ~alias:None
+           ~hidden:
+             (List.map (fun (hidden : hidden_name) -> hidden.hn_name) excluded)
+           ~tok st wildcard_local qn,
+         pending))
     | G.OtherDirective (("NsDirective", tok), exprs)
     | G.OtherDirective (("RequireDirective", tok), exprs) ->
-      List.fold_left (collect_clojure_ns_form ~tok) st exprs
-    | _ -> st
+      (List.fold_left (collect_clojure_ns_form ~tok) st exprs, hiding)
+    | _ -> (st, hiding)
   in
   let extract_require_spec (expr : G.expr) : string option =
     match expr.G.e with
@@ -284,7 +320,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
           List.fold_left
             (fun st (((key : string), (tok : Tok.t)), (local : string)) ->
               add ~tok ~static:false ~global:false ~binds:Binds_any
-                ~alias:(Some local) ~role:Role_binds st local
+                ~alias:(Some local) ~role:Role_binds ~hidden:[] st local
                 (Names.Module_qn.concat qn key))
             st names
       in
@@ -295,7 +331,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | None -> st
         | Some (qn : Names.Module_qn.t) ->
           add ~tok ~static:false ~global:false ~binds:Binds_module
-            ~alias:(Some local) ~role:Role_binds st local qn)
+            ~alias:(Some local) ~role:Role_binds ~hidden:[] st local qn)
       | Some spec, G.EPattern (G.PatRecord (_, fields, _)) ->
         bind_names spec
           (List.filter_map
@@ -315,12 +351,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | _ -> st)
       | Some _, _ -> st
   in
-  let acc =
-    Walker.fold_stmts_in_program (fun st stmt ->
-      match stmt.G.s with
-      | G.DirectiveStmt dir -> on_directive st dir
-      | G.DefStmt (ent, G.VarDef vd) -> on_defstmt st ent vd
-      | _ -> st) [] ast
+  let acc, _ =
+    Walker.fold_stmts_in_program
+      (fun ((st : import list), (hiding : hidden_name list)) stmt ->
+        match stmt.G.s with
+        | G.DirectiveStmt dir -> on_directive st hiding dir
+        | G.DefStmt (ent, G.VarDef vd) -> (on_defstmt st ent vd, hiding)
+        | _ -> (st, hiding)) ([], []) ast
   in
   List.rev acc
 

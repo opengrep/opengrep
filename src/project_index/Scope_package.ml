@@ -275,32 +275,37 @@ let build
   in
   let on_demand_bindings (imp : import) (target : Names.Module_qn.t)
       : Scope_binding.positioned_binding list =
-    match class_target target with
-    | Some (class_qn : Names.Class_qn.t) ->
-      if imp.im_static then
-        bindings_of_class_members
-          ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
-      else
-        bindings_of_nested_types
-          ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
-    | None ->
-      bindings_of_module ~pos:(Scope_binding.position_of_tok imp.im_tok)
-        target
+    let bindings =
+      match class_target target with
+      | Some (class_qn : Names.Class_qn.t) ->
+        if imp.im_static then
+          bindings_of_class_members
+            ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
+        else
+          bindings_of_nested_types
+            ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
+      | None ->
+        bindings_of_module ~pos:(Scope_binding.position_of_tok imp.im_tok)
+          target
+    in
+    match imp.im_hidden with
+    | [] -> bindings
+    | (_ :: _) as hidden ->
+      List.filter
+        (fun (binding : Scope_binding.positioned_binding) ->
+          not (List.exists (String.equal binding.Scope_binding.pb_name) hidden))
+        bindings
   in
-  let imported, on_demand, bound_class_files, hidden =
+  let imported, on_demand, bound_class_files =
     List.fold_left
       (fun ((imported : Scope_binding.positioned_binding list),
             (on_demand : Scope_binding.positioned_binding list),
-            (bound_class_files : (Names.Class_name.t * Fpath.t) list),
-            (hidden : unit Common.SMap.t))
+            (bound_class_files : (Names.Class_name.t * Fpath.t) list))
            (imp : import) ->
         match Imports.binding_of imp with
         | Imports.Wildcard_from (target : Names.Module_qn.t) ->
           (imported, on_demand_bindings imp target @ on_demand,
-           bound_class_files, hidden)
-        | Imports.Named_binding { local = "_"; target } ->
-          ( imported, on_demand, bound_class_files,
-            Common.SMap.add (Names.Module_qn.bare_name target) () hidden )
+           bound_class_files)
         | Imports.Named_binding { local; target } -> (
           match
             Common.SMap.find_opt (Names.Module_qn.to_string target)
@@ -310,7 +315,7 @@ let build
             ( Scope_binding.function_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local funcs
               @ imported,
-              on_demand, bound_class_files, hidden )
+              on_demand, bound_class_files )
           | Some (Class_definition { class_file; class_qn; class_companion; _ }) ->
             ( Scope_binding.class_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local class_qn
@@ -324,16 +329,9 @@ let build
               on_demand,
               (Names.Class_name.of_string (Names.Module_qn.bare_name target),
                class_file)
-              :: bound_class_files,
-              hidden )
-          | None -> (imported, on_demand, bound_class_files, hidden)))
-      ([], [], [], Common.SMap.empty) fi.fi_imports
-  in
-  let on_demand =
-    List.filter
-      (fun (binding : Scope_binding.positioned_binding) ->
-        not (Common.SMap.mem binding.Scope_binding.pb_name hidden))
-      on_demand
+              :: bound_class_files )
+          | None -> (imported, on_demand, bound_class_files)))
+      ([], [], []) fi.fi_imports
   in
   let global_bindings =
     List.concat_map
