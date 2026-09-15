@@ -7,7 +7,8 @@ rules:
       Ts_class_aliases target resolution: the referenced identifier
       resolves through the file's imports (including import aliases),
       never by a project-wide first-match on the bare name — an
-      unimported homonym elsewhere in the project must not bind.
+      unimported class with the same simple name elsewhere in the project
+      must not bind.
     mode: taint
     options:
       taint_interfile: true

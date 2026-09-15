@@ -110,7 +110,7 @@ let cdef_of_module_items (items : G.stmt list) : G.class_definition =
     cparams = (fk, [], fk);
     cbody = (fk, List.map (fun stmt -> G.F stmt) items, fk) }
 
-let module_definition_regions (ast : G.program) : Names.Module_qn.t list =
+let module_definition_scopes (ast : G.program) : Names.Module_qn.t list =
   let rec walk (prefix : string list) (stmts : G.stmt list)
       (opened : Names.Module_qn.t list) : Names.Module_qn.t list =
     List.fold_left
@@ -155,7 +155,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
   in
   (* Scope stack threaded as the visitor's env (innermost first).  The
      visitor is built per top-level subtree with the [module_path] in force
-     there — the file's for most files, but the open package region's for a
+     there — the file's for most files, but the open package namespace scope's for a
      class inside a [namespace] (see [walk_top_level]).  The shared
      accumulators are captured from the enclosing scope, so instances agree. *)
   let make_visitor (module_path : Names.Module_qn.t) = object
@@ -438,7 +438,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
      [Package]/[PackageEnd] directives rather than nested [ModuleDef]s, and a
      file may open several ([namespace a {..} namespace b {..}]) or nest them.
      Walk the top level threading the open-package stack functionally: each
-     class is qualified by the region in force at its definition, not the
+     class is qualified by the namespace scope in force at its definition, not the
      file's first package.  Other languages (Go's [package] included) carry
      package identity in the module path, so the stack stays empty and the
      file [module_path] is used unchanged. *)
@@ -463,7 +463,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
   let qn_module_path =
     if root_namespace_qn then Names.Module_qn.empty else module_path
   in
-  let region_prefix : string list =
+  let namespace_scope_prefix : string list =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_module ->
       if Names.Module_qn.is_empty module_path then []
@@ -478,54 +478,54 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_translation_unit
     | `Per_project -> []
   in
-  let module_path_of_regions (regions : string list list) : Names.Module_qn.t =
-    match List.concat (List.rev regions) with
+  let module_path_of_namespace_scopes (namespace_scopes : string list list) : Names.Module_qn.t =
+    match List.concat (List.rev namespace_scopes) with
     | [] -> qn_module_path
-    | parts -> Names.Module_qn.of_parts (region_prefix @ parts)
+    | parts -> Names.Module_qn.of_parts (namespace_scope_prefix @ parts)
   in
   let rec walk_top_level
-      ((regions : string list list), (opened : Names.Module_qn.t list))
+      ((namespace_scopes : string list list), (opened : Names.Module_qn.t list))
       (stmts : G.stmt list)
     : string list list * Names.Module_qn.t list =
     match stmts with
-    | [] -> (regions, opened)
+    | [] -> (namespace_scopes, opened)
     | stmt :: rest ->
-      (* Visit under the region open at this statement, then update the stack
+      (* Visit under the namespace scope open at this statement, then update the stack
          for the following siblings — [Package]/[PackageEnd]/def are flat
-         siblings, so the region a class sees is the one active when reached. *)
-      let regions, opened =
+         siblings, so the namespace scope a class sees is the one active when reached. *)
+      let namespace_scopes, opened =
         match stmt.G.s with
         (* A braced namespace (PHP [namespace A { .. }]) wraps its
-           [Package]/[PackageEnd] and defs in a [Block]; descend so the region
+           [Package]/[PackageEnd] and defs in a [Block]; descend so the namespace scope
            is tracked around the classes inside (the flat statement form
            [namespace A;] needs no unwrapping). *)
-        | G.Block (_, inner, _) -> walk_top_level (regions, opened) inner
+        | G.Block (_, inner, _) -> walk_top_level (namespace_scopes, opened) inner
         | G.DirectiveStmt { G.d = G.Package (_, parts); _ } when package_scoped ->
-          (make_visitor (module_path_of_regions regions))#visit_stmt [] stmt;
-          let regions = List.map fst parts :: regions in
-          (regions, module_path_of_regions regions :: opened)
+          (make_visitor (module_path_of_namespace_scopes namespace_scopes))#visit_stmt [] stmt;
+          let namespace_scopes = List.map fst parts :: namespace_scopes in
+          (namespace_scopes, module_path_of_namespace_scopes namespace_scopes :: opened)
         | G.DirectiveStmt { G.d = G.PackageEnd _; _ } when package_scoped ->
-          (make_visitor (module_path_of_regions regions))#visit_stmt [] stmt;
-          ((match regions with _ :: outer -> outer | [] -> []), opened)
+          (make_visitor (module_path_of_namespace_scopes namespace_scopes))#visit_stmt [] stmt;
+          ((match namespace_scopes with _ :: outer -> outer | [] -> []), opened)
         | _ ->
-          (make_visitor (module_path_of_regions regions))#visit_stmt [] stmt;
-          (regions, opened)
+          (make_visitor (module_path_of_namespace_scopes namespace_scopes))#visit_stmt [] stmt;
+          (namespace_scopes, opened)
       in
-      walk_top_level (regions, opened) rest
+      walk_top_level (namespace_scopes, opened) rest
   in
-  (* Non-package languages never open regions, so one visitor over the whole
+  (* Non-package languages never open namespace scopes, so one visitor over the whole
      program suffices; only package languages need the per-top-level walk. *)
-  let opened_regions =
+  let opened_namespace_scopes =
     if package_scoped then snd (walk_top_level ([], []) ast)
     else begin
       (make_visitor qn_module_path)#visit_program [] ast;
       if cfg.Index_lang_rules.module_definition_is_namespace then
-        module_definition_regions ast
+        module_definition_scopes ast
       else []
     end
   in
-  let module_regions =
-    let opened = List.sort_uniq Names.Module_qn.compare opened_regions in
+  let namespace_scopes =
+    let opened = List.sort_uniq Names.Module_qn.compare opened_namespace_scopes in
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_module -> module_path :: opened
     | `Per_file
@@ -539,11 +539,11 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_project -> (
       match opened with
       | [] -> [ (if package_scoped then qn_module_path else module_path) ]
-      | regions -> regions)
+      | namespace_scopes -> namespace_scopes)
   in
   let fi = { fi_file = file; fi_module_path = module_path;
              fi_package_clause = cfg.Index_lang_rules.package_clause_of_ast ast;
-             fi_module_regions = module_regions;
+             fi_namespace_scopes = namespace_scopes;
              fi_imports = imports;
              fi_dataclass_wrappers = !dc_wrappers;
              fi_ast = ast;

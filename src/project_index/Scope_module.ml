@@ -63,13 +63,13 @@ let rows_of_stmt (stmt : G.stmt) : export_row list =
   | G.ExprStmt ({ G.e = G.Assign (lhs, _, rhs); _ }, _) -> cjs_rows lhs rhs
   | _ -> []
 
-let region_key (module_path : Names.Module_qn.t) (regions : string list list)
+let namespace_scope_key (module_path : Names.Module_qn.t) (namespace_scopes : string list list)
     : string =
   Names.Module_qn.to_string
     (Names.Module_qn.of_parts
        ((if Names.Module_qn.is_empty module_path then []
          else Names.Module_qn.parts module_path)
-        @ List.concat (List.rev regions)))
+        @ List.concat (List.rev namespace_scopes)))
 
 let object_members ~(own_funcs : Func_info.t list) (init : G.expr)
     : Func_info.t list Common.SMap.t option =
@@ -126,7 +126,7 @@ let rows_of_file ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
       (Hashtbl.find_opt file_funcs_index (Fpath.to_string fi.fi_file))
       ~default:[]
   in
-  let rec walk (regions : string list list)
+  let rec walk (namespace_scopes : string list list)
       ((rows : (string * export_row) list),
        (objects : (string * string * Func_info.t list Common.SMap.t) list))
       (stmts : G.stmt list) :
@@ -137,14 +137,14 @@ let rows_of_file ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     | (stmt : G.stmt) :: rest -> (
       match stmt.G.s with
       | G.DirectiveStmt { G.d = G.Package (_, parts); _ } ->
-        walk (List.map fst parts :: regions) (rows, objects) rest
+        walk (List.map fst parts :: namespace_scopes) (rows, objects) rest
       | G.DirectiveStmt { G.d = G.PackageEnd _; _ } ->
         walk
-          (match regions with _ :: outer -> outer | [] -> [])
+          (match namespace_scopes with _ :: outer -> outer | [] -> [])
           (rows, objects) rest
       | _ ->
-        let key = region_key fi.fi_module_path regions in
-        walk regions
+        let key = namespace_scope_key fi.fi_module_path namespace_scopes in
+        walk namespace_scopes
           ( List.map (fun (row : export_row) -> (key, row)) (rows_of_stmt stmt)
             @ rows,
             List.map
@@ -213,7 +213,7 @@ let module_level_name ~(definitions_by_qn : definition Common.SMap.t)
       match own with
       | Some (found : definition) -> Some (Exports_definition found)
       | None when List.exists (Names.Module_qn.equal within)
-                    fi.fi_module_regions -> Some (Exports_module within)
+                    fi.fi_namespace_scopes -> Some (Exports_module within)
       | None -> (
         match
           Option.bind
@@ -391,18 +391,18 @@ let own_bindings ~(classes_by_file : class_info list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     (fi : file_info) : Scope_binding.positioned_binding list =
   let fi_file_str = Fpath.to_string fi.fi_file in
-  let region_keys =
+  let namespace_scope_keys =
     List.fold_left
-      (fun (keys : unit Common.SMap.t) (region : Names.Module_qn.t) ->
-        Common.SMap.add (Names.Module_qn.to_string region) () keys)
-      Common.SMap.empty fi.fi_module_regions
+      (fun (keys : unit Common.SMap.t) (namespace_scope : Names.Module_qn.t) ->
+        Common.SMap.add (Names.Module_qn.to_string namespace_scope) () keys)
+      Common.SMap.empty fi.fi_namespace_scopes
   in
   Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
   @ Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   @ Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
       ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
-        Common.SMap.mem (Names.Class_qn.to_string owner) region_keys)
+        Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scope_keys)
       ~scope_of_owner:(fun _ -> None)
       (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
          ~default:[])
@@ -563,19 +563,19 @@ let build ~(scope : project_scope)
     (fi : file_info) : file_bindings =
   let exports = scope.pj_exports in
   let own_modules =
-    List.sort_uniq Names.Module_qn.compare fi.fi_module_regions
+    List.sort_uniq Names.Module_qn.compare fi.fi_namespace_scopes
   in
   let own =
     own_bindings ~classes_by_file ~class_parent_paths ~file_funcs_index fi
     @ List.concat_map
-        (fun (region : Names.Module_qn.t) ->
+        (fun (namespace_scope : Names.Module_qn.t) ->
           Common.SMap.fold
             (fun (name : string) (members : Func_info.t list Common.SMap.t)
                  (bindings : Scope_binding.positioned_binding list) ->
               object_binding_of ~pos:None ~parent_path:[] name members
               :: bindings)
             (Option.value
-               (Common.SMap.find_opt (Names.Module_qn.to_string region)
+               (Common.SMap.find_opt (Names.Module_qn.to_string namespace_scope)
                   scope.pj_objects)
                ~default:Common.SMap.empty)
             [])

@@ -31,7 +31,7 @@ the hooks address it.
 | `class_def_reshape` | Coerce Go `type T struct/interface` and Rust `impl Foo { ... }` into `ClassDef` shape.  (Ruby `module ... end` is handled by a dedicated `ModuleDef` branch in the symbol collector, not by this hook.) |
 | `package_directive_is_namespace` | The language's `Package`/`PackageEnd` directives are qn scopes (namespace blocks / package clauses), not the file's module identity.  PHP, Scala, Java, Kotlin, C#, C++. |
 | `class_identity_is_constant_path` | Class identity is its constant path, file-independent — drops the file-path prefix from class qns.  Ruby (class reopening). |
-| `narrow_methods_by_imports` | Narrow the project `Type_state` by per-file import hints.  Rust (crate homonyms). |
+| `narrow_methods_by_imports` | Narrow the project `Type_state` by per-file import hints.  Rust (crates with the same simple name). |
 | `narrow_methods_by_import_files` | Restrict each imported class's methods to the file(s) it was imported from, disambiguating same-named classes at dispatch.  TS/JS (two files each `export default class Handler`). |
 | `narrow_methods_by_required_files` | Restrict same-named colliding methods to the files the caller itself requires.  Ruby (`require_relative`), PHP (`require`/`include`). |
 | `strip_field_sigil` | Normalise field names.  PHP drops the `$` so `$this->x` and promoted ctor params share one field namespace. |
@@ -170,7 +170,7 @@ name (with `fn_id` rewritten to `[Some Embedder; Some method]`).
 `find_methods(Client, Authenticate)` resolves to `Authenticator`'s
 FBDecl.
 
-### Cross-package homonym disambiguation
+### Cross-package disambiguation of classes with the same simple name
 
 A Go project can easily have 30+ packages each defining
 `type Service struct { ... }` with a `Get(...)` method.  When a

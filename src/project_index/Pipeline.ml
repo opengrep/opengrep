@@ -48,7 +48,7 @@ type ctx = {
   singleton_names : Func_lookup.singleton_names;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
-  region_bindings : Scope_binding.region_bindings Common.SMap.t;
+  namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
   include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
@@ -258,7 +258,7 @@ let build_scope_table
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
-    ~(region_bindings : Scope_binding.region_bindings Common.SMap.t)
+    ~(namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t)
     ~(php_global_bindings : Scope_binding.positioned_binding list)
     ~(include_map : Include_map.t)
     ~(module_scope : Scope_module.project_scope)
@@ -309,7 +309,7 @@ let build_scope_table
           ~nested_types_by_class fi
       in
       Some { scope_table =
-               Func_lookup.scope_table_layered
+               Func_lookup.scope_table_union
                  ~front:(Func_lookup.scope_table_of_map bindings)
                  ~back:top_level_scope;
              bound_class_files = []; own_modules;
@@ -317,7 +317,7 @@ let build_scope_table
     | `Per_namespace ->
       let bindings, own_modules =
         Scope_php.build ~definitions_by_qn ~attributes_by_module
-          ~region_bindings
+          ~namespace_scope_bindings
           ~global_bindings:php_global_bindings
           ~classes_by_file ~class_parent_paths ~file_funcs_index fi
       in
@@ -332,7 +332,7 @@ let build_scope_table
         Scope_c_family.build ~precedence:cfg.Index_lang_rules.precedence
           ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~resolution_orders
-          ~methods_by_class ~region_bindings
+          ~methods_by_class ~namespace_scope_bindings
           ~include_bindings:
             (Include_map.bindings_of_file include_map ~closure
                (Fpath.to_string fi.fi_file))
@@ -340,7 +340,7 @@ let build_scope_table
           ~file_funcs_index fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files = []; own_modules = fi.fi_module_regions;
+             bound_class_files = []; own_modules = fi.fi_namespace_scopes;
              module_aliases = None }
     | `Per_crate ->
       let bindings, bound_class_files, module_aliases =
@@ -533,7 +533,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         resolution_orders; class_qn_by_definition; methods_by_class;
         singleton_names;
         extensions_by_module; nested_types_by_class;
-        region_bindings; php_global_bindings; include_map;
+        namespace_scope_bindings; php_global_bindings; include_map;
         module_scope; go_packages;
         top_level_scope; namespace_object_members;
         classes_by_file; class_parent_paths; global_imports;
@@ -560,7 +560,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
-        ~region_bindings ~php_global_bindings ~include_map ~module_scope
+        ~namespace_scope_bindings ~php_global_bindings ~include_map ~module_scope
         ~go_packages ~top_level_scope ~namespace_object_members fi
     in
     let alias_to_module_qn =

@@ -102,8 +102,8 @@ let resolve_parent_by_scope
         | _ -> None
       in
       (* A candidate that shares no leading part of its qualified name with
-         the child is an unrelated homonym in every language, so a parent
-         binds only through a shared prefix. *)
+         the child is an unrelated class with the same simple name in every
+         language, so a parent binds only through a shared prefix. *)
       match path_suffix_matches with
       | _ :: _ -> pick_best ~require_shared:true path_suffix_matches
       | [] -> pick_best ~require_shared:true candidates
@@ -112,9 +112,10 @@ let resolve_parent_by_scope
 (* Lexical constant resolution: a bare parent reference [path] seen from [ci]'s
    body resolves against [ci]'s enclosing namespaces innermost-first, then
    top-level — [Svc::Box < Base] tries [Svc::Base] then [::Base]; a top-level
-   [Sub < Base] tries [Base] directly.  An EXACT qn match wins, so a homonym
-   requiring a different qualifier ([Other::Base], [Dec::Base]) is never
-   chosen.  Only meaningful once class qns are the constant path (Ruby); with a
+   [Sub < Base] tries [Base] directly.  An EXACT qn match wins, so a class
+   with the same simple name that requires a different qualifier
+   ([Other::Base], [Dec::Base]) is never chosen.  Only meaningful once class
+   qns are the constant path (Ruby); with a
    file-path prefix the candidates don't match cross-file, so it no-ops. *)
 let resolve_parent_lexical
     ~(by_qn : (Names.Class_qn.t, class_info) Hashtbl.t)
@@ -197,7 +198,7 @@ let inherit_into_type_state
         resolve_parent_in_own_scope ~known_class_qns ci p_path
       | Index_lang_rules.Parent_by_lexical_scope ->
         resolve_parent_lexical ~by_qn ci p_path
-      | Index_lang_rules.Parent_by_lexical_scope_then_homonym -> (
+      | Index_lang_rules.Parent_by_lexical_scope_then_simple_name -> (
         match resolve_parent_lexical ~by_qn ci p_path with
         | Some _ as resolved -> resolved
         | None ->
@@ -349,7 +350,8 @@ let inherit_into_type_state
            ([class Base] in two files) keeps the methods of both
            definitions.  Fall back to the parent's own file when no method
            carries a matching class id
-           (keeps the prior homonym-in-another-file protection intact). *)
+           (keeps the prior protection against a class with the same
+           simple name in another file). *)
         let pinned_ids =
           Option.value (Hashtbl.find_opt ci_ids_by_qn pci.ci_qn)
             ~default:[pci.ci_id]

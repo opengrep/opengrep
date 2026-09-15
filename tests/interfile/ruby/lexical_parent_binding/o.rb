@@ -1,4 +1,4 @@
-# A homonym `Base` in a DIFFERENT namespace (`Other`) at a SHORT file path.
+# A `Base` with the same simple name in a DIFFERENT namespace (`Other`) at a SHORT file path.
 # With filename-prefixed class qns, this shorter qn used to win parent
 # resolution for `Svc::Box < Base` in app.rb — binding to the wrong (benign)
 # class purely by filename length.  With constant-path Ruby identity, `Box`

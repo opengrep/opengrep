@@ -7,7 +7,7 @@ val build :
     (Function_id.t * IL.name option list) list Common.SMap.t ->
   resolution_orders:Func_lookup.resolution_orders ->
   methods_by_class:Func_lookup.methods_by_class ->
-  region_bindings:Scope_binding.region_bindings Common.SMap.t ->
+  namespace_scope_bindings:Scope_binding.namespace_scope_bindings Common.SMap.t ->
   include_bindings:Scope_binding.positioned_binding list ->
   included_files:string list ->
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->

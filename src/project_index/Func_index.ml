@@ -51,11 +51,11 @@ let build_attributes_by_module
     List.fold_left
       (fun (qns : unit Common.SMap.t) (fi : Types.file_info) ->
         List.fold_left
-          (fun (qns : unit Common.SMap.t) (region : Names.Module_qn.t) ->
-            Common.SMap.add (Names.Module_qn.to_string region) () qns)
+          (fun (qns : unit Common.SMap.t) (namespace_scope : Names.Module_qn.t) ->
+            Common.SMap.add (Names.Module_qn.to_string namespace_scope) () qns)
           (Common.SMap.add
              (Names.Module_qn.to_string fi.Types.fi_module_path) () qns)
-          fi.Types.fi_module_regions)
+          fi.Types.fi_namespace_scopes)
       Common.SMap.empty file_infos
   in
   let attribute_of (definition : Types.definition)

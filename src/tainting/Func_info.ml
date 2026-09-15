@@ -97,7 +97,8 @@ let has_colliding_bare_names (funcs : t list) : bool =
    classes in different files land under one bare class name at method
    dispatch, and [pick_by_arity] drops the call on the (class, method, arity)
    collision — a silent cross-file false negative caused by an unrelated
-   homonym.  Only a group holding several entries is that collision, so
+   class with the same simple name.  Only a group holding several entries is
+   that collision, so
    narrowing applies per method name, not per class: a uniquely named method
    is kept whatever its file (a TS class-body alias carries the aliased
    function's file, not the class's, and would otherwise be dropped whenever

@@ -1,7 +1,7 @@
 rules:
   - id: include-gates-global
     languages: [cpp]
-    message: a call binds to the definition declared by the header the caller includes, not to the homonym of a file it does not include
+    message: a call binds to the definition declared by the header the caller includes, not to the definition with the same simple name in a file it does not include
     severity: ERROR
     mode: taint
     options:

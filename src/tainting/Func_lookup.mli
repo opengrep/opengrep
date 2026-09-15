@@ -60,7 +60,7 @@ type scope_table
 
 val scope_table_of_map : scope_entry list Common.SMap.t -> scope_table
 
-val scope_table_layered : front:scope_table -> back:scope_table -> scope_table
+val scope_table_union : front:scope_table -> back:scope_table -> scope_table
 
 val scope_table_shadowing :
   front:scope_table -> back:scope_table -> scope_table

@@ -1,6 +1,6 @@
 open Types
 
-let own_regions (classes : class_info list) : Names.Module_qn.t list =
+let own_namespace_scopes (classes : class_info list) : Names.Module_qn.t list =
   List.sort_uniq Names.Module_qn.compare
     (List.map
        (fun (ci : class_info) ->
@@ -70,4 +70,4 @@ let build
   ( Scope_binding.bindings_of_positioned
       (nesting_bindings @ member_bindings @ type_bindings @ function_bindings
        @ alias_bindings),
-    own_regions own_classes )
+    own_namespace_scopes own_classes )

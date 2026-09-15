@@ -78,17 +78,17 @@ val bindings_of_every_attribute :
   Func_lookup.module_attribute Common.SMap.t ->
   positioned_binding list
 
-type region_bindings = {
-  rb_in_region : positioned_binding list;
+type namespace_scope_bindings = {
+  rb_in_namespace_scope : positioned_binding list;
   rb_names : unit Common.SMap.t;
 }
 
-val bindings_in_region : region_bindings -> positioned_binding list
+val bindings_in_namespace_scope : namespace_scope_bindings -> positioned_binding list
 
-val build_region_bindings :
+val build_namespace_scope_bindings :
   attributes_by_module:Func_lookup.module_attributes ->
   file_infos:Types.file_info list ->
-  region_bindings Common.SMap.t
+  namespace_scope_bindings Common.SMap.t
 
 val top_level_bindings :
   keep:(Func_info.t -> bool) ->

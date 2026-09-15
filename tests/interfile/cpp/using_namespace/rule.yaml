@@ -1,7 +1,7 @@
 rules:
   - id: using-namespace
     languages: [cpp]
-    message: a using directive brings one namespace's function into scope, not the homonym of a second namespace
+    message: a using directive brings one namespace's function into scope, not the function with the same simple name in a second namespace
     severity: ERROR
     mode: taint
     options:

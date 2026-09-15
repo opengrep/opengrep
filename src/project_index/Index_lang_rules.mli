@@ -31,7 +31,7 @@ type singleton_exposure =
 type parent_resolution =
   | Parent_in_own_scope
   | Parent_by_lexical_scope
-  | Parent_by_lexical_scope_then_homonym
+  | Parent_by_lexical_scope_then_simple_name
 
 type relative_module =
   | Root_module

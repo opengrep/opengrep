@@ -42,7 +42,8 @@ let method_call_target
   | _ -> None
 
 (* A same-package method return type is unqualified in the AST; attach the
-   receiver's package qualifier so homonym classes stay distinguished
+   receiver's package qualifier so classes with the same simple name stay
+   distinguished
    ([r.Get()] on [repo.Repo] yields [repo.Inner], not bare [Inner]). *)
 let propagate_qualifier ~(receiver : G.name) (ret : G.name) : G.name =
   match receiver, ret with

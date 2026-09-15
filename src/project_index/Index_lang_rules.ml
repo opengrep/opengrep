@@ -29,7 +29,7 @@ type singleton_exposure =
 type parent_resolution =
   | Parent_in_own_scope
   | Parent_by_lexical_scope
-  | Parent_by_lexical_scope_then_homonym
+  | Parent_by_lexical_scope_then_simple_name
 
 type relative_module =
   | Root_module
@@ -85,7 +85,7 @@ type t = {
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
      C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
-     qualified by the region open at its definition, so several or nested
+     qualified by the namespace scope open at its definition, so several or nested
      namespaces per file are attributed correctly.  False where a [package]
      directive names the file's module identity instead (Go, via go.mod). *)
   package_directive_is_namespace : bool;
@@ -336,7 +336,7 @@ let default : t = {
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
   interface_dispatch_uses_export_visibility = false;
-  parent_resolution = Parent_by_lexical_scope_then_homonym;
+  parent_resolution = Parent_by_lexical_scope_then_simple_name;
   package_clause_of_ast = (fun _ -> None);
   method_owner_of_funcdef = (fun _ -> None);
   name_is_exported = (fun _ -> true);

@@ -137,11 +137,11 @@ let build
   let own_classes =
     Option.value (Common.SMap.find_opt fi_file_str classes_by_file) ~default:[]
   in
-  let regions : unit Common.SMap.t =
+  let namespace_scopes : unit Common.SMap.t =
     List.fold_left
-      (fun (regions : unit Common.SMap.t) (region : Names.Module_qn.t) ->
-        Common.SMap.add (Names.Module_qn.to_string region) () regions)
-      Common.SMap.empty fi.fi_module_regions
+      (fun (namespace_scopes : unit Common.SMap.t) (namespace_scope : Names.Module_qn.t) ->
+        Common.SMap.add (Names.Module_qn.to_string namespace_scope) () namespace_scopes)
+      Common.SMap.empty fi.fi_namespace_scopes
   in
   let own_class_by_qn : class_info Common.SMap.t =
     List.fold_left
@@ -160,7 +160,7 @@ let build
             | G.Trait -> false))
       ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
-        Common.SMap.mem (Names.Class_qn.to_string owner) regions)
+        Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scopes)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
           (fun (ci : class_info) ->
@@ -298,9 +298,9 @@ let build
         | Imports.Named_binding _ -> [])
       global_imports
   in
-  let rec enclosing_namespaces (region : Names.Module_qn.t)
+  let rec enclosing_namespaces (namespace_scope : Names.Module_qn.t)
       : Names.Module_qn.t list =
-    match Names.Module_qn.split_last region with
+    match Names.Module_qn.split_last namespace_scope with
     | None -> []
     | Some ((enclosing : Names.Module_qn.t), _) ->
       enclosing :: enclosing_namespaces enclosing
@@ -308,15 +308,15 @@ let build
   let own_namespaces : Names.Module_qn.t list =
     (if namespaces_nest then
        List.concat_map
-         (fun (region : Names.Module_qn.t) ->
-           region :: enclosing_namespaces region)
-         fi.fi_module_regions
-     else fi.fi_module_regions)
+         (fun (namespace_scope : Names.Module_qn.t) ->
+           namespace_scope :: enclosing_namespaces namespace_scope)
+         fi.fi_namespace_scopes
+     else fi.fi_namespace_scopes)
     |> List.sort_uniq Names.Module_qn.compare
   in
-  let own_region_bindings =
+  let own_namespace_scope_bindings =
     List.concat_map
-      (fun (region : Names.Module_qn.t) -> bindings_of_module ~pos:None region)
+      (fun (namespace_scope : Names.Module_qn.t) -> bindings_of_module ~pos:None namespace_scope)
       own_namespaces
   in
   let extension_namespaces : Names.Module_qn.t list =
@@ -355,7 +355,7 @@ let build
     of_kind Index_lang_rules.Wildcard_import
       (unambiguous_on_demand (global_bindings @ List.rev on_demand)
        @ extension_bindings)
-    @ of_kind own_package_members_kind own_region_bindings
+    @ of_kind own_package_members_kind own_namespace_scope_bindings
     @ of_kind Index_lang_rules.Own_definition
         (function_bindings @ alias_bindings @ type_bindings @ member_bindings)
     @ of_kind Index_lang_rules.Single_import (List.rev imported)

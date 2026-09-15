@@ -198,7 +198,8 @@ let pick_by_arity ?(overload_groups = false) ~(lang : Lang.t)
                   (List.length matches) arity);
               None
           | _ -> (
-              (* Overloads by parameter type, or homonyms across scopes. *)
+              (* Overloads by parameter type, or entries with the same simple
+                 name across scopes. *)
               match
                 overload_representative ~lang ~overload_groups arity_matches
               with
@@ -1029,11 +1030,11 @@ let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
 let in_own_modules ~(func_lookup : Func_lookup.t) (chain : string list)
     : (binding_target * string list) option =
   List.find_map
-    (fun (region : Names.Module_qn.t) ->
-      if Names.Module_qn.is_empty region then None
+    (fun (namespace_scope : Names.Module_qn.t) ->
+      if Names.Module_qn.is_empty namespace_scope then None
       else
         qualified_prefix_binding ~func_lookup
-          (Names.Module_qn.parts region @ chain))
+          (Names.Module_qn.parts namespace_scope @ chain))
     (Func_lookup.own_modules func_lookup)
 
 let follow_chain ~(func_lookup : Func_lookup.t)

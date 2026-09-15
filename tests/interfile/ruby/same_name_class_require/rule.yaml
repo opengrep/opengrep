@@ -1,0 +1,15 @@
+rules:
+  - id: same-name-class-require
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A constant resolves by its constant path and a require restricts
+      nothing, so a reference to Widget names the top level Widget and never
+      Other::Widget.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)

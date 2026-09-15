@@ -67,14 +67,14 @@ type scope_entry = {
 
 type scope_table =
   | Scope_bindings of scope_entry list Common.SMap.t
-  | Scope_layered of scope_table * scope_table
+  | Scope_union of scope_table * scope_table
   | Scope_shadowing of scope_table * scope_table
 
 let scope_table_of_map (bindings : scope_entry list Common.SMap.t)
     : scope_table = Scope_bindings bindings
 
-let scope_table_layered ~(front : scope_table) ~(back : scope_table)
-    : scope_table = Scope_layered (front, back)
+let scope_table_union ~(front : scope_table) ~(back : scope_table)
+    : scope_table = Scope_union (front, back)
 
 let scope_table_shadowing ~(front : scope_table) ~(back : scope_table)
     : scope_table = Scope_shadowing (front, back)
@@ -210,7 +210,8 @@ type t = {
   funcs_by_module_qn : module_index option;
   alias_to_module_qn : alias_index option;
   same_file_funcs_by_name : bare_name_index option;
-  (* Disambiguates method homonyms across same-basename packages by exact import path. *)
+  (* Disambiguates methods with the same simple name across same-basename
+     packages by exact import path. *)
   file_module_qn : file_module_index option;
   local_imports : name_set option;
   constructors : constructor_index option;
@@ -270,7 +271,7 @@ let resolve_in_scope (t : t) ~(caller_parent_path : IL.name option list)
     | Scope_bindings (bindings : scope_entry list Common.SMap.t) ->
       List.filter visible
         (Option.value (Common.SMap.find_opt name bindings) ~default:[])
-    | Scope_layered (front, back) -> (
+    | Scope_union (front, back) -> (
       match (entries front, entries back) with
       | found, [] -> found
       | [], found -> found

@@ -67,7 +67,7 @@ type file_info = {
   fi_file : Fpath.t;
   fi_module_path : Names.Module_qn.t;
   fi_package_clause : string option;
-  fi_module_regions : Names.Module_qn.t list;
+  fi_namespace_scopes : Names.Module_qn.t list;
   fi_imports : import list;
   fi_dataclass_wrappers : dataclass_wrapper list;
   fi_ast : G.program;

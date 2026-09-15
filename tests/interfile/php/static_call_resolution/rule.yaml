@@ -4,8 +4,8 @@ rules:
     severity: ERROR
     message: >
       User input flows from main.php through Db::query (a static
-      method) to a SQL sink.  A homonym instance method
-      Model::query exists in model.php but must NOT be matched by
+      method) to a SQL sink.  An instance method with the same simple
+      name, Model::query, exists in model.php but must NOT be matched by
       the resolver — static calls require class-qualifier-aware
       resolution, not a bare-name project-wide fallback.
     mode: taint

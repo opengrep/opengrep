@@ -1,7 +1,7 @@
 rules:
   - id: qualified-nested-namespace
     languages: [cpp]
-    message: a qualified call inside a namespace binds to the nested namespace's function, not to the homonym of the enclosing one
+    message: a qualified call inside a namespace binds to the nested namespace's function, not to the function with the same simple name in the enclosing one
     severity: ERROR
     mode: taint
     options:

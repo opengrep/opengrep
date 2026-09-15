@@ -147,20 +147,20 @@ let global_bindings_of_includes
         Some { binding with Scope_binding.pb_kinds = kinds })
     bindings
 
-let rec enclosing_namespaces (region : Names.Module_qn.t)
+let rec enclosing_namespaces (namespace_scope : Names.Module_qn.t)
     : Names.Module_qn.t list =
-  match Names.Module_qn.split_last region with
+  match Names.Module_qn.split_last namespace_scope with
   | None -> []
   | Some ((enclosing : Names.Module_qn.t), _) ->
     enclosing :: enclosing_namespaces enclosing
 
 let open_namespaces (fi : file_info) : Names.Module_qn.t list =
   List.concat_map
-    (fun (region : Names.Module_qn.t) ->
-      region :: enclosing_namespaces region)
-    fi.fi_module_regions
-  |> List.filter (fun (region : Names.Module_qn.t) ->
-       not (Names.Module_qn.is_empty region))
+    (fun (namespace_scope : Names.Module_qn.t) ->
+      namespace_scope :: enclosing_namespaces namespace_scope)
+    fi.fi_namespace_scopes
+  |> List.filter (fun (namespace_scope : Names.Module_qn.t) ->
+       not (Names.Module_qn.is_empty namespace_scope))
   |> List.sort_uniq Names.Module_qn.compare
 
 let build
@@ -172,7 +172,7 @@ let build
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(resolution_orders : Func_lookup.resolution_orders)
     ~(methods_by_class : Func_lookup.methods_by_class)
-    ~(region_bindings : Scope_binding.region_bindings Common.SMap.t)
+    ~(namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t)
     ~(include_bindings : Scope_binding.positioned_binding list)
     ~(included_files : string list)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -190,19 +190,19 @@ let build
       included_files
   in
   let own_class_by_qn = Scope_binding.classes_by_qn own_classes in
-  let regions : unit Common.SMap.t =
+  let namespace_scopes : unit Common.SMap.t =
     List.fold_left
-      (fun (regions : unit Common.SMap.t) (region : Names.Module_qn.t) ->
-        Common.SMap.add (Names.Module_qn.to_string region) () regions)
-      Common.SMap.empty fi.fi_module_regions
+      (fun (namespace_scopes : unit Common.SMap.t) (namespace_scope : Names.Module_qn.t) ->
+        Common.SMap.add (Names.Module_qn.to_string namespace_scope) () namespace_scopes)
+      Common.SMap.empty fi.fi_namespace_scopes
   in
   let bindings_of_namespace ~(pos : Pos.t option) (target : Names.Module_qn.t)
       : Scope_binding.positioned_binding list =
     match
-      Common.SMap.find_opt (Names.Module_qn.to_string target) region_bindings
+      Common.SMap.find_opt (Names.Module_qn.to_string target) namespace_scope_bindings
     with
-    | Some (bound : Scope_binding.region_bindings) when Option.is_none pos ->
-      Scope_binding.bindings_in_region bound
+    | Some (bound : Scope_binding.namespace_scope_bindings) when Option.is_none pos ->
+      Scope_binding.bindings_in_namespace_scope bound
     | Some _
     | None ->
       Scope_binding.bindings_of_every_attribute ~pos
@@ -218,7 +218,7 @@ let build
     Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
       ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
-        Common.SMap.mem (Names.Class_qn.to_string owner) regions)
+        Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scopes)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
           (fun (ci : class_info) ->
@@ -235,8 +235,8 @@ let build
   in
   let own_namespace_bindings =
     List.concat_map
-      (fun (region : Names.Module_qn.t) ->
-        bindings_of_namespace ~pos:None region)
+      (fun (namespace_scope : Names.Module_qn.t) ->
+        bindings_of_namespace ~pos:None namespace_scope)
       (open_namespaces fi)
   in
   let imported =

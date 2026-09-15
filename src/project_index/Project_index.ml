@@ -566,7 +566,7 @@ let build_project_call_graph (caps : < Cap.fork >)
          Hashtbl.replace project_funcs_by_module qn funcs);
 
   (* Defining-file -> package module qn; disambiguates same-basename packages
-     for method-homonym resolution. *)
+     for resolving methods with the same simple name. *)
   let file_module_qn : (string, Names.Module_qn.t) Hashtbl.t =
     let index = Hashtbl.create (List.length file_infos) in
     List.iter (fun (fi : file_info) ->
@@ -704,12 +704,12 @@ let build_project_call_graph (caps : < Cap.fork >)
       type_state;
       definitions_by_qn;
       attributes_by_module;
-      region_bindings =
+      namespace_scope_bindings =
         timed "call graph: namespace bindings" (fun () ->
           match cfg.Index_lang_rules.unqualified_scope with
           | `Per_namespace
           | `Per_translation_unit ->
-            Scope_binding.build_region_bindings ~attributes_by_module
+            Scope_binding.build_namespace_scope_bindings ~attributes_by_module
               ~file_infos:indexed_files
           | `Per_file
           | `Per_crate

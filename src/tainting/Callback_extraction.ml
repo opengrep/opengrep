@@ -385,7 +385,8 @@ let identify_callback ?(all_funcs = [])
     Option.map (fun (c : IL.name) -> fst c.IL.ident)
       (Func_info.enclosing_class caller_parent_path)
   in
-  (* Fall back to [all_funcs] narrowed to the caller's class: avoids cross-package homonym FPs. *)
+  (* Fall back to [all_funcs] narrowed to the caller's class: avoids false
+     positives from a class with the same simple name in another package. *)
   let all_funcs =
     let class_filtered_in_all_funcs cls =
       List.filter (fun (f : func_info) ->

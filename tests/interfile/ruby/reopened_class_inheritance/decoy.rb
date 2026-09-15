@@ -1,4 +1,4 @@
-# `Dec::Widget` is a homonym with a `run` method of the same name.  Dispatch
+# `Dec::Widget` has the same simple name and a `run` method of the same name.  Dispatch
 # on the bare name alone cannot distinguish it from the real `Widget#run`.
 # `Sub` (below) must resolve `run` through its type/MRO, not globally.
 module Dec
