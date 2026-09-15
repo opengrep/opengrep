@@ -23,6 +23,7 @@ type ctx = {
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
   definitions_by_qn : definition Common.SMap.t;
+  companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
   resolution_orders : Func_lookup.resolution_orders;

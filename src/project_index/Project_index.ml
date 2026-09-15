@@ -61,7 +61,7 @@ let build_class_parent_paths ~(entries : entry list)
 let build_definitions_by_qn ~(entries : entry list)
     ~(funcs_by_id : FA.func_info list Function_id_map.t)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
-    : definition Common.SMap.t =
+    : definition Common.SMap.t * Func_lookup.companion_index =
   let functions =
     List.fold_left
       (fun (by_qn : definition Common.SMap.t) (entry : entry) ->
@@ -84,9 +84,9 @@ let build_definitions_by_qn ~(entries : entry list)
               (Function_definitions (funcs @ previous)) by_qn))
       Common.SMap.empty entries
   in
-  let companions : Names.Class_qn.t Common.SMap.t =
+  let companions : Func_lookup.companion_index =
     List.fold_left
-      (fun (companions : Names.Class_qn.t Common.SMap.t) (entry : entry) ->
+      (fun (companions : Func_lookup.companion_index) (entry : entry) ->
         match entry.kind with
         | K_function
         | K_method
@@ -95,11 +95,12 @@ let build_definitions_by_qn ~(entries : entry list)
           match Names.Def_qn.split_last entry.qn with
           | None -> companions
           | Some ((parent : Names.Def_qn.t), _) ->
-            Common.SMap.add
-              (Names.Def_qn.to_string (Names.Def_qn.concat parent entry.name))
+            Func_lookup.Class_qn_map.add
+              (Names.Class_qn.of_string
+                 (Names.Def_qn.to_string (Names.Def_qn.concat parent entry.name)))
               (Names.Class_qn.of_string (Names.Def_qn.to_string entry.qn))
               companions))
-      Common.SMap.empty entries
+      Func_lookup.Class_qn_map.empty entries
   in
   let with_classes =
     List.fold_left
@@ -109,12 +110,14 @@ let build_definitions_by_qn ~(entries : entry list)
         | K_method -> by_qn
         | K_class ->
           let qn = Names.Def_qn.to_string entry.qn in
+          let class_qn = Names.Class_qn.of_string qn in
           Common.SMap.add qn
             (Class_definition
                { class_file = entry.file;
-                 class_qn = Names.Class_qn.of_string qn;
+                 class_qn;
                  class_name = entry.name;
-                 class_companion = Common.SMap.find_opt qn companions })
+                 class_companion =
+                   Func_lookup.Class_qn_map.find_opt class_qn companions })
             by_qn
         | K_companion ->
           let qn = Names.Def_qn.to_string entry.qn in
@@ -136,25 +139,28 @@ let build_definitions_by_qn ~(entries : entry list)
             else Common.SMap.add class_key definition by_qn)
       functions entries
   in
-  Hashtbl.fold
-    (fun (bound : Names.Module_qn.t) (_target : Names.Module_qn.t)
-         (by_qn : definition Common.SMap.t) ->
-      let bound_key = Names.Module_qn.to_string bound in
-        if Common.SMap.mem bound_key by_qn then by_qn
-        else
-          let is_known (qn : Names.Module_qn.t) : bool =
-            Common.SMap.mem (Names.Module_qn.to_string qn) by_qn
-          in
-          match Mro.chase_reexport ~reexport_map ~is_known bound with
-          | None -> by_qn
-          | Some (target : Names.Module_qn.t) -> (
-            match
-              Common.SMap.find_opt (Names.Module_qn.to_string target) by_qn
-            with
+  let with_reexports =
+    Hashtbl.fold
+      (fun (bound : Names.Module_qn.t) (_target : Names.Module_qn.t)
+           (by_qn : definition Common.SMap.t) ->
+        let bound_key = Names.Module_qn.to_string bound in
+          if Common.SMap.mem bound_key by_qn then by_qn
+          else
+            let is_known (qn : Names.Module_qn.t) : bool =
+              Common.SMap.mem (Names.Module_qn.to_string qn) by_qn
+            in
+            match Mro.chase_reexport ~reexport_map ~is_known bound with
             | None -> by_qn
-            | Some (found : definition) ->
-              Common.SMap.add bound_key found by_qn))
-    reexport_map with_classes
+            | Some (target : Names.Module_qn.t) -> (
+              match
+                Common.SMap.find_opt (Names.Module_qn.to_string target) by_qn
+              with
+              | None -> by_qn
+              | Some (found : definition) ->
+                Common.SMap.add bound_key found by_qn))
+      reexport_map with_classes
+  in
+  (with_reexports, companions)
 
 
 (* Maximum number of files processed per parallel work unit.  Batching
@@ -582,7 +588,8 @@ let build_project_call_graph (caps : < Cap.fork >)
          packages, modules, re-exports, visibility): %.2fs"
         (Unix.gettimeofday () -. t_indexes_start));
   let funcs_by_id = build_funcs_by_id all_funcs in
-  let definitions_by_qn =
+  let (definitions_by_qn : definition Common.SMap.t),
+      (companions : Func_lookup.companion_index) =
     timed "call graph: definitions by qualified name" (fun () ->
       build_definitions_by_qn ~entries:indexed_entries ~funcs_by_id
         ~reexport_map)
@@ -703,6 +710,7 @@ let build_project_call_graph (caps : < Cap.fork >)
       cfg;
       type_state;
       definitions_by_qn;
+      companions;
       attributes_by_module;
       namespace_scope_bindings =
         timed "call graph: namespace bindings" (fun () ->

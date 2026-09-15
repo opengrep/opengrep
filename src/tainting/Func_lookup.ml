@@ -43,6 +43,8 @@ type method_receiver =
 
 type singleton_names = unit Common.SMap.t Class_qn_map.t
 
+type companion_index = Names.Class_qn.t Class_qn_map.t
+
 type class_qn_by_definition =
   (Function_id.t * Names.Class_qn.t) list Common.SMap.t
 
@@ -228,6 +230,7 @@ type t = {
   class_qn_by_definition : class_qn_by_definition;
   methods_by_class : methods_by_class;
   singleton_names : singleton_names;
+  companions : companion_index;
   method_sets : Lang_config.method_sets;
 }
 
@@ -288,21 +291,9 @@ let module_attribute (t : t) (qn : Names.Module_qn.t) (name : string)
     : module_attribute option =
   Common.SMap.find_opt name (attributes_of_module t.module_attributes qn)
 
-let companion_of_class (t : t) (class_qn : Names.Class_qn.t)
+let companion_of (t : t) (class_qn : Names.Class_qn.t)
     : Names.Class_qn.t option =
-  match Names.Class_qn.split_last class_qn with
-  | None -> None
-  | Some ((parent : Names.Class_qn.t), (name : string)) -> (
-    match
-      module_attribute t
-        (Names.Module_qn.of_string (Names.Class_qn.to_string parent)) name
-    with
-    | Some (Attr_class_with_companion (_, (companion_qn : Names.Class_qn.t)))
-      -> Some companion_qn
-    | Some (Attr_class _)
-    | Some (Attr_functions _)
-    | Some (Attr_module _)
-    | None -> None)
+  Class_qn_map.find_opt class_qn t.companions
 
 let resolution_order (t : t) (class_qn : Names.Class_qn.t)
     : Names.Class_qn.t list =
@@ -403,6 +394,7 @@ let empty = {
   class_qn_by_definition = Common.SMap.empty;
   methods_by_class = Class_qn_map.empty;
   singleton_names = Class_qn_map.empty;
+  companions = Class_qn_map.empty;
   method_sets = Lang_config.Shared_by_class_and_instance;
 }
 
@@ -413,6 +405,7 @@ let create
     ?local_imports ?constructors ?project_constructors
     ?(overload_groups = false)
     ?(own_modules : Names.Module_qn.t list = [])
+    ?(companions : companion_index = Class_qn_map.empty)
     ~(module_attributes : module_attributes)
     ~(resolution_orders : resolution_orders)
     ~(class_qn_by_definition : class_qn_by_definition)
@@ -437,6 +430,7 @@ let create
     class_qn_by_definition;
     methods_by_class;
     singleton_names;
+    companions;
     method_sets }
 
 let with_local_imports t local_imports : t =

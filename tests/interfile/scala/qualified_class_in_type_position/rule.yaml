@@ -1,0 +1,12 @@
+rules:
+  - id: qualified-class-in-type-position
+    languages: [scala]
+    message: A name in type position binds the class, not the companion object
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

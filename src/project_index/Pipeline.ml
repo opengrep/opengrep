@@ -40,6 +40,7 @@ type ctx = {
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
   definitions_by_qn : definition Common.SMap.t;
+  companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
   resolution_orders : Func_lookup.resolution_orders;
@@ -528,7 +529,7 @@ let invocation_resolver ~(func_lookup : Func_lookup.t)
 
 let edges_for_file (ctx : ctx) (fi : file_info)
   : (Function_id.t * Function_id.t * Tok.t) list =
-  let { lang; cfg; type_state; definitions_by_qn;
+  let { lang; cfg; type_state; definitions_by_qn; companions;
         attributes_by_module; dunder_all;
         resolution_orders; class_qn_by_definition; methods_by_class;
         singleton_names;
@@ -611,6 +612,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~class_qn_by_definition
         ~methods_by_class
         ~singleton_names
+        ~companions
         ~method_sets:(Lang_config.get lang).Lang_config.method_sets
         ~scope_table:
           (match file_scope with
@@ -787,6 +789,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           ~class_qn_by_definition
           ~methods_by_class
           ~singleton_names
+          ~companions
           ~method_sets:(Lang_config.get lang).Lang_config.method_sets
           ?alias_to_module_qn:
             (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)

@@ -943,15 +943,17 @@ let head_binding ~(func_lookup : Func_lookup.t)
         (fun (qn : Names.Module_qn.t) -> Bound_module qn)
         (Func_lookup.resolve_alias func_lookup segment)))
 
-let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
-    (segment : string) : binding_target option =
+let attribute_of ~(func_lookup : Func_lookup.t) ~(position : name_position)
+    (target : binding_target) (segment : string) : binding_target option =
   match target with
   | Bound_module (module_qn : Names.Module_qn.t) -> (
     match Func_lookup.module_attribute func_lookup module_qn segment with
     | Some (Func_lookup.Attr_functions funcs) -> Some (Bound_functions funcs)
     | Some (Func_lookup.Attr_class class_qn) -> Some (Bound_class class_qn)
-    | Some (Func_lookup.Attr_class_with_companion (_, companion_qn)) ->
-      Some (Bound_class companion_qn)
+    | Some (Func_lookup.Attr_class_with_companion (class_qn, companion_qn)) -> (
+      match position with
+      | Term_position -> Some (Bound_class companion_qn)
+      | Type_position -> Some (Bound_class class_qn))
     | Some (Func_lookup.Attr_module submodule_qn) ->
       Some (Bound_module submodule_qn)
     | None -> None)
@@ -989,7 +991,8 @@ let longest_accepted_prefix ~(accept : string list -> bool)
   search [] chain None
 
 let global_attribute_binding ~(func_lookup : Func_lookup.t)
-    (chain : string list) : (binding_target * string list) option =
+    ~(position : name_position) (chain : string list)
+    : (binding_target * string list) option =
   match chain with
   | [ (segment : string) ] -> (
     match
@@ -999,8 +1002,13 @@ let global_attribute_binding ~(func_lookup : Func_lookup.t)
       Some (Bound_functions funcs, [])
     | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) ->
       Some (Bound_class class_qn, [])
-    | Some (Func_lookup.Attr_class_with_companion (_, companion_qn)) ->
-      Some (Bound_class companion_qn, [])
+    | Some
+        (Func_lookup.Attr_class_with_companion
+           ((class_qn : Names.Class_qn.t), (companion_qn : Names.Class_qn.t)))
+      -> (
+      match position with
+      | Term_position -> Some (Bound_class companion_qn, [])
+      | Type_position -> Some (Bound_class class_qn, []))
     | Some (Func_lookup.Attr_module (module_qn : Names.Module_qn.t)) ->
       Some (Bound_module module_qn, [])
     | None -> None)
@@ -1008,7 +1016,8 @@ let global_attribute_binding ~(func_lookup : Func_lookup.t)
   | _ :: _ :: _ -> None
 
 let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
-    (chain : string list) : (binding_target * string list) option =
+    ~(position : name_position) (chain : string list)
+    : (binding_target * string list) option =
   match
     longest_accepted_prefix
       ~accept:(fun (prefix : string list) ->
@@ -1016,7 +1025,16 @@ let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
       chain
   with
   | Some ((prefix : string list), (segments : string list)) ->
-    Some (Bound_class (Names.Class_qn.of_parts prefix), segments)
+    let class_qn = Names.Class_qn.of_parts prefix in
+    let bound =
+      match position with
+      | Term_position -> (
+        match Func_lookup.companion_of func_lookup class_qn with
+        | Some (companion_qn : Names.Class_qn.t) -> Bound_class companion_qn
+        | None -> Bound_class class_qn)
+      | Type_position -> Bound_class class_qn
+    in
+    Some (bound, segments)
   | None ->
     Option.map
       (fun ((prefix : string list), (segments : string list)) ->
@@ -1027,13 +1045,13 @@ let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
              (Names.Module_qn.of_parts prefix))
          chain)
 
-let in_own_modules ~(func_lookup : Func_lookup.t) (chain : string list)
-    : (binding_target * string list) option =
+let in_own_modules ~(func_lookup : Func_lookup.t) ~(position : name_position)
+    (chain : string list) : (binding_target * string list) option =
   List.find_map
     (fun (namespace_scope : Names.Module_qn.t) ->
       if Names.Module_qn.is_empty namespace_scope then None
       else
-        qualified_prefix_binding ~func_lookup
+        qualified_prefix_binding ~func_lookup ~position
           (Names.Module_qn.parts namespace_scope @ chain))
     (Func_lookup.own_modules func_lookup)
 
@@ -1041,23 +1059,12 @@ let follow_chain ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(position : name_position)
     (chain : dotted_chain) : binding_target option =
   let segments_of_chain = chain.dc_segments in
-  let in_position ((target : binding_target), (segments : string list))
-      : binding_target * string list =
-    match (position, target) with
-    | Term_position, Bound_class (class_qn : Names.Class_qn.t) -> (
-      match Func_lookup.companion_of_class func_lookup class_qn with
-      | Some (companion_qn : Names.Class_qn.t) ->
-        (Bound_class companion_qn, segments)
-      | None -> (target, segments))
-    | Term_position, (Bound_module _ | Bound_functions _ | Bound_object _)
-    | Type_position, _ -> (target, segments)
-  in
   let completed ((target : binding_target), (segments : string list))
       : binding_target option =
     List.fold_left
       (fun (target : binding_target option) (segment : string) ->
         Option.bind target (fun target ->
-          attribute_of ~func_lookup target segment))
+          attribute_of ~func_lookup ~position target segment))
       (Some target) segments
   in
   match segments_of_chain with
@@ -1065,23 +1072,27 @@ let follow_chain ~(func_lookup : Func_lookup.t)
   | head :: segments -> (
     if chain.dc_rooted then
       match
-        match qualified_prefix_binding ~func_lookup segments_of_chain with
+        match
+          qualified_prefix_binding ~func_lookup ~position segments_of_chain
+        with
         | Some _ as bound -> bound
-        | None -> global_attribute_binding ~func_lookup segments_of_chain
+        | None ->
+          global_attribute_binding ~func_lookup ~position segments_of_chain
       with
       | None -> None
-      | Some (start : binding_target * string list) ->
-        completed (in_position start)
+      | Some (start : binding_target * string list) -> completed start
     else
       match head_binding ~func_lookup ~caller_parent_path ~position head with
       | Some (target : binding_target) -> completed (target, segments)
       | None ->
         List.find_map
           (fun (start : unit -> (binding_target * string list) option) ->
-            Option.bind (start ()) (fun start -> completed (in_position start)))
-          [ (fun () -> in_own_modules ~func_lookup segments_of_chain);
+            Option.bind (start ()) completed)
+          [ (fun () ->
+              in_own_modules ~func_lookup ~position segments_of_chain);
             (fun () ->
-              qualified_prefix_binding ~func_lookup segments_of_chain) ])
+              qualified_prefix_binding ~func_lookup ~position
+                segments_of_chain) ])
 
 let constructor_of_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     (class_qn : Names.Class_qn.t) : func_info list =
