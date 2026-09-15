@@ -38,6 +38,7 @@ val build :
   nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
   global_imports:Types.import list ->
   namespace_object_members:Scope_binding.positioned_binding list Common.SMap.t ->
+  companions:bool ->
   Types.file_info ->
   Func_lookup.scope_entry list Common.SMap.t
   * (Names.Class_name.t * Fpath.t) list

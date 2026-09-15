@@ -40,9 +40,26 @@ let dispatch_call_tok (c_m : FA.func_info) : Tok.t =
    alternatives as an interface's implementations. Runs serially on the
    coordinator, like [emit_dispatch_edges]. *)
 let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
+    ~(class_qn_by_definition : Func_lookup.class_qn_by_definition)
     (all_funcs : FA.func_info list) : int =
   let groups : (string, (Function_id.t * FA.func_info) list) Hashtbl.t =
     Hashtbl.create 64
+  in
+  let defining_class (cls : IL.name) : string =
+    match
+      Common.SMap.find_opt (fst cls.IL.ident) class_qn_by_definition
+    with
+    | None -> fst cls.IL.ident
+    | Some (classes : (Function_id.t * Names.Class_qn.t) list) -> (
+      match
+        List.find_opt
+          (fun (((id : Function_id.t), _) : Function_id.t * Names.Class_qn.t) ->
+            Function_id.equal_name id cls)
+          classes
+      with
+      | Some (_, (class_qn : Names.Class_qn.t)) ->
+        Names.Class_qn.to_string class_qn
+      | None -> fst cls.IL.ident)
   in
   if not (Lang_config.overloads_by_type lang) then 0
   else begin
@@ -50,7 +67,7 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
     (fun (func : FA.func_info) ->
       let scope : string option option =
         match func.FA.fn_id with
-        | [ Some cls; Some _ ] -> Some (Some (fst cls.IL.ident))
+        | [ Some cls; Some _ ] -> Some (Some (defining_class cls))
         | [ None; Some _ ] -> Some (Func_info.entity_qualifier func)
         | _ -> None
       in
@@ -114,7 +131,7 @@ let emit_dispatch_edges
     match Hashtbl.find_opt methods_in_file_cache key with
     | Some cached_methods -> cached_methods
     | None ->
-      let bare_name = Names.Class_qn.bare_name ci.ci_qn in
+      let bare_name = ci.ci_name in
       let cands =
         Option.value
           (Type_state.get_methods type_state

@@ -19,6 +19,7 @@ type constructor_index
 type module_attribute =
   | Attr_functions of Func_info.t list
   | Attr_class of Names.Class_qn.t
+  | Attr_class_with_companion of Names.Class_qn.t * Names.Class_qn.t
   | Attr_module of Names.Module_qn.t
 
 type module_attributes = module_attribute Common.SMap.t Common.SMap.t
@@ -45,6 +46,7 @@ val attributes_of_module :
 type scope_kind =
   | Scope_function of Func_info.t
   | Scope_class of Names.Class_qn.t
+  | Scope_companion of Names.Class_qn.t
   | Scope_extension of Func_info.t
   | Scope_object of Func_info.t list Common.SMap.t
   | Scope_local_value
@@ -64,6 +66,8 @@ val scope_table_shadowing :
   front:scope_table -> back:scope_table -> scope_table
 
 val class_of_entries : scope_entry list -> Names.Class_qn.t option
+
+val companion_of_entries : scope_entry list -> Names.Class_qn.t option
 
 val functions_of_entries : scope_entry list -> Func_info.t list
 

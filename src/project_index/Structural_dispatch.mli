@@ -2,7 +2,11 @@
    scope, name and arity, concrete bodies) to its representative, the
    earliest by position, and records them as its alternatives. *)
 val emit_overload_edges :
-  lang:Lang.t -> graph:Call_graph.G.t -> Graph_from_AST.func_info list -> int
+  lang:Lang.t ->
+  graph:Call_graph.G.t ->
+  class_qn_by_definition:Func_lookup.class_qn_by_definition ->
+  Graph_from_AST.func_info list ->
+  int
 
 (* Emits [C.M <- I.M] Dispatch edges (structural interface satisfaction) so the topo fold sees impls before interfaces. *)
 

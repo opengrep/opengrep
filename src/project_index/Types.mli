@@ -2,7 +2,7 @@
 
 module G = AST_generic
 
-type def_kind = K_function | K_method | K_class
+type def_kind = K_function | K_method | K_class | K_companion
 
 type entry = {
   id : Function_id.t;
@@ -19,6 +19,8 @@ type definition =
   | Class_definition of {
       class_file : Fpath.t;
       class_qn : Names.Class_qn.t;
+      class_name : string;
+      class_companion : Names.Class_qn.t option;
     }
 
 type import_binds =
@@ -44,6 +46,7 @@ type import = {
 type class_info = {
   ci_id : Function_id.t;
   ci_qn : Names.Class_qn.t;
+  ci_name : string;
   ci_class_kind : G.class_kind;
   ci_file : Fpath.t;
   ci_range : Range.t option;

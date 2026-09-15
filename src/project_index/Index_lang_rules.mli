@@ -80,6 +80,7 @@ type t = {
   package_directive_is_namespace : bool;
   module_definition_is_namespace : bool;
   object_members_bind_in_namespace : bool;
+  companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
   (* Class identity is its constant path, file-independent (Ruby reopening):
      drops the file-path prefix from class qns. *)

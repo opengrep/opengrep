@@ -81,6 +81,7 @@ type t = {
   package_directive_is_namespace : bool;
   module_definition_is_namespace : bool;
   object_members_bind_in_namespace : bool;
+  companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
   (* A class's identity is its constant path, independent of the file it is
      (re)opened in (Ruby: [::Base], [Svc::Base]).  Drops the file-path prefix
@@ -302,6 +303,7 @@ let default : t = {
   package_directive_is_namespace = false;
   module_definition_is_namespace = false;
   object_members_bind_in_namespace = false;
+  companion_object_has_own_name = false;
   unaliased_import_binds = First_segment_binds;
   class_identity_is_constant_path = false;
   discover_project =
@@ -603,6 +605,7 @@ let scala : t = { default with
   module_path_from_ast = extract_package_decl;
   class_body_extra_parents = scala_mixins_before_superclass;
   superclass_position = Superclass_after_mixins;
+  companion_object_has_own_name = true;
 }
 
 let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)

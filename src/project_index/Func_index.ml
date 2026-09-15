@@ -61,7 +61,12 @@ let build_attributes_by_module
   let attribute_of (definition : Types.definition)
     : Func_lookup.module_attribute =
     match definition with
-    | Types.Class_definition { class_qn; _ } -> Func_lookup.Attr_class class_qn
+    | Types.Class_definition { class_qn; class_companion = None; _ } ->
+      Func_lookup.Attr_class class_qn
+    | Types.Class_definition
+        { class_qn; class_companion = Some (companion_qn : Names.Class_qn.t);
+          _ } ->
+      Func_lookup.Attr_class_with_companion (class_qn, companion_qn)
     | Types.Function_definitions (funcs : FA.func_info list) ->
       Func_lookup.Attr_functions funcs
   in
@@ -72,8 +77,11 @@ let build_attributes_by_module
     Common.SMap.update module_key
       (function
         | None -> Some (Common.SMap.singleton name attribute)
-        | Some (bound : Func_lookup.module_attribute Common.SMap.t) ->
-          Some (Common.SMap.add name attribute bound))
+        | Some (bound : Func_lookup.module_attribute Common.SMap.t) -> (
+          match (Common.SMap.find_opt name bound, attribute) with
+          | Some (Func_lookup.Attr_class_with_companion _),
+            Func_lookup.Attr_class _ -> Some bound
+          | _ -> Some (Common.SMap.add name attribute bound)))
       attributes
   in
   let per_file (attributes : Func_lookup.module_attributes)
@@ -135,9 +143,14 @@ let build_attributes_by_module
       (fun (qn : string) (definition : Types.definition)
            (attributes : Func_lookup.module_attributes) ->
         match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
-        | Some ((parent : Names.Def_qn.t), (name : string))
+        | Some ((parent : Names.Def_qn.t), (segment : string))
           when Common.SMap.mem (Names.Def_qn.to_string parent) module_qns
-               && is_attribute (Names.Def_qn.to_string parent) name ->
+               && is_attribute (Names.Def_qn.to_string parent) segment ->
+          let name =
+            match definition with
+            | Types.Class_definition { class_name; _ } -> class_name
+            | Types.Function_definitions _ -> segment
+          in
           add (Names.Def_qn.to_string parent) name
             (attribute_of definition) attributes
         | Some _

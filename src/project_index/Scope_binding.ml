@@ -134,7 +134,17 @@ let class_member_bindings
           (members_of ci.ci_qn)))
     classes
 
+let companion_binding_of ~(pos : Pos.t option)
+    ~(parent_path : IL.name option list) (name : string)
+    (class_qn : Names.Class_qn.t) : positioned_binding =
+  { pb_pos = pos; pb_name = name;
+    pb_parent_path = parent_path;
+    pb_kinds = [ Func_lookup.Scope_companion class_qn ] }
+
+let no_companion (_ : class_info) : bool = false
+
 let own_class_bindings
+    ~(companion : class_info -> bool)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(binds_at_file_scope : Names.Class_qn.t -> bool)
@@ -144,10 +154,12 @@ let own_class_bindings
   |> List.filter_map (fun (ci : class_info) ->
        match Names.Class_qn.split_last ci.ci_qn with
        | None -> None
-       | Some ((parent : Names.Class_qn.t), (name : string)) ->
+       | Some ((parent : Names.Class_qn.t), _) ->
          let bind (parent_path : IL.name option list) : positioned_binding =
-           class_binding_of ~pos:(position_of_tok (Function_id.tok ci.ci_id))
-             ~parent_path name ci.ci_qn
+           let pos = position_of_tok (Function_id.tok ci.ci_id) in
+           if companion ci then
+             companion_binding_of ~pos ~parent_path ci.ci_name ci.ci_qn
+           else class_binding_of ~pos ~parent_path ci.ci_name ci.ci_qn
          in
          if binds_at_file_scope parent then Some (bind [])
          else
@@ -221,6 +233,10 @@ let bindings_of_attributes ~(pos : Pos.t option)
           function_binding_of ~pos ~parent_path:[] name funcs @ bindings
         | Func_lookup.Attr_class (class_qn : Names.Class_qn.t) ->
           class_binding_of ~pos ~parent_path:[] name class_qn :: bindings
+        | Func_lookup.Attr_class_with_companion (class_qn, companion_qn) ->
+          class_binding_of ~pos ~parent_path:[] name class_qn
+          :: companion_binding_of ~pos ~parent_path:[] name companion_qn
+          :: bindings
         | Func_lookup.Attr_module _ -> bindings)
     attributes []
 

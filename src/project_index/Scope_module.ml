@@ -399,7 +399,8 @@ let own_bindings ~(classes_by_file : class_info list Common.SMap.t)
   in
   Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
   @ Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
-  @ Scope_binding.own_class_bindings ~class_parent_paths
+  @ Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+      ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         Common.SMap.mem (Names.Class_qn.to_string owner) region_keys)
       ~scope_of_owner:(fun _ -> None)
@@ -528,7 +529,7 @@ let binding_of_export ~(pos : Pos.t option) (local : string)
     ([ object_binding_of ~pos ~parent_path:[] local members ], [], [])
   | Exports_definition (Function_definitions (funcs : Func_info.t list)) ->
     (Scope_binding.function_binding_of ~pos ~parent_path:[] local funcs, [], [])
-  | Exports_definition (Class_definition { class_file; class_qn }) ->
+  | Exports_definition (Class_definition { class_file; class_qn; _ }) ->
     ( [ Scope_binding.class_binding_of ~pos ~parent_path:[] local class_qn ],
       [ (Names.Class_name.of_string (Names.Class_qn.bare_name class_qn),
          class_file) ],

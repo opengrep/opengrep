@@ -175,14 +175,23 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                decompose it into namespace scopes so the qn matches the nested
                [module A; class B] form. *)
             let scope = push_qualifier_scopes ent scope in
+            let is_companion =
+              match
+                (fst cdef.G.ckind,
+                 cfg.Index_lang_rules.companion_object_has_own_name)
+              with
+              | G.Object, true -> true
+              | (G.Object | G.Class | G.Interface | G.Trait), _ -> false
+            in
+            let qn_name = if is_companion then name ^ "$" else name in
             let class_qn =
-              qualified_name_of ~module_path (List.rev scope) name
+              qualified_name_of ~module_path (List.rev scope) qn_name
             in
             let class_qn_def = Names.Def_qn.of_string class_qn in
             let class_range = entity_range ent in
             let parent_class_id = immediate_enclosing_class_id scope in
             entries := mk_entry ~id:class_id ~name ~qn:class_qn_def
-                         ~kind:K_class
+                         ~kind:(if is_companion then K_companion else K_class)
                          ~range:class_range
                          ~defining_class_id:parent_class_id :: !entries;
             let synthesized =
@@ -250,6 +259,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             in
             class_infos := { ci_id = class_id;
                              ci_qn = Names.Class_qn.of_string class_qn;
+                             ci_name = name;
                              ci_class_kind = fst cdef.G.ckind;
                              ci_file = file;
                              ci_range = class_range;
@@ -260,7 +270,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                              ci_imports = imports;
                              ci_decorator_names = entity_decorator_names ent }
                            :: !class_infos;
-            let scope' = Sc_class { name; id = class_id } :: scope in
+            let scope' = Sc_class { name = qn_name; id = class_id } :: scope in
             super#visit_definition scope' (ent, def_kind)
         end
       | G.FuncDef _
@@ -370,6 +380,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
               ) (cfg.Index_lang_rules.class_body_synth_methods cdef);
               class_infos := { ci_id = ns_id;
                                ci_qn = Names.Class_qn.of_string ns_qn;
+                               ci_name = name;
                                ci_class_kind = G.Class;
                                ci_file = file;
                                ci_range = ns_range;

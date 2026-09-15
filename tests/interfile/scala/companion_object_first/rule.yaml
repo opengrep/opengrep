@@ -1,0 +1,12 @@
+rules:
+  - id: test-companion-object-first
+    languages: [scala]
+    message: The object written before its class is still the one a call on the name reaches
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

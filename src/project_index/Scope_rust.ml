@@ -32,7 +32,7 @@ let imported_bindings ~(definitions_by_qn : definition Common.SMap.t)
           ( Scope_binding.function_binding_of ~pos ~parent_path:[] local funcs
             @ bindings,
             bound_files )
-        | Some (Class_definition { class_file; class_qn }) ->
+        | Some (Class_definition { class_file; class_qn; _ }) ->
           ( Scope_binding.class_binding_of ~pos ~parent_path:[] local class_qn
             :: bindings,
             bound_class_file target class_file :: bound_files )))
@@ -81,7 +81,8 @@ let build
     Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
   let type_bindings =
-    Scope_binding.own_class_bindings ~class_parent_paths
+    Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+      ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         String.equal (Names.Class_qn.to_string owner)
           (Names.Module_qn.to_string fi.fi_module_path))

@@ -19,6 +19,13 @@ val class_binding_of :
   Names.Class_qn.t ->
   positioned_binding
 
+val companion_binding_of :
+  pos:Pos.t option ->
+  parent_path:IL.name option list ->
+  string ->
+  Names.Class_qn.t ->
+  positioned_binding
+
 val bindings_of_positioned :
   positioned_binding list -> Func_lookup.scope_entry list Common.SMap.t
 
@@ -37,7 +44,10 @@ val class_member_bindings :
   Types.class_info list ->
   positioned_binding list
 
+val no_companion : Types.class_info -> bool
+
 val own_class_bindings :
+  companion:(Types.class_info -> bool) ->
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->
   binds_at_file_scope:(Names.Class_qn.t -> bool) ->

@@ -20,7 +20,8 @@ let build
       Common.SMap.empty own_classes
   in
   let type_bindings =
-    Scope_binding.own_class_bindings ~class_parent_paths
+    Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+      ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         Names.Class_qn.is_empty owner)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->

@@ -288,7 +288,8 @@ let build_scope_table
         Scope_package.build ~lang ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
           ~resolution_orders ~methods_by_class ~extensions_by_module
-          ~nested_types_by_class ~global_imports ~namespace_object_members fi
+          ~nested_types_by_class ~global_imports ~namespace_object_members
+          ~companions:cfg.Index_lang_rules.companion_object_has_own_name fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              bound_class_files; own_modules = []; module_aliases = None }
@@ -377,7 +378,8 @@ let build_scope_table
       Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
     in
     let own_classes =
-      Scope_binding.own_class_bindings ~class_parent_paths
+      Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+        ~class_parent_paths
         ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
           String.equal (Names.Class_qn.to_string owner)
             (Names.Module_qn.to_string fi.fi_module_path))
@@ -409,6 +411,13 @@ let build_scope_table
                       Scope_binding.class_binding_of ~pos ~parent_path:[] name
                         class_qn
                       :: imported
+                    | Func_lookup.Attr_class_with_companion
+                        (class_qn, companion_qn) ->
+                      Scope_binding.class_binding_of ~pos ~parent_path:[] name
+                        class_qn
+                      :: Scope_binding.companion_binding_of ~pos ~parent_path:[]
+                           name companion_qn
+                      :: imported
                     | Func_lookup.Attr_module _ -> imported)
                 (Func_lookup.attributes_of_module attributes_by_module target)
                 imported,
@@ -420,10 +429,15 @@ let build_scope_table
                  funcs
                @ imported,
                bound_class_files)
-            | Some (Class_definition { class_file; class_qn }) ->
+            | Some (Class_definition { class_file; class_qn; class_companion; _ }) ->
               ( Scope_binding.class_binding_of ~pos ~parent_path:[] local
                   class_qn
-                :: imported,
+                :: (match class_companion with
+                    | Some (companion_qn : Names.Class_qn.t) ->
+                      [ Scope_binding.companion_binding_of ~pos ~parent_path:[]
+                          local companion_qn ]
+                    | None -> [])
+                @ imported,
                 (Names.Class_name.of_string
                    (Names.Module_qn.bare_name target), class_file)
                 :: bound_class_files )

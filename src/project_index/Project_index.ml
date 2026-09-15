@@ -33,7 +33,7 @@ let build_class_parent_paths ~(entries : entry list)
     (fun (paths : (Function_id.t * IL.name option list) list Common.SMap.t)
          (entry : entry) ->
       match (entry.kind, entry.defining_class_id) with
-      | (K_function | K_class), _
+      | (K_function | K_class | K_companion), _
       | K_method, None -> paths
       | K_method, Some (class_id : Function_id.t) -> (
         match Function_id_map.find_opt entry.id funcs_by_id with
@@ -66,7 +66,8 @@ let build_definitions_by_qn ~(entries : entry list)
     List.fold_left
       (fun (by_qn : definition Common.SMap.t) (entry : entry) ->
         match entry.kind with
-        | K_class -> by_qn
+        | K_class
+        | K_companion -> by_qn
         | K_function
         | K_method -> (
           match Function_id_map.find_opt entry.id funcs_by_id with
@@ -83,6 +84,23 @@ let build_definitions_by_qn ~(entries : entry list)
               (Function_definitions (funcs @ previous)) by_qn))
       Common.SMap.empty entries
   in
+  let companions : Names.Class_qn.t Common.SMap.t =
+    List.fold_left
+      (fun (companions : Names.Class_qn.t Common.SMap.t) (entry : entry) ->
+        match entry.kind with
+        | K_function
+        | K_method
+        | K_class -> companions
+        | K_companion -> (
+          match Names.Def_qn.split_last entry.qn with
+          | None -> companions
+          | Some ((parent : Names.Def_qn.t), _) ->
+            Common.SMap.add
+              (Names.Def_qn.to_string (Names.Def_qn.concat parent entry.name))
+              (Names.Class_qn.of_string (Names.Def_qn.to_string entry.qn))
+              companions))
+      Common.SMap.empty entries
+  in
   let with_classes =
     List.fold_left
       (fun (by_qn : definition Common.SMap.t) (entry : entry) ->
@@ -94,8 +112,28 @@ let build_definitions_by_qn ~(entries : entry list)
           Common.SMap.add qn
             (Class_definition
                { class_file = entry.file;
-                 class_qn = Names.Class_qn.of_string qn })
-            by_qn)
+                 class_qn = Names.Class_qn.of_string qn;
+                 class_name = entry.name;
+                 class_companion = Common.SMap.find_opt qn companions })
+            by_qn
+        | K_companion ->
+          let qn = Names.Def_qn.to_string entry.qn in
+          let definition =
+            Class_definition
+              { class_file = entry.file;
+                class_qn = Names.Class_qn.of_string qn;
+                class_name = entry.name;
+                class_companion = None }
+          in
+          let by_qn = Common.SMap.add qn definition by_qn in
+          match Names.Def_qn.split_last entry.qn with
+          | None -> by_qn
+          | Some ((parent : Names.Def_qn.t), _) ->
+            let class_key =
+              Names.Def_qn.to_string (Names.Def_qn.concat parent entry.name)
+            in
+            if Common.SMap.mem class_key by_qn then by_qn
+            else Common.SMap.add class_key definition by_qn)
       functions entries
   in
   Hashtbl.fold
@@ -776,6 +814,7 @@ let build_project_call_graph (caps : < Cap.fork >)
                             ~resolution_orders ~methods_by_class class_qn)
                        @ lifted
                      | Func_lookup.Attr_class _
+                     | Func_lookup.Attr_class_with_companion _
                      | Func_lookup.Attr_functions _
                      | Func_lookup.Attr_module _ -> lifted)
                    attributes []
@@ -1023,7 +1062,8 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Same-arity overloads of one scope: see [Structural_dispatch]. *)
   let n_overload =
     timed "call graph: overload dispatch edges" @@ fun () ->
-    Structural_dispatch.emit_overload_edges ~lang ~graph all_funcs
+    Structural_dispatch.emit_overload_edges ~lang ~graph
+      ~class_qn_by_definition all_funcs
   in
   if n_overload > 0 then
     Log.debug (fun m -> m "Overload dispatch: emitted %d Dispatch edges"

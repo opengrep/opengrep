@@ -24,6 +24,7 @@ type constructor_index = Func_info.t list Common.SMap.t
 type module_attribute =
   | Attr_functions of Func_info.t list
   | Attr_class of Names.Class_qn.t
+  | Attr_class_with_companion of Names.Class_qn.t * Names.Class_qn.t
   | Attr_module of Names.Module_qn.t
 
 type module_attributes = module_attribute Common.SMap.t Common.SMap.t
@@ -56,6 +57,7 @@ let attributes_of_module (attributes : module_attributes)
 type scope_kind =
   | Scope_function of Func_info.t
   | Scope_class of Names.Class_qn.t
+  | Scope_companion of Names.Class_qn.t
   | Scope_extension of Func_info.t
   | Scope_object of Func_info.t list Common.SMap.t
   | Scope_local_value
@@ -84,6 +86,20 @@ let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
     (fun (entry : scope_entry) ->
       match entry.kind with
       | Scope_class (class_qn : Names.Class_qn.t) -> Some class_qn
+      | Scope_companion _
+      | Scope_function _
+      | Scope_object _
+      | Scope_local_value
+      | Scope_extension _ -> None)
+    entries
+
+let companion_of_entries (entries : scope_entry list)
+    : Names.Class_qn.t option =
+  List.find_map
+    (fun (entry : scope_entry) ->
+      match entry.kind with
+      | Scope_companion (class_qn : Names.Class_qn.t) -> Some class_qn
+      | Scope_class _
       | Scope_function _
       | Scope_object _
       | Scope_local_value
@@ -96,6 +112,7 @@ let functions_of_entries (entries : scope_entry list) : Func_info.t list =
       match entry.kind with
       | Scope_function (func : Func_info.t) -> Some func
       | Scope_class _
+      | Scope_companion _
       | Scope_object _
       | Scope_local_value
       | Scope_extension _ -> None)
@@ -107,6 +124,7 @@ let extensions_of_entries (entries : scope_entry list) : Func_info.t list =
       match entry.kind with
       | Scope_extension (func : Func_info.t) -> Some func
       | Scope_class _
+      | Scope_companion _
       | Scope_object _
       | Scope_local_value
       | Scope_function _ -> None)
@@ -119,6 +137,7 @@ let object_of_entries (entries : scope_entry list)
       match entry.kind with
       | Scope_object (members : Func_info.t list Common.SMap.t) -> Some members
       | Scope_class _
+      | Scope_companion _
       | Scope_function _
       | Scope_local_value
       | Scope_extension _ -> None)
@@ -132,11 +151,13 @@ let equal_kind (left : scope_kind) (right : scope_kind) : bool =
   | Scope_extension (first : Func_info.t), Scope_extension (second : Func_info.t)
     -> Func_info.equal_fn_id first.fn_id second.fn_id
   | Scope_class (first : Names.Class_qn.t), Scope_class (second : Names.Class_qn.t)
+  | Scope_companion (first : Names.Class_qn.t),
+    Scope_companion (second : Names.Class_qn.t)
     -> Names.Class_qn.equal first second
   | Scope_local_value, Scope_local_value -> true
   | Scope_object _, Scope_object _ -> false
-  | (Scope_function _ | Scope_extension _ | Scope_class _ | Scope_object _
-    | Scope_local_value), _ -> false
+  | (Scope_function _ | Scope_extension _ | Scope_class _ | Scope_companion _
+    | Scope_object _ | Scope_local_value), _ -> false
 
 let keep_distinct (entries : scope_entry list) : scope_entry list =
   List_.uniq_by

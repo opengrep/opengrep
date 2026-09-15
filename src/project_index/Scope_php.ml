@@ -19,6 +19,7 @@ let is_function_attribute (_ : string)
   match attribute with
   | Func_lookup.Attr_functions _ -> true
   | Func_lookup.Attr_class _
+  | Func_lookup.Attr_class_with_companion _
   | Func_lookup.Attr_module _ -> false
 
 let global_function_bindings
@@ -57,7 +58,8 @@ let build
     Option.value (Common.SMap.find_opt fi_file_str classes_by_file) ~default:[]
   in
   let type_bindings =
-    Scope_binding.own_class_bindings ~class_parent_paths
+    Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+      ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         Common.SMap.mem (Names.Class_qn.to_string owner) keys)
       ~scope_of_owner:(fun _ -> None)

@@ -118,7 +118,8 @@ let package_bindings
       let fi_file_str = Fpath.to_string file in
       Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
       @ Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
-      @ Scope_binding.own_class_bindings ~class_parent_paths
+      @ Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+        ~class_parent_paths
           ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
             String.equal (Names.Class_qn.to_string owner)
               (Names.Module_qn.to_string package_qn))
@@ -159,7 +160,8 @@ let class_qn_of_module_attribute
     Common.SMap.find_opt name
       (Func_lookup.attributes_of_module attributes_by_module target)
   with
-  | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) -> Some class_qn
+  | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t))
+  | Some (Func_lookup.Attr_class_with_companion (class_qn, _)) -> Some class_qn
   | Some (Func_lookup.Attr_functions _)
   | Some (Func_lookup.Attr_module _)
   | None -> None

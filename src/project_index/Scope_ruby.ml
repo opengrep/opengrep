@@ -29,7 +29,8 @@ let build
     Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
   let type_bindings =
-    Scope_binding.own_class_bindings ~class_parent_paths
+    Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+      ~class_parent_paths
       ~binds_at_file_scope:Names.Class_qn.is_empty
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map

@@ -955,6 +955,9 @@ let head_binding ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) (segment : string)
     : binding_target option =
   let entries = entries_in_scope ~func_lookup ~caller_parent_path segment in
+  match Func_lookup.companion_of_entries entries with
+  | Some (companion_qn : Names.Class_qn.t) -> Some (Bound_class companion_qn)
+  | None -> (
   match Func_lookup.class_of_entries entries with
   | Some (class_qn : Names.Class_qn.t) -> Some (Bound_class class_qn)
   | None -> (
@@ -964,7 +967,7 @@ let head_binding ~(func_lookup : Func_lookup.t)
     | None ->
       Option.map
         (fun (qn : Names.Module_qn.t) -> Bound_module qn)
-        (Func_lookup.resolve_alias func_lookup segment))
+        (Func_lookup.resolve_alias func_lookup segment)))
 
 let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
     (segment : string) : binding_target option =
@@ -973,6 +976,8 @@ let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
     match Func_lookup.module_attribute func_lookup module_qn segment with
     | Some (Func_lookup.Attr_functions funcs) -> Some (Bound_functions funcs)
     | Some (Func_lookup.Attr_class class_qn) -> Some (Bound_class class_qn)
+    | Some (Func_lookup.Attr_class_with_companion (_, companion_qn)) ->
+      Some (Bound_class companion_qn)
     | Some (Func_lookup.Attr_module submodule_qn) ->
       Some (Bound_module submodule_qn)
     | None -> None)
@@ -1020,6 +1025,8 @@ let global_attribute_binding ~(func_lookup : Func_lookup.t)
       Some (Bound_functions funcs, [])
     | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) ->
       Some (Bound_class class_qn, [])
+    | Some (Func_lookup.Attr_class_with_companion (_, companion_qn)) ->
+      Some (Bound_class companion_qn, [])
     | Some (Func_lookup.Attr_module (module_qn : Names.Module_qn.t)) ->
       Some (Bound_module module_qn, [])
     | None -> None)
@@ -1197,7 +1204,8 @@ let class_qn_in_module_of ~(func_lookup : Func_lookup.t)
       Func_lookup.module_attribute func_lookup
         (Names.Module_qn.of_string (Names.Class_qn.to_string parent)) bare_name
     with
-    | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) -> Some class_qn
+    | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t))
+    | Some (Func_lookup.Attr_class_with_companion (class_qn, _)) -> Some class_qn
     | Some (Func_lookup.Attr_functions _)
     | Some (Func_lookup.Attr_module _)
     | None -> None)

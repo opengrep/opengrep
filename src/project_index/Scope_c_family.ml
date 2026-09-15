@@ -136,6 +136,7 @@ let global_bindings_of_includes
               is_global_definition ~definitions_by_qn
                 binding.Scope_binding.pb_name func
             | Func_lookup.Scope_class _
+            | Func_lookup.Scope_companion _
             | Func_lookup.Scope_object _
             | Func_lookup.Scope_local_value
             | Func_lookup.Scope_extension _ -> false)
@@ -214,7 +215,8 @@ let build
     Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
   let type_bindings =
-    Scope_binding.own_class_bindings ~class_parent_paths
+    Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
+      ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         Common.SMap.mem (Names.Class_qn.to_string owner) regions)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->

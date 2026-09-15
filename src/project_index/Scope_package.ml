@@ -75,7 +75,8 @@ let is_extension_binding (binding : Scope_binding.positioned_binding) : bool =
       | Func_lookup.Scope_function _
       | Func_lookup.Scope_object _
       | Func_lookup.Scope_local_value
-      | Func_lookup.Scope_class _ -> false)
+      | Func_lookup.Scope_class _
+      | Func_lookup.Scope_companion _ -> false)
     binding.Scope_binding.pb_kinds
 
 let equal_tier (first : tier) (second : tier) : bool =
@@ -172,6 +173,7 @@ let build
     ~(global_imports : import list)
     ~(namespace_object_members :
         Scope_binding.positioned_binding list Common.SMap.t)
+    ~(companions : bool)
     (fi : file_info)
     : Func_lookup.scope_entry list Common.SMap.t
       * (Names.Class_name.t * Fpath.t) list =
@@ -192,7 +194,15 @@ let build
       Common.SMap.empty own_classes
   in
   let type_bindings =
-    Scope_binding.own_class_bindings ~class_parent_paths
+    Scope_binding.own_class_bindings
+      ~companion:(fun (ci : class_info) ->
+        companions
+        && (match ci.ci_class_kind with
+            | G.Object -> true
+            | G.Class
+            | G.Interface
+            | G.Trait -> false))
+      ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         Common.SMap.mem (Names.Class_qn.to_string owner) regions)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
@@ -301,10 +311,16 @@ let build
                 local funcs
               @ imported,
               on_demand, bound_class_files, hidden )
-          | Some (Class_definition { class_file; class_qn }) ->
+          | Some (Class_definition { class_file; class_qn; class_companion; _ }) ->
             ( Scope_binding.class_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local class_qn
-              :: imported,
+              :: (match class_companion with
+                  | Some (companion_qn : Names.Class_qn.t) ->
+                    [ Scope_binding.companion_binding_of
+                        ~pos:(Scope_binding.position_of_tok imp.im_tok)
+                        ~parent_path:[] local companion_qn ]
+                  | None -> [])
+              @ imported,
               on_demand,
               (Names.Class_name.of_string (Names.Module_qn.bare_name target),
                class_file)
