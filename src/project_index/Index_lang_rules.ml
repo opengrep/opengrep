@@ -44,6 +44,12 @@ type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
 
+type tier =
+  | On_demand
+  | Single_import
+  | Own_scope
+  | Package_members
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -72,6 +78,9 @@ type t = {
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
     | `Per_translation_unit | `Per_project ];
+  tier_rank : tier -> int;
+  region_tier : tier;
+  namespaces_nest : bool;
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
@@ -303,6 +312,14 @@ let default : t = {
   superclass_position = Superclass_before_mixins;
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
+  tier_rank =
+    (function
+      | On_demand -> 0
+      | Single_import -> 1
+      | Own_scope -> 2
+      | Package_members -> 3);
+  region_tier = Own_scope;
+  namespaces_nest = false;
   package_directive_is_namespace = false;
   module_definition_is_namespace = false;
   object_members_bind_in_namespace = false;
@@ -637,6 +654,13 @@ let scala : t = { default with
   package_directive_is_namespace = true;
   walks_inheritance = true;
   unqualified_scope = `Per_package;
+  tier_rank =
+    (function
+      | Package_members -> 0
+      | On_demand -> 1
+      | Single_import -> 2
+      | Own_scope -> 3);
+  region_tier = Package_members;
   module_path_from_ast = extract_package_decl;
   class_body_extra_parents = scala_mixins_before_superclass;
   superclass_position = Superclass_after_mixins;
@@ -699,9 +723,20 @@ let package_scoped : t = { default with
   module_path_from_ast = extract_package_decl;
 }
 
-let java : t = package_scoped
+let java : t = { package_scoped with
+  tier_rank =
+    (function
+      | On_demand -> 0
+      | Own_scope -> 1
+      | Single_import -> 2
+      | Package_members -> 3);
+}
+
 let kotlin : t = package_scoped
-let csharp : t = package_scoped
+
+let csharp : t = { package_scoped with
+  namespaces_nest = true;
+}
 let cpp : t = { package_scoped with
   unqualified_scope = `Per_translation_unit;
   module_path_from_ast = namespace_decl_or_global;
@@ -815,6 +850,7 @@ let vb : t = { default with
   walks_inheritance = true;
   module_definition_is_namespace = true;
   object_members_bind_in_namespace = true;
+  namespaces_nest = true;
 }
 
 let for_lang (lang : Lang.t) : t =

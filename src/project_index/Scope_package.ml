@@ -1,42 +1,12 @@
 open Types
 
-type tier =
-  | On_demand
-  | Single_import
-  | Own_scope
-  | Package_members
-
-let shadowing_order (lang : Lang.t) : tier list =
-  match lang with
-  | Lang.Java -> [ On_demand; Own_scope; Single_import ]
-  | Lang.Scala -> [ Package_members; On_demand; Single_import; Own_scope ]
-  | Lang.Kotlin
-  | Lang.Csharp
-  | Lang.Vb
-  | Lang.Cpp
-  | Lang.C -> [ On_demand; Single_import; Own_scope ]
-  | _ -> [ On_demand; Single_import; Own_scope ]
-
-let region_tier (lang : Lang.t) : tier =
-  match lang with
-  | Lang.Scala -> Package_members
-  | _ -> Own_scope
-
-let namespaces_nest (lang : Lang.t) : bool =
-  match lang with
-  | Lang.Csharp
-  | Lang.Vb -> true
-  | Lang.Java
-  | Lang.Kotlin
-  | Lang.Scala -> false
-  | _ -> false
-
 type tiered = {
-  tier : tier;
+  tier : Index_lang_rules.tier;
   binding : Scope_binding.positioned_binding;
 }
 
-let at_tier (tier : tier) (bindings : Scope_binding.positioned_binding list)
+let at_tier (tier : Index_lang_rules.tier)
+    (bindings : Scope_binding.positioned_binding list)
     : tiered list =
   List.map
     (fun (binding : Scope_binding.positioned_binding) -> { tier; binding })
@@ -79,15 +49,8 @@ let is_extension_binding (binding : Scope_binding.positioned_binding) : bool =
       | Func_lookup.Scope_companion _ -> false)
     binding.Scope_binding.pb_kinds
 
-let equal_tier (first : tier) (second : tier) : bool =
-  match (first, second) with
-  | On_demand, On_demand
-  | Single_import, Single_import
-  | Own_scope, Own_scope
-  | Package_members, Package_members -> true
-  | (On_demand | Single_import | Own_scope | Package_members), _ -> false
-
-let keep_strongest (lang : Lang.t) (bindings : tiered list)
+let keep_strongest ~(tier_rank : Index_lang_rules.tier -> int)
+    (bindings : tiered list)
     : Scope_binding.positioned_binding list =
   let at_file_scope (entry : tiered) : bool =
     (match entry.binding.Scope_binding.pb_parent_path with
@@ -95,26 +58,17 @@ let keep_strongest (lang : Lang.t) (bindings : tiered list)
      | _ :: _ -> false)
     && not (is_extension_binding entry.binding)
   in
+  let rank (entry : tiered) : int = tier_rank entry.tier in
   let strongest =
     List.fold_left
-      (fun (strongest : tier Common.SMap.t) (entry : tiered) ->
+      (fun (strongest : int Common.SMap.t) (entry : tiered) ->
         if not (at_file_scope entry) then strongest
         else
           let name = entry.binding.Scope_binding.pb_name in
-          Common.SMap.add name entry.tier strongest)
+          Common.SMap.add name (rank entry) strongest)
       Common.SMap.empty
       (List.filter at_file_scope bindings
        |> List.stable_sort (fun (first : tiered) (second : tiered) ->
-              let rank (entry : tiered) : int =
-                let rec index (position : int) (order : tier list) : int =
-                  match order with
-                  | [] -> position
-                  | candidate :: rest ->
-                    if equal_tier candidate entry.tier then position
-                    else index (position + 1) rest
-                in
-                index 0 (shadowing_order lang)
-              in
               Int.compare (rank first) (rank second)))
   in
   List.filter_map
@@ -124,7 +78,7 @@ let keep_strongest (lang : Lang.t) (bindings : tiered list)
         match
           Common.SMap.find_opt entry.binding.Scope_binding.pb_name strongest
         with
-        | Some (winner : tier) when equal_tier winner entry.tier ->
+        | Some (winner : int) when Int.equal winner (rank entry) ->
           Some entry.binding
         | Some _
         | None -> None)
@@ -159,7 +113,9 @@ let members_along_order
   |> Common.SMap.bindings
 
 let build
-    ~(lang : Lang.t)
+    ~(tier_rank : Index_lang_rules.tier -> int)
+    ~(region_tier : Index_lang_rules.tier)
+    ~(namespaces_nest : bool)
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
     ~(classes_by_file : class_info list Common.SMap.t)
@@ -350,7 +306,7 @@ let build
       enclosing :: enclosing_namespaces enclosing
   in
   let own_namespaces : Names.Module_qn.t list =
-    (if namespaces_nest lang then
+    (if namespaces_nest then
        List.concat_map
          (fun (region : Names.Module_qn.t) ->
            region :: enclosing_namespaces region)
@@ -396,13 +352,13 @@ let build
       extension_namespaces
   in
   let bindings =
-    at_tier On_demand
+    at_tier Index_lang_rules.On_demand
       (unambiguous_on_demand (global_bindings @ List.rev on_demand)
        @ extension_bindings)
-    @ at_tier (region_tier lang) own_region_bindings
-    @ at_tier Own_scope
+    @ at_tier region_tier own_region_bindings
+    @ at_tier Index_lang_rules.Own_scope
         (function_bindings @ alias_bindings @ type_bindings @ member_bindings)
-    @ at_tier Single_import (List.rev imported)
+    @ at_tier Index_lang_rules.Single_import (List.rev imported)
   in
-  (Scope_binding.bindings_of_positioned (keep_strongest lang bindings),
+  (Scope_binding.bindings_of_positioned (keep_strongest ~tier_rank bindings),
    bound_class_files)

@@ -46,6 +46,12 @@ type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
 
+type tier =
+  | On_demand
+  | Single_import
+  | Own_scope
+  | Package_members
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -74,6 +80,9 @@ type t = {
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
     | `Per_translation_unit | `Per_project ];
+  tier_rank : tier -> int;
+  region_tier : tier;
+  namespaces_nest : bool;
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace

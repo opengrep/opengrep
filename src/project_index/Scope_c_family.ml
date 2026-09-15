@@ -164,7 +164,7 @@ let open_namespaces (fi : file_info) : Names.Module_qn.t list =
   |> List.sort_uniq Names.Module_qn.compare
 
 let build
-    ~(lang : Lang.t)
+    ~(tier_rank : Index_lang_rules.tier -> int)
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
     ~(classes_by_file : class_info list Common.SMap.t)
@@ -275,13 +275,13 @@ let build
            using.uc_directives)
   in
   let bindings =
-    Scope_package.at_tier Scope_package.On_demand on_demand
-    @ Scope_package.at_tier Scope_package.Own_scope
+    Scope_package.at_tier Index_lang_rules.On_demand on_demand
+    @ Scope_package.at_tier Index_lang_rules.Own_scope
         (own_namespace_bindings @ function_bindings @ alias_bindings
          @ type_bindings @ member_bindings)
-    @ Scope_package.at_tier Scope_package.Single_import imported
+    @ Scope_package.at_tier Index_lang_rules.Single_import imported
   in
   List.fold_left bind_alias
     (Scope_binding.bindings_of_positioned
-       (Scope_package.keep_strongest lang bindings))
+       (Scope_package.keep_strongest ~tier_rank bindings))
     (function_pointer_aliases fi.fi_ast)

@@ -1,22 +1,21 @@
-type tier =
-  | On_demand
-  | Single_import
-  | Own_scope
-  | Package_members
-
 type tiered = {
-  tier : tier;
+  tier : Index_lang_rules.tier;
   binding : Scope_binding.positioned_binding;
 }
 
-val at_tier : tier -> Scope_binding.positioned_binding list -> tiered list
+val at_tier :
+  Index_lang_rules.tier ->
+  Scope_binding.positioned_binding list ->
+  tiered list
 
 val unambiguous_on_demand :
   Scope_binding.positioned_binding list ->
   Scope_binding.positioned_binding list
 
 val keep_strongest :
-  Lang.t -> tiered list -> Scope_binding.positioned_binding list
+  tier_rank:(Index_lang_rules.tier -> int) ->
+  tiered list ->
+  Scope_binding.positioned_binding list
 
 val members_along_order :
   resolution_orders:Func_lookup.resolution_orders ->
@@ -25,7 +24,9 @@ val members_along_order :
   (string * Func_info.t list) list
 
 val build :
-  lang:Lang.t ->
+  tier_rank:(Index_lang_rules.tier -> int) ->
+  region_tier:Index_lang_rules.tier ->
+  namespaces_nest:bool ->
   definitions_by_qn:Types.definition Common.SMap.t ->
   attributes_by_module:Func_lookup.module_attributes ->
   classes_by_file:Types.class_info list Common.SMap.t ->
