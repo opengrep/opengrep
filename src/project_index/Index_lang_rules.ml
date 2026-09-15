@@ -53,6 +53,7 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  specifier_candidates : Fpath.t -> string list;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -285,6 +286,7 @@ let default : t = {
   normalize_import_specifier = (fun s -> s);
   specifiers_name_files = false;
   specifiers_are_uris = false;
+  specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -543,10 +545,41 @@ let typescript_class_constructor_synth_fields
       when List.exists is_param_property_attr pattrs -> Some (pn, pty)
     | _ -> None)
 
+(* The extensions a specifier leaves out: the source extensions
+   [candidates_of_base] probes. *)
+let source_exts : string list =
+  [ ".ts"; ".tsx"; ".mts"; ".cts"; ".js"; ".jsx"; ".mjs"; ".cjs" ]
+
+let candidates_of_base (base_path : Fpath.t) : string list =
+  let base = Fpath.to_string base_path in
+  let index_under (ext : string) : string =
+    Fpath.append base_path (Fpath.v ("index" ^ ext)) |> Fpath.to_string
+  in
+  (* Extensioned specifiers: mandatory under NodeNext resolution, where
+     './utils.js' refers to utils.ts on disk (and plain CJS requires
+     name the real file).  Try the literal path and the source-extension
+     swaps first; appending to an already-extensioned base can only
+     produce names like [utils.js.ts], which never exist. *)
+  let extensioned =
+    let chop = Fpath.to_string (Fpath.rem_ext base_path) in
+    match Fpath.get_ext base_path with
+    | ".js" -> [ base; chop ^ ".ts"; chop ^ ".tsx" ]
+    | ".jsx" -> [ base; chop ^ ".tsx" ]
+    | ".mjs" -> [ base; chop ^ ".mts"; chop ^ ".ts" ]
+    | ".cjs" -> [ base; chop ^ ".cts"; chop ^ ".ts" ]
+    | ".ts" | ".tsx" | ".mts" | ".cts" -> [ base ]
+    | "" -> []
+    | _ -> [ base ]
+  in
+  extensioned
+  @ List.map (fun (ext : string) -> base ^ ext) source_exts
+  @ List.map index_under source_exts
+
 let typescript : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
   specifiers_name_files = true;
+  specifier_candidates = candidates_of_base;
   discover_project =
     (fun ~(project_root : Fpath.t) ->
       let excludes, module_paths = Ts_modules.discover ~project_root in

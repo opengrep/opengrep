@@ -1,0 +1,15 @@
+rules:
+  - id: dotted-specifier
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      Tainted data flows through an import whose specifier ends in a
+      dot segment that is not a JavaScript extension. Specifier
+      resolution must map './types.d' to types.d.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

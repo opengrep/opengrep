@@ -12,6 +12,7 @@ type path_entry = {
 type module_files = {
   mf_modules : Names.Module_qn.t Common.SMap.t;
   mf_paths : path_entry list;
+  mf_candidates : Fpath.t -> string list;
 }
 
 type specifier_resolution =
@@ -53,39 +54,6 @@ let substituted (pattern : path_pattern) (capture : string) : string =
   | Pattern_exact (exact : string) -> exact
   | Pattern_wildcard { before; after } -> before ^ capture ^ after
 
-(* The extensions a specifier leaves out: the source extensions
-   [candidates_of_base] probes. *)
-let source_exts : string list =
-  [ ".ts"; ".tsx"; ".mts"; ".cts"; ".js"; ".jsx"; ".mjs"; ".cjs" ]
-
-let candidates_of_base (base_path : Fpath.t) : string list =
-  let base = Fpath.to_string base_path in
-  let index_under (ext : string) : string =
-    Fpath.append base_path (Fpath.v ("index" ^ ext)) |> Fpath.to_string
-  in
-  (* Extensioned specifiers: mandatory under NodeNext resolution, where
-     './utils.js' refers to utils.ts on disk (and plain CJS requires
-     name the real file).  Try the literal path and the source-extension
-     swaps first; appending to an already-extensioned base can only
-     produce names like [utils.js.ts], which never exist. *)
-  let extensioned =
-    let chop = Fpath.to_string (Fpath.rem_ext base_path) in
-    match Fpath.get_ext base_path with
-    | ".js" -> [ base; chop ^ ".ts"; chop ^ ".tsx" ]
-    | ".jsx" -> [ base; chop ^ ".tsx" ]
-    | ".mjs" -> [ base; chop ^ ".mts"; chop ^ ".ts" ]
-    | ".cjs" -> [ base; chop ^ ".cts"; chop ^ ".ts" ]
-    | ".ts" | ".tsx" | ".mts" | ".cts" -> [ base ]
-    | "" -> []
-    | _ -> [ base ]
-  in
-  match Fpath.get_ext base_path with
-  | "" | ".js" | ".jsx" | ".mjs" | ".cjs" | ".ts" | ".tsx" | ".mts" | ".cts" ->
-    extensioned
-    @ List.map (fun (ext : string) -> base ^ ext) source_exts
-    @ List.map index_under source_exts
-  | _ -> extensioned
-
 let module_of_candidates (files : module_files) (candidates : string list)
     : Names.Module_qn.t option =
   List.find_map
@@ -95,7 +63,7 @@ let module_of_candidates (files : module_files) (candidates : string list)
 let module_of_relative (files : module_files) ~(current_file : Fpath.t)
     (specifier : string) : Names.Module_qn.t option =
   module_of_candidates files
-    (candidates_of_base
+    (files.mf_candidates
        (Fpath.append (Fpath.parent current_file) (Fpath.v specifier)
         |> Fpath.normalize |> Fpath.rem_empty_seg))
 
@@ -109,7 +77,7 @@ let module_of_bare (files : module_files) (specifier : string)
         List.find_map
           (fun (target : path_pattern) ->
             module_of_candidates files
-              (candidates_of_base
+              (files.mf_candidates
                  (Fpath.v (substituted target capture) |> Fpath.normalize
                   |> Fpath.rem_empty_seg)))
           entry.pe_targets)
@@ -182,7 +150,8 @@ let specifier_resolution_of_files ~(cfg : Index_lang_rules.t)
           (fun ((key : string), (targets : string list)) ->
             { pe_pattern = pattern_of_string key;
               pe_targets = List.map pattern_of_string targets })
-          paths }
+          paths;
+      mf_candidates = cfg.Index_lang_rules.specifier_candidates }
 
 let relative_head ~(cfg : Index_lang_rules.t) (segment : string)
     : Index_lang_rules.relative_module option =
