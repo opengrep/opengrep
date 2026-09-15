@@ -137,6 +137,8 @@ val resolve_in_scope : t -> string -> scope_entry list
 val module_attribute :
   t -> Names.Module_qn.t -> string -> module_attribute option
 
+val companion_of_class : t -> Names.Class_qn.t -> Names.Class_qn.t option
+
 val resolution_order : t -> Names.Class_qn.t -> Names.Class_qn.t list
 
 val is_known_class : t -> Names.Class_qn.t -> bool

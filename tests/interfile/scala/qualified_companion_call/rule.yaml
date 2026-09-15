@@ -1,0 +1,12 @@
+rules:
+  - id: test-qualified-companion-call
+    languages: [scala]
+    message: A fully qualified call on the object name from another package reaches the object member
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

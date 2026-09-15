@@ -276,6 +276,22 @@ let module_attribute (t : t) (qn : Names.Module_qn.t) (name : string)
     : module_attribute option =
   Common.SMap.find_opt name (attributes_of_module t.module_attributes qn)
 
+let companion_of_class (t : t) (class_qn : Names.Class_qn.t)
+    : Names.Class_qn.t option =
+  match Names.Class_qn.split_last class_qn with
+  | None -> None
+  | Some ((parent : Names.Class_qn.t), (name : string)) -> (
+    match
+      module_attribute t
+        (Names.Module_qn.of_string (Names.Class_qn.to_string parent)) name
+    with
+    | Some (Attr_class_with_companion (_, (companion_qn : Names.Class_qn.t)))
+      -> Some companion_qn
+    | Some (Attr_class _)
+    | Some (Attr_functions _)
+    | Some (Attr_module _)
+    | None -> None)
+
 let resolution_order (t : t) (class_qn : Names.Class_qn.t)
     : Names.Class_qn.t list =
   Option.value

@@ -907,6 +907,10 @@ type binding_target =
   | Bound_functions of func_info list
   | Bound_object of func_info list Common.SMap.t
 
+type name_position =
+  | Term_position
+  | Type_position
+
 type dotted_chain = {
   dc_rooted : bool;
   dc_segments : string list;
@@ -952,12 +956,16 @@ let class_in_scope ~(func_lookup : Func_lookup.t)
     (entries_in_scope ~func_lookup ~caller_parent_path name)
 
 let head_binding ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (segment : string)
-    : binding_target option =
+    ~(caller_parent_path : IL.name option list) ~(position : name_position)
+    (segment : string) : binding_target option =
   let entries = entries_in_scope ~func_lookup ~caller_parent_path segment in
-  match Func_lookup.companion_of_entries entries with
-  | Some (companion_qn : Names.Class_qn.t) -> Some (Bound_class companion_qn)
-  | None -> (
+  match
+    (position, Func_lookup.companion_of_entries entries)
+  with
+  | Term_position, Some (companion_qn : Names.Class_qn.t) ->
+    Some (Bound_class companion_qn)
+  | Term_position, None
+  | Type_position, _ -> (
   match Func_lookup.class_of_entries entries with
   | Some (class_qn : Names.Class_qn.t) -> Some (Bound_class class_qn)
   | None -> (
@@ -1064,9 +1072,20 @@ let in_own_modules ~(func_lookup : Func_lookup.t) (chain : string list)
     (Func_lookup.own_modules func_lookup)
 
 let follow_chain ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (chain : dotted_chain)
-    : binding_target option =
+    ~(caller_parent_path : IL.name option list) ~(position : name_position)
+    (chain : dotted_chain) : binding_target option =
   let segments_of_chain = chain.dc_segments in
+  let in_position ((target : binding_target), (segments : string list))
+      : binding_target * string list =
+    match (position, target) with
+    | Term_position, Bound_class (class_qn : Names.Class_qn.t) -> (
+      match Func_lookup.companion_of_class func_lookup class_qn with
+      | Some (companion_qn : Names.Class_qn.t) ->
+        (Bound_class companion_qn, segments)
+      | None -> (target, segments))
+    | Term_position, (Bound_module _ | Bound_functions _ | Bound_object _)
+    | Type_position, _ -> (target, segments)
+  in
   let completed ((target : binding_target), (segments : string list))
       : binding_target option =
     List.fold_left
@@ -1085,14 +1104,15 @@ let follow_chain ~(func_lookup : Func_lookup.t)
         | None -> global_attribute_binding ~func_lookup segments_of_chain
       with
       | None -> None
-      | Some (start : binding_target * string list) -> completed start
+      | Some (start : binding_target * string list) ->
+        completed (in_position start)
     else
-      match head_binding ~func_lookup ~caller_parent_path head with
+      match head_binding ~func_lookup ~caller_parent_path ~position head with
       | Some (target : binding_target) -> completed (target, segments)
       | None ->
         List.find_map
           (fun (start : unit -> (binding_target * string list) option) ->
-            Option.bind (start ()) completed)
+            Option.bind (start ()) (fun start -> completed (in_position start)))
           [ (fun () -> in_own_modules ~func_lookup segments_of_chain);
             (fun () ->
               qualified_prefix_binding ~func_lookup segments_of_chain) ])
@@ -1221,7 +1241,10 @@ let class_qn_of_type_name ~(func_lookup : Func_lookup.t)
     | G.IdQualified { G.name_middle = Some (G.QDots (_ :: _)); _ } ->
       Option.bind (dotted_chain_of_name name)
         (fun (chain : dotted_chain) ->
-          match follow_chain ~func_lookup ~caller_parent_path chain with
+          match
+            follow_chain ~func_lookup ~caller_parent_path
+              ~position:Type_position chain
+          with
           | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
           | Some (Bound_module _)
           | Some (Bound_object _)
@@ -1285,7 +1308,7 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
   | G.Call (callee, _) -> (
     match
       Option.bind (dotted_chain_of_expr callee)
-        (follow_chain ~func_lookup ~caller_parent_path)
+        (follow_chain ~func_lookup ~caller_parent_path ~position:Term_position)
     with
     | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
     | Some (Bound_functions (funcs : func_info list))
@@ -1447,7 +1470,8 @@ let identify_callee_interfile ~(lang : Lang.t)
     match
       of_target
         (Option.bind (dotted_chain_of_expr callee)
-        (follow_chain ~func_lookup ~caller_parent_path))
+        (follow_chain ~func_lookup ~caller_parent_path
+           ~position:Term_position))
     with
     | Some _ as resolved -> resolved
     | None -> (
@@ -1466,5 +1490,6 @@ let identify_callee_interfile ~(lang : Lang.t)
   | G.N (G.IdQualified _) ->
     of_target
       (Option.bind (dotted_chain_of_expr callee)
-         (follow_chain ~func_lookup ~caller_parent_path))
+         (follow_chain ~func_lookup ~caller_parent_path
+            ~position:Term_position))
   | _ -> None
