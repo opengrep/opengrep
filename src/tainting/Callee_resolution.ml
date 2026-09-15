@@ -274,40 +274,6 @@ let funcs_with_bare_name ~(func_lookup : Func_lookup.t)
     ~(all_funcs : func_info list) (bare_name : string) : func_info list =
   Func_lookup.funcs_with_bare_name func_lookup ~all_funcs bare_name
 
-let rec parent_path_is_prefix (pre : IL.name option list)
-    (path : IL.name option list) : bool =
-  match pre, path with
-  | [], _ -> true
-  | p :: ps, x :: xs ->
-    Option.equal Function_id.equal_il_name p x
-    && parent_path_is_prefix ps xs
-  | _ :: _, [] -> false
-
-let nearest_scope_entries (entries : Func_lookup.scope_entry list)
-    (caller_parent_path : IL.name option list) : Func_lookup.scope_entry list =
-  let in_scope =
-    List.filter
-      (fun (entry : Func_lookup.scope_entry) ->
-        parent_path_is_prefix entry.Func_lookup.parent_path caller_parent_path)
-      entries
-  in
-  let depth (entry : Func_lookup.scope_entry) : int =
-    List.length entry.Func_lookup.parent_path
-  in
-  match in_scope with
-  | [] -> []
-  | first :: rest ->
-    let nearest =
-      List.fold_left
-        (fun (deepest : int) (entry : Func_lookup.scope_entry) ->
-          max deepest (depth entry))
-        (depth first) rest
-    in
-    List.filter
-      (fun (entry : Func_lookup.scope_entry) ->
-        Int.equal (depth entry) nearest)
-      in_scope
-
 type construction_resolver =
   call_arity:int -> G.type_ -> fn_id option
 
@@ -946,8 +912,7 @@ and dotted_chain_of_name (name : G.name) : dotted_chain option =
 let entries_in_scope ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) (name : string)
     : Func_lookup.scope_entry list =
-  nearest_scope_entries
-    (Func_lookup.resolve_in_scope func_lookup name) caller_parent_path
+  Func_lookup.resolve_in_scope func_lookup ~caller_parent_path name
 
 let class_in_scope ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) (name : string)

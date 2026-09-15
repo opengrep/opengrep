@@ -24,11 +24,6 @@ val is_free_named : func_info -> string -> bool
 val find_func_in_scope :
   func_info list -> IL.name option list -> string -> func_info option
 
-val nearest_scope_entries :
-  Func_lookup.scope_entry list ->
-  IL.name option list ->
-  Func_lookup.scope_entry list
-
 val prefer_concrete : func_info list -> func_info list
 
 val uses_new_keyword : Lang.t -> bool

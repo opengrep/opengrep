@@ -486,9 +486,8 @@ let identify_callback_interfile ~(lang : Lang.t)
           | [] -> None
         in
         let nearest =
-          nearest_scope_entries
-            (Func_lookup.resolve_in_scope func_lookup callback_name_str)
-            caller_parent_path
+          Func_lookup.resolve_in_scope func_lookup ~caller_parent_path
+            callback_name_str
         in
         match Func_lookup.class_of_entries nearest with
         | Some (class_qn : Names.Class_qn.t) ->

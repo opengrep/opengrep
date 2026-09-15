@@ -254,11 +254,42 @@ let overload_groups (t : t) : bool = t.overload_groups
 
 let own_modules (t : t) : Names.Module_qn.t list = t.own_modules
 
-let resolve_in_scope (t : t) (name : string) : scope_entry list =
+let rec parent_path_is_prefix (pre : IL.name option list)
+    (path : IL.name option list) : bool =
+  match pre, path with
+  | [], _ -> true
+  | p :: ps, x :: xs ->
+    Option.equal Function_id.equal_il_name p x
+    && parent_path_is_prefix ps xs
+  | _ :: _, [] -> false
+
+let nearest_scope_entries (entries : scope_entry list) : scope_entry list =
+  let depth (entry : scope_entry) : int =
+    List.length entry.parent_path
+  in
+  match entries with
+  | [] -> []
+  | first :: rest ->
+    let nearest =
+      List.fold_left
+        (fun (deepest : int) (entry : scope_entry) ->
+          max deepest (depth entry))
+        (depth first) rest
+    in
+    List.filter
+      (fun (entry : scope_entry) -> Int.equal (depth entry) nearest)
+      entries
+
+let resolve_in_scope (t : t) ~(caller_parent_path : IL.name option list)
+    (name : string) : scope_entry list =
+  let visible (entry : scope_entry) : bool =
+    parent_path_is_prefix entry.parent_path caller_parent_path
+  in
   let rec entries (table : scope_table) : scope_entry list =
     match table with
     | Scope_bindings (bindings : scope_entry list Common.SMap.t) ->
-      Option.value (Common.SMap.find_opt name bindings) ~default:[]
+      List.filter visible
+        (Option.value (Common.SMap.find_opt name bindings) ~default:[])
     | Scope_layered (front, back) -> (
       match (entries front, entries back) with
       | found, [] -> found
@@ -270,7 +301,7 @@ let resolve_in_scope (t : t) (name : string) : scope_entry list =
       | [] -> entries back
       | found -> found)
   in
-  entries t.scope_table
+  nearest_scope_entries (entries t.scope_table)
 
 let module_attribute (t : t) (qn : Names.Module_qn.t) (name : string)
     : module_attribute option =

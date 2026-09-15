@@ -548,9 +548,7 @@ let invocation_resolver ~(func_lookup : Func_lookup.t)
     : Func_info.fn_id option =
   match
     Func_lookup.functions_of_entries
-      (Callee_resolution.nearest_scope_entries
-         (Func_lookup.resolve_in_scope func_lookup var_name)
-         caller_parent_path)
+      (Func_lookup.resolve_in_scope func_lookup ~caller_parent_path var_name)
   with
   | (func : Func_info.t) :: _ -> Some func.Func_info.fn_id
   | [] -> None

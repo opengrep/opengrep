@@ -132,7 +132,8 @@ val overload_groups : t -> bool
 
 val own_modules : t -> Names.Module_qn.t list
 
-val resolve_in_scope : t -> string -> scope_entry list
+val resolve_in_scope :
+  t -> caller_parent_path:IL.name option list -> string -> scope_entry list
 
 val module_attribute :
   t -> Names.Module_qn.t -> string -> module_attribute option
