@@ -44,11 +44,11 @@ type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
 
-type tier =
-  | On_demand
+type binding_kind =
+  | Wildcard_import
   | Single_import
-  | Own_scope
-  | Package_members
+  | Own_definition
+  | Package_member
 
 type t = {
   is_init_file : Fpath.t -> bool;
@@ -78,8 +78,8 @@ type t = {
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
     | `Per_translation_unit | `Per_project ];
-  tier_rank : tier -> int;
-  region_tier : tier;
+  precedence : binding_kind -> int;
+  own_package_members_kind : binding_kind;
   namespaces_nest : bool;
   relative_module_names : (string * relative_module) list;
   import_head_may_be_own_module : bool;
@@ -312,13 +312,13 @@ let default : t = {
   superclass_position = Superclass_before_mixins;
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
-  tier_rank =
+  precedence =
     (function
-      | On_demand -> 0
+      | Wildcard_import -> 0
       | Single_import -> 1
-      | Own_scope -> 2
-      | Package_members -> 3);
-  region_tier = Own_scope;
+      | Own_definition -> 2
+      | Package_member -> 3);
+  own_package_members_kind = Own_definition;
   namespaces_nest = false;
   package_directive_is_namespace = false;
   module_definition_is_namespace = false;
@@ -654,13 +654,13 @@ let scala : t = { default with
   package_directive_is_namespace = true;
   walks_inheritance = true;
   unqualified_scope = `Per_package;
-  tier_rank =
+  precedence =
     (function
-      | Package_members -> 0
-      | On_demand -> 1
+      | Package_member -> 0
+      | Wildcard_import -> 1
       | Single_import -> 2
-      | Own_scope -> 3);
-  region_tier = Package_members;
+      | Own_definition -> 3);
+  own_package_members_kind = Package_member;
   module_path_from_ast = extract_package_decl;
   class_body_extra_parents = scala_mixins_before_superclass;
   superclass_position = Superclass_after_mixins;
@@ -724,12 +724,12 @@ let package_scoped : t = { default with
 }
 
 let java : t = { package_scoped with
-  tier_rank =
+  precedence =
     (function
-      | On_demand -> 0
-      | Own_scope -> 1
+      | Wildcard_import -> 0
+      | Own_definition -> 1
       | Single_import -> 2
-      | Package_members -> 3);
+      | Package_member -> 3);
 }
 
 let kotlin : t = package_scoped

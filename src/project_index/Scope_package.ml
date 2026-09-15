@@ -1,15 +1,15 @@
 open Types
 
-type tiered = {
-  tier : Index_lang_rules.tier;
+type binding_with_kind = {
+  kind : Index_lang_rules.binding_kind;
   binding : Scope_binding.positioned_binding;
 }
 
-let at_tier (tier : Index_lang_rules.tier)
+let of_kind (kind : Index_lang_rules.binding_kind)
     (bindings : Scope_binding.positioned_binding list)
-    : tiered list =
+    : binding_with_kind list =
   List.map
-    (fun (binding : Scope_binding.positioned_binding) -> { tier; binding })
+    (fun (binding : Scope_binding.positioned_binding) -> { kind; binding })
     bindings
 
 let unambiguous_on_demand
@@ -49,36 +49,36 @@ let is_extension_binding (binding : Scope_binding.positioned_binding) : bool =
       | Func_lookup.Scope_companion _ -> false)
     binding.Scope_binding.pb_kinds
 
-let keep_strongest ~(tier_rank : Index_lang_rules.tier -> int)
-    (bindings : tiered list)
+let keep_highest_precedence ~(precedence : Index_lang_rules.binding_kind -> int)
+    (bindings : binding_with_kind list)
     : Scope_binding.positioned_binding list =
-  let at_file_scope (entry : tiered) : bool =
+  let at_file_scope (entry : binding_with_kind) : bool =
     (match entry.binding.Scope_binding.pb_parent_path with
      | [] -> true
      | _ :: _ -> false)
     && not (is_extension_binding entry.binding)
   in
-  let rank (entry : tiered) : int = tier_rank entry.tier in
-  let strongest =
+  let precedence_of (entry : binding_with_kind) : int = precedence entry.kind in
+  let highest =
     List.fold_left
-      (fun (strongest : int Common.SMap.t) (entry : tiered) ->
-        if not (at_file_scope entry) then strongest
+      (fun (highest : int Common.SMap.t) (entry : binding_with_kind) ->
+        if not (at_file_scope entry) then highest
         else
           let name = entry.binding.Scope_binding.pb_name in
-          Common.SMap.add name (rank entry) strongest)
+          Common.SMap.add name (precedence_of entry) highest)
       Common.SMap.empty
       (List.filter at_file_scope bindings
-       |> List.stable_sort (fun (first : tiered) (second : tiered) ->
-              Int.compare (rank first) (rank second)))
+       |> List.stable_sort (fun (first : binding_with_kind) (second : binding_with_kind) ->
+              Int.compare (precedence_of first) (precedence_of second)))
   in
   List.filter_map
-    (fun (entry : tiered) ->
+    (fun (entry : binding_with_kind) ->
       if not (at_file_scope entry) then Some entry.binding
       else
         match
-          Common.SMap.find_opt entry.binding.Scope_binding.pb_name strongest
+          Common.SMap.find_opt entry.binding.Scope_binding.pb_name highest
         with
-        | Some (winner : int) when Int.equal winner (rank entry) ->
+        | Some (winner : int) when Int.equal winner (precedence_of entry) ->
           Some entry.binding
         | Some _
         | None -> None)
@@ -113,8 +113,8 @@ let members_along_order
   |> Common.SMap.bindings
 
 let build
-    ~(tier_rank : Index_lang_rules.tier -> int)
-    ~(region_tier : Index_lang_rules.tier)
+    ~(precedence : Index_lang_rules.binding_kind -> int)
+    ~(own_package_members_kind : Index_lang_rules.binding_kind)
     ~(namespaces_nest : bool)
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
@@ -352,13 +352,13 @@ let build
       extension_namespaces
   in
   let bindings =
-    at_tier Index_lang_rules.On_demand
+    of_kind Index_lang_rules.Wildcard_import
       (unambiguous_on_demand (global_bindings @ List.rev on_demand)
        @ extension_bindings)
-    @ at_tier region_tier own_region_bindings
-    @ at_tier Index_lang_rules.Own_scope
+    @ of_kind own_package_members_kind own_region_bindings
+    @ of_kind Index_lang_rules.Own_definition
         (function_bindings @ alias_bindings @ type_bindings @ member_bindings)
-    @ at_tier Index_lang_rules.Single_import (List.rev imported)
+    @ of_kind Index_lang_rules.Single_import (List.rev imported)
   in
-  (Scope_binding.bindings_of_positioned (keep_strongest ~tier_rank bindings),
+  (Scope_binding.bindings_of_positioned (keep_highest_precedence ~precedence bindings),
    bound_class_files)

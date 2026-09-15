@@ -71,7 +71,7 @@ let resolve_parent_by_scope
         && String.equal (String.sub qs (qlen - plen) plen) path_str
         && (qlen = plen || Char.equal qs.[qlen - plen - 1] '.')
       in
-      let tier1 = List.filter dotted_ends_with_path candidates in
+      let path_suffix_matches = List.filter dotted_ends_with_path candidates in
       (* Most shared leading qn parts with [ci], shortest qn on ties;
          [require_shared] drops zero-overlap candidates. *)
       let pick_best ~require_shared qns =
@@ -104,8 +104,8 @@ let resolve_parent_by_scope
       (* A candidate that shares no leading part of its qualified name with
          the child is an unrelated homonym in every language, so a parent
          binds only through a shared prefix. *)
-      match tier1 with
-      | _ :: _ -> pick_best ~require_shared:true tier1
+      match path_suffix_matches with
+      | _ :: _ -> pick_best ~require_shared:true path_suffix_matches
       | [] -> pick_best ~require_shared:true candidates
     end
 

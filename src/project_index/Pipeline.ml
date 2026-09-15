@@ -275,8 +275,8 @@ let build_scope_table
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package ->
       let bindings, bound_class_files =
-        Scope_package.build ~tier_rank:cfg.Index_lang_rules.tier_rank
-          ~region_tier:cfg.Index_lang_rules.region_tier
+        Scope_package.build ~precedence:cfg.Index_lang_rules.precedence
+          ~own_package_members_kind:cfg.Index_lang_rules.own_package_members_kind
           ~namespaces_nest:cfg.Index_lang_rules.namespaces_nest
           ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
@@ -329,7 +329,7 @@ let build_scope_table
         Include_map.closure_of_file include_map (Fpath.to_string fi.fi_file)
       in
       let bindings =
-        Scope_c_family.build ~tier_rank:cfg.Index_lang_rules.tier_rank
+        Scope_c_family.build ~precedence:cfg.Index_lang_rules.precedence
           ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~resolution_orders
           ~methods_by_class ~region_bindings

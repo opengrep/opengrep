@@ -1,5 +1,5 @@
 val build :
-  tier_rank:(Index_lang_rules.tier -> int) ->
+  precedence:(Index_lang_rules.binding_kind -> int) ->
   definitions_by_qn:Types.definition Common.SMap.t ->
   attributes_by_module:Func_lookup.module_attributes ->
   classes_by_file:Types.class_info list Common.SMap.t ->

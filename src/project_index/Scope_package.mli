@@ -1,20 +1,20 @@
-type tiered = {
-  tier : Index_lang_rules.tier;
+type binding_with_kind = {
+  kind : Index_lang_rules.binding_kind;
   binding : Scope_binding.positioned_binding;
 }
 
-val at_tier :
-  Index_lang_rules.tier ->
+val of_kind :
+  Index_lang_rules.binding_kind ->
   Scope_binding.positioned_binding list ->
-  tiered list
+  binding_with_kind list
 
 val unambiguous_on_demand :
   Scope_binding.positioned_binding list ->
   Scope_binding.positioned_binding list
 
-val keep_strongest :
-  tier_rank:(Index_lang_rules.tier -> int) ->
-  tiered list ->
+val keep_highest_precedence :
+  precedence:(Index_lang_rules.binding_kind -> int) ->
+  binding_with_kind list ->
   Scope_binding.positioned_binding list
 
 val members_along_order :
@@ -24,8 +24,8 @@ val members_along_order :
   (string * Func_info.t list) list
 
 val build :
-  tier_rank:(Index_lang_rules.tier -> int) ->
-  region_tier:Index_lang_rules.tier ->
+  precedence:(Index_lang_rules.binding_kind -> int) ->
+  own_package_members_kind:Index_lang_rules.binding_kind ->
   namespaces_nest:bool ->
   definitions_by_qn:Types.definition Common.SMap.t ->
   attributes_by_module:Func_lookup.module_attributes ->
