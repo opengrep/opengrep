@@ -7,8 +7,14 @@ local function source()
 end
 
 local function handle(msg)
+  -- ok: test-local-shadows-global
+  sink(msg)
+end
+
+local function report(msg)
   -- ruleid: test-local-shadows-global
   sink(msg)
 end
 
-handle(source())
+handle("clean")
+report(source())
