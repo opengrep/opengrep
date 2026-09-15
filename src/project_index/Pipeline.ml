@@ -58,7 +58,6 @@ type ctx = {
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
-  project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
@@ -67,7 +66,6 @@ type ctx = {
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
   top_level_node_for : Fpath.t -> Function_id.t;
-  visible_names_for_file : file_info -> (string, unit) Hashtbl.t;
   stamp_var_types : stamp_var_types;
   (* (module qn string, exported name) -> module-level bare-name alias
      value, for import-value svalue stamping. See
@@ -177,23 +175,15 @@ let stamp_import_value_aliases
 
 (* This pass reads the class of a variable from the constructor the
    variable is initialised with and stamps that class onto
-   [id_instance_type].
-   Side effect on [visible]: extends it with discovered class names so
-   [build_funcs_by_name] keeps their methods. *)
+   [id_instance_type]. *)
 let stamp_base_var_types
     ~(lang : Lang.t)
     ~(project_class_names : G.name list)
-    ~(visible : (string, unit) Hashtbl.t)
     (fi : file_info) : unit =
   let facts =
     Object_initialization.detect_object_initialization
       ~extra_class_names:project_class_names fi.fi_ast lang
   in
-  List.iter (fun (_var, class_name) ->
-    match class_name with
-    | G.Id ((name_str, _), _) -> Hashtbl.replace visible name_str ()
-    | _ -> ()
-  ) facts;
   Object_initialization.stamp_id_types facts fi.fi_ast
 
 let build_alias_to_module_qn
@@ -491,27 +481,6 @@ let build_same_file_funcs_by_name
   ) same_file_list;
   tbl
 
-let build_funcs_by_name
-    ~(visible : (string, unit) Hashtbl.t)
-    ~(project_funcs_by_name : (string, Func_info.t list) Hashtbl.t)
-    ~(func_in_caller_file : Func_info.t -> bool)
-    () : (string, Func_info.t list) Hashtbl.t option =
-  let tbl = Hashtbl.create (Hashtbl.length visible) in
-  Hashtbl.iter (fun name () ->
-    match Hashtbl.find_opt project_funcs_by_name name with
-    | None -> ()
-    | Some fs ->
-      let kept = List.filter (fun (func : Func_info.t) ->
-        match Func_info.as_method func.Func_info.fn_id with
-        | Some (cls, _) -> Hashtbl.mem visible (fst cls.IL.ident)
-        | None -> true
-      ) fs in
-      let same, other = List.partition func_in_caller_file kept in
-      let kept = same @ other in
-      if kept <> [] then Hashtbl.replace tbl name kept
-  ) visible;
-  Some tbl
-
 (* Imported module singletons: stamp [local]'s occurrences with the
    singleton's class. *)
 let stamp_singleton_imports
@@ -564,12 +533,11 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         module_scope; go_packages;
         top_level_scope; namespace_object_members;
         classes_by_file; class_parent_paths; global_imports;
-        project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
         project_class_names;
         file_funcs_index;
         slice_element_of_field;
-        top_level_node_for; visible_names_for_file;
+        top_level_node_for;
         stamp_var_types; value_alias_index } = ctx in
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
@@ -577,17 +545,10 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let emitter =
       Edge_emitter.create ~top_level:(top_level_node_for fi.fi_file)
     in
-    let visible = staged "visibility" (fun () -> visible_names_for_file fi) in
     let fi_file_str = Fpath.to_string fi.fi_file in
     let top_level_node = top_level_node_for fi.fi_file in
-    let func_in_caller_file (func : FA.func_info) : bool =
-      match func_file_opt func with
-      | Some file_str -> file_str = fi_file_str
-      | None -> false
-    in
-    (* Must run before [build_funcs_by_name]: augments [visible] with cross-file class targets it filters on. *)
     staged "stamp base var types + import aliases" (fun () ->
-      stamp_base_var_types ~lang ~project_class_names ~visible fi;
+      stamp_base_var_types ~lang ~project_class_names fi;
       stamp_import_value_aliases ~value_alias_index fi);
     let file_scope =
       staged "scope table" @@ fun () ->
@@ -627,14 +588,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       staged "same-file funcs table" @@ fun () ->
       build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str
     in
-    let funcs_by_name =
-      staged "funcs_by_name table" @@ fun () ->
-      build_funcs_by_name ~visible ~project_funcs_by_name ~func_in_caller_file ()
-    in
     let func_lookup =
       staged "func_lookup create" @@ fun () ->
       Func_lookup.create
-        ?funcs_by_name:(Option.map Func_lookup.bare_name_index_of_hashtbl funcs_by_name)
         ~project_funcs_by_name:
           (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_name)
         ?funcs_by_module_qn:
@@ -646,10 +602,6 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~overload_groups:(Lang_config.overloads_by_type lang)
         ~file_module_qn:
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
-        ?constructors:
-          (Option.bind funcs_by_name
-             (Func_lookup.constructor_index_of_hashtbl ~lang))
-        ~project_constructors
         ~module_attributes:attributes_by_module
         ~resolution_orders
         ~class_qn_by_definition
@@ -823,23 +775,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       ) [] toplevel_calls
     in
     let toplevel_callbacks =
-      (* The file's visible functions ahead of the project's, layered
-         rather than merged: a merge copied the project table once per
-         file. *)
-      let project_index =
-        Func_lookup.bare_name_index_of_hashtbl project_funcs_by_name
-      in
-      let merged_funcs_by_name =
-        match funcs_by_name with
-        | None -> project_index
-        | Some pf ->
-          Func_lookup.bare_name_index_layered
-            ~front:(Func_lookup.bare_name_index_of_hashtbl pf)
-            ~back:project_index
-      in
       let toplevel_func_lookup =
         Func_lookup.create
-          ~funcs_by_name:merged_funcs_by_name
           ~overload_groups:(Lang_config.overloads_by_type lang)
           ~module_attributes:attributes_by_module
           ~resolution_orders

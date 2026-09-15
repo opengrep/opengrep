@@ -575,24 +575,12 @@ let build_project_call_graph (caps : < Cap.fork >)
     index
   in
 
-  (* Directory and per-file visible-names sets.  See [Visibility]. *)
-  let dir_visible_names =
-    Visibility.build_dir_index ~cfg file_infos
-  in
-  let visible_names_for_file =
-    Visibility.for_file ~cfg ~dir_visible_names ~project_funcs_by_module
-  in
-
   (* Per-AST [extract_calls] into an edge list; graph mutated only in the
      merge step. *)
   Log_interfile_timing.Log.info (fun m ->
       m "[interfile timing] project index: call graph: indexes (exports, \
          packages, modules, re-exports, visibility): %.2fs"
         (Unix.gettimeofday () -. t_indexes_start));
-  let project_constructors =
-    timed "call graph: constructors by class" @@ fun () ->
-    Func_lookup.constructor_index_of_funcs ~lang all_funcs
-  in
   let funcs_by_id = build_funcs_by_id all_funcs in
   let definitions_by_qn =
     timed "call graph: definitions by qualified name" (fun () ->
@@ -841,7 +829,6 @@ let build_project_call_graph (caps : < Cap.fork >)
           (fun (fi : file_info) ->
             List.filter (fun (imp : import) -> imp.im_global) fi.fi_imports)
           indexed_files;
-      project_constructors;
       project_funcs_by_name;
       project_funcs_by_module;
       file_module_qn;
@@ -849,7 +836,6 @@ let build_project_call_graph (caps : < Cap.fork >)
       file_funcs_index;
       slice_element_of_field;
       top_level_node_for;
-      visible_names_for_file;
       stamp_var_types =
         (fun ~type_state ~slice_element_of_field ast ->
           Type_augment.stamp_var_types_from_bodies ~uses_new_keyword

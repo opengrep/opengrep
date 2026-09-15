@@ -41,7 +41,6 @@ type ctx = {
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
-  project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
@@ -50,7 +49,6 @@ type ctx = {
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
   top_level_node_for : Fpath.t -> Function_id.t;
-  visible_names_for_file : file_info -> (string, unit) Hashtbl.t;
   stamp_var_types : stamp_var_types;
   (* (module qn string, exported name) -> module-level bare-name alias
      value; see [build_value_alias_index]. *)

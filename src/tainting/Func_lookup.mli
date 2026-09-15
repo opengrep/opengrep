@@ -78,7 +78,6 @@ val object_of_entries :
 
 val empty_scope_table : scope_table
 
-val bare_name_index_layered : front:bare_name_index -> back:bare_name_index -> bare_name_index
 val bare_name_index_override : front:bare_name_index -> back:bare_name_index -> bare_name_index
 val bare_name_index_of_hashtbl :
   (string, Func_info.t list) Hashtbl.t -> bare_name_index
@@ -90,17 +89,8 @@ val file_module_index_of_hashtbl :
   (string, Names.Module_qn.t) Hashtbl.t -> file_module_index
 val name_set_of_hashtbl : (string, unit) Hashtbl.t -> name_set
 
-(* The result holds the constructors that a file's bare-name table
-   contains under the constructor names of [lang], keyed by class. The
-   result is [None] when the table contains no entry under any of those
-   names, and a lookup then reads the project-wide index. *)
-val constructor_index_of_hashtbl :
-  lang:Lang.t ->
-  (string, Func_info.t list) Hashtbl.t -> constructor_index option
-
 (* The result holds the constructors among the given functions, keyed by
-   class. The project index builds the map once over every function of
-   the project, and the single-file call graph builds one over the file's
+   class. The single file call graph builds the map over the file's
    functions. *)
 val constructor_index_of_funcs :
   lang:Lang.t -> Func_info.t list -> constructor_index

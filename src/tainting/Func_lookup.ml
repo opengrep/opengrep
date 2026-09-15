@@ -1,14 +1,12 @@
 (* An index type built from a [Hashtbl.t] keeps that table with no copy, so
    the caller must not mutate the table after building the index. *)
 
-(* [Layered (front, back)] returns [front]'s functions for the bare name
-   followed by [back]'s. [Override (front, back)] returns [front]'s functions
-   when [front] holds the bare name, and [back]'s otherwise. Both forms read
-   [back], the project table shared by every file, and never write to it;
-   [front] is a small table built for one file. *)
+(* [Override (front, back)] returns [front]'s functions when [front] holds
+   the bare name, and [back]'s otherwise. It reads [back], the project table
+   shared by every file, and never writes to it; [front] is a small table
+   built for one file. *)
 type bare_name_index =
   | Table of (string, Func_info.t list) Hashtbl.t
-  | Layered of bare_name_index * bare_name_index
   | Override of bare_name_index * bare_name_index
 type module_index = (Names.Module_qn.t, Func_info.t list) Hashtbl.t
 type alias_index = (string, Names.Module_qn.t) Hashtbl.t
@@ -168,17 +166,11 @@ let keep_distinct (entries : scope_entry list) : scope_entry list =
     entries
 
 let bare_name_index_of_hashtbl tbl = Table tbl
-let bare_name_index_layered ~front ~back = Layered (front, back)
 let bare_name_index_override ~front ~back = Override (front, back)
 
 let rec find_in_index (idx : bare_name_index) (key : string) : Func_info.t list =
   match idx with
   | Table tbl -> Option.value (Hashtbl.find_opt tbl key) ~default:[]
-  | Layered (front, back) -> (
-      match (find_in_index front key, find_in_index back key) with
-      | xs, [] -> xs
-      | [], ys -> ys
-      | xs, ys -> xs @ ys)
   | Override (front, back) -> (
       match find_in_index front key with
       | [] -> find_in_index back key
@@ -211,18 +203,6 @@ let constructor_index_of_funcs ~(lang : Lang.t)
             constructors_by_class)
     Common.SMap.empty funcs
   |> Common.SMap.map List.rev
-
-let constructor_index_of_hashtbl ~(lang : Lang.t)
-    (tbl : (string, Func_info.t list) Hashtbl.t) : constructor_index option =
-  match
-    List.concat_map
-      (fun (name : string) ->
-        Option.value (Hashtbl.find_opt tbl name) ~default:[])
-      (Object_initialization.get_constructor_names lang)
-  with
-  | [] -> None
-  | _ :: _ as funcs_under_constructor_names ->
-    Some (constructor_index_of_funcs ~lang funcs_under_constructor_names)
 
 type t = {
   funcs_by_name : bare_name_index option;
