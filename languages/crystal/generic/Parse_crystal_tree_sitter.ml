@@ -285,13 +285,17 @@ and map_statement (env : env) (x : CST.statement) : G.stmt =
       G.DefStmt (ent, G.VarDef { vinit = Some (map_statement_expr env rhs); vtype = None; vtok = Some (token env eq) })
       |> G.s
   | `Module_def (tok, name, body, _end) ->
-      let ent = G.basic_entity (id_of_type_name env name) in
+      let ent =
+        { G.name = G.EN (name_of_type_name env name); attrs = []; tparams = None }
+      in
       let items = Option.value ~default:[] (Option.map (map_statements env) body) in
       G.DefStmt (ent, G.ModuleDef { mbody = G.ModuleStruct (None, items) }) |> G.s
   | `Class_def (abstract, tok, name, parent, body, _end)
   | `Struct_def (abstract, tok, name, parent, body, _end) ->
       let attrs = Option.to_list abstract |> List_.map (fun tok -> G.unhandled_keywordattr (str env tok)) in
-      let ent = G.basic_entity ~attrs (id_of_type_name env name) in
+      let ent =
+        { G.name = G.EN (name_of_type_name env name); attrs; tparams = None }
+      in
       let ckind = (G.Class, token env tok) in
       let cextends =
         match parent with
@@ -976,14 +980,17 @@ and map_method_def env (base, _term, body, _rescue, _end) =
   def
 
 and map_base_method_def env (tok, recv, name, params, ret, _forall) body =
-  let id =
+  let id, attrs =
     match recv with
-    | None -> id_of_method_name env name
+    | None -> (id_of_method_name env name, [])
+    | Some (`Self self_tok, _dot) ->
+        ( id_of_method_name env name,
+          [ G.KeywordAttr (G.Static, token env self_tok) ] )
     | Some (recv, _dot) ->
         let id, tok = id_of_method_name env name in
-        (id_of_method_receiver env recv ^ "." ^ id, tok)
+        ((id_of_method_receiver env recv ^ "." ^ id, tok), [])
   in
-  let ent = G.basic_entity id in
+  let ent = G.basic_entity ~attrs id in
   let fparams =
     match params with
     | None -> fb []
@@ -1150,6 +1157,11 @@ and id_of_type_name env = function
   | `Semg_meta tok -> str env tok
   | `Cst c -> name_to_id env c
   | `Gene_type (c, _lp, _params, _rp) -> name_to_id env c
+
+and name_of_type_name env = function
+  | `Semg_meta tok -> G.Id (str env tok, G.empty_id_info ())
+  | `Cst c -> name_of_constant env c
+  | `Gene_type (c, _lp, _params, _rp) -> name_of_constant env c
 
 and id_of_method_receiver env = function
   | `Semg_meta tok -> fst (str env tok)
