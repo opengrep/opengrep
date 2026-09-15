@@ -110,31 +110,13 @@ let cdef_of_module_items (items : G.stmt list) : G.class_definition =
     cparams = (fk, [], fk);
     cbody = (fk, List.map (fun stmt -> G.F stmt) items, fk) }
 
-let module_definition_scopes (ast : G.program) : Names.Module_qn.t list =
-  let rec walk (prefix : string list) (stmts : G.stmt list)
-      (opened : Names.Module_qn.t list) : Names.Module_qn.t list =
-    List.fold_left
-      (fun (opened : Names.Module_qn.t list) (stmt : G.stmt) ->
-        match stmt.G.s with
-        | G.Block (_, (inner : G.stmt list), _) -> walk prefix inner opened
-        | G.DefStmt ((ent : G.entity),
-                     G.ModuleDef { G.mbody = G.ModuleStruct (_, items) }) -> (
-          match entity_simple_name ent with
-          | None -> opened
-          | Some (name : string) ->
-            let parts = prefix @ entity_qualifier_parts ent @ [ name ] in
-            walk parts items (Names.Module_qn.of_parts parts :: opened))
-        | _ -> opened)
-      opened stmts
-  in
-  walk [] ast []
-
 let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     ~(resolution : Module_paths.specifier_resolution)
     ~(module_path : Names.Module_qn.t) ~(file : Fpath.t)
     (ast : G.program) : entry list * class_info list * file_info =
   let entries = ref [] in
   let class_infos = ref [] in
+  let opened_module_scopes : Names.Module_qn.t list ref = ref [] in
   let dc_wrappers = ref [] in
   let imports =
     let is_init_file = cfg.Index_lang_rules.is_init_file file in
@@ -392,6 +374,20 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                                ci_decorator_names = [] } :: !class_infos
             end;
             let scope' = Sc_namespace name :: scope in
+            if cfg.Index_lang_rules.module_definition_is_namespace then begin
+              let parts : string list =
+                List.rev
+                  (List.filter_map
+                     (fun (sc : scope_kind) ->
+                       match sc with
+                       | Sc_namespace (ns : string) -> Some ns
+                       | Sc_class _
+                       | Sc_function _ -> None)
+                     scope')
+              in
+              opened_module_scopes :=
+                Names.Module_qn.of_parts parts :: !opened_module_scopes
+            end;
             super#visit_definition scope' (ent, def_kind)
         end
       | _ -> super#visit_definition scope (ent, def_kind)
@@ -519,9 +515,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     if package_scoped then snd (walk_top_level ([], []) ast)
     else begin
       (make_visitor qn_module_path)#visit_program [] ast;
-      if cfg.Index_lang_rules.module_definition_is_namespace then
-        module_definition_scopes ast
-      else []
+      !opened_module_scopes
     end
   in
   let namespace_scopes =
