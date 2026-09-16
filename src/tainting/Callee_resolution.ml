@@ -58,25 +58,10 @@ let equal_with_pos f1 f2 =
   in
   List.equal (Option.equal equal_il_name) f1 f2
 
-(* Match a [func_info] against [name_str] by either the fn_id's last ident
-   (regular functions/methods) or the entity's name (named lambdas, whose
-   fn_id is the synthetic [_tmp_lambda] but whose entity carries the binding). *)
-let func_info_name_matches (f : func_info) (name_str : string) : bool =
-  (match List_.init_and_last_opt f.fn_id with
-   | Some (_, Some name) when String.equal (fst name.IL.ident) name_str -> true
-   | _ -> false)
-  ||
-  (match f.entity with
-   | Some ent ->
-       (match AST_to_IL.name_of_entity ent with
-        | Some n -> String.equal (fst n.IL.ident) name_str
-        | None -> false)
-   | None -> false)
-
 (* Free-function check that also matches named-lambda var bindings (which [as_free] alone reports as [_tmp_lambda]). *)
 let is_free_named (f : func_info) (name_str : string) : bool =
   Option.is_some (Func_info.as_free f.fn_id)
-  && func_info_name_matches f name_str
+  && Func_info.name_matches f name_str
 
 (* Find a [func_info] in [all_funcs] whose name matches [name_str] (per
    [func_info_name_matches]) and whose parent path equals [caller_parent_path]
@@ -85,7 +70,7 @@ let find_func_in_scope (all_funcs : func_info list)
     (caller_parent_path : IL.name option list) (name_str : string)
     : func_info option =
   List.find_opt (fun f ->
-    if func_info_name_matches f name_str then
+    if Func_info.name_matches f name_str then
       match List_.init_and_last_opt f.fn_id with
       | Some (f_parent, _) -> equal_with_pos f_parent caller_parent_path
       | _ -> false
@@ -274,6 +259,31 @@ let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs (ty : G.type_) : f
 let funcs_with_bare_name ~(func_lookup : Func_lookup.t)
     ~(all_funcs : func_info list) (bare_name : string) : func_info list =
   Func_lookup.funcs_with_bare_name func_lookup ~all_funcs bare_name
+
+(* Intrafile only. A call whose callee is a dotted name, such as M.f(x),
+   resolves to a function defined under the same dotted name,
+   function M.f(x) or M.f = function(x). The comparison is syntactic:
+   the sequence of identifiers of the callee against the sequence of
+   identifiers of the definition's name. A rebinding of M or of the
+   field between the definition and the call is not followed, as in
+   the other name based arms of this resolver. The interfile resolver
+   does not use this arm: whether M is visible in another file is
+   decided by the index. The candidates are the functions of the file
+   filtered by the dotted name, not the bare name index: a lambda bound
+   to a field has a position identity and no bare name. *)
+let funcs_with_dotted_name ~(all_funcs : func_info list)
+    (chain : string list) : func_info list =
+  List.filter (fun (f : func_info) ->
+      match f.entity with
+      | None -> false
+      | Some (ent : G.entity) ->
+        (match AST_generic_helpers.name_of_entity_name ent.G.name with
+         | None -> false
+         | Some (name : G.name) ->
+           List.equal String.equal
+             (List.map fst (AST_generic_helpers.dotted_ident_of_name name))
+             chain))
+    all_funcs
 
 type construction_resolver =
   call_arity:int -> G.type_ -> fn_id option
@@ -517,6 +527,16 @@ let rec identify_callee ~(lang : Lang.t)
                   ~class_name:cls_simple ~method_name
               in
               pick_by_arity ~lang call_arity method_matches)
+  in
+  let try_dotted_definition ~(base : string) ~(parts : string list)
+      ~(method_name : string) : fn_id option =
+    if is_locally_imported base then None
+    else
+      let chain = (base :: parts) @ [ method_name ] in
+      let candidates = funcs_with_dotted_name ~all_funcs chain in
+      match find_func_in_scope candidates caller_parent_path method_name with
+      | Some (f : func_info) -> Some f.fn_id
+      | None -> pick_by_arity ~lang call_arity candidates
   in
   (* Kept un-narrowed for the bare-generic [foo<T>()] reroute. *)
   let unnarrowed_all_funcs = all_funcs in
@@ -793,14 +813,29 @@ let rec identify_callee ~(lang : Lang.t)
                          (match resolve_constructor ~lang ~all_funcs obj_name with
                           | Some _ as r -> r
                           | None ->
-                            try_unique_method_call ~method_name:method_name_str)))))
+                            (match try_unique_method_call
+                                     ~method_name:method_name_str with
+                             | Some _ as r -> r
+                             | None ->
+                               try_dotted_definition ~base:obj_name ~parts:[]
+                                 ~method_name:method_name_str))))))
         (* Chained call: Constructor(...).method() — receiver is a constructor.
            Python/Kotlin/Scala: ClassName(args).method()
            Java/JS/TS/C#:       new ClassName(args).method()
            Ruby/Crystal:        ClassName.new(args).method() *)
         | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) ->
+            let receiver_chain = collect_dotted_chain receiver in
+            let try_unique_method_or_dotted () : fn_id option =
+              match try_unique_method_call ~method_name with
+              | Some _ as r -> r
+              | None ->
+                (match receiver_chain with
+                 | None -> None
+                 | Some (base, parts) ->
+                   try_dotted_definition ~base ~parts ~method_name)
+            in
             let module_match =
-              match collect_dotted_chain receiver with
+              match receiver_chain with
               | None -> None
               | Some (base, parts) ->
                 try_module_qn_call ~base ~parts ~method_name
@@ -853,9 +888,9 @@ let rec identify_callee ~(lang : Lang.t)
                 (match resolve_class_method ?qualifier:qualifier_hint
                          ~class_name ~method_name method_matches with
                  | Some _ as r -> r
-                 | None -> try_unique_method_call ~method_name)
+                 | None -> try_unique_method_or_dotted ())
             | None ->
-              try_unique_method_call ~method_name))
+              try_unique_method_or_dotted ()))
         | _ ->
             Log.debug (fun m ->
                 m "CALL_EXTRACT: Unmatched call pattern: %s"
@@ -965,8 +1000,7 @@ let attribute_of ~(func_lookup : Func_lookup.t) ~(position : name_position)
     with
     | [] ->
       let nested = Names.Class_qn.concat class_qn segment in
-      if Func_lookup.is_known_class func_lookup nested then
-        Some (Bound_class nested)
+      if Func_lookup.has_class func_lookup nested then Some (Bound_class nested)
       else None
     | (_ :: _) as funcs -> Some (Bound_functions funcs))
   | Bound_object (members : func_info list Common.SMap.t) ->

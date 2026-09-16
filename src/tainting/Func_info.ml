@@ -50,6 +50,21 @@ let bare_name : fn_id -> IL.name option = fun fn_id ->
   | Some name :: _ -> Some name
   | _ -> None
 
+(* Match a [func_info] against [name_str] by either the fn_id's last ident
+   (regular functions/methods) or the entity's name (named lambdas, whose
+   fn_id is the synthetic [_tmp_lambda] but whose entity carries the binding). *)
+let name_matches (func : t) (name_str : string) : bool =
+  let matches_ident (name : IL.name) : bool =
+    String.equal (fst name.IL.ident) name_str
+  in
+  (match bare_name func.fn_id with
+   | Some (name : IL.name) -> matches_ident name
+   | None -> false)
+  ||
+  (match Option.bind func.entity AST_to_IL.name_of_entity with
+   | Some (name : IL.name) -> matches_ident name
+   | None -> false)
+
 let enclosing_class : fn_id -> IL.name option = function
   | Some cls :: _ -> Some cls
   | _ -> None

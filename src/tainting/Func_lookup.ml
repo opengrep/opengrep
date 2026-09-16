@@ -45,6 +45,8 @@ type singleton_names = unit Common.SMap.t Class_qn_map.t
 
 type companion_index = Names.Class_qn.t Class_qn_map.t
 
+type project_classes = unit Class_qn_map.t
+
 type class_qn_by_definition =
   (Function_id.t * Names.Class_qn.t) list Common.SMap.t
 
@@ -231,6 +233,7 @@ type t = {
   methods_by_class : methods_by_class;
   singleton_names : singleton_names;
   companions : companion_index;
+  project_classes : project_classes;
   method_sets : Lang_config.method_sets;
 }
 
@@ -303,6 +306,9 @@ let resolution_order (t : t) (class_qn : Names.Class_qn.t)
     ~default:[]
 
 let is_known_class (t : t) (class_qn : Names.Class_qn.t) : bool =
+  Class_qn_map.mem class_qn t.project_classes
+
+let has_class (t : t) (class_qn : Names.Class_qn.t) : bool =
   Common.SMap.mem (Names.Class_qn.to_string class_qn) t.resolution_orders
 
 let is_known_module (t : t) (module_qn : Names.Module_qn.t) : bool =
@@ -395,6 +401,7 @@ let empty = {
   methods_by_class = Class_qn_map.empty;
   singleton_names = Class_qn_map.empty;
   companions = Class_qn_map.empty;
+  project_classes = Class_qn_map.empty;
   method_sets = Lang_config.Shared_by_class_and_instance;
 }
 
@@ -406,6 +413,7 @@ let create
     ?(overload_groups = false)
     ?(own_modules : Names.Module_qn.t list = [])
     ?(companions : companion_index = Class_qn_map.empty)
+    ?(project_classes : project_classes = Class_qn_map.empty)
     ~(module_attributes : module_attributes)
     ~(resolution_orders : resolution_orders)
     ~(class_qn_by_definition : class_qn_by_definition)
@@ -431,6 +439,7 @@ let create
     methods_by_class;
     singleton_names;
     companions;
+    project_classes;
     method_sets }
 
 let with_local_imports t local_imports : t =

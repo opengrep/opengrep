@@ -237,15 +237,14 @@ let call_instr env tok eorig ~void mk_call : stmts * exp =
 
 let ident_of_entity_opt ent : (G.ident * G.id_info) option =
   match ent.G.name with
-  | G.EN (G.Id (i, pinfo)) -> Some (i, pinfo)
   (* TODO: use name_middle? name_top? *)
-  | G.EN (G.IdQualified { name_last = i, _topt; name_info = pinfo; _ }) ->
-      Some (i, pinfo)
+  | G.EN _
+  | G.EDynamic _ ->
+      Option.map H.id_of_name (H.name_of_entity_name ent.G.name)
   (* Simple-binding pattern, e.g. Rust's `let foo = expr` parses as a
      [VarDef] entity with [name = EPattern (PatId ...)]. Unwrap when the
      pattern is a single named binding. *)
   | G.EPattern (G.PatId (i, pinfo)) -> Some (i, pinfo)
-  | G.EDynamic _ -> None
   (* TODO *)
   | G.EPattern _
   | G.OtherEntity _ ->
@@ -3999,6 +3998,10 @@ and stmt_aux env st : stmts =
       (* We want to analyze any expressions in 'ty'. *)
       let ss, _ = type_ env ty in
       ss
+  | G.DefStmt ({ G.name = G.EDynamic lhs; _ }, G.FuncDef fdef) ->
+      let ss_lambda, rhs = expr env (G.Lambda fdef |> G.e) in
+      let ss_assign, _ = assign env ~g_expr:lhs lhs (snd fdef.fkind) rhs in
+      ss_lambda @ ss_assign
   | G.DefStmt (ent, G.FuncDef fdef) when env.inside_function ->
       (* Translate nested function declarations as lambda assignments so that
        * the CFG builder extracts them into lambdas_cfgs, enabling the taint

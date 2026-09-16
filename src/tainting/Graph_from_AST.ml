@@ -753,18 +753,50 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       Some IL.{ ident = (str, tok); sid = G.SId.unsafe_default; id_info }
     | _ -> None
   in
-  let entity_to_il_name (ent : G.entity) : IL.name option =
-    match ent.G.name with
-    | G.EN name -> g_name_to_il_name name
-    | _ -> None
-  in
-  let visitor = object
+  let visitor = object (self)
     inherit [_] G.iter_no_id_info as super
+
+    method private attribute_ranges_to_function (span : G.any) (ent : G.entity)
+        (fdef : G.function_definition)
+        (env : G.name option * IL.name option list)
+        (visit_nested : G.name option * IL.name option list -> unit) : unit =
+      let current_class, parent_path = env in
+      match AST_generic_helpers.range_of_any_opt span with
+      | Some (loc_start, loc_end) ->
+          let range = Range.range_of_token_locations loc_start loc_end in
+          let func_start = range.start in
+          let func_end = range.end_ in
+          let func_size = func_end - func_start in
+
+          (* For each range, check if it's inside this function *)
+          List.iter (fun (range : Range.t) ->
+            if func_start <= range.Range.start && range.Range.end_ <= func_end then (
+              let class_il = Option.bind current_class g_name_to_il_name in
+              let visitor_parent_path =
+                match parent_path with
+                | [] -> [class_il]
+                | _ -> parent_path
+              in
+              match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
+              | Some fn_id -> add_to_range range fn_id func_size
+              | None -> ()
+            )
+          ) ranges;
+
+          let class_il = Option.bind current_class g_name_to_il_name in
+          let func_il = Visit_function_defs.func_il_for_entity ent fdef in
+          let current_fn_id =
+            match parent_path with
+            | [] -> [class_il; func_il]
+            | _ -> parent_path @ [func_il]
+          in
+          visit_nested (current_class, current_fn_id)
+      | None -> visit_nested env
 
     method! visit_definition
         (env : G.name option * IL.name option list)
         ((ent, def_kind) as def) =
-      let current_class, parent_path = env in
+      let _, parent_path = env in
       match def_kind with
       | G.ClassDef cdef ->
           (* Non-[EN]-named class resets [current_class] to [None] (no inherit). *)
@@ -805,40 +837,16 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
           | None -> super#visit_definition env' def)
       | G.FuncDef fdef | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
           (* Get the entire function definition range (including parameters) *)
-          let func_range_opt = AST_generic_helpers.range_of_any_opt (G.Def def) in
-          (match func_range_opt with
-          | Some (loc_start, loc_end) ->
-              let range = Range.range_of_token_locations loc_start loc_end in
-              let func_start = range.start in
-              let func_end = range.end_ in
-              let func_size = func_end - func_start in
-
-              (* For each range, check if it's inside this function *)
-              List.iter (fun (range : Range.t) ->
-                if func_start <= range.Range.start && range.Range.end_ <= func_end then (
-                  let class_il = Option.bind current_class g_name_to_il_name in
-                  let visitor_parent_path =
-                    match parent_path with
-                    | [] -> [class_il]
-                    | _ -> parent_path
-                  in
-                  match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
-                  | Some fn_id -> add_to_range range fn_id func_size
-                  | None -> ()
-                )
-              ) ranges;
-
-              let class_il = Option.bind current_class g_name_to_il_name in
-              let func_il = entity_to_il_name ent in
-              let current_fn_id =
-                match parent_path with
-                | [] -> [class_il; func_il]
-                | _ -> parent_path @ [func_il]
-              in
-              let env' = (current_class, current_fn_id) in
-              super#visit_definition env' def
-          | None -> super#visit_definition env def)
+          self#attribute_ranges_to_function (G.Def def) ent fdef env
+            (fun env' -> super#visit_definition env' def)
       | _ -> super#visit_definition env def
+
+    method! visit_expr (env : G.name option * IL.name option list) e =
+      match Visit_function_defs.extract_lambda_assignment ~lang e with
+      | Some ((ent : G.entity), (fdef : G.function_definition)) ->
+          self#attribute_ranges_to_function (G.E e) ent fdef env
+            (fun env' -> super#visit_expr env' e)
+      | None -> super#visit_expr env e
   end in
 
   visitor#visit_program (None, []) ast;

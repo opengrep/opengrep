@@ -91,6 +91,6 @@ val build_namespace_scope_bindings :
   namespace_scope_bindings Common.SMap.t
 
 val top_level_bindings :
-  keep:(Func_info.t -> bool) ->
+  keep:(AST_generic.entity option -> bool) ->
   definitions_by_qn:Types.definition Common.SMap.t ->
   positioned_binding list

@@ -39,6 +39,8 @@ type singleton_names = unit Common.SMap.t Class_qn_map.t
 
 type companion_index = Names.Class_qn.t Class_qn_map.t
 
+type project_classes = unit Class_qn_map.t
+
 type class_qn_by_definition =
   (Function_id.t * Names.Class_qn.t) list Common.SMap.t
 
@@ -110,6 +112,7 @@ val create :
   ?overload_groups : bool ->
   ?own_modules : Names.Module_qn.t list ->
   ?companions : companion_index ->
+  ?project_classes : project_classes ->
   module_attributes : module_attributes ->
   resolution_orders : resolution_orders ->
   class_qn_by_definition : class_qn_by_definition ->
@@ -136,6 +139,8 @@ val companion_of : t -> Names.Class_qn.t -> Names.Class_qn.t option
 val resolution_order : t -> Names.Class_qn.t -> Names.Class_qn.t list
 
 val is_known_class : t -> Names.Class_qn.t -> bool
+
+val has_class : t -> Names.Class_qn.t -> bool
 
 val is_known_module : t -> Names.Module_qn.t -> bool
 

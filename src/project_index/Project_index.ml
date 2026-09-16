@@ -117,7 +117,8 @@ let build_definitions_by_qn ~(entries : entry list)
                  class_qn;
                  class_name = entry.name;
                  class_companion =
-                   Func_lookup.Class_qn_map.find_opt class_qn companions })
+                   Func_lookup.Class_qn_map.find_opt class_qn companions;
+                 class_entity = entry.entity })
             by_qn
         | K_companion ->
           let qn = Names.Def_qn.to_string entry.qn in
@@ -126,7 +127,8 @@ let build_definitions_by_qn ~(entries : entry list)
               { class_file = entry.file;
                 class_qn = Names.Class_qn.of_string qn;
                 class_name = entry.name;
-                class_companion = None }
+                class_companion = None;
+                class_entity = entry.entity }
           in
           let by_qn = Common.SMap.add qn definition by_qn in
           match Names.Def_qn.split_last entry.qn with
@@ -488,6 +490,31 @@ let build_project_call_graph (caps : < Cap.fork >)
         Common.SMap.add (Names.Class_qn.to_string class_qn) order orders)
       Common.SMap.empty class_resolution_orders
   in
+  let project_classes : Func_lookup.project_classes =
+    let admits_own_entity : bool Func_lookup.Class_qn_map.t =
+      List.fold_left
+        (fun (gated : bool Func_lookup.Class_qn_map.t) (ci : class_info) ->
+          Func_lookup.Class_qn_map.add ci.ci_qn
+            (cfg.Index_lang_rules.project_scope_admits ci.ci_entity) gated)
+        Func_lookup.Class_qn_map.empty indexed_classes
+    in
+    let rec owners_admit (class_qn : Names.Class_qn.t) : bool =
+      match Names.Class_qn.split_last class_qn with
+      | None -> true
+      | Some ((owner : Names.Class_qn.t), _) ->
+        Names.Class_qn.is_empty owner
+        || (match Func_lookup.Class_qn_map.find_opt owner admits_own_entity with
+            | None -> true
+            | Some (admitted : bool) -> admitted && owners_admit owner)
+    in
+    Func_lookup.Class_qn_map.fold
+      (fun (class_qn : Names.Class_qn.t) (admitted : bool)
+           (visible : Func_lookup.project_classes) ->
+        if admitted && owners_admit class_qn then
+          Func_lookup.Class_qn_map.add class_qn () visible
+        else visible)
+      admits_own_entity Func_lookup.Class_qn_map.empty
+  in
   let class_qn_by_definition : Func_lookup.class_qn_by_definition =
     List.fold_left
       (fun (by_name : Func_lookup.class_qn_by_definition) (ci : class_info) ->
@@ -764,9 +791,7 @@ let build_project_call_graph (caps : < Cap.fork >)
             Func_lookup.scope_table_of_map
               (Scope_binding.bindings_of_positioned
                  (Scope_binding.top_level_bindings
-                    ~keep:(fun (func : Func_info.t) ->
-                      cfg.Index_lang_rules.project_scope_admits
-                        func.Func_info.entity)
+                    ~keep:cfg.Index_lang_rules.project_scope_admits
                     ~definitions_by_qn))
           | `Per_file
           | `Per_crate
@@ -821,6 +846,7 @@ let build_project_call_graph (caps : < Cap.fork >)
          else Common.SMap.empty);
       dunder_all;
       resolution_orders;
+      project_classes;
       class_qn_by_definition;
       methods_by_class;
       singleton_names;
@@ -1255,7 +1281,8 @@ let run_pipeline (caps : < Cap.fork >)
                    method_name;
             kind = K_method;
             file = ci.ci_file; range = ci.ci_range;
-            defining_class_id = Some ci.ci_id })
+            defining_class_id = Some ci.ci_id;
+            entity = None })
           (Func_info.bare_name func.Func_info.fn_id))
         funcs)
       inherited_by_class

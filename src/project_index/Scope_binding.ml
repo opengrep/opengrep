@@ -280,7 +280,7 @@ let build_namespace_scope_bindings
         by_namespace_scope fi.Types.fi_namespace_scopes)
     Common.SMap.empty file_infos
 
-let top_level_bindings ~(keep : Func_info.t -> bool)
+let top_level_bindings ~(keep : AST_generic.entity option -> bool)
     ~(definitions_by_qn : definition Common.SMap.t)
     : positioned_binding list =
   Common.SMap.fold
@@ -292,10 +292,14 @@ let top_level_bindings ~(keep : Func_info.t -> bool)
         match definition with
         | Function_definitions (funcs : Func_info.t list) ->
           function_binding_of ~pos:None ~parent_path:[] name
-            (List.filter keep funcs)
+            (List.filter
+               (fun (func : Func_info.t) -> keep func.Func_info.entity)
+               funcs)
           @ bindings
-        | Class_definition { class_qn; _ } ->
-          class_binding_of ~pos:None ~parent_path:[] name class_qn :: bindings)
+        | Class_definition { class_qn; class_entity; _ } ->
+          if keep class_entity then
+            class_binding_of ~pos:None ~parent_path:[] name class_qn :: bindings
+          else bindings)
       | Some _
       | None -> bindings)
     definitions_by_qn []

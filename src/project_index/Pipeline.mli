@@ -27,6 +27,7 @@ type ctx = {
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
   resolution_orders : Func_lookup.resolution_orders;
+  project_classes : Func_lookup.project_classes;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
   singleton_names : Func_lookup.singleton_names;

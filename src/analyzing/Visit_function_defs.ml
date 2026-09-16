@@ -21,6 +21,10 @@ module H = AST_generic_helpers
 let extract_lambda_assignment ?(lang : Lang.t option) (e : G.expr)
     : (G.entity * G.function_definition) option =
   match e.G.e with
+  | G.Assign ((target : G.expr), _, { e = G.Lambda fdef; _ })
+    when Option.is_some (H.name_of_entity_name (G.EDynamic target)) ->
+      let ent = { G.name = G.EDynamic target; G.attrs = []; G.tparams = None } in
+      Some (ent, fdef)
   | G.Assign ({ e = G.N (G.Id (id, id_info)); _ }, _, { e = G.Lambda fdef; _ }) ->
       let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
       Some (ent, fdef)
@@ -205,9 +209,7 @@ let g_name_to_il_name (g_name : G.name) : IL.name option =
 
 (* Convert G.entity to IL.name for fn_id path construction. *)
 let entity_to_il_name (ent : G.entity) : IL.name option =
-  match ent.G.name with
-  | G.EN name -> g_name_to_il_name name
-  | _ -> None
+  Option.bind (H.name_of_entity_name ent.G.name) g_name_to_il_name
 
 (* Position-based IL.name for a lambda. All lambdas (named [cb = lambda x: ...]
    or anonymous) share this identity scheme — the binding variable is an alias,

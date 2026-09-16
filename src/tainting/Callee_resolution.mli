@@ -17,8 +17,6 @@ val get_fn_name : fn_id -> IL.name option
 
 val fn_id_to_node : fn_id -> node option
 
-val func_info_name_matches : func_info -> string -> bool
-
 val is_free_named : func_info -> string -> bool
 
 val find_func_in_scope :

@@ -91,6 +91,7 @@ type t = {
   package_directive_is_namespace : bool;
   module_definition_is_namespace : bool;
   object_members_bind_in_namespace : bool;
+  dict_literal_is_object_definition : bool;
   companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
   hiding_alias : string option;
@@ -129,9 +130,9 @@ let decorator_simple_name (attr : G.attribute) : string option =
   | _ -> None
 
 let entity_simple_name (ent : G.entity) : string option =
-  match ent.G.name with
-  | G.EN name -> Ty_bare_name.bare_name_of_name name
-  | _ -> None
+  Option.bind
+    (AST_generic_helpers.name_of_entity_name ent.G.name)
+    Ty_bare_name.bare_name_of_name
 
 let name_to_path (name : G.name) : string list =
   match name with
@@ -323,6 +324,7 @@ let default : t = {
   package_directive_is_namespace = false;
   module_definition_is_namespace = false;
   object_members_bind_in_namespace = false;
+  dict_literal_is_object_definition = false;
   companion_object_has_own_name = false;
   unaliased_import_binds = First_segment_binds;
   hiding_alias = None;
@@ -777,6 +779,8 @@ let lua_global_definition (ent : G.entity option) : bool =
 let lua : t = { default with
   unqualified_scope = `Per_project;
   project_scope_admits = lua_global_definition;
+  dict_literal_is_object_definition = true;
+  walks_inheritance = true;
 }
 
 let dart_package_name ~(project_root : Fpath.t) : string option =

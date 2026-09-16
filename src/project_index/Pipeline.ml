@@ -44,6 +44,7 @@ type ctx = {
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
   resolution_orders : Func_lookup.resolution_orders;
+  project_classes : Func_lookup.project_classes;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
   singleton_names : Func_lookup.singleton_names;
@@ -531,7 +532,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
   : (Function_id.t * Function_id.t * Tok.t) list =
   let { lang; cfg; type_state; definitions_by_qn; companions;
         attributes_by_module; dunder_all;
-        resolution_orders; class_qn_by_definition; methods_by_class;
+        resolution_orders; project_classes; class_qn_by_definition;
+        methods_by_class;
         singleton_names;
         extensions_by_module; nested_types_by_class;
         namespace_scope_bindings; php_global_bindings; include_map;
@@ -609,6 +611,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
         ~module_attributes:attributes_by_module
         ~resolution_orders
+        ~project_classes
         ~class_qn_by_definition
         ~methods_by_class
         ~singleton_names
@@ -786,6 +789,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           ~overload_groups:(Lang_config.overloads_by_type lang)
           ~module_attributes:attributes_by_module
           ~resolution_orders
+          ~project_classes
           ~class_qn_by_definition
           ~methods_by_class
           ~singleton_names

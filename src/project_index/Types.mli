@@ -12,6 +12,7 @@ type entry = {
   file : Fpath.t;
   range : Range.t option;
   defining_class_id : Function_id.t option;
+  entity : G.entity option;
 }
 
 type definition =
@@ -21,6 +22,7 @@ type definition =
       class_qn : Names.Class_qn.t;
       class_name : string;
       class_companion : Names.Class_qn.t option;
+      class_entity : G.entity option;
     }
 
 type import_binds =
@@ -55,6 +57,7 @@ type class_info = {
   ci_singleton_exposure : Index_lang_rules.singleton_exposure;
   ci_imports : import list;
   ci_decorator_names : string list;
+  ci_entity : G.entity option;
 }
 
 (* A class paired with functions attributed to it, e.g. the methods it

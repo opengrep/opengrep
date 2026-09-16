@@ -1,0 +1,12 @@
+rules:
+  - id: assigned_function_sink_in_body
+    languages: [js]
+    severity: ERROR
+    message: probe
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
