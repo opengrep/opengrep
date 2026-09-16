@@ -177,3 +177,24 @@ val array : ('a -> string) -> 'a array -> string
 (* The mutex used for logging, exposed so it can
  * be shared by pretty-printing functions. *)
 val logs_mutex : Mutex.t
+
+(* Called inside the log mutex, before and after any log output. Used by a
+   caller that draws on the terminal itself, to erase its line before a
+   message and redraw it after.
+
+   A hook runs with [logs_mutex] HELD, which constrains what it may do:
+
+   - it must not log. The reporter would take [logs_mutex] again, and the
+     mutex is not re-entrant, so the process stops dead on the next message.
+   - it must not take [logs_mutex], for the same reason, nor call anything
+     that does. [UCmd.capture_and_log_stderr] is one such caller.
+   - it must not block for long. Every log message in every domain queues
+     behind it.
+   - it should not raise. An exception is caught here rather than left to
+     escape through an unrelated log call, but the hook is the only place
+     that knows what failing meant.
+
+   Writing to a terminal is the intended use, and a terminal can fail or
+   block: see Status_bar.fmt_eprintf for what that costs. *)
+val before_log_hook : (unit -> unit) ref
+val after_log_hook : (unit -> unit) ref

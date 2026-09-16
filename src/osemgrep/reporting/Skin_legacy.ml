@@ -148,4 +148,6 @@ let pp_matches (ctx : Skin.ctx) ppf
     ~interfile_dedup_by:ctx.interfile_dedup_by ~is_interfile:ctx.is_interfile
     ppf matches
 
+(* the report opengrep has always printed, which had no status bar *)
+let wants_status_bar = false
 let live = None

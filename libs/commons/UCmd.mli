@@ -1,3 +1,14 @@
+(* Called around the stderr capture, so that anything drawing on stderr
+   stops while the descriptor is redirected.
+
+   Unlike the Logs_ hooks these run with no lock held, and an implementation
+   may take one: pausing has to be ordered against whatever else writes to
+   the terminal, or a write already under way lands in the captured text.
+   They come in pairs and may not be assumed to be called once -- count
+   them, do not set a flag. *)
+val pause_stderr_hook : (unit -> unit) ref
+val unpause_stderr_hook : (unit -> unit) ref
+
 (* You should prefer to use the safer CapExec.ml module. This UCmd module
  * is for Unsafe use of Cmd (hence the name). see TCB/Cap.mli for more info.
  *)

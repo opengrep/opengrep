@@ -61,6 +61,8 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Skin_model.Plan.t -> unit) ->
+    (* what the scan is doing, and one event per unit of work it finishes *)
+    ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
     conf ->

@@ -35,12 +35,22 @@ let log_shell_command cmd =
    not a general-purpose library. Bos doesn't seem to provide a simple
    equivalent (?)
 *)
+(* Called around the stderr capture below, so that anything drawing on
+ * stderr (Status_bar) stops while the descriptor is redirected — its output
+ * would otherwise land in the captured text instead of on the terminal. *)
+let pause_stderr_hook : (unit -> unit) ref = ref (fun () -> ())
+let unpause_stderr_hook : (unit -> unit) ref = ref (fun () -> ())
+
 let capture_and_log_stderr func =
-  let res, err = Testo.with_capture UStdlib.stderr func in
-  if err <> "" then
-    (* nosemgrep: no-logs-in-library *)
-    Logs.info (fun m -> m "error output: %s" (Redact.apply err));
-  res
+  !pause_stderr_hook ();
+  Common.protect
+    ~finally:(fun () -> !unpause_stderr_hook ())
+    (fun () ->
+      let res, err = Testo.with_capture UStdlib.stderr func in
+      if err <> "" then
+        (* nosemgrep: no-logs-in-library *)
+        Logs.info (fun m -> m "error output: %s" (Redact.apply err));
+      res)
 
 (*****************************************************************************)
 (* Old Common.cmd_to_list *)

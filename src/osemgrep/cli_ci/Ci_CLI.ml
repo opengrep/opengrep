@@ -226,6 +226,9 @@ let cmdline_term : conf Term.t =
            checkout *)
         autofix = false;
         output_conf;
+        (* the ci log is not a terminal, and its output is the record of
+           a run rather than something watched live *)
+        no_progress_bar = true;
         incremental_output = false;
         incremental_output_postprocess = false;
         rewrite_rule_ids;
