@@ -23,11 +23,10 @@ type t = {
 }
 
 let entity_qualifier (func : t) : string option =
-  match func.entity with
-  | Some { G.name = G.EN (name : G.name); _ } ->
-    Ty_bare_name.qualifier_of_name name
-  | Some _
-  | None -> None
+  Option.bind func.entity (fun (entity : G.entity) ->
+      Option.bind
+        (AST_generic_helpers.name_of_entity_name entity.G.name)
+        Ty_bare_name.qualifier_of_name)
 
 let as_method : fn_id -> (IL.name * IL.name) option = function
   | [Some cls; Some meth] -> Some (cls, meth)
