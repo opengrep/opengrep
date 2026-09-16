@@ -273,10 +273,21 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 
 (* Enable threaded logging. *)
 
+(* Called inside the reporter's lock, around every log message. A caller
+ * that draws on the terminal itself (Status_bar) erases before the message
+ * and redraws after, so its line cannot be cut in half by a log. *)
+let before_log_hook : (unit -> unit) ref = ref (fun () -> ())
+let after_log_hook : (unit -> unit) ref = ref (fun () -> ())
+
 let _ =
-  let lock () = Mutex.lock logs_mutex
-  and unlock () = Mutex.unlock logs_mutex in
-Logs.set_reporter_mutex ~lock ~unlock
+  let lock () =
+    Mutex.lock logs_mutex;
+    !before_log_hook ()
+  and unlock () =
+    !after_log_hook ();
+    Mutex.unlock logs_mutex
+  in
+  Logs.set_reporter_mutex ~lock ~unlock
 
 (* We previously used use a re-entrant mutex above because otherwise tests
  * using [make core-test] raise an error when trying to lock the already locked

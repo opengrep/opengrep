@@ -426,4 +426,5 @@ let pp_findings (ctx : Skin.ctx) ppf (cli_output : OutJ.cli_output) : unit =
   |> pp_by_file ctx ppf;
   pp_time ppf cli_output
 
+let wants_status_bar = true
 let live = None

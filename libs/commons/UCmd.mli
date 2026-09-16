@@ -1,3 +1,8 @@
+(* Called around the stderr capture, so that anything drawing on stderr
+   stops while the descriptor is redirected. *)
+val pause_stderr_hook : (unit -> unit) ref
+val unpause_stderr_hook : (unit -> unit) ref
+
 (* You should prefer to use the safer CapExec.ml module. This UCmd module
  * is for Unsafe use of Cmd (hence the name). see TCB/Cap.mli for more info.
  *)

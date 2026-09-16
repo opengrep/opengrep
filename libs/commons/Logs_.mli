@@ -177,3 +177,9 @@ val array : ('a -> string) -> 'a array -> string
 (* The mutex used for logging, exposed so it can
  * be shared by pretty-printing functions. *)
 val logs_mutex : Mutex.t
+
+(* Called inside the log mutex, before and after any log output. Used by a
+   caller that draws on the terminal itself, to erase its line before a
+   message and redraw it after. *)
+val before_log_hook : (unit -> unit) ref
+val after_log_hook : (unit -> unit) ref

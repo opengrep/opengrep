@@ -89,6 +89,7 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Skin_model.Plan.t -> unit) ->
+    ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
     conf ->
@@ -404,6 +405,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         target_source = Targets [];
         rule_source = Rules [];
         file_match_hook = None;
+        progress_hook = None;
         engine_config = engine_config;
         (* same than in Core_scan_config.default
          * alt: we could use a 'Core_scan_config.default with ...' but better
@@ -456,6 +458,7 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
   let run ?file_match_hook ?(on_plan = fun (_ : Skin_model.Plan.t) -> ())
+      ?(progress_hook : (Core_scan_config.progress -> unit) option)
       ~(git_repo : bool)
       ~(scanning_roots : Scanning_root.directory list) (conf : conf)
       (targeting_conf : Find_targets.conf)
@@ -520,6 +523,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
       {
         (core_scan_config_of_conf conf) with
         file_match_hook;
+        progress_hook;
         target_source = Targets final_targets;
         rule_source = Rules applicable_rules;
         matching_conf;

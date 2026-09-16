@@ -49,6 +49,8 @@ type conf = {
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
   output_conf : Output.conf;
+  (* --no-progress-bar *)
+  no_progress_bar : bool;
   incremental_output : bool;
   incremental_output_postprocess : bool;
   (* Debugging/logging/profiling options *)
@@ -95,6 +97,7 @@ let default : conf =
     (* trace = false;
        trace_endpoint = None; *)
     output_conf = Output.default;
+    no_progress_bar = false;
     incremental_output = false;
     incremental_output_postprocess = false;
     rewrite_rule_ids = true;
@@ -309,6 +312,15 @@ May also be set with SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
 (* ------------------------------------------------------------------ *)
 (* Performance and memory options *)
 (* ------------------------------------------------------------------ *)
+
+let o_no_progress_bar : bool Term.t =
+  let info =
+    Arg.info [ "no-progress-bar" ]
+      ~doc:
+        {|Do not draw the status bar that reports what the scan is doing.
+It is drawn only on a terminal, and never with $(b,--incremental-output).|}
+  in
+  Arg.value (Arg.flag info)
 
 let o_num_jobs : int Term.t =
   let info =
@@ -1292,7 +1304,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb
       max_target_bytes
-      num_jobs nosem opengrep_ignore_pattern optimizations
+      no_progress_bar num_jobs nosem opengrep_ignore_pattern optimizations
       output output_enclosing_context pattern project_root taint_interfile
       taint_interfile_depth taint_intrafile
       effect_guards replacement rewrite_rule_ids sarif sarif_outputs
@@ -1499,6 +1511,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       error_on_findings = error;
       autofix;
       output_conf;
+      no_progress_bar;
       incremental_output;
       incremental_output_postprocess;
       rewrite_rule_ids;
@@ -1536,7 +1549,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb
     $ o_max_target_bytes
-    $ o_num_jobs $ o_nosem $ CLI_common.o_opengrep_ignore_pattern
+    $ o_no_progress_bar $ o_num_jobs $ o_nosem
+    $ CLI_common.o_opengrep_ignore_pattern
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
     $ o_taint_interfile $ o_taint_interfile_depth $ o_taint_intrafile
