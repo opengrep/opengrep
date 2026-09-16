@@ -103,6 +103,10 @@ module type S = sig
      --incremental-output. *)
   val pp_matches : ctx -> Semgrep_output_v1_t.cli_match list Fmt.t
 
+  (* Whether this skin wants the status bar the scan draws while it works.
+     A skin that keeps the terminal quiet says no. *)
+  val wants_status_bar : bool
+
   val live : (module LIVE) option
 end
 

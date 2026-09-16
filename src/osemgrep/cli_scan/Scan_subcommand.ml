@@ -564,6 +564,40 @@ let check_targets_with_rules ?(print_summary = true)
       let on_plan (plan : Skin_model.Plan.t) : unit =
         Skin_emit.emit (Sk.on_plan skin_ctx plan)
       in
+      (* Started here, a step before the Common.protect below that stops it:
+         the bar runs a thread and installs hooks, so nothing that could
+         raise belongs between the two. It is drawn on stderr while the scan
+         works and stopped before the report, so findings are not printed
+         over it. Under --incremental-output findings reach stdout during
+         the scan, so there is no bar at all then; under --quiet, which
+         silences the log stream the bar shares that terminal with, there is
+         none either. *)
+      let status_bar =
+        if
+          conf.no_progress_bar || conf.incremental_output
+          || Option.is_none conf.common.logging_level
+          || not Sk.wants_status_bar
+        then None
+        else Status_bar.create Status_bar.Analyzing_targets
+      in
+      let progress_hook (progress : Core_scan_config.progress) : unit =
+        Option.iter
+          (fun (bar : Status_bar.t) ->
+            match progress with
+            | Core_scan_config.Target_done
+            | Core_scan_config.Interfile_rule_done ->
+                Status_bar.notify_work_item_done bar
+            | Core_scan_config.Analyzing_targets ->
+                Status_bar.set_phase bar Status_bar.Analyzing_targets
+            | Core_scan_config.Building_interfile_graph ->
+                Status_bar.set_phase bar Status_bar.Building_interfile_graph
+            | Core_scan_config.Scanning_started { targets; interfile_rules } ->
+                Status_bar.set_phase bar
+                  (Status_bar.Scanning
+                     { total = targets + interfile_rules;
+                       completed = Atomic.make 0 }))
+          status_bar
+      in
       (match (output_format, conf.output_conf.output) with
       | Output_format.Incremental, Some _ ->
           Logs.warn (fun m ->
@@ -577,13 +611,19 @@ let check_targets_with_rules ?(print_summary = true)
             (List.length selected));
       Logs.info (fun m -> m "running the opengrep engine");
       let (result_or_exn : Core_result.result_or_exn) =
+        (* The bar lives for the engine run and no longer: stopping it here
+           puts the cursor back and clears the line whatever the run did,
+           and leaves the report to print on a clean screen. *)
+        Common.protect
+          ~finally:(fun () -> Option.iter Status_bar.finish status_bar)
+        @@ fun () ->
         match conf.targeting_conf.baseline_commit with
         | None ->
             Profiler.record profiler ~name:"core_time" (fun () ->
                 let { run } : Core_runner.func =
                   mk_core_run_for_osemgrep caps
                 in
-                run ?file_match_hook ~on_plan
+                run ?file_match_hook ~on_plan ~progress_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
                   ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
@@ -607,7 +647,7 @@ let check_targets_with_rules ?(print_summary = true)
                       Find_targets.explicit_targets = table;
                     }
               in
-              run ?file_match_hook ~on_plan
+              run ?file_match_hook ~on_plan ~progress_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf
                 conf.matching_conf (rules, invalid_rules) targets
