@@ -1,0 +1,12 @@
+rules:
+  - id: global_table_dotted_definition
+    languages: [lua]
+    message: probe
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
