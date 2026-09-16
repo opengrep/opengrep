@@ -91,6 +91,7 @@ type t = {
   module_definition_is_namespace : bool;
   object_members_bind_in_namespace : bool;
   dict_literal_is_object_definition : bool;
+  module_is_returned_value : bool;
   companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
   hiding_alias : string option;

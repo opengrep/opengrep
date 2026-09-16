@@ -92,6 +92,7 @@ type t = {
   module_definition_is_namespace : bool;
   object_members_bind_in_namespace : bool;
   dict_literal_is_object_definition : bool;
+  module_is_returned_value : bool;
   companion_object_has_own_name : bool;
   unaliased_import_binds : unaliased_import_local;
   hiding_alias : string option;
@@ -207,8 +208,14 @@ let python_is_stub_file (file : Fpath.t) : bool =
   | ".pyi" -> true
   | _ -> false
 
+let rewrite_init_module_path ~(init_basename : string) (path : string)
+    : string =
+  if String.equal (Filename.basename path) init_basename
+  then Filename.dirname path
+  else path
+
 let python_rewrite_module_path (path : string) : string =
-  if Filename.basename path = "__init__" then Filename.dirname path else path
+  rewrite_init_module_path ~init_basename:"__init__" path
 
 let is_dataclass_decorator (attr : G.attribute) : bool =
   match decorator_simple_name attr with Some "dataclass" -> true | _ -> false
@@ -325,6 +332,7 @@ let default : t = {
   module_definition_is_namespace = false;
   object_members_bind_in_namespace = false;
   dict_literal_is_object_definition = false;
+  module_is_returned_value = false;
   companion_object_has_own_name = false;
   unaliased_import_binds = First_segment_binds;
   hiding_alias = None;
@@ -776,11 +784,34 @@ let swift : t = { default with
 let lua_global_definition (ent : G.entity option) : bool =
   Option.is_some ent && not (Receiver.is_static ent)
 
+let lua_specifier_as_path (specifier : string) : string =
+  String.concat "/" (String.split_on_char '.' specifier)
+
+let lua_specifier_candidates (base_path : Fpath.t) : string list =
+  let base =
+    Fpath.append (Fpath.parent base_path)
+      (Fpath.v (lua_specifier_as_path (Fpath.basename base_path)))
+    |> Fpath.normalize |> Fpath.rem_empty_seg
+  in
+  [ Fpath.to_string base ^ ".lua";
+    Fpath.append base (Fpath.v "init.lua") |> Fpath.to_string ]
+
 let lua : t = { default with
   unqualified_scope = `Per_project;
   project_scope_admits = lua_global_definition;
   dict_literal_is_object_definition = true;
+  module_is_returned_value = true;
   walks_inheritance = true;
+  specifiers_name_files = true;
+  specifier_candidates = lua_specifier_candidates;
+  rewrite_module_path = rewrite_init_module_path ~init_basename:"init";
+  discover_project =
+    (fun ~(project_root : Fpath.t) ->
+      let target =
+        Fpath.append project_root (Fpath.v "*")
+        |> Fpath.normalize |> Fpath.rem_empty_seg |> Fpath.to_string
+      in
+      { excludes = []; module_paths = [ ("*", [ target ]) ] });
 }
 
 let dart_package_name ~(project_root : Fpath.t) : string option =

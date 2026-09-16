@@ -479,7 +479,13 @@ and map_function_call_expr (env : env) (x : CST.function_call_statement) :
   | `Prefix_args (v1, v2) ->
       let v1 = map_prefix env v1 in
       let v2 = map_arguments env v2 in
-      G.Call (v1, v2) |> G.e
+      let callee =
+        match v1 with
+        | { G.e = G.N (G.Id (("require", tok), _)); _ } ->
+            G.IdSpecial (G.Require, tok) |> G.e
+        | _ -> v1
+      in
+      G.Call (callee, v2) |> G.e
   | `Prefix_COLON_id_args (v1, v2, v3, v4) ->
       let prefix = map_prefix env v1 in
       let colon = token env v2 (* ":" *) in

@@ -646,13 +646,37 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       | [] -> [ (if package_scoped then qn_module_path else module_path) ]
       | namespace_scopes -> namespace_scopes)
   in
+  let module_object =
+    if not cfg.Index_lang_rules.module_is_returned_value then None
+    else
+      match List.rev ast with
+      | { G.s =
+            G.Return
+              (_,
+               Some { G.e =
+                        G.Container
+                          (G.Tuple,
+                           (_,
+                            { G.e = G.N (G.Id (((name : string), _), _)); _ }
+                            :: _,
+                            _));
+                      _ },
+               _);
+          _ } :: _ ->
+        let qn = qualified_name_of ~module_path:qn_module_path [] name in
+        Option.map
+          (fun (_ : Function_id.t) -> Names.Class_qn.of_string qn)
+          (Common.SMap.find_opt qn !object_ids)
+      | _ -> None
+  in
   let fi = { fi_file = file; fi_module_path = module_path;
              fi_package_clause = cfg.Index_lang_rules.package_clause_of_ast ast;
              fi_namespace_scopes = namespace_scopes;
              fi_imports = imports;
              fi_dataclass_wrappers = !dc_wrappers;
              fi_ast = ast;
-             fi_observations = Walker.walk_file ~lang ast } in
+             fi_observations = Walker.walk_file ~lang ast;
+             fi_module_object = module_object } in
   (List.rev !entries, List.rev !class_infos, fi)
 
 (* Per-class owned-method-name sets, seeded from [K_method] entries; the

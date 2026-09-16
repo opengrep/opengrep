@@ -56,6 +56,7 @@ type ctx = {
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
   top_level_scope : Func_lookup.scope_table;
+  module_object_by_module : Names.Class_qn.t Common.SMap.t;
   namespace_object_members : Scope_binding.positioned_binding list Common.SMap.t;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
@@ -266,6 +267,7 @@ let build_scope_table
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
     ~(top_level_scope : Func_lookup.scope_table)
+    ~(module_object_by_module : Names.Class_qn.t Common.SMap.t)
     ~(namespace_object_members :
         Scope_binding.positioned_binding list Common.SMap.t)
     (fi : file_info) : file_scope option =
@@ -301,7 +303,7 @@ let build_scope_table
       Some { scope_table =
                Scope_project.build ~classes_by_file ~class_parent_paths
                  ~file_funcs_index ~resolution_orders ~methods_by_class
-                 ~top_level_scope fi;
+                 ~module_object_by_module ~top_level_scope fi;
              bound_class_files = []; own_modules = [];
              module_aliases = None }
     | `Per_constant_path ->
@@ -538,7 +540,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         extensions_by_module; nested_types_by_class;
         namespace_scope_bindings; php_global_bindings; include_map;
         module_scope; go_packages;
-        top_level_scope; namespace_object_members;
+        top_level_scope; module_object_by_module; namespace_object_members;
         classes_by_file; class_parent_paths; global_imports;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
         project_class_names;
@@ -564,7 +566,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
         ~namespace_scope_bindings ~php_global_bindings ~include_map ~module_scope
-        ~go_packages ~top_level_scope ~namespace_object_members fi
+        ~go_packages ~top_level_scope ~module_object_by_module
+        ~namespace_object_members fi
     in
     let alias_to_module_qn =
       staged "alias to module map" @@ fun () ->

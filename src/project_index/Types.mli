@@ -75,4 +75,5 @@ type file_info = {
   fi_dataclass_wrappers : dataclass_wrapper list;
   fi_ast : G.program;
   fi_observations : Walker.Observation.t list;
+  fi_module_object : Names.Class_qn.t option;
 }

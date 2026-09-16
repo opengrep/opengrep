@@ -720,6 +720,10 @@ let build_project_call_graph (caps : < Cap.fork >)
              Func_index.Only_exported_names
                (Scope_module.exported_names
                   (Scope_module.exports_of module_scope))
+           | `Per_project ->
+             if cfg.Index_lang_rules.module_is_returned_value then
+               Func_index.Only_exported_names Common.SMap.empty
+             else Func_index.Every_definition_is_an_attribute
            | `Per_file
            | `Per_crate
            | `Per_constant_path
@@ -727,8 +731,7 @@ let build_project_call_graph (caps : < Cap.fork >)
            | `Per_go_package
            | `Per_package
            | `Per_namespace
-           | `Per_translation_unit
-           | `Per_project ->
+           | `Per_translation_unit ->
              Func_index.Every_definition_is_an_attribute)
         ~definitions_by_qn ~file_infos:indexed_files)
   in
@@ -801,6 +804,16 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_namespace
           | `Per_package
           | `Per_translation_unit -> Func_lookup.empty_scope_table);
+      module_object_by_module =
+        List.fold_left
+          (fun (by_module : Names.Class_qn.t Common.SMap.t) (fi : file_info) ->
+            match fi.fi_module_object with
+            | None -> by_module
+            | Some (class_qn : Names.Class_qn.t) ->
+              Common.SMap.add
+                (Names.Module_qn.to_string fi.fi_module_path) class_qn
+                by_module)
+          Common.SMap.empty indexed_files;
       namespace_object_members =
         (if cfg.Index_lang_rules.object_members_bind_in_namespace then
            let objects : unit Common.SMap.t =

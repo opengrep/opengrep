@@ -7,6 +7,7 @@ let build
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(resolution_orders : Func_lookup.resolution_orders)
     ~(methods_by_class : Func_lookup.methods_by_class)
+    ~(module_object_by_module : Names.Class_qn.t Common.SMap.t)
     ~(top_level_scope : Func_lookup.scope_table)
     (fi : file_info) : Func_lookup.scope_table =
   let fi_file_str = Fpath.to_string fi.fi_file in
@@ -47,9 +48,29 @@ let build
              ~methods_by_class ci.ci_qn))
       own_classes
   in
+  let module_bindings =
+    List.filter_map
+      (fun (imp : import) ->
+        match imp.im_binds with
+        | Binds_module ->
+          Option.map
+            (fun (class_qn : Names.Class_qn.t) ->
+              Scope_binding.class_binding_of
+                ~pos:(Scope_binding.position_of_tok imp.im_tok)
+                ~parent_path:[] imp.im_local class_qn)
+            (Common.SMap.find_opt
+               (Names.Module_qn.to_string imp.im_target)
+               module_object_by_module)
+        | Binds_any
+        | Binds_function
+        | Binds_constant
+        | Binds_type -> None)
+      fi.fi_imports
+  in
   Func_lookup.scope_table_shadowing
     ~front:
       (Func_lookup.scope_table_of_map
          (Scope_binding.bindings_of_positioned
-            (function_bindings @ type_bindings @ member_bindings)))
+            (function_bindings @ type_bindings @ member_bindings
+             @ module_bindings)))
     ~back:top_level_scope
