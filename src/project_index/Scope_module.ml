@@ -73,11 +73,11 @@ let namespace_scope_key (module_path : Names.Module_qn.t) (namespace_scopes : st
 
 let object_members ~(own_funcs : Func_info.t list) (init : G.expr)
     : Func_info.t list Common.SMap.t option =
-  let defined_at (name : IL.name) : Func_info.t list =
+  let defined_at (identity : IL.name) : Func_info.t list =
     List.filter
       (fun (func : Func_info.t) ->
         match Func_info.bare_name func.Func_info.fn_id with
-        | Some (bound : IL.name) -> Function_id.equal_il_name bound name
+        | Some (bound : IL.name) -> Function_id.equal_il_name bound identity
         | None -> false)
       own_funcs
   in
@@ -87,18 +87,24 @@ let object_members ~(own_funcs : Func_info.t list) (init : G.expr)
       List.fold_left
         (fun (members : Func_info.t list Common.SMap.t) (field : G.field) ->
           match field with
-          | G.F { G.s = G.DefStmt ((ent : G.entity), G.FuncDef _); _ } -> (
-            match ent.G.name with
-            | G.EN (gname : G.name) -> (
-              let bound = AST_to_IL.var_of_name gname in
-              match (Ty_bare_name.bare_name_of_name gname, defined_at bound) with
+          | G.F { G.s = G.DefStmt ((ent : G.entity),
+                                   G.FuncDef (fdef : G.function_definition));
+                  _ } -> (
+            match
+              (ent.G.name, Visit_function_defs.func_il_for_entity ent fdef)
+            with
+            | G.EN (gname : G.name), Some (identity : IL.name) -> (
+              match
+                (Ty_bare_name.bare_name_of_name gname, defined_at identity)
+              with
               | Some (name : string), ((_ :: _) as funcs) ->
                 Common.SMap.add name funcs members
               | Some _, []
               | None, _ -> members)
-            | G.EDynamic _
-            | G.EPattern _
-            | G.OtherEntity _ -> members)
+            | G.EN _, None
+            | G.EDynamic _, _
+            | G.EPattern _, _
+            | G.OtherEntity _, _ -> members)
           | _ -> members)
         Common.SMap.empty fields
     in

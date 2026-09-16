@@ -1,0 +1,14 @@
+rules:
+  - id: object_member_function_value
+    languages: [js]
+    severity: ERROR
+    message: >
+      An object literal binds a member whose value is an anonymous
+      function expression, so M.f names that function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
