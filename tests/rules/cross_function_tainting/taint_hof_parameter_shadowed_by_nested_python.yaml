@@ -1,0 +1,13 @@
+rules:
+  - id: taint-hof-parameter-shadowed-by-nested-python
+    message: A call of a parameter resolves to no function by name, so the higher order machinery carries the taint
+    languages:
+      - python
+    severity: ERROR
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

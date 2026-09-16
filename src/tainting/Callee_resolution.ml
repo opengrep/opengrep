@@ -559,7 +559,7 @@ let rec identify_callee ~(lang : Lang.t)
   let current_class = Func_info.enclosing_class caller_parent_path in
   match callee.G.e with
     (* Simple function call: foo() *)
-    | G.N (G.Id ((id, _), _id_info)) ->
+    | G.N (G.Id ((id, _), id_info)) ->
         let callee_name_str = id in
         (* First check if it's a nested function in the same scope.
            Use position-aware match to distinguish same-named parent functions. *)
@@ -571,6 +571,10 @@ let rec identify_callee ~(lang : Lang.t)
           | Some f ->
               Log.debug (fun m -> m "CALL_EXTRACT: Found nested function %s in same scope" callee_name_str);
               Some f.fn_id
+          | None when (match !(id_info.G.id_resolved) with
+                       | Some ((G.LocalVar | G.Parameter), _) -> true
+                       | _ -> false) ->
+              None
           | None ->
               (* For class-based languages, foo() might be an implicit this.foo() call.
                  Check if a method with this name exists in the current class. *)
