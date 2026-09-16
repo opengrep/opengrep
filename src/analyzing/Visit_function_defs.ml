@@ -242,6 +242,37 @@ let append_to_parrent_path parent_path class_il func_il =
   let current_fn_id = visitor_parent_path @ [ func_il ] in
   (visitor_parent_path, current_fn_id)
 
+let class_scope_of_definition (ent : G.entity) (def_kind : G.definition_kind)
+  : (G.entity * G.definition_kind) option =
+  match def_kind with
+  | G.OtherDef ((kind, _), anys) when String.equal kind "Impl" ->
+    let types =
+      List.filter_map (function G.T ty -> Some ty | _ -> None) anys
+    in
+    let stmts =
+      List.concat_map (function G.Ss body -> body | _ -> []) anys
+    in
+    let self_ty, trait_tys =
+      match types with
+      | [] -> (None, [])
+      | self_ty :: traits -> (Some self_ty, traits)
+    in
+    (match self_ty with
+     | Some { G.t = G.TyN (G.Id _ as name); _ }
+     | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as name); _ }; _ } ->
+       let new_ent = { ent with G.name = G.EN name } in
+       let fk = Tok.unsafe_fake_tok "impl" in
+       let cdef = G.ClassDef {
+         G.ckind = (G.Class, fk);
+         cextends = List.map (fun (ty : G.type_) -> (ty, None)) trait_tys;
+         cimplements = []; cmixins = [];
+         cparams = (fk, [], fk);
+         cbody = (fk, List.map (fun stmt -> G.F stmt) stmts, fk);
+       } in
+       Some (new_ent, cdef)
+     | _ -> None)
+  | _ -> None
+
 class ['self] visitor_with_parent_path ~(lang : Lang.t) =
   object (self : 'self)
     inherit [_] G.iter_no_id_info as super
@@ -250,6 +281,10 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
     val parent_path : IL.name option list ref = ref []
 
     method! visit_definition f ((ent, def_kind) as def) =
+      match class_scope_of_definition ent def_kind with
+      | Some (class_def : G.entity * G.definition_kind) ->
+          self#visit_definition f class_def
+      | None ->
       match def_kind with
       | G.ClassDef _
       (* Ruby's [module Foo; ... end] parses as [ModuleDef] with

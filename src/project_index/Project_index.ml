@@ -1135,33 +1135,6 @@ let run_pipeline (caps : < Cap.fork >)
   let n_total = List.length files in
   Log.info (fun m -> m "Discovered %d %s files. Parsing with %d domain(s)..."
     n_total (Lang.to_string lang) ncores);
-  (* Rust only: [impl Foo {...}] ([OtherDef("Impl")]) is rewritten into a
-     [ClassDef] in the STORED ast ([cfg.class_def_reshape]) so that every
-     later pass sees the methods as class methods; every other language that
-     wires the hook, Go among them, applies it to the collector's view alone
-     and keeps the stored ast as the parser produced it. *)
-  let rec reshape_class_defs (ast : G.program) : G.program =
-    if not (Lang.equal lang Lang.Rust) then ast
-    else
-      List.map (fun (stmt : G.stmt) ->
-        match stmt.G.s with
-        | G.DefStmt (ent, G.ModuleDef { G.mbody = G.ModuleStruct (name, items) })
-          ->
-          { stmt with
-            G.s =
-              G.DefStmt
-                (ent,
-                 G.ModuleDef
-                   { G.mbody =
-                       G.ModuleStruct (name, reshape_class_defs items) }) }
-        | G.DefStmt (ent, def_kind) ->
-          (match cfg.Index_lang_rules.class_def_reshape ent def_kind with
-           | Some (new_ent, new_kind) ->
-             { stmt with G.s = G.DefStmt (new_ent, new_kind) }
-           | None -> stmt)
-        | _ -> stmt
-      ) ast
-  in
   let absolutize (file : Fpath.t) : Fpath.t =
     fst (Fpath_.absolutify ~cwd:project_root_abs file)
   in
@@ -1194,7 +1167,6 @@ let run_pipeline (caps : < Cap.fork >)
     let ast =
       Parse_target.parse_and_resolve_name_warn_if_partial lang file
     in
-    let ast = reshape_class_defs ast in
     let mp =
       Module_paths.module_qn_of_file ~cfg ~go_modules ~rust_crates
         ~project_root ~ast:(Some ast) file

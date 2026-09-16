@@ -678,42 +678,11 @@ let scala : t = { default with
   hiding_alias = Some "_";
 }
 
-let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
-  : (G.entity * G.definition_kind) option =
-  match def_kind with
-  | G.OtherDef ((kind, _), anys) when String.equal kind "Impl" ->
-    let types =
-      List.filter_map (function G.T ty -> Some ty | _ -> None) anys
-    in
-    let stmts =
-      List.concat_map (function G.Ss body -> body | _ -> []) anys
-    in
-    let self_ty, trait_tys =
-      match types with
-      | [] -> (None, [])
-      | self_ty :: traits -> (Some self_ty, traits)
-    in
-    (match self_ty with
-     | Some { G.t = G.TyN (G.Id _ as name); _ }
-     | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as name); _ }; _ } ->
-       let new_ent = { ent with G.name = G.EN name } in
-       let fk = Tok.unsafe_fake_tok "impl" in
-       let cdef = G.ClassDef {
-         G.ckind = (G.Class, fk);
-         cextends = List.map (fun (ty : G.type_) -> (ty, None)) trait_tys;
-         cimplements = []; cmixins = [];
-         cparams = (fk, [], fk);
-         cbody = (fk, List.map (fun stmt -> G.F stmt) stmts, fk);
-       } in
-       Some (new_ent, cdef)
-     | _ -> None)
-  | _ -> None
-
 let rust_relative_module_names : (string * relative_module) list =
   [ ("crate", Root_module); ("self", Own_module); ("super", Parent_module) ]
 
 let rust : t = { default with
-  class_def_reshape = rust_class_def_reshape;
+  class_def_reshape = Visit_function_defs.class_scope_of_definition;
   unqualified_scope = `Per_crate;
   relative_module_names = rust_relative_module_names;
   import_head_may_be_own_module = true;

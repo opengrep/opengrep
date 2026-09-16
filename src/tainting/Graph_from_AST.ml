@@ -797,6 +797,10 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
         (env : G.name option * IL.name option list)
         ((ent, def_kind) as def) =
       let _, parent_path = env in
+      match Visit_function_defs.class_scope_of_definition ent def_kind with
+      | Some (class_def : G.entity * G.definition_kind) ->
+          self#visit_definition env class_def
+      | None ->
       match def_kind with
       | G.ClassDef cdef ->
           (* Non-[EN]-named class resets [current_class] to [None] (no inherit). *)

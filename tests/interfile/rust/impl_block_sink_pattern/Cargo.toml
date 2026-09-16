@@ -1,0 +1,4 @@
+[package]
+name = "impl_block_sink_pattern"
+version = "0.1.0"
+edition = "2021"
