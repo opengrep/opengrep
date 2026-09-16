@@ -35,9 +35,8 @@ val mk_error :
 val error_of_invalid_rule : Rule_error.invalid_rule -> t
 val error_of_rule_error : Rule_error.t -> t
 
-(* Map target-related exceptions the engine already understands (parse errors,
-   etc.). Returns None for unexpected exceptions. *)
-val known_exn_to_error : ?file:Fpath.t -> Exception.t -> t option
+(* Log a per-target exception without promoting parse failures to [ERROR]. *)
+val log_exception_on_target_file : Fpath.t -> Exception.t -> unit
 
 (* Convert a caught exception and its stack trace to a Semgrep error.
  * See also JSON_report.json_of_exn for non-target related exn handling.

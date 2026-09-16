@@ -588,14 +588,7 @@ let iter_targets_and_get_matches_and_exn_to_errors
                  | exn when not !Flag_semgrep.fail_fast ->
                      (* TODO? repeat Parmap_targets.core_error_of_path_exc() *)
                      let e = Exception.catch exn in
-                     let msg = Printexc.to_string (Exception.get_exn e) in
-                     (match E.known_exn_to_error ~file:internal_path e with
-                     | Some _ ->
-                         Logs.debug (fun m ->
-                             m "exception on %s (%s)" !!internal_path msg)
-                     | None ->
-                         Logs.err (fun m ->
-                             m "exception on %s (%s)" !!internal_path msg));
+                     E.log_exception_on_target_file internal_path e;
                      let errors =
                        ESet.singleton (E.exn_to_error ~file:internal_path e)
                      in

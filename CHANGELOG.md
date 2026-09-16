@@ -34,7 +34,6 @@
 
 ### Bug fixes
 
-* `--experimental`: suppress `[ERROR]` logs for known target parse failures; scan summary still reports partially analyzed files (#134)
 * taint: deliver propagator taints when the `to` l-value is visited before the `from` by @corneliuhoffman in #809
 * ci: pass the GitLab job token through the environment rather than the command line, and redact URL userinfo in logged git commands by @dimitris-m in #802
 * ci: search deeper for a GitHub merge base only when the branch-off point is missing, and fetch all history on the last attempt by @dimitris-m in #802
