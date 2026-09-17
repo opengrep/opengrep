@@ -38,10 +38,6 @@ let locate ?tok s : string =
   | Some loc -> spf "%s: %s" loc s
   | None -> s
 
-let log_debug ?tok msg : unit = Log.debug (fun m -> m "%s" (locate ?tok msg))
-let log_warning ?tok msg : unit = Log.warn (fun m -> m "%s" (locate ?tok msg))
-let log_error ?tok msg : unit = Log.err (fun m -> m "%s" (locate ?tok msg))
-
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
@@ -125,16 +121,21 @@ let impossible any_generic : 'a =
   raise (Fixme (Impossible, any_generic))
 
 let log_fixme kind gany : unit =
-  let toks = AST_generic_helpers.ii_of_any gany in
-  let tok = Common2.hd_opt toks in
+  let tok () = Common2.hd_opt (AST_generic_helpers.ii_of_any gany) in
   match kind with
   | ToDo ->
-      log_warning ?tok
-        "Unsupported construct(s) may affect the accuracy of dataflow analyses"
+      Log.warn (fun m ->
+          m "%s"
+            (locate ?tok:(tok ())
+               "Unsupported construct(s) may affect the accuracy of dataflow analyses"))
   | Sgrep_construct ->
-      log_error ?tok "Cannot translate Opengrep construct(s) into IL"
+      Log.err (fun m ->
+          m "%s"
+            (locate ?tok:(tok ()) "Cannot translate Opengrep construct(s) into IL"))
   | Impossible ->
-      log_error ?tok "Impossible happened during AST-to-IL translation"
+      Log.err (fun m ->
+          m "%s"
+            (locate ?tok:(tok ()) "Impossible happened during AST-to-IL translation"))
 
 let fixme_exp ?partial kind gany eorig : exp =
   log_fixme kind (any_of_orig eorig);
@@ -179,8 +180,9 @@ let var_of_id_info id id_info : name =
     | Some (_resolved, sid) -> sid
     | None ->
         let id_str, id_tok = id in
-        let msg = spf "the ident '%s' is not resolved" id_str in
-        log_debug ~tok:id_tok msg;
+        Log.debug (fun m ->
+            m "%s"
+              (locate ~tok:id_tok (spf "the ident '%s' is not resolved" id_str)));
         G.SId.unsafe_default
   in
   { ident = id; sid; id_info }
@@ -2813,7 +2815,8 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
                 IL translation engine will brick the whole record if it is encountered.
                 To avoid this, we will just ignore any unrecognized fields for HCL specifically.
              *)
-            log_warning "Skipping HCL record field during IL translation";
+            Log.warn (fun m ->
+                m "%s" (locate "Skipping HCL record field during IL translation"));
             ([], None)
         | G.F _ -> todo (G.E e_gen))
       origfields
