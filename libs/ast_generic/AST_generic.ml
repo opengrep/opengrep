@@ -940,7 +940,8 @@ and expr_kind =
    * Subshell in Ruby, Delete/Unset in JS/Hack/Solidity/C++,
    * Unpack/ArrayAppend in PHP (the AST for $x[] = 1 used to be
    * handled as an AssignOp with special Append).
-   * Define/Arguments/NewTarget/YieldStar/Exports/Module/Require/UseStrict JS,
+   * Define/Arguments/NewTarget/YieldStar/Exports/Module/UseStrict JS,
+   * Require JS and Lua,
    * UnitLiteral/HexString/UnicodeString/TupleHole/StructExpr in Solidity,
    * AtomExpr/AnonDotField/ContainerBits/When/Join/OpSlashInt/Sigil/Shortcut
    * AttrExpr in Elixir, Error/ImportStr/ObjComprehension in Jsonnet
@@ -1125,10 +1126,11 @@ and special =
   | Op of operator
   (* less: should be lift up and transformed in Assign at stmt level *)
   | IncrDecr of (incr_decr * prefix_postfix)
-  (* JS: `require('foo')`. Calls to require are different than imports as
-   * represented by e.g. `ImportFrom`. They are expressions rather than top
-   * level statements, and can therefore appear inline in any expression, so
-   * it's not generally possible to desugar to imports. *)
+  (* JS `require('foo')` and Lua `require 'foo'`. Calls to require are
+   * different than imports as represented by e.g. `ImportFrom`. They are
+   * expressions rather than top level statements, and can therefore appear
+   * inline in any expression, so it's not generally possible to desugar to
+   * imports. *)
   | Require
 
 (* mostly binary operators.

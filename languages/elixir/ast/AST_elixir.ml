@@ -70,8 +70,9 @@ type ident =
 
 (* uppercase ident; constructs that expand to atoms at compile-time.
  * Foo.Bar is parsed as a single alias whose string holds the dots.
- * Elixir_to_generic.dotted_ident_of_alias splits it for the alias and
- * import directives; the name sites still keep it as one ident.
+ * The alias and import directives split it through
+ * Elixir_to_generic.dotted_ident_of_alias; the name sites keep it as one
+ * ident.
  *)
 type alias = string wrap [@@deriving show]
 

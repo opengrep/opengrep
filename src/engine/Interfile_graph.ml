@@ -10,11 +10,12 @@ type resolved_asts = (string, AST_generic.program) Hashtbl.t
 
 type skipped_tokens = (string, Tok.location list) Hashtbl.t
 
-(* [None] on failure.  Called once per (lang, project_root) per scan —
-   [Interfile_dispatch] groups all of a language's rules onto one build —
-   so there is nothing to cache.  The third component lists per-file build
-   failures: those files' functions and edges are MISSING from the graph, so
-   the caller surfaces them as scan errors rather than dropping them. *)
+(* The result is [None] on failure. The function runs once per (lang,
+   project_root) per scan, since [Interfile_dispatch] puts all of a
+   language's rules on one project index. The third component is the skipped
+   tokens of each partially parsed file. The fourth is the files the index
+   failed to process, each with its error; their functions and edges are
+   missing from the graph, so the caller reports them as scan errors. *)
 let load_interfile_build (caps : < Cap.fork >)
     ?(ncores : int = 0)
     ~(targeting_conf : Find_targets.conf)

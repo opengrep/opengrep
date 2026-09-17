@@ -223,7 +223,8 @@ type t = {
   (* The project index widens an overload group's representative to the
      union of the group (see [Structural_dispatch.emit_overload_edges]),
      so a same-arity tie resolves to it; a single-file graph has no such
-     union and gives up on the tie. *)
+     union and gives up on the tie. Groups form for a language with
+     overloads by type and for one whose top level scope is the project. *)
   overload_groups : bool;
   top_level_scope_is_project : bool;
   scope_table : scope_table;

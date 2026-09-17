@@ -1092,7 +1092,9 @@ let build_project_call_graph (caps : < Cap.fork >)
   if n_override > 0 then
     Log.debug (fun m -> m "Override dispatch: emitted %d Dispatch edges"
       n_override);
-  (* Same-arity overloads of one scope: see [Structural_dispatch]. *)
+  (* Same arity overloads of one scope form a group; for a language whose
+     top level scope is the project, that scope is the whole project. See
+     [Structural_dispatch]. *)
   let n_overload =
     timed "call graph: overload dispatch edges" @@ fun () ->
     Structural_dispatch.emit_overload_edges ~lang ~cfg ~graph

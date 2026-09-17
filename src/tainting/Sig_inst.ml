@@ -2575,7 +2575,12 @@ let strip_receiver ~(interface_param_count : int) (params : Signature.params)
       rest
   | _ -> params
 
-(** Merge dispatch impl signatures: normalise BArg to the first impl's params, strip receivers, union effects; falls back to first sig on incompatible params. *)
+(** Merges the dispatch implementation signatures. BArg is normalised to the
+    representative's params, else to the first impl's; receivers are
+    stripped; the effects are unioned, except the members' effects that
+    depend on a global variable (a BGlob base). The second argument is the
+    interface signature, returned unchanged when there are no impls. On
+    incompatible params the first signature is returned. *)
 let merge_dispatch_signatures ?(representative_sig : Signature.t option)
     (sigs : Signature.t list) (interface_sig : Signature.t) : Signature.t =
   let interface_param_count = List.length interface_sig.Signature.params in

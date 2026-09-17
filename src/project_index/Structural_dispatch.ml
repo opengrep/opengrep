@@ -34,11 +34,12 @@ let dispatch_call_tok (c_m : FA.func_info) : Tok.t =
 
 (* Overload dispatch: the concrete functions of one scope sharing a name
    and an arity, Java's [handle(String)] and [handle(int)], form a group.
-   A call resolves to the group's representative, the earliest by position
-   (see [Callee_resolution.pick_by_arity]), whose signature the dispatch
-   merge widens to the union over the group through the same edges and
-   alternatives as an interface's implementations. Runs serially on the
-   coordinator, like [emit_dispatch_edges]. *)
+   For a language whose top level scope is the project, the scope spans
+   files. A call resolves to the group's representative, the earliest by
+   position (see [Callee_resolution.pick_by_arity]), whose signature the
+   dispatch merge widens to the union over the group through the same
+   edges and alternatives as an interface's implementations. Runs serially
+   on the coordinator, like [emit_dispatch_edges]. *)
 let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     ~(graph : Call_graph.G.t)
     ~(class_qn_by_definition : Func_lookup.class_qn_by_definition)

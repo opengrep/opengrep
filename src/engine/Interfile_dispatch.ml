@@ -1249,8 +1249,8 @@ let chunks (n : int) (xs : 'a list) : 'a list list =
   in
   loop [] [] 0 xs
 
-(* A parsed batch: the ASTs by file, and the files that failed, each with
-   its error as a per-target failure reports it. *)
+(* A parsed batch holds the ASTs by file, the skipped tokens of the files
+   parsed here, and the files whose parse raised, each with its error. *)
 type parsed_batch =
   Lang.t * (Fpath.t, G.program) Hashtbl.t
   * (Fpath.t * Tok.location list) list * (Fpath.t * E.t) list

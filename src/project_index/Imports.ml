@@ -65,8 +65,8 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
          let rec scan st = function
            | [] -> st
            | kw :: value :: tail when is_kwd ":as" kw ->
-             (* wildcard [("*", ns_qn)] tells the re-export pass to copy ns_qn's
-                free fns for [(h/handle ...)]. *)
+             (* This arm adds the alias binding only. The [:refer :all] arm
+                below adds the wildcard binding. *)
              let st = match id_name value with
                | Some alias -> add st alias ns_qn
                | None -> st

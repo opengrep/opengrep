@@ -124,7 +124,9 @@ val create :
   unit -> t
 
 (* Whether the index widened overload groups to their union, so that a
-   same-arity tie resolves to the group's representative. *)
+   same-arity tie resolves to the group's representative. Groups form for
+   a language with overloads by type and for one whose top level scope is
+   the project. *)
 val overload_groups : t -> bool
 
 val top_level_scope_is_project : t -> bool

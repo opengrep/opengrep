@@ -106,12 +106,12 @@ let prefer_concrete (matches : func_info list) : func_info list =
   | [] -> matches
   | _ -> concrete
 
-(* The callee for a tie between same-arity overloads of one scope: the
-   earliest by position, whose signature interfile dispatch widens to the
+(* For a tie between same arity overloads of one scope, the callee is the
+   earliest by position; interfile dispatch widens its signature to the
    union over the group (see [Structural_dispatch.emit_overload_edges]).
-   None when the tie spans scopes, when the language has no overloads by
-   type, or when no union is built, as in a single-file graph: giving up
-   is then the conservative answer. *)
+   For a language whose top level scope is the project, that scope spans
+   files. The result is None when the tie spans scopes or when no union
+   exists, as in a single file graph. *)
 let overload_representative ~(overload_groups : bool)
     ~(top_level_scope_is_project : bool) (matches : func_info list)
     : fn_id option =

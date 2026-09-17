@@ -916,7 +916,6 @@ let iter_unified_and_get_matches_and_exn_to_errors
     in
     interfile_items @ target_items
   in
-  (* empty result with the byte count for --time *)
   let dispatched_results =
     dispatched
     |> List_.map (fun ((target : Target.t), (size : int)) ->

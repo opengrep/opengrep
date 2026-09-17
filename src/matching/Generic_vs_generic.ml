@@ -144,7 +144,7 @@ let should_match_call = function
   | G.Self
   | G.Parent
   | G.LateStatic
-  (* JS `require("fs")` *)
+  (* JS `require("fs")`, Lua `require "fs"` *)
   | G.Require
   | G.Eval ->
       true

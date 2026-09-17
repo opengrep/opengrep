@@ -17,9 +17,10 @@ val load_interfile_build :
   Lang.t -> Fpath.t ->
   (interfile_graph * resolved_asts * skipped_tokens * Core_error.t list)
   option
-(** The third component lists per-file index build failures: those files'
-    functions and edges are missing from the graph, so callers surface them
-    as scan errors rather than dropping them. *)
+(** The third component is the skipped tokens of each partially parsed file.
+    The fourth is the files the index failed to process, each with its error;
+    their functions and edges are missing from the graph, so the caller
+    reports them as scan errors. *)
 
 val absolutify_fid :
   Fpath.t option -> Function_id.t -> Function_id.t

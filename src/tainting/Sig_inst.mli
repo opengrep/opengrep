@@ -50,10 +50,12 @@ val merge_dispatch_signatures :
   Shape_and_sig.Signature.t list ->
   Shape_and_sig.Signature.t ->
   Shape_and_sig.Signature.t
-(** Merge dispatch impl signatures: normalise BArg to the first impl's param
- * names, union effects, drop BGlob-dependent ones. Second arg is the
- * interface sig (returned as-is when impls empty); falls back to the first
- * sig on incompatible param structures. *)
+(** Merges the dispatch implementation signatures. BArg is normalised to the
+ * representative's params, else to the first impl's; receivers are stripped;
+ * the effects are unioned, except the members' effects that depend on a
+ * global variable (a BGlob base). The second argument is the interface
+ * signature, returned unchanged when there are no impls. On incompatible
+ * params the first signature is returned. *)
 
 val instantiate_function_signature :
   lang:Lang.t ->
