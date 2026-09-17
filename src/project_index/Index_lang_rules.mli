@@ -142,3 +142,7 @@ val crystal : t
 val default : t
 
 val for_lang : Lang.t -> t
+
+val top_level_scope_is_project : t -> bool
+
+val forms_overload_groups : lang:Lang.t -> cfg:t -> bool

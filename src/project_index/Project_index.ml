@@ -1095,7 +1095,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Same-arity overloads of one scope: see [Structural_dispatch]. *)
   let n_overload =
     timed "call graph: overload dispatch edges" @@ fun () ->
-    Structural_dispatch.emit_overload_edges ~lang ~graph
+    Structural_dispatch.emit_overload_edges ~lang ~cfg ~graph
       ~class_qn_by_definition all_funcs
   in
   if n_overload > 0 then

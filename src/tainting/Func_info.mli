@@ -21,6 +21,7 @@ val as_free : fn_id -> IL.name option
 val is_method_of : class_name:string -> method_name:string -> fn_id -> bool
 val bare_name : fn_id -> IL.name option
 val name_matches : t -> string -> bool
+val has_body : AST_generic.function_definition -> bool
 val enclosing_class : fn_id -> IL.name option
 val method_id : cls:IL.name -> meth:IL.name -> fn_id
 val free_id : IL.name -> fn_id

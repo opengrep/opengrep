@@ -1,0 +1,12 @@
+rules:
+  - id: test-global-function-in-two-files
+    languages: [julia]
+    message: Two files defining one top level function of the same name and arity form one overload group
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

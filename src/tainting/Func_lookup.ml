@@ -225,6 +225,7 @@ type t = {
      so a same-arity tie resolves to it; a single-file graph has no such
      union and gives up on the tie. *)
   overload_groups : bool;
+  top_level_scope_is_project : bool;
   scope_table : scope_table;
   own_modules : Names.Module_qn.t list;
   module_attributes : module_attributes;
@@ -238,6 +239,8 @@ type t = {
 }
 
 let overload_groups (t : t) : bool = t.overload_groups
+
+let top_level_scope_is_project (t : t) : bool = t.top_level_scope_is_project
 
 let own_modules (t : t) : Names.Module_qn.t list = t.own_modules
 
@@ -393,6 +396,7 @@ let empty = {
   constructors = None;
   project_constructors = None;
   overload_groups = false;
+  top_level_scope_is_project = false;
   scope_table = empty_scope_table;
   own_modules = [];
   module_attributes = Common.SMap.empty;
@@ -411,6 +415,7 @@ let create
     ?same_file_funcs_by_name ?file_module_qn
     ?local_imports ?constructors ?project_constructors
     ?(overload_groups = false)
+    ?(top_level_scope_is_project = false)
     ?(own_modules : Names.Module_qn.t list = [])
     ?(companions : companion_index = Class_qn_map.empty)
     ?(project_classes : project_classes = Class_qn_map.empty)
@@ -431,6 +436,7 @@ let create
     constructors;
     project_constructors;
     overload_groups;
+    top_level_scope_is_project;
     scope_table;
     own_modules;
     module_attributes;

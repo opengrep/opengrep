@@ -1,0 +1,12 @@
+rules:
+  - id: test-global-function-in-two-files
+    languages: [lua]
+    message: Two files defining one global function of the same name and arity form one overload group
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

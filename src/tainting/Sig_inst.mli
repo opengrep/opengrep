@@ -46,6 +46,7 @@ type call_effects = call_effect list
 type sig_inst_cache
 
 val merge_dispatch_signatures :
+  ?representative_sig:Shape_and_sig.Signature.t ->
   Shape_and_sig.Signature.t list ->
   Shape_and_sig.Signature.t ->
   Shape_and_sig.Signature.t

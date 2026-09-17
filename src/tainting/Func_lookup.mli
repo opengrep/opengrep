@@ -110,6 +110,7 @@ val create :
   ?constructors : constructor_index ->
   ?project_constructors : constructor_index ->
   ?overload_groups : bool ->
+  ?top_level_scope_is_project : bool ->
   ?own_modules : Names.Module_qn.t list ->
   ?companions : companion_index ->
   ?project_classes : project_classes ->
@@ -125,6 +126,8 @@ val create :
 (* Whether the index widened overload groups to their union, so that a
    same-arity tie resolves to the group's representative. *)
 val overload_groups : t -> bool
+
+val top_level_scope_is_project : t -> bool
 
 val own_modules : t -> Names.Module_qn.t list
 

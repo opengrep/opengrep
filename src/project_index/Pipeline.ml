@@ -609,7 +609,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)
         ~same_file_funcs_by_name:
           (Func_lookup.bare_name_index_of_hashtbl same_file_funcs_by_name)
-        ~overload_groups:(Lang_config.overloads_by_type lang)
+        ~overload_groups:(Index_lang_rules.forms_overload_groups ~lang ~cfg)
+        ~top_level_scope_is_project:
+          (Index_lang_rules.top_level_scope_is_project cfg)
         ~file_module_qn:
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
         ~module_attributes:attributes_by_module
@@ -789,7 +791,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let toplevel_callbacks =
       let toplevel_func_lookup =
         Func_lookup.create
-          ~overload_groups:(Lang_config.overloads_by_type lang)
+          ~overload_groups:(Index_lang_rules.forms_overload_groups ~lang ~cfg)
+          ~top_level_scope_is_project:
+            (Index_lang_rules.top_level_scope_is_project cfg)
           ~module_attributes:attributes_by_module
           ~resolution_orders
           ~project_classes

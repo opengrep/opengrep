@@ -3,6 +3,7 @@
    earliest by position, and records them as its alternatives. *)
 val emit_overload_edges :
   lang:Lang.t ->
+  cfg:Index_lang_rules.t ->
   graph:Call_graph.G.t ->
   class_qn_by_definition:Func_lookup.class_qn_by_definition ->
   Graph_from_AST.func_info list ->

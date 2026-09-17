@@ -795,6 +795,12 @@ let dispatch_impls (rs : rule_state) (fid : Function_id.t) : Function_id.t list 
   List.filter (fun (pred : Function_id.t) ->
       not (Function_id.equal pred fid)) impls
 
+let has_body (rs : rule_state) (fid : Function_id.t) : bool =
+  match FunctionMap.find_opt fid rs.info_map with
+  | None -> false
+  | Some (info : Match_tainting_mode.fun_info) ->
+      Func_info.has_body info.Match_tainting_mode.fdef
+
 let dispatch_merge_fbdecl (rs : rule_state)
     (fid : Function_id.t) (fid_arity : int)
     (db : Shape_and_sig.signature_database)
@@ -817,8 +823,12 @@ let dispatch_merge_fbdecl (rs : rule_state)
             (Function_id.show_debug fid));
       db
   | Some interface_sig, _ ->
+      let representative_sig =
+        if has_body rs fid then Some interface_sig else None
+      in
       let merged =
-        Sig_inst.merge_dispatch_signatures impl_sigs interface_sig
+        Sig_inst.merge_dispatch_signatures ?representative_sig impl_sigs
+          interface_sig
       in
       let ext_sig =
         { Shape_and_sig.sig_ = merged;

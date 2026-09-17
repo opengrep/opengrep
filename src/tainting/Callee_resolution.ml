@@ -99,12 +99,9 @@ let get_func_arity ~(lang : Lang.t) (f : func_info) : int =
    ([Arity_at_least]), this helper only sees raw parameter lists and
    uses strict exact-arity matching. *)
 let prefer_concrete (matches : func_info list) : func_info list =
-  let is_abstract (f : func_info) : bool =
-    match f.fdef.G.fbody with
-    | G.FBDecl _ | G.FBNothing -> true
-    | _ -> false
+  let concrete =
+    List.filter (fun (f : func_info) -> Func_info.has_body f.fdef) matches
   in
-  let concrete = List.filter (fun f -> not (is_abstract f)) matches in
   match concrete with
   | [] -> matches
   | _ -> concrete
@@ -115,17 +112,19 @@ let prefer_concrete (matches : func_info list) : func_info list =
    None when the tie spans scopes, when the language has no overloads by
    type, or when no union is built, as in a single-file graph: giving up
    is then the conservative answer. *)
-let overload_representative ~(lang : Lang.t) ~(overload_groups : bool)
-    (matches : func_info list) : fn_id option =
+let overload_representative ~(overload_groups : bool)
+    ~(top_level_scope_is_project : bool) (matches : func_info list)
+    : fn_id option =
   let scope (f : func_info) : (string option * string option) =
     ( (match Func_info.enclosing_class f.fn_id with
        | Some (cls : IL.name) -> Some (fst cls.IL.ident)
        | None -> Func_info.entity_qualifier f),
-      Option.map Fpath.to_string (Func_info.def_file_opt f) )
+      if top_level_scope_is_project then None
+      else Option.map Fpath.to_string (Func_info.def_file_opt f) )
   in
   match matches with
   | [] -> None
-  | _ when not (overload_groups && Lang_config.overloads_by_type lang) -> None
+  | _ when not overload_groups -> None
   | first :: rest ->
       let same_scope =
         List.for_all
@@ -148,7 +147,8 @@ let overload_representative ~(lang : Lang.t) ~(overload_groups : bool)
         |> List_.hd_opt
         |> Option.map (fun (_, (f : func_info)) -> f.fn_id)
 
-let pick_by_arity ?(overload_groups = false) ~(lang : Lang.t)
+let pick_by_arity ?(overload_groups = false)
+    ?(top_level_scope_is_project = false) ~(lang : Lang.t)
     (call_arity : int option) (matches : func_info list) : fn_id option =
   let matches = prefer_concrete matches in
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
@@ -157,10 +157,12 @@ let pick_by_arity ?(overload_groups = false) ~(lang : Lang.t)
      resolvable — dispatch merges the concrete impls' signatures into the
      decl's vertex, so dropping its edge severs impl dispatch. *)
   let single_synth_with_args (f : func_info) : bool =
-    match call_arity, f.fdef.G.fbody with
-    | Some n, (G.FBNothing | G.FBDecl _)
-      when n > 0 && List_.null (Tok.unbracket f.fdef.G.fparams) -> true
-    | _ -> false
+    match call_arity with
+    | Some n ->
+        n > 0
+        && not (Func_info.has_body f.fdef)
+        && List_.null (Tok.unbracket f.fdef.G.fparams)
+    | None -> false
   in
   match matches with
   | [single_match] when single_synth_with_args single_match ->
@@ -186,7 +188,8 @@ let pick_by_arity ?(overload_groups = false) ~(lang : Lang.t)
               (* Overloads by parameter type, or entries with the same simple
                  name across scopes. *)
               match
-                overload_representative ~lang ~overload_groups arity_matches
+                overload_representative ~overload_groups
+                  ~top_level_scope_is_project arity_matches
               with
               | Some _ as representative -> representative
               | None ->
@@ -314,6 +317,8 @@ let rec identify_callee ~(lang : Lang.t)
       (matches : func_info list) : fn_id option =
     pick_by_arity
       ~overload_groups:(Func_lookup.overload_groups func_lookup)
+      ~top_level_scope_is_project:
+        (Func_lookup.top_level_scope_is_project func_lookup)
       ~lang call_arity matches
   in
   let rec collect_dotted_chain (e : G.expr) : (string * string list) option =
@@ -1399,6 +1404,8 @@ let identify_callee_interfile ~(lang : Lang.t)
   let pick (matches : func_info list) : fn_id option =
     pick_by_arity
       ~overload_groups:(Func_lookup.overload_groups func_lookup)
+      ~top_level_scope_is_project:
+        (Func_lookup.top_level_scope_is_project func_lookup)
       ~lang call_arity matches
   in
   let along_order ~(receiver : Func_lookup.method_receiver)

@@ -64,6 +64,12 @@ let name_matches (func : t) (name_str : string) : bool =
    | Some (name : IL.name) -> matches_ident name
    | None -> false)
 
+let has_body (fdef : G.function_definition) : bool =
+  match fdef.G.fbody with
+  | G.FBDecl _
+  | G.FBNothing -> false
+  | _ -> true
+
 let enclosing_class : fn_id -> IL.name option = function
   | Some cls :: _ -> Some cls
   | _ -> None

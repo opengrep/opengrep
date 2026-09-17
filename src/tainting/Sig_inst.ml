@@ -2521,7 +2521,7 @@ and remap_effect_barg (remap_fn : T.arg -> T.arg) (eff : Effect.t)
 let build_barg_remap (canonical_params : Signature.params)
     (impl_params : Signature.params) : (T.arg -> T.arg) option =
   if List.compare_lengths canonical_params impl_params <> 0 then (
-    Logs.warn (fun m ->
+    Log.warn (fun m ->
         m
           "build_barg_remap: param count mismatch, canonical=%d vs impl=%d"
           (List.length canonical_params)
@@ -2557,7 +2557,7 @@ let build_barg_remap (canonical_params : Signature.params)
               T.index = canonical_idx;
             }
         | Some canonical_idx ->
-            Logs.warn (fun m ->
+            Log.warn (fun m ->
                 m
                   "build_barg_remap: canonical_idx=%d out of bounds \
                    (canonical has %d params), keeping arg as-is"
@@ -2576,8 +2576,8 @@ let strip_receiver ~(interface_param_count : int) (params : Signature.params)
   | _ -> params
 
 (** Merge dispatch impl signatures: normalise BArg to the first impl's params, strip receivers, union effects; falls back to first sig on incompatible params. *)
-let merge_dispatch_signatures (sigs : Signature.t list)
-    (interface_sig : Signature.t) : Signature.t =
+let merge_dispatch_signatures ?(representative_sig : Signature.t option)
+    (sigs : Signature.t list) (interface_sig : Signature.t) : Signature.t =
   let interface_param_count = List.length interface_sig.Signature.params in
   let sigs =
     List.map
@@ -2592,29 +2592,37 @@ let merge_dispatch_signatures (sigs : Signature.t list)
       (fun (eff : Effect.t) -> not (effect_has_bglob_dependency eff))
       effects
   in
-  match sigs with
-  | [] -> interface_sig
-  | [ single ] ->
+  let union_onto ~(canonical : Signature.params) (init : Effects.t)
+      (members : Signature.t list) : Effects.t =
+    List.fold_left
+      (fun (acc : Effects.t) (sig_k : Signature.t) ->
+        match build_barg_remap canonical sig_k.Signature.params with
+        | Some remap_fn ->
+            let remapped = remap_effects_barg remap_fn sig_k.Signature.effects in
+            Effects.union acc remapped
+        | None ->
+            Log.warn (fun m ->
+                m
+                  "merge_dispatch_signatures: incompatible params, \
+                   canonical=[%s] vs impl=[%s], skipping"
+                  (Signature.show_params canonical)
+                  (Signature.show_params sig_k.Signature.params));
+            acc)
+      init members
+  in
+  match representative_sig, sigs with
+  | Some (representative : Signature.t), _ ->
+      let canonical = representative.Signature.params in
+      let members = filter_bglob (union_onto ~canonical Effects.empty sigs) in
+      { Signature.params = canonical;
+        params_il = [];
+        effects = Effects.union representative.Signature.effects members }
+  | None, [] -> interface_sig
+  | None, [ single ] ->
       { single with Signature.effects = filter_bglob single.Signature.effects }
-  | first :: rest ->
+  | None, first :: rest ->
       let canonical = first.Signature.params in
-      let merged_effects =
-        List.fold_left
-          (fun (acc : Effects.t) (sig_k : Signature.t) ->
-            match build_barg_remap canonical sig_k.Signature.params with
-            | Some remap_fn ->
-                let remapped = remap_effects_barg remap_fn sig_k.Signature.effects in
-                Effects.union acc remapped
-            | None ->
-                Logs.warn (fun m ->
-                    m
-                      "merge_dispatch_signatures: incompatible params, \
-                       canonical=[%s] vs impl=[%s], skipping"
-                      (Signature.show_params canonical)
-                      (Signature.show_params sig_k.Signature.params));
-                acc)
-          first.Signature.effects rest
-      in
+      let merged_effects = union_onto ~canonical first.Signature.effects rest in
       let filtered = filter_bglob merged_effects in
       (* [params_il = []]: merged sig fuses impls, so param-anchored guards can't
          re-anchor and stay undecided → may over-report, never under-report. *)
@@ -2853,3 +2861,37 @@ let%test "merge_dispatch: three impls" =
           | Some (name, idx) -> String.equal name "alpha" && idx =|= 0
           | None -> false)
        merged.Signature.effects
+
+let mk_glob_return_effect (glob : string) : Effect.t =
+  let name : IL.name =
+    { IL.ident = (glob, Tok.unsafe_fake_tok glob);
+      sid = G.SId.unsafe_default;
+      id_info = G.empty_id_info () }
+  in
+  Effect.ToReturn
+    { data_taints =
+        Taints.singleton
+          { T.orig = T.Var { T.base = T.BGlob name; offset = [] };
+            tokens = [] };
+      data_shape = Bot;
+      control_taints = Taints.empty;
+      return_tok = Tok.unsafe_fake_tok "test";
+      guards = Effect_guard.top }
+
+let%test "merge_dispatch: representative's global effect survives, the member's does not" =
+  let representative =
+    { Signature.params = [ P "x" ]; params_il = [];
+      effects = Effects.singleton (mk_glob_return_effect "rep_glob") }
+  in
+  let member =
+    { Signature.params = [ P "x" ]; params_il = [];
+      effects = Effects.singleton (mk_glob_return_effect "member_glob") }
+  in
+  let merged =
+    merge_dispatch_signatures ~representative_sig:representative [ member ]
+      representative
+  in
+  List.equal Signature.equal_param
+    merged.Signature.params Signature.[ P "x" ]
+  && Effects.cardinal merged.Signature.effects =|= 1
+  && Effects.equal merged.Signature.effects representative.Signature.effects

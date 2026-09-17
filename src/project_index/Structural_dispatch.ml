@@ -39,7 +39,8 @@ let dispatch_call_tok (c_m : FA.func_info) : Tok.t =
    merge widens to the union over the group through the same edges and
    alternatives as an interface's implementations. Runs serially on the
    coordinator, like [emit_dispatch_edges]. *)
-let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
+let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
+    ~(graph : Call_graph.G.t)
     ~(class_qn_by_definition : Func_lookup.class_qn_by_definition)
     (all_funcs : FA.func_info list) : int =
   let groups : (string, (Function_id.t * FA.func_info) list) Hashtbl.t =
@@ -61,8 +62,14 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
         Names.Class_qn.to_string class_qn
       | None -> fst cls.IL.ident)
   in
-  if not (Lang_config.overloads_by_type lang) then 0
+  if not (Index_lang_rules.forms_overload_groups ~lang ~cfg) then 0
   else begin
+  let file_in_key (func : FA.func_info) (file : Fpath.t) : string =
+    if Index_lang_rules.top_level_scope_is_project cfg
+       && cfg.Index_lang_rules.project_scope_admits func.FA.entity
+    then ""
+    else Fpath.to_string file
+  in
   List.iter
     (fun (func : FA.func_info) ->
       let scope : string option option =
@@ -71,18 +78,12 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
         | [ None; Some _ ] -> Some (Func_info.entity_qualifier func)
         | _ -> None
       in
-      let concrete =
-        match func.FA.fdef.G.fbody with
-        | G.FBDecl _
-        | G.FBNothing ->
-            false
-        | _ -> true
-      in
+      let concrete = Func_info.has_body func.FA.fdef in
       match (scope, Func_info.bare_name func.FA.fn_id, Func_info.def_file_opt func) with
       | Some scope, Some bare_name, Some file when concrete ->
           let key =
             Printf.sprintf "%s\000%b\000%s\000%s\000%d"
-              (Fpath.to_string file) (Option.is_some scope)
+              (file_in_key func file) (Option.is_some scope)
               (Option.value scope ~default:"")
               (fst bare_name.IL.ident)
               (List.length (Tok.unbracket func.FA.fdef.G.fparams))

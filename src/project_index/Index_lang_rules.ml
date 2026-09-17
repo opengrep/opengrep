@@ -881,3 +881,11 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Crystal -> crystal
   | Lang.Scala -> scala
   | _ -> default
+
+let top_level_scope_is_project (cfg : t) : bool =
+  match cfg.unqualified_scope with
+  | `Per_project -> true
+  | _ -> false
+
+let forms_overload_groups ~(lang : Lang.t) ~(cfg : t) : bool =
+  Lang_config.overloads_by_type lang || top_level_scope_is_project cfg
