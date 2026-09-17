@@ -119,17 +119,13 @@ let full_split ?iflags ?flags ~rex ?pos ?max ?callout subj =
   with
   | Pcre2.Error err -> Error err
 
-let log_error rex subj err =
- (* NOTE: We could move the [string_fragment] calculation into log function below,
-  * but in normal operation we print the warnings anyway, unless if `--quiet` is
-  * passed. And if we did move it in the log closure, it would be protected by a
-  * mutex which would make normal operation slower. *)
-  let string_fragment =
-    let len = String.length subj in
-    if len < 200 then subj
-    else sprintf "%s ... (%i bytes)" (Str.first_chars subj 200) len
-  in
+let log_error (rex : t) (subj : string) (err : error) =
   Log.warn (fun m ->
+      let string_fragment =
+        let len = String.length subj in
+        if len < 200 then subj
+        else sprintf "%s ... (%i bytes)" (Str.first_chars subj 200) len
+      in
       m "PCRE error: %a on input %S. Source regexp: %S" pp_error err
         string_fragment rex.pattern)
 

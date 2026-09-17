@@ -101,21 +101,18 @@ let label_node state labels nodei =
   |> List.iter (fun label ->
          Hashtbl.add state.labels (key_of_label label) nodei)
 
-let resolve_gotos state =
+let resolve_gotos (state : state) =
   !(state.gotos)
   |> List.iter (fun (srci, label_key) ->
          match Hashtbl.find state.labels label_key with
          | dsti -> state.g |> add_arc (srci, dsti)
          | exception Not_found ->
-             (* We won't move that stuff inside the function below, because
-              * warning is on by default, and logging is protected by a mutex,
-              * which would slow down default operation as a result. *)
-             let loc_str =
-               match state.opt_tok with
-               | None -> ""
-               | Some tok -> spf " (%s)" (Tok.stringpos_of_tok tok)
-             in
              Log.warn (fun m ->
+                 let loc_str =
+                   match state.opt_tok with
+                   | None -> ""
+                   | Some tok -> spf " (%s)" (Tok.stringpos_of_tok tok)
+                 in
                  m ~tags "Could not resolve label: %s%s" (fst label_key) loc_str));
   state.gotos := []
 

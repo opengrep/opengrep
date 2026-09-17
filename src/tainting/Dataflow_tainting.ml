@@ -3596,11 +3596,12 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
    * propagate taint from an object receiving a method call, to a lambda being
    * passed to that method. *)
   let lambdas_to_analyze = lambdas_to_analyze_in_node env lambdas node in
-  let num_lambdas = List.length lambdas_to_analyze in
-  if num_lambdas > 0 then
-    Log.debug (fun m ->
-        m "There are %d lambda(s) occurring in: %s" num_lambdas
-          (Display_IL.short_string_of_node_kind node.F.n));
+  Log.debug (fun m ->
+      match List.length lambdas_to_analyze with
+      | 0 -> ()
+      | num_lambdas ->
+          m "There are %d lambda(s) occurring in: %s" num_lambdas
+            (Display_IL.short_string_of_node_kind node.F.n));
   let effects_lambdas, out_envs_lambdas =
     lambdas_to_analyze
     |> List_.map (fun (lambda_name, lambda_cfg) ->
