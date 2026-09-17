@@ -1,0 +1,17 @@
+rules:
+  - id: partial-parse-companion
+    languages: [typescript]
+    severity: WARNING
+    message: >
+      A companion file the parser only partially parses is not a target,
+      so the scan reports no partial parse for it.
+    mode: taint
+    options:
+      taint_interfile: true
+    paths:
+      exclude:
+        - lib.ts
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

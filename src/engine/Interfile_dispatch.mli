@@ -38,6 +38,7 @@ val build_rule_states :
   targeting_conf:Find_targets.conf ->
   xconf:Match_env.xconfig ->
   rule_state list * Xlang.t list * Core_error.t list
+  * (Fpath.t -> Tok.location list)
 (** Returns rule_states, the interfile languages, and the errors of the
     files the analysis lost or left out and of the rules that did not run,
     as a per-target failure reports them; they go with the scan's errors. *)

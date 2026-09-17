@@ -667,16 +667,26 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
   let (ast, skipped_tokens), parse_time =
     Core_profiling.with_time (fun () -> lazy_force lazy_ast_and_errors)
   in
+  let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
   (* the matching time spans the taint spec, the per-function, class
    * initialisation and top-level fixpoints, up to the report *)
   let match_start = Core_profiling.now () in
+  let report_of_matches (matches : PM.t list) :
+      Core_profiling.rule_profiling RP.match_result =
+    RP.mk_match_result matches errors
+      {
+        Core_profiling.rule_id = fst rule.R.id;
+        rule_parse_time = parse_time;
+        rule_match_time = Core_profiling.since match_start;
+      }
+  in
   (* TODO: 'debug_taint' should just be part of 'res'
    * (i.e., add a "debugging" field to 'Report.match_result'). *)
   match
     Match_taint_spec.taint_config_of_rule ~per_file_formula_cache
       xconf lang file (ast, []) rule
   with
-  | None -> (None, None)
+  | None -> (Some (report_of_matches []), None)
   | Some (taint_inst, spec_matches, expls) ->
       (* Must match the root used to absolutify the graph/fids below, else dataflow's [Tok.abs_tok] tokens stay relative and miss the graph. *)
       let taint_inst =
@@ -888,17 +898,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         |> PM.uniq
         |> PM.no_submatches (* see "Taint-tracking via ranges" *) |> match_hook
       in
-      let match_time = Core_profiling.since match_start in
-
-      let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
-      let report =
-        RP.mk_match_result matches errors
-          {
-            Core_profiling.rule_id = fst rule.R.id;
-            rule_parse_time = parse_time;
-            rule_match_time = match_time;
-          }
-      in
+      let report = report_of_matches matches in
       let explanations =
         if xconf.matching_explanations then
           [

@@ -877,6 +877,7 @@ let iter_unified_and_get_matches_and_exn_to_errors
     (config : Core_scan_config.t)
     (target_handler : target_handler)
     ~(interfile_rule_states : Interfile_dispatch.rule_state list)
+    ~(skipped_tokens_of_target : Fpath.t -> Tok.location list)
     ~(target_rules : Target.t -> target_rules)
     (targets : Target.t list)
     : Core_profiling.file_profiling Core_result.match_result list
@@ -919,9 +920,11 @@ let iter_unified_and_get_matches_and_exn_to_errors
   let dispatched_results =
     dispatched
     |> List_.map (fun ((target : Target.t), (size : int)) ->
-           Core_result.mk_match_result [] ESet.empty
-             (Core_profiling.empty_partial_profiling
-                (Target.internal_path target))
+           let path = Target.internal_path target in
+           Core_result.mk_match_result []
+             (Parse_target.errors_from_skipped_tokens
+                (skipped_tokens_of_target path))
+             (Core_profiling.empty_partial_profiling path)
            |> Core_result.add_run_time 0.0
            |> Core_result.map_profiling
                 (fun (p : Core_profiling.file_profiling) ->
@@ -1016,7 +1019,8 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
     else NoPrefiltering
   in
   let equivs = parse_equivalences config.equivalences_file in
-  let interfile_rule_states, interfile_languages_used, interfile_errors =
+  let interfile_rule_states, interfile_languages_used, interfile_errors,
+      skipped_tokens_of_target =
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores:config.ncores
@@ -1064,6 +1068,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       (mk_target_handler (caps :> < Cap.time_limit >) config ~equivs
          prefilter_cache_opt)
       ~interfile_rule_states
+      ~skipped_tokens_of_target
       ~target_rules
       targets
   in

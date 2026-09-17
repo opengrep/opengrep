@@ -1116,7 +1116,7 @@ let run_pipeline (caps : < Cap.fork >)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
   : entry list * Call_graph.G.t * int * int * file_info list
-    * Core_error.t list =
+    * (Fpath.t * Tok.location list) list * Core_error.t list =
   let cfg = Index_lang_rules.for_lang lang in
   (* Absolutize paths: interface dispatch's [family_key] needs consistent
      directory prefixes. *)
@@ -1162,16 +1162,17 @@ let run_pipeline (caps : < Cap.fork >)
         (List.map absolutize files)
     else Module_paths.Specifier_is_module_name
   in
-  let process file =
+  let process (file : Fpath.t) =
     let file = absolutize file in
-    let ast =
-      Parse_target.parse_and_resolve_name_warn_if_partial lang file
+    let { Parsing_result2.ast; skipped_tokens; _ } =
+      Parse_target.parse_and_resolve_name lang file
     in
     let mp =
       Module_paths.module_qn_of_file ~cfg ~go_modules ~rust_crates
         ~project_root ~ast:(Some ast) file
     in
-    Symbols.collect_in_ast ~cfg ~lang ~resolution ~module_path:mp ~file ast
+    (Symbols.collect_in_ast ~cfg ~lang ~resolution ~module_path:mp ~file ast,
+     (file, skipped_tokens))
   in
   let results =
     timed (Printf.sprintf "parse + symbols (%d files)" n_total) @@ fun () ->
@@ -1195,21 +1196,29 @@ let run_pipeline (caps : < Cap.fork >)
         process
         files
   in
-  let scanned, skipped, all_entries, all_classes, all_files, parse_failures =
-    List.fold_left (fun (sc, sk, es, cs, fis, fails) -> function
-      | Ok (entries, class_infos, fi) ->
+  let scanned, skipped, all_entries, all_classes, all_files, all_skipped_tokens,
+      parse_failures =
+    List.fold_left (fun (sc, sk, es, cs, fis, sts, fails) -> function
+      | Ok ((entries, class_infos, fi), (file, skipped_tokens)) ->
+        let sts =
+          match skipped_tokens with
+          | [] -> sts
+          | _ :: _ -> (file, skipped_tokens) :: sts
+        in
         (sc + 1, sk,
          List.rev_append entries es,
          List.rev_append class_infos cs,
          fi :: fis,
+         sts,
          fails)
       | Error (file, exn) ->
         (* [sk] counts failures so far; log the first five only. *)
         if sk < 5 then
           Log.warn (fun m -> m "[skip] %s: %s" (Fpath.to_string file)
                       (Exception.to_string exn));
-        (sc, sk + 1, es, cs, fis, Core_error.exn_to_error ~file exn :: fails)
-    ) (0, 0, [], [], [], []) results
+        (sc, sk + 1, es, cs, fis, sts,
+         Core_error.exn_to_error ~file exn :: fails)
+    ) (0, 0, [], [], [], [], []) results
   in
   let parse_failures = List.rev parse_failures in
   let go_packages =
@@ -1277,7 +1286,7 @@ let run_pipeline (caps : < Cap.fork >)
   let final_entries = entries_pre_mro @ inherited in
   Log.info (fun m -> m "Call graph: %d vertices, %d edges"
     (Call_graph.G.nb_vertex graph) (Call_graph.G.nb_edges graph));
-  (final_entries, graph, scanned, skipped, all_files,
+  (final_entries, graph, scanned, skipped, all_files, all_skipped_tokens,
    parse_failures @ worker_failures)
 
 let collect (caps : < Cap.fork >)
@@ -1286,7 +1295,8 @@ let collect (caps : < Cap.fork >)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
   : entry list * Call_graph.G.t * int * int =
-  let (entries, graph, scanned, skipped, _all_files, _failures) =
+  let (entries, graph, scanned, skipped, _all_files, _skipped_tokens,
+       _failures) =
     run_pipeline caps ~targeting_conf ~lang ~project_root ~ncores
       ~includes ~excludes ()
   in
@@ -1297,12 +1307,14 @@ let collect_resolved (caps : < Cap.fork >)
                 Discover.projidx_default_targeting_conf)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
-  : Call_graph.G.t * (string, G.program) Hashtbl.t * Core_error.t list =
+  : Call_graph.G.t * (string, G.program) Hashtbl.t
+    * (string, Tok.location list) Hashtbl.t * Core_error.t list =
   let project_root_abs = project_root_abs_of project_root in
   let absnorm (file : Fpath.t) : string =
     fst (Fpath_.absolutify ~cwd:project_root_abs file) |> Fpath.to_string
   in
-  let (_entries, graph, _scanned, _skipped, all_files, failures) =
+  let (_entries, graph, _scanned, _skipped, all_files, all_skipped_tokens,
+       failures) =
     run_pipeline caps ~targeting_conf ~lang ~project_root:project_root_abs
       ~ncores ~includes ~excludes ()
   in
@@ -1310,7 +1322,11 @@ let collect_resolved (caps : < Cap.fork >)
   List.iter (fun (fi : file_info) ->
     Hashtbl.replace tbl (absnorm fi.fi_file) fi.fi_ast)
     all_files;
-  (graph, tbl, failures)
+  let skipped_tokens_tbl = Hashtbl.create (List.length all_skipped_tokens) in
+  List.iter (fun ((file : Fpath.t), (locs : Tok.location list)) ->
+    Hashtbl.replace skipped_tokens_tbl (absnorm file) locs)
+    all_skipped_tokens;
+  (graph, tbl, skipped_tokens_tbl, failures)
 
 let resolve_ast_for_file (caps : < Cap.fork >)
     ?(targeting_conf : Find_targets.conf =
@@ -1322,7 +1338,7 @@ let resolve_ast_for_file (caps : < Cap.fork >)
   let target_key =
     fst (Fpath_.absolutify ~cwd:project_root_abs target) |> Fpath.to_string
   in
-  let _graph, asts, _failures =
+  let _graph, asts, _skipped_tokens, _failures =
     collect_resolved caps ~targeting_conf ~lang ~project_root ~ncores
       ~includes:[] ~excludes:[] ()
   in

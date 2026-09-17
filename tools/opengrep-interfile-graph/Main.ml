@@ -89,19 +89,22 @@ let cmd_full_graph (project_root : string) (lang_str : string)
 
 module Log = PI.Log_projidx.Log
 
-let count_by_kind (entries : PI.Types.entry list) : int * int * int =
-  List.fold_left (fun (funcs, methods, classes) (entry : PI.Types.entry) ->
-    match entry.PI.Types.kind with
-    | PI.Types.K_function -> (funcs + 1, methods, classes)
-    | PI.Types.K_method -> (funcs, methods + 1, classes)
-    | PI.Types.K_class -> (funcs, methods, classes + 1)
-  ) (0, 0, 0) entries
+let count_by_kind (entries : PI.Types.entry list) : int * int * int * int =
+  List.fold_left
+    (fun (funcs, methods, classes, companions) (entry : PI.Types.entry) ->
+      match entry.PI.Types.kind with
+      | PI.Types.K_function -> (funcs + 1, methods, classes, companions)
+      | PI.Types.K_method -> (funcs, methods + 1, classes, companions)
+      | PI.Types.K_class -> (funcs, methods, classes + 1, companions)
+      | PI.Types.K_companion -> (funcs, methods, classes, companions + 1))
+    (0, 0, 0, 0) entries
 
 let kind_str (kind : PI.Types.def_kind) : string =
   match kind with
   | PI.Types.K_function -> "function"
   | PI.Types.K_method -> "method"
   | PI.Types.K_class -> "class"
+  | PI.Types.K_companion -> "companion"
 
 let cmd_index (project_root_str : string) (lang_str : string)
     (sample : int) (dump_all : bool) (ncores : int)
@@ -138,7 +141,7 @@ let cmd_index (project_root_str : string) (lang_str : string)
         ~lang ~project_root ~ncores ~includes ~excludes ()
     in
     let t1 = Unix.gettimeofday () in
-    let (funcs, methods, classes) = count_by_kind entries in
+    let (funcs, methods, classes, companions) = count_by_kind entries in
     let summary_chan = if dump_all || dump_edges then stderr else stdout in
     Printf.fprintf summary_chan "Files scanned:  %d\n" scanned;
     Printf.fprintf summary_chan "Files skipped:  %d\n" skipped;
@@ -146,6 +149,7 @@ let cmd_index (project_root_str : string) (lang_str : string)
     Printf.fprintf summary_chan "  functions:    %d\n" funcs;
     Printf.fprintf summary_chan "  methods:      %d\n" methods;
     Printf.fprintf summary_chan "  classes:      %d\n" classes;
+    Printf.fprintf summary_chan "  companions:   %d\n" companions;
     Printf.fprintf summary_chan "Elapsed:        %.2fs\n" (t1 -. t0);
     let entry_loc (entry : PI.Types.entry) =
       let file, line, col = Function_id.to_file_line_col entry.PI.Types.id in
@@ -325,7 +329,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let targeting_conf =
     Opengrep_project_index.Discover.projidx_default_targeting_conf
   in
-  let rule_states, _langs, _errors =
+  let rule_states, _langs, _errors, _skipped_tokens_of_target =
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores

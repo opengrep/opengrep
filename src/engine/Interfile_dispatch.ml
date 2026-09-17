@@ -29,9 +29,12 @@ let timed (name : string) (f : unit -> 'a) : 'a =
       m "[interfile timing] %s: %.2fs" name secs);
   res
 
-let parse_file (lang : Lang.t) (file : Fpath.t) : G.program =
-  let result = Parse_target.parse_and_resolve_name lang file in
-  result.Parsing_result2.ast
+let parse_file (lang : Lang.t) (file : Fpath.t)
+    : G.program * Tok.location list =
+  let { Parsing_result2.ast; skipped_tokens; _ } =
+    Parse_target.parse_and_resolve_name lang file
+  in
+  (ast, skipped_tokens)
 
 type file_env = {
   ast : G.program;
@@ -1249,7 +1252,8 @@ let chunks (n : int) (xs : 'a list) : 'a list list =
 (* A parsed batch: the ASTs by file, and the files that failed, each with
    its error as a per-target failure reports it. *)
 type parsed_batch =
-  Lang.t * (Fpath.t, G.program) Hashtbl.t * (Fpath.t * E.t) list
+  Lang.t * (Fpath.t, G.program) Hashtbl.t
+  * (Fpath.t * Tok.location list) list * (Fpath.t * E.t) list
 
 (* Reuse a [resolved] projidx AST when present (it carries the cross-file
    [id_callee_definition] stamps); otherwise fresh-parse. A failure is
@@ -1258,20 +1262,25 @@ let parse_file_batch
     ?(resolved : (string, G.program) Hashtbl.t = Hashtbl.create 0)
     (lang : Lang.t) (files : Fpath.t list) : parsed_batch =
   let tbl = Hashtbl.create (List.length files) in
-  let failures =
+  let skipped_tokens, failures =
     List.fold_left
-      (fun (failures : (Fpath.t * E.t) list) (file : Fpath.t) ->
+      (fun ((skipped : (Fpath.t * Tok.location list) list),
+            (failures : (Fpath.t * E.t) list)) (file : Fpath.t) ->
         let key = Fpath.to_string (Fpath.normalize file) in
         match Hashtbl.find_opt resolved key with
-        | Some ast -> Hashtbl.replace tbl file ast; failures
+        | Some ast -> Hashtbl.replace tbl file ast; (skipped, failures)
         | None ->
           (match parse_file lang file with
-           | ast -> Hashtbl.replace tbl file ast; failures
+           | ast, [] -> Hashtbl.replace tbl file ast; (skipped, failures)
+           | ast, locs ->
+             Hashtbl.replace tbl file ast;
+             ((file, locs) :: skipped, failures)
            | exception exn ->
-             (file, file_error ~file (Exception.catch exn)) :: failures))
-      [] files
+             (skipped,
+              (file, file_error ~file (Exception.catch exn)) :: failures)))
+      ([], []) files
   in
-  (lang, tbl, failures)
+  (lang, tbl, skipped_tokens, failures)
 
 (* the batch failed outside the per-file parse: every file failed *)
 let failed_batch ((lang, batch) : Lang.t * Fpath.t list) (exn : Exception.t)
@@ -1279,16 +1288,22 @@ let failed_batch ((lang, batch) : Lang.t * Fpath.t list) (exn : Exception.t)
   Log.warn (fun m ->
       m "interfile parse: %s batch failed: %s" (Lang.to_string lang)
         (Exception.to_string exn));
-  (lang, Hashtbl.create 0,
+  (lang, Hashtbl.create 0, [],
    List_.map (fun (file : Fpath.t) -> (file, file_error ~file exn)) batch)
 
 let batch_asts (batches : parsed_batch list)
     : (Lang.t * (Fpath.t, G.program) Hashtbl.t) list =
-  List_.map (fun ((lang, tbl, _) : parsed_batch) -> (lang, tbl)) batches
+  List_.map (fun ((lang, tbl, _, _) : parsed_batch) -> (lang, tbl)) batches
+
+let batch_skipped_tokens (batches : parsed_batch list)
+    : (Fpath.t * Tok.location list) list =
+  List.concat_map
+    (fun ((_, _, skipped_tokens, _) : parsed_batch) -> skipped_tokens)
+    batches
 
 let batch_failures (batches : parsed_batch list) : (Fpath.t * E.t) list =
   List.concat_map
-    (fun ((_, _, failures) : parsed_batch) -> failures)
+    (fun ((_, _, _, failures) : parsed_batch) -> failures)
     batches
 
 let build_ast_lookup
@@ -1373,7 +1388,7 @@ let parse_companion_files
     let parsed, failed =
       run_parmap caps ~ncores ~on_exn:failed_batch
         (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-          let ((_, tbl, _) as parsed) =
+          let ((_, tbl, _, _) as parsed) =
             parse_file_batch ~resolved lang batch
           in
           Log.info (fun m ->
@@ -1404,13 +1419,14 @@ let build_rule_states
     ~(respect_rule_paths : bool)
     ~(targeting_conf : Find_targets.conf)
     ~(xconf : Match_env.xconfig)
-    : rule_state list * Xlang.t list * E.t list =
+    : rule_state list * Xlang.t list * E.t list
+      * (Fpath.t -> Tok.location list) =
   (* A rule-local option counts, not just the global flag. *)
   let lang_rules =
     interfile_taint_rules_by_lang ~taint_interfile valid_rules
   in
   match lang_rules with
-  | [] -> ([], [], [])
+  | [] -> ([], [], [], fun (_ : Fpath.t) -> [])
   | _ ->
   (* the limits apply to the graph build only; the rest forks *)
   let limit_caps = caps in
@@ -1447,6 +1463,9 @@ let build_rule_states
           (Hashtbl.length targets_by_root));
   (* Abs-path keys are globally unique, so merging across roots is safe. *)
   let projidx_asts : (string, G.program) Hashtbl.t = Hashtbl.create 1024 in
+  let skipped_tokens_by_file : (string, Tok.location list) Hashtbl.t =
+    Hashtbl.create 16
+  in
   (* Per language: the context (when the build is usable) and the build's
      per-file failures — files whose functions/edges are missing from the
      graph.  The failures become scan errors so the recall loss is visible. *)
@@ -1457,7 +1476,7 @@ let build_rule_states
      each rule's run. *)
   let bounded_build (lang : Lang.t) (project_root : Fpath.t) :
       ((Interfile_graph.interfile_graph * Interfile_graph.resolved_asts
-        * E.t list) option,
+        * Interfile_graph.skipped_tokens * E.t list) option,
        E.t) result =
     match
       Memory_limit.run_with_global_memory_limit
@@ -1507,14 +1526,16 @@ let build_rule_states
                     rules )
           in
           (match build_opt with
-           | Some (_, asts, _) ->
-             Hashtbl.iter (Hashtbl.replace projidx_asts) asts
+           | Some (_, asts, skipped_tokens, _) ->
+             Hashtbl.iter (Hashtbl.replace projidx_asts) asts;
+             Hashtbl.iter (Hashtbl.replace skipped_tokens_by_file)
+               skipped_tokens
            | None -> ());
           (* a warning at the file, as a partial parse is reported *)
           let file_failures : E.t list =
             match build_opt with
             | None -> []
-            | Some (_, _, failures) -> failures
+            | Some (_, _, _, failures) -> failures
           in
           (* A file with an index error is absent from the graph because
              of it; it is not reported a second time as absent. *)
@@ -1568,7 +1589,7 @@ let build_rule_states
                   (Lang.to_string lang) (Fpath.to_string project_root));
             (None,
              not_covered lang_targets "the interfile graph could not be built")
-          | Some (interfile_graph, asts, _) ->
+          | Some (interfile_graph, asts, _, _) ->
             (* covered: every file the index parsed, a file with nothing to
                index (an empty package file) included *)
             let interfile_files = interfile_file_set interfile_graph in
@@ -1647,7 +1668,7 @@ let build_rule_states
     let parsed, failed =
       run_parmap caps ~ncores ~on_exn:failed_batch
         (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-          let ((_, tbl, _) as parsed) =
+          let ((_, tbl, _, _) as parsed) =
             parse_file_batch ~resolved:projidx_asts lang batch
           in
           Log.info (fun m ->
@@ -1659,6 +1680,28 @@ let build_rule_states
         target_batches
     in
     parsed @ failed
+  in
+  List.iter
+    (fun ((file : Fpath.t), (locs : Tok.location list)) ->
+      Hashtbl.replace skipped_tokens_by_file
+        (Fpath.to_string (Fpath.normalize file)) locs)
+    (batch_skipped_tokens parsed_target_batches);
+  let skipped_tokens_by_target : Tok.location list FpathMap.t =
+    FpathMap.fold
+      (fun (canon : Fpath.t) ({ path; _ } : path_with_root)
+           (acc : Tok.location list FpathMap.t) ->
+        match Hashtbl.find_opt skipped_tokens_by_file (Fpath.to_string canon) with
+        | None -> acc
+        | Some locs ->
+            FpathMap.add path
+              (List_.map (rebase_loc (fun (_ : Fpath.t) -> Some path)) locs)
+              acc)
+      target_root_map FpathMap.empty
+  in
+  let skipped_tokens_of_target (path : Fpath.t) : Tok.location list =
+    match FpathMap.find_opt path skipped_tokens_by_target with
+    | Some locs -> locs
+    | None -> []
   in
   let target_ast_lookup =
     build_ast_lookup (batch_asts parsed_target_batches)
@@ -2036,4 +2079,4 @@ let build_rule_states
              E.loc =
                Option.map (rebase_loc (rebase_file target_root_map)) err.E.loc })
   in
-  (rule_states, langs, errors)
+  (rule_states, langs, errors, skipped_tokens_of_target)

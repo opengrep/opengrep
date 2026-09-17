@@ -8,6 +8,8 @@ type interfile_graph = Call_graph.G.t
 (* AST map (abs path -> AST) carrying cross-file callee [id_resolved]. *)
 type resolved_asts = (string, AST_generic.program) Hashtbl.t
 
+type skipped_tokens = (string, Tok.location list) Hashtbl.t
+
 (* [None] on failure.  Called once per (lang, project_root) per scan —
    [Interfile_dispatch] groups all of a language's rules onto one build —
    so there is nothing to cache.  The third component lists per-file build
@@ -17,7 +19,8 @@ let load_interfile_build (caps : < Cap.fork >)
     ?(ncores : int = 0)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
-    : (interfile_graph * resolved_asts * Core_error.t list) option =
+    : (interfile_graph * resolved_asts * skipped_tokens * Core_error.t list)
+      option =
   (* The graph is keyed by canonical path, whether the root is relative or
      absolute, and [Interfile_dispatch] looks targets up by canonical path. *)
   let project_root_abs =
@@ -30,7 +33,7 @@ let load_interfile_build (caps : < Cap.fork >)
     if ncores <= 0 then Domainslib_.get_cpu_count () else ncores
   in
   try
-    let (graph, asts, failures) =
+    let (graph, asts, skipped_tokens, failures) =
       Opengrep_project_index.Project_index.collect_resolved caps
         ~targeting_conf
         ~lang ~project_root:project_root_abs ~ncores
@@ -38,7 +41,7 @@ let load_interfile_build (caps : < Cap.fork >)
     in
     (* [Interfile_dispatch] looks up vertices by absolute path. *)
     Some (Call_graph.make_paths_absolute project_root_abs graph, asts,
-          failures)
+          skipped_tokens, failures)
   with
   | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
     Exception.catch_and_reraise exn
@@ -55,7 +58,7 @@ let load_interfile_graph (caps : < Cap.fork >)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
     : interfile_graph option =
-  Option.map (fun (graph, _asts, _failures) -> graph)
+  Option.map (fun (graph, _asts, _skipped_tokens, _failures) -> graph)
     (load_interfile_build caps ~ncores ~targeting_conf lang project_root)
 
 (* Graph uses absolute paths, so ids touching it must be absolute too. *)

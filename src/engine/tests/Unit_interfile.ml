@@ -92,6 +92,23 @@ let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
         |> List_.map (fun ((file : Fpath.t), (line : int)) ->
                (relative_to_cwd file, line))
       in
+      let expected_errors_file = Fpath.(cwd / "expected_errors.txt") in
+      let expected_errors : (Fpath.t * int) list =
+        if Sys.file_exists !!expected_errors_file then
+          UFile.cat expected_errors_file
+          |> List_.map (fun (line : string) ->
+                 match String.rindex_opt line ':' with
+                 | Some i ->
+                     ( Fpath.v (String.sub line 0 i),
+                       int_of_string
+                         (String.sub line (i + 1) (String.length line - i - 1))
+                     )
+                 | None ->
+                     failwith
+                       (spf "%s: a line is <file>:<line>, got %s"
+                          !!expected_errors_file line))
+        else []
+      in
 
       let config =
         Core_scan_config.{
@@ -118,12 +135,24 @@ let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
                let (file, line) = TCM.location_of_pm pm.RP.pm in
                (relative_to_cwd file, line))
       in
+      let actual_errors =
+        result.RP.errors
+        |> List.filter (fun (err : Core_error.t) ->
+               match err.Core_error.typ with
+               | Semgrep_output_v1_t.PartialParsing _ -> true
+               | _ -> false)
+        |> List_.map (fun (err : Core_error.t) ->
+               let (file, line) = TCM.location_of_core_error err in
+               (relative_to_cwd file, line))
+      in
       (* Reset globals (even on failure) so cases stay isolated. *)
       Fun.protect
         ~finally:(fun () -> Globals.reset ())
         (fun () ->
           TCM.compare_actual_to_expected_for_alcotest
-            ~to_location:Fun.id actual expected))
+            ~to_location:Fun.id actual expected;
+          TCM.compare_actual_to_expected_for_alcotest
+            ~to_location:Fun.id actual_errors expected_errors))
 
 (* Cases needing non-default interfile config (fixtures run interfile on, depth 3). *)
 let regression_tests (caps : Core_scan.caps) : Testo.t list =

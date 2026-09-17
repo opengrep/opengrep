@@ -880,6 +880,46 @@ let lang_classification_tests () =
 (* All tests *)
 (*****************************************************************************)
 
+let taint_partial_parse_tests () =
+  let dir = tests_path / "tainting_partial_parse" in
+  let rule_file = dir / "sink_no_source.yaml" in
+  let target = dir / "sink_no_source.ts" in
+  let check_partial_parse ~(taint_intrafile : bool) () : unit =
+    let rules =
+      match Parse_rule.parse rule_file with
+      | Ok rules -> rules
+      | Error e ->
+          failwith (spf "failed to parse %s: %s" !!rule_file (Rule_error.show e))
+    in
+    let xlang = Test_engine.first_xlang_of_rules rules in
+    let xtarget = Test_engine.xtarget_of_file xlang target in
+    let base_xconf = Match_env.default_xconfig in
+    let xconf =
+      { base_xconf with config = { base_xconf.config with taint_intrafile } }
+    in
+    let res =
+      Match_rules.check ~match_hook:(fun _pm -> ()) ~timeout:None xconf rules
+        xtarget
+    in
+    let partial_parsing =
+      E.ErrorSet.elements res.errors
+      |> List.filter (fun (err : E.t) ->
+             match err.E.typ with
+             | Out.PartialParsing _ -> true
+             | _ -> false)
+    in
+    Alcotest.(check int) "one PartialParsing error" 1
+      (List.length partial_parsing);
+    Alcotest.(check int) "no finding" 0 (List.length res.matches)
+  in
+  Testo.categorize "taint partial parse"
+    [
+      t "a sink without a source reports the partial parse"
+        (check_partial_parse ~taint_intrafile:false);
+      t "a sink without a source reports the partial parse under intrafile"
+        (check_partial_parse ~taint_intrafile:true);
+    ]
+
 let tests () =
   List_.flatten
     [
@@ -894,5 +934,6 @@ let tests () =
       full_rule_regression_tests ();
       semgrep_rules_repo_tests ();
       lang_tainting_tests ();
+      taint_partial_parse_tests ();
       lang_classification_tests ();
     ]

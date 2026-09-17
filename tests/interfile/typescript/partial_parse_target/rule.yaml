@@ -1,0 +1,15 @@
+rules:
+  - id: partial-parse-target
+    languages: [typescript]
+    severity: WARNING
+    message: >
+      A target the parser only partially parses is analysed from the
+      recovered tree and reported as partially analysed, as a per target
+      scan reports it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
