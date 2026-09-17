@@ -14,8 +14,25 @@ module G = AST_generic
 (* Object mapping: variable -> class *)
 type object_mapping = G.name * G.name
 
+module String_set = Set.Make (String)
+
+type class_names = String_set.t
+
+let no_class_names : class_names = String_set.empty
+
+let add_class_names (names : G.name list) (acc : class_names) : class_names =
+  List.fold_left
+    (fun (acc : class_names) (name : G.name) ->
+      match name with
+      | G.Id ((str, _), _) -> String_set.add str acc
+      | _ -> acc)
+    acc names
+
+let count_class_names (class_names : class_names) : int =
+  String_set.cardinal class_names
+
 (* Matcher type: extracts class name from constructor expression *)
-type matcher = G.expr -> G.name list -> G.name option
+type matcher = G.expr -> class_names -> G.name option
 
 (*****************************************************************************)
 (* Common Matchers *)
@@ -23,16 +40,10 @@ type matcher = G.expr -> G.name list -> G.name option
 
 (* The match is on the bare name, so a qualified reference matches a class by
    its simple name. *)
-let is_known_class (name : G.name) (class_names : G.name list) : bool =
+let is_known_class (name : G.name) (class_names : class_names) : bool =
   match Ty_bare_name.bare_name_of_name name with
   | None -> false
-  | Some s1 ->
-    List.exists
-      (fun class_name ->
-        match Ty_bare_name.bare_name_of_name class_name with
-        | Some s2 -> String.equal s1 s2
-        | None -> false)
-      class_names
+  | Some str -> String_set.mem str class_names
 
 (* Check if string starts with uppercase *)
 let is_uppercase_start str =
@@ -179,27 +190,18 @@ let collect_class_names (ast : G.program) : G.name list =
 
 (* Extract class name from constructor call expression *)
 let extract_class_name_from_constructor (rval_expr : G.expr) (lang : Lang.t)
-    (class_names : G.name list) : G.name option =
+    (class_names : class_names) : G.name option =
   match get_matcher lang with
   | Some matcher -> matcher rval_expr class_names
   | None -> None
 
 (* [extra_class_names] supplies project-wide/interfile classes, deduped. *)
 let detect_object_initialization
-    ?(extra_class_names : G.name list = [])
+    ?(extra_class_names : class_names = no_class_names)
     (ast : G.program) (lang : Lang.t) :
     object_mapping list =
-  let class_names =
-    let module StringSet = Set.Make (String) in
-    let _, acc =
-      List.fold_left (fun (seen, acc) n ->
-        match n with
-        | G.Id ((s, _), _) when not (StringSet.mem s seen) ->
-          (StringSet.add s seen, n :: acc)
-        | _ -> (seen, acc)
-      ) (StringSet.empty, []) (collect_class_names ast @ extra_class_names)
-    in
-    acc
+  let class_names : class_names =
+    add_class_names (collect_class_names ast) extra_class_names
   in
   let object_mappings = ref [] in
 
@@ -488,7 +490,7 @@ let execute_constructor_call lang constructor_name class_name args =
 (* C++ Constructor Statement Detection *)
 (*****************************************************************************)
 
-let detect_cpp_constructor_defstmt stmt class_names =
+let detect_cpp_constructor_defstmt (stmt : G.stmt) (class_names : class_names) =
   match stmt.G.s with
   | G.DefStmt (ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ }) -> (
       match (ent.name, ty.G.t) with

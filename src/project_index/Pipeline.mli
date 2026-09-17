@@ -48,7 +48,7 @@ type ctx = {
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
   file_module_qn : (string, Names.Module_qn.t) Hashtbl.t;
-  project_class_names : G.name list;
+  project_class_names : Object_initialization.class_names;
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
   top_level_node_for : Fpath.t -> Function_id.t;

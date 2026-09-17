@@ -12,6 +12,14 @@
 (* Object mapping: variable -> class *)
 type object_mapping = AST_generic.name * AST_generic.name
 
+type class_names
+
+val no_class_names : class_names
+
+val add_class_names : AST_generic.name list -> class_names -> class_names
+
+val count_class_names : class_names -> int
+
 (*****************************************************************************)
 (* Main API *)
 (*****************************************************************************)
@@ -19,7 +27,7 @@ type object_mapping = AST_generic.name * AST_generic.name
 (* [extra_class_names] supplies project-wide/interfile classes, deduped.
    Pure: the result is published onto the AST via [stamp_id_types]. *)
 val detect_object_initialization :
-  ?extra_class_names:AST_generic.name list ->
+  ?extra_class_names:class_names ->
   AST_generic.program -> Lang.t -> object_mapping list
 
 (* Stamp each mapping's class onto every occurrence's [id_instance_type],
@@ -33,8 +41,8 @@ val stamp_id_types : object_mapping list -> AST_generic.program -> unit
 val collect_class_names : AST_generic.program -> AST_generic.name list
 
 (* Extract class name from a constructor expression *)
-val extract_class_name_from_constructor : 
-  AST_generic.expr -> Lang.t -> AST_generic.name list -> AST_generic.name option
+val extract_class_name_from_constructor :
+  AST_generic.expr -> Lang.t -> class_names -> AST_generic.name option
 
 (*****************************************************************************)
 (* Constructor Detection Utilities *)
@@ -64,7 +72,7 @@ val execute_unified_constructor : 'a -> 'b list -> 'c list ->
 val execute_constructor_call : Lang.t -> string -> string option -> 'a list -> (string * string option * 'a list) option
 
 (* Detect C++ constructor patterns in DefStmt - returns (var_name, class_name, params) if found *)
-val detect_cpp_constructor_defstmt : AST_generic.stmt -> AST_generic.name list -> (string * string * AST_generic.parameter list) option
+val detect_cpp_constructor_defstmt : AST_generic.stmt -> class_names -> (string * string * AST_generic.parameter list) option
 
 (*****************************************************************************)
 (* Debugging and Display *)

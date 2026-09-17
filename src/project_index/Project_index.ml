@@ -419,21 +419,15 @@ let build_project_call_graph (caps : < Cap.fork >)
     | None -> ()
   ) all_funcs;
 
-  let project_class_names : G.name list =
-    let seen : (string, unit) Hashtbl.t =
-      Hashtbl.create (List.length class_infos) in
-    List.fold_left (fun acc fi ->
-      List.fold_left (fun acc name ->
-        match name with
-        | G.Id ((name_str, _), _) when not (Hashtbl.mem seen name_str) ->
-          Hashtbl.replace seen name_str ();
-          name :: acc
-        | _ -> acc
-      ) acc (Object_initialization.collect_class_names fi.fi_ast)
-    ) [] file_infos
+  let project_class_names : Object_initialization.class_names =
+    List.fold_left
+      (fun (acc : Object_initialization.class_names) (fi : file_info) ->
+        Object_initialization.add_class_names
+          (Object_initialization.collect_class_names fi.fi_ast) acc)
+      Object_initialization.no_class_names file_infos
   in
   Log.debug (fun m -> m "Project class names: %d (interfile object_mappings)"
-    (List.length project_class_names));
+    (Object_initialization.count_class_names project_class_names));
 
   let funcs_by_name : (string, FA.func_info list) Hashtbl.t =
     Hashtbl.create (List.length all_funcs * 2)
