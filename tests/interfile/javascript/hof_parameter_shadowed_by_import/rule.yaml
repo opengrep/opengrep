@@ -1,0 +1,15 @@
+rules:
+  - id: hof-parameter-shadowed-by-import
+    languages: [js]
+    severity: ERROR
+    message: >
+      A call of a parameter resolves to no function by name, so the
+      imported function of a.js named callback is not the callee and the
+      higher order machinery carries the taint.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

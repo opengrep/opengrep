@@ -1419,12 +1419,14 @@ let identify_callee_interfile ~(lang : Lang.t)
     | Some (Bound_module _)
     | None -> None
   in
-  let of_bare_name (id : string) : fn_id option =
-    let nearest = entries_in_scope ~func_lookup ~caller_parent_path id in
-    match Func_lookup.class_of_entries nearest with
+  let of_entries (entries : Func_lookup.scope_entry list) : fn_id option =
+    match Func_lookup.class_of_entries entries with
     | Some (class_qn : Names.Class_qn.t) ->
       of_target (Some (Bound_class class_qn))
-    | None -> pick (Func_lookup.functions_of_entries nearest)
+    | None -> pick (Func_lookup.functions_of_entries entries)
+  in
+  let of_bare_name (id : string) : fn_id option =
+    of_entries (entries_in_scope ~func_lookup ~caller_parent_path id)
   in
   match callee.G.e with
   | G.IdSpecial (G.Super, _) -> (
@@ -1442,7 +1444,15 @@ let identify_callee_interfile ~(lang : Lang.t)
              ~receiver:Func_lookup.On_any after_self
              (fun _ -> [ fst method_il.IL.ident ])))
     | _ -> None)
-  | G.N (G.Id ((id, _), _id_info)) -> of_bare_name id
+  | G.N (G.Id ((id, _), id_info)) -> (
+    match !(id_info.G.id_resolved) with
+    | Some ((G.LocalVar | G.Parameter), _) ->
+      of_entries
+        (List.filter
+           (fun (entry : Func_lookup.scope_entry) ->
+             equal_with_pos entry.Func_lookup.parent_path caller_parent_path)
+           (entries_in_scope ~func_lookup ~caller_parent_path id))
+    | _ -> of_bare_name id)
   | G.N (G.IdQualified
            { name_last = ((id, _), _typeargs); name_middle = None;
              name_top = None; _ }) -> of_bare_name id
