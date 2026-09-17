@@ -441,6 +441,11 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~targets:[ "targets/bad/invalid_python.py" ]
            ~extra_args:[ "--verbose"; "--strict"; "invalid_python.py" ]
            ~check:Exit_code.Check.invalid_code);
+      t "findings: a target that does not parse prints no error line"
+        ~checked_output:(Testo.stderr ()) ~normalize:normalise
+        (run_scan caps ~format_args:[] ~rule:"rules/eqeq-basic.yaml"
+           ~targets:[ "targets/bad/unterminated_function.js" ]
+           ~extra_args:[ "unterminated_function.js" ]);
       (* A metavariable of the message keeps its own value, so a message
          that already holds one is not interpolated twice.
          python: test_no_double_interpolation *)

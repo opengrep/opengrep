@@ -33,7 +33,7 @@ let sort_targets_by_decreasing_size (targets : Target.t list) : Target.t list =
 let core_error_of_path_exc (internal_path : Fpath.t) (e : Exception.t) :
     Core_error.t =
   let exn = Exception.get_exn e in
-  Logs.err (fun m ->
+  Logs.debug (fun m ->
       m "exception on %s (%s)" !!internal_path (Printexc.to_string exn));
   Core_error.exn_to_error ~file:internal_path e
 

@@ -98,7 +98,6 @@ let run_with_global_memory_limit _caps ?get_context ~mem_limit_mb f =
         Exception.reraise e
     | exception exn ->
         let e = Exception.catch exn in
-        Logs.err (fun m -> m "exn while in run_with_global_memory_limit");
         (* Any other exception raised by [f], such as a rule timeout, is
          * re-raised without compacting. *)
         Exception.reraise e

@@ -572,7 +572,7 @@ let handle_target_with_protection
          *)
         | exn when not !Flag_semgrep.fail_fast ->
             let e = Exception.catch exn in
-            Logs.err (fun m ->
+            Logs.debug (fun m ->
                 m "exception on %s (%s)" !!internal_path
                   (Exception.to_string e));
             let errors =
@@ -860,12 +860,12 @@ let unified_exception_handler (item : scan_work_item) (e : Exception.t)
   match item with
   | Per_target (target, _size, _rules) ->
     let internal_path = Target.internal_path target in
-    Logs.err (fun m ->
+    Logs.debug (fun m ->
         m "exception on %s (%s)" !!internal_path (Exception.to_string e));
     Target_error (target, E.exn_to_error ~file:internal_path e)
   | Interfile_rule rs ->
     let rule_id = Interfile_dispatch.rule_id_of rs in
-    Logs.err (fun m ->
+    Logs.debug (fun m ->
         m "interfile dispatch: exception on rule %s: %s"
           (Rule_ID.to_string rule_id)
           (Exception.to_string e));
