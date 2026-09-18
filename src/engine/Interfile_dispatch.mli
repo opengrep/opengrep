@@ -36,6 +36,7 @@ val build_rule_states :
   targets:Target.t list ->
   respect_rule_paths:bool ->
   targeting_conf:Find_targets.conf ->
+  scanning_roots:Scanning_root.directory list ->
   xconf:Match_env.xconfig ->
   rule_state list * Xlang.t list * Core_error.t list
   * (Fpath.t -> Tok.location list)

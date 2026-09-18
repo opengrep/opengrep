@@ -53,6 +53,7 @@ type rule_state = {
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
   match_on : [ `Sink | `Source ];
   target_root_map : path_with_root FpathMap.t;  (* by canonical path *)
+  scanning_roots : Scanning_root.directory list;
   sccs : Function_id.t list list;  (* of [relevant_graph], callees first *)
   recursive_fids : FidSet.t;
       (* members of a recursive component: an SCC of several functions,
@@ -642,6 +643,7 @@ let init_rule_state
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(target_root_map : path_with_root FpathMap.t)
+    ~(scanning_roots : Scanning_root.directory list)
     (rsg : rule_subgraph)
     : rule_state * E.t list =
   let lang = rsg.rsg_lang_context.lc_lang in
@@ -687,6 +689,7 @@ let init_rule_state
       Some (Builtin_models.create_all_builtin_models lang);
     match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
+    scanning_roots;
     sccs;
     recursive_fids =
       Sig_fixpoint.recursive_members rsg.rsg_relevant_graph sccs
@@ -1000,13 +1003,24 @@ let extract_signatures (rs : rule_state)
    cross-run comparison (e.g. between CI runners).  [target_root_map]
    keeps each target's path, as the scan listed it, by its canonical
    path, so a finding in a target reports the same path that a per-target
-   scan reports.  Non-target companion files stay absolute; they were
-   never targets and only appear inside taint traces. *)
+   scan reports.  A companion file, one that appears only inside a taint
+   trace, is reported under the root of the finding by the same rule, and
+   stays absolute when it lies under no root. *)
 let rebase_file (target_root_map : path_with_root FpathMap.t)
     (file : Fpath.t) : Fpath.t option =
   match FpathMap.find_opt (Fpath.normalize file) target_root_map with
   | Some { path; _ } -> Some path
   | None -> None
+
+let root_of_match (scanning_roots : Scanning_root.directory list)
+    (listed : Fpath.t) (canon : Fpath.t) : Scanning_root.directory option =
+  List.find_opt
+    (fun (root : Scanning_root.directory) ->
+      match Scanning_root.path_under_root root canon with
+      | Some under_root ->
+          Fpath.equal under_root.Scanning_root.listed listed
+      | None -> false)
+    scanning_roots
 
 let rebase_loc (rebase : Fpath.t -> Fpath.t option) (loc : Tok.location)
     : Tok.location =
@@ -1041,9 +1055,27 @@ let rebase_trace (rebase : Fpath.t -> Fpath.t option) (trace : Taint_trace.t)
       })
     trace
 
-let rebase_pm (target_root_map : path_with_root FpathMap.t) (pm : PM.t)
+let rebase_pm (scanning_roots : Scanning_root.directory list)
+    (target_root_map : path_with_root FpathMap.t) (pm : PM.t)
     : PM.t =
-  let rebase = rebase_file target_root_map in
+  let rebase_target = rebase_file target_root_map in
+  let canon = Fpath.normalize pm.PM.path.Target.internal_path_to_content in
+  let rebase : Fpath.t -> Fpath.t option =
+    match
+      Option.bind (FpathMap.find_opt canon target_root_map)
+        (fun ({ path = listed; _ } : path_with_root) ->
+          root_of_match scanning_roots listed canon)
+    with
+    | Some root ->
+        fun (file : Fpath.t) ->
+          (match rebase_target file with
+          | Some _ as rebased -> rebased
+          | None ->
+              Scanning_root.path_under_root root (Fpath.normalize file)
+              |> Option.map (fun (under_root : Scanning_root.under_root) ->
+                     under_root.Scanning_root.listed))
+    | None -> rebase_target
+  in
   let path =
     let internal_path_to_content =
       match rebase pm.PM.path.Target.internal_path_to_content with
@@ -1207,7 +1239,7 @@ let run_rule (rs : rule_state) : PM.t list =
         !epilogue_top_secs (Taint_timing.report ()));
   List.rev_append glob_matches
     (List.rev_append topo_matches epilogue_matches)
-  |> List_.map (rebase_pm rs.target_root_map)
+  |> List_.map (rebase_pm rs.scanning_roots rs.target_root_map)
   |> PM.uniq
   |> PM.no_submatches
 
@@ -1418,6 +1450,7 @@ let build_rule_states
     ~(targets : Target.t list)
     ~(respect_rule_paths : bool)
     ~(targeting_conf : Find_targets.conf)
+    ~(scanning_roots : Scanning_root.directory list)
     ~(xconf : Match_env.xconfig)
     : rule_state list * Xlang.t list * E.t list
       * (Fpath.t -> Tok.location list) =
@@ -2037,7 +2070,7 @@ let build_rule_states
         init_rule_state
           ~ast_table:(ast_table_for_lang full_ast_lookup
                         rsg.rsg_lang_context.lc_lang)
-          ~function_maps ~target_root_map rsg)
+          ~function_maps ~target_root_map ~scanning_roots rsg)
       rule_subgraphs
   in
   let rule_states = List_.map fst inits in

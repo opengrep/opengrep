@@ -40,6 +40,9 @@ val default : conf
 (* used with max_log_list_entries *)
 val too_much_data : string
 
+val is_interfile_rule_id :
+  taint_interfile:bool -> Rule.hrules -> Rule_ID.t -> bool
+
 (* Aborts on a destination we will not write to: a URL, a symlink, or one
  * named by both -o and a --<format>-output flag. Called at CLI-parsing time
  * so that the scan does not run first.

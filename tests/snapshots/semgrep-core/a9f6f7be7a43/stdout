@@ -1,0 +1,67 @@
+--- begin input files ---
+rule.yaml
+two_sinks.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 28 insertions(+)
+ create mode 100644 rule.yaml
+ create mode 100644 two_sinks.py
+
+
+┌─────────────────┐
+│ 4 Code Findings │
+└─────────────────┘
+
+    two_sinks.py
+   ❯❯❱ dedup-two-sinks
+          taint reaches sink
+
+            6┆ sink(x)
+             source two_sinks.py:2  source_a()
+             source two_sinks.py:3  source_b()
+
+             Taint comes from:
+               2┆     a = source_a()
+
+             Taint flows through these intermediate variables:
+               2┆     a = source_a()
+               4┆     x = a if cond else b
+
+             This is how taint reaches the sink:
+               6┆     sink(x)
+
+             Taint comes from:
+               3┆     b = source_b()
+
+             Taint flows through these intermediate variables:
+               3┆     b = source_b()
+               4┆     x = a if cond else b
+
+             This is how taint reaches the sink:
+               6┆     sink(x)
+            ⋮┆----------------------------------------
+           14┆ sink(y)
+             source two_sinks.py:10  source_a()
+             source two_sinks.py:11  source_b()
+
+             Taint comes from:
+              10┆     a = source_a()
+
+             Taint flows through these intermediate variables:
+              10┆     a = source_a()
+              12┆     y = a if cond else b
+
+             This is how taint reaches the sink:
+              14┆     sink(y)
+
+             Taint comes from:
+              11┆     b = source_b()
+
+             Taint flows through these intermediate variables:
+              11┆     b = source_b()
+              12┆     y = a if cond else b
+
+             This is how taint reaches the sink:
+              14┆     sink(y)
+

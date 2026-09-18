@@ -1,0 +1,12 @@
+rules:
+  - id: dedup-two-sources
+    mode: taint
+    languages:
+      - python
+    message: taint reaches sink
+    pattern-sources:
+      - pattern: source_a(...)
+      - pattern: source_b(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

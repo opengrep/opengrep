@@ -22,4 +22,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
           cross-file taint
 
             3┆ sink(v)
+             source main.py:5  source()
 

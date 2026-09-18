@@ -31,6 +31,7 @@ type conf = {
   effect_guards : bool;
   taint_interfile : bool;
   taint_interfile_depth : int;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -41,6 +42,8 @@ type result = {
   core : Semgrep_output_v1_t.core_output;
   hrules : Rule.hrules;
   scanned : Fpath.t Set_.t;
+  taint_interfile : bool;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
 }
 
 (* This type is similar to Core_scan.func, but taking a list of
@@ -56,6 +59,7 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     git_repo:bool ->
+    scanning_roots:Scanning_root.directory list ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->
@@ -68,7 +72,12 @@ val default_conf : conf
 
 (* builder *)
 val mk_result :
-  ?inline:bool -> ?taint_interfile:bool -> Rule.rule list -> Core_result.t -> result
+  ?inline:bool ->
+  ?taint_interfile:bool ->
+  ?interfile_dedup_by:Core_match.interfile_dedup_by ->
+  Rule.rule list ->
+  Core_result.t ->
+  result
 
 (* Core_scan.func adapter to be used in osemgrep.
 

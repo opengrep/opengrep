@@ -310,7 +310,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let roots =
     List.map Scanning_root.of_fpath target_roots
   in
-  let { Find_targets.selected = fpaths; _ } =
+  let { Find_targets.selected = fpaths; roots = scanning_roots; _ } =
     Find_targets.get_target_fpaths Find_targets.default_conf roots
   in
   let targets, rules = Core_runner.targets_and_rules_for_files fpaths rules in
@@ -338,6 +338,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
       ~valid_rules:rules ~targets
       ~respect_rule_paths:true
       ~targeting_conf
+      ~scanning_roots
       ~xconf
   in
   rule_states

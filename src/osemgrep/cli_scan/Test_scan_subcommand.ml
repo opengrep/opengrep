@@ -970,10 +970,8 @@ let test_interfile_partial_target (caps : Scan_subcommand.caps) () =
           in
           Exit_code.Check.ok exit_code))
 
-(* Two distinct sources reach the same sink line: interfile dedup keys on
-   source+sink, so both findings must be reported.  [--dataflow-traces] prints
-   each finding's trace, pinning in the snapshot that the sources differ. *)
-let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps) () =
+let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps)
+    (args : string list) () =
   with_env_app_token (fun () ->
       let repo_files =
         [
@@ -986,10 +984,12 @@ let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps) () =
           let exit_code =
             without_settings (fun () ->
                 Scan_subcommand.main caps
-                  [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
-                    "--taint-interfile"; "--dataflow-traces";
-                  |])
+                  (Array.of_list
+                     ([
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile"; "--dataflow-traces";
+                      ]
+                     @ args)))
           in
           Exit_code.Check.ok exit_code))
 
@@ -2837,9 +2837,17 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile findings from a partial target set"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_partial_target caps);
-      t "interfile same-sink findings keep distinct sources"
+      t
+        "an interfile scan of two sources that reach one sink in another file \
+         reports one finding under the default"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
-        (test_interfile_source_sink_dedup caps);
+        (test_interfile_source_sink_dedup caps []);
+      t
+        "an interfile scan of two sources that reach one sink in another file \
+         reports one finding per source under --interfile-dedup-by source-sink"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_source_sink_dedup caps
+           [ "--interfile-dedup-by"; "source-sink" ]);
       t "interfile targets are scanned targets"
         (test_interfile_paths_scanned caps);
       t "interfile parse error on one file"

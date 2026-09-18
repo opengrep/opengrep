@@ -36,9 +36,15 @@ module SS = Set.Make (String)
 (*****************************************************************************)
 type diff_scan_func =
   ?explicit_targets:Find_targets.Explicit_targets.t ->
+  scanning_roots:Scanning_root.directory list ->
   Target_and_root.t list ->
   Rule.rules ->
   Core_result.result_or_exn
+
+type replay_input = {
+  replay_targets : Target_and_root.t list;
+  replay_roots : Scanning_root.directory list;
+}
 
 (*****************************************************************************)
 (* Helpers *)
@@ -203,7 +209,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                      ~taint_interfile:conf.core_runner_conf.taint_interfile)
                   baseline_rules
               in
-              let interfile_targets () =
+              let interfile_targets () : replay_input =
                   (* An interfile match depends on files that carry no match of
                      their own — the caller supplying the taint — so replaying
                      only [paths_in_match] cannot reproduce it: the baseline
@@ -237,23 +243,27 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                            |> Fpath.to_dir_path |> from_cwd
                            |> Fpath.rem_empty_seg |> Scanning_root.of_fpath)
                   in
-                  let { Find_targets.selected = all_in_baseline; _ } =
+                  let { Find_targets.selected = all_in_baseline;
+                        roots = resolved_baseline_roots; _ } =
                     Find_targets.get_target_fpaths_with_project_roots
                       conf.targeting_conf baseline_roots
                   in
-                  all_in_baseline
+                  { replay_targets = all_in_baseline;
+                    replay_roots = resolved_baseline_roots }
               in
               (* [targets] is computed only when there is a rule to replay:
                  the interfile set is a rediscovery of the whole tree *)
               let replay (rules : Rule.rules)
-                  (targets : unit -> Target_and_root.t list)
+                  (targets : unit -> replay_input)
                   : Core_result.result_or_exn option =
                 match rules with
                 | [] -> None
                 | _ ->
+                    let input = targets () in
                     Some
                       (core ~explicit_targets:baseline_explicit_targets
-                         (targets ()) rules)
+                         ~scanning_roots:input.replay_roots
+                         input.replay_targets rules)
               in
               let res : Core_result.result_or_exn =
                 let merge (a : Core_result.result_or_exn option)
@@ -269,7 +279,9 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                             ra.processed_matches @ rb.processed_matches }
                 in
                 merge
-                  (replay other_rules (fun () -> wrap_as_targets paths_in_match))
+                  (replay other_rules (fun () : replay_input ->
+                       { replay_targets = wrap_as_targets paths_in_match;
+                         replay_roots = [] }))
                   (replay interfile_rules interfile_targets)
               in
               (* Build the signatures HERE, still inside the worktree that
@@ -313,6 +325,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     (profiler : Profiler.t) (baseline : Find_targets.baseline_ref)
     (targets : Target_and_root.t list) (rules : Rule.rules)
     ~(explicit_targets : Find_targets.Explicit_targets.t)
+    ~(scanning_roots : Scanning_root.directory list)
     ~(head_scan_func : diff_scan_func)
     ~(baseline_scan_func : diff_scan_func) : Core_result.result_or_exn =
   Logs.info (fun m ->
@@ -381,7 +394,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
-        head_scan_func targets rules)
+        head_scan_func ~scanning_roots targets rules)
   in
   scan_baseline_and_remove_duplicates caps conf profiler
     ~from_cwd:relative_to_cwd ~explicit_targets head_scan_result rules commit

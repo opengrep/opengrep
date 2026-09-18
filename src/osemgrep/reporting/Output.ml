@@ -90,12 +90,36 @@ let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t 
   | Some (Profiler.Start t) -> Some (Timedesc.Timestamp.of_float_s t)
   | _ -> None
 
+let is_interfile_rule_id ~(taint_interfile : bool) (hrules : Rule.hrules)
+    (id : Rule_ID.t) : bool =
+  match Hashtbl.find_opt hrules id with
+  | None -> false
+  | Some (rule : Rule.rule) ->
+      (match rule.Rule.mode with
+      | `Taint _ -> true
+      | _else_ -> false)
+      && (taint_interfile
+         ||
+         match rule.Rule.options with
+         | Some (opts : Rule_options.t) -> opts.Rule_options_t.taint_interfile
+         | None -> false)
+
+let message_with_taint_source ~(is_interfile : Rule_ID.t -> bool)
+    (m : Out.cli_match) : string =
+  match (is_interfile m.check_id, m.extra.dataflow_trace) with
+  | true, Some { Out.taint_source = Some source; _ } ->
+      let (loc : Out.location), (_code : string) =
+        Core_json_output.leaf_of_call_trace source
+      in
+      spf "%s [source %s:%d]" m.extra.message !!(loc.path) loc.start.line
+  | _ -> m.extra.message
+
 (*****************************************************************************)
 (* Format dispatcher *)
 (*****************************************************************************)
 
-let format ~(profiler : Profiler.t) (kind : Output_format.t)
-    (cli_output : Out.cli_output) : string list =
+let format ~(profiler : Profiler.t) ~(is_interfile : Rule_ID.t -> bool)
+    (kind : Output_format.t) (cli_output : Out.cli_output) : string list =
   match kind with
   | Text
   | Sarif
@@ -119,7 +143,7 @@ let format ~(profiler : Profiler.t) (kind : Output_format.t)
       cli_output.results
       |> List_.map (fun (m : Out.cli_match) ->
              match m with
-             | { check_id; path; start; extra = { message; severity; _ }; _ } ->
+             | { check_id; path; start; extra = { severity; _ }; _ } ->
                  let parts =
                    [
                      !!path;
@@ -128,7 +152,7 @@ let format ~(profiler : Profiler.t) (kind : Output_format.t)
                      (* TOPORT? restrict to just I|E|W ? *)
                      spf "%c" (string_of_severity severity).[0];
                      Rule_ID.to_string check_id;
-                     message;
+                     message_with_taint_source ~is_interfile m;
                    ]
                  in
                  String.concat ":" parts)
@@ -137,14 +161,7 @@ let format ~(profiler : Profiler.t) (kind : Output_format.t)
       cli_output.results
       |> List_.map (fun (m : Out.cli_match) ->
              match m with
-             | {
-              check_id;
-              path;
-              start;
-              end_;
-              extra = { message; severity; _ };
-              _;
-             } ->
+             | { check_id; path; start; end_; extra = { severity; _ }; _ } ->
                  let severity =
                    String.lowercase_ascii (string_of_severity severity)
                  in
@@ -177,7 +194,7 @@ let format ~(profiler : Profiler.t) (kind : Output_format.t)
                      (* TOPORT? restrict to just I|E|W ? *)
                      severity_and_ruleid;
                      line;
-                     message;
+                     message_with_taint_source ~is_interfile m;
                    ]
                  in
                  String.concat ":" parts)
@@ -214,7 +231,9 @@ let for_output_format (conf : conf) (kind : Output_format.t)
  * matches have already been displayed in a file_match_results_hook).
  *)
 let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
-    (kind : Output_format.t) (cli_output : Out.cli_output) : string option =
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
+    ~(is_interfile : Rule_ID.t -> bool) (kind : Output_format.t)
+    (cli_output : Out.cli_output) : string option =
   match kind with
   | Incremental -> None
   | Text ->
@@ -225,6 +244,7 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
               ~max_lines_per_finding:conf.max_lines_per_finding
               ~color_output:false
               ~show_dataflow_traces:conf.show_dataflow_traces
+              ~interfile_dedup_by ~is_interfile
               ~is_ci_invocation:conf.is_ci_invocation)
            cli_output)
   | Sarif ->
@@ -236,8 +256,8 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
         | Some `PRO -> "PRO"
       in
       let sarif_json =
-        Sarif_output.sarif_output hrules cli_output engine_label
-          conf.show_dataflow_traces
+        Sarif_output.sarif_output hrules cli_output ~engine_label
+          ~show_dataflow_traces:conf.show_dataflow_traces ~interfile_dedup_by
       in
       Some (Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)
   | Files_with_matches ->
@@ -246,7 +266,7 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
         |> List_.map (fun (x : Out.cli_match) -> !!(x.path))
         |> Set_.of_list |> Set_.elements |> List_.sort |> String.concat "\n")
   | (Json | Junit_xml | Gitlab_sast | Gitlab_secrets | Vim | Emacs) as kind -> (
-      match format ~profiler kind cli_output with
+      match format ~profiler ~is_interfile kind cli_output with
       | [] -> None
       | xs -> Some (String.concat "\n" xs))
 
@@ -303,7 +323,9 @@ let dispatch_output_format
     (profiler : Profiler.t)
     (conf : conf)
     (cli_output : Out.cli_output)
-    (hrules : Rule.hrules) : unit =
+    (hrules : Rule.hrules)
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
+    ~(is_interfile : Rule_ID.t -> bool) : unit =
   let print = CapConsole.print caps#stdout in
   let print_stdout (kind : Output_format.t) (cli_output : Out.cli_output) : unit
       =
@@ -317,10 +339,14 @@ let dispatch_output_format
           ~max_lines_per_finding:conf.max_lines_per_finding
             (* nosemgrep: forbid-console *)
           ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
+          ~interfile_dedup_by ~is_interfile
           ~is_ci_invocation:conf.is_ci_invocation
           Format.std_formatter cli_output
     | kind -> (
-        match render conf profiler ~hrules kind cli_output with
+        match
+          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile kind
+            cli_output
+        with
         | Some str -> print str
         | None -> ())
   in
@@ -333,7 +359,11 @@ let dispatch_output_format
         (* a format with nothing to say still gets its file, so that a caller
          * reading the destination back does not meet an ENOENT after a scan
          * that simply found nothing *)
-        let str = render conf profiler ~hrules kind cli_output ||| "" in
+        let str =
+          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile kind
+            cli_output
+          ||| ""
+        in
         let file = Fpath.v dest in
         let parent = Fpath.parent file |> Fpath.rem_empty_seg in
         (* a destination we cannot write to is the user's mistake, not ours,
@@ -382,7 +412,8 @@ let preprocess_result ~fixed_lines ~keep_ignored (res : Core_runner.result) :
        pysemgrep's RuleMatchSet.add assigned it before any suppression, so
        the ignored ones are dropped only after the indexing. *)
     results =
-      Cli_json_output.index_match_based_ids results.results
+      Cli_json_output.index_match_based_ids
+        ~interfile_dedup_by:res.interfile_dedup_by results.results
       |> List.filter (fun (m : Out.cli_match) ->
              keep_ignored || not_ignored m);
   }
@@ -429,7 +460,10 @@ let output_result ~(keep_ignored : bool) (caps : < Cap.stdout >) (conf : conf)
     else cli_output
   in
   (* the actual output on stdout *)
-  dispatch_output_format caps profiler conf cli_output res.hrules;
+  dispatch_output_format caps profiler conf cli_output res.hrules
+    ~interfile_dedup_by:res.interfile_dedup_by
+    ~is_interfile:
+      (is_interfile_rule_id ~taint_interfile:res.taint_interfile res.hrules);
   (* we return cli_output as the caller might use it *)
   cli_output
 [@@profiling]

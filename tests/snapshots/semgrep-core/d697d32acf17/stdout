@@ -1,0 +1,85 @@
+--- begin input files ---
+caller_a.py
+caller_b.py
+rule.yaml
+same_file.py
+shared_sink.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 5 files changed, 33 insertions(+)
+ create mode 100644 caller_a.py
+ create mode 100644 caller_b.py
+ create mode 100644 rule.yaml
+ create mode 100644 same_file.py
+ create mode 100644 shared_sink.py
+
+
+┌─────────────────┐
+│ 4 Code Findings │
+└─────────────────┘
+
+    same_file.py
+   ❯❯❱ dedup-two-sources
+          taint reaches sink
+
+            6┆ sink(x)
+             source same_file.py:2  source_a()
+             source same_file.py:3  source_b()
+
+             Taint comes from:
+               2┆     a = source_a()
+
+             Taint flows through these intermediate variables:
+               2┆     a = source_a()
+               4┆     x = a if cond else b
+
+             This is how taint reaches the sink:
+               6┆     sink(x)
+
+             Taint comes from:
+               3┆     b = source_b()
+
+             Taint flows through these intermediate variables:
+               3┆     b = source_b()
+               4┆     x = a if cond else b
+
+             This is how taint reaches the sink:
+               6┆     sink(x)
+
+    shared_sink.py
+   ❯❯❱ dedup-two-sources
+          taint reaches sink
+
+            3┆ sink(x)
+             source caller_a.py:5  source_a()
+             source caller_b.py:5  source_b()
+
+             Taint comes from:
+              caller_a.py
+               5┆     to_sink(source_a())
+
+             This is how taint reaches the sink:
+              caller_a.py
+               5┆     to_sink(source_a())
+
+             Taint flows through these intermediate variables:
+               1┆ def to_sink(x):
+
+             then reaches:
+               3┆     sink(x)
+
+             Taint comes from:
+              caller_b.py
+               5┆     to_sink(source_b())
+
+             This is how taint reaches the sink:
+              caller_b.py
+               5┆     to_sink(source_b())
+
+             Taint flows through these intermediate variables:
+               1┆ def to_sink(x):
+
+             then reaches:
+               3┆     sink(x)
+

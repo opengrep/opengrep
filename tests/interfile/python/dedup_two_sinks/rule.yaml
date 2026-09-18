@@ -1,0 +1,14 @@
+rules:
+  - id: dedup-two-sinks
+    options:
+      taint_interfile: true
+    mode: taint
+    languages:
+      - python
+    message: taint reaches sink
+    pattern-sources:
+      - pattern: source_a(...)
+      - pattern: source_b(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

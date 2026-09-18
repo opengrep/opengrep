@@ -1028,6 +1028,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       ~valid_rules ~targets
       ~respect_rule_paths:config.respect_rule_paths
       ~targeting_conf:config.targeting_conf
+      ~scanning_roots:config.scanning_roots
       ~xconf:(interfile_xconfig config ~equivs)
   in
   let interfile_rule_ids =

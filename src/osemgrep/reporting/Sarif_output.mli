@@ -4,4 +4,5 @@ val sarif_output :
   Semgrep_output_v1_t.cli_output ->
   engine_label:string ->
   show_dataflow_traces:bool ->
+  interfile_dedup_by:Core_match.interfile_dedup_by ->
   Sarif.Sarif_v_2_1_0_t.sarif_json_schema

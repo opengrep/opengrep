@@ -94,6 +94,7 @@ let taint_intrafile = ref Core_scan_config.default.taint_intrafile
 (* interfile tainting mode *)
 let taint_interfile = ref Core_scan_config.default.taint_interfile
 let taint_interfile_depth = ref Core_scan_config.default.taint_interfile_depth
+let interfile_dedup_by = ref Core_scan_config.default.interfile_dedup_by
 
 (* ------------------------------------------------------------------------- *)
 (* limits *)
@@ -265,7 +266,8 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
         Logs_.with_debug_trace ~__FUNCTION__ (fun () ->
             Core_json_output.core_output_of_matches_and_errors
               ~inline:config.inline_metavariables
-              ~taint_interfile:config.taint_interfile res)
+              ~taint_interfile:config.taint_interfile
+              ~interfile_dedup_by:config.interfile_dedup_by res)
       in
       (*
         Not pretty-printing the json output (Yojson.Safe.prettify)
@@ -302,6 +304,7 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
           let matches =
             Core_json_output.dedup_and_sort
               ~taint_interfile:config.taint_interfile
+              ~interfile_dedup_by:config.interfile_dedup_by
               (Core_match.to_rule_id_options_map
                  List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches))
               matches
@@ -361,6 +364,8 @@ let mk_config () : Core_scan_config.t =
     effect_guards = false;
     taint_interfile = !taint_interfile;
     taint_interfile_depth = !taint_interfile_depth;
+    interfile_dedup_by = !interfile_dedup_by;
+    scanning_roots = [];
     engine_config = Engine_config.default;
     targeting_conf = Find_targets.default_conf;
   }
@@ -699,6 +704,21 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-taint_interfile_depth",
       Arg.Set_int taint_interfile_depth,
       " <int> maximum call chain depth for companion file discovery (default 3)" );
+    ( "-interfile_dedup_by",
+      Arg.String
+        (fun (s : string) ->
+          match s with
+          | "sink" -> interfile_dedup_by := Core_match.Sink
+          | "source-sink" -> interfile_dedup_by := Core_match.Source_sink
+          | _ ->
+              raise
+                (Arg.Bad
+                   (spf
+                      "-interfile_dedup_by: expected sink or source-sink, \
+                       given %s"
+                      s))),
+      " <sink|source-sink> how interfile findings are deduplicated: by sink, \
+       or by source and sink (default sink)" );
   ]
   @ Flag_parsing_cpp.cmdline_flags_macrofile ()
   (* inlining of: Common2.cmdline_flags_devel () @ *)

@@ -100,17 +100,21 @@ let range_of_any_opt startp_of_match_range any =
 type key = string * string * int * int * string option * string option
 [@@deriving show]
 
-(* Leaf [CliLoc] of a call trace, unwinding [CliCall] wrappers: dedup keys
-   on the source location, not the interfile call chain. *)
-let rec leaf_source (trace : Out.match_call_trace) : Out.match_call_trace =
+(* Leaf [CliLoc] of a call trace, unwinding [CliCall] wrappers. *)
+let rec leaf_of_call_trace (trace : Out.match_call_trace) :
+    Out.loc_and_content =
   match trace with
-  | Out.CliLoc _ -> trace
-  | Out.CliCall (_, _, inner) -> leaf_source inner
+  | Out.CliLoc leaf -> leaf
+  | Out.CliCall (_, _, inner) -> leaf_of_call_trace inner
+
+let leaf_source (trace : Out.match_call_trace) : Out.match_call_trace =
+  Out.CliLoc (leaf_of_call_trace trace)
 
 (* This is a port of the original pysemgrep cli_unique_key. This used to be in the CLI,
    but has since been moved to core.
 *)
 let core_unique_key ~(taint_interfile : bool)
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     (rule_options : Core_match.rule_id_options Rule_ID.Map.t)
     (c : Out.core_match) : key =
   let name = Rule_ID.to_string c.check_id in
@@ -119,21 +123,25 @@ let core_unique_key ~(taint_interfile : bool)
     | Some { git_blob = Some sha; _ } -> ATD_string_wrap.Sha1.unwrap sha
     | _ -> Fpath.to_string c.path
   in
-  (* Include the taint source in the dedup key only under interfile taint
-     (CLI flag or the rule's own option), so interfile findings with the same
-     sink but different sources stay distinct. *)
   let interfile =
     taint_interfile
     || (match Rule_ID.Map.find_opt c.check_id rule_options with
         | Some o -> o.Core_match.taint_interfile
         | None -> false)
   in
+  let source_in_key =
+    interfile
+    &&
+    match interfile_dedup_by with
+    | Core_match.Sink -> false
+    | Core_match.Source_sink -> true
+  in
   ( name,
     path,
     c.start.offset,
     c.end_.offset,
     c.extra.message,
-    (if not interfile then None
+    (if not source_in_key then None
      else
        match c.extra.dataflow_trace with
        | None -> None
@@ -181,6 +189,7 @@ let process_matches_with_rule_options
 *)
 let dedup_and_sort
     ?(taint_interfile = false)
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     (rule_options: Core_match.rule_id_options Rule_ID.Map.t)
     (xs : Out.core_match list) : Out.core_match list =
   (* Whether we prefer to report match x over match y.
@@ -206,7 +215,9 @@ let dedup_and_sort
      keep undesirable matches, such as those with less metavariables.
   *)
   |> List.iter (fun x ->
-         let key = core_unique_key ~taint_interfile rule_options x in
+         let key =
+           core_unique_key ~taint_interfile ~interfile_dedup_by rule_options x
+         in
          match Hashtbl.find_opt seen key with
          | None -> Hashtbl.add seen key x
          | Some y when should_report_instead (x, y) ->
@@ -605,11 +616,10 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
 (* Final semgrep-core output *)
 (*****************************************************************************)
 
-(* [taint_interfile]: whether interfile taint was enabled via the CLI flag;
-   consulted at dedup time to decide if the taint source belongs in the
-   unique key. *)
 let core_output_of_matches_and_errors ?(inline = false)
-    ?(taint_interfile = false) (res : Core_result.t) : Out.core_output =
+    ?(taint_interfile = false)
+    ?(interfile_dedup_by = Core_match.Sink) (res : Core_result.t) :
+    Out.core_output =
   let matches, new_errs =
     Result_.partition (match_to_match ~inline) res.processed_matches
   in
@@ -618,6 +628,7 @@ let core_output_of_matches_and_errors ?(inline = false)
     results = matches
               |> dedup_and_sort
                 ~taint_interfile
+                ~interfile_dedup_by
                 (Core_match.to_rule_id_options_map
                    List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches));
     errors = errs |> List_.map error_to_error;
@@ -656,4 +667,5 @@ let core_output_of_matches_and_errors ?(inline = false)
 (******************************************************************************)
 
 let test_core_unique_key c =
-  core_unique_key ~taint_interfile:false Rule_ID.Map.empty c
+  core_unique_key ~taint_interfile:false ~interfile_dedup_by:Core_match.Sink
+    Rule_ID.Map.empty c

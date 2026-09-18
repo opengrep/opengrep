@@ -256,6 +256,7 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
       |> fst
       |> Core_json_output.dedup_and_sort
            ~taint_interfile:conf.core_runner_conf.taint_interfile
+           ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
            Core_match.(to_rule_id_options_map pms)
     in
     (* the env that keeps a fix from being reported twice over the same
@@ -273,7 +274,8 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
     Mutex.protect file_match_hook_mutex (fun () -> printer conf cli_matches))
 
 (* coupling: similar to Output.dispatch_output_format for Text *)
-let incremental_text_printer (_caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+let incremental_text_printer (_caps : < Cap.stdout >)
+    ~(is_interfile : Rule_ID.t -> bool) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =
   (* TODO: we should switch to Fmt_.with_buffer_to_string +
    * some CapConsole.print_no_nl, but then is_atty fail on
@@ -285,6 +287,7 @@ let incremental_text_printer (_caps : < Cap.stdout >) (conf : Scan_CLI.conf)
       (* nosemgrep: forbid-console *)
     ~color_output:conf.output_conf.force_color
     ~show_dataflow_traces:conf.output_conf.show_dataflow_traces
+    ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by ~is_interfile
     Format.std_formatter cli_matches
 
 let incremental_json_printer (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
@@ -311,7 +314,12 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
     } ->
       ( Output_format.Incremental,
         Some (mk_file_match_hook ~inline_metavars:false (* because text format *)
-                conf rules (incremental_text_printer caps)) )
+                conf rules
+                (incremental_text_printer caps
+                   ~is_interfile:
+                     (Output.is_interfile_rule_id
+                        ~taint_interfile:conf.core_runner_conf.taint_interfile
+                        (Rule.hrules_of_rules rules)))) )
   | {
    output_conf = { output_format = Output_format.Json; _ };
    incremental_output = true;
@@ -616,6 +624,7 @@ let check_targets_with_rules ?(print_summary = true)
                 in
                 run ?file_match_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
+                  ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
         | Some baseline ->
@@ -623,7 +632,7 @@ let check_targets_with_rules ?(print_summary = true)
             (* diff scan mode *)
             let mk_diff_scan_func ?file_match_hook () : Diff_scan.diff_scan_func
                 =
-             fun ?explicit_targets targets rules ->
+             fun ?explicit_targets ~scanning_roots targets rules ->
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               (* the baseline scan names its targets relative to the current
                  directory, and the targets of the command line are named
@@ -639,8 +648,8 @@ let check_targets_with_rules ?(print_summary = true)
               in
               run ?file_match_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
-                conf.core_runner_conf targeting_conf conf.matching_conf
-                (rules, invalid_rules) targets
+                ~scanning_roots conf.core_runner_conf targeting_conf
+                conf.matching_conf (rules, invalid_rules) targets
             in
             (* The baseline replay exists only to build the dedup set: its
                matches must never stream through the incremental-output hook,
@@ -650,6 +659,7 @@ let check_targets_with_rules ?(print_summary = true)
                 (caps :> < Cap.chdir ; Cap.tmp >)
                 conf profiler baseline selected rules
                 ~explicit_targets:conf.targeting_conf.explicit_targets
+                ~scanning_roots:targets_and_skipped.Find_targets.roots
                 ~head_scan_func:(mk_diff_scan_func ?file_match_hook ())
                 ~baseline_scan_func:(mk_diff_scan_func ())
             in
@@ -681,6 +691,7 @@ let check_targets_with_rules ?(print_summary = true)
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
               ~taint_interfile:conf.core_runner_conf.taint_interfile
+              ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
               rules
               result
           in

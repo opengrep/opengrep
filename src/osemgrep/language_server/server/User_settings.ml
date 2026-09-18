@@ -96,5 +96,6 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       effect_guards = false;
       taint_interfile = false;
       taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
+      interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
       engine_config = Engine_config.default;
     }

@@ -1,0 +1,27 @@
+--- begin input files ---
+rule.yaml
+two_sinks.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 28 insertions(+)
+ create mode 100644 rule.yaml
+ create mode 100644 two_sinks.py
+
+
+┌─────────────────┐
+│ 4 Code Findings │
+└─────────────────┘
+
+    two_sinks.py
+   ❯❯❱ dedup-two-sinks
+          taint reaches sink
+
+            6┆ sink(x)
+             source two_sinks.py:2  source_a()
+             source two_sinks.py:3  source_b()
+            ⋮┆----------------------------------------
+           14┆ sink(y)
+             source two_sinks.py:10  source_a()
+             source two_sinks.py:11  source_b()
+

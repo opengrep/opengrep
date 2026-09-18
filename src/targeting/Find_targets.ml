@@ -256,7 +256,8 @@ let default_conf : conf =
 type 'a targets = {
   selected : 'a list;
   skipped : Semgrep_output_v1_t.skipped_target list;
-  git_repo : bool
+  git_repo : bool;
+  roots : Scanning_root.directory list
 }
 
 (*************************************************************************)
@@ -673,6 +674,10 @@ let git_list_files ~exclude_standard
                  let canon_scanning_root_path =
                    Rpath.canonical_exn sc_root.fpath
                  in
+                 let scanning_root_directory : Scanning_root.directory =
+                   { as_written = orig_scanning_root_path;
+                     canonical = canon_scanning_root_path }
+                 in
                  (* We can't just cd into the scanning root to obtain paths
                     relative to it because the scanning root may be a regular
                     file. It could also be the root of the file system, so we
@@ -699,22 +704,20 @@ let git_list_files ~exclude_standard
                              cwd, the root as given and the path git lists
                              can be '../sub' and '.' for the same
                              directory, and never match. *)
-                          Fpath.relativize ~root:canon_scanning_root_path
+                          Scanning_root.path_under_root scanning_root_directory
                             (Fpath.normalize
                                (cwd // target_relative_to_cwd_or_absolute))
                         with
-                        | Some target_relative_to_scan_root ->
+                        | Some under_root ->
                             (* The segments below the root extend both the
                                root as given and its ppath, so that the
                                file and its root are in one frame even
                                when the root goes through a symlink. *)
                             ({
-                               fpath =
-                                 Fpath_.append_no_dot orig_scanning_root_path
-                                   target_relative_to_scan_root;
+                               fpath = under_root.Scanning_root.listed;
                                ppath =
                                  Ppath.append_fpath sc_root.ppath
-                                   target_relative_to_scan_root;
+                                   under_root.Scanning_root.relative_to_root;
                                project_root =
                                  Some (Rpath.to_fpath project_root);
                              }
@@ -1041,6 +1044,13 @@ let ignored_scanning_root (ign : Gitignore.filter) (root : Fppath.t) :
 
 let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targets =
   Log.debug (fun m -> m "Find_target.get_targets_for_project");
+  (* coupling: git_list_files canonicalises the same root again with
+     Rpath.canonical_exn, so a root of a git project is resolved twice. *)
+  let roots =
+    project_roots.scanning_roots
+    |> List_.map (fun (sc_root : Fppath.t) ->
+           Scanning_root.directory (Scanning_root.of_fpath sc_root.fpath))
+  in
   let ((ign, _) as filters) = setup_path_filters conf project_roots in
   let skipped_roots, scanning_roots =
     project_roots.scanning_roots
@@ -1080,7 +1090,8 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
       selected_targets
       skipped_targets
   in
-  { selected = selected_targets; skipped = skipped_targets; git_repo = is_git_repo }
+  { selected = selected_targets; skipped = skipped_targets;
+    git_repo = is_git_repo; roots }
 
 (*************************************************************************)
 (* Entry point *)
@@ -1098,8 +1109,9 @@ let get_targets conf scanning_roots : Fppath.t targets =
         let r = get_targets_for_project conf root in
         { selected = List.rev_append r.selected acc.selected;
           skipped = List.rev_append r.skipped acc.skipped;
-          git_repo = r.git_repo || acc.git_repo })
-      { selected = []; skipped = []; git_repo = false }
+          git_repo = r.git_repo || acc.git_repo;
+          roots = List.rev_append r.roots acc.roots })
+      { selected = []; skipped = []; git_repo = false; roots = [] }
       (group_scanning_roots_by_project conf scanning_roots)
   in
   (* The '.min.js' exclusion and the size limit apply to what walking a
@@ -1126,7 +1138,7 @@ let get_targets conf scanning_roots : Fppath.t targets =
       (fun (a : Out.skipped_target) (b : Out.skipped_target) -> Fpath.compare a.path b.path)
       (List.rev_append skipped_files raw.skipped)
   in
-  { selected; skipped; git_repo = raw.git_repo }
+  { selected; skipped; git_repo = raw.git_repo; roots = List.rev raw.roots }
 [@@profiling]
 
 let get_target_fpaths_with_project_roots (conf : conf)

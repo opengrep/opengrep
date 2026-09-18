@@ -59,6 +59,8 @@ type t = {
   effect_guards : bool;
   taint_interfile : bool;
   taint_interfile_depth : int;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
+  scanning_roots : Scanning_root.directory list;
   strict : bool;
   matching_conf : Match_patterns.matching_conf;
   (* respect or not the paths: directive in a rule. Useful to set to false
@@ -121,6 +123,8 @@ let default =
     effect_guards = false;
     taint_interfile = false;
     taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
+    interfile_dedup_by = Core_match.Sink;
+    scanning_roots = [];
     strict = false;
     matching_conf = Match_patterns.default_matching_conf;
     respect_rule_paths = true;

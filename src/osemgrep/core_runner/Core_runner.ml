@@ -55,6 +55,7 @@ type conf = {
   effect_guards : bool;
   taint_interfile : bool;
   taint_interfile_depth : int;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -71,6 +72,8 @@ type result = {
   core : Semgrep_output_v1_t.core_output;
   hrules : Rule.hrules;
   scanned : Fpath.t Set_.t;
+  taint_interfile : bool;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
 }
 
 (* Type for the scan function, which can either be built by
@@ -86,6 +89,7 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     git_repo:bool ->
+    scanning_roots:Scanning_root.directory list ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->
@@ -129,6 +133,7 @@ let default_conf : conf =
     effect_guards = false;
     taint_interfile = false;
     taint_interfile_depth = 3;
+    interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
     nosem = true;
     strict = false;
     engine_config = Engine_config.default;
@@ -373,6 +378,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    effect_guards;
    taint_interfile;
    taint_interfile_depth;
+   interfile_dedup_by;
    nosem = _TODO;
    strict;
    time_flag;
@@ -402,6 +408,8 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         effect_guards;
         taint_interfile;
         taint_interfile_depth;
+        interfile_dedup_by;
+        scanning_roots = [];
         strict;
         report_time = time_flag;
         (* set later in mk_core_run_for_osemgrep *)
@@ -427,12 +435,13 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
  * for now that's what pysemgrep used to get so simpler to return it.
  *)
 let mk_result ?(inline = false) ?(taint_interfile = false)
-    (all_rules : Rule.rule list) (res : Core_result.t) : result =
+    ?(interfile_dedup_by = Core_match.Sink) (all_rules : Rule.rule list)
+    (res : Core_result.t) : result =
   (* similar to Core_command.output_core_results code *)
   let scanned = res.scanned |> List_.map Target.internal_path |> Set_.of_list in
   let match_results =
-    Core_json_output.core_output_of_matches_and_errors ~inline
-      ~taint_interfile res
+    Core_json_output.core_output_of_matches_and_errors ~inline ~taint_interfile
+      ~interfile_dedup_by res
   in
   (* TOPORT? or move in semgrep-core so get info ASAP
      if match_results.skipped_targets:
@@ -445,7 +454,13 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
                  f"skipped '{skip.path}' [{rule_info}]: {skip.reason}: {skip.details}"
              )
   *)
-  { core = match_results; hrules = Rule.hrules_of_rules all_rules; scanned }
+  {
+    core = match_results;
+    hrules = Rule.hrules_of_rules all_rules;
+    scanned;
+    taint_interfile;
+    interfile_dedup_by;
+  }
 
 (*************************************************************************)
 (* Entry point *)
@@ -453,7 +468,8 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook ~(git_repo : bool) (conf : conf)
+  let run ?file_match_hook ~(git_repo : bool)
+      ~(scanning_roots : Scanning_root.directory list) (conf : conf)
       (targeting_conf : Find_targets.conf)
       (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
@@ -518,6 +534,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
         (* Pass the scan's targeting conf so projidx (the interfile
            call-graph builder) sees the same file universe as targeting. *)
         targeting_conf;
+        scanning_roots;
       }
     in
     (* !!!!Finally! this is where we branch to semgrep-core core scan fun!!! *)

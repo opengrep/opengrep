@@ -103,6 +103,139 @@ let message_interpolation : (string * string) list =
     ("multi-pattern-inside", "multi_pattern_inside_nested");
   ]
 
+let interfile_fixtures_root : Fpath.t = Fpath.v "tests/interfile/python"
+
+let dedup_scan (caps : Scan_subcommand.caps) ~(case : string) ~(rule : string)
+    ~(targets : string list) (args : string list) :
+    Semgrep_output_v1_t.cli_match list =
+  let fixture (name : string) : Testutil_files.t =
+    Testutil_files.File
+      (name, read_fixture ~root:interfile_fixtures_root (case ^ "/" ^ name))
+  in
+  Testutil_git.with_git_repo
+    (List_.map fixture (rule :: targets))
+    (fun (_cwd : Fpath.t) ->
+      let (), stdout_output =
+        Testo.with_capture stdout (fun () ->
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([
+                        "opengrep-scan";
+                        "--config";
+                        rule;
+                        "--json";
+                      ]
+                     @ args)))
+            |> ignore)
+      in
+      (Semgrep_output_v1_j.cli_output_of_string stdout_output).results)
+
+let two_sources_scan (caps : Scan_subcommand.caps) ~(rule : string)
+    (args : string list) : Semgrep_output_v1_t.cli_match list =
+  dedup_scan caps ~case:"dedup_two_sources" ~rule
+    ~targets:[ "same_file.py"; "shared_sink.py"; "caller_a.py"; "caller_b.py" ]
+    args
+
+let two_sinks_scan (caps : Scan_subcommand.caps) (args : string list) :
+    Semgrep_output_v1_t.cli_match list =
+  dedup_scan caps ~case:"dedup_two_sinks" ~rule:"rule.yaml"
+    ~targets:[ "two_sinks.py" ] args
+
+let match_fingerprints (matches : Semgrep_output_v1_t.cli_match list) :
+    string list =
+  matches
+  |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+         m.Semgrep_output_v1_t.extra.fingerprint)
+
+let fingerprints (matches : Semgrep_output_v1_t.cli_match list) : string list =
+  matches |> match_fingerprints |> List.sort_uniq String.compare
+
+let source_sink_args : string list = [ "--interfile-dedup-by"; "source-sink" ]
+
+let test_dedup_default_is_sink (caps : Scan_subcommand.caps) () =
+  let sink_findings = two_sources_scan caps ~rule:"rule.yaml" [] in
+  Alcotest.(check int)
+    "a scan of two sinks with two sources each reports two findings under the \
+     default"
+    2 (List.length sink_findings)
+
+let test_dedup_source_sink (caps : Scan_subcommand.caps) () =
+  let source_sink_findings =
+    two_sources_scan caps ~rule:"rule.yaml" source_sink_args
+  in
+  Alcotest.(check int)
+    "a scan of two sinks with two sources each reports four findings under \
+     --interfile-dedup-by source-sink"
+    4
+    (List.length source_sink_findings)
+
+let test_dedup_default_fingerprints_kept (caps : Scan_subcommand.caps) () =
+  let sink_findings = two_sources_scan caps ~rule:"rule.yaml" [] in
+  let source_sink_findings =
+    two_sources_scan caps ~rule:"rule.yaml" source_sink_args
+  in
+  let plain_findings = two_sources_scan caps ~rule:"rule_plain.yaml" [] in
+  Alcotest.(check bool)
+    "every fingerprint of the scan under the default is also a fingerprint of \
+     the scan under --interfile-dedup-by source-sink"
+    true
+    (List.for_all
+       (fun (f : string) ->
+         List.exists (String.equal f) (fingerprints source_sink_findings))
+       (fingerprints sink_findings));
+  Alcotest.(check int)
+    "the same rule without the interfile option reports one finding" 1
+    (List.length plain_findings);
+  Alcotest.(check bool)
+    "the finding of the rule without the interfile option has a fingerprint \
+     that the interfile rule gives as well"
+    true
+    (List.for_all
+       (fun (f : string) ->
+         List.exists (String.equal f) (fingerprints sink_findings))
+       (fingerprints plain_findings))
+
+let test_dedup_suffix_counts_sinks (caps : Scan_subcommand.caps) () =
+  let suffixes (matches : Semgrep_output_v1_t.cli_match list) : string list =
+    matches
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           let fingerprint = m.Semgrep_output_v1_t.extra.fingerprint in
+           match String.index_opt fingerprint '_' with
+           | Some i ->
+               String.sub fingerprint i (String.length fingerprint - i)
+           | None -> fingerprint)
+  in
+  Alcotest.(check (list string))
+    "under the default the two sinks of the file give the match based id \
+     suffixes _0 and _1"
+    [ "_0"; "_1" ]
+    (suffixes (two_sinks_scan caps []));
+  Alcotest.(check (list string))
+    "under --interfile-dedup-by source-sink each sink keeps its own number and \
+     the second finding at a sink gains a second number"
+    [ "_0"; "_0_1"; "_1"; "_1_1" ]
+    (suffixes (two_sinks_scan caps source_sink_args))
+
+let test_source_sink_ids_are_distinct (caps : Scan_subcommand.caps) () =
+  let sink_ids = match_fingerprints (two_sinks_scan caps []) in
+  let source_sink_ids =
+    match_fingerprints (two_sinks_scan caps source_sink_args)
+  in
+  Alcotest.(check int)
+    "the scan under --interfile-dedup-by source-sink reports four findings" 4
+    (List.length source_sink_ids);
+  Alcotest.(check int)
+    "the four findings have four different match based ids" 4
+    (List.length (List.sort_uniq String.compare source_sink_ids));
+  Alcotest.(check bool)
+    "each finding of the scan under the default keeps its match based id under \
+     --interfile-dedup-by source-sink"
+    true
+    (List.for_all
+       (fun (f : string) -> List.exists (String.equal f) source_sink_ids)
+       sink_ids)
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -455,6 +588,119 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"rules/message_interpolation/interpolated_message.yaml"
            ~targets:
              [ "targets/message_interpolation/target_with_metavariable.py" ]);
+      t
+        "findings: an interfile scan of two sinks with two sources each \
+         reports one finding per sink under the default"
+        (test_dedup_default_is_sink caps);
+      t
+        "findings: an interfile scan of two sinks with two sources each \
+         reports one finding per source under --interfile-dedup-by source-sink"
+        (test_dedup_source_sink caps);
+      t
+        "findings: every fingerprint of an interfile scan under the default is \
+         also given under --interfile-dedup-by source-sink"
+        (test_dedup_default_fingerprints_kept caps);
+      t
+        "findings: the first number of a match based id counts the sinks of \
+         the file under both values of --interfile-dedup-by"
+        (test_dedup_suffix_counts_sinks caps);
+      t
+        "findings: the two findings at one sink have different match based ids \
+         under --interfile-dedup-by source-sink"
+        (test_source_sink_ids_are_distinct caps);
+      t
+        "findings: with --dataflow-traces and --interfile-dedup-by \
+         source-sink, the text output names the file of a taint step that lies \
+         in another file"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sources/rule.yaml"
+           ~targets:
+             [
+               "dedup_two_sources/same_file.py";
+               "dedup_two_sources/shared_sink.py";
+               "dedup_two_sources/caller_a.py";
+               "dedup_two_sources/caller_b.py";
+             ]
+           ~format_args:[]
+           ~extra_args:("--dataflow-traces" :: source_sink_args));
+      t
+        "findings: under --interfile-dedup-by source-sink, the text output \
+         lists the two sources of a sink below the sink line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sources/rule.yaml"
+           ~targets:
+             [
+               "dedup_two_sources/same_file.py";
+               "dedup_two_sources/shared_sink.py";
+               "dedup_two_sources/caller_a.py";
+               "dedup_two_sources/caller_b.py";
+             ]
+           ~format_args:[] ~extra_args:source_sink_args);
+      t
+        "findings: under --interfile-dedup-by source-sink, the text output \
+         lists the sources of each of the two sinks of a file"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sinks/rule.yaml"
+           ~targets:[ "dedup_two_sinks/two_sinks.py" ]
+           ~format_args:[] ~extra_args:source_sink_args);
+      t
+        "findings: with --dataflow-traces and --interfile-dedup-by \
+         source-sink, the text output prints one taint trace per source of \
+         each sink"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sinks/rule.yaml"
+           ~targets:[ "dedup_two_sinks/two_sinks.py" ]
+           ~format_args:[]
+           ~extra_args:("--dataflow-traces" :: source_sink_args));
+      t
+        "findings: each --emacs line names its taint source under \
+         --interfile-dedup-by source-sink"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sources/rule.yaml"
+           ~targets:
+             [
+               "dedup_two_sources/same_file.py";
+               "dedup_two_sources/shared_sink.py";
+               "dedup_two_sources/caller_a.py";
+               "dedup_two_sources/caller_b.py";
+             ]
+           ~format_args:[ "--emacs" ] ~extra_args:source_sink_args);
+      t
+        "findings: each --vim line names its taint source under \
+         --interfile-dedup-by source-sink"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sources/rule.yaml"
+           ~targets:
+             [
+               "dedup_two_sources/same_file.py";
+               "dedup_two_sources/shared_sink.py";
+               "dedup_two_sources/caller_a.py";
+               "dedup_two_sources/caller_b.py";
+             ]
+           ~format_args:[ "--vim" ] ~extra_args:source_sink_args);
+      t
+        "findings: under --interfile-dedup-by source-sink, the GitLab SAST \
+         output gives the two findings at one sink different vulnerability ids"
+        ~checked_output:(Testo.stdout ())
+        ~normalize:Test_scan_subcommand_formats.normalise_gitlab
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sinks/rule.yaml"
+           ~targets:[ "dedup_two_sinks/two_sinks.py" ]
+           ~format_args:[ "--gitlab-sast" ] ~extra_args:source_sink_args);
+      t
+        "findings: under --interfile-dedup-by source-sink, the SARIF output \
+         gives each finding its code flow without --dataflow-traces"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sinks/rule.yaml"
+           ~targets:[ "dedup_two_sinks/two_sinks.py" ]
+           ~format_args:[ "--sarif" ] ~extra_args:source_sink_args);
     ]
     @ (aliengrep_cases
       |> List.map (fun ((rule : string), (target : string)) ->

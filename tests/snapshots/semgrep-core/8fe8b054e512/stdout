@@ -11,35 +11,24 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 sinks.py
 
 
-┌─────────────────┐
-│ 2 Code Findings │
-└─────────────────┘
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
 
     sinks.py
    ❯❯❱ interfile-taint
           cross-file taint
 
             3┆ sink(v)
+             source main.py:5  source()
 
              Taint comes from:
+              main.py
                5┆     leak(source())
 
              This is how taint reaches the sink:
+              main.py
                5┆     leak(source())
-
-             Taint flows through these intermediate variables:
-               2┆ def leak(v):
-
-             then reaches:
-               3┆     sink(v)
-            ⋮┆----------------------------------------
-            3┆ sink(v)
-
-             Taint comes from:
-               8┆     leak(source())
-
-             This is how taint reaches the sink:
-               8┆     leak(source())
 
              Taint flows through these intermediate variables:
                2┆ def leak(v):

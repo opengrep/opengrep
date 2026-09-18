@@ -5,6 +5,7 @@
    '.min.js' bypass and for '--scan-unknown-extensions'. *)
 type diff_scan_func =
   ?explicit_targets:Find_targets.Explicit_targets.t ->
+  scanning_roots:Scanning_root.directory list ->
   Target_and_root.t list ->
   Rule.rules ->
   Core_result.result_or_exn
@@ -21,6 +22,7 @@ val scan_baseline :
   Target_and_root.t list ->
   Rule.rules ->
   explicit_targets:Find_targets.Explicit_targets.t ->
+  scanning_roots:Scanning_root.directory list ->
   head_scan_func:diff_scan_func ->
   baseline_scan_func:diff_scan_func ->
   Core_result.result_or_exn

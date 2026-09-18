@@ -702,6 +702,19 @@ let o_taint_interfile_depth : int Term.t =
   in
   Arg.value (Arg.opt Arg.int 3 info)
 
+let o_interfile_dedup_by : Core_match.interfile_dedup_by Term.t =
+  let info =
+    Arg.info [ "interfile-dedup-by" ]
+      ~doc:
+        "How interfile findings are deduplicated: by sink, or by source and \
+         sink."
+  in
+  Arg.value
+    (Arg.opt
+       (Cmdliner.Arg.enum
+          [ ("sink", Core_match.Sink); ("source-sink", Core_match.Source_sink) ])
+       Core_match.Sink info)
+
 (* TODO: Remove this, or adapt to Opengrep. *)
 (* ------------------------------------------------------------------ *)
 (* Configuration options ('scan' only, not reused in 'ci') *)
@@ -1267,6 +1280,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids files_with_matches
       force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       include_ incremental_output incremental_output_postprocess
+      interfile_dedup_by
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb
       max_target_bytes
@@ -1383,6 +1397,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         effect_guards;
         taint_interfile;
         taint_interfile_depth;
+        interfile_dedup_by;
         engine_config;
       }
     in
@@ -1507,6 +1522,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_files_with_matches $ o_force_color $ o_gitlab_sast
     $ o_gitlab_sast_outputs $ o_gitlab_secrets $ o_gitlab_secrets_outputs
     $ o_include $ o_incremental_output $ o_incremental_output_postprocess
+    $ o_interfile_dedup_by
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb
