@@ -1,5 +1,5 @@
 (* This module provides a simple interface for making HTTP requests. It wraps
-   Cohttp with better error handling, adds network mocking, and proxy support *)
+   Cohttp with better error handling and adds network mocking. *)
 
 type body_result = (string, string) result
 (** [response_body] is [Ok body] when the server returns an a success status
@@ -43,6 +43,7 @@ val call_client :
 
 val get :
   ?headers:(string * string) list ->
+  ?redirects:int ->
   Cap.Network.t ->
   Uri.t ->
   client_result Lwt.t

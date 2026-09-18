@@ -23,13 +23,12 @@ bug-reports: "https://github.com/opengrep/opengrep/issues"
 depends: [
   "ocaml" {>= "5.2.1"}
   "dune" {>= "3.8" & >= "3.7"}
-  "menhir" {= "20230608"}
+  "menhir" {= "20250912"}
   "base" {>= "v0.17.1"}
   "fpath"
   "bos"
   "fileutils"
   "alcotest"
-  "alcotest-js"
   "alcotest-lwt"
   "calendar"
   "fmt"
@@ -57,22 +56,19 @@ depends: [
   "ocamlgraph"
   "semver"
   "timedesc" {>= "2.0.0"}
-  "lsp" {= "1.22.0"}
+  "lsp" {= "1.27.0"}
   "git"
-  "ambient-context-lwt"
   "uri"
   "uuidm" {>= "0.9.9"}
-  "cohttp" {= "6.0.0"}
+  "cohttp" {= "6.3.0"}
   "cohttp-lwt-unix"
   "tls-lwt"
   "emile"
   "digestif" {>= "1.0.0"}
-  "tls-mirage" {= "0.17.3"}
+  "tls-mirage"
   "lwt"
   "lwt_ppx"
   "conf-libev" {os != "win32"}
-  "integers_stubs_js"
-  "git-unix"
   "memprof-limits" {= "dev"}
   "memtrace" {= "dev"}
   "thread-local-storage"

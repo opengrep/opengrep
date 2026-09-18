@@ -72,44 +72,6 @@ let server_response_of_response (response, body) meth =
       Log.debug (fun m -> m "HTTP %s unexpected response:\n %s" meth_str body);
       { body = Error body; response; code }
 
-(*****************************************************************************)
-(* Proxy Stuff *)
-(*****************************************************************************)
-
-(* Respect the proxy!*)
-(* Cohttp doesn't https://github.com/mirage/ocaml-cohttp/issues/459 *)
-(* https://github.com/0install/0install/blob/6c0f5c51bc099370a367102e48723a42cd352b3b/ocaml/zeroinstall/http.cohttp.ml#L232-L256 *)
-
-(* What do we have to do to support a proxy? *)
-(* On Native OCaml (not js), the certificate MUST be in a path listed in
-   https://github.com/mirage/ca-certs/blob/fa4ff942f1ac980e2502a0783ef10ade5ba497f2/lib/ca_certs.ml#L34-L50 *)
-(* Or set SSL_CERT_FILE=path/to/cert. But note setting this means no default certs will be included *)
-(* HTTP(s)_PROXY MUST have a scheme, http:// or https://, and must have a port
-   if it isn't on port 80/443 *)
-(* So HTTP_PROXY=http://localhost:8080 or
-   HTTPS_PROXY=https://localhost:8080 *)
-(* And note that HTTP_PROXY is only used for HTTP requests! We almost
-   exclusively use HTTPS urls so make sure both are set*)
-let get_proxy uri =
-  let proxy_uri_env =
-    match Uri.scheme uri with
-    (* TODO support all versions of these env vars. They can be both uppercase *)
-    (* and lowercase *)
-    | Some "http" -> Some "HTTP_PROXY"
-    | Some "https" -> Some "HTTPS_PROXY"
-    | _ -> None
-  in
-  let proxy_uri = Option.bind proxy_uri_env Sys.getenv_opt in
-  match proxy_uri with
-  | Some proxy_uri ->
-      Log.info (fun m -> m "Using proxy %s for request" proxy_uri);
-      Some (Uri.of_string proxy_uri)
-  | None -> None
-
-(* Why this wrapper function? Client.call takes a uri, and some other things
-   and then makes a Request.t with said uri and sends that request to the same
-   uri By using Client.callv, we can make a request that has some uri, but then
-   really send it to a different uri. This is used for proxying requests *)
 let default_resp_handler (response, body) =
   let%lwt body_str = Cohttp_lwt.Body.to_string body in
   Lwt.return (response, body_str)
@@ -131,77 +93,25 @@ let call_client ?(body = Cohttp_lwt.Body.empty) ?(headers = [])
          | Some client -> client
          | None -> failwith "HTTP client not initialized")
   in
-  (* Send the request to the proxy, not the original url, if it's set *)
-  let%lwt content_length_header =
-    match meth with
-    | `POST ->
-        let%lwt length, _ = Cohttp_lwt.Body.length body in
-        (* Not added when using callv :(, so we gotta add it here *)
-        Lwt.return [ ("content-length", Int64.to_string length) ]
-    | _ -> Lwt.return []
-  in
-  let headers = content_length_header @ headers in
   let headers = Header.of_list headers in
-  (* [make_for_client] Sets host header internally *)
-  let req = Cohttp.Request.make_for_client ~headers ~chunked meth url in
-  let req, url =
-    match get_proxy url with
-    | Some proxy_url ->
-        ({ req with Cohttp.Request.resource = Uri.to_string url }, proxy_url)
-    | None -> (req, url)
-  in
-  let stream_req = Lwt_stream.of_list [ (req, body) ] in
-  (* callv is deprecated in 6.0.0 of cohttp, but that's not released yet as of this comment *)
-  let responses_stream_opt =
-    (* We add a try catch  to handle otherwise uncaught unix errors
-       (e.g. ECONNREFUSED) and return a more helpful error message.
-
-       Currently, we're observing high failure rates from our metrics endpoint
-       with the corresponding error `Unix_error: Connection reset by peer read`
-       when the server initiates a connection with SSL via TLS v1.2 instead
-       of v1.3
-
-       For investigative work, we're currently using an internal AWS Lambda
-       URL instead of our human-friendly metrics endpoint. This is because the
-       Lambda URL tends to get matched to a node with TLS v1.3 support,
-       whereas our metrics endpoint for some reason almost exclusively is
-       matched with a node that initiaties TLS v1.2 which is causing the
-       connection reset error.
-
-       This is a somewhat temporary workaround as even our Lambda URL will not
-       always respond with TLS v1.3, as we are not guaranteed to hit the same
-       node. Currently, AWS does not support specifying a minimum TLS version
-       of v1.3, and we will need to figure out a better solution for ensuring
-       reliable metrics delivery. *)
-    try%lwt
-      let%lwt responses_stream = Client.callv url stream_req in
-      Lwt.return_ok responses_stream
-    with
-    | exn ->
-        let err = Printexc.to_string exn in
-        Log.err (fun m ->
-            m "HTTP %s to '%s' failed: %s" (string_of_meth meth)
-              (Uri.to_string url) err);
-        Lwt.return_error err
-  in
-  let handle_responses responses_stream =
-    (* Assume that we only get one response back *)
-    match%lwt
-      responses_stream |> Lwt_stream.map_s resp_handler |> Lwt_stream.to_list
-    with
-    | [ (response, response_body) ] -> Lwt.return_ok (response, response_body)
-    | [] -> Lwt.return_error "No responses from a single request"
-    | _ :: _ -> Lwt.return_error "Multiple responses from a single request"
-    | exception Cohttp_lwt.Connection.Retry ->
-        Lwt.return_error
-          "Error in request: maybe the server hung up prematurely?"
-  in
-  Lwt_result.bind responses_stream_opt handle_responses
+  try%lwt
+    let%lwt response = Client.call ~headers ~body ~chunked meth url in
+    let%lwt result = resp_handler response in
+    Lwt.return_ok result
+  with
+  | Cohttp_lwt.Connection.Retry ->
+      Lwt.return_error "Error in request: maybe the server hung up prematurely?"
+  | exn ->
+      let err = Printexc.to_string exn in
+      Log.err (fun m ->
+          m "HTTP %s to '%s' failed: %s" (string_of_meth meth)
+            (Uri.to_string url) err);
+      Lwt.return_error err
 
 (*****************************************************************************)
 (* Async *)
 (*****************************************************************************)
-let rec get ?(headers = []) caps url =
+let rec get ?(headers = []) ?(redirects = 5) caps url =
   Log.info (fun m -> m "GET on %s" (Uri.to_string url));
   (* This checks to make sure a client has been set *)
   (* Instead of defaulting to a client, as that can cause *)
@@ -226,7 +136,12 @@ let rec get ?(headers = []) caps url =
             Log.err (fun m -> m "%s" err);
             let server_response = { server_response with body = Error err } in
             Lwt.return_ok server_response
-        | Some url -> get caps (Uri.of_string url))
+        | Some url when redirects > 0 ->
+            get ~redirects:(redirects - 1) caps (Uri.of_string url)
+        | Some url ->
+            let err = "HTTP GET failed: too many redirects, last one to " ^ url in
+            Log.err (fun m -> m "%s" err);
+            Lwt.return_ok { server_response with body = Error err })
     | _ -> Lwt.return_ok server_response
   in
   Lwt_result.bind response_result handle_response
