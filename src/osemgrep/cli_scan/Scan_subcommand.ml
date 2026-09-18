@@ -277,15 +277,10 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
 let incremental_text_printer (_caps : < Cap.stdout >)
     ~(is_interfile : Rule_ID.t -> bool) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =
-  (* TODO: we should switch to Fmt_.with_buffer_to_string +
-   * some CapConsole.print_no_nl, but then is_atty fail on
-   * a string buffer and we lose the colors
-   *)
   Matches_report.pp_text_outputs
     ~max_chars_per_line:conf.output_conf.max_chars_per_line
     ~max_lines_per_finding:conf.output_conf.max_lines_per_finding
       (* nosemgrep: forbid-console *)
-    ~color_output:conf.output_conf.force_color
     ~show_dataflow_traces:conf.output_conf.show_dataflow_traces
     ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by ~is_interfile
     Format.std_formatter cli_matches
@@ -1042,6 +1037,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
    *)
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~level:conf.common.logging_level;
+  Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 
   Output.check_destinations conf.output_conf;

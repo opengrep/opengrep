@@ -400,6 +400,7 @@ let run_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~level:conf.common.logging_level;
+  Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
   Logs.debug (fun m -> m "conf = %s" (Ci_CLI.show_conf ci_conf));
   run_and_suppress_errors caps ci_conf

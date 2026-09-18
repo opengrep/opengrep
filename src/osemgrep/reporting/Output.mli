@@ -49,6 +49,8 @@ val is_interfile_rule_id :
  *)
 val check_destinations : conf -> unit
 
+val setup_stdout : conf -> unit
+
 (* Whether any of the outputs in conf wants the nosem-ignored matches, so
  * that they must be left in the results instead of being filtered out.
  * Only SARIF wants them, as it reports them as suppressed.

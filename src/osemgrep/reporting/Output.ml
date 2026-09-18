@@ -224,29 +224,38 @@ let for_output_format (conf : conf) (kind : Output_format.t)
   if Output_format.keep_ignores kind || not (keeps_ignores conf) then cli_output
   else { cli_output with results = List.filter not_ignored cli_output.results }
 
+let text_colour (conf : conf) ~(dest : string option) : bool =
+  conf.force_color
+  || Option.is_none dest
+     && (not !Semgrep_envvars.v.no_color)
+     && !ANSITerminal.isatty Unix.stdout
+
+let setup_stdout (conf : conf) : unit =
+  Fmt.set_style_renderer Format.std_formatter
+    (if text_colour conf ~dest:None then `Ansi_tty else `None)
+
 (* Render any output format to a string (without trailing newline).
- * Used for the file destinations of -o/--output and --<format>-output;
- * unlike on stdout, Text is rendered without colors.
+ * Used for the file destinations of -o/--output and --<format>-output.
  * Returns None when there is nothing to output (e.g., Incremental, whose
  * matches have already been displayed in a file_match_results_hook).
  *)
 let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
-    ~(is_interfile : Rule_ID.t -> bool) (kind : Output_format.t)
-    (cli_output : Out.cli_output) : string option =
+    ~(is_interfile : Rule_ID.t -> bool) ~(dest : string option)
+    (kind : Output_format.t) (cli_output : Out.cli_output) : string option =
   match kind with
   | Incremental -> None
   | Text ->
       Some
-        (Format.asprintf "%a"
-           (Matches_report.pp_cli_output
-              ~max_chars_per_line:conf.max_chars_per_line
-              ~max_lines_per_finding:conf.max_lines_per_finding
-              ~color_output:false
-              ~show_dataflow_traces:conf.show_dataflow_traces
-              ~interfile_dedup_by ~is_interfile
-              ~is_ci_invocation:conf.is_ci_invocation)
-           cli_output)
+        (Fmt_.with_buffer_to_string (fun (ppf : Format.formatter) ->
+             Fmt.set_style_renderer ppf
+               (if text_colour conf ~dest then `Ansi_tty else `None);
+             Matches_report.pp_cli_output
+               ~max_chars_per_line:conf.max_chars_per_line
+               ~max_lines_per_finding:conf.max_lines_per_finding
+               ~show_dataflow_traces:conf.show_dataflow_traces
+               ~interfile_dedup_by ~is_interfile
+               ~is_ci_invocation:conf.is_ci_invocation ppf cli_output))
   | Sarif ->
       let engine_label =
         match cli_output.engine_requested with
@@ -331,21 +340,17 @@ let dispatch_output_format
       =
     match kind with
     | Text ->
-        (* TODO: we should switch to Fmt_.with_buffer_to_string +
-         * some CapConsole.print_no_nl, but then is_atty fail on
-         * a string buffer and we lose the colors
-         *)
         Matches_report.pp_cli_output ~max_chars_per_line:conf.max_chars_per_line
           ~max_lines_per_finding:conf.max_lines_per_finding
             (* nosemgrep: forbid-console *)
-          ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
+          ~show_dataflow_traces:conf.show_dataflow_traces
           ~interfile_dedup_by ~is_interfile
           ~is_ci_invocation:conf.is_ci_invocation
           Format.std_formatter cli_output
     | kind -> (
         match
-          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile kind
-            cli_output
+          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile
+            ~dest:None kind cli_output
         with
         | Some str -> print str
         | None -> ())
@@ -360,8 +365,8 @@ let dispatch_output_format
          * reading the destination back does not meet an ENOENT after a scan
          * that simply found nothing *)
         let str =
-          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile kind
-            cli_output
+          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile
+            ~dest:(Some dest) kind cli_output
           ||| ""
         in
         let file = Fpath.v dest in

@@ -673,16 +673,10 @@ let pp_sources_of_sink ppf (findings : OutJ.cli_match list) : unit =
          | None ->
              ())
 
-let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
+let pp_finding ~max_chars_per_line ~max_lines_per_finding
     ~show_dataflow_traces ~append_separator
     ~(is_interfile : Rule_ID.t -> bool)
     ~(sink_findings : OutJ.cli_match list) ppf (m : OutJ.cli_match) =
-  (* TODO: honour color_output, so that colours are decided per destination
-   * as in the python wrapper, where a text file gets them under
-   * SEMGREP_FORCE_COLOR. They currently come from the style renderer that
-   * Logs_ sets on the formatter, from --force-color or a tty, which this
-   * argument cannot override. *)
-  ignore color_output;
   let lines =
     Option.value
       ~default:(String.split_on_char '\n' m.extra.lines)
@@ -784,7 +778,7 @@ let group_findings_by_sink (matches : OutJ.cli_match list) :
   |> List_.map List.rev |> List.rev
 
 let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-    ~color_output ~show_dataflow_traces
+    ~show_dataflow_traces
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     ~(is_interfile : Rule_ID.t -> bool) ppf
     (matches : OutJ.cli_match list) =
@@ -892,7 +886,7 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
       | None -> false
       | Some next -> Rule_ID.equal next.check_id cur.check_id
     in
-    pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
+    pp_finding ~max_chars_per_line ~max_lines_per_finding
       ~show_dataflow_traces ~append_separator:(same_file_next && same_rule_next)
       ~is_interfile ~sink_findings ppf cur;
     Fmt.pf ppf "@."
@@ -938,7 +932,6 @@ let pp_rules_fired ppf (title : string) (ids : string list) : unit =
 let pp_cli_output
     ~max_chars_per_line
     ~max_lines_per_finding
-    ~color_output
     ~show_dataflow_traces
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     ~(is_interfile : Rule_ID.t -> bool)
@@ -998,8 +991,7 @@ let pp_cli_output
            Fmt_.pp_heading ppf
              (String_.unit_str (List.length matches) (group_titles group));
          pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-           ~color_output ~show_dataflow_traces ~interfile_dedup_by ~is_interfile
-           ppf matches);
+           ~show_dataflow_traces ~interfile_dedup_by ~is_interfile ppf matches);
   if is_ci_invocation then (
     pp_rules_fired ppf "BLOCKING CODE RULES FIRED:"
       (match List.assoc_opt `Blocking groups with

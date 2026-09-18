@@ -349,12 +349,12 @@ let setup ?(highlight_setting = Console.get_highlight_setting ())
     | Off -> false
     | Auto -> isatty
   in
-  (* an absent renderer would make Fmt_tty detect the tty on its own and
-     ignore the decision above *)
+  (* The renderer is set on the log formatter only. The formatter of stdout
+     is set by the code that writes the report to it. *)
   let style_renderer : Fmt.style_renderer =
     if highlight then `Ansi_tty else `None
   in
-  Fmt_tty.setup_std_outputs ~style_renderer ();
+  Fmt.set_style_renderer dst style_renderer;
   Logs.set_level ~all:true level;
   Logs.set_reporter
     (mk_reporter ~additional_reporters ~dst ~require_one_of_these_tags
