@@ -8,6 +8,7 @@
   TCB
   semgrep.core_cli
   semgrep.osemgrep_cli
+  memtrace
   ; implementations of dune virtual modules
   lwt_platform.unix)
  (preprocess
