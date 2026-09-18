@@ -62,17 +62,16 @@ depends: [
   "ambient-context-lwt"
   "uri"
   "uuidm" {>= "0.9.9"}
-  "cohttp" {= "6.0.0"}
+  "cohttp" {= "6.3.0"}
   "cohttp-lwt-unix"
   "tls-lwt"
   "emile"
   "digestif" {>= "1.0.0"}
-  "tls-mirage" {= "0.17.3"}
+  "tls-mirage"
   "lwt"
   "lwt_ppx"
   "conf-libev" {os != "win32"}
   "integers_stubs_js"
-  "git-unix"
   "memprof-limits" {= "dev"}
   "memtrace" {= "dev"}
   "thread-local-storage"

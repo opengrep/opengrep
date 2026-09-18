@@ -268,8 +268,33 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
   (* pad poor's man profiler *)
   if profile then Profiling.profile := Profiling.ProfAll;
 
-  (* hacks for having a smaller engine.js file *)
   Parsing_init.init ();
+  let proxy_uri (upper : string) (lower : string) : Uri.t option =
+    List.find_map Opengrep_env.getenv_nonempty [ upper; lower ]
+    |> Option.map Uri.of_string
+  in
+  let scheme_proxy =
+    List.filter_map
+      (fun ((scheme : string), (proxy : Uri.t option)) ->
+        Option.map (fun (uri : Uri.t) -> (scheme, uri)) proxy)
+      [
+        ("http", proxy_uri "HTTP_PROXY" "http_proxy");
+        ("https", proxy_uri "HTTPS_PROXY" "https_proxy");
+      ]
+  in
+  let all_proxy = proxy_uri "ALL_PROXY" "all_proxy" in
+  let no_proxy =
+    List.find_map Opengrep_env.getenv_nonempty [ "NO_PROXY"; "no_proxy" ]
+  in
+  let proxy_cache =
+    lazy
+      (Cohttp_lwt_unix.Connection_proxy.create ~scheme_proxy ?all_proxy
+         ?no_proxy ())
+  in
+  Cohttp_lwt_unix.Client.set_cache
+    (fun ?headers ?body ?absolute_form (meth : Cohttp.Code.meth) (uri : Uri.t) ->
+      Cohttp_lwt_unix.Connection_proxy.call (Lazy.force proxy_cache) ?headers
+        ?body ?absolute_form meth uri);
   Http_helpers_.set_client_ref (module Cohttp_lwt_unix.Client);
 
   (* TOPORT: maybe_set_git_safe_directories() *)

@@ -518,23 +518,17 @@ For more information see https://opengrep.dev.
     ; web stuff
     uri
     (uuidm (>= 0.9.9))
-    (cohttp (= 6.0.0)) ; 6.0.0 for better error handling
+    (cohttp (= 6.3.0))
     cohttp-lwt-unix
     tls-lwt ; needed for TLS support in the cohttp HTTP client (only TLS 1.3 seems to work)
     emile
     (digestif (>= 1.0.0))
-    (tls-mirage (= 0.17.3)) ; force older version of tls-mirage to make windows work
+    tls-mirage
     ; concurrency
     lwt
     lwt_ppx
     (conf-libev (<> :os win32)) ; for lwt, to get better FD perf
     integers_stubs_js
-    ;TODO: this is for secrets and should be in ../dune-project but doing so
-    ; slows down a lot our CI because it pulls dependencies that seem
-    ; to cause the removal and recompilation of many packages (e.g., tls) and
-    ; make our GHA opam cache useless. We might need to install here instead
-    ; packages that would avoid this effect.
-    git-unix
     (memprof-limits (= "dev")) ; NOTE: Just to invalidate CI cache for now.
     (memtrace (= "dev"))
     thread-local-storage ; NOTE: We should not mess with memprof-limits, but in

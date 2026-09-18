@@ -1,5 +1,5 @@
 (* This module provides a simple interface for making HTTP requests. It wraps
-   Cohttp with better error handling, adds network mocking, and proxy support *)
+   Cohttp with better error handling and adds network mocking. *)
 
 type body_result = (string, string) result
 (** [response_body] is [Ok body] when the server returns an a success status
