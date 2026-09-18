@@ -47,6 +47,18 @@ val float_opt_with_env :
 (* A single-valued option whose value can also come from one of several
    environment variables (cmdliner supports only one per option). The
    first set variable wins; the command line wins over the environment. *)
+(* A single-valued option chosen from a fixed set of names, which an
+   environment variable can also set. The command line wins over the
+   variable, and warns that it is ignoring it; a value the set does not hold
+   is an error naming the ones it does. *)
+val enum_with_env :
+  env:string ->
+  doc:string ->
+  default:'a ->
+  names:(string * 'a) list ->
+  string list ->
+  'a Cmdliner.Term.t
+
 val string_opt_with_envs :
   envs:string list ->
   doc:string ->

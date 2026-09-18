@@ -22,46 +22,46 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
              source two_sinks.py:3  source_b()
 
              Taint comes from:
-               2┆     a = source_a()
+               2┆ a = source_a()
 
              Taint flows through these intermediate variables:
-               2┆     a = source_a()
-               4┆     x = a if cond else b
+               2┆ a = source_a()
+               4┆ x = a if cond else b
 
              This is how taint reaches the sink:
-               6┆     sink(x)
+               6┆ sink(x)
 
              Taint comes from:
-               3┆     b = source_b()
+               3┆ b = source_b()
 
              Taint flows through these intermediate variables:
-               3┆     b = source_b()
-               4┆     x = a if cond else b
+               3┆ b = source_b()
+               4┆ x = a if cond else b
 
              This is how taint reaches the sink:
-               6┆     sink(x)
+               6┆ sink(x)
             ⋮┆----------------------------------------
            14┆ sink(y)
              source two_sinks.py:10  source_a()
              source two_sinks.py:11  source_b()
 
              Taint comes from:
-              10┆     a = source_a()
+              10┆ a = source_a()
 
              Taint flows through these intermediate variables:
-              10┆     a = source_a()
-              12┆     y = a if cond else b
+              10┆ a = source_a()
+              12┆ y = a if cond else b
 
              This is how taint reaches the sink:
-              14┆     sink(y)
+              14┆ sink(y)
 
              Taint comes from:
-              11┆     b = source_b()
+              11┆ b = source_b()
 
              Taint flows through these intermediate variables:
-              11┆     b = source_b()
-              12┆     y = a if cond else b
+              11┆ b = source_b()
+              12┆ y = a if cond else b
 
              This is how taint reaches the sink:
-              14┆     sink(y)
+              14┆ sink(y)
 

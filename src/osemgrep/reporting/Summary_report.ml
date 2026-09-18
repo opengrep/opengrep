@@ -65,9 +65,9 @@ let cli_errors_to_report ~(verbose : bool) (errors : OutJ.cli_error list) :
 (* [unplaced_warnings]: the warnings about the scan rather than a file,
    such as the targets the interfile graph leaves out; their text prints
    with --verbose. *)
-let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
-    ~(maturity : Maturity.t) ~max_target_bytes ~skipped_groups
-    ~(unplaced_warnings : int) ppf () : unit =
+let summary_of_skipped ~respect_gitignore ~is_git_repo
+    ~(is_baseline_scan : bool) ~(maturity : Maturity.t) ~max_target_bytes
+    ~skipped_groups ~(unplaced_warnings : int) () : Skin_model.Summary.t =
   let {
     Skipped_report.ignored = semgrep_ignored;
     include_ = include_ignored;
@@ -81,7 +81,6 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
     skipped_groups
   in
 
-  Fmt_.pp_heading ppf "Scan Summary";
   (* python: the "limited" fragment of the block below; a baseline scan
      reports the commit it compares with rather than the git listing.
      The git fragment is printed whenever the targets came from a git listing
@@ -112,9 +111,13 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
       Some "Scan was limited to files tracked by git."
     else None
   in
-  let opt_msg msg = function
+  let count_of (noun : string) = function
     | [] -> None
-    | xs -> Some (string_of_int (List.length xs) ^ " " ^ msg)
+    | xs -> Some (List.length xs, noun)
+  in
+  let opt_msg noun xs =
+    count_of noun xs
+    |> Option.map (fun count -> { Skin_model.counts = [ count ]; suffix = "" })
   in
   (* the ignored directories, reported once each, count apart *)
   let semgrepignored =
@@ -124,11 +127,13 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
         semgrep_ignored
     in
     match
-      List_.filter_map Fun.id [ opt_msg "files" files; opt_msg "directories" dirs ]
+      List_.filter_map Fun.id
+        [ count_of "files" files; count_of "directories" dirs ]
     with
     | [] -> None
     | counts ->
-        Some (String.concat " and " counts ^ " matching .semgrepignore patterns")
+        Some
+          { Skin_model.counts; suffix = "matching .semgrepignore patterns" }
   in
   let out_skipped =
     (* in bytes below one megabyte, so that a small limit reads plainly *)
@@ -157,31 +162,41 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
       "files only partially analyzed due to a parsing or internal Opengrep error"
       (Skipped_report.group_errors_by_file errors)
   in
-  match (limited, out_skipped, out_partial, unplaced_warnings) with
-  | None, [], None, 0 -> ()
-  | limited, xs, parts, unplaced -> (
-      Fmt.pf ppf "Some files were skipped or only partially analyzed.@\n";
-      Option.iter (fun txt -> Fmt.pf ppf "  %s@\n" txt) limited;
-      Option.iter (fun txt -> Fmt.pf ppf "  Partially scanned: %s@\n" txt) parts;
-      if unplaced > 0 then
+  { Skin_model.Summary.limited; skipped = out_skipped;
+    partially_analyzed = out_partial; unplaced_warnings }
+
+(* The heading is printed whether or not anything was left out, so a clean
+   scan still shows an empty block. *)
+let pp_summary ppf (summary : Skin_model.Summary.t) : unit =
+  let str = Skin_model.string_of_phrase in
+  Fmt_.pp_heading ppf "Scan Summary";
+  if Skin_model.Summary.is_empty summary then ()
+  else (
+    Fmt.pf ppf "Some files were skipped or only partially analyzed.@\n";
+    Option.iter (fun txt -> Fmt.pf ppf "  %s@\n" txt) summary.limited;
+    Option.iter
+      (fun p -> Fmt.pf ppf "  Partially scanned: %s@\n" (str p))
+      summary.partially_analyzed;
+    if summary.unplaced_warnings > 0 then
+      Fmt.pf ppf
+        "  Analysis limited: %d warning%s about the scan; run with \
+         --verbose to see %s.@\n"
+        summary.unplaced_warnings
+        (if summary.unplaced_warnings = 1 then "" else "s")
+        (if summary.unplaced_warnings = 1 then "it" else "them");
+    match summary.skipped with
+    | [] -> ()
+    | xs ->
+        Fmt.pf ppf "  Scan skipped: %s@\n"
+          (xs |> List_.map str |> String.concat ", ");
         Fmt.pf ppf
-          "  Analysis limited: %d warning%s about the scan; run with \
-           --verbose to see %s.@\n"
-          unplaced
-          (if unplaced = 1 then "" else "s")
-          (if unplaced = 1 then "it" else "them");
-      match xs with
-      | [] -> ()
-      | xs ->
-          Fmt.pf ppf "  Scan skipped: %s@\n" (String.concat ", " xs);
-          Fmt.pf ppf
-            "  For a full list of skipped files, run opengrep with the \
-             --verbose flag.@\n")
+          "  For a full list of skipped files, run opengrep with the \
+           --verbose flag.@\n")
 
 (* python: OutputHandler._handle_semgrep_timeout_errors *)
-let pp_timeout_warnings ~(timeout_threshold : int) ppf
-    (errors : OutJ.cli_error list) : unit =
-  let timeouts_by_file : (Fpath.t * Rule_ID.t list) list =
+let timeouts_of_errors ~(timeout_threshold : int)
+    (errors : OutJ.cli_error list) : Skin_model.Timeouts.t =
+  let files =
     errors
     |> List_.filter_map (fun (e : OutJ.cli_error) ->
            match (e.type_, e.path, e.rule_id) with
@@ -194,23 +209,32 @@ let pp_timeout_warnings ~(timeout_threshold : int) ppf
        arbitrary one; sorting by path makes the block reproducible. *)
     |> List.sort (fun ((p1 : Fpath.t), _) ((p2 : Fpath.t), _) ->
            Fpath.compare p1 p2)
+    |> List_.map (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
+           {
+             Skin_model.Timeouts.path = Fpath.to_string path;
+             rule_ids = rule_ids |> List_.map Rule_ID.to_string;
+           })
   in
-  timeouts_by_file
-  |> List.iter (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
-         let num_errs = List.length rule_ids in
+  { Skin_model.Timeouts.files; threshold = timeout_threshold }
+
+let pp_timeout_warnings ppf (timeouts : Skin_model.Timeouts.t) : unit =
+  timeouts.files
+  |> List.iter (fun (f : Skin_model.Timeouts.file) ->
+         let num_errs = List.length f.rule_ids in
          Fmt.pf ppf
            "%d timeout error(s) in %s when running the following rules: [%s]@\n"
-           num_errs (Fpath.to_string path)
-           (rule_ids |> List_.map Rule_ID.to_string |> String.concat ", ");
-         if Int.equal num_errs timeout_threshold then
+           num_errs f.path
+           (f.rule_ids |> String.concat ", ");
+         if Int.equal num_errs timeouts.threshold then
            Fmt.pf ppf
              "Opengrep stopped running rules on %s after %d timeout \
               error(s). See `--timeout-threshold` for more info.@\n"
-             (Fpath.to_string path) num_errs);
+             f.path num_errs);
   if
-    Int.equal timeout_threshold 0
-    && timeouts_by_file
-       |> List.exists (fun (_path, rule_ids) -> List.length rule_ids > 5)
+    Int.equal timeouts.threshold 0
+    && timeouts.files
+       |> List.exists (fun (f : Skin_model.Timeouts.file) ->
+              List.length f.rule_ids > 5)
   then
     Fmt.pf ppf
       "You can use the `--timeout-threshold` flag to set a number of \

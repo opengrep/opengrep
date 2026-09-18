@@ -28,24 +28,24 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
              source same_file.py:3  source_b()
 
              Taint comes from:
-               2┆     a = source_a()
+               2┆ a = source_a()
 
              Taint flows through these intermediate variables:
-               2┆     a = source_a()
-               4┆     x = a if cond else b
+               2┆ a = source_a()
+               4┆ x = a if cond else b
 
              This is how taint reaches the sink:
-               6┆     sink(x)
+               6┆ sink(x)
 
              Taint comes from:
-               3┆     b = source_b()
+               3┆ b = source_b()
 
              Taint flows through these intermediate variables:
-               3┆     b = source_b()
-               4┆     x = a if cond else b
+               3┆ b = source_b()
+               4┆ x = a if cond else b
 
              This is how taint reaches the sink:
-               6┆     sink(x)
+               6┆ sink(x)
 
     shared_sink.py
    ❯❯❱ dedup-two-sources
@@ -57,29 +57,29 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
              Taint comes from:
               caller_a.py
-               5┆     to_sink(source_a())
+               5┆ to_sink(source_a())
 
              This is how taint reaches the sink:
               caller_a.py
-               5┆     to_sink(source_a())
+               5┆ to_sink(source_a())
 
              Taint flows through these intermediate variables:
                1┆ def to_sink(x):
 
              then reaches:
-               3┆     sink(x)
+               3┆ sink(x)
 
              Taint comes from:
               caller_b.py
-               5┆     to_sink(source_b())
+               5┆ to_sink(source_b())
 
              This is how taint reaches the sink:
               caller_b.py
-               5┆     to_sink(source_b())
+               5┆ to_sink(source_b())
 
              Taint flows through these intermediate variables:
                1┆ def to_sink(x):
 
              then reaches:
-               3┆     sink(x)
+               3┆ sink(x)
 

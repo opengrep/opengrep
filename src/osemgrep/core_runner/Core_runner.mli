@@ -54,10 +54,15 @@ type result = {
  * no further scanning of the filesystem shall be performed.
  * The Find_targets.conf argument is for explicit target management.
  * git_repo says whether the targets came from git, for the scan status.
+ * on_plan is called once the jobs have paired files with rules, so that the
+ * caller reports the plan; the runner itself prints nothing.
  *)
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    ?on_plan:(Skin_model.Plan.t -> unit) ->
+    (* what the scan is doing, and one event per unit of work it finishes *)
+    ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
     conf ->

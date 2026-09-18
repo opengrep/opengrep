@@ -108,7 +108,9 @@ let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
         Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors)
       in
 
-      Output.output_result ~keep_ignored:false
+      Output.output_result
+        ~skin:(Skins.resolve conf.output_conf.skin)
+        ~keep_ignored:false
         (caps :> < Cap.stdout >)
         (* TODO: choose output conf? *)
         conf.output_conf profiler res
@@ -277,12 +279,12 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
 let incremental_text_printer (_caps : < Cap.stdout >)
     ~(is_interfile : Rule_ID.t -> bool) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =
-  Matches_report.pp_text_outputs
-    ~max_chars_per_line:conf.output_conf.max_chars_per_line
-    ~max_lines_per_finding:conf.output_conf.max_lines_per_finding
-      (* nosemgrep: forbid-console *)
-    ~show_dataflow_traces:conf.output_conf.show_dataflow_traces
-    ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by ~is_interfile
+  let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
+  (* nosemgrep: forbid-console *)
+  Sk.pp_matches
+    (Output.skin_ctx
+       ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
+       ~is_interfile conf.output_conf)
     Format.std_formatter cli_matches
 
 let incremental_json_printer (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
@@ -341,86 +343,37 @@ let show_banner (rules_source : Rules_source.t) : bool =
   | Rules_source.Pattern _ -> false
   | Configs _ -> true
 
-let print_logo () : unit =
-  let logo =
-    {|
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-|}
-  in
-  Logs.app (fun m -> m "%s" logo);
-  ()
+let features () : Skin_model.Start.feature list =
+  [
+    {
+      Skin_model.Start.name = "Opengrep OSS";
+      description =
+        "Basic security coverage for first-party code vulnerabilities.";
+      enabled = true;
+    };
+    (* Semgrep Code (SAST) and Semgrep Secrets used to be listed here, gated
+       on the api token and the engine's secrets config. *)
+  ]
 
-(* These strings go to stderr through Logs.app, so they are styled with the
-   renderer of stderr, which follows --force-color, $NO_COLOR and the tty
-   like every other output (see CLI_common.setup_logging). *)
-let styled (style : Fmt.style) (text : string) : string =
-  Fmt.str_like Fmt.stderr "%a" Fmt.(styled style string) text
+let rule_source_of (source : Rule_fetching.source) : Skin_model.Start.rule_source
+    =
+  match source with
+  | Configs (configs, _not_found) -> (
+      let has = function
+        | `Registry ->
+            List.exists
+              (function
+                | C.R _ -> true
+                | _ -> false)
+              configs
+        | `Git -> List.exists (function C.Git _ -> true | _ -> false) configs
+      in
+      match () with
+      | _ when has `Registry -> Skin_model.Start.Registry
+      | _ when has `Git -> Skin_model.Start.Git
+      | _ -> Skin_model.Start.Local)
+  | Pattern _ -> Skin_model.Start.Pattern
 
-let feature_status ~(enabled : bool) : string =
-  if enabled then styled (`Fg `Green) "✔" else styled (`Fg `Red) "✘"
-
-let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) *) () :
-    unit =
-  (* let secrets_enabled =
-       match engine with
-       | PRO
-           Engine_type.
-             { secrets_config = Some Engine_type.{ allow_all_origins = _; _ }; _ }
-         ->
-           true
-       | OSS
-       | PRO Engine_type.{ secrets_config = None; _ } ->
-           false
-     in *)
-  let features =
-    [
-      ( "Opengrep OSS",
-        "Basic security coverage for first-party code vulnerabilities.",
-        true );
-      (* ( "Semgrep Code (SAST)",
-           "Find and fix vulnerabilities in the code you write with advanced \
-            scanning and expert security rules.",
-           includes_token );
-         ( "Semgrep Secrets",
-           "Detect and validate potential secrets in your code.",
-           secrets_enabled ); *)
-    ]
-  in
-  (* Print our set of features and whether each is enabled *)
-  List.iter
-    (fun (feature_name, desc, is_enabled) ->
-      Logs.app (fun m ->
-          m "%s %s" (feature_status ~enabled:is_enabled) (styled `Bold feature_name));
-      Logs.app (fun m ->
-          m "  %s %s\n" (feature_status ~enabled:is_enabled) desc))
-    features;
-  ()
-
-let display_rule_source (source : Rule_fetching.source) : unit =
-  let msg =
-    match source with
-    | Configs (configs, _not_found) -> (
-        let has = function
-          | `Registry ->
-              List.exists
-                (function
-                  | C.R _ -> true
-                  | _ -> false)
-                configs
-          | `Git ->
-              List.exists (function C.Git _ -> true | _ -> false) configs
-        in
-        match () with
-        | _ when has `Registry -> styled `Bold "  Loading rules from registry..."
-        | _ when has `Git ->
-            styled `Bold "  Loading rules from git repository..."
-        | _ -> styled `Bold "  Loading rules from local config...")
-    | Pattern _ -> "  Using custom pattern."
-  in
-  Logs.app (fun m -> m "%s" msg);
-  ()
 
 (*************************************************************************)
 (* Helpers *)
@@ -430,13 +383,21 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >) :
     Core_runner.func =
   Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
 
-let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
-    ~strict caps (source : Rule_fetching.source) =
-  (* Create the wait hook for our progress indicator *)
+let rules_from_rules_source ?(skip_invalid_configs = false)
+    ?(status : string option) ~rewrite_rule_ids ~strict caps
+    (source : Rule_fetching.source) =
+  (* the status the spinner animates, printed for it to draw on; it is
+     erased again when the rules are in. Only a terminal gets it: nothing
+     erases it elsewhere, and it would only pile up in a log. *)
+  let status = if Console_Spinner.should_show_spinner () then status else None in
+  Option.iter (fun (text : string) -> Logs.app (fun m -> m "%s" text)) status;
+  (* The spinner animates the status line, so a skin that shows no status
+     gets no spinner either. *)
   let spinner_ls =
-    if Console_Spinner.should_show_spinner () then
-      [ Console_Spinner.spinner_async () ]
-    else []
+    match status with
+    | Some _ when Console_Spinner.should_show_spinner () ->
+        [ Console_Spinner.spinner_async ~takes_previous_line:true () ]
+    | _ -> []
   in
   (* Fetch the rules *)
   let rules_and_origins =
@@ -573,6 +534,20 @@ let check_targets_with_rules ?(print_summary = true)
               (String_.unit_str (List.length rules_not_run) "rule"));
       let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
       let too_many_entries = conf.output_conf.max_log_list_entries in
+      let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
+      (* The bar is drawn on stderr while the scan works, and stopped before
+         the report so that findings are not printed over it. Under
+         --incremental-output findings reach stdout during the scan, so
+         there is no bar at all then. *)
+      let status_bar =
+        if
+          conf.no_progress_bar || conf.incremental_output
+          || not Sk.wants_status_bar
+        then None
+        else
+          Status_bar.create Status_bar.Analyzing_targets
+      in
+      let skin_ctx = Output.skin_ctx conf.output_conf in
       Logs.info (fun m ->
           m "%a"
             (Rules_report.pp_rules ~too_many_entries)
@@ -598,6 +573,29 @@ let check_targets_with_rules ?(print_summary = true)
       let output_format, file_match_hook =
         choose_output_format_and_match_hook (caps :> < Cap.stdout >) conf rules
       in
+      let on_plan (plan : Skin_model.Plan.t) : unit =
+        Skin_emit.emit (Sk.on_plan skin_ctx plan)
+      in
+      let progress_hook (progress : Core_scan_config.progress) : unit =
+        Option.iter
+          (fun (bar : Status_bar.t) ->
+            match progress with
+            | Core_scan_config.Target_done -> Status_bar.notify_target_done bar
+            | Core_scan_config.Interfile_rule_done ->
+                Status_bar.notify_interfile_rule_done bar
+            | Core_scan_config.Analyzing_targets ->
+                Status_bar.set_phase bar Status_bar.Analyzing_targets
+            | Core_scan_config.Building_interfile_graph ->
+                Status_bar.set_phase bar Status_bar.Building_interfile_graph
+            | Core_scan_config.Scanning_started { targets; interfile_rules } ->
+                Status_bar.set_phase bar
+                  (Status_bar.Scanning
+                     { targets;
+                       targets_done = Atomic.make 0;
+                       interfile_rules;
+                       interfile_rules_done = Atomic.make 0 }))
+          status_bar
+      in
       (match (output_format, conf.output_conf.output) with
       | Output_format.Incremental, Some _ ->
           Logs.warn (fun m ->
@@ -611,13 +609,19 @@ let check_targets_with_rules ?(print_summary = true)
             (List.length selected));
       Logs.info (fun m -> m "running the opengrep engine");
       let (result_or_exn : Core_result.result_or_exn) =
+        (* The bar lives for the engine run and no longer: stopping it here
+           puts the cursor back and clears the line whatever the run did,
+           and leaves the report to print on a clean screen. *)
+        Common.protect
+          ~finally:(fun () -> Option.iter Status_bar.finish status_bar)
+        @@ fun () ->
         match conf.targeting_conf.baseline_commit with
         | None ->
             Profiler.record profiler ~name:"core_time" (fun () ->
                 let { run } : Core_runner.func =
                   mk_core_run_for_osemgrep caps
                 in
-                run ?file_match_hook
+                run ?file_match_hook ~on_plan ~progress_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
                   ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
@@ -641,7 +645,7 @@ let check_targets_with_rules ?(print_summary = true)
                       Find_targets.explicit_targets = table;
                     }
               in
-              run ?file_match_hook
+              run ?file_match_hook ~on_plan ~progress_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf
                 conf.matching_conf (rules, invalid_rules) targets
@@ -773,27 +777,9 @@ let check_targets_with_rules ?(print_summary = true)
           | _ -> ());
 
           (* step 5: report the matches *)
-          Logs.info (fun m -> m "reporting matches if any");
-          (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
-            Output.output_result ~keep_ignored
-              (caps :> < Cap.stdout >)
-              output_conf profiler res
+            Output.cli_output_of_result ~keep_ignored output_conf profiler res
           in
-          (* python: the timeout warnings printed in text mode with the
-             results (not with --quiet, on either side) *)
-          (match output_format with
-          | Text ->
-              let warnings =
-                Fmt_.with_buffer_to_string (fun ppf ->
-                    Summary_report.pp_timeout_warnings
-                      ~timeout_threshold:conf.core_runner_conf.timeout_threshold
-                      ppf cli_output.errors)
-              in
-              if not (String.equal warnings "") then
-                Logs.warn (fun m -> m "%s" (String.trim warnings))
-          | _ -> ());
-          Profiler.stop_ign profiler ~name:"total_time";
 
           (* The rules that ran are those with a target file, as the Python
              wrapper counts them; a rule of several languages is in the
@@ -809,45 +795,86 @@ let check_targets_with_rules ?(print_summary = true)
             | [] -> List.length rules
             | ids -> List.length ids
           in
-
           let skipped_groups = Skipped_report.group_skipped skipped in
-          Logs.info (fun m ->
-              m "%a"
-                (Skipped_report.pp_skipped ~too_many_entries)
-                ( conf.targeting_conf.respect_gitignore,
-                  conf.common.maturity,
-                  conf.targeting_conf.max_target_bytes,
-                  skipped_groups ));
-          (* Note that Logs.app() is printing on stderr (but without any [XXX]
-           * prefix), and is filtered when using --quiet.
-           *)
-          Logs.app (fun m ->
-              m "%a"
-                (Summary_report.pp_summary
-                   ~respect_gitignore:conf.targeting_conf.respect_gitignore
-                   ~is_git_repo:targets_and_skipped.Find_targets.git_repo
-                   ~is_baseline_scan:
-                     (Option.is_some conf.targeting_conf.baseline_commit)
-                   ~maturity:conf.common.maturity
-                   ~max_target_bytes:conf.targeting_conf.max_target_bytes
-                   ~skipped_groups
-                   ~unplaced_warnings:
-                     (result.Core_result.errors
-                     |> List.filter (fun (e : Core_error.t) ->
-                            (match e.typ with
-                            | SemgrepWarning -> true
-                            | _ -> false)
-                            && Option.is_none e.loc)
-                     |> List.length))
-                ());
-          (* python: the print_summary parameter of output(); 'opengrep ci'
-           * prints its own completion lines instead *)
-          if print_summary then
-            Logs.app (fun m ->
-                m "Ran %s on %s: %s."
-                  (String_.unit_str num_rules_ran "rule")
-                  (String_.unit_str (List.length cli_output.paths.scanned) "file")
-                  (String_.unit_str (List.length cli_output.results) "finding"));
+          let (result_view : Skin_model.Result.t) =
+            {
+              summary =
+                Summary_report.summary_of_skipped
+                  ~respect_gitignore:conf.targeting_conf.respect_gitignore
+                  ~is_git_repo:targets_and_skipped.Find_targets.git_repo
+                  ~is_baseline_scan:
+                    (Option.is_some conf.targeting_conf.baseline_commit)
+                  ~maturity:conf.common.maturity
+                  ~max_target_bytes:conf.targeting_conf.max_target_bytes
+                  ~skipped_groups
+                  (* the warnings about the scan rather than about a file,
+                     such as the targets the interfile graph leaves out *)
+                  ~unplaced_warnings:
+                    (result.Core_result.errors
+                    |> List.filter (fun (e : Core_error.t) ->
+                           (match e.typ with
+                           | SemgrepWarning -> true
+                           | _ -> false)
+                           && Option.is_none e.loc)
+                    |> List.length)
+                  ();
+              (* python: the print_summary parameter of output(); 'opengrep ci'
+                 prints its own completion lines instead *)
+              tally =
+                (if print_summary then
+                   Some
+                     {
+                       Skin_model.Result.rules_ran = num_rules_ran;
+                       files_scanned = List.length cli_output.paths.scanned;
+                       files_with_findings =
+                         cli_output.results
+                         |> List_.map (fun (m : Out.cli_match) -> m.path)
+                         |> List_.deduplicate |> List.length;
+                       findings = List.length cli_output.results;
+                     }
+                 else None);
+            }
+          in
+          (* The skin decides what the report is made of and in which order;
+             the findings, and the diagnostics that belong with them, are
+             written where it placed Skin.Findings. *)
+          let on_findings () : unit =
+            Logs.info (fun m -> m "reporting matches if any");
+            (* outputting the result on stdout! in JSON/Text/... depending on
+               conf *)
+            Output.dispatch ~skin:(module Sk)
+              (caps :> < Cap.stdout >)
+              profiler output_conf cli_output res.hrules
+              ~interfile_dedup_by:res.interfile_dedup_by
+              ~is_interfile:
+                (Output.is_interfile_rule_id
+                   ~taint_interfile:res.taint_interfile res.hrules);
+            (* python: the timeout warnings printed in text mode with the
+               results (not with --quiet, on either side) *)
+            (match output_format with
+            | Text ->
+                let timeouts =
+                  Summary_report.timeouts_of_errors
+                    ~timeout_threshold:conf.core_runner_conf.timeout_threshold
+                    cli_output.errors
+                in
+                let warnings =
+                  Fmt_.with_buffer_to_string (fun ppf ->
+                      Summary_report.pp_timeout_warnings ppf timeouts)
+                in
+                if not (String.equal warnings "") then
+                  Logs.warn (fun m -> m "%s" (String.trim warnings))
+            | _ -> ());
+            Profiler.stop_ign profiler ~name:"total_time";
+            Logs.info (fun m ->
+                m "%a"
+                  (Skipped_report.pp_skipped ~too_many_entries)
+                  ( conf.targeting_conf.respect_gitignore,
+                    conf.common.maturity,
+                    conf.targeting_conf.max_target_bytes,
+                    skipped_groups ))
+          in
+          Skin_emit.emit ~on_findings (Sk.on_result skin_ctx result_view);
 
           (* step 6: apply autofixes *)
           (* this must happen posterior to reporting matches, or will report the
@@ -935,9 +962,21 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
 let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
     (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
-  let banner = show_banner conf.rules_source in
-  (* Print The logo ASAP to minimize time to first meaningful content paint *)
-  if banner then print_logo ();
+  let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
+  let skin_ctx = Output.skin_ctx conf.output_conf in
+  (* classifying the source reads nothing; it only says what the banner
+     below should call the rules *)
+  let source = Rule_fetching.classify conf.rules_source in
+  (* Draw the banner ASAP to minimize time to first meaningful content paint *)
+  let (start : Skin_model.Start.t) =
+    {
+      Skin_model.Start.banner = show_banner conf.rules_source;
+      features = features ();
+      rule_source = rule_source_of source;
+      ci = None;
+    }
+  in
+  Skin_emit.emit (Sk.on_start skin_ctx start);
 
   (* imitate pysemgrep for backward compatible profiling metrics ? *)
   let profiler = Profiler.make () in
@@ -946,29 +985,14 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
 
   Core_profiling.profiling := conf.core_runner_conf.time_flag;
 
-  (* Print feature section for enabled products if pattern mode is not used.
-     Ideally, pattern mode should be a different subcommand, but for now we will
-     conditionally print the feature section.
-  *)
-  if banner then
-    (match conf.rules_source with
-    | Pattern _ ->
-        Logs.app (fun m -> m "%s" (styled `Bold "  Code scanning.\n"))
-    | _ ->
-        print_feature_section
-          (* ~includes_token:(settings.api_token <> None) *)
-          (* ~engine:conf.engine_type) *) ());
-
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
-  (* Display a (possibly interactive) message to denote rule fetching *)
-  let source = Rule_fetching.classify conf.rules_source in
-  if banner then display_rule_source source;
   let rules_and_origins, fatal_errors =
     Profiler.record profiler ~name:"config_time" (fun () ->
         rules_from_rules_source
           (caps :> < Cap.network ; Cap.tmp >)
           ~skip_invalid_configs:conf.skip_invalid_configs
+          ?status:(Sk.rules_status skin_ctx start)
           ~rewrite_rule_ids:conf.rewrite_rule_ids
           ~strict:conf.core_runner_conf.strict source)
   in

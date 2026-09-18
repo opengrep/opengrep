@@ -26,6 +26,8 @@ type conf = {
   core_runner_conf : Core_runner.conf;
   output_conf : Output.conf;
   (* osemgrep-only: *)
+  (* --no-progress-bar: the status bar the scan draws while it works *)
+  no_progress_bar : bool;
   incremental_output : bool;
   incremental_output_postprocess : bool;
   (* Debugging/logging/profiling options *)
@@ -119,6 +121,7 @@ val o_rewrite_rule_ids : bool Cmdliner.Term.t
 val o_sarif : bool Cmdliner.Term.t
 val o_sarif_outputs : string list Cmdliner.Term.t
 val o_scan_unknown_extensions : bool Cmdliner.Term.t
+val o_skin : Skin.name Cmdliner.Term.t
 val o_semgrepignore_filename : string option Cmdliner.Term.t
 val o_test : bool Cmdliner.Term.t
 val o_text : bool Cmdliner.Term.t
