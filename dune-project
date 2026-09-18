@@ -470,7 +470,6 @@ For more information see https://opengrep.dev.
     ; unit testing (note that testo is vendored in libs/ so not listed here)
     ; TODO? still need those alcotest-xx now that we use testo?
     alcotest
-    alcotest-js
     alcotest-lwt
     calendar
     ; text and terminal formating
@@ -513,8 +512,6 @@ For more information see https://opengrep.dev.
     (timedesc (>= 2.0.0)) ; used via git-wrapper
     (lsp (= 1.27.0))
     git
-    ; tracing
-    ambient-context-lwt
     ; web stuff
     uri
     (uuidm (>= 0.9.9))
@@ -528,7 +525,6 @@ For more information see https://opengrep.dev.
     lwt
     lwt_ppx
     (conf-libev (<> :os win32)) ; for lwt, to get better FD perf
-    integers_stubs_js
     (memprof-limits (= "dev")) ; NOTE: Just to invalidate CI cache for now.
     (memtrace (= "dev"))
     thread-local-storage ; NOTE: We should not mess with memprof-limits, but in

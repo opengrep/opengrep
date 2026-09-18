@@ -29,7 +29,6 @@ depends: [
   "bos"
   "fileutils"
   "alcotest"
-  "alcotest-js"
   "alcotest-lwt"
   "calendar"
   "fmt"
@@ -59,7 +58,6 @@ depends: [
   "timedesc" {>= "2.0.0"}
   "lsp" {= "1.27.0"}
   "git"
-  "ambient-context-lwt"
   "uri"
   "uuidm" {>= "0.9.9"}
   "cohttp" {= "6.3.0"}
@@ -71,7 +69,6 @@ depends: [
   "lwt"
   "lwt_ppx"
   "conf-libev" {os != "win32"}
-  "integers_stubs_js"
   "memprof-limits" {= "dev"}
   "memtrace" {= "dev"}
   "thread-local-storage"
