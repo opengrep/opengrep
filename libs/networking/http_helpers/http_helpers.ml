@@ -111,7 +111,7 @@ let call_client ?(body = Cohttp_lwt.Body.empty) ?(headers = [])
 (*****************************************************************************)
 (* Async *)
 (*****************************************************************************)
-let rec get ?(headers = []) caps url =
+let rec get ?(headers = []) ?(redirects = 5) caps url =
   Log.info (fun m -> m "GET on %s" (Uri.to_string url));
   (* This checks to make sure a client has been set *)
   (* Instead of defaulting to a client, as that can cause *)
@@ -136,7 +136,12 @@ let rec get ?(headers = []) caps url =
             Log.err (fun m -> m "%s" err);
             let server_response = { server_response with body = Error err } in
             Lwt.return_ok server_response
-        | Some url -> get caps (Uri.of_string url))
+        | Some url when redirects > 0 ->
+            get ~redirects:(redirects - 1) caps (Uri.of_string url)
+        | Some url ->
+            let err = "HTTP GET failed: too many redirects, last one to " ^ url in
+            Log.err (fun m -> m "%s" err);
+            Lwt.return_ok { server_response with body = Error err })
     | _ -> Lwt.return_ok server_response
   in
   Lwt_result.bind response_result handle_response

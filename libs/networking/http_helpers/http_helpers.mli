@@ -43,6 +43,7 @@ val call_client :
 
 val get :
   ?headers:(string * string) list ->
+  ?redirects:int ->
   Cap.Network.t ->
   Uri.t ->
   client_result Lwt.t
