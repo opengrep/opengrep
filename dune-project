@@ -457,7 +457,7 @@ For more information see https://opengrep.dev.
     (ocaml (>= 5.2.1))
     (dune (>= 3.7))
     ; parser generators
-    (menhir (= 20230608))
+    (menhir (= 20250912))
     ; standard libraries
     ; We don't use Base directly. If it's being used indirectly
     ; (is it, though?), we need a version that doesn't register
@@ -511,7 +511,7 @@ For more information see https://opengrep.dev.
     ocamlgraph
     semver
     (timedesc (>= 2.0.0)) ; used via git-wrapper
-    (lsp (= 1.22.0))
+    (lsp (= 1.27.0))
     git
     ; tracing
     ambient-context-lwt
