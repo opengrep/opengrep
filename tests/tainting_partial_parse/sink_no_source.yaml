@@ -1,0 +1,10 @@
+rules:
+  - id: sink-no-source
+    languages: [typescript]
+    severity: WARNING
+    message: tainted data reaches a sink
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

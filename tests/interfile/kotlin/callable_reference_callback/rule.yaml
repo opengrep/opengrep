@@ -1,0 +1,12 @@
+rules:
+  - id: callable-reference-callback
+    languages: [kotlin]
+    message: A callable reference passed as an argument is the method the receiver type binds.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -163,6 +163,15 @@ let name_of_dot_access e =
   let* xs = fetch_ids e.e in
   Some (name_of_ids xs)
 
+let name_of_entity_name (en : entity_name) : name option =
+  match en with
+  | EN name -> Some name
+  | EDynamic ({ e = DotAccess _; _ } as e) -> name_of_dot_access e
+  | EDynamic _
+  | EPattern _
+  | OtherEntity _ ->
+      None
+
 (* TODO: you should not need to use that. This is mostly because
  * Constructor and PatConstructor currently takes a dotted_ident instead
  * of a name, and because module_name accepts only DottedName

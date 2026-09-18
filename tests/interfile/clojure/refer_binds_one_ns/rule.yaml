@@ -1,0 +1,12 @@
+rules:
+  - id: test-refer-binds-one-ns
+    languages: [clojure]
+    message: Tainted data flows through the handle that the refer names, not the other one
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $X)

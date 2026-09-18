@@ -787,7 +787,7 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
           let v4 =
             match v4 with
             | Some x -> simple_identifier env x
-            | None -> ("!companion!", v2)
+            | None -> ("Companion", v2)
           in
           let v5 =
             match v5 with
@@ -1019,10 +1019,28 @@ and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definiti
       let v1 = modifiers_opt env v1 in
       let v2 = token env v2 (* "fun" *) in
       let v3 = Option.map (type_parameters env) v3 in
-      (* TODO: receiver type, build a complex name with v5 *)
-      let _v4TODO = anon_opt_rece_type_opt_DOT_cc9388e env v4 in
+      (* The receiver type of an extension function becomes the first
+         parameter, which is a receiver parameter. *)
+      let v4 = anon_opt_rece_type_opt_DOT_cc9388e env v4 in
       let v5 = simple_identifier env v5 in
       let v6 = function_value_parameters env v6 in
+      let v6 =
+        match v4 with
+        | None -> v6
+        | Some receiver_type ->
+            let lp, params, rp = v6 in
+            let receiver =
+              G.ParamReceiver
+                {
+                  G.pname = Some ("this", v2);
+                  ptype = Some (snd receiver_type);
+                  pdefault = None;
+                  pattrs = [];
+                  pinfo = empty_id_info ();
+                }
+            in
+            (lp, receiver :: params, rp)
+      in
       let v7 =
         match v7 with
         | Some (v1, v2) ->
@@ -1743,7 +1761,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
             Some id
         | None -> None
       in
-      let v2 = token env v2 (* "::" *) in
+      let _v2 = token env v2 (* "::" *) in
       let v3 =
         match v3 with
         | `Simple_id x -> simple_identifier env x
@@ -1751,16 +1769,18 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
         | `Class tok -> str env tok
         (* "class" *)
       in
+      (* The receiver of a callable reference becomes the qualifier of the
+         name. *)
       let name_info =
-        match (v1, v2, v3) with
-        | _ ->
-            {
-              name_last = (v3, None);
-              name_middle = None (* TODO*);
-              name_top = None;
-              name_info = empty_id_info ();
-            }
-        (* TODO use qualifiers, with v1TODO above *)
+        {
+          name_last = (v3, None);
+          name_middle =
+            (match v1 with
+            | None -> None
+            | Some receiver -> Some (QDots [ (receiver, None) ]));
+          name_top = None;
+          name_info = empty_id_info ();
+        }
       in
       G.N (IdQualified name_info) |> G.e
   | `Func_lit x -> function_literal env x

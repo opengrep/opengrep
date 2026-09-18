@@ -1,0 +1,18 @@
+rules:
+  - id: multi-namespace-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      Tainted `$_GET` flows from app.php into `Client->handle`, inherited from
+      `B\Base` (the second of two same-named classes in lib.php).  PHP
+      `namespace` parses to `Package`/`PackageEnd`; the parent edge resolves
+      to the sink class only if `Base` is attributed to region `B` (qn
+      `B.Base`) rather than colliding with `A\Base`.  The benign `A\Base`
+      handle must NOT be flagged.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

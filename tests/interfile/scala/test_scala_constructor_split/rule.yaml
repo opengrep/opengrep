@@ -1,0 +1,14 @@
+rules:
+  - id: scala_constructor_sqli
+    options:
+      taint_interfile: true
+    message: SQL injection through constructor
+    languages:
+      - scala
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

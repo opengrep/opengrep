@@ -1,0 +1,12 @@
+rules:
+  - id: test-local-shadows-global
+    languages: [lua]
+    message: A local function shadows the global of the same name only in the file that declares it
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

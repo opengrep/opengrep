@@ -1,0 +1,22 @@
+rules:
+  - id: bare-specifier-import
+    languages: [ts]
+    severity: ERROR
+    message: >
+      User input flows from app.ts into a default-exported class Handler
+      defined in lib/handler.ts, imported with a BARE specifier
+      `import Handler from "lib/handler"`.  A bare specifier names a package,
+      and the project's tsconfig "paths" entry mapping "lib/*" to "./lib/*"
+      is what makes it name lib/handler.ts.  Without that entry the import
+      binds nothing and the cross-file taint chain through
+      `h.process(userInput)` is absent.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY

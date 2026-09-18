@@ -549,7 +549,14 @@ let pp_wrapped_code_line ppf ~(line_number : int) ~(width : int)
            Fmt.(styled `Bold string)
            b c)
 
-let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
+(* python compatibility: the 22m and 24m are "normal color or
+    intensity", and "underline off" *)
+let esc_prefix (ppf : Format.formatter) =
+  if Fmt.style_renderer ppf = `Ansi_tty then Fmt.any "\027[22m\027[24m  "
+  else Fmt.any "  "
+
+let pp_dataflow_trace ~(finding_path : Fpath.t) ppf
+    (trace : OutJ.match_dataflow_trace) =
   (* Helper to print a location with bold highlighting *)
   (* NOTE: We need to consider that the location can span > 1 lines, which
    * seems to happen with matches related to macroexpanded clojure code. *)
@@ -580,6 +587,10 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
          *)
       in
       let a, b, c = cut lines_to_print start_col end_col in
+      if not (Fpath.equal loc.path finding_path) then
+        Fmt.pf ppf "%s%a@." prefix
+          Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
+          !!(loc.path);
       Fmt.pf ppf "%s%4d┆ %s%a%s@." prefix start_line_num a
         Fmt.(styled `Bold string) b c
     with ex ->
@@ -642,14 +653,30 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
       print_call_trace "This is how taint reaches the sink:" sink
   | _ -> ()
 
-let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
-    ~show_dataflow_traces ~append_separator ppf (m : OutJ.cli_match) =
-  (* TODO: honour color_output, so that colours are decided per destination
-   * as in the python wrapper, where a text file gets them under
-   * SEMGREP_FORCE_COLOR. They currently come from the style renderer that
-   * Logs_ sets on the formatter, from --force-color or a tty, which this
-   * argument cannot override. *)
-  ignore color_output;
+let one_line_of_code (code : string) : string =
+  code |> String.split_on_char '\n' |> List_.map String.trim
+  |> List.filter (fun (s : string) -> not (String.equal s ""))
+  |> String.concat " "
+
+let pp_sources_of_sink ppf (findings : OutJ.cli_match list) : unit =
+  findings
+  |> List.iter (fun (finding : OutJ.cli_match) ->
+         match finding.extra.dataflow_trace with
+         | Some { OutJ.taint_source = Some source; _ } ->
+             let loc, code = Core_json_output.leaf_of_call_trace source in
+             Fmt.pf ppf "%s source %a:%d  %a@." findings_indent
+               Fmt.(styled (`Fg `Cyan) string)
+               !!(loc.path) loc.start.line
+               Fmt.(styled `Bold string)
+               (one_line_of_code code)
+         | Some _
+         | None ->
+             ())
+
+let pp_finding ~max_chars_per_line ~max_lines_per_finding
+    ~show_dataflow_traces ~append_separator
+    ~(is_interfile : Rule_ID.t -> bool)
+    ~(sink_findings : OutJ.cli_match list) ppf (m : OutJ.cli_match) =
   let lines =
     Option.value
       ~default:(String.split_on_char '\n' m.extra.lines)
@@ -692,9 +719,14 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
          (* TODO(secrets): Apply masking to the bold part *)
          pp_wrapped_code_line ppf ~line_number ~width ~bold_start ~bold_end
            line);
-  (match m.extra.dataflow_trace with
-  | Some trace -> if show_dataflow_traces then pp_dataflow_trace ppf trace else ()
-  | None -> ());
+  if is_interfile m.check_id then pp_sources_of_sink ppf sink_findings;
+  (if show_dataflow_traces then
+     sink_findings
+     |> List.iter (fun (finding : OutJ.cli_match) ->
+            match finding.extra.dataflow_trace with
+            | Some trace ->
+                pp_dataflow_trace ~finding_path:finding.path ppf trace
+            | None -> ()));
   match trimmed with
   | Some num ->
       Fmt.pf ppf
@@ -728,11 +760,30 @@ let pp_styled_severity ppf (severity : OutJ.match_severity) =
   | `Experiment ->
       Fmt.pf ppf "%s%s" rule_leading_indent "   "
 
+let same_sink (a : OutJ.cli_match) (b : OutJ.cli_match) : bool =
+  Fpath.equal a.path b.path
+  && Rule_ID.equal a.check_id b.check_id
+  && Int.equal a.start.offset b.start.offset
+  && Int.equal a.end_.offset b.end_.offset
+
+let group_findings_by_sink (matches : OutJ.cli_match list) :
+    OutJ.cli_match list list =
+  List.fold_left
+    (fun (groups : OutJ.cli_match list list) (m : OutJ.cli_match) ->
+      match groups with
+      | (previous :: _ as group) :: older when same_sink previous m ->
+          (m :: group) :: older
+      | _ -> [ m ] :: groups)
+    [] matches
+  |> List_.map List.rev |> List.rev
+
 let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-    ~color_output ~show_dataflow_traces ppf
+    ~show_dataflow_traces
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
+    ~(is_interfile : Rule_ID.t -> bool) ppf
     (matches : OutJ.cli_match list) =
   let print_one_match ~(prev : OutJ.cli_match option) ~(cur : OutJ.cli_match)
-      ~(next : OutJ.cli_match option) =
+      ~(next : OutJ.cli_match option) ~(sink_findings : OutJ.cli_match list) =
     (* Separation of concerns:
        Keep side effect separate from value-returning computations *)
     (match prev with
@@ -760,13 +811,9 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
     in
     let has_rule_name = cur.check_id <> Rule_ID.dash_e in
     (if must_print_file then
-       (* python compatibility: the 22m and 24m are "normal color or
-           intensity", and "underline off" *)
-       let esc =
-         if Fmt.style_renderer ppf = `Ansi_tty then Fmt.any "\027[22m\027[24m  "
-         else Fmt.any "  "
-       in
-       Fmt.pf ppf "  %a@." Fmt.(styled (`Fg `Cyan) (esc ++ string)) !!(cur.path));
+       Fmt.pf ppf "  %a@."
+         Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
+         !!(cur.path));
     (if must_print_rule then
        let rule_name_lines =
          if has_rule_name then (
@@ -811,11 +858,7 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
         (* the fix on one line, wrapped after the tag; an empty fix deletes
            the match *)
         let autofix_tag = "▶▶┆ Autofix ▶ " in
-        let fix_text =
-          fix |> String.split_on_char '\n' |> List_.map String.trim
-          |> List.filter (fun (s : string) -> not (String.equal s ""))
-          |> String.concat " "
-        in
+        let fix_text = one_line_of_code fix in
         (* python: (BASE_INDENT + 1) columns, plus those of the console *)
         Fmt.pf ppf "%s%a"
           (String.make (detail_indent_size + 1) ' ')
@@ -843,12 +886,30 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
       | None -> false
       | Some next -> Rule_ID.equal next.check_id cur.check_id
     in
-    pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
+    pp_finding ~max_chars_per_line ~max_lines_per_finding
       ~show_dataflow_traces ~append_separator:(same_file_next && same_rule_next)
-      ppf cur;
+      ~is_interfile ~sink_findings ppf cur;
     Fmt.pf ppf "@."
   in
-  List_.iter_with_view_into_neighbor_elements print_one_match matches
+  let groups =
+    match interfile_dedup_by with
+    | Core_match.Sink -> List_.map (fun (m : OutJ.cli_match) -> [ m ]) matches
+    | Core_match.Source_sink -> group_findings_by_sink matches
+  in
+  let head (group : OutJ.cli_match list) : OutJ.cli_match option =
+    match group with
+    | m :: _ -> Some m
+    | [] -> None
+  in
+  groups
+  |> List_.iter_with_view_into_neighbor_elements
+       (fun ~(prev : OutJ.cli_match list option) ~(cur : OutJ.cli_match list)
+            ~(next : OutJ.cli_match list option) ->
+         match cur with
+         | [] -> ()
+         | first :: _ ->
+             print_one_match ~prev:(Option.bind prev head) ~cur:first
+               ~next:(Option.bind next head) ~sink_findings:cur)
 
 (*****************************************************************************)
 (* Entry point *)
@@ -871,8 +932,9 @@ let pp_rules_fired ppf (title : string) (ids : string list) : unit =
 let pp_cli_output
     ~max_chars_per_line
     ~max_lines_per_finding
-    ~color_output
     ~show_dataflow_traces
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
+    ~(is_interfile : Rule_ID.t -> bool)
     ?(is_ci_invocation = false)
     ppf
     (cli_output : OutJ.cli_output) =
@@ -929,7 +991,7 @@ let pp_cli_output
            Fmt_.pp_heading ppf
              (String_.unit_str (List.length matches) (group_titles group));
          pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-           ~color_output ~show_dataflow_traces ppf matches);
+           ~show_dataflow_traces ~interfile_dedup_by ~is_interfile ppf matches);
   if is_ci_invocation then (
     pp_rules_fired ppf "BLOCKING CODE RULES FIRED:"
       (match List.assoc_opt `Blocking groups with

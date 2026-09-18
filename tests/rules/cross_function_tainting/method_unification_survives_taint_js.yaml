@@ -1,0 +1,22 @@
+rules:
+  - id: method_unification_survives_taint
+    languages: [js]
+    severity: ERROR
+    message: >
+      Two calls of the same method name on receivers of two classes unify the
+      method metavariable, while a taint rule runs on the same file.
+    pattern: |
+      $X.$M();
+      ...
+      $Y.$M();
+  - id: method_unification_survives_taint_sink
+    languages: [js]
+    severity: ERROR
+    message: Tainted value reaches the sink.
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

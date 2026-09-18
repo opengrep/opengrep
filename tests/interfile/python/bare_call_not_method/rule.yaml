@@ -1,0 +1,16 @@
+rules:
+  - id: bare-call-not-method
+    languages: [python]
+    severity: ERROR
+    message: >
+      A bare call must not resolve to a same-file class method, which
+      requires a receiver — that shape produces spurious cross-class
+      edges.  The positive control pins that ordinary free-function
+      resolution still works.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

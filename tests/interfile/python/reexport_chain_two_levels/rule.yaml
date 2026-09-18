@@ -1,0 +1,31 @@
+rules:
+  - id: reexport-chain-two-levels
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two-level package re-export.  main.py writes
+      `from foo import process`.  foo/__init__.py re-exports
+      `process` from the subpackage `bar` (`from .bar import process`).
+      bar/__init__.py in turn re-exports `process` from
+      `bar/impl.py` (`from .impl import process`).  The real
+      definition (and the sink) lives in bar/impl.py.
+
+      § 4 Python claims `has_reexports = true` triggers a post-phase
+      that walks each init file's imports and records
+      (module, name) -> original_qn mappings.  The docs do NOT say
+      the post-phase is run to a fixpoint.  If it resolves single
+      level only — foo.process -> foo.bar.process — the chain stops
+      there: `foo.bar.process` is itself a re-export, not a real
+      func_info, so the caller in main.py can't bind to the actual
+      function in bar/impl.py.
+
+      A fixpoint resolution flattens foo.process -> bar.impl.process
+      in one shot and the call edge from main.py is built.  This
+      test fails red if the post-phase is single-level.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

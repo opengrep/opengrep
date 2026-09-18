@@ -1,0 +1,12 @@
+rules:
+  - id: qualified-constant-call
+    languages: [ruby]
+    severity: ERROR
+    message: A qualified constant path reaches a class method of the class it names.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

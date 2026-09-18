@@ -1,0 +1,14 @@
+rules:
+  - id: defined-type-with-methods
+    languages: [go]
+    severity: ERROR
+    message: >
+      A defined type whose underlying type is neither a struct nor an
+      interface carries methods, so it is a class of the index.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

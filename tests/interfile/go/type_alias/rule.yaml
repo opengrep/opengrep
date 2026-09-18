@@ -1,0 +1,14 @@
+rules:
+  - id: type-alias
+    languages: [go]
+    severity: ERROR
+    message: >
+      An alias declaration denotes the same type, so the alias has the target's
+      method set.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

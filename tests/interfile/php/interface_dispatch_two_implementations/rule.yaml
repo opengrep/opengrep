@@ -1,0 +1,14 @@
+rules:
+  - id: interface-dispatch-two-implementations
+    languages: [php]
+    severity: ERROR
+    message: >
+      A call on a receiver whose declared type is an interface reaches every
+      class that implements it, so the sinking implementation is reported.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

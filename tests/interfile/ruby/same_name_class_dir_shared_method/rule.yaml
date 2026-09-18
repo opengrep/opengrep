@@ -1,0 +1,16 @@
+rules:
+  - id: same-name-class-dir-shared-method
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A constant resolves by its constant path, not by the directory of the
+      caller. The top level Store and Other::Store are two classes, so a
+      reference to Store reaches the top level one alone, and the method that
+      only Other::Store defines resolves to nothing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

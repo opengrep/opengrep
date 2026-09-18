@@ -550,7 +550,47 @@ bad_function() # 2nd call
  * will be different. So the first will be <match_based_id>_0 and the second
  * will be <match_based_id>_1.
  *)
-let index_match_based_ids (matches : Out.cli_match list) : Out.cli_match list =
+(* Opengrep departs from that algorithm in one case: under
+   --interfile-dedup-by source-sink, matches with the same match based
+   id and the same range share the index k. The first of them keeps
+   <hash>_k, the id it has under dedup by sink, and each further one
+   gets <hash>_k_j, j counting from 1 in the order the matches have. *)
+let index_match_based_ids
+    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
+    (matches : Out.cli_match list) : Out.cli_match list =
+  let same_occurrence ((a_start, a_end) : int * int)
+      ((b_start, b_end) : int * int) : bool =
+    match interfile_dedup_by with
+    | Core_match.Sink -> false
+    | Core_match.Source_sink ->
+        Int.equal a_start b_start && Int.equal a_end b_end
+  in
+  let index_group (matches : (int * Out.cli_match) list) :
+      (int * Out.cli_match) list =
+    matches
+    |> List.fold_left
+         (fun ((previous : ((int * int) * int * int) option),
+               (acc : (int * Out.cli_match) list))
+              ((order : int), (x : Out.cli_match)) ->
+           let range : int * int = (x.start.offset, x.end_.offset) in
+           let (index : int), (earlier_at_range : int) =
+             match previous with
+             | None -> (0, 0)
+             | Some (previous_range, previous_index, previous_earlier) ->
+                 if same_occurrence previous_range range then
+                   (previous_index, previous_earlier + 1)
+                 else (previous_index + 1, 0)
+           in
+           let fingerprint : string =
+             if Int.equal earlier_at_range 0 then
+               spf "%s_%d" x.extra.fingerprint index
+             else spf "%s_%d_%d" x.extra.fingerprint index earlier_at_range
+           in
+           ( Some (range, index, earlier_at_range),
+             (order, { x with extra = { x.extra with fingerprint } }) :: acc ))
+         (None, [])
+    |> snd |> List.rev
+  in
   matches
   (* preserve order *)
   |> List_.mapi (fun i x -> (i, x))
@@ -567,21 +607,7 @@ let index_match_based_ids (matches : Out.cli_match list) : Out.cli_match list =
              matches ))
   (* Index per file *)
   |> List_.map (fun (path_and_rule_id, matches) ->
-         let matches =
-           List_.mapi
-             (fun i (i', (x : Out.cli_match)) ->
-               ( i',
-                 {
-                   x with
-                   extra =
-                     {
-                       x.extra with
-                       fingerprint = spf "%s_%d" x.extra.fingerprint i;
-                     };
-                 } ))
-             matches
-         in
-         (path_and_rule_id, matches))
+         (path_and_rule_id, index_group matches))
   (* Flatten *)
   |> List.concat_map snd
   |> List.sort (fun (a, _) (b, _) -> a - b)

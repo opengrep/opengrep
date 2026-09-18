@@ -1,0 +1,22 @@
+rules:
+  - id: namespace-class-method
+    languages: [ts]
+    severity: ERROR
+    message: >
+      `req.query.q` flows into `new Svc.Handler().run(userInput)`, whose
+      body reaches `db.query`.  `Handler` is declared inside
+      `namespace Svc` in lib.ts.  A namespace is a package region of its
+      module, so the class's qualified name is the file's module path
+      followed by `Svc.Handler`, and `Svc` is exported by lib.ts and
+      imported by app.ts as a module.  Without the region the class would
+      be qualified as though it sat at the file's top level.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY

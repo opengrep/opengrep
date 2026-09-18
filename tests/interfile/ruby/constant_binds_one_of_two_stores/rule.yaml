@@ -1,0 +1,12 @@
+rules:
+  - id: constant-binds-one-of-two-stores
+    languages: [ruby]
+    severity: ERROR
+    message: A constant reference binds the class of the enclosing nesting, not the same-named class of another module.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

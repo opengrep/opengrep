@@ -1,0 +1,12 @@
+rules:
+  - id: underscore-alias
+    languages: [csharp]
+    message: An alias named with one underscore is a name, not a hiding import.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

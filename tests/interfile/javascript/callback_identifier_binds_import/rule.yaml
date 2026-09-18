@@ -1,0 +1,14 @@
+rules:
+  - id: callback-identifier-binds-import
+    languages: [js]
+    severity: ERROR
+    message: >
+      A callback passed by name resolves through the file's bindings, so
+      run names a.js's run and not the same-named function of b.js.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,4 @@
+[package]
+name = "test_hof_callback_taint_rust_split"
+version = "0.1.0"
+edition = "2021"

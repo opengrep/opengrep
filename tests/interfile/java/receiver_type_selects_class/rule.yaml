@@ -1,0 +1,12 @@
+rules:
+  - id: receiver-type-selects-class
+    languages: [java]
+    message: The declared type of a receiver names the class the caller file binds.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

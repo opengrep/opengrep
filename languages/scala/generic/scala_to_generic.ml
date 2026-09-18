@@ -136,12 +136,15 @@ and v_import_expr tk import_expr =
 
 and v_named_selector tk path ((v1, v2) : named_selector) =
   let id = id_of_import_path_elem v1 in
-  let alias =
-    match v2 with
-    | None -> None
-    | Some id -> Some (v_ident_or_wildcard id, G.empty_id_info ())
-  in
-  G.ImportFrom (tk, G.DottedName path, [ (id, alias) ]) |> G.d
+  match (id, v2) with
+  | ("_", tok), None -> G.ImportAll (tk, G.DottedName path, tok) |> G.d
+  | _ ->
+      let alias =
+        match v2 with
+        | None -> None
+        | Some id -> Some (v_ident_or_wildcard id, G.empty_id_info ())
+      in
+      G.ImportFrom (tk, G.DottedName path, [ (id, alias) ]) |> G.d
 
 and v_wildcard_selector tk path (x : wildcard_selector) =
   match x with

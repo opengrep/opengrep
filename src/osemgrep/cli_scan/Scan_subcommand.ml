@@ -175,8 +175,8 @@ let output_and_exit_from_fatal_exn ~(msg : string) ~(exit_code : Exit_code.t)
  * FilesNotFoundError does: one fatal error per missing root, reported in
  * the output format asked for, exit code 2. *)
 let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) : (Fpath.t Find_targets.targets, Exit_code.t) result
-    =
+    (profiler : Profiler.t) :
+    (Target_and_root.t Find_targets.targets, Exit_code.t) result =
   let missing_roots : Fpath.t list =
     conf.target_roots
     |> List_.map Scanning_root.to_fpath
@@ -184,7 +184,9 @@ let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
   in
   match missing_roots with
   | [] ->
-      Ok (Find_targets.get_target_fpaths conf.targeting_conf conf.target_roots)
+      Ok
+        (Find_targets.get_target_fpaths_with_project_roots conf.targeting_conf
+           conf.target_roots)
   | _ :: _ ->
       let errors : Core_error.t list =
         missing_roots
@@ -253,6 +255,8 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
       (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
       |> fst
       |> Core_json_output.dedup_and_sort
+           ~taint_interfile:conf.core_runner_conf.taint_interfile
+           ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
            Core_match.(to_rule_id_options_map pms)
     in
     (* the env that keeps a fix from being reported twice over the same
@@ -270,18 +274,15 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
     Mutex.protect file_match_hook_mutex (fun () -> printer conf cli_matches))
 
 (* coupling: similar to Output.dispatch_output_format for Text *)
-let incremental_text_printer (_caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+let incremental_text_printer (_caps : < Cap.stdout >)
+    ~(is_interfile : Rule_ID.t -> bool) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =
-  (* TODO: we should switch to Fmt_.with_buffer_to_string +
-   * some CapConsole.print_no_nl, but then is_atty fail on
-   * a string buffer and we lose the colors
-   *)
   Matches_report.pp_text_outputs
     ~max_chars_per_line:conf.output_conf.max_chars_per_line
     ~max_lines_per_finding:conf.output_conf.max_lines_per_finding
       (* nosemgrep: forbid-console *)
-    ~color_output:conf.output_conf.force_color
     ~show_dataflow_traces:conf.output_conf.show_dataflow_traces
+    ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by ~is_interfile
     Format.std_formatter cli_matches
 
 let incremental_json_printer (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
@@ -308,7 +309,12 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
     } ->
       ( Output_format.Incremental,
         Some (mk_file_match_hook ~inline_metavars:false (* because text format *)
-                conf rules (incremental_text_printer caps)) )
+                conf rules
+                (incremental_text_printer caps
+                   ~is_interfile:
+                     (Output.is_interfile_rule_id
+                        ~taint_interfile:conf.core_runner_conf.taint_interfile
+                        (Rule.hrules_of_rules rules)))) )
   | {
    output_conf = { output_format = Output_format.Json; _ };
    incremental_output = true;
@@ -503,7 +509,7 @@ let check_targets_with_rules ?(print_summary = true)
       ; Cap.memory_limit
       ; .. >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (rules_and_origins : Rule_fetching.rules_and_origin list)
-    (targets_and_skipped : Fpath.t Find_targets.targets) :
+    (targets_and_skipped : Target_and_root.t Find_targets.targets) :
     (Rule.rule list * Core_runner.result * Out.cli_output, Exit_code.t) result =
   (* step 1: last touch on rules *)
   let rules, invalid_rules =
@@ -574,9 +580,13 @@ let check_targets_with_rules ?(print_summary = true)
       (* step 2: printing the skipped targets *)
       let selected = targets_and_skipped.Find_targets.selected
       and skipped = targets_and_skipped.Find_targets.skipped in
+      let target_fpaths =
+        List_.map
+          (fun ({ Target_and_root.target_fpath; _ }) -> target_fpath) selected
+      in
       Log_targeting.Log.debug (fun m ->
           m "%a" Targets_report.pp_targets_debug
-            (conf.target_roots, skipped, selected));
+            (conf.target_roots, skipped, target_fpaths));
       Log_targeting.Log.debug (fun m ->
           skipped
           |> List.iter (fun (x : Semgrep_output_v1_t.skipped_target) ->
@@ -609,13 +619,15 @@ let check_targets_with_rules ?(print_summary = true)
                 in
                 run ?file_match_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
+                  ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
         | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
-            let diff_scan_func : Diff_scan.diff_scan_func =
-             fun ?explicit_targets targets rules ->
+            let mk_diff_scan_func ?file_match_hook () : Diff_scan.diff_scan_func
+                =
+             fun ?explicit_targets ~scanning_roots targets rules ->
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               (* the baseline scan names its targets relative to the current
                  directory, and the targets of the command line are named
@@ -631,15 +643,20 @@ let check_targets_with_rules ?(print_summary = true)
               in
               run ?file_match_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
-                conf.core_runner_conf targeting_conf conf.matching_conf
-                (rules, invalid_rules) targets
+                ~scanning_roots conf.core_runner_conf targeting_conf
+                conf.matching_conf (rules, invalid_rules) targets
             in
+            (* The baseline replay exists only to build the dedup set: its
+               matches must never stream through the incremental-output hook,
+               or pre-existing (baseline) findings get printed as output. *)
             let result_or_exn =
               Diff_scan.scan_baseline
                 (caps :> < Cap.chdir ; Cap.tmp >)
-                profiler baseline selected rules
+                conf profiler baseline selected rules
                 ~explicit_targets:conf.targeting_conf.explicit_targets
-                diff_scan_func
+                ~scanning_roots:targets_and_skipped.Find_targets.roots
+                ~head_scan_func:(mk_diff_scan_func ?file_match_hook ())
+                ~baseline_scan_func:(mk_diff_scan_func ())
             in
             (* python: run_scan.py saves core_time right after the scan of
                the head, before the baseline worktree is scanned, so the
@@ -668,6 +685,8 @@ let check_targets_with_rules ?(print_summary = true)
           let (res : Core_runner.result) =
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
+              ~taint_interfile:conf.core_runner_conf.taint_interfile
+              ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
               rules
               result
           in
@@ -679,6 +698,9 @@ let check_targets_with_rules ?(print_summary = true)
               Core_runner.split_jobs_by_language conf.targeting_conf
                 rules_not_run selected
               |> List.concat_map (fun (job : Lang_job.t) -> job.targets)
+              |> List_.map
+                   (fun ({ target_fpath; _ } : Target_and_root.t) ->
+                     target_fpath)
             in
             { res with scanned = Set_.union res.scanned (Set_.of_list scanned_by_no_rule) }
           in
@@ -808,7 +830,15 @@ let check_targets_with_rules ?(print_summary = true)
                      (Option.is_some conf.targeting_conf.baseline_commit)
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
-                   ~skipped_groups)
+                   ~skipped_groups
+                   ~unplaced_warnings:
+                     (result.Core_result.errors
+                     |> List.filter (fun (e : Core_error.t) ->
+                            (match e.typ with
+                            | SemgrepWarning -> true
+                            | _ -> false)
+                            && Option.is_none e.loc)
+                     |> List.length))
                 ());
           (* python: the print_summary parameter of output(); 'opengrep ci'
            * prints its own completion lines instead *)
@@ -1007,6 +1037,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
    *)
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~level:conf.common.logging_level;
+  Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 
   Output.check_destinations conf.output_conf;
@@ -1060,7 +1091,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
         (Common2.some conf.validate)
   | _ when conf.show <> None ->
       Show_subcommand.run_conf
-        (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >)
+        (caps :> < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.fork >)
         (Common2.some conf.show)
   | _ when conf.ls ->
       Ls_subcommand.run ~target_roots:conf.target_roots

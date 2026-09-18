@@ -1,0 +1,12 @@
+rules:
+  - id: test-passthrough
+    languages: [julia]
+    message: Tainted data flows through a multi-file passthrough chain
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

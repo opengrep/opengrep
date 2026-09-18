@@ -1,0 +1,20 @@
+rules:
+  - id: init-reexport-alias
+    languages: [python]
+    severity: ERROR
+    message: >
+      User input flows through an ALIASED name re-exported from a
+      package __init__.py.  __init__.py does
+      `from .processor import process as run`, so `mypkg.run` is an
+      alias for `mypkg.processor.process`.  projidx's re-export
+      tracking must record the alias (mypkg.run -> processor.process)
+      even though the bound name (run) differs from the target name
+      (process), or the call edge from main.py to processor.py is
+      missing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

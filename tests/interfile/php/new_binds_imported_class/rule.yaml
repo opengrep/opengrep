@@ -1,0 +1,15 @@
+rules:
+  - id: new-binds-imported-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      An unqualified class name in `new Store($x)` is looked up in the file's
+      class table, where `use Beta\\Store;` bound it, so the constructor of
+      `Beta\\Store` runs and the same-named `Alpha\\Store` is not constructed.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

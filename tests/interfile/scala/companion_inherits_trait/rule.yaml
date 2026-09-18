@@ -1,0 +1,12 @@
+rules:
+  - id: test-companion-inherits-trait
+    languages: [scala]
+    message: A call on the object name reaches the member the object inherits from a trait
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

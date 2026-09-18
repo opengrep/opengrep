@@ -1,0 +1,16 @@
+rules:
+  - id: nested-func-arg-shift
+    languages: [python]
+    severity: ERROR
+    message: >
+      Stripping a non-existent receiver from a function nested inside a method
+      shifts every remaining parameter down one slot, so argument [i] is
+      modelled as arriving at parameter [i+1].  Taint must reach the parameter
+      the call actually binds it to.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -74,9 +74,11 @@ depends: [
   "integers_stubs_js"
   "git-unix"
   "memprof-limits" {= "dev"}
+  "memtrace" {= "dev"}
   "thread-local-storage"
   "domainslib"
   "saturn" {>= "1.0.0"}
+  "otoml"
   "odoc" {with-doc}
 ]
 build: [
@@ -98,5 +100,9 @@ pin-depends: [
   [
     "memprof-limits.dev"
     "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0-opengrep"
+  ]
+  [
+    "memtrace.dev"
+    "git+https://github.com/opengrep/memtrace.git#dm/multicore-memprof-limits-compat"
   ]
 ]

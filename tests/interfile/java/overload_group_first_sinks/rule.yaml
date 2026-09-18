@@ -1,0 +1,15 @@
+rules:
+  - id: overload-group-first-sinks
+    languages: [java]
+    severity: ERROR
+    message: >
+      Tainted data reaches the sink through the overload declared first,
+      which is the group's representative: the dispatch merge keeps the
+      representative's own effects alongside the other members'.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: test-package-specifier
+    languages: [dart]
+    message: A package specifier resolves to the file under lib of the project package
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

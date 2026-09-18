@@ -1,0 +1,15 @@
+rules:
+  - id: rebound-function-then-class
+    languages: [python]
+    severity: ERROR
+    message: >
+      The file defines a function [make] and then a class of that name.
+      The class binding comes last, so the call site calls the class and
+      the constructor it inherits, and not the function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

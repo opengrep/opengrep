@@ -36,6 +36,7 @@
      plan)
 *)
 type default_semgrepignore_patterns = Empty | Semgrep_scan_legacy
+[@@deriving show]
 
 (*
    TODO: Preprocess a file to expand ':include' directives before parsing it

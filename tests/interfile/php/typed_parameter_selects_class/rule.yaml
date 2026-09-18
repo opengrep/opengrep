@@ -1,0 +1,15 @@
+rules:
+  - id: typed-parameter-selects-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      The declared type of the parameter names the class the file's `use`
+      binds, so the call reaches `App\\Store::run` and the same-named
+      `Lib\\Store::run` is not called.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

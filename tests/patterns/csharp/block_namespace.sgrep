@@ -1,0 +1,5 @@
+namespace A {
+    class C {
+        ...
+    }
+}

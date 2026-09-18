@@ -1,0 +1,12 @@
+char* source();
+void sink(char* s);
+void customForEach(char** arr, int size, void (*callback)(char*));
+void directCall(void (*callback)(char*));
+char* getHistory(char* name, char* owner);
+void sink_callback(char* x);
+void sink_callback_direct(char* x);
+void sink_callback_complex(char* node);
+void toplevel_handler(char* x);
+void test_custom_foreach();
+void test_direct_call();
+void test_original_example();

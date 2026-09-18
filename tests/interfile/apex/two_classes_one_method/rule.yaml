@@ -1,0 +1,12 @@
+rules:
+  - id: test-two-classes-one-method
+    languages: [apex]
+    message: A qualified call reaches the named class, not another class with the same method
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

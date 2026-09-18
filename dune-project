@@ -395,6 +395,7 @@ time and memory used by Semgrep.
     (dune (>= "3.2.0" ))
     (commons (>= "1.5.5"))
     (memprof-limits (= "dev"))
+    (memtrace (= "dev"))
   )
 )
 
@@ -535,11 +536,13 @@ For more information see https://opengrep.dev.
     ; packages that would avoid this effect.
     git-unix
     (memprof-limits (= "dev")) ; NOTE: Just to invalidate CI cache for now.
+    (memtrace (= "dev"))
     thread-local-storage ; NOTE: We should not mess with memprof-limits, but in
                          ; fact there is a TLS module in there also; however, it's
                          ; not exposed in the public interface.
     domainslib
     (saturn (>= "1.0.0")) ; Saturn.Htbl exists since 1.0.0.
+    otoml ; pyproject.toml include/exclude parsing in projidx
   )
 )
 

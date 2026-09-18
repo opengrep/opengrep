@@ -821,6 +821,8 @@ let semgrep_rules_repo_tests () : Testo.t list =
                 rules need updating upstream. *)
              | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-rails-session-secret-handling.yaml" -> None
              | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-cookie-store-session-security-attributes.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/java/spring/security/injection/tainted-sql-string.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming
@@ -829,10 +831,6 @@ let semgrep_rules_repo_tests () : Testo.t list =
                     TODO: don't capitalize? leave a slash? *)
                  let s = Common.matched1 test.name in
                  Some (String.capitalize_ascii s)
-             (* TODO: This is not skipped! See above. It should move further up to be
-              * excluded! Remove exclusion? *)
-             (* this skips a test that incorrectly fails for cross-function tainting (because of false positives) *)
-             (* | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None *)
              (* this skips the semgrep-rules/.github entries *)
              | _ ->
                  Logs.info (fun m -> m "skipping %s" test.name);
@@ -859,9 +857,68 @@ let semgrep_rules_repo_tests () : Testo.t list =
                   | _ -> test)
            |> Testo.categorize group))
 
+(* The Go module manifest shares the [.mod] extension with Go source files
+   and must not reach the Go parser. *)
+let lang_classification_tests () =
+  let assert_classified_as ~(label : string) (fname : string)
+      (expected : Lang.t list) () =
+    let got = Lang.langs_of_filename (Fpath.v fname) in
+    Alcotest.(check (list string)) label
+      (List.map Lang.to_string expected)
+      (List.map Lang.to_string got)
+  in
+  [
+    t "go.mod is not classified as a source language"
+      (assert_classified_as ~label:"go.mod" "go.mod" []);
+    t ".go files still classify as Go"
+      (assert_classified_as ~label:"foo.go" "foo.go" [ Lang.Go ]);
+    t ".mod files other than go.mod still classify as Go"
+      (assert_classified_as ~label:"foo.mod" "foo.mod" [ Lang.Go ]);
+  ]
+
 (*****************************************************************************)
 (* All tests *)
 (*****************************************************************************)
+
+let taint_partial_parse_tests () =
+  let dir = tests_path / "tainting_partial_parse" in
+  let rule_file = dir / "sink_no_source.yaml" in
+  let target = dir / "sink_no_source.ts" in
+  let check_partial_parse ~(taint_intrafile : bool) () : unit =
+    let rules =
+      match Parse_rule.parse rule_file with
+      | Ok rules -> rules
+      | Error e ->
+          failwith (spf "failed to parse %s: %s" !!rule_file (Rule_error.show e))
+    in
+    let xlang = Test_engine.first_xlang_of_rules rules in
+    let xtarget = Test_engine.xtarget_of_file xlang target in
+    let base_xconf = Match_env.default_xconfig in
+    let xconf =
+      { base_xconf with config = { base_xconf.config with taint_intrafile } }
+    in
+    let res =
+      Match_rules.check ~match_hook:(fun _pm -> ()) ~timeout:None xconf rules
+        xtarget
+    in
+    let partial_parsing =
+      E.ErrorSet.elements res.errors
+      |> List.filter (fun (err : E.t) ->
+             match err.E.typ with
+             | Out.PartialParsing _ -> true
+             | _ -> false)
+    in
+    Alcotest.(check int) "one PartialParsing error" 1
+      (List.length partial_parsing);
+    Alcotest.(check int) "no finding" 0 (List.length res.matches)
+  in
+  Testo.categorize "taint partial parse"
+    [
+      t "a sink without a source reports the partial parse"
+        (check_partial_parse ~taint_intrafile:false);
+      t "a sink without a source reports the partial parse under intrafile"
+        (check_partial_parse ~taint_intrafile:true);
+    ]
 
 let tests () =
   List_.flatten
@@ -877,4 +934,6 @@ let tests () =
       full_rule_regression_tests ();
       semgrep_rules_repo_tests ();
       lang_tainting_tests ();
+      taint_partial_parse_tests ();
+      lang_classification_tests ();
     ]

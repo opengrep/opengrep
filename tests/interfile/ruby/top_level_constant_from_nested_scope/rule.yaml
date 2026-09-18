@@ -1,0 +1,12 @@
+rules:
+  - id: top-level-constant-from-nested-scope
+    languages: [ruby]
+    severity: ERROR
+    message: A constant that no nesting prefix binds resolves as a top level constant.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,4 @@
+[package]
+name = "crate_super_self"
+version = "0.1.0"
+edition = "2021"

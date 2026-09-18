@@ -1,0 +1,4 @@
+[package]
+name = "test_lambda_deeply_nested_rust_split"
+version = "0.1.0"
+edition = "2021"

@@ -1,0 +1,1 @@
+Osemgrep Scan findings (e2e) > findings: under --interfile-dedup-by source-sink, the text output lists the sources of each of the two sinks of a file

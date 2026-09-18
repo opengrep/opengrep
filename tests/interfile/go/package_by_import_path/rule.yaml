@@ -1,0 +1,14 @@
+rules:
+  - id: package-by-import-path
+    languages: [go]
+    severity: ERROR
+    message: >
+      A package is its import path, so the imported alpha/util is the only
+      candidate and the same named beta/util is never reached.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

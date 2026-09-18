@@ -1,0 +1,12 @@
+rules:
+  - id: test-wildcard-shadows-package-member
+    languages: [scala]
+    message: A wildcard import shadows a same package member defined in another file
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

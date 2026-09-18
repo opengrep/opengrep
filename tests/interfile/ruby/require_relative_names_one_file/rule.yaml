@@ -1,0 +1,12 @@
+rules:
+  - id: require-relative-names-one-file
+    languages: [ruby]
+    severity: ERROR
+    message: A require_relative does not restrict a constant, so two top level classes of one name are one class.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

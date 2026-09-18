@@ -1,0 +1,19 @@
+--- begin input files ---
+caller_a.py
+caller_b.py
+rule.yaml
+same_file.py
+shared_sink.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 5 files changed, 33 insertions(+)
+ create mode 100644 caller_a.py
+ create mode 100644 caller_b.py
+ create mode 100644 rule.yaml
+ create mode 100644 same_file.py
+ create mode 100644 shared_sink.py
+same_file.py:6:5:E:dedup-two-sources:taint reaches sink [source same_file.py:2]
+same_file.py:6:5:E:dedup-two-sources:taint reaches sink [source same_file.py:3]
+shared_sink.py:3:5:E:dedup-two-sources:taint reaches sink [source caller_a.py:5]
+shared_sink.py:3:5:E:dedup-two-sources:taint reaches sink [source caller_b.py:5]

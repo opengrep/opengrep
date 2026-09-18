@@ -1,0 +1,19 @@
+rules:
+  - id: ctor-arg-type-conflict
+    languages: [python]
+    severity: ERROR
+    message: >
+      Taint reaches a sink through a method dispatched on a field typed
+      from caller-supplied constructor arguments.  Pins the defined
+      resolution of build_caller_arg_types: a unique caller class types
+      the field (positive control); conflicting caller classes make no
+      claim, so no dispatch edge exists regardless of file order (the
+      documented false-negative trade-off; the precise semantics is
+      per-construction-site, see the interfile task list).
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)

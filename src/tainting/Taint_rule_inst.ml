@@ -89,6 +89,9 @@ type java_props_cache = (string * AST_generic.SId.t, IL.name) Hashtbl.t
 type t = {
   lang : Lang.t;
   file : Fpath.t;  (** File under analysis, for Deep Semgrep. *)
+  project_root : Fpath.t option;
+      (** Prepended to relative AST token paths so they compare
+          absolute-vs-absolute against call-graph edges (always absolute). *)
   rule_id : Rule_ID.t;  (** Taint rule id, for Deep Semgrep. *)
   options : Rule_options.t;
   track_control : bool;
@@ -96,6 +99,13 @@ type t = {
        * then we avoid adding control taint-variables to environment. *)
   preds : spec_predicates;
   handle_effects : effects_handler;  (** Callback to report effects. *)
+  recursive : bool;
+      (** The function belongs to a recursive component of the call graph,
+          direct or mutual recursion. The calls it instantiates compose
+          argument offsets under the flat bound: through recursion an
+          offset grows at every call, and the longer offsets multiply the
+          polymorphic taints and add no finding. See
+          [Taint_shape.max_poly_offset]. *)
   java_props_cache : java_props_cache;
       (** Getters/setters without a definition are resolved to the property
     * named after them.

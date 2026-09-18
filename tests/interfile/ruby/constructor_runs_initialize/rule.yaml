@@ -1,0 +1,12 @@
+rules:
+  - id: constructor-runs-initialize
+    languages: [ruby]
+    severity: ERROR
+    message: A call of new on a constant runs the class's initialize.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

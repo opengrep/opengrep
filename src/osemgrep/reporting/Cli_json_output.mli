@@ -49,8 +49,13 @@ val cli_match_of_core_match :
   Out.core_match ->
   Out.cli_match
 
-val index_match_based_ids : Out.cli_match list -> Out.cli_match list
-(** [index_match_based_ids matches] will append an index to the match based id
-  * where the index is what # finding of the same rule kind in the same file
-  * it is. This is needed for the App to do deduplication
-  *)
+val index_match_based_ids :
+  interfile_dedup_by:Core_match.interfile_dedup_by ->
+  Out.cli_match list ->
+  Out.cli_match list
+(** [index_match_based_ids ~interfile_dedup_by matches] appends to
+    each match based id the number of earlier matches of the same rule
+    in the same file. Under [Source_sink], matches with the same match
+    based id and the same range share that number k; the first keeps
+    <hash>_k and each further one gets <hash>_k_j, j from 1. The App
+    uses the indexed id for deduplication. *)

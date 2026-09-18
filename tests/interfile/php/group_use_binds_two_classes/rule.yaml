@@ -1,0 +1,15 @@
+rules:
+  - id: group-use-binds-two-classes
+    languages: [php]
+    severity: ERROR
+    message: >
+      A group use, `use App\\{Store, Cache};`, binds both names of the group,
+      each to the class of that name in `App` and not to the same-named class
+      in `Lib`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,14 @@
+rules:
+  - id: method-value-argument
+    languages: [go]
+    severity: ERROR
+    message: >
+      A method value passed as an argument carries its receiver, and the
+      function that invokes the argument reaches the method.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

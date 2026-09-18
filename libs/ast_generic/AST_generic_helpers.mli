@@ -72,6 +72,9 @@ val add_suffix_to_name :
 (* Tries to re-interpreted a DotAccess expression a.b.c as an IdQualified. *)
 val name_of_dot_access : AST_generic.expr -> AST_generic.name option
 
+val name_of_entity_name :
+  AST_generic.entity_name -> AST_generic.name option
+
 (* name conversions *)
 
 (* You should avoid this function! *)

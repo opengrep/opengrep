@@ -1,0 +1,12 @@
+rules:
+  - id: transitive-include
+    languages: [cpp]
+    message: a call binds through a header included by way of another header
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

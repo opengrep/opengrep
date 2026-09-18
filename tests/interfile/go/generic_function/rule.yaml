@@ -1,0 +1,14 @@
+rules:
+  - id: generic-function
+    languages: [go]
+    severity: ERROR
+    message: >
+      An instantiation names the same declaration as the generic function, and
+      an uncalled instantiation assigned to a variable names it too.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

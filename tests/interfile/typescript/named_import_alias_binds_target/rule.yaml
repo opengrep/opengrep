@@ -1,0 +1,14 @@
+rules:
+  - id: named-import-alias-binds-target
+    languages: [ts]
+    severity: ERROR
+    message: >
+      An aliased named import binds the local name to the imported name of
+      the named module, so go names a.ts's run and not b.ts's go.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

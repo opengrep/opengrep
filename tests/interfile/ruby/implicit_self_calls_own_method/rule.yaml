@@ -1,0 +1,12 @@
+rules:
+  - id: implicit-self-calls-own-method
+    languages: [ruby]
+    severity: ERROR
+    message: A bare call inside a method reaches the method of the enclosing class, not a top level method of the same name.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

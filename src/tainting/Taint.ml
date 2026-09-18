@@ -87,8 +87,8 @@ let length_of_call_trace ct =
   loop 0 ct
 
 let compare_metavar_env env1 env2 =
-  (* It's important that we only return 0 if the two bindings are
-     structurally equal. Otherwise, there will be many duplicates. *)
+  (* Returns 0 only for bindings that [Metavariable.equal_bindings] treats
+     as equal. Otherwise, there will be many duplicates. *)
   Metavariable.compare_bindings env1 env2
 
 let compare_matches pm1 pm2 =
@@ -535,7 +535,7 @@ module Taint_set = struct
     | Shape_var _, Shape_var _
     | Control, Control ->
         (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
-        if List.length taint1.tokens < List.length taint2.tokens then taint1
+        if List.compare_lengths taint1.tokens taint2.tokens < 0 then taint1
         else taint2
     | Src src1, Src src2 ->
         let precondition =
@@ -584,7 +584,7 @@ module Taint_set = struct
         else if call_trace_cmp > 0 then taint2
         else if
           (* same length *)
-          List.length taint1.tokens < List.length taint2.tokens
+          List.compare_lengths taint1.tokens taint2.tokens < 0
         then taint1
         else taint2
     | (Src _ | Var _ | Shape_var _ | Control), _ ->

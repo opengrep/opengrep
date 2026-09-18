@@ -1,0 +1,12 @@
+rules:
+  - id: test-require-form-refer-all
+    languages: [clojure]
+    message: Tainted data flows through every var of the namespace a top level require refers
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $X)

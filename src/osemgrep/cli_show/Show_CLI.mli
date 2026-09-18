@@ -31,6 +31,7 @@ and show_kind =
   | DumpPatternsOfRule of Fpath.t
   | DumpIntrafileGraph of Fpath.t * Lang.t
   | DumpTaintSignatures of Fpath.t * Fpath.t
+  | DumpInterfileGraph of Fpath.t * Lang.t
 [@@deriving show]
 
 (*

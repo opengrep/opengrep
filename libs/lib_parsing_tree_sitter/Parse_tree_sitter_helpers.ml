@@ -120,17 +120,13 @@ let wrap_parser tree_sitter_parser ast_mapper =
     match res.program with
     | Some cst ->
         (if res.errors <> [] then
-           (* We could move this into the fun below, but since we emit warnings
-            * by default, this would only save some work when using `--quiet`,
-            * but would also force the code below to run in a critical section
-            * which is not necessary, in normal operation. *)
-           let error_strs =
-             List_.map
-               (fun err -> err.Tree_sitter_run.Tree_sitter_error.msg)
-               res.errors
-           in
-           let error_str = String.concat "\n" error_strs in
            Log.warn (fun m ->
+               let error_strs =
+                 List_.map
+                   (fun err -> err.Tree_sitter_run.Tree_sitter_error.msg)
+                   res.errors
+               in
+               let error_str = String.concat "\n" error_strs in
                m "Partial errors returned by Tree-sitter parser\n%s" error_str));
         Some (ast_mapper cst res.extras)
     | None -> None

@@ -1,0 +1,12 @@
+rules:
+  - id: new-binds-imported-class
+    languages: [java]
+    message: A construction runs the constructor of the class the caller file binds.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

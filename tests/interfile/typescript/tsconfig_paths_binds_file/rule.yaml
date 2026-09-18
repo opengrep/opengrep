@@ -1,0 +1,15 @@
+rules:
+  - id: tsconfig-paths-binds-file
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A bare specifier reaches a project file only through a tsconfig
+      paths entry, which here maps app/* to ./src/*, so the import names
+      src/svc.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

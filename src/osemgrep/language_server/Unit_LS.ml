@@ -100,7 +100,14 @@ let mock_run_results (files : string list) : Core_runner.result =
       interfile_languages_used = Some [];
     }
   in
-  Core_runner.{ core; hrules; scanned }
+  Core_runner.
+    {
+      core;
+      hrules;
+      scanned;
+      taint_interfile = false;
+      interfile_dedup_by = Core_match.Sink;
+    }
 
 let mock_workspace ?(git = false) () : Fpath.t =
   let rand_dir () =

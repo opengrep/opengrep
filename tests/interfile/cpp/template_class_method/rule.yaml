@@ -1,0 +1,12 @@
+rules:
+  - id: template-class-method
+    languages: [cpp]
+    message: a call on a template instance binds to the template's member definition
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -620,18 +620,18 @@ let compare_param_ref (n1, i1) (n2, i2) =
   if c <> 0 then c
   else String.compare (IL.str_of_name n1) (IL.str_of_name n2)
 
-let compare g1 g2 =
-  let c = compare_cond g1.cond g2.cond in
-  if c <> 0 then c
-  else
-    List.compare compare_param_ref
-      (List.sort compare_param_ref g1.param_refs)
-      (List.sort compare_param_ref g2.param_refs)
-
-let equal g1 g2 = compare g1 g2 = 0
 let top : t = { cond = cond_true; param_refs = [] }
 let is_top (g : t) : bool = cond_is_top g.cond
 let is_bot (g : t) : bool = cond_is_bot g.cond
+
+let compare (g1 : t) (g2 : t) : int =
+  if is_top g1 && is_top g2 then 0
+  else
+    let c = compare_cond g1.cond g2.cond in
+    if c <> 0 then c
+    else List.compare compare_param_ref g1.param_refs g2.param_refs
+
+let equal (g1 : t) (g2 : t) : bool = g1 == g2 || compare g1 g2 = 0
 
 (* Render the cond as [(l1 && l2) || (l3)]. [~truncate_guards] (default
  * [true]) renders each atom into at most
@@ -695,14 +695,18 @@ let show_set ?(truncate_guards = true) gs =
     ^ String.concat " && " (gs |> Set.elements |> List.map (show ~truncate_guards))
     ^ "]"
 
+module Param_ref_set = Stdlib.Set.Make (struct
+  type t = IL.name * int
+
+  let compare = compare_param_ref
+end)
+
 let merge_param_refs (rs1 : (IL.name * int) list)
     (rs2 : (IL.name * int) list) : (IL.name * int) list =
-  let module S = Stdlib.Set.Make (struct
-    type t = IL.name * int
-
-    let compare = compare_param_ref
-  end) in
-  S.elements (S.union (S.of_list rs1) (S.of_list rs2))
+  Param_ref_set.elements
+    (Param_ref_set.union
+       (Param_ref_set.of_list rs1)
+       (Param_ref_set.of_list rs2))
 
 (* Conjoin two guards. [top] is absorbed. *)
 let compose_and (g1 : t) (g2 : t) : t =
@@ -717,7 +721,8 @@ let compose_and (g1 : t) (g2 : t) : t =
 (* Disjoin two guards. A guard with [cond = false] is the [Or]
  * identity. *)
 let compose_or (g1 : t) (g2 : t) : t =
-  if is_bot g1 then g2
+  if is_top g1 || is_top g2 then top
+  else if is_bot g1 then g2
   else if is_bot g2 then g1
   else
     {

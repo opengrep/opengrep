@@ -1,0 +1,3 @@
+function go() {
+  f(source());
+}

@@ -1,0 +1,14 @@
+rules:
+  - id: overload-same-arity-csharp
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      Tainted data reaches the sink through one of two same-arity overloads
+      of a method called from another file.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink(...)

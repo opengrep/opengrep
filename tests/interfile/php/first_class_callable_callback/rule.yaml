@@ -1,0 +1,20 @@
+rules:
+  - id: first-class-callable-callback
+    languages: [php]
+    severity: ERROR
+    message: >
+      The first class callable syntax `$obj->handle(...)` is a reference to the
+      method `handle` of the receiver's class, so the sinking
+      `App\\Store::handle` runs and the same-named `Lib\\Store::handle` does
+      not.
+      The call graph carries the callback edge to `App\\Store::handle`. The
+      taint layer instantiates a callback named at a call site only when it is
+      written as a lambda, so no finding is produced and the sink is marked
+      todoruleid.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

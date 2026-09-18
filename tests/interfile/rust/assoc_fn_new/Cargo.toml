@@ -1,0 +1,4 @@
+[package]
+name = "assoc_fn_new"
+version = "0.1.0"
+edition = "2021"

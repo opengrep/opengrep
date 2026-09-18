@@ -16,7 +16,9 @@ type conf = {
   dynamic_timeout_max_multiplier : int;
   dynamic_timeout_unit_kb : int;
   allow_rule_timeout_control : bool;
-  timeout_threshold : int; (* output flags *)
+  timeout_threshold : int;
+  (* time limit of the interfile analysis of a rule *)
+  interfile_timeout : int;
   (* features *)
   nosem : bool;
   strict : bool;
@@ -27,6 +29,9 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
+  taint_interfile : bool;
+  taint_interfile_depth : int;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -37,6 +42,8 @@ type result = {
   core : Semgrep_output_v1_t.core_output;
   hrules : Rule.hrules;
   scanned : Fpath.t Set_.t;
+  taint_interfile : bool;
+  interfile_dedup_by : Core_match.interfile_dedup_by;
 }
 
 (* This type is similar to Core_scan.func, but taking a list of
@@ -52,18 +59,25 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     git_repo:bool ->
+    scanning_roots:Scanning_root.directory list ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->
     Rule_error.rules_and_invalid ->
-    Fpath.t list ->
+    Target_and_root.t list ->
     Core_result.result_or_exn;
 }
 
 val default_conf : conf
 
 (* builder *)
-val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
+val mk_result :
+  ?inline:bool ->
+  ?taint_interfile:bool ->
+  ?interfile_dedup_by:Core_match.interfile_dedup_by ->
+  Rule.rule list ->
+  Core_result.t ->
+  result
 
 (* Core_scan.func adapter to be used in osemgrep.
 
@@ -86,4 +100,4 @@ val targets_and_rules_for_files :
 
 (* the targets of each language of the rules *)
 val split_jobs_by_language :
-  Find_targets.conf -> Rule.t list -> Fpath.t list -> Lang_job.t list
+  Find_targets.conf -> Rule.t list -> Target_and_root.t list -> Lang_job.t list

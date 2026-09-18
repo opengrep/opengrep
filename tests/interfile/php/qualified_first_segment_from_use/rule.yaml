@@ -1,0 +1,15 @@
+rules:
+  - id: qualified-first-segment-from-use
+    languages: [php]
+    severity: ERROR
+    message: >
+      The first segment of the qualified name `Svc\\Store` is looked up in the
+      class table, where `use App\\Svc;` bound it, so the call names
+      `App\\Svc\\Store::run`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

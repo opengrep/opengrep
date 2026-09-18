@@ -26,6 +26,10 @@ rule.yml
                                                      id_resolved_alternatives =
                                                      ref ([]);
                                                      id_type = ref (None);
+                                                     id_instance_type =
+                                                     ref (None);
+                                                     id_callee_definition =
+                                                     ref (None);
                                                      id_svalue = ref (None);
                                                      id_flags = ref (0) }
                                                    )));
@@ -41,6 +45,10 @@ rule.yml
                                                       id_resolved_alternatives =
                                                       ref ([]);
                                                       id_type = ref (None);
+                                                      id_instance_type =
+                                                      ref (None);
+                                                      id_callee_definition =
+                                                      ref (None);
                                                       id_svalue = ref (None);
                                                       id_flags = ref (0) }
                                                     )));

@@ -1,0 +1,13 @@
+rules:
+  - id: test-invoke-methods-kotlin
+    options:
+      taint_interfile: true
+    message: Taint flows through lambda invoked via .invoke()
+    languages:
+      - kotlin
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

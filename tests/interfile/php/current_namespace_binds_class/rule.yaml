@@ -1,0 +1,15 @@
+rules:
+  - id: current-namespace-binds-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      Inside `namespace App;` the unqualified class name `Store` means
+      `App\\Store` and never `Lib\\Store`; there is no fallback to the global
+      namespace for a class name.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

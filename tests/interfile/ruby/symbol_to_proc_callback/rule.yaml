@@ -1,0 +1,16 @@
+rules:
+  - id: symbol-to-proc-callback
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A symbol behind an ampersand resolves to the method it names and yields
+      the edge, but a symbol literal has no identifier to carry the
+      definition stamp, so no taint flows through it; the same call written
+      as a block still resolves.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

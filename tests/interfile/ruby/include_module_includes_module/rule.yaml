@@ -1,0 +1,34 @@
+rules:
+  - id: include-module-includes-module
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      Transitive Ruby `include` chain.  Module `Inner` defines
+      `process` (sink).  Module `Outer` includes `Inner`.  Class
+      `App` includes `Outer`.  `App.new.process(tainted)` must
+      dispatch to `Inner#process`.
+
+      § 4 Ruby says `class_body_extra_parents` walks include /
+      extend / prepend calls IN A CLASS BODY and appends them to
+      `ci_parent_paths`.  The hook name explicitly mentions "class
+      body" — Ruby modules can `include` other modules too, but
+      whether projidx's hook fires inside a `module ... end` block
+      is undocumented.
+
+      If projidx only fires the hook inside `class ... end`:
+        - App's parents: [Outer].  Resolved.
+        - Outer's parents: [] — `include Inner` inside `module Outer`
+          was not seen.
+        - MRO walk for App finds Outer's own methods (none) and
+          stops.  Inner#process is invisible.  Dispatch fails.
+      If the hook also fires in module bodies (or there's a separate
+      pass that does so), the transitive chain works.
+
+      The intra-module include is the exact axis the test stresses.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: test-wildcard-import
+    languages: [scala]
+    message: A wildcard import binds every member of one package
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

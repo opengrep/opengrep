@@ -1,0 +1,12 @@
+rules:
+  - id: class-method
+    languages: [crystal]
+    severity: ERROR
+    message: A call on the class name reaches the class method, not the instance method of the same name
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

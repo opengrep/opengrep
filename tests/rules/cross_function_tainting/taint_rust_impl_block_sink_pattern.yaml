@@ -1,0 +1,16 @@
+rules:
+  - id: taint_rust_impl_block_sink_pattern
+    message: tainted data reaches a sink inside an impl block
+    languages:
+      - rust
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)
+          - pattern-inside: |
+              impl $T {
+                ...
+              }

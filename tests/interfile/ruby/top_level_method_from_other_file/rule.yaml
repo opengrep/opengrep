@@ -1,0 +1,12 @@
+rules:
+  - id: top-level-method-from-other-file
+    languages: [ruby]
+    severity: ERROR
+    message: A bare call reaches a method defined at the top level of another file.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

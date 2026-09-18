@@ -1,0 +1,15 @@
+rules:
+  - id: stub-file-ignored
+    languages: [python]
+    severity: ERROR
+    message: >
+      The project holds a stub file beside the module. A call reaches the
+      definition in the module at run time, never the declaration in the
+      stub, so the stub takes no part in the binding structures.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

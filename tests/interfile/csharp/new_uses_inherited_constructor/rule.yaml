@@ -1,0 +1,16 @@
+rules:
+  - id: new-uses-inherited-constructor
+    languages: [csharp]
+    message: >
+      A construction walks the class resolution order and takes the
+      constructor of the first class that declares one, so `Child` takes
+      the constructor of `Parent`.  C# does not inherit a constructor;
+      walking the order is the maintainer's decision for this engine.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

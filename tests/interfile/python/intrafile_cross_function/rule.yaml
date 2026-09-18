@@ -1,0 +1,10 @@
+rules:
+  - id: intrafile-cross-function
+    languages: [python]
+    severity: ERROR
+    message: tainted data reaches sink across functions
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

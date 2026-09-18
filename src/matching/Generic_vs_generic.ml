@@ -143,7 +143,8 @@ let should_match_call = function
   | G.Super
   | G.Self
   | G.Parent
-  (* JS `require("fs")` *)
+  | G.LateStatic
+  (* JS `require("fs")`, Lua `require "fs"` *)
   | G.Require
   | G.Eval ->
       true
@@ -287,6 +288,8 @@ let m_module_name_prefix a b =
       (* TODO figure out what prefix support means here *)
         ~m_string_for_default:m_filepath_prefix a b
   | G.DottedName a1, B.DottedName b1 -> m_dotted_name_prefix_ok a1 b1
+  | G.DottedName [ (s, t) ], B.FileName b1 when Mvar.is_metavar_name s ->
+      envf (s, t) (MV.N (H.name_of_ids [ b1 ]))
   | G.FileName _, _
   | G.DottedName _, _ ->
       fail ()
@@ -741,6 +744,8 @@ and m_id_info a b =
         G.id_resolved = _a1;
         id_resolved_alternatives = _a2;
         id_type = _a3;
+        id_instance_type = _a_instance_type;
+        id_callee_definition = _a_callee_definition;
         id_svalue = _a4;
         id_flags = _a5;
       },
@@ -748,6 +753,8 @@ and m_id_info a b =
         B.id_resolved = _b1;
         id_resolved_alternatives = _b2;
         id_type = _b3;
+        id_instance_type = _b_instance_type;
+        id_callee_definition = _b_callee_definition;
         id_svalue = _b4;
         id_flags = _b5;
       } ) ->
@@ -1498,6 +1505,7 @@ and m_special a b =
   | G.Super, B.Super -> return ()
   | G.Self, B.Self -> return ()
   | G.Parent, B.Parent -> return ()
+  | G.LateStatic, B.LateStatic -> return ()
   | G.Eval, B.Eval -> return ()
   | G.Typeof, B.Typeof -> return ()
   | G.Instanceof, B.Instanceof -> return ()
@@ -1518,6 +1526,7 @@ and m_special a b =
   | G.Super, _
   | G.Self, _
   | G.Parent, _
+  | G.LateStatic, _
   | G.Eval, _
   | G.Typeof, _
   | G.Instanceof, _
@@ -3234,6 +3243,17 @@ and m_definition_kind a b =
         (fun x -> x.arrow_is_function)
         ~then_:(m_function_definition a1 b1)
         ~else_:(fail ())
+  (* In C and C++ a function declaration at file scope is a [FuncDef] whose
+     body is [FBDecl], while the same text written as a pattern carries the
+     variable shape the conversion gives it everywhere else. *)
+  | G.VarDef { G.vtype = Some { G.t = G.TyFun (a1, a2); _ }; vinit = None; _ },
+    B.FuncDef { B.fparams = b1; frettype = Some b2; fbody = B.FBDecl _; _ } ->
+      with_lang (fun lang ->
+        match lang with
+        | Lang.C
+        | Lang.Cpp ->
+          m_parameter_list a1 (Tok.unbracket b1) >>= fun () -> m_type_ a2 b2
+        | _ -> fail ())
   | G.VarDef a1, B.VarDef b1 -> m_variable_definition a1 b1
   | G.FieldDefColon a1, B.FieldDefColon b1 -> m_variable_definition a1 b1
   | G.ClassDef a1, B.ClassDef b1 -> m_class_definition a1 b1
@@ -3364,6 +3384,7 @@ and can_skip_special_cases lang =
       fun p ->
         match p with
         | G.Param p when List.exists is_extern p.pattrs -> true
+        | G.ParamReceiver _ -> true
         | _ -> false
   else
     fun _ -> false

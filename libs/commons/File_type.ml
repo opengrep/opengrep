@@ -402,6 +402,8 @@ let file_type_of_file file =
   | "mk" -> Config Makefile
   | "rs" -> PL Rust
   | "move" -> PL Move
+  (* the Go module manifest shares its extension with Go source files *)
+  | "mod" when String.equal b "go" -> Text "go.mod"
   | "mod"
   | "go" ->
       PL Go

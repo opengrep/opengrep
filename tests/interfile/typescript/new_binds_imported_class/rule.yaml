@@ -1,0 +1,14 @@
+rules:
+  - id: new-binds-imported-class
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A construction resolves through the file's own bindings, so new
+      Store names a.ts's class and not the same-named class of b.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

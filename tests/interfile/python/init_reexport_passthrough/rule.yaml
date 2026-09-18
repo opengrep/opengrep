@@ -1,0 +1,22 @@
+rules:
+  - id: init-reexport-passthrough
+    languages: [python]
+    severity: ERROR
+    message: >
+      User input flows through a name re-exported from a package
+      __init__.py.  main.py imports `process` from `mypkg`; the
+      `mypkg` package is the directory `mypkg/` and its
+      __init__.py re-exports `process` from the submodule
+      `mypkg.processor`.  The Python `has_reexports` post-phase in
+      projidx must walk init files and record
+      (mypkg, process) -> mypkg.processor.process so the call edge
+      from main.py to mypkg/processor.py:process is built.  Without
+      that, `process` is unresolved at the call site and the
+      cross-file taint chain breaks.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

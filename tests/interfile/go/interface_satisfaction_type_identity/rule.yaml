@@ -1,0 +1,14 @@
+rules:
+  - id: interface-satisfaction-type-identity
+    languages: [go]
+    severity: ERROR
+    message: >
+      A concrete type satisfies an interface only when each method signature is
+      identical, so pkga.Service and pkgb.Service are different parameter types.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

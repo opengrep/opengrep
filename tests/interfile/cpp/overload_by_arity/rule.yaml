@@ -1,0 +1,12 @@
+rules:
+  - id: overload-by-arity
+    languages: [cpp]
+    message: a call binds to the overload of its own arity
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

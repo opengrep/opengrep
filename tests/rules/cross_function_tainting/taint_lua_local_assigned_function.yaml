@@ -1,0 +1,12 @@
+rules:
+  - id: taint_lua_local_assigned_function
+    message: probe
+    languages:
+      - lua
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

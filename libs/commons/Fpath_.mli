@@ -63,6 +63,11 @@ val strip_leading_dot_and_trailing_slash : Fpath.t -> Fpath.t
    segment and so names another file when that segment is a symlink. *)
 val drop_dot_segments : Fpath.t -> Fpath.t
 
+(* Normalised absolute form of a path, plus the anchor it was resolved
+   against: [(Fpath.(cwd // path) |> normalize, Some cwd)] for a relative
+   path, [(normalize path, None)] for an already-absolute one. *)
+val absolutify : cwd:Fpath.t -> Fpath.t -> Fpath.t * Fpath.t option
+
 (*
    Operators on files or file paths or anything related to files.
    This is module is meant to be opened:

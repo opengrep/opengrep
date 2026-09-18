@@ -1,0 +1,15 @@
+rules:
+  - id: aliased-function-import
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      An aliased named import must resolve at the call site: the local
+      name binds the exported function from the file it was imported
+      from, not a same-named export elsewhere in the project.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

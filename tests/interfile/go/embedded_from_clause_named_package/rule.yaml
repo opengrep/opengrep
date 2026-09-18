@@ -1,0 +1,15 @@
+rules:
+  - id: embedded-from-clause-named-package
+    languages: [go]
+    severity: ERROR
+    message: >
+      An embedded type written with a package qualifier resolves through the
+      local name the unaliased import binds, which is the imported package's
+      clause.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,16 @@
+rules:
+  - id: rebound-name-definition-after-import
+    languages: [python]
+    severity: ERROR
+    message: >
+      The file imports [handle] and then defines a function of that name
+      at module level. The definition comes last, so the call site
+      resolves to the definition in the calling file and not to the
+      imported one.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

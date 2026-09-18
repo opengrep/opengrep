@@ -1,0 +1,19 @@
+rules:
+  - id: class-redefinition-last-wins
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two files declare class Foo with the same simple name.  Only
+      the lexically-later file (zzz.py) imports Base.  Last-wins
+      semantics on Type_state.set_parent ensure Foo's parent in the
+      lattice is Base, so super().__init__ resolves through Base and
+      the source flows into the sink.  Under first-wins semantics
+      the earlier (aaa.py) Foo would have no parent and the chain
+      would break.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

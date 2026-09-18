@@ -1,0 +1,14 @@
+rules:
+  - id: import-alias-binds-namespace
+    languages: [ts]
+    severity: ERROR
+    message: >
+      An import alias binds a local name to a namespace member, so S names
+      Svc.Inner and S.run reaches the function it holds.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

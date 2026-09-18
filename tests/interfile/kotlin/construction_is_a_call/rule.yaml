@@ -1,0 +1,12 @@
+rules:
+  - id: construction-is-a-call
+    languages: [kotlin]
+    message: A construction is a call on the class name, resolved through the import that binds it.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

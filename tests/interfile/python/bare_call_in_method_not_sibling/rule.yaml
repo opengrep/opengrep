@@ -1,0 +1,18 @@
+rules:
+  - id: bare-call-in-method-not-sibling
+    languages: [python]
+    severity: ERROR
+    message: >
+      A bare call written inside a method must not resolve to another
+      method of the enclosing class, because Python looks a bare name up
+      in the local scope, the enclosing function scopes, the module
+      globals and the builtins, and never in the class body. The call to
+      the imported function is the positive control and shows that
+      ordinary resolution still works.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

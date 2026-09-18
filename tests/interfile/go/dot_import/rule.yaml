@@ -1,0 +1,14 @@
+rules:
+  - id: dot-import
+    languages: [go]
+    severity: ERROR
+    message: >
+      A dot import declares the imported package's exported names in the
+      importing file, so Run is written with no qualifier.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

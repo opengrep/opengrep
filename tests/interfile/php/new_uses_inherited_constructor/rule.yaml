@@ -1,0 +1,14 @@
+rules:
+  - id: new-uses-inherited-constructor
+    languages: [php]
+    severity: ERROR
+    message: >
+      A class with no constructor of its own is constructed through the first
+      `__construct` along its resolution order, which is its parent's.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,14 @@
+rules:
+  - id: blank-import
+    languages: [go]
+    severity: ERROR
+    message: >
+      A blank import binds no name, so driver in the importing file is the
+      local variable and never the imported package.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

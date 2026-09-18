@@ -134,6 +134,7 @@ let tests (caps : Cap.all_caps) =
       Unit_ReDoS.tests;
       Unit_guess_lang.tests;
       Unit_tok.tests;
+      Unit_AST_generic.tests;
       Unit_Ppath.tests;
       Unit_Rpath.tests;
       Unit_git_wrapper.tests;
@@ -155,6 +156,7 @@ let tests (caps : Cap.all_caps) =
       Unit_engine.tests ();
       Unit_jsonnet.tests (caps :> < Cap.time_limit >);
       Unit_metachecking.tests (caps :> Core_scan.caps);
+      Unit_interfile.tests (caps :> Core_scan.caps);
       (* osemgrep unit tests *)
       Unit_LS.tests (caps :> Session.caps);
       (* Unit_Login.tests caps; *)

@@ -40,12 +40,14 @@ let recover_when_partial_error = ref true
 
 
 type scope = InFunction | InClass | TopLevel
+type declaration_context = At_file_scope | In_class_body | In_function_body
 type mode = Pattern | Target
 type cpp_parsing_option = [ `AsFunDef | `AsVarDefWithCtor ]
 
 type env = {
   mutable defs_toadd : G.definition list;
   mutable in_scope : scope;
+  mutable declaration_context : declaration_context;
   mutable in_mode : mode;
   mutable parsing_pref : cpp_parsing_option option;
 }
@@ -54,9 +56,16 @@ let empty_env () =
   {
     defs_toadd = [];
     in_scope = TopLevel;
+    declaration_context = At_file_scope;
     in_mode = Target;
     parsing_pref = None;
   }
+
+let function_kind (env : env) : G.function_kind =
+  match env.in_scope with
+  | InClass -> G.Method
+  | InFunction
+  | TopLevel -> G.Function
 
 let error t s = raise (Parsing_error.Other_error (s, t))
 
@@ -1456,9 +1465,7 @@ and map_onedecl env x : G.definition list =
       let id = map_ident env id in
       let ent = G.basic_entity id in
       [ (ent, G.TypeDef { G.tbody = G.AliasType ty }) ]
-  | V v1 ->
-      let ent, vardef = map_var_decl env v1 in
-      [ (ent, G.VarDef vardef) ]
+  | V v1 -> [ map_declared_var env v1 ]
   | StructuredBinding (v1, v2, v3) ->
       let v1 = map_type_ env v1 in
       let l, xs, r = map_bracket env (map_of_list (map_ident env)) v2 in
@@ -1491,11 +1498,40 @@ and map_onedecl env x : G.definition list =
       in
       [ (ent, def) ]
 
+and map_declared_var env (v : var_decl) : G.definition =
+  let ent, vardef = map_var_decl env v in
+  match vardef with
+  | { G.vtype = Some { G.t = G.TyFun ((params : G.parameter list),
+                                      (ret : G.type_)); _ };
+      vinit = None; _ }
+    when (match env.declaration_context with
+          | At_file_scope -> true
+          | In_class_body
+          | In_function_body -> false)
+         && (match env.in_mode with Pattern -> false | Target -> true) ->
+      ( ent,
+        G.FuncDef
+          {
+            G.fkind = (function_kind env, G.fake "");
+            fparams = (G.fake "(", params, G.fake ")");
+            frettype = Some ret;
+            fbody = G.FBDecl G.sc;
+          } )
+  | _ -> (ent, G.VarDef vardef)
+
+and map_object_init env (ty : G.type_) (x : obj_init) : G.expr =
+  let ((l : G.tok), _, _) as args = map_obj_init env x in
+  G.New (l, ty, G.empty_id_info (), args) |> G.e
+
 and map_var_decl env (ent, { v_init = v_v_init; v_type = v_v_type }) =
   let convert_var_decl () =
     let ent = map_entity env ent in
     let v_v_type = map_type_ env v_v_type in
-    let v_v_init = map_of_option (map_init env) v_v_init in
+    let v_v_init =
+      match v_v_init with
+      | Some (ObjInit (Args _ as v1)) -> Some (map_object_init env v_v_type v1)
+      | _ -> map_of_option (map_init env) v_v_init
+    in
     (ent, { G.vtype = Some v_v_type; vinit = v_v_init; vtok = G.no_sc })
   in
   let fun_def_as_var_def_with_ctor () =
@@ -1518,7 +1554,9 @@ and map_var_decl env (ent, { v_init = v_v_init; v_type = v_v_type }) =
         let args = params |> List_.filter_map param_to_arg_opt in
         if List.length params <> List.length args then None
         else
-          let v_v_init = map_init env (ObjInit (Args (p1, args, p2))) in
+          let v_v_init =
+            map_object_init env v_v_type (Args (p1, args, p2))
+          in
           Some
             ( ent,
               { G.vtype = Some v_v_type; vinit = Some v_v_init; vtok = G.no_sc }
@@ -1664,12 +1702,11 @@ and map_method_definition env (v1, v2) : G.definition =
 and map_function_definition env
     { f_type = v_f_type; f_body = v_f_body; f_specs = v_f_specs } :
     G.function_definition =
+  let kind = function_kind env in
+  let env = { env with declaration_context = In_function_body } in
   let _v_f_specsTODO = map_of_list (map_specifier env) v_f_specs in
   let fbody, _attrsTODO = map_function_body env v_f_body in
   let fparams, fret = map_functionType env v_f_type in
-  let kind = match env.in_scope with
-    InClass -> G.Method
-    |_ -> G.Function in
   { G.fkind = (kind, G.fake ""); fparams; frettype = Some fret; fbody }
 
 and map_functionType env x : G.parameters * G.type_ =
@@ -1834,7 +1871,9 @@ and map_enum_elem env { e_name = v_e_name; e_val = v_e_val } : G.or_type_element
   G.OrEnum (v_e_name, v_e_val)
 
 and map_class_definition env (v1, v2) : G.name option * G.class_definition =
-  let env = { env with in_scope = InClass } in
+  let env =
+    { env with in_scope = InClass; declaration_context = In_class_body }
+  in
   let v1 = map_of_option (map_a_class_name env) v1
   and v2 = map_class_definition_bis env v2 in
   (v1, v2)

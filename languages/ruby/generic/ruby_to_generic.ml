@@ -45,6 +45,21 @@ let unsafe_fake s = Tok.unsafe_fake_tok s
 let fb = Tok.unsafe_fake_bracket
 let nonbasic_entity id_or_e = { G.name = id_or_e; attrs = []; tparams = None }
 
+let constant_id_info () : G.id_info =
+  let info = G.empty_id_info () in
+  info.G.id_flags := IdFlags.set_constant !(info.G.id_flags);
+  info
+
+let id_info_of_kind (kind : Ast_ruby.id_kind) : G.id_info =
+  match kind with
+  | ID_Uppercase -> constant_id_info ()
+  | ID_Self
+  | ID_Super
+  | ID_Lowercase
+  | ID_Instance
+  | ID_Class
+  | ID_Global -> G.empty_id_info ()
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -73,6 +88,17 @@ let concatenate_literal_fragments xs =
   in
   concat [] xs
 
+let rec mark_static_defs (t : Tok.t) (st : G.stmt) : G.stmt =
+  match st.G.s with
+  | G.Block (l, stmts, r) ->
+      G.Block (l, List_.map (mark_static_defs t) stmts, r) |> G.s
+  | G.DefStmt (ent, (G.FuncDef _ as def_kind)) ->
+      G.DefStmt
+        ({ ent with G.attrs = G.KeywordAttr (G.Static, t) :: ent.G.attrs },
+         def_kind)
+      |> G.s
+  | _ -> st
+
 let rec expr e =
   (match e with
   | Literal x -> literal x
@@ -91,7 +117,7 @@ let rec expr e =
             G.DotAccess (this_expr, tok, G.FN (G.Id ((field_name, tok), G.empty_id_info ())))
           else
             G.N (G.Id (ident id, G.empty_id_info ()))
-      | _ -> G.N (G.Id (ident id, G.empty_id_info ())))
+      | _ -> G.N (G.Id (ident id, id_info_of_kind kind)))
   | ScopedId x ->
       let name = scope_resolution x in
       G.N name
@@ -325,7 +351,7 @@ and scope_resolution x : G.name =
           G.name_last = (id, None);
           name_middle = None;
           name_top = Some t;
-          name_info = G.empty_id_info ();
+          name_info = id_info_of_kind (snd v);
         }
   | Scope (e, t, v_or_m) ->
       let id = variable_or_method_name v_or_m in
@@ -357,10 +383,14 @@ and scope_resolution x : G.name =
           G.name_last = (id, None);
           name_middle = Some qualif;
           name_top = None;
-          name_info = G.empty_id_info ();
+          name_info = id_info_of_scope_name v_or_m;
         }
 
 and variable (id, _kind) = ident id
+
+and id_info_of_scope_name = function
+  | SV (_, kind) -> id_info_of_kind kind
+  | SM _ -> G.empty_id_info ()
 
 and variable_or_method_name = function
   | SV v -> variable v
@@ -804,7 +834,9 @@ and definition def =
             | _ -> ("", fake t "")
           in
           let e = expr e in
-          let ent = G.basic_entity method_id in
+          let ent =
+            G.basic_entity ~attrs:[ G.KeywordAttr (G.Static, t) ] method_id
+          in
           G.OtherStmt (G.OS_Todo, [ G.E e; G.Def (ent, G.FuncDef funcdef) ])
           |> G.s)
   | ClassDef (t, kind, body) -> (
@@ -839,7 +871,8 @@ and definition def =
           G.DefStmt (ent, G.ClassDef def) |> G.s
       | SingletonC (t, e) ->
           let e = expr e in
-          G.OtherStmt (G.OS_Todo, [ G.Tk t; G.E e; G.S body ]) |> G.s)
+          G.OtherStmt (G.OS_Todo, [ G.Tk t; G.E e; G.S (mark_static_defs t body) ])
+          |> G.s)
   | ModuleDef (_t, name, body) ->
       let body = body_exn body in
       let ent =

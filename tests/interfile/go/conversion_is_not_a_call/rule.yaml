@@ -1,0 +1,14 @@
+rules:
+  - id: conversion-is-not-a-call
+    languages: [go]
+    severity: ERROR
+    message: >
+      A conversion written as a type name applied to a value calls nothing, so
+      it reaches no method of the type.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,15 @@
+rules:
+  - id: super-calls-parent-method
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A super with no parentheses yields no call node and no edge, so the
+      method of the next ancestor carries no taint; the method the subclass
+      does not override still resolves along the order.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

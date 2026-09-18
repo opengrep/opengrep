@@ -1,0 +1,15 @@
+rules:
+  - id: bare-specifier-unresolved
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A bare specifier that no tsconfig paths entry covers names a package
+      outside the project, so it binds nothing even when a project file
+      has the same trailing path segments.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -385,6 +385,62 @@ let map_ident_should_not_use env v : G.ident =
 (* TODO: this should really return a dotted_ident *)
 let map_alias env v : G.ident = (map_wrap map_string) env v
 
+let dotted_ident_of_alias ((name : string), (tok : tok)) : G.dotted_ident =
+  String.split_on_char '.' name
+  |> List_.map (fun (part : string) -> (part, tok))
+
+let module_import (tok : tok) (parts : G.dotted_ident)
+    (local : G.ident option) : G.directive =
+  { G.d =
+      G.ImportAs
+        ( tok,
+          G.DottedName parts,
+          Option.map
+            (fun (id : G.ident) -> (id, G.empty_id_info ()))
+            local );
+    G.d_attrs = [ G.OtherAttribute (("alias", tok), []) ] }
+
+let map_directive env (v : directive) : G.stmt =
+  match v with
+  | AliasDirective { ad_alias; ad_module; ad_binding } -> (
+      let prefix = dotted_ident_of_alias ad_module in
+      match ad_binding with
+      | BindLastSegment ->
+          G.DirectiveStmt (module_import ad_alias prefix None) |> G.s
+      | BindAs (local : alias) ->
+          G.DirectiveStmt
+            (module_import ad_alias prefix (Some (map_alias env local)))
+          |> G.s
+      | BindGroup (members : alias list) ->
+          let stmts =
+            members
+            |> List_.map (fun (member : alias) ->
+                   G.DirectiveStmt
+                     (module_import ad_alias
+                        (prefix @ dotted_ident_of_alias member) None)
+                   |> G.s)
+          in
+          G.Block (fb stmts) |> G.s)
+  | ImportDirective { imd_import; imd_module; imd_selection } -> (
+      let parts = dotted_ident_of_alias imd_module in
+      let attrs = [ G.KeywordAttr (G.Callable, imd_import) ] in
+      match imd_selection with
+      | ImportEveryFunction ->
+          G.DirectiveStmt
+            { G.d = G.ImportAll (imd_import, G.DottedName parts, imd_import);
+              G.d_attrs = attrs }
+          |> G.s
+      | ImportOnly (functions : imported_function list) ->
+          let names =
+            functions
+            |> List_.map (fun (f : imported_function) ->
+                   (map_ident_should_not_use env f.imf_name, None))
+          in
+          G.DirectiveStmt
+            { G.d = G.ImportFrom (imd_import, G.DottedName parts, names);
+              G.d_attrs = attrs }
+          |> G.s)
+
 let map_wrap_operator env (op, tk) =
   match op with
   | OPin
@@ -548,6 +604,7 @@ and map_stmt env (v : stmt) : G.stmt =
   | D def ->
       let d = map_definition env def in
       G.DefStmt d |> G.s
+  | Dir dir -> map_directive env dir
 
 and map_param_as_arg env (p : parameter) : G.argument =
   match p with

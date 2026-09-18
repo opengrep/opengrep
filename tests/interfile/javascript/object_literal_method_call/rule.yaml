@@ -1,0 +1,14 @@
+rules:
+  - id: object-literal-method-call
+    languages: [js]
+    severity: ERROR
+    message: >
+      An object literal bound to a name binds its function valued
+      properties, so o.run names the property of the literal.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

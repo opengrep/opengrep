@@ -1,0 +1,14 @@
+rules:
+  - id: shadowed-by-local
+    languages: [go]
+    severity: ERROR
+    message: >
+      A short variable declaration shadows the package level declaration of
+      that name for the rest of the block.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

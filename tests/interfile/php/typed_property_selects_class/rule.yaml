@@ -1,0 +1,14 @@
+rules:
+  - id: typed-property-selects-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      The declared type of the property, written `App\\Store`, names the class
+      whose `run` the call reaches through `$this->store`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

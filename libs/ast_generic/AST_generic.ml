@@ -280,7 +280,112 @@ type module_name =
   | FileName of string wrap (* ex: Js import, C #include, Go import *)
 [@@deriving show { with_path = false }, eq, ord, hash]
 
-module SId = Gensym.MkId ()
+(* A per-file source identity: either a real token place ([idx = 0], same
+   scheme as [Function_id]) or a synthetic IL temp ([idx >= 1]); the two never
+   collide within a file.  Not a [Tok.t] because that lacks [hash] and its
+   equality is position-insensitive, which would destroy sid identity. *)
+(* A symbol id names a binding of one file: the identity two occurrences of
+ * a name share when they refer to the same binding. It also carries the
+ * definition site of the occurrence that created it, for the call graph,
+ * which keys a function by where it is defined; the site is not part of
+ * the identity, so two definitions rebinding one name in one scope are
+ * equal while each keeps its own site. *)
+module SId : sig
+  type t [@@deriving show, eq, ord, hash, sexp]
+
+  (* A binding naming allocated, counted per file in traversal order, so
+     that two parses of the same bytes agree. [?name] overrides the token
+     text: synthetic names (e.g. lambda [_tmp_lambda]) key [Function_id]
+     on the ident string, not the text of the located-fake token. *)
+  val of_tok : ?name:string -> binding:int -> file:string -> Tok.t -> t
+
+  (* A definition naming did not bind, identified by its site. *)
+  val of_site : ?name:string -> file:string -> Tok.t -> t
+
+  (* An IL temporary, counted per lowering. *)
+  val temp : file:string -> int -> t
+
+  (* Injective within a file. *)
+  val to_int : t -> int
+
+  (* Identity and site, for logs. *)
+  val to_string : t -> string
+
+  (* The definition site: name, file, line, column. Used by
+     [Function_id.of_sid] without consulting the call graph. *)
+  val to_loc : t -> string * string * int * int
+  val same_site : t -> t -> bool
+  val unsafe_default : t
+  val is_unsafe_default : t -> bool
+end = struct
+  type identity =
+    | Binding of int
+    | Temp of int
+    | Site of int * int (* line, column *)
+  [@@deriving show, eq, ord, hash, sexp]
+
+  type site = { name : string; line : int; col : int }
+  [@@deriving show, eq, ord, hash, sexp]
+
+  type t = {
+    file : string;
+    identity : identity;
+    site : site; [@equal fun _a _b -> true] [@compare fun _a _b -> 0] [@hash.ignore]
+  }
+  [@@deriving show, eq, ord, hash, sexp]
+
+  (* Caller supplies the real [file] (single-file lowered program); a placeless
+     [Error] token still gets the real file with zeroed position. *)
+  let site_of_tok ?name tok =
+    match Tok.loc_of_tok tok with
+    | Ok loc ->
+        {
+          name = (match name with Some n -> n | None -> loc.Tok.str);
+          line = loc.Tok.pos.line;
+          col = loc.Tok.pos.column;
+        }
+    | Error _ -> { name = ""; line = 0; col = 0 }
+
+  let of_tok ?name ~binding ~file tok =
+    { file; identity = Binding binding; site = site_of_tok ?name tok }
+
+  let of_site ?name ~file tok =
+    let site = site_of_tok ?name tok in
+    { file; identity = Site (site.line, site.col); site }
+
+  let no_site = { name = ""; line = 0; col = 0 }
+  let temp ~file idx = { file; identity = Temp idx; site = no_site }
+
+  let to_int t =
+    match t.identity with
+    | Binding n -> n
+    | Temp n -> -n
+    | Site (line, col) -> (line * 100_000) + col
+
+  let to_string t =
+    match t.identity with
+    | Temp n -> Printf.sprintf "#%d@%s" n t.file
+    | Binding _
+    | Site _ ->
+        if String.equal t.file "" && String.equal t.site.name "" then
+          "<unresolved>"
+        else
+          Printf.sprintf "%s@%s:%d:%d#%d" t.site.name t.file t.site.line
+            t.site.col (to_int t)
+
+  let to_loc t = (t.site.name, t.file, t.site.line, t.site.col)
+
+  let same_site a b =
+    String.equal a.file b.file
+    && String.equal a.site.name b.site.name
+    && Int.equal a.site.line b.site.line
+    && Int.equal a.site.col b.site.col
+
+  (* The "not yet resolved" sentinel; left fileless since naming overwrites
+     it before the file would matter. *)
+  let unsafe_default = { file = ""; identity = Binding 0; site = no_site }
+  let is_unsafe_default t = equal t unsafe_default
+end
 
 (* A single unique id: sid (uid would be a better name, but it usually
  * means "user id" for people).
@@ -296,7 +401,6 @@ module SId = Gensym.MkId ()
  * You need to call Naming_AST.resolve (or one of the lang-specific
  * Resolve_xxx.resolve) on the generic AST to set it correctly.
  *)
-(* a single unique gensym'ed number. *)
 type sid = SId.t
 and resolved_name = resolved_name_kind * sid
 
@@ -452,6 +556,7 @@ class virtual ['self] iter_parent =
     method visit_location _env _ = ()
     method visit_id_flags_t _env _ = ()
     method visit_resolved_name _env _ = ()
+    method visit_sid _env _ = ()
     method visit_tok _env _ = ()
 
     method visit_parsed_int env pi =
@@ -524,6 +629,7 @@ class virtual ['self] map_parent =
     method visit_location _env x = x
     method visit_id_flags_t _env x = x
     method visit_resolved_name _env x = x
+    method visit_sid _env x = x
     method visit_tok _env x = x
     method visit_parsed_int env pi = Parsed_int.map_tok (self#visit_tok env) pi
   end
@@ -615,8 +721,13 @@ and id_info = {
    *   because the first `foo` has type `Foo` but that `Foo` has SId.t "n",
    *   whereas the second `foo` has type `Foo` but with SId.t "m".
    *)
-  id_type : type_ option ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_type : type_ option ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
+  id_instance_type : type_ option ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* type checker (typing) *)
+  id_callee_definition : sid option ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* sgrep: this is for sgrep constant propagation hack.
    * todo? associate only with Id?
    * note that we do not use the svalue for equality (hence the adhoc
@@ -624,13 +735,15 @@ and id_info = {
    * meaning the same variable might have different id_svalue value
    * depending where it is used.
    *)
-  id_svalue : svalue option ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_svalue : svalue option ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* ^^^ THINK: Drop option? *)
   (* See module 'IdFlags'. Previously we compared 'id_flags' with 'IdFlags.equal'
    * but, once we added the 'final' flag which is only set at definition site,
    * the same identifier can now have different flags. In fact we did not really
    * have to compare 'id_flags' anyways. *)
-  id_flags : id_flags ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_flags : id_flags ref;
+      [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
 }
 
 (* See explanation for @name where the visitors are generated at the end of
@@ -827,7 +940,8 @@ and expr_kind =
    * Subshell in Ruby, Delete/Unset in JS/Hack/Solidity/C++,
    * Unpack/ArrayAppend in PHP (the AST for $x[] = 1 used to be
    * handled as an AssignOp with special Append).
-   * Define/Arguments/NewTarget/YieldStar/Exports/Module/Require/UseStrict JS,
+   * Define/Arguments/NewTarget/YieldStar/Exports/Module/UseStrict JS,
+   * Require JS and Lua,
    * UnitLiteral/HexString/UnicodeString/TupleHole/StructExpr in Solidity,
    * AtomExpr/AnonDotField/ContainerBits/When/Join/OpSlashInt/Sigil/Shortcut
    * AttrExpr in Elixir, Error/ImportStr/ObjComprehension in Jsonnet
@@ -964,6 +1078,7 @@ and special =
   (* less: how different self/parent is from this/super? *)
   | Self
   | Parent
+  | LateStatic
   (* for Lua, todo: just remove it, create Dict without key *)
   | NextArrayIndex
   (* special calls *)
@@ -1011,10 +1126,11 @@ and special =
   | Op of operator
   (* less: should be lift up and transformed in Assign at stmt level *)
   | IncrDecr of (incr_decr * prefix_postfix)
-  (* JS: `require('foo')`. Calls to require are different than imports as
-   * represented by e.g. `ImportFrom`. They are expressions rather than top
-   * level statements, and can therefore appear inline in any expression, so
-   * it's not generally possible to desugar to imports. *)
+  (* JS `require('foo')` and Lua `require 'foo'`. Calls to require are
+   * different than imports as represented by e.g. `ImportFrom`. They are
+   * expressions rather than top level statements, and can therefore appear
+   * inline in any expression, so it's not generally possible to desugar to
+   * imports. *)
   | Require
 
 (* mostly binary operators.
@@ -1578,6 +1694,10 @@ and keyword_attribute =
   (* the classic C modifiers (except Auto) *)
   | Static (* a.k.a Intern in Solidity *)
   | Extern (* less: of string? like extern "C" in C++ or Rust *)
+  | GlobalScope
+  | Callable
+  | TypeOnly
+  | Reexport
   | Volatile
   (* the classic C++ modifiers for fields/methods *)
   | Public
@@ -2267,6 +2387,8 @@ let empty_id_info ?(hidden = false) ?(case_insensitive = false) () =
     id_resolved = ref None;
     id_resolved_alternatives = ref [];
     id_type = ref None;
+    id_instance_type = ref None;
+    id_callee_definition = ref None;
     id_svalue = ref None;
     id_flags =
       ref (IdFlags.make ~hidden ~case_insensitive ~final:false ~static:false);

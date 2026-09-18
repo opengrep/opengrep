@@ -55,6 +55,10 @@ val is_static : t -> bool
 
 val set_static : t -> t
 
+val is_constant : t -> bool
+
+val set_constant : t -> t
+
 val union : t -> t -> t
 (** Union two sets of flags. *)
 

@@ -59,6 +59,11 @@ type t = {
    * The user-visible rule option is [guarded_taint_signatures]; the
    * internal field name stays [effect_guards]. *)
   ~effect_guards <json name="guarded_taint_signatures"> <ocaml default="false"> : bool;
+  (* enable cross-file taint analysis via the in-process project call graph *)
+  ~taint_interfile <ocaml default="false"> : bool;
+  (* maximum call chain depth for companion file discovery; negative is
+   * unbounded; unset defers to the scan's value *)
+  ?taint_interfile_depth : int option;
 
   (* 'ac' stands for associative-commutative matching *)
   ~ac_matching <ocaml default="true"> : bool;
@@ -169,7 +174,9 @@ type t = {
   (* Preprocess comments away to facilitate matching with spacegrep. *)
   ?generic_comment_style: generic_comment_style option;
 
-  (* Whether a rule should be considered for interfile analysis. *)
+  (* Whether a rule should be considered for interfile analysis.
+     Alias for taint_interfile, the name published rules use; it sets
+     taint_interfile when the rule is parsed, and setting both is an error. *)
   ~interfile <ocaml default="false"> : bool;
 
   (* Whether last expression executed in a function is treated the

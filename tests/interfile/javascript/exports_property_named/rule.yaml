@@ -1,0 +1,15 @@
+rules:
+  - id: exports-property-named
+    languages: [js]
+    severity: ERROR
+    message: >
+      An assignment to a property of exports adds a named export, so run
+      is reachable from another module and hidden, which no assignment
+      exports, is not.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: static-import-binds-member
+    languages: [java]
+    message: A single static import binds one class member, not a same-named member of another package.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

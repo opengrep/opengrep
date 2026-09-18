@@ -1,0 +1,12 @@
+rules:
+  - id: test-namespace-scope
+    languages: [vb]
+    message: A bare call reaches the module of the caller's own namespace
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink($X)

@@ -1,0 +1,16 @@
+rules:
+  - id: last-binding-in-scope-wins
+    languages: [js]
+    severity: ERROR
+    message: >
+      Where one scope binds one name twice the later binding is the one in
+      force, so run names the second function. A block local name is
+      visible to the whole function, which differs from the language,
+      whose block bindings end with the block.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

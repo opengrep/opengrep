@@ -1,0 +1,12 @@
+rules:
+  - id: two-files-distinct-defs
+    languages: [crystal]
+    severity: ERROR
+    message: A bare call reaches the one top level method of that name in the project
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

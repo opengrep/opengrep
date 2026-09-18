@@ -1,0 +1,12 @@
+rules:
+  - id: taint-lua-dotted-definition
+    message: A lua function defined at a table field is called through that field
+    languages:
+      - lua
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

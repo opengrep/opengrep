@@ -181,6 +181,8 @@ module SMap : Map.S with type key = String.t
 
 type 'a smap = 'a SMap.t
 
+module SSet : Set.S with type elt = String.t
+
 (*****************************************************************************)
 (* Option *)
 (*****************************************************************************)

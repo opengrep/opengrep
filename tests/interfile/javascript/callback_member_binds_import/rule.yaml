@@ -1,0 +1,14 @@
+rules:
+  - id: callback-member-binds-import
+    languages: [js]
+    severity: ERROR
+    message: >
+      A callback passed as a member of a namespace import resolves through
+      the module the import binds, so lib.run names a.js's run.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

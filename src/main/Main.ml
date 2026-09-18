@@ -91,6 +91,7 @@
  *)
 let () =
   Cap.main (fun (caps : Cap.all_caps) ->
+      Memtrace.trace_if_requested ~memprof:(module Memprof_limits.Memprof) ();
       let argv = CapSys.argv caps#argv in
       match Array.to_list argv with
       (* the low-level engine CLI, whose options are shown by

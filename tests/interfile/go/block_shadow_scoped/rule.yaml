@@ -1,0 +1,15 @@
+rules:
+  - id: block-shadow-scoped
+    languages: [go]
+    severity: ERROR
+    message: >
+      A name declared inside a nested function literal belongs to that
+      literal's own scope and does not shadow the package declaration for the
+      enclosing function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

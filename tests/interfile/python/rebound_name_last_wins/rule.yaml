@@ -1,0 +1,16 @@
+rules:
+  - id: rebound-name-last-wins
+    languages: [python]
+    severity: ERROR
+    message: >
+      A module level name bound twice is the binding that comes last in
+      the file. The caller imports [handle] from [mod_a] and then from
+      [mod_b], so the call site resolves to the definition in [mod_b]
+      and to that one only.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,15 @@
+rules:
+  - id: same-name-module-other-dir
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A constant resolves by its constant path, so the top level Store and
+      Other::Store are two classes and a reference to Store from sub/app.rb
+      names the top level one alone.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

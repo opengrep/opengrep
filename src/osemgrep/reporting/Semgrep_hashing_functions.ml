@@ -132,15 +132,14 @@ let string_of_formulas (xs : Rule.formula list) : string =
 (*****************************************************************************)
 
 (* coupling: rule_match.py get_ci_unique_key() *)
-let ci_unique_key (c : Out.cli_match) : string * Fpath.t * string * int =
+let ci_unique_key (c : Out.cli_match) : string * Fpath.t * string * string =
   (* ugly: coupling: Cli_json_output.index_match_based_ids() *)
-  let index =
+  let index_suffix : string =
     let fingerprint = c.extra.fingerprint in
-    if fingerprint =~ ".*_\\([0-9]+\\)$" then
-      int_of_string (Common.matched1 fingerprint)
+    if fingerprint =~ "[^_]+_\\([0-9_]+\\)$" then Common.matched1 fingerprint
     else (
       Logs.warn (fun m -> m "wrong fingerprint format: %s" fingerprint);
-      0)
+      "0")
   in
   (* TODO the code for syntactic_context should be:
    *     # The code that matched, with whitespace and nosem comments removed.
@@ -159,17 +158,17 @@ let ci_unique_key (c : Out.cli_match) : string * Fpath.t * string * int =
    *     return code
    *)
   let syntactic_context = String.trim c.extra.lines in
-  (name c, c.path, syntactic_context, index)
+  (name c, c.path, syntactic_context, index_suffix)
 
 (* coupling: rule_match.py get_syntactic_id()
  * TODO? the return value in pysemgrep is the hex output of the
  * murmur3 hash, here the binary value is returned directly
  *)
 let syntactic_id (c : Out.cli_match) : string =
-  let name_, path, syntactic_context, index = ci_unique_key c in
+  let name_, path, syntactic_context, index_suffix = ci_unique_key c in
   let repr = Python_str_repr.repr in
-  spf "(%s, %s, %s, %u)" (repr name_) (repr !!path) (repr syntactic_context)
-    index
+  spf "(%s, %s, %s, %s)" (repr name_) (repr !!path) (repr syntactic_context)
+    index_suffix
   |> Murmur3.hash128
 
 (* coupling: rule_match.py main part of get_match_based_key() *)
@@ -235,6 +234,10 @@ module Match_based_id = struct
    * 4. Hash the tuple `(formula, path, rule_id)` w/ blake2b
    * 5. Append the index of the match in the list of matches for the rule
    *    (see [index_match_based_ids])
+   *    Under --interfile-dedup-by source-sink, matches with the same match
+   *    based id and the same range share the index k, and each further
+   *    match at that range gets the suffix _k_j (see
+   *    [Cli_json_output.index_match_based_ids]).
    *
    * coupling: rule_match.py get_match_based_id ()
    *)

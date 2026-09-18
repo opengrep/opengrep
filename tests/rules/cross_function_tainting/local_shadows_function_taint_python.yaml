@@ -1,0 +1,12 @@
+rules:
+  - id: local_shadows_function_taint
+    languages: [python]
+    severity: ERROR
+    message: Tainted value reaches the sink.
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

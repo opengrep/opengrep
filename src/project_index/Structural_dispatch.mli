@@ -1,0 +1,23 @@
+(* Emits Dispatch edges from the other members of an overload group (same
+   scope, name and arity, concrete bodies) to its representative, the
+   earliest by position, and records them as its alternatives. The scope
+   spans files for a language whose top level scope is the project. *)
+val emit_overload_edges :
+  lang:Lang.t ->
+  cfg:Index_lang_rules.t ->
+  graph:Call_graph.G.t ->
+  class_qn_by_definition:Func_lookup.class_qn_by_definition ->
+  Graph_from_AST.func_info list ->
+  int
+
+(* Emits [C.M <- I.M] Dispatch edges (structural interface satisfaction) so the topo fold sees impls before interfaces. *)
+
+val emit_dispatch_edges :
+  lang:Lang.t ->
+  cfg:Index_lang_rules.t ->
+  type_state:Type_state.t ->
+  func_def_file:(Graph_from_AST.func_info -> string option) ->
+  type_key:(file:string option -> AST_generic.type_ -> string option) ->
+  class_infos:Types.class_info list ->
+  graph:Call_graph.G.t ->
+  int

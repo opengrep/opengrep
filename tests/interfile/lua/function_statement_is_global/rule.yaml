@@ -1,0 +1,12 @@
+rules:
+  - id: function_statement_is_global
+    languages: [lua]
+    severity: ERROR
+    message: probe
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

@@ -39,5 +39,4 @@ let cmdline_info : Cmd.info = Cmd.info "opengrep lsp" ~doc ~man ~exits:CLI_commo
 
 let parse_argv (argv : string array) : conf =
   let cmd : conf Cmd.t = Cmd.v cmdline_info cmdline_term in
-  Fmt_tty.setup_std_outputs ?style_renderer:None ();
   CLI_common.eval_value ~argv cmd

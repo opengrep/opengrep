@@ -1,0 +1,17 @@
+rules:
+  - id: dispatch-cycle
+    languages: [go]
+    severity: ERROR
+    message: >
+      Tainted input flows through an indirect impl<->interface cycle
+      (Impl.Handle -> relay -> Handler.Handle -> Impl.Handle) and reaches the
+      sink.  The interface signature is merged from the concrete impl, which is
+      itself in the cycle; without an SCC signature fixpoint the merge uses a
+      stale impl signature and the taint is lost.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,14 @@
+rules:
+  - id: method-on-receiver
+    languages: [go]
+    severity: ERROR
+    message: >
+      A call on the method's own receiver reaches the method set of the
+      receiver's type.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: test-instance-not-companion
+    languages: [scala]
+    message: A call on an instance reaches the class member, not the companion object member of the same name
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

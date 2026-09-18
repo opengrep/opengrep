@@ -6,8 +6,9 @@
 val pp_cli_output :
   max_chars_per_line:int ->
   max_lines_per_finding:int ->
-  color_output:'a ->
   show_dataflow_traces:bool ->
+  interfile_dedup_by:Core_match.interfile_dedup_by ->
+  is_interfile:(Rule_ID.t -> bool) ->
   ?is_ci_invocation:bool ->
   Format.formatter ->
   Semgrep_output_v1_t.cli_output ->
@@ -21,8 +22,9 @@ val is_blocking : Yojson.Basic.t -> bool
 val pp_text_outputs :
   max_chars_per_line:int ->
   max_lines_per_finding:int ->
-  color_output:'a ->
   show_dataflow_traces:bool ->
+  interfile_dedup_by:Core_match.interfile_dedup_by ->
+  is_interfile:(Rule_ID.t -> bool) ->
   Format.formatter ->
   Semgrep_output_v1_t.cli_match list ->
   unit

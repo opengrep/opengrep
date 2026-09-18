@@ -17,8 +17,16 @@
 *)
 type t = private Fpath.t [@@deriving show]
 
+type directory = { as_written : Fpath.t; canonical : Fpath.t } [@@deriving show]
+
+type under_root = { relative_to_root : Fpath.t; listed : Fpath.t }
+[@@deriving show]
+
 (* Conversions from/to fpaths are no-ops. *)
 val of_fpath : Fpath.t -> t
 val to_fpath : t -> Fpath.t
 val of_string : string -> t
 val to_string : t -> string
+
+val directory : t -> directory
+val path_under_root : directory -> Fpath.t -> under_root option

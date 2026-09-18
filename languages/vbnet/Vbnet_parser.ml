@@ -5758,7 +5758,7 @@ and modifier : G.attribute parser = fun __n -> (
     begin
       (* modifier -> 'Shared' *)
       let* t = token "SHARED" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Static, t.tok))
     end;
     begin
       (* modifier -> 'Static' *)

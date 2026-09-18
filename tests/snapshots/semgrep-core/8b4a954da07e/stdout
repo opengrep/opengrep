@@ -1,0 +1,13 @@
+--- begin input files ---
+main.py
+rules.yml
+sinks.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main <MASKED>] Add files
+ 3 files changed, 21 insertions(+)
+ create mode 100644 main.py
+ create mode 100644 rules.yml
+ create mode 100644 sinks.py
+[main <MASKED>] Touch the sink file
+ 1 file changed, 2 insertions(+)

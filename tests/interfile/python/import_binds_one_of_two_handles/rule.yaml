@@ -1,0 +1,17 @@
+rules:
+  - id: import-binds-one-of-two-handles
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two modules define a function named [handle]. Each caller imports
+      one of the two modules, so each call site resolves to the function
+      its own import names. A resolver that takes the first candidate of
+      the name gives both call sites the same callee, and one of the two
+      findings is then missing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

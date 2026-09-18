@@ -1,0 +1,14 @@
+rules:
+  - id: use-binds-one-of-two-stores
+    languages: [php]
+    severity: ERROR
+    message: >
+      The caller writes `use App\\Store;`, so the unqualified name `Store` names
+      `App\\Store` and never the same-named `Lib\\Store`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

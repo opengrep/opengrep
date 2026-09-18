@@ -1,0 +1,12 @@
+rules:
+  - id: method-group-callback
+    languages: [csharp]
+    message: A method group passed as an argument is the method the using directive binds.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

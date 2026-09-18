@@ -1,0 +1,16 @@
+rules:
+  - id: promoted-property-flows-to-sink
+    languages: [php]
+    severity: ERROR
+    message: >
+      A constructor parameter declared with a visibility modifier is also a
+      property, so a tainted argument reaches the sink that reads that
+      property of the class the caller's `use` binds, and not the same-named
+      class in another namespace.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

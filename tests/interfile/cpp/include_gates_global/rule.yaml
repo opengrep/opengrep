@@ -1,0 +1,12 @@
+rules:
+  - id: include-gates-global
+    languages: [cpp]
+    message: a call binds to the definition declared by the header the caller includes, not to the definition with the same simple name in a file it does not include
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

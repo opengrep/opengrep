@@ -1,0 +1,12 @@
+rules:
+  - id: test-global-table
+    languages: [lua]
+    message: A bare call reaches the global function of that name in another file
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

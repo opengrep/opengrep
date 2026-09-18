@@ -1,0 +1,12 @@
+rules:
+  - id: test-rename-import
+    languages: [scala]
+    message: A renamed import binds the new name to one object
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

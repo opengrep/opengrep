@@ -1,0 +1,15 @@
+rules:
+  - id: late-static-binding-calls-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      `static::handle` resolves to the method of the class the call is written
+      in, along that class's resolution order, which is the static answer
+      available for late static binding.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

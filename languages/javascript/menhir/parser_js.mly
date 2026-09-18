@@ -530,11 +530,13 @@ import_clause:
  |                    import_names    { $1 }
 
 import_default: binding_id
-  { (fun t path -> [Import (t, [((default_entity, snd $1), Some $1)], path)]) }
+  { (fun t path ->
+       [Import (t, Import_binds, Binds_value,
+                [((default_entity, snd $1), Some $1)], path)]) }
 
 import_names:
  | "*" T_AS binding_id
-     { (fun t path -> [ModuleAlias (t, $3, path)]) }
+     { (fun t path -> [ModuleAlias (t, Binds_value, $3, path)]) }
  | named_imports
      { (fun t path ->
           let imports = $1 |> List_.filter_map (fun x ->
@@ -542,7 +544,7 @@ import_names:
             | Some (n1, n2opt) -> Some (n1, n2opt)
             | None -> None)
           in
-          [Import (t, imports, path)]
+          [Import (t, Import_binds, Binds_value, imports, path)]
        )
      }
  (* typing-ext: *)

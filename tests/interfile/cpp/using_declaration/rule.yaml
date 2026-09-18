@@ -1,0 +1,12 @@
+rules:
+  - id: using-declaration
+    languages: [cpp]
+    message: a using declaration binds one name from one namespace, not the declaration with the same simple name in a second namespace
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

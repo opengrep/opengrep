@@ -1,0 +1,14 @@
+rules:
+  - id: external-import-unresolved
+    languages: [go]
+    severity: ERROR
+    message: >
+      An import path that names no package of the project binds a name that no
+      definition of the project answers.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

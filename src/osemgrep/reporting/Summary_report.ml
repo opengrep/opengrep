@@ -62,8 +62,12 @@ let cli_errors_to_report ~(verbose : bool) (errors : OutJ.cli_error list) :
   |> List.filter (fun (error : OutJ.cli_error) ->
          (not (has_own_line error)) && is_reported error)
 
+(* [unplaced_warnings]: the warnings about the scan rather than a file,
+   such as the targets the interfile graph leaves out; their text prints
+   with --verbose. *)
 let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
-    ~(maturity : Maturity.t) ~max_target_bytes ~skipped_groups ppf () : unit =
+    ~(maturity : Maturity.t) ~max_target_bytes ~skipped_groups
+    ~(unplaced_warnings : int) ppf () : unit =
   let {
     Skipped_report.ignored = semgrep_ignored;
     include_ = include_ignored;
@@ -153,12 +157,19 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
       "files only partially analyzed due to a parsing or internal Opengrep error"
       (Skipped_report.group_errors_by_file errors)
   in
-  match (limited, out_skipped, out_partial) with
-  | None, [], None -> ()
-  | limited, xs, parts -> (
+  match (limited, out_skipped, out_partial, unplaced_warnings) with
+  | None, [], None, 0 -> ()
+  | limited, xs, parts, unplaced -> (
       Fmt.pf ppf "Some files were skipped or only partially analyzed.@\n";
       Option.iter (fun txt -> Fmt.pf ppf "  %s@\n" txt) limited;
       Option.iter (fun txt -> Fmt.pf ppf "  Partially scanned: %s@\n" txt) parts;
+      if unplaced > 0 then
+        Fmt.pf ppf
+          "  Analysis limited: %d warning%s about the scan; run with \
+           --verbose to see %s.@\n"
+          unplaced
+          (if unplaced = 1 then "" else "s")
+          (if unplaced = 1 then "it" else "them");
       match xs with
       | [] -> ()
       | xs ->

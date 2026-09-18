@@ -1,0 +1,12 @@
+rules:
+  - id: self-class-new
+    languages: [ruby]
+    severity: ERROR
+    message: The receiver self.class names the enclosing class.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

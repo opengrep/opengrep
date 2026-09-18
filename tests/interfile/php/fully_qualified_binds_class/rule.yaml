@@ -1,0 +1,15 @@
+rules:
+  - id: fully-qualified-binds-class
+    languages: [php]
+    severity: ERROR
+    message: >
+      A fully qualified name names its target directly and consults no import,
+      so `\\App\\Svc\\Store::run` receives the tainted argument and the
+      same-named `Lib\\Svc\\Store::run` does not.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

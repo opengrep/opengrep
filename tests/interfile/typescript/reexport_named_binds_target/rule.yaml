@@ -1,0 +1,14 @@
+rules:
+  - id: reexport-named-binds-target
+    languages: [ts]
+    severity: ERROR
+    message: >
+      b.ts re-exports a.ts's run without binding it locally, so an import
+      from b.ts reaches a.ts's run.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

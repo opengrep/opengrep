@@ -1,0 +1,23 @@
+rules:
+  - id: block-body-sink-range
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      Taint reaches a sink focused on a tap block body.  Pins the finding's
+      anchor to the block-body statement: the emission pass's re-extraction
+      against the converged signature db is what keeps the sink range on the
+      focused block body — skipping it (an "obviously safe" optimisation
+      attempted twice) collapses the sink range onto the taint's own origin,
+      a range no branch of this sink can produce.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: $X
+          - patterns:
+              - pattern-inside: |
+                  $Y.tap{ |$ANY| $Z }
+              - focus-metavariable: $Z

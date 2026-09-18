@@ -1,0 +1,15 @@
+rules:
+  - id: declare-module-binds-nothing
+    languages: [ts]
+    severity: ERROR
+    message: >
+      An ambient module declaration introduces no definition that runs, so
+      the import of pkg is decided by the tsconfig paths entry alone and
+      names pkg.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

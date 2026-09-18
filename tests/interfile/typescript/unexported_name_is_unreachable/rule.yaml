@@ -1,0 +1,14 @@
+rules:
+  - id: unexported-name-is-unreachable
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A name that a module does not export is unreachable from another
+      module, so the import binds nothing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

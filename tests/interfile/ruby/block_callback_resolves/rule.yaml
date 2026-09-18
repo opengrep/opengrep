@@ -1,0 +1,12 @@
+rules:
+  - id: block-callback-resolves
+    languages: [ruby]
+    severity: ERROR
+    message: A bare call inside a block reaches a method of another file.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

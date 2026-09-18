@@ -1,0 +1,12 @@
+rules:
+  - id: test-imports-alias
+    languages: [vb]
+    message: A qualified call reaches the module an import alias names
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink($X)

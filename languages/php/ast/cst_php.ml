@@ -826,13 +826,15 @@ and toplevel =
   | NamespaceBracketDef of tok * qualified_ident option * toplevel list brace
   | NamespaceUse of
       tok
-      * tok option (* 'function|const' *)
+      * use_keyword option
       * namespace_use_rule comma_list
       * tok
   (* ; *)
   (* old:  | Halt of tok * unit paren * tok (* __halt__ ; *) *)
   | NotParsedCorrectly of tok list (* when Flag.error_recovery = true *)
   | FinalDef of tok (* EOF *)
+
+and use_keyword = Use_function_keyword of tok | Use_const_keyword of tok
 
 (* the qualified_ident can have a leading '\' *)
 and namespace_use_rule = qualified_ident * alias option

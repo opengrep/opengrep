@@ -1,0 +1,14 @@
+rules:
+  - id: use-function-binds-helper
+    languages: [php]
+    severity: ERROR
+    message: >
+      `use function App\\helper;` binds `helper` in the function table, so the
+      unqualified call names `App\\helper` and not `Lib\\helper`.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,16 @@
+rules:
+  - id: method-reference-callback
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      A method reference passed as an argument resolves to the method of
+      another file and yields the edge, but the reference has no identifier
+      in the tree to carry the definition stamp, so no taint flows through
+      it; a direct call of the same file's other method still resolves.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
