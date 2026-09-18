@@ -829,6 +829,10 @@ and stmt_aux env x =
   | ImportFrom (t, v1, v2) ->
       let v1 = module_name env v1 and v2 = list (alias env) v2 in
       [ G.DirectiveStmt (G.ImportFrom (t, v1, v2) |> G.d) |> G.s ]
+  | TypeAlias (_t, v1, v2) ->
+      let v1 = name env v1 and v2 = type_ env v2 in
+      let ent = G.basic_entity v1 in
+      [ G.DefStmt (ent, G.TypeDef { G.tbody = G.AliasType v2 }) |> G.s ]
   | Global (t, v1)
   | NonLocal (t, v1) ->
       let v1 = list (name env) v1 in
