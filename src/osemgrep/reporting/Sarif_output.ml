@@ -347,8 +347,8 @@ let sarif_codeflow (cli_match : Out.cli_match) : Sarif.code_flow list option =
             ~thread_flows ();
         ]
 
-let result ~(interfile_dedup_by : Core_match.interfile_dedup_by)
-    (show_dataflow_traces : bool) (cli_match : Out.cli_match) : Sarif.result =
+let result ~(is_interfile : Rule_ID.t -> bool) (show_dataflow_traces : bool)
+    (cli_match : Out.cli_match) : Sarif.result =
   let location =
     let physical_location =
       Sarif.create_physical_location
@@ -371,10 +371,9 @@ let result ~(interfile_dedup_by : Core_match.interfile_dedup_by)
   in
   let fixes = sarif_fixes cli_match in
   let code_flows =
-    match interfile_dedup_by with
-    | Core_match.Source_sink -> sarif_codeflow cli_match
-    | Core_match.Sink ->
-        if show_dataflow_traces then sarif_codeflow cli_match else None
+    if is_interfile cli_match.check_id || show_dataflow_traces then
+      sarif_codeflow cli_match
+    else None
   in
   let properties =
     match Exposure.of_cli_match_opt cli_match with
@@ -406,7 +405,7 @@ let error_to_sarif_notification (e : Out.cli_error) =
 
 let sarif_output hrules (cli_output : Out.cli_output)
     ~engine_label ~show_dataflow_traces
-    ~(interfile_dedup_by : Core_match.interfile_dedup_by) :
+    ~(is_interfile : Rule_ID.t -> bool) :
     Sarif.sarif_json_schema =
   let sarif_schema =
     "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
@@ -430,7 +429,7 @@ let sarif_output hrules (cli_output : Out.cli_output)
     in
     let results =
       cli_output.results |> Semgrep_output_utils.sort_cli_matches
-      |> List_.map (result ~interfile_dedup_by show_dataflow_traces)
+      |> List_.map (result ~is_interfile show_dataflow_traces)
     in
     let invocation =
       (* TODO no test case(s) for executionNotifications being non-empty *)

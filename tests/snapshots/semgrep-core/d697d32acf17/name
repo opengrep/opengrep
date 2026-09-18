@@ -1,1 +1,0 @@
-Osemgrep Scan findings (e2e) > findings: with --dataflow-traces and --interfile-dedup-by source-sink, the text output names the file of a taint step that lies in another file

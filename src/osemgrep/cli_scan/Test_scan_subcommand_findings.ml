@@ -305,9 +305,9 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~extra_files:[ rules_dir "nosem.yaml"; basic_dir ]
            ~extra_args:
              [ "--disable-nosem"; "--config"; "rules/nosem.yaml"; "basic" ]);
-      (* One nosem comment names both rule ids, so neither is reported.
+      (* One nosem comment lists both rule ids, so neither is reported.
          python: test_nosem_with_multiple_ids *)
-      t "findings: nosem naming several ids" ~checked_output:(Testo.stdout ())
+      t "findings: nosem with several ids" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (run_scan caps ~format_args:[ "--json" ] ~targets:[]
            ~extra_files:
@@ -352,8 +352,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/inside.yaml"
            ~targets:[] ~extra_files:[ basic_dir ] ~extra_args:[ "basic" ]);
-      (* python: multi_focus_metavariable, never collected there as its name
-         lacks the prefix *)
+      (* python: multi_focus_metavariable, never collected there as its
+         identifier lacks the prefix *)
       t "findings: several focus-metavariable" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (json_findings caps ~rule:"rules/multi-focus-metavariable.yaml"
@@ -610,7 +610,7 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_source_sink_ids_are_distinct caps);
       t
         "findings: with --dataflow-traces and --interfile-dedup-by \
-         source-sink, the text output names the file of a taint step that lies \
+         source-sink, the text output gives the file of a taint step that lies \
          in another file"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root:interfile_fixtures_root
@@ -657,7 +657,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~format_args:[]
            ~extra_args:("--dataflow-traces" :: source_sink_args));
       t
-        "findings: each --emacs line names its taint source under \
+        "findings: each --emacs line ends with its taint source under \
          --interfile-dedup-by source-sink"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root:interfile_fixtures_root
@@ -671,7 +671,7 @@ let tests (caps : < Scan_subcommand.caps >) =
              ]
            ~format_args:[ "--emacs" ] ~extra_args:source_sink_args);
       t
-        "findings: each --vim line names its taint source under \
+        "findings: each --vim line ends with its taint source under \
          --interfile-dedup-by source-sink"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root:interfile_fixtures_root
@@ -684,6 +684,34 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_b.py";
              ]
            ~format_args:[ "--vim" ] ~extra_args:source_sink_args);
+      t
+        "findings: each --emacs line ends with its taint source under the \
+         default dedup"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sources/rule.yaml"
+           ~targets:
+             [
+               "dedup_two_sources/same_file.py";
+               "dedup_two_sources/shared_sink.py";
+               "dedup_two_sources/caller_a.py";
+               "dedup_two_sources/caller_b.py";
+             ]
+           ~format_args:[ "--emacs" ]);
+      t
+        "findings: each --vim line ends with its taint source under the \
+         default dedup"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:interfile_fixtures_root
+           ~rule:"dedup_two_sources/rule.yaml"
+           ~targets:
+             [
+               "dedup_two_sources/same_file.py";
+               "dedup_two_sources/shared_sink.py";
+               "dedup_two_sources/caller_a.py";
+               "dedup_two_sources/caller_b.py";
+             ]
+           ~format_args:[ "--vim" ]);
       t
         "findings: under --interfile-dedup-by source-sink, the GitLab SAST \
          output gives the two findings at one sink different vulnerability ids"

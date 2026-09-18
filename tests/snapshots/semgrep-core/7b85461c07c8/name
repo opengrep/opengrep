@@ -1,1 +1,0 @@
-Osemgrep Scan findings (e2e) > findings: each --emacs line names its taint source under --interfile-dedup-by source-sink

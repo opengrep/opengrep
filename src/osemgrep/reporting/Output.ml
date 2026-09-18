@@ -266,7 +266,7 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
       in
       let sarif_json =
         Sarif_output.sarif_output hrules cli_output ~engine_label
-          ~show_dataflow_traces:conf.show_dataflow_traces ~interfile_dedup_by
+          ~show_dataflow_traces:conf.show_dataflow_traces ~is_interfile
       in
       Some (Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)
   | Files_with_matches ->
