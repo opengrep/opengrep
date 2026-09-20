@@ -36,6 +36,10 @@ let gutter_indent = body_size - Findings_layout.console_indent_size
 
 (* " │ " between the line number and the code *)
 let separator = " │ "
+
+(* A located line of a trace sits under the file name that introduces it,
+   which Findings_layout.esc_prefix indents by two columns. *)
+let trace_number_indent = "  "
 let separator_width = 3
 
 (*****************************************************************************)
@@ -155,25 +159,78 @@ let pp_code (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
          Fmt.pf ppf "%s%a@." body
            Fmt.(styled (`Fg `Cyan) string)
            (Printf.sprintf "… %s more" (String_.unit_str n "line")));
-  (* --dataflow-traces, in the same gutter as the snippet above *)
-  match m.extra.dataflow_trace with
-  | Some trace when ctx.show_dataflow_traces ->
-      let faint (glyph : string) : string =
-        Fmt.str_like ppf "%a" Fmt.(styled `Faint string) glyph
-      in
-      Findings_layout.pp_dataflow_tree ~finding_path:m.path
-        ~line_prefix:body ~glyph:faint
-        ~gutter:(fun (n : int) -> Printf.sprintf "%*d%s" digits n separator)
-        ~gutter_blank:(String.make digits ' ' ^ separator)
-        ~highlight:[ `Bold ] ppf trace
-  | _ -> ()
+  ()
 
-let pp_finding (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
+(* Under --interfile-dedup-by source-sink the findings sharing this sink
+   differ only in where the taint started, so the sink is drawn once and
+   each source named under it. Without this the block appears once per
+   source with nothing to tell the copies apart.
+
+   Each source is followed by its own trace rather than all the sources
+   first and all the traces after: the pairing is what makes a trace
+   readable, since on its own it does not say which source it explains. *)
+let pp_origins (ctx : Skin.ctx) ppf (m : OutJ.cli_match)
+    (group : OutJ.cli_match list) : unit =
+  let entries = if group = [] then [ m ] else group in
+  let several = List.length entries > 1 in
+  let name_sources = ctx.is_interfile m.check_id && several in
+  let traces = ctx.show_dataflow_traces in
+  if name_sources || traces then begin
+    (* the same gutter width the snippet above used, so the two line up *)
+    let digits = String.length (string_of_int m.end_.line) in
+    let faint (glyph : string) : string =
+      Fmt.str_like ppf "%a" Fmt.(styled `Faint string) glyph
+    in
+    entries
+    |> List.iteri (fun (i : int) (finding : OutJ.cli_match) ->
+           (* a gap opens the block when a source line leads it, and
+              divides one entry from the next only once each carries a
+              trace. A trace following the snippet needs no gap of its own:
+              its spine already joins the two, and a bare list of sources
+              reads better tight. *)
+           if (i = 0 && name_sources) || (i > 0 && traces) then Fmt.pf ppf "@.";
+           if name_sources then
+             Findings_layout.source_of_finding finding
+             |> Option.iter (fun ((loc : OutJ.location), (code : string)) ->
+                    let where =
+                      Printf.sprintf "%s:%d" !!(loc.path) loc.start.line
+                    in
+                    (* a source spanning several lines arrives as one long
+                       line, so it is cut to what is left of the width *)
+                    let code =
+                      Findings_layout.ellipsize
+                        ~width:
+                          (ctx.width - body_size - String.length "from "
+                         - String.length where - 2)
+                        code
+                    in
+                    Fmt.pf ppf "%s%a %a  %s@." body
+                      Fmt.(styled `Faint string)
+                      "from"
+                      Fmt.(styled (`Fg `Cyan) string)
+                      where code);
+           if traces then
+             finding.extra.dataflow_trace
+             |> Option.iter (fun trace ->
+                    Findings_layout.pp_dataflow_tree
+                      ~finding_path:finding.path ~line_prefix:body ~glyph:faint
+                      ~gutter:(fun (n : int) ->
+                        Printf.sprintf "%s%*d%s" trace_number_indent digits n
+                          separator)
+                      ~gutter_blank:
+                        (trace_number_indent ^ String.make digits ' '
+                       ^ separator)
+                      ~highlight:[ `Bold ] ppf trace))
+  end
+
+let pp_finding ?(group : OutJ.cli_match list = []) (ctx : Skin.ctx) ppf
+    (m : OutJ.cli_match) : unit =
   pp_heading ctx ppf m;
   pp_message ctx ppf m.extra.message;
   (* the blank line that sets the snippet apart from the message *)
   Fmt.pf ppf "@.";
   pp_code ctx ppf m;
+  pp_origins ctx ppf m group;
   (match Option.map (Findings_layout.fix_lines ~first_col:m.start.col) m.extra.fix with
   (* a fix with no text deletes the match, which the report has to say:
      the code goes away when --autofix runs *)
@@ -271,14 +328,22 @@ let on_result (_ctx : Skin.ctx) (result : M.Result.t) : Skin.chunk list =
 
 (* the findings of one file under a name stated once, in reported order *)
 let pp_by_file (ctx : Skin.ctx) ppf (matches : OutJ.cli_match list) : unit =
-  matches
+  let groups =
+    match ctx.interfile_dedup_by with
+    | Core_match.Sink -> List_.map (fun (m : OutJ.cli_match) -> [ m ]) matches
+    | Core_match.Source_sink -> Findings_layout.group_findings_by_sink matches
+  in
+  groups
   |> List.fold_left
-       (fun (previous : string option) (m : OutJ.cli_match) ->
-         let path = !!(m.path) in
-         let here = Some path in
-         if previous <> here then pp_file_header ppf path;
-         pp_finding ctx ppf m;
-         here)
+       (fun (previous : string option) (group : OutJ.cli_match list) ->
+         match group with
+         | [] -> previous
+         | (m : OutJ.cli_match) :: _ ->
+             let path = !!(m.path) in
+             let here = Some path in
+             if previous <> here then pp_file_header ppf path;
+             pp_finding ~group ctx ppf m;
+             here)
        None
   |> ignore
 

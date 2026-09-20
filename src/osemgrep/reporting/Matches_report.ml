@@ -51,25 +51,14 @@ let sort_by_groups als =
   let compare_group x y = group_order x - group_order y in
   als |> List.stable_sort (Common.on compare_group fst)
 
-let one_line_of_code (code : string) : string =
-  code |> String.split_on_char '\n' |> List_.map String.trim
-  |> List.filter (fun (s : string) -> not (String.equal s ""))
-  |> String.concat " "
-
 let pp_sources_of_sink ppf (findings : OutJ.cli_match list) : unit =
-  findings
-  |> List.iter (fun (finding : OutJ.cli_match) ->
-         match finding.extra.dataflow_trace with
-         | Some { OutJ.taint_source = Some source; _ } ->
-             let loc, code = Core_json_output.leaf_of_call_trace source in
-             Fmt.pf ppf "%s source %a:%d  %a@." findings_indent
-               Fmt.(styled (`Fg `Cyan) string)
-               !!(loc.path) loc.start.line
-               Fmt.(styled `Bold string)
-               (one_line_of_code code)
-         | Some _
-         | None ->
-             ())
+  sources_of_sink findings
+  |> List.iter (fun ((loc : OutJ.location), (code : string)) ->
+         Fmt.pf ppf "%s source %a:%d  %a@." findings_indent
+           Fmt.(styled (`Fg `Cyan) string)
+           !!(loc.path) loc.start.line
+           Fmt.(styled `Bold string)
+           code)
 
 let pp_finding ~max_chars_per_line ~max_lines_per_finding
     ~show_dataflow_traces ~append_separator
@@ -157,23 +146,6 @@ let pp_styled_severity ppf (severity : OutJ.match_severity) =
   | `Inventory
   | `Experiment ->
       Fmt.pf ppf "%s%s" rule_leading_indent "   "
-
-let same_sink (a : OutJ.cli_match) (b : OutJ.cli_match) : bool =
-  Fpath.equal a.path b.path
-  && Rule_ID.equal a.check_id b.check_id
-  && Int.equal a.start.offset b.start.offset
-  && Int.equal a.end_.offset b.end_.offset
-
-let group_findings_by_sink (matches : OutJ.cli_match list) :
-    OutJ.cli_match list list =
-  List.fold_left
-    (fun (groups : OutJ.cli_match list list) (m : OutJ.cli_match) ->
-      match groups with
-      | (previous :: _ as group) :: older when same_sink previous m ->
-          (m :: group) :: older
-      | _ -> [ m ] :: groups)
-    [] matches
-  |> List_.map List.rev |> List.rev
 
 let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
     ~show_dataflow_traces
