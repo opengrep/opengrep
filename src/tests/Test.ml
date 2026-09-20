@@ -157,6 +157,7 @@ let tests (caps : Cap.all_caps) =
       Unit_jsonnet.tests (caps :> < Cap.time_limit >);
       Unit_metachecking.tests (caps :> Core_scan.caps);
       Unit_interfile.tests (caps :> Core_scan.caps);
+      Unit_core_scan.tests (caps :> Core_scan.caps);
       (* osemgrep unit tests *)
       Unit_LS.tests (caps :> Session.caps);
       (* Unit_Login.tests caps; *)
@@ -169,6 +170,8 @@ let tests (caps : Cap.all_caps) =
       Test_scan_subcommand_sarif.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_output.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_text.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_skins.tests
+        (caps :> Test_scan_subcommand_skins.caps);
       Test_scan_subcommand_formats.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_findings.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_targets.tests (caps :> Scan_subcommand.caps);

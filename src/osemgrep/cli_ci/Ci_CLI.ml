@@ -226,9 +226,12 @@ let cmdline_term : conf Term.t =
            checkout *)
         autofix = false;
         output_conf;
-        (* the ci log is not a terminal, and its output is the record of
-           a run rather than something watched live *)
-        no_progress_bar = true;
+        (* ci never starts the status bar: it calls
+           Scan_subcommand.check_targets_with_rules directly, and only
+           run_scan_conf creates one. Nothing reads this, so it carries the
+           default rather than an intent it cannot act on -- and ci takes no
+           --no-progress-bar for the same reason. *)
+        no_progress_bar = SC.default.no_progress_bar;
         incremental_output = false;
         incremental_output_postprocess = false;
         rewrite_rule_ids;

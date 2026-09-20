@@ -198,3 +198,15 @@ val logs_mutex : Mutex.t
    block: see Status_bar.fmt_eprintf for what that costs. *)
 val before_log_hook : (unit -> unit) ref
 val after_log_hook : (unit -> unit) ref
+
+(* Do what a log message does around [f], without logging: take
+   [logs_mutex], run [before_log_hook], run [f], run [after_log_hook].
+
+   For a caller that writes to the terminal outside the log reporter --
+   another stream, say -- and so has to be held apart from the bar that a
+   hook draws there, and from other writers.
+
+   [f] runs under [logs_mutex] and is bound by the contract above: it must
+   not log, must not take [logs_mutex], and must not block for long. It
+   should do its own flushing, since nothing after it will. *)
+val with_reporter_lock : (unit -> unit) -> unit

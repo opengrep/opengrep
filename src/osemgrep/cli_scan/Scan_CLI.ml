@@ -834,12 +834,21 @@ Each should be one of INFO, WARNING, or ERROR.
        [] info)
 
 let o_skin : Skin.name Term.t =
-  H.enum_with_env [ "skin" ] ~env:"OPENGREP_SKIN" ~default:Skins.default
+  (* Each skin describes itself, so that the help cannot say one thing
+     while the report does another. *)
+  let skins =
+    Skin.all_names
+    |> List_.map (fun ((label : string), (name : Skin.name)) ->
+           let (module S : Skin.S) = Skins.resolve name in
+           spf "$(b,%s): %s" label S.doc)
+    |> String.concat " "
+  in
+  H.enum_with_env [ "skin" ] ~env:"OPENGREP_SKIN" ~default:Skin.default
     ~names:Skin.all_names
     ~doc:
-      {|Which look the text report has: $(b,legacy) is the report opengrep
-has always printed, $(b,simple) is terse and unadorned, $(b,vivid) uses
-colour for readability. Also settable with $(b,OPENGREP_SKIN).|}
+      (spf
+         {|Which look the text report has. %s Also settable with $(b,OPENGREP_SKIN).|}
+         skins)
 
 let o_exclude_rule_ids : string list Term.t =
   let info =

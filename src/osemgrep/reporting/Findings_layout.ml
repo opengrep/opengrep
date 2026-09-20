@@ -613,12 +613,29 @@ let steps_of_dataflow_trace (trace : OutJ.match_dataflow_trace) :
    of them share a sink and differ only in where the taint came from. A
    report that does not group them shows the same block twice over with
    nothing to tell the two apart. *)
+(* Whether a finding has a rule worth naming. A -e/--pattern run has none:
+   Rule.rule_of_formula builds a rule whose id is "-", whose severity
+   nobody chose, and whose message is the pattern that was typed. The
+   legacy report heads such a finding with nothing at all -- no severity,
+   no id, no message -- leaving the file name and the snippet, and every
+   skin follows it.
+   coupling: Matches_report's own has_rule_name, which cannot call this
+   one without a dependency it does not have. *)
+let has_rule_name (m : OutJ.cli_match) : bool =
+  not (Rule_ID.equal m.check_id Rule_ID.dash_e)
+
 let same_sink (a : OutJ.cli_match) (b : OutJ.cli_match) : bool =
   Fpath.equal a.path b.path
   && Rule_ID.equal a.check_id b.check_id
   && Int.equal a.start.offset b.start.offset
   && Int.equal a.end_.offset b.end_.offset
 
+(* Runs of findings that share a sink, in the order they arrived.
+   Only neighbours are compared, so [matches] has to come sorted by
+   Semgrep_output_utils.sort_cli_matches, whose key -- path, then the
+   start and end positions, then the rule -- puts the findings of one sink
+   next to each other. Handed an unsorted list this quietly returns groups
+   that are too small rather than failing. *)
 let group_findings_by_sink (matches : OutJ.cli_match list) :
     OutJ.cli_match list list =
   List.fold_left
@@ -651,27 +668,90 @@ let sources_of_sink (findings : OutJ.cli_match list) :
     (OutJ.location * string) list =
   findings |> List_.filter_map source_of_finding
 
-(* [s] cut to [width] columns, an ellipsis standing for what was dropped.
-   A source that spans several lines becomes one long line, which would
-   otherwise run off the side of the report. *)
+(* [s] cut to [width] characters, an ellipsis standing for what was
+   dropped. A source that spans several lines becomes one long line, which
+   would otherwise run off the side of the report.
+
+   Counted in characters rather than bytes: a byte count clips a CJK or
+   accented line to a third of the room it was given. Characters are not
+   columns either -- a CJK character occupies two -- so a line of them
+   still overruns, but by a factor of two rather than three, and nothing
+   else in the report models double-width characters yet. *)
 let ellipsize ~(width : int) (s : string) : string =
-  if width <= 0 || String.length s <= width then s
+  (* A budget of nothing still means the text does not fit; returning it
+     whole is the one answer that cannot be right. The ellipsis alone says
+     as much as there is room to say. *)
+  if width <= 1 then "…"
   else
-    (* back off any trailing continuation byte, so the cut never lands
-       inside a UTF-8 character *)
-    let rec cut_at (i : int) : int =
-      if i <= 0 then 0
+    let offsets = Utf8.code_point_offsets s in
+    (* the array carries the length of [s] as its last element, so it holds
+       one more entry than the string has characters *)
+    let characters = Array.length offsets - 1 in
+    if characters <= width then s
+    else String_.safe_sub s 0 offsets.(max 0 (width - 1)) ^ "…"
+
+(* The lines of a "from" clause, wrapped to [width]: where the taint came
+   from, and the code there. Each line comes as (located, code) so that a
+   skin can give the two different colours -- the path is a locator, the
+   code is code -- which a single wrapped string could not express.
+
+   The path is never shortened: it is what a reader opens. The code is,
+   since a source spanning several lines arrives here collapsed onto one.
+   The code shares the last line of the path when it fits and takes lines
+   of its own when it does not. *)
+let from_clause_lines ~(width : int) ~(located : string) ~(code : string) :
+    (string * string) list =
+  let wrap (txt : string) : string list =
+    wrap_lines ~filler:Textwrap ~width:(safe_width width) ~initial_indent:0
+      ~subsequent_indent:0 txt
+    |> List_.map snd
+  in
+  let code = ellipsize ~width code in
+  match wrap located with
+  | [] -> [ ("", code) ]
+  | located_lines ->
+      let last = List.length located_lines - 1 in
+      let tail = List.nth located_lines last in
+      if String.length tail + 2 + String.length code <= width then
+        located_lines
+        |> List.mapi (fun (i : int) (txt : string) ->
+               if i = last then (txt, code) else (txt, ""))
       else
-        let c = Char.code s.[i] in
-        if c >= 0x80 && c < 0xc0 then cut_at (i - 1) else i
-    in
-    String_.safe_sub s 0 (cut_at (width - 1)) ^ "…"
+        List_.map (fun (txt : string) -> (txt, "")) located_lines
+        @ List_.map (fun (txt : string) -> ("", txt)) (wrap code)
 
 (* python compatibility: the 22m and 24m are "normal color or
     intensity", and "underline off" *)
 let esc_prefix (ppf : Format.formatter) =
   if Fmt.style_renderer ppf = `Ansi_tty then Fmt.any "\027[22m\027[24m  "
   else Fmt.any "  "
+
+(* The widest line number the traces of these findings will draw. A skin
+   sizes its trace gutter from this rather than from the finding's own line
+   number: a trace step lives wherever the taint came from, which is often
+   another file entirely and may be thousands of lines further down. Sizing
+   it from the finding leaves a wider number overflowing its column and the
+   code beside it out of line with its neighbours. *)
+let trace_line_digits (findings : OutJ.cli_match list) : int =
+  let widest =
+    findings
+    |> List.fold_left
+         (fun (acc : int) (finding : OutJ.cli_match) ->
+           match finding.extra.dataflow_trace with
+           | None -> acc
+           | Some trace ->
+               steps_of_dataflow_trace trace
+               |> List.fold_left
+                    (fun (acc : int) (step : trace_step) ->
+                      step.locations
+                      |> List.fold_left
+                           (fun (acc : int) (loc : OutJ.location) ->
+                             max acc loc.start.line)
+                           acc)
+                    acc)
+         1
+  in
+  String.length (string_of_int (max 1 widest))
 
 (* One located line (or several, when the location spans them), under
    [prefix] and in the skin's gutter, with the located span picked out.

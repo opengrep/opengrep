@@ -25,6 +25,12 @@ type phrase = {
   suffix : string;
 }
 
+(* What a phrase counts, added up. A skin wording a phrase itself needs the
+   number without the nouns, which carry a sentence of their own. *)
+let total_of_phrase (x : phrase) : int =
+  x.counts
+  |> List.fold_left (fun (acc : int) ((n : int), (_ : string)) -> acc + n) 0
+
 (* the plain wording of a phrase, which a skin is free not to use *)
 let string_of_phrase (x : phrase) : string =
   let counts =
@@ -80,6 +86,16 @@ module Plan = struct
   type lang_row = { language : string; rules : int; files : int }
   type origin_row = { origin : string; rules : int }
 
+  (* Which of a differential scan's runs a plan is for. A
+     --baseline-commit scan states a plan twice: once for the working
+     tree, then again for the same paths as they stood at the baseline
+     commit, the replay that decides which findings are new. The replay
+     often has nothing to look at, so unlabelled its plan reads as a
+     contradiction of the one above it. *)
+  type run =
+    | Current
+    | Baseline
+
   type t = {
     (* the files targeting found, and every rule that was loaded *)
     num_targets : int;
@@ -94,6 +110,8 @@ module Plan = struct
     lang_rows : lang_row list;
     (* sorted by rules desc, then origin *)
     origin_rows : origin_row list;
+    (* which run this plan describes; see [run] *)
+    run : run;
   }
 end
 
@@ -121,21 +139,6 @@ module Summary = struct
 end
 
 (*****************************************************************************)
-(* The rules that ran out of time *)
-(*****************************************************************************)
-
-module Timeouts = struct
-  type file = { path : string; rule_ids : string list }
-
-  type t = {
-    (* one entry per file, sorted by path; the ids of each are sorted too *)
-    files : file list;
-    (* the --timeout-threshold in force, which the report reads back *)
-    threshold : int;
-  }
-end
-
-(*****************************************************************************)
 (* The end of the scan *)
 (*****************************************************************************)
 
@@ -145,6 +148,9 @@ module Result = struct
    * was reported in, which is what a report means by "in N files". *)
   type tally = {
     rules_ran : int;
+    (* how many distinct rules something was reported by, which is not
+     * rules_ran: a report that says "from N rules" means these *)
+    rules_with_findings : int;
     files_scanned : int;
     files_with_findings : int;
     findings : int;

@@ -24,8 +24,17 @@
  *)
 
 type phase =
+  (* fetching a large ruleset over the network takes long enough that
+     without this the app looks wedged *)
+  | Loading_rules
   | Analyzing_targets
   | Building_interfile_graph
+  (* the second engine run of a --baseline-commit scan, which re-scans the
+     changed paths at the baseline commit only to work out which findings
+     are new. It reports no count of its own: it is a different pass over
+     the same files, and a counter restarting from zero would read as the
+     scan having gone backwards. *)
+  | Comparing_with_baseline
   (* Targets and interfile rules are counted as one, though a rule is by far
      the longer unit: they run together in one pool from the start, so any
      split leaves whichever half is not on show looking stalled. One count
@@ -75,17 +84,64 @@ let empty_dot = "·"
    everything below. *)
 let spinner_cols = 2
 
-(* The real width, not Findings_layout.text_width, which floors at 40 and so
+(* Narrower than this and nothing the bar can say is worth saying, so a
+   width below it is taken for a terminal that does not know its own size
+   rather than for a very small one. A pty whose size was never set reports
+   zero, and COLUMNS=0 turns up in CI and under script(1). *)
+let min_sensible_columns = 10
+
+(* How long [finish] gives a terminal behind on its reading to take the
+   sequence that puts the cursor back. Long enough for a pane that is
+   catching up, short enough not to read as a hang. *)
+let cursor_restore_wait = 2.0
+
+(* The width of the terminal, asked of whichever descriptor will answer.
+   The bar draws on stderr, but nothing we depend on will report the size
+   of a descriptor we name: Terminal_size asks about stdout, ANSITerminal
+   about stdin. With stdout redirected -- > out, | less -- the first has
+   nothing to say, and the bar would then draw at its full width and wrap
+   a narrower window, which the one-row erase cannot clean up. Stdin is
+   still the terminal in that case, and is the same terminal as stderr in
+   any arrangement worth serving, so it answers for it.
+
+   The real width, not Findings_layout.text_width, which floors at 40 and so
    would claim room a narrow terminal does not have. Read for every frame,
-   so that resizing a window is picked up without watching for SIGWINCH. *)
+   so that resizing a window is picked up without watching for SIGWINCH.
+   [None] means "no idea", which costs the dotted bar but not the counts;
+   see [counter]. *)
 let terminal_columns () : int option =
-  match
+  let from_env =
     Opengrep_env.getenv_opt "COLUMNS"
     |> Option.map String.trim
     |> Fun.flip Option.bind int_of_string_opt
-  with
-  | Some w when w > 0 -> Some w
-  | _ -> Terminal_size.get_columns ()
+  in
+  (* raises, rather than returning an option, when stdin is not a terminal
+     and on a platform its stub cannot serve *)
+  let from_stdin () : int option =
+    match ANSITerminal.size () with
+    | width, _height -> Some width
+    | exception _ -> None
+  in
+  let columns =
+    match from_env with
+    | Some w when w > 0 -> Some w
+    | _ -> (
+        match Terminal_size.get_columns () with
+        | Some _ as w -> w
+        | None -> from_stdin ())
+  in
+  match columns with
+  | Some w when w >= min_sensible_columns -> Some w
+  | _ -> None
+
+(* $NO_COLOR and --force-color are resolved once into the console's
+   highlight setting; the bar follows it as the rest of the report does.
+   Only the styling goes: the erase and the spinner are not colour, and a
+   reader who turned colour off still wants to see that work is happening. *)
+let styling_on () : bool =
+  match Console.get_highlight () with
+  | Console.On -> true
+  | Console.Off -> false
 
 let progress_bar ~(width : int) ~(filled : int) ~(total : int) : string =
   let ratio =
@@ -99,15 +155,17 @@ let progress_bar ~(width : int) ~(filled : int) ~(total : int) : string =
     Buffer.add_string buf filled_dot
   done;
   if filled_len < width then begin
-    Buffer.add_string buf faint_str;
+    let styled = styling_on () in
+    if styled then Buffer.add_string buf faint_str;
     for _ = 1 to width - filled_len do
       Buffer.add_string buf empty_dot
     done;
-    Buffer.add_string buf normal_str
+    if styled then Buffer.add_string buf normal_str
   end;
   Buffer.contents buf
 
-let titled (s : string) : string = bold_str ^ s ^ normal_str
+let titled (s : string) : string =
+  if styling_on () then bold_str ^ s ^ normal_str else s
 
 (* A line wider than the terminal wraps, and the erase before each frame
    clears one row, so the rows above it would be left behind as the bar
@@ -122,8 +180,19 @@ let counter ~(title : string) ~(with_bar : bool) ~(done_ : int) ~(total : int)
     | None -> true (* no terminal to ask: behave as it always did *)
     | Some available -> cols <= available
   in
+  (* The bar is the widest of the three and the one worth giving up when
+     nothing will say how wide the terminal is. The counts are short enough
+     to risk; a wrapped bar is not, since the row it spills onto outlives
+     the one-row erase and stays on the screen. Every ordinary run answers
+     through one descriptor or another, so this is the redirected-stdout,
+     redirected-stdin case and no other. *)
+  let known_room_for (cols : int) : bool =
+    Option.is_some columns && room_for cols
+  in
   let with_title = spinner_cols + String.length title + 1 in
-  if with_bar && room_for (with_title + bar_width + 1 + String.length numbers)
+  if
+    with_bar
+    && known_room_for (with_title + bar_width + 1 + String.length numbers)
   then
     Printf.sprintf "%s %s %s" (titled title)
       (progress_bar ~width:bar_width ~filled:done_ ~total)
@@ -150,8 +219,10 @@ let label ~(columns : int option) (s : string) : string =
 
 let phase_to_string ~(columns : int option) (phase : phase) : string =
   match phase with
+  | Loading_rules -> label ~columns "Loading rules..."
   | Analyzing_targets -> label ~columns "Analyzing targets..."
   | Building_interfile_graph -> label ~columns "Building call graph..."
+  | Comparing_with_baseline -> label ~columns "Comparing with baseline..."
   | Scanning { total; completed } ->
       let done_ = Atomic.get completed in
       if total > 0 then
@@ -173,10 +244,40 @@ let phase_to_string ~(columns : int option) (phase : phase) : string =
  * reporter's lock. An exception from there would surface out of some
  * unrelated log call and leave that lock held, hanging every message after
  * it. Losing the bar costs nothing by comparison. *)
-let fmt_eprintf (s : string) : unit =
+let fmt_eprintf ?(may_drop : bool = true) ?(wait : float = 0.)
+    (s : string) : unit =
   try
-    Format.pp_print_as Format.err_formatter 0 s;
-    Format.pp_print_flush Format.err_formatter ()
+    (* A frame is skipped when the terminal cannot take it. A pty whose
+       reader has stopped -- Ctrl-S, a paused tmux pane, a stalled ssh
+       link -- fills its buffer, and a write then blocks. The render thread
+       would block holding Logs_.logs_mutex, so every log message in every
+       domain would queue behind it and [finish] would join a thread that
+       never wakes: a decorative line would have stopped the scan. A
+       dropped frame costs nothing; the next one redraws the whole line.
+
+       [may_drop:false] is for the erase before a log message, which is
+       not decorative: dropping it does not cost a frame, it corrupts what
+       follows, since the message lands on the end of the bar's own line
+       and the reporter writes it whether the terminal is ready or not.
+       Blocking there is safe where dropping a frame is not -- the message
+       behind it was going to block on the same descriptor anyway, and the
+       caller is a logging thread rather than the render thread.
+
+       [wait] is how long to give stderr to become writable. The cursor is
+       put back through it, so that a terminal briefly behind on its
+       reading still gets it and is not left without one, while a terminal
+       that has stopped reading for good costs a bounded pause and not a
+       scan that never ends. *)
+    let writable =
+      if not may_drop then true
+      else
+        let _, writable, _ = Unix.select [] [ Unix.stderr ] [] wait in
+        not (List_.null writable)
+    in
+    if writable then begin
+      Format.pp_print_as Format.err_formatter 0 s;
+      Format.pp_print_flush Format.err_formatter ()
+    end
   with
   | Sys_error _
   | Unix.Unix_error _ ->
@@ -188,7 +289,7 @@ let render_frame ~(frame_index : int) ~(columns : int option) (phase : phase) :
   Printf.sprintf "%s%s %s" erase_line_str glyph
     (phase_to_string ~columns phase)
 
-let erase_status_bar () : unit = fmt_eprintf erase_line_str
+let erase_status_bar () : unit = fmt_eprintf ~may_drop:false erase_line_str
 
 (*****************************************************************************)
 (* The loop *)
@@ -262,8 +363,14 @@ let create (initial_phase : phase) : t option =
     (* These two run with Logs_.logs_mutex held: see the contract on
        Logs_.before_log_hook. Neither body may log or take a lock, which is
        why is_paused reads the count without one and why fmt_eprintf
-       swallows a failed write instead of raising. *)
-    Logs_.before_log_hook := erase_status_bar;
+       swallows a failed write instead of raising.
+
+       Both check the pause. A log emitted while stderr is redirected would
+       otherwise write the erase sequence into the captured text, which is
+       the very corruption the pause exists to prevent, arriving through
+       the logging door instead of the render loop's. *)
+    Logs_.before_log_hook :=
+      (fun () -> if not (is_paused bar) then erase_status_bar ());
     Logs_.after_log_hook :=
       (fun () ->
         if not (is_paused bar) then fmt_eprintf !(bar.last_rendered));
@@ -283,17 +390,21 @@ let set_phase (bar : t) (new_phase : phase) : unit =
 let notify_work_item_done (bar : t) : unit =
   match bar.phase with
   | Scanning { completed; _ } -> Atomic.incr completed
+  | Loading_rules
   | Analyzing_targets
-  | Building_interfile_graph ->
+  | Building_interfile_graph
+  | Comparing_with_baseline ->
       ()
 
-(* Stopping joins the thread, so this must run once: a second call would
- * join a thread that has already been joined. *)
+(* Stopping joins the thread, so the work happens once however often this
+ * is called: the caller stops the bar before printing its report, and an
+ * enclosing handler stops it again on the way out. *)
 let finish (bar : t) : unit =
-  Atomic.set bar.stop true;
-  Thread.join bar.thread;
-  Logs_.before_log_hook := (fun () -> ());
-  Logs_.after_log_hook := (fun () -> ());
-  UCmd.pause_stderr_hook := (fun () -> ());
-  UCmd.unpause_stderr_hook := (fun () -> ());
-  fmt_eprintf (erase_line_str ^ show_cursor_str)
+  if not (Atomic.exchange bar.stop true) then begin
+    Thread.join bar.thread;
+    Logs_.before_log_hook := (fun () -> ());
+    Logs_.after_log_hook := (fun () -> ());
+    UCmd.pause_stderr_hook := (fun () -> ());
+    UCmd.unpause_stderr_hook := (fun () -> ());
+    fmt_eprintf ~wait:cursor_restore_wait (erase_line_str ^ show_cursor_str)
+  end

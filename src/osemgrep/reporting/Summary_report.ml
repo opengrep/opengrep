@@ -193,9 +193,23 @@ let pp_summary ppf (summary : Skin_model.Summary.t) : unit =
           "  For a full list of skipped files, run opengrep with the \
            --verbose flag.@\n")
 
+(* The rules that ran out of time. Not in Skin_model, though it is a view
+   model like the others: no skin renders it -- the driver prints the block
+   below whatever the skin -- so it is not part of what a skin is handed. *)
+module Timeouts = struct
+  type file = { path : string; rule_ids : string list }
+
+  type t = {
+    (* one entry per file, sorted by path; the ids of each are sorted too *)
+    files : file list;
+    (* the --timeout-threshold in force, which the report reads back *)
+    threshold : int;
+  }
+end
+
 (* python: OutputHandler._handle_semgrep_timeout_errors *)
 let timeouts_of_errors ~(timeout_threshold : int)
-    (errors : OutJ.cli_error list) : Skin_model.Timeouts.t =
+    (errors : OutJ.cli_error list) : Timeouts.t =
   let files =
     errors
     |> List_.filter_map (fun (e : OutJ.cli_error) ->
@@ -211,15 +225,15 @@ let timeouts_of_errors ~(timeout_threshold : int)
            Fpath.compare p1 p2)
     |> List_.map (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
            {
-             Skin_model.Timeouts.path = Fpath.to_string path;
+             Timeouts.path = Fpath.to_string path;
              rule_ids = rule_ids |> List_.map Rule_ID.to_string;
            })
   in
-  { Skin_model.Timeouts.files; threshold = timeout_threshold }
+  { Timeouts.files; threshold = timeout_threshold }
 
-let pp_timeout_warnings ppf (timeouts : Skin_model.Timeouts.t) : unit =
+let pp_timeout_warnings ppf (timeouts : Timeouts.t) : unit =
   timeouts.files
-  |> List.iter (fun (f : Skin_model.Timeouts.file) ->
+  |> List.iter (fun (f : Timeouts.file) ->
          let num_errs = List.length f.rule_ids in
          Fmt.pf ppf
            "%d timeout error(s) in %s when running the following rules: [%s]@\n"
@@ -233,7 +247,7 @@ let pp_timeout_warnings ppf (timeouts : Skin_model.Timeouts.t) : unit =
   if
     Int.equal timeouts.threshold 0
     && timeouts.files
-       |> List.exists (fun (f : Skin_model.Timeouts.file) ->
+       |> List.exists (fun (f : Timeouts.file) ->
               List.length f.rule_ids > 5)
   then
     Fmt.pf ppf

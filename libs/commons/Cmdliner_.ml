@@ -176,7 +176,13 @@ let float_opt_with_env ~(env : string) ~(doc : string) (options : string list)
 (* A single-valued option chosen from a fixed set of names, whose value can
    also come from an environment variable. The command line wins, and says
    so when it overrides a variable that is set; a name the set does not hold
-   is an error that lists the ones it does. *)
+   is an error that lists the ones it does.
+
+   [env] is not handed to Arg.info, so cmdliner neither reads the variable
+   nor lists it under ENVIRONMENT: the helper reads it itself, through
+   Opengrep_env, which is what honours the OPENGREP_/SEMGREP_ alias that
+   cmdliner knows nothing about. The doc string names the variable in its
+   place. Same bargain as the other *_with_env helpers here. *)
 let enum_with_env ~(env : string) ~(doc : string) ~(default : 'a)
     ~(names : (string * 'a) list) (options : string list) : 'a Term.t =
   let value =

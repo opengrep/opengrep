@@ -89,8 +89,16 @@ type t = {
    *)
   file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;
   (* Called as the scan moves through its phases and once per unit of work
-   * it finishes. [Target_done] arrives from whichever domain ran the unit,
-   * so the hook has to be safe to call concurrently. *)
+   * it finishes.
+   *
+   * [Target_done] and [Interfile_rule_done] arrive from whichever domain
+   * ran the unit, so the hook must be safe to call concurrently. It should
+   * not raise either: those two are sent from the [finally] of the work
+   * item, where an exception would become [Finally_raised] and fail the
+   * unit. [Core_scan.report_progress] catches one so that a reporting
+   * fault cannot become a scan error, but it is contained and not
+   * reported: a hook that raises simply stops counting. Counting into an
+   * atomic is the shape this expects. *)
   progress_hook : (progress -> unit) option;
   (* Limits *)
   (* maximum time to spend running a rule on a single file *)

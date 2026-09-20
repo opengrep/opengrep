@@ -7,8 +7,11 @@
    report. *)
 
 type phase =
+  | Loading_rules
   | Analyzing_targets
   | Building_interfile_graph
+  (* the baseline replay of a differential scan; see Status_bar.ml *)
+  | Comparing_with_baseline
   (* targets and interfile rules counted as one; see Status_bar.ml *)
   | Scanning of { total : int; completed : int Atomic.t }
 
@@ -24,6 +27,6 @@ val set_phase : t -> phase -> unit
    outside the scanning phase, and safe to call from any domain. *)
 val notify_work_item_done : t -> unit
 
-(* Stops the thread, unhooks, and clears the line. Call it once: it joins
-   the render thread. *)
+(* Stops the thread, unhooks, and clears the line. Calling it more than
+   once is harmless; only the first call does the work. *)
 val finish : t -> unit

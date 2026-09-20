@@ -8,8 +8,6 @@
  * where the rendering machinery is.
  *)
 
-let default : Skin.name = Skin.default
-
 let resolve (name : Skin.name) : (module Skin.S) =
   match name with
   | Skin.Legacy -> (module Skin_legacy : Skin.S)

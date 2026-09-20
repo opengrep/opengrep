@@ -12,6 +12,11 @@
 
 module P = Skin_model.Plan
 
+(* What this module builds, named here so that a caller taking one -- the
+   core runner, whose business is not the report -- can say [Scan_plan.t]
+   rather than reach into the skins' model for it. *)
+type t = P.t
+
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
@@ -126,4 +131,8 @@ let of_lang_jobs ~(rules : Rule.t list) ~(num_targets : int)
     languages = languages_of lang_jobs;
     lang_rows = lang_rows lang_jobs;
     origin_rows = origin_rows rules;
+    (* The engine runs the same way for either; it is the driver that
+       knows it is replaying a baseline, and marks the plan as it goes
+       past. *)
+    run = P.Current;
   }

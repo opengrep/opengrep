@@ -240,13 +240,9 @@ let setup_stdout (conf : conf) : unit =
     (if text_colour conf ~dest:None then `Ansi_tty else `None)
 
 let skin_ctx ?(interfile_dedup_by = Core_match.Sink)
-    ?(is_interfile = fun (_ : Rule_ID.t) -> false) ?(dest : string option)
-    (conf : conf) : Skin.ctx =
+    ?(is_interfile = fun (_ : Rule_ID.t) -> false) (conf : conf) : Skin.ctx =
   {
-    Skin.color = text_colour conf ~dest;
-    is_tty = !ANSITerminal.isatty Unix.stdout;
-    verbose = conf.skipped_files;
-    width = Findings_layout.text_width;
+    Skin.width = Findings_layout.text_width;
     max_chars_per_line = conf.max_chars_per_line;
     max_lines_per_finding = conf.max_lines_per_finding;
     show_dataflow_traces = conf.show_dataflow_traces;
@@ -276,7 +272,7 @@ let render ~(skin : (module Skin.S)) (conf : conf) (profiler : Profiler.t)
              Fmt.set_style_renderer ppf
                (if text_colour conf ~dest then `Ansi_tty else `None);
              Sk.pp_findings
-               (skin_ctx ~interfile_dedup_by ~is_interfile ?dest conf)
+               (skin_ctx ~interfile_dedup_by ~is_interfile conf)
                ppf cli_output))
   | Sarif ->
       let engine_label =

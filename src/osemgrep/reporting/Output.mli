@@ -44,7 +44,6 @@ val default : conf
 val skin_ctx :
   ?interfile_dedup_by:Core_match.interfile_dedup_by ->
   ?is_interfile:(Rule_ID.t -> bool) ->
-  ?dest:string ->
   conf ->
   Skin.ctx
 

@@ -1,0 +1,8 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 3 insertions(+)
+ create mode 100644 p.py
+p.py
+
+    3 │ print(y)
+

@@ -29,6 +29,10 @@
  * without a "[LEVEL]" prefix.
  *)
 type dest =
+  (* Written straight to the formatter, and held apart from the status bar
+     by Skin_emit rather than by Logs. The document is rendered with the
+     log mutex held, so it must not log -- which a document has no reason
+     to do, being a rendering of data the builder already gathered. *)
   | Stdout
   | Stderr of Logs.level
 
@@ -41,12 +45,6 @@ type chunk =
 
 (* What a skin needs to know about the terminal it draws on. *)
 type ctx = {
-  (* whether ANSI styling reaches the reader; decided by the destination
-   * this report is going to, as the style renderer of its formatter is *)
-  color : bool;
-  is_tty : bool;
-  (* --verbose or --debug *)
-  verbose : bool;
   (* the columns the report draws within, already clamped *)
   width : int;
   (* --max-chars-per-line and --max-lines-per-finding *)
@@ -68,17 +66,9 @@ type ctx = {
 (* The interface *)
 (*****************************************************************************)
 
-(* Only for a skin that repaints while the scan runs; ordinary skins answer
- * None and stay pure. *)
-module type LIVE = sig
-  type t
-
-  val start : ctx -> t
-  val stop : t -> unit
-end
-
 module type S = sig
-  val name : string
+  (* what --skin says this skin looks like; Scan_CLI builds its help from
+     these, so a skin describes itself in one place only *)
   val doc : string
 
   (* before the rules are fetched: the banner, and what the rules come from *)
@@ -106,8 +96,6 @@ module type S = sig
   (* Whether this skin wants the status bar the scan draws while it works.
      A skin that keeps the terminal quiet says no. *)
   val wants_status_bar : bool
-
-  val live : (module LIVE) option
 end
 
 (*****************************************************************************)

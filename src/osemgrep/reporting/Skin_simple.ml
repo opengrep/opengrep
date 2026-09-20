@@ -40,7 +40,8 @@ let separator = " │ "
 (* A located line of a trace sits under the file name that introduces it,
    which Findings_layout.esc_prefix indents by two columns. *)
 let trace_number_indent = "  "
-let separator_width = 3
+(* derived, so that changing [separator] moves the gutter with it *)
+let separator_width = Utf8.length separator
 
 (*****************************************************************************)
 (* Styling *)
@@ -67,28 +68,73 @@ let severity_word (severity : OutJ.match_severity) : string * Fmt.style =
 (*****************************************************************************)
 
 (* the file a run of findings is in, stated once above them *)
-let pp_file_header ppf (path : string) : unit =
-  Fmt.pf ppf "%a@.@." Fmt.(styled `Bold string) path
+(* A deep path is wrapped rather than shortened: it is what a reader opens,
+   and the report has no other copy of it. *)
+let pp_file_header (ctx : Skin.ctx) ppf (path : string) : unit =
+  Findings_layout.wrap_lines ~filler:Textwrap
+    ~width:(Findings_layout.safe_width ctx.width) ~initial_indent:0
+    ~subsequent_indent:0 path
+  |> List.iter (fun ((_ : string), (txt : string)) ->
+         Fmt.pf ppf "%a@." Fmt.(styled `Bold string) txt);
+  Fmt.pf ppf "@."
 
-(* Whether a finding is one that fails a ci run. Severity does not say: a
-   rule of any severity can be advisory, so a ci report has to mark it. *)
-let pp_ci_marker (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
-  if ctx.is_ci_invocation then
-    if Findings_layout.is_blocking m.extra.metadata then
-      Fmt.pf ppf "  %a" Fmt.(styled (`Fg `Red) string) "blocking"
-    else Fmt.pf ppf "  %a" Fmt.(styled `Faint string) "non-blocking"
+(* A ci report splits its findings into the ones that fail the run and the
+   ones that do not, under a heading each, so nothing is repeated on every
+   finding: the section it sits in already says which it is. *)
+let pp_section ppf (title : string) (style : Fmt.style) (count : int) : unit =
+  Fmt.pf ppf "%a %a@.@."
+    Fmt.(styled style string)
+    title
+    Fmt.(styled `Faint string)
+    (Printf.sprintf "· %s" (String_.unit_str count "finding"))
+
+(* The distinct rules behind the findings that fail the run: what a reader
+   has to go and fix before the build passes. There is no non-blocking
+   counterpart, as there is nothing to act on. *)
+let pp_rules_fired ppf (matches : OutJ.cli_match list) : unit =
+  let ids =
+    matches
+    |> List_.map (fun (m : OutJ.cli_match) -> Rule_ID.to_string m.check_id)
+    |> List.sort_uniq String.compare
+  in
+  if not (List_.null ids) then begin
+    Fmt.pf ppf "%a@." Fmt.(styled `Bold string) "blocking rules fired";
+    ids
+    |> List.iter (fun (id : string) ->
+           Fmt.pf ppf "%s%a@." indent Fmt.(styled (`Fg `Cyan) string) id);
+    Fmt.pf ppf "@."
+  end
 
 (* "  warn  os-system-concat"; the line is in the gutter of the snippet *)
+(* A long id is wrapped rather than shortened: it is what a reader copies
+   to silence or search for the rule, so all of it has to be there. The
+   break lands wherever the width falls, mid-token if need be, as the
+   legacy report breaks it -- ids this long are rare enough that a tidier
+   rule is not worth the machinery. *)
 let pp_heading (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
   let word, style = severity_word m.extra.severity in
-  Fmt.pf ppf "%s%a  %a%a@." indent
-    Fmt.(styled style string)
-    word
-    Fmt.(styled (`Fg `Cyan) string)
-    (Rule_ID.to_string m.check_id)
-    (pp_ci_marker ctx) m
+  (* the column the id starts at, which its later lines hang under *)
+  let id_column = indent_size + String.length word + 2 in
+  let pp_id : string Fmt.t = Fmt.(styled (`Fg `Cyan) string) in
+  match
+    Findings_layout.wrap_lines ~filler:Textwrap
+      ~width:(Findings_layout.safe_width (ctx.width - id_column))
+      ~initial_indent:0 ~subsequent_indent:0
+      (Rule_ID.to_string m.check_id)
+  with
+  | [] -> ()
+  | (_, first) :: rest ->
+      Fmt.pf ppf "%s%a  %a@." indent Fmt.(styled style string) word pp_id first;
+      let hanging = String.make id_column ' ' in
+      rest
+      |> List.iter (fun ((_ : string), (txt : string)) ->
+             Fmt.pf ppf "%s%a@." hanging pp_id txt)
 
+(* Nothing is printed for a rule with no message: the indent on its own
+   would be a blank line of trailing whitespace. *)
 let pp_message (ctx : Skin.ctx) ppf (message : string) : unit =
+  if String.equal (String.trim message) "" then ()
+  else
   message |> Findings_layout.message_paragraphs
   |> List.iteri (fun (i : int) ((extra_indent : int), (paragraph : string)) ->
          if i > 0 then Fmt.pf ppf "@.";
@@ -172,12 +218,18 @@ let pp_code (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
 let pp_origins (ctx : Skin.ctx) ppf (m : OutJ.cli_match)
     (group : OutJ.cli_match list) : unit =
   let entries = if group = [] then [ m ] else group in
-  let several = List.length entries > 1 in
-  let name_sources = ctx.is_interfile m.check_id && several in
+  (* Named for every interfile finding, not only where several share a
+     sink. The line is provenance, not a way of telling duplicates apart:
+     the snippet is the sink, and for a cross-file flow it says nothing
+     about where the untrusted value entered. The legacy report names the
+     source whenever the rule is interfile, and this is the default skin. *)
+  let name_sources = ctx.is_interfile m.check_id in
   let traces = ctx.show_dataflow_traces in
   if name_sources || traces then begin
-    (* the same gutter width the snippet above used, so the two line up *)
-    let digits = String.length (string_of_int m.end_.line) in
+    (* wide enough for the largest number the traces below will draw,
+       which is not the finding's own: a step can sit far down another
+       file *)
+    let digits = Findings_layout.trace_line_digits entries in
     let faint (glyph : string) : string =
       Fmt.str_like ppf "%a" Fmt.(styled `Faint string) glyph
     in
@@ -195,20 +247,37 @@ let pp_origins (ctx : Skin.ctx) ppf (m : OutJ.cli_match)
                     let where =
                       Printf.sprintf "%s:%d" !!(loc.path) loc.start.line
                     in
-                    (* a source spanning several lines arrives as one long
-                       line, so it is cut to what is left of the width *)
-                    let code =
-                      Findings_layout.ellipsize
-                        ~width:
-                          (ctx.width - body_size - String.length "from "
-                         - String.length where - 2)
-                        code
-                    in
-                    Fmt.pf ppf "%s%a %a  %s@." body
-                      Fmt.(styled `Faint string)
-                      "from"
-                      Fmt.(styled (`Fg `Cyan) string)
-                      where code);
+                    (* The path is never shortened -- it is what a
+                       reader opens -- so the clause wraps instead, the
+                       break falling on the gap before the code where it
+                       can and inside the path only when the path alone is
+                       wider than the line. The code is still cut, since a
+                       source spanning several lines arrives here as one.
+                       Labelled as the fix below it is, so the two read as
+                       the same kind of aside. *)
+                    let label = "from: " in
+                    let column = body_size + String.length label in
+                    let hanging = String.make column ' ' in
+                    (* the locator is coloured, the code beside it is not:
+                       it is code, and reads as the snippets above do *)
+                    Findings_layout.from_clause_lines
+                      ~width:(ctx.width - column) ~located:where ~code
+                    |> List.iteri
+                         (fun (i : int)
+                              ((located : string), (code : string)) ->
+                           let opener =
+                             if i = 0 then body ^ label else hanging
+                           in
+                           (* a line of code alone opens no colour span:
+                              an empty styled string is just two escapes *)
+                           if String.equal located "" then
+                             Fmt.pf ppf "%s%s@." opener code
+                           else
+                             Fmt.pf ppf "%s%a%s@." opener
+                               Fmt.(styled (`Fg `Cyan) string)
+                               located
+                               (if String.equal code "" then ""
+                                else "  " ^ code)));
            if traces then
              finding.extra.dataflow_trace
              |> Option.iter (fun trace ->
@@ -223,12 +292,21 @@ let pp_origins (ctx : Skin.ctx) ppf (m : OutJ.cli_match)
                       ~highlight:[ `Bold ] ppf trace))
   end
 
-let pp_finding ?(group : OutJ.cli_match list = []) (ctx : Skin.ctx) ppf
-    (m : OutJ.cli_match) : unit =
-  pp_heading ctx ppf m;
-  pp_message ctx ppf m.extra.message;
-  (* the blank line that sets the snippet apart from the message *)
-  Fmt.pf ppf "@.";
+(* [heading] is false for a match that repeats the rule and message of the
+   one before it in the same file: those are the same finding said again of
+   another line, and the report states the rule once and lets the snippets
+   follow. The blank line under the message goes with it, the finding above
+   having already closed with one. *)
+let pp_finding ?(group : OutJ.cli_match list = []) ?(heading = true)
+    (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
+  (* Guarded here rather than where [heading] is decided, so that no
+     caller can head a -e finding by asking for one. *)
+  if heading && Findings_layout.has_rule_name m then begin
+    pp_heading ctx ppf m;
+    pp_message ctx ppf m.extra.message;
+    (* the blank line that sets the snippet apart from the message *)
+    Fmt.pf ppf "@."
+  end;
   pp_code ctx ppf m;
   pp_origins ctx ppf m group;
   (match Option.map (Findings_layout.fix_lines ~first_col:m.start.col) m.extra.fix with
@@ -237,13 +315,32 @@ let pp_finding ?(group : OutJ.cli_match list = []) (ctx : Skin.ctx) ppf
   | Some [] ->
       Fmt.pf ppf "@.";
       Fmt.pf ppf "%sfix: %a@." body Fmt.(styled (`Fg `Red) string) "delete"
-  | Some (first :: rest) ->
+  | Some (_ :: _ as fix) ->
       (* set apart from the snippet, as the snippet is from the message;
-         the lines after the first hang under the text, not the label *)
+         the lines after the first hang under the text, not the label. A
+         one-line fix can be far wider than the report, so each line is
+         wrapped as the legacy report wraps it. *)
+      let label = "fix: " in
+      let hanging = body ^ String.make (String.length label) ' ' in
+      let width =
+        Findings_layout.safe_width
+          (ctx.width - body_size - String.length label)
+      in
       Fmt.pf ppf "@.";
-      Fmt.pf ppf "%sfix: %s@." body first;
-      let hanging = body ^ String.make (String.length "fix: ") ' ' in
-      rest |> List.iter (fun (l : string) -> Fmt.pf ppf "%s%s@." hanging l)
+      let first = ref true in
+      fix
+      |> List.iter (fun (line : string) ->
+             Findings_layout.wrap_lines ~filler:Textwrap ~width
+               ~initial_indent:0 ~subsequent_indent:0 line
+             |> List.iter (fun ((_ : string), (txt : string)) ->
+                    if !first then (
+                      Fmt.pf ppf "%s%s%s@." body label txt;
+                      first := false)
+                    else if String.equal txt "" then
+                      (* a blank line of the fix is blank: the hanging
+                         indent alone would be trailing whitespace *)
+                      Fmt.pf ppf "@."
+                    else Fmt.pf ppf "%s%s@." hanging txt))
   | None -> ());
   Fmt.pf ppf "@."
 
@@ -251,7 +348,6 @@ let pp_finding ?(group : OutJ.cli_match list = []) (ctx : Skin.ctx) ppf
 (* The skin *)
 (*****************************************************************************)
 
-let name = "simple"
 let doc = "A plain report: no boxes, and colour only where it names things."
 
 let line (f : Format.formatter -> unit) : Skin.chunk =
@@ -281,12 +377,24 @@ let rules_status (_ctx : Skin.ctx) (_start : M.Start.t) : string option = None
 let on_plan (_ctx : Skin.ctx) (plan : M.Plan.t) : Skin.chunk list =
   [
     line (fun ppf ->
+        (* A --baseline-commit scan says this twice; the second is the
+           replay, and says so. *)
+        let prefix =
+          match plan.run with
+          | M.Plan.Current -> ""
+          | M.Plan.Baseline -> "baseline · "
+        in
         if plan.num_rules_with_a_target = 0 || plan.num_files_with_a_rule = 0
-        then Fmt.pf ppf "nothing to scan"
+        then Fmt.pf ppf "%snothing to scan" prefix
         else
-          Fmt.pf ppf "%s · %s"
-            (String_.unit_str plan.num_targets "file")
-            (String_.unit_str plan.num_rules "rule"));
+          (* The files a rule will look at and the rules that have one to
+             look at, not everything targeting found and everything that
+             was loaded. On a mixed repository the two are far apart -- one
+             Java rule over a Java benchmark pairs 2766 files out of the
+             5703 found -- and this line is what the scan is about to do. *)
+          Fmt.pf ppf "%s%s · %s" prefix
+            (String_.unit_str plan.num_files_with_a_rule "file")
+            (String_.unit_str plan.num_rules_with_a_target "rule"));
     (* the findings start their own block *)
     line (fun _ppf -> ());
   ]
@@ -294,8 +402,14 @@ let on_plan (_ctx : Skin.ctx) (plan : M.Plan.t) : Skin.chunk list =
 let pp_summary ppf (summary : M.Summary.t) : unit =
   let str = M.string_of_phrase in
   Option.iter (fun (txt : string) -> Fmt.pf ppf "%s@." txt) summary.limited;
+  (* Worded here rather than taken plain: the phrase's own noun is the
+     whole of "N files only partially analyzed due to a ... error", which
+     under a label of the same name would be said twice, and which is
+     plural whatever it counts. The count is all this line needs. *)
   summary.partially_analyzed
-  |> Option.iter (fun p -> Fmt.pf ppf "partially analyzed: %s@." (str p));
+  |> Option.iter (fun (p : M.phrase) ->
+         Fmt.pf ppf "partially analyzed: %s (parse or internal error)@."
+           (String_.unit_str (M.total_of_phrase p) "file"));
   if summary.unplaced_warnings > 0 then
     Fmt.pf ppf "analysis limited: %s about the scan, see --verbose@."
       (String_.unit_str summary.unplaced_warnings "warning");
@@ -335,16 +449,30 @@ let pp_by_file (ctx : Skin.ctx) ppf (matches : OutJ.cli_match list) : unit =
   in
   groups
   |> List.fold_left
-       (fun (previous : string option) (group : OutJ.cli_match list) ->
+       (fun ((previous : string option), (said : (Rule_ID.t * string) option))
+            (group : OutJ.cli_match list) ->
          match group with
-         | [] -> previous
+         | [] -> (previous, said)
          | (m : OutJ.cli_match) :: _ ->
              let path = !!(m.path) in
              let here = Some path in
-             if previous <> here then pp_file_header ppf path;
-             pp_finding ~group ctx ppf m;
-             here)
-       None
+             let file_changed = previous <> here in
+             if file_changed then pp_file_header ctx ppf path;
+             (* the message and not just the rule: it carries the
+                metavariables of this match, so two findings of one rule can
+                still have something different to say *)
+             let heading =
+               file_changed
+               ||
+               match said with
+               | None -> true
+               | Some (id, msg) ->
+                   (not (Rule_ID.equal id m.check_id))
+                   || not (String.equal msg m.extra.message)
+             in
+             pp_finding ~group ~heading ctx ppf m;
+             (here, Some (m.check_id, m.extra.message)))
+       (None, None)
   |> ignore
 
 let pp_matches (ctx : Skin.ctx) ppf (matches : OutJ.cli_match list) : unit =
@@ -360,9 +488,28 @@ let pp_time ppf (cli_output : OutJ.cli_output) : unit =
   | None -> ()
 
 let pp_findings (ctx : Skin.ctx) ppf (cli_output : OutJ.cli_output) : unit =
-  cli_output.results |> Semgrep_output_utils.sort_cli_matches
-  |> pp_by_file ctx ppf;
+  let sorted = cli_output.results |> Semgrep_output_utils.sort_cli_matches in
+  (if not ctx.is_ci_invocation then pp_by_file ctx ppf sorted
+   else
+     (* a ci report is read to answer one question first -- what fails the
+        run -- so the findings that do come first, under a heading of their
+        own, and the rules behind them close the report *)
+     let blocking, advisory =
+       List.partition
+         (fun (m : OutJ.cli_match) ->
+           Findings_layout.is_blocking m.extra.metadata)
+         sorted
+     in
+     let section (title : string) (style : Fmt.style)
+         (matches : OutJ.cli_match list) : unit =
+       if not (List_.null matches) then begin
+         pp_section ppf title style (List.length matches);
+         pp_by_file ctx ppf matches
+       end
+     in
+     section "blocking" (`Fg `Red) blocking;
+     section "non-blocking" `Faint advisory;
+     pp_rules_fired ppf blocking);
   pp_time ppf cli_output
 
 let wants_status_bar = true
-let live = None

@@ -279,27 +279,31 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 let before_log_hook : (unit -> unit) ref = ref (fun () -> ())
 let after_log_hook : (unit -> unit) ref = ref (fun () -> ())
 
-let _ =
-  (* A hook that raised would leave the lock held and hang every message
-     after it, in every domain. There is nowhere to report that to -- we are
-     inside the reporter -- so the hook's failure is dropped and logging
-     carries on.
+(* A hook that raised would leave the lock held and hang every message
+   after it, in every domain. There is nowhere to report that to -- we are
+   inside the reporter -- so the hook's failure is dropped and logging
+   carries on.
 
-     This covers a hook that RAISES, and nothing else. A hook that logs, or
-     takes logs_mutex, deadlocks instead, and no handler here can see that
-     coming: the contract in Logs_.mli is what keeps it from happening. *)
-  let run_hook (hook : (unit -> unit) ref) : unit =
-    try !hook () with
-    | _ -> ()
-  in
-  let lock () =
-    Mutex.lock logs_mutex;
-    run_hook before_log_hook
-  and unlock () =
-    run_hook after_log_hook;
-    Mutex.unlock logs_mutex
-  in
-  Logs.set_reporter_mutex ~lock ~unlock
+   This covers a hook that RAISES, and nothing else. A hook that logs, or
+   takes logs_mutex, deadlocks instead, and no handler here can see that
+   coming: the contract in Logs_.mli is what keeps it from happening. *)
+let run_hook (hook : (unit -> unit) ref) : unit =
+  try !hook () with
+  | _ -> ()
+
+let lock_reporter () : unit =
+  Mutex.lock logs_mutex;
+  run_hook before_log_hook
+
+let unlock_reporter () : unit =
+  run_hook after_log_hook;
+  Mutex.unlock logs_mutex
+
+let with_reporter_lock (f : unit -> unit) : unit =
+  lock_reporter ();
+  Common.protect ~finally:unlock_reporter f
+
+let _ = Logs.set_reporter_mutex ~lock:lock_reporter ~unlock:unlock_reporter
 
 (* We previously used use a re-entrant mutex above because otherwise tests
  * using [make core-test] raise an error when trying to lock the already locked

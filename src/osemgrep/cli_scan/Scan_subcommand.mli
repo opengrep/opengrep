@@ -78,6 +78,8 @@ val get_targets_or_exit :
  *)
 val check_targets_with_rules :
   ?print_summary:bool ->
+  (* the bar the caller started, which this stops before it prints *)
+  ?status_bar:Status_bar.t ->
   (* caps - network *)
   < Cap.stdout
   ; Cap.chdir

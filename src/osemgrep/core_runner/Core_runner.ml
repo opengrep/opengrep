@@ -88,7 +88,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
-    ?on_plan:(Skin_model.Plan.t -> unit) ->
+    ?on_plan:(Scan_plan.t -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -457,7 +457,7 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook ?(on_plan = fun (_ : Skin_model.Plan.t) -> ())
+  let run ?file_match_hook ?(on_plan = fun (_ : Scan_plan.t) -> ())
       ?(progress_hook : (Core_scan_config.progress -> unit) option)
       ~(git_repo : bool)
       ~(scanning_roots : Scanning_root.directory list) (conf : conf)

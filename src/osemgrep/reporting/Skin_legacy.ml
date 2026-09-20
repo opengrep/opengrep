@@ -3,10 +3,11 @@
 (*****************************************************************************)
 (* The report opengrep has always printed.
  *
- * This is the default skin, and the one the end-to-end tests pin: every
- * chunk below reproduces one of the print calls the driver used to make,
- * in the order it made them, so that its output stays byte for byte what
- * it was.
+ * This is what every release printed before the other skins existed, and
+ * what the end-to-end tests pin: every chunk below reproduces one of the
+ * print calls the driver used to make, in the order it made them, so that
+ * its output stays byte for byte what it was. It is no longer the default
+ * -- see Skin.default -- so reaching it now takes --skin legacy.
  *)
 
 module M = Skin_model
@@ -45,7 +46,6 @@ let app_str (s : string) : Skin.chunk = app (fun ppf -> Fmt.pf ppf "%s" s)
 (* The skin *)
 (*****************************************************************************)
 
-let name = "legacy"
 let doc = "The report opengrep has always printed."
 
 (* 'opengrep ci' states the environment it runs in whether or not there is a
@@ -150,4 +150,3 @@ let pp_matches (ctx : Skin.ctx) ppf
 
 (* the report opengrep has always printed, which had no status bar *)
 let wants_status_bar = false
-let live = None
