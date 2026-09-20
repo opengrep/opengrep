@@ -1,12 +1,9 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* The report opengrep has always printed.
- *
- * This is the default skin, and the one the end-to-end tests pin: every
- * chunk below reproduces one of the print calls the driver used to make,
- * in the order it made them, so that its output stays byte for byte what
- * it was.
+(* The legacy report: the text output of pysemgrep, byte for byte, which
+ * the end-to-end tests pin. Every chunk below is one line of it, in its
+ * order. It is chosen with --skin legacy; see Skin.default.
  *)
 
 module M = Skin_model
@@ -35,9 +32,9 @@ let logo =
 └──────────────┘
 |}
 
-(* one chunk per line the driver used to hand to Logs.app *)
+(* one chunk per line of the report, written as Logs.app writes it *)
 let app (f : Format.formatter -> unit) : Skin.chunk =
-  Skin.Line (Skin.Stderr Logs.App, f)
+  Skin.Line (Logs.App, f)
 
 let app_str (s : string) : Skin.chunk = app (fun ppf -> Fmt.pf ppf "%s" s)
 
@@ -45,7 +42,6 @@ let app_str (s : string) : Skin.chunk = app (fun ppf -> Fmt.pf ppf "%s" s)
 (* The skin *)
 (*****************************************************************************)
 
-let name = "legacy"
 let doc = "The report opengrep has always printed."
 
 (* 'opengrep ci' states the environment it runs in whether or not there is a
@@ -150,4 +146,3 @@ let pp_matches (ctx : Skin.ctx) ppf
 
 (* the report opengrep has always printed, which had no status bar *)
 let wants_status_bar = false
-let live = None

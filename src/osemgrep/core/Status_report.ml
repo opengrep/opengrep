@@ -2,8 +2,7 @@
 (* Prelude *)
 (*****************************************************************************)
 (*
-  The legacy rendering of the scan plan. The counting it used to do while it
-  printed is now in Scan_plan.ml, so that a skin gets numbers, not rules.
+  The legacy rendering of the scan plan, whose numbers Scan_plan.ml counts.
 
   Partially translated from semgrep_main.py (print_scan_status()) and from
   core_runner.py (print()).

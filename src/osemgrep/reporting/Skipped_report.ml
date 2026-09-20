@@ -12,6 +12,7 @@ module OutJ = Semgrep_output_v1_t
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
+
 (* this is used both in this file and in Summary_report.ml *)
 type skipped_targets_grouped = {
   (* targets skipped because of file targeting spec *)
@@ -31,6 +32,12 @@ type skipped_targets_grouped = {
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
+
+(* What a list cut short by --max-log-list-entries says instead; the rules
+   report uses it too. Here rather than in Output, which the reports must
+   not depend on: the skins do, and Output renders with them. *)
+let too_much_data =
+  "<SKIPPED DATA (too many entries; adjust with --max-log-list-entries)>"
 
 (* Whether the file an error points at is a target of the scan. The errors
    raised while a rule is loaded point at the rule file, which is never
@@ -249,7 +256,7 @@ let pp_skipped ~too_many_entries ppf
     Fmt.(styled `Bold string)
     (esc ^ "Skipped by --exclude patterns:");
   if too_many_entries > 0 && List.length exclude_ignored > too_many_entries then
-    Fmt.pf ppf "   • %s@." Output.too_much_data
+    Fmt.pf ppf "   • %s@." too_much_data
   else pp_list exclude_ignored;
   Fmt.pf ppf "@.";
 

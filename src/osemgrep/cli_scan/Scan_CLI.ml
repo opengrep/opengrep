@@ -318,7 +318,9 @@ let o_no_progress_bar : bool Term.t =
     Arg.info [ "no-progress-bar" ]
       ~doc:
         {|Do not draw the status bar that reports what the scan is doing.
-It is drawn only on a terminal, and never with $(b,--incremental-output).|}
+It is drawn only on a terminal, and not when $(b,TERM) is unset, $(b,dumb)
+or $(b,unknown), when $(b,CI) is set, on Windows, or with
+$(b,--incremental-output).|}
   in
   Arg.value (Arg.flag info)
 
@@ -832,14 +834,6 @@ Each should be one of INFO, WARNING, or ERROR.
        (Cmdliner.Arg.enum
           [ ("INFO", `Info); ("WARNING", `Warning); ("ERROR", `Error) ])
        [] info)
-
-let o_skin : Skin.name Term.t =
-  H.enum_with_env [ "skin" ] ~env:"OPENGREP_SKIN" ~default:Skins.default
-    ~names:Skin.all_names
-    ~doc:
-      {|Which look the text report has: $(b,legacy) is the report opengrep
-has always printed, $(b,simple) is terse and unadorned, $(b,vivid) uses
-colour for readability. Also settable with $(b,OPENGREP_SKIN).|}
 
 let o_exclude_rule_ids : string list Term.t =
   let info =
@@ -1558,7 +1552,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages
-    $ o_skin $ o_skip_invalid_configs $ o_strict
+    $ Skin_CLI.o_skin $ o_skip_invalid_configs $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate

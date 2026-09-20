@@ -194,9 +194,9 @@ let pp_summary ppf (summary : Skin_model.Summary.t) : unit =
            --verbose flag.@\n")
 
 (* python: OutputHandler._handle_semgrep_timeout_errors *)
-let timeouts_of_errors ~(timeout_threshold : int)
-    (errors : OutJ.cli_error list) : Skin_model.Timeouts.t =
-  let files =
+let pp_timeout_warnings ~(timeout_threshold : int) ppf
+    (errors : OutJ.cli_error list) : unit =
+  let timeouts_by_file : (Fpath.t * Rule_ID.t list) list =
     errors
     |> List_.filter_map (fun (e : OutJ.cli_error) ->
            match (e.type_, e.path, e.rule_id) with
@@ -209,32 +209,23 @@ let timeouts_of_errors ~(timeout_threshold : int)
        arbitrary one; sorting by path makes the block reproducible. *)
     |> List.sort (fun ((p1 : Fpath.t), _) ((p2 : Fpath.t), _) ->
            Fpath.compare p1 p2)
-    |> List_.map (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
-           {
-             Skin_model.Timeouts.path = Fpath.to_string path;
-             rule_ids = rule_ids |> List_.map Rule_ID.to_string;
-           })
   in
-  { Skin_model.Timeouts.files; threshold = timeout_threshold }
-
-let pp_timeout_warnings ppf (timeouts : Skin_model.Timeouts.t) : unit =
-  timeouts.files
-  |> List.iter (fun (f : Skin_model.Timeouts.file) ->
-         let num_errs = List.length f.rule_ids in
+  timeouts_by_file
+  |> List.iter (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
+         let num_errs = List.length rule_ids in
          Fmt.pf ppf
            "%d timeout error(s) in %s when running the following rules: [%s]@\n"
-           num_errs f.path
-           (f.rule_ids |> String.concat ", ");
-         if Int.equal num_errs timeouts.threshold then
+           num_errs (Fpath.to_string path)
+           (rule_ids |> List_.map Rule_ID.to_string |> String.concat ", ");
+         if Int.equal num_errs timeout_threshold then
            Fmt.pf ppf
              "Opengrep stopped running rules on %s after %d timeout \
               error(s). See `--timeout-threshold` for more info.@\n"
-             f.path num_errs);
+             (Fpath.to_string path) num_errs);
   if
-    Int.equal timeouts.threshold 0
-    && timeouts.files
-       |> List.exists (fun (f : Skin_model.Timeouts.file) ->
-              List.length f.rule_ids > 5)
+    Int.equal timeout_threshold 0
+    && timeouts_by_file
+       |> List.exists (fun (_path, rule_ids) -> List.length rule_ids > 5)
   then
     Fmt.pf ppf
       "You can use the `--timeout-threshold` flag to set a number of \

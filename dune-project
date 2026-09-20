@@ -106,7 +106,9 @@ a few other projects developed at r2c.
     (ANSITerminal (>= "0.8.4"))
     (alcotest (>= "1.5.0"))
     (cmdliner (>= "1.1.1" ))
-    (logs (>= "0.7.0" ))
+    ; 0.10.0 unlocks the reporter mutex when a reporter raises, which
+    ; Logs_.mk_reporter relies on
+    (logs (>= "0.10.0" ))
     (yojson (>= "1.7.0"))
     (re (>= "1.10.4"))
     ; we're currently "vendoring" pcre2 in libs/pcre2
@@ -480,8 +482,8 @@ For more information see https://opengrep.dev.
     ; Unicode - used via python-str-repr
     uucp
     uutf
-    ; logging
-    logs
+    ; logging; see the commons package for the bound
+    (logs (>= "0.10.0"))
     ; JSON/YAML/XML
     atdgen
     (yojson (>= 2.0.0))

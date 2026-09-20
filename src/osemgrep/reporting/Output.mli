@@ -44,12 +44,9 @@ val default : conf
 val skin_ctx :
   ?interfile_dedup_by:Core_match.interfile_dedup_by ->
   ?is_interfile:(Rule_ID.t -> bool) ->
-  ?dest:string ->
   conf ->
   Skin.ctx
 
-(* used with max_log_list_entries *)
-val too_much_data : string
 
 val is_interfile_rule_id :
   taint_interfile:bool -> Rule.hrules -> Rule_ID.t -> bool
@@ -68,14 +65,6 @@ val setup_stdout : conf -> unit
  *)
 val keeps_ignores : conf -> bool
 
-(* Output the core results on stdout (and in the files given by
- * -o/--output and --<format>-output) depending on flags in conf.
- *
- * The format_context are parameters that are determined at runtime
- * that can also affect the output. For example, if a user is not logged in,
- * then in the SARIF output format, we include a message to nudge the user
- * to log in and try Pro.
- *)
 (* The findings and errors of a scan, made suitable for the user: nosem
    filtering, messages, fingerprints, and the profiling times. Computes
    nothing about the terminal, so a caller is free to render it later. *)
@@ -89,7 +78,6 @@ val cli_output_of_result :
 (* Writes the output: the primary format on stdout (or its -o file), and
    every --<format>-output destination. *)
 val dispatch :
-  skin:(module Skin.S) ->
   < Cap.stdout > ->
   Profiler.t ->
   conf ->
@@ -99,8 +87,15 @@ val dispatch :
   is_interfile:(Rule_ID.t -> bool) ->
   unit
 
+(* Output the core results on stdout (and in the files given by
+ * -o/--output and --<format>-output) depending on flags in conf.
+ *
+ * The format_context are parameters that are determined at runtime
+ * that can also affect the output. For example, if a user is not logged in,
+ * then in the SARIF output format, we include a message to nudge the user
+ * to log in and try Pro.
+ *)
 val output_result :
-  skin:(module Skin.S) ->
   keep_ignored:bool ->
   < Cap.stdout > ->
   conf ->

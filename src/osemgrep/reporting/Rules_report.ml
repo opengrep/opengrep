@@ -26,7 +26,7 @@ let pp_rules ~too_many_entries ppf (rules_source, filtered_rules) =
   Fmt.pf ppf "Rules:@.";
   let rule_id r = fst r.Rule.id in
   if too_many_entries > 0 && List.length filtered_rules > too_many_entries
-  then Fmt.pf ppf "%s" Output.too_much_data
+  then Fmt.pf ppf "%s" Skipped_report.too_much_data
   else
     filtered_rules
     |> List.sort (fun r1 r2 -> Rule_ID.compare (rule_id r1) (rule_id r2))

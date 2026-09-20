@@ -64,22 +64,7 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding
     ~show_dataflow_traces ~append_separator
     ~(is_interfile : Rule_ID.t -> bool)
     ~(sink_findings : OutJ.cli_match list) ppf (m : OutJ.cli_match) =
-  let lines =
-    Option.value
-      ~default:(String.split_on_char '\n' m.extra.lines)
-      m.extra.fixed_lines
-  in
-  let lines, dedented = dedent_lines lines in
-  let lines, trimmed =
-    let ll = List.length lines in
-    let max_lines =
-      if max_lines_per_finding = 0 then ll else max_lines_per_finding
-    in
-    let keep = min ll max_lines in
-    if keep = ll then (lines, None)
-    else (List_.take keep lines, Some (ll - keep))
-  in
-  let start_line = m.start.line in
+  let lines, trimmed = code_lines ~max_lines_per_finding m in
   (* python: per_line_max_chars_limit, the whole rendered line being
      wrapped at --max-chars-per-line, or at the width of the findings
      block when the flag asks for more *)
@@ -89,23 +74,10 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding
        else findings_text_width)
   in
   lines
-  |> List.iteri (fun (i : int) (line : string) ->
-         let line_number = start_line + i in
-         let col c = max 0 (c - 1 - dedented) in
-         let bold_start = if line_number > start_line then 0 else col m.start.col in
-         let bold_end =
-           max bold_start
-             (if line_number >= m.end_.line then
-                min
-                  (if m.start.line = m.end_.line then
-                     bold_start + (m.end_.col - m.start.col)
-                   else col m.end_.col)
-                  (String.length line)
-              else String.length line)
-         in
+  |> List.iter (fun (line : code_line) ->
          (* TODO(secrets): Apply masking to the bold part *)
-         pp_wrapped_code_line ppf ~line_number ~width ~bold_start ~bold_end
-           line);
+         pp_wrapped_code_line ppf ~line_number:line.line_number ~width
+           ~bold_start:line.match_start ~bold_end:line.match_end line.text);
   if is_interfile m.check_id then pp_sources_of_sink ppf sink_findings;
   (if show_dataflow_traces then
      sink_findings
@@ -179,14 +151,13 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
           (not (Rule_ID.equal m.check_id cur.check_id))
           || not (String.equal m.extra.message cur.extra.message)
     in
-    let has_rule_name = cur.check_id <> Rule_ID.dash_e in
     (if must_print_file then
        Fmt.pf ppf "  %a@."
          Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
          !!(cur.path));
     (if must_print_rule then
        let rule_name_lines =
-         if has_rule_name then (
+         if has_rule_name cur then (
            pp_styled_severity ppf cur.extra.severity;
            (* python: RULE_TEXT_WIDTH and RULE_INDENT *)
            wrap_lines ~filler:Textwrap ~width:(safe_width rule_text_width)
@@ -384,11 +355,4 @@ let pp_cli_output
       |> Set_.of_list |> Set_.elements |> List.sort String.compare
     in
     pp_rules_fired ppf "BLOCKING SECRETS RULES FIRED:" secrets_ids);
-  (* the "time" field is there with --time *)
-  match cli_output.time with
-  | Some time ->
-      (* python: a blank line separates the block from the findings, and
-         the last finding printed one already *)
-      if List_.null cli_output.results then Fmt.pf ppf "@.";
-      Time_report.pp_time_summary ppf time cli_output.errors
-  | None -> ()
+  pp_time ppf cli_output

@@ -188,8 +188,8 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
 (*****************************************************************************)
 
 (* Checking (3) *)
-let check_targets_rules (caps : < caps ; .. >) targets_rules
-    core_runner_conf =
+let check_targets_rules (caps : < caps ; .. >)
+    ?(on_plan : (Scan_plan.t -> unit) option) targets_rules core_runner_conf =
   let in_docker = !Semgrep_envvars.v.in_docker in
   let (config : Rules_config.t) =
     Rules_config.parse_config_string ~in_docker metarules_pack
@@ -212,7 +212,8 @@ let check_targets_rules (caps : < caps ; .. >) targets_rules
     Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
   in
   let result_or_exn =
-    core_run_func.run ~git_repo:false ~scanning_roots:[] core_runner_conf
+    core_run_func.run ?on_plan ~git_repo:false ~scanning_roots:[]
+      core_runner_conf
       (* These two configs are irrelevant to the "validate" subcommand *)
       Find_targets.default_conf Match_patterns.default_matching_conf
       (metarules, [])
@@ -314,9 +315,18 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
       conf.rules_source
   in
 
-  (* step2: checking the rules *)
+  (* step2: checking the rules, by a scan of the rule files that states its
+     plan as any scan does, in the skin asked for *)
+  let on_plan : (Scan_plan.t -> unit) option =
+    if Skin_emit.stderr_is_shown () then
+      Some
+        (fun (plan : Scan_plan.t) ->
+          let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
+          Skin_emit.emit (Sk.on_plan (Output.skin_ctx conf.output_conf) plan))
+    else None
+  in
   let metacheck_errors =
-    check_targets_rules caps targets_rules conf.core_runner_conf
+    check_targets_rules caps ?on_plan targets_rules conf.core_runner_conf
   in
 
   (* step3: summarizing findings (errors) *)
@@ -353,9 +363,7 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
    * python: scan in commands/scan.py called its output handler only when
    * the validation had collected errors. *)
   if conf.json && not (List_.null errors) then
-    Output.output_result
-      ~skin:(Skins.resolve conf.output_conf.skin)
-      ~keep_ignored:false
+    Output.output_result ~keep_ignored:false
       (caps :> < Cap.stdout >)
       { conf.output_conf with output_format = Output_format.Json }
       (Profiler.make ())

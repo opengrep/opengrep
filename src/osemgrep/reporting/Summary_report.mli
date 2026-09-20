@@ -26,13 +26,11 @@ val summary_of_skipped :
    printed even when nothing was left out, then the block of counts. *)
 val pp_summary : Skin_model.Summary.t Fmt.t
 
-(* The timeouts of the scan: one entry per file with the ids of the rules
-   that timed out, sorted by path. *)
-val timeouts_of_errors :
+(* The timeouts of the scan, one warning per file with the ids of the rules
+   that timed out, and whether --timeout-threshold stopped the file.
+   Printed on stderr in text mode. *)
+val pp_timeout_warnings :
   timeout_threshold:int ->
+  Format.formatter ->
   Semgrep_output_v1_t.cli_error list ->
-  Skin_model.Timeouts.t
-
-(* The legacy rendering of the above, and whether --timeout-threshold
-   stopped a file. Printed on stderr in text mode. *)
-val pp_timeout_warnings : Skin_model.Timeouts.t Fmt.t
+  unit

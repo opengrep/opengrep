@@ -34,6 +34,8 @@
    alcotest-lwt
    thread-local-storage
    saturn
+   ; for Exception.is_critical
+   memprof-limits
  )
  (inline_tests)
  ; can't use profiling.ppx because of circular dependencies :(

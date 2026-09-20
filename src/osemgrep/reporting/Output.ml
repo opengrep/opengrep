@@ -76,16 +76,10 @@ let default : conf =
     is_ci_invocation = false;
   }
 
-(* used with max_log_list_entries *)
-let too_much_data =
-  "<SKIPPED DATA (too many entries; adjust with --max-log-list-entries)>"
-
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
 
-(* What the skins draw on. The colours and the tty were decided once, by
- * CLI_common.setup_logging, for every output of the run. *)
 let string_of_severity (severity : Out.match_severity) : string =
   Out.string_of_match_severity severity
   |> JSON.remove_enclosing_quotes_of_jstring
@@ -239,14 +233,12 @@ let setup_stdout (conf : conf) : unit =
   Fmt.set_style_renderer Format.std_formatter
     (if text_colour conf ~dest:None then `Ansi_tty else `None)
 
+(* What the skins draw on. The colours and the tty were decided once, by
+ * CLI_common.setup_logging, for every output of the run. *)
 let skin_ctx ?(interfile_dedup_by = Core_match.Sink)
-    ?(is_interfile = fun (_ : Rule_ID.t) -> false) ?(dest : string option)
-    (conf : conf) : Skin.ctx =
+    ?(is_interfile = fun (_ : Rule_ID.t) -> false) (conf : conf) : Skin.ctx =
   {
-    Skin.color = text_colour conf ~dest;
-    is_tty = !ANSITerminal.isatty Unix.stdout;
-    verbose = conf.skipped_files;
-    width = Findings_layout.text_width;
+    Skin.width = Findings_layout.text_width;
     max_chars_per_line = conf.max_chars_per_line;
     max_lines_per_finding = conf.max_lines_per_finding;
     show_dataflow_traces = conf.show_dataflow_traces;
@@ -260,7 +252,7 @@ let skin_ctx ?(interfile_dedup_by = Core_match.Sink)
  * Returns None when there is nothing to output (e.g., Incremental, whose
  * matches have already been displayed in a file_match_results_hook).
  *)
-let render ~(skin : (module Skin.S)) (conf : conf) (profiler : Profiler.t)
+let render (conf : conf) (profiler : Profiler.t)
     ~(hrules : Rule.hrules)
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     ~(is_interfile : Rule_ID.t -> bool) ~(dest : string option)
@@ -268,7 +260,7 @@ let render ~(skin : (module Skin.S)) (conf : conf) (profiler : Profiler.t)
   match kind with
   | Incremental -> None
   | Text ->
-      let module Sk = (val skin : Skin.S) in
+      let module Sk = (val Skins.resolve conf.skin : Skin.S) in
       (* a buffer formatter carries no style renderer, which is what keeps
          the escapes out of a file *)
       Some
@@ -276,7 +268,7 @@ let render ~(skin : (module Skin.S)) (conf : conf) (profiler : Profiler.t)
              Fmt.set_style_renderer ppf
                (if text_colour conf ~dest then `Ansi_tty else `None);
              Sk.pp_findings
-               (skin_ctx ~interfile_dedup_by ~is_interfile ?dest conf)
+               (skin_ctx ~interfile_dedup_by ~is_interfile conf)
                ppf cli_output))
   | Sarif ->
       let engine_label =
@@ -349,8 +341,8 @@ let check_destinations (conf : conf) : unit =
   |> List.iter (fun ((dest : string option), (_kind : Output_format.t)) ->
          Option.iter check_destination dest)
 
-let dispatch_output_format
-    ~(skin : (module Skin.S))
+(* the actual output on stdout, and the file destinations *)
+let dispatch
     (caps : < Cap.stdout >)
     (profiler : Profiler.t)
     (conf : conf)
@@ -363,14 +355,14 @@ let dispatch_output_format
       =
     match kind with
     | Text ->
-        let module Sk = (val skin : Skin.S) in
+        let module Sk = (val Skins.resolve conf.skin : Skin.S) in
         (* nosemgrep: forbid-console *)
         Sk.pp_findings
           (skin_ctx ~interfile_dedup_by ~is_interfile conf)
           Format.std_formatter cli_output
     | kind -> (
         match
-          render ~skin conf profiler ~hrules ~interfile_dedup_by ~is_interfile
+          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile
             ~dest:None kind cli_output
         with
         | Some str -> print str
@@ -386,7 +378,7 @@ let dispatch_output_format
          * reading the destination back does not meet an ENOENT after a scan
          * that simply found nothing *)
         let str =
-          render ~skin conf profiler ~hrules ~interfile_dedup_by ~is_interfile
+          render conf profiler ~hrules ~interfile_dedup_by ~is_interfile
             ~dest:(Some dest) kind cli_output
           ||| ""
         in
@@ -486,20 +478,11 @@ let cli_output_of_result ~(keep_ignored : bool) (conf : conf)
   in
   cli_output
 
-(* the actual output on stdout, and the file destinations *)
-let dispatch ~(skin : (module Skin.S)) (caps : < Cap.stdout >)
-    (profiler : Profiler.t) (conf : conf) (cli_output : Out.cli_output)
-    (hrules : Rule.hrules)
-    ~(interfile_dedup_by : Core_match.interfile_dedup_by)
-    ~(is_interfile : Rule_ID.t -> bool) : unit =
-  dispatch_output_format ~skin caps profiler conf cli_output hrules
-    ~interfile_dedup_by ~is_interfile
-
-let output_result ~(skin : (module Skin.S)) ~(keep_ignored : bool)
+let output_result ~(keep_ignored : bool)
     (caps : < Cap.stdout >) (conf : conf) (profiler : Profiler.t)
     (res : Core_runner.result) : Out.cli_output =
   let cli_output = cli_output_of_result ~keep_ignored conf profiler res in
-  dispatch ~skin caps profiler conf cli_output res.hrules
+  dispatch caps profiler conf cli_output res.hrules
     ~interfile_dedup_by:res.interfile_dedup_by
     ~is_interfile:
       (is_interfile_rule_id ~taint_interfile:res.taint_interfile res.hrules);

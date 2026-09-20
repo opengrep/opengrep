@@ -21,8 +21,7 @@ module TH = Token_helpers_cpp
 (*****************************************************************************)
 (* Wrappers *)
 (*****************************************************************************)
-let pr2_err, _pr2_once = Common2.mk_pr2_wrappers Flag.verbose_parsing
-let pr2_err s = pr2_err ("ERROR_RECOV: " ^ s)
+module Log = Log_parser_cpp.Log
 
 (*****************************************************************************)
 (* Helpers *)
@@ -75,32 +74,37 @@ let rec find_next_synchro ~next ~already_passed =
 and find_next_synchro_define next already_passed =
   match next with
   | [] ->
-      pr2_err "end of file while in recovery mode";
+      Log.debug (fun m -> m "ERROR_RECOV: end of file while in recovery mode");
       (already_passed, [])
   | (T.TCommentNewline_DefineEndOfMacro _ as v) :: xs ->
-      pr2_err (spf "found sync end of #define  at line %d" (TH.line_of_tok v));
+      Log.debug (fun m ->
+          m "ERROR_RECOV: found sync end of #define  at line %d"
+            (TH.line_of_tok v));
       (v :: already_passed, xs)
   | v :: xs -> find_next_synchro_define xs (v :: already_passed)
 
 and find_next_synchro_orig next already_passed =
   match next with
   | [] ->
-      pr2_err "end of file while in recovery mode";
+      Log.debug (fun m -> m "ERROR_RECOV: end of file while in recovery mode");
       (already_passed, [])
   | (T.TCBrace i as v) :: xs when Tok.col_of_tok i =|= 0 -> (
-      pr2_err (spf "found sync '}' at line %d" (Tok.line_of_tok i));
+      Log.debug (fun m ->
+          m "ERROR_RECOV: found sync '}' at line %d" (Tok.line_of_tok i));
 
       match xs with
       | [] -> raise Impossible (* there is a EOF token normally *)
       (* still useful: now parser.mly allow empty ';' so normally no pb *)
       | T.TPtVirg iptvirg :: xs ->
-          pr2_err "found sync bis, eating } and ;";
+          Log.debug (fun m -> m "ERROR_RECOV: found sync bis, eating } and ;");
           (T.TPtVirg iptvirg :: v :: already_passed, xs)
       | T.TIdent x :: T.TPtVirg iptvirg :: xs ->
-          pr2_err "found sync bis, eating ident, }, and ;";
+          Log.debug (fun m ->
+              m "ERROR_RECOV: found sync bis, eating ident, }, and ;");
           (T.TPtVirg iptvirg :: T.TIdent x :: v :: already_passed, xs)
       | T.TCommentSpace sp :: T.TIdent x :: T.TPtVirg iptvirg :: xs ->
-          pr2_err "found sync bis, eating ident, }, and ;";
+          Log.debug (fun m ->
+              m "ERROR_RECOV: found sync bis, eating ident, }, and ;");
           ( T.TCommentSpace sp :: T.TPtVirg iptvirg :: T.TIdent x :: v
             :: already_passed,
             xs )
@@ -108,6 +112,7 @@ and find_next_synchro_orig next already_passed =
   | v :: xs ->
       let info = TH.info_of_tok v in
       if Tok.col_of_tok info =|= 0 && TH.is_start_of_something v then (
-        pr2_err (spf "found sync col 0 at line %d " (Tok.line_of_tok info));
+        Log.debug (fun m ->
+            m "ERROR_RECOV: found sync col 0 at line %d " (Tok.line_of_tok info));
         (already_passed, v :: xs))
       else find_next_synchro_orig xs (v :: already_passed)

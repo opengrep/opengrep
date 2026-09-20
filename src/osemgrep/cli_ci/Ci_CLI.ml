@@ -226,9 +226,12 @@ let cmdline_term : conf Term.t =
            checkout *)
         autofix = false;
         output_conf;
-        (* the ci log is not a terminal, and its output is the record of
-           a run rather than something watched live *)
-        no_progress_bar = true;
+        (* ci never starts the status bar: it calls
+           Scan_subcommand.check_targets_with_rules directly, and only
+           run_scan_conf creates one. Nothing reads this, so it carries the
+           default rather than an intent it cannot act on -- and ci takes no
+           --no-progress-bar for the same reason. *)
+        no_progress_bar = SC.default.no_progress_bar;
         incremental_output = false;
         incremental_output_postprocess = false;
         rewrite_rule_ids;
@@ -273,7 +276,7 @@ let cmdline_term : conf Term.t =
     $ SC.o_max_match_per_file $ SC.o_max_memory_mb $ SC.o_max_target_bytes
     $ SC.o_nosem $ SC.o_num_jobs $ CLI_common.o_opengrep_ignore_pattern
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
-    $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ SC.o_skin
+    $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ Skin_CLI.o_skin
     $ o_subdir
     $ o_suppress_errors $ SC.o_taint_interfile $ SC.o_taint_interfile_depth
     $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs

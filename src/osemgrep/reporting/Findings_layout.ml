@@ -5,11 +5,11 @@
  *
  * Wrapping, tab expansion and dedenting a snippet are the same job whatever
  * a skin decides the report should look like, so they live here rather than
- * in any one skin. So does the classification of a match, which is a fact
- * about the match and not a matter of taste; the titles and the order of the
- * groups are the skin's business.
- *
- * Split out of Matches_report.ml, which is now the legacy skin's renderer.
+ * in any one skin. So does what a report is made of: which lines of a match
+ * it shows and what of them the match covers, how findings group by file,
+ * what goes under a finding, and how a ci report splits its findings. These
+ * are facts about the matches and not a matter of taste; how each piece is
+ * drawn is the skin's business.
  *)
 
 module OutJ = Semgrep_output_v1_t
@@ -413,12 +413,12 @@ let fill_chunks ~(filler : filler) ~(width : int) ~(initial_indent : int)
 
 (* The lines of [txt] wrapped as [fill_chunks] does, each with the spaces
    to print it after: the indentation of the paragraph plus the two columns
-   rich added to every line the wrapper printed. *)
+   rich added to every line the wrapper printed.
+
+   A skin calls this from a chunk, with the log mutex held, so it must not
+   log: see Skin.chunk. *)
 let wrap_lines ~(filler : filler) ~(width : int) ~(initial_indent : int)
     ~(subsequent_indent : int) (txt : string) : (string * string) list =
-  Log.debug (fun m ->
-      m "wrap width=%d initial_indent=%d subsequent_indent=%d s=%s" width
-        initial_indent subsequent_indent txt);
   let txt = munge_whitespace txt in
   let indentation = chunk_indentation ~initial_indent ~subsequent_indent in
   match fill_chunks ~filler ~width ~initial_indent ~subsequent_indent txt with
@@ -608,6 +608,15 @@ let steps_of_dataflow_trace (trace : OutJ.match_dataflow_trace) :
           "This is how taint reaches the sink:" sink
   | _ -> []
 
+(* Whether a finding has a rule worth naming. A -e/--pattern run has none:
+   Rule.rule_of_formula builds a rule whose id is "-", whose severity
+   nobody chose, and whose message is the pattern that was typed. The
+   legacy report heads such a finding with nothing at all -- no severity,
+   no id, no message -- leaving the file name and the snippet, and every
+   skin follows it. *)
+let has_rule_name (m : OutJ.cli_match) : bool =
+  not (Rule_ID.equal m.check_id Rule_ID.dash_e)
+
 (* Which findings are the same sink. Under --interfile-dedup-by source-sink
    the engine emits one finding per source that reaches a sink, so several
    of them share a sink and differ only in where the taint came from. A
@@ -619,6 +628,12 @@ let same_sink (a : OutJ.cli_match) (b : OutJ.cli_match) : bool =
   && Int.equal a.start.offset b.start.offset
   && Int.equal a.end_.offset b.end_.offset
 
+(* Runs of findings that share a sink, in the order they arrived.
+   Only neighbours are compared, so [matches] has to come sorted by
+   Semgrep_output_utils.sort_cli_matches, whose key -- path, then the
+   start and end positions, then the rule -- puts the findings of one sink
+   next to each other. Handed an unsorted list this quietly returns groups
+   that are too small rather than failing. *)
 let group_findings_by_sink (matches : OutJ.cli_match list) :
     OutJ.cli_match list list =
   List.fold_left
@@ -651,21 +666,57 @@ let sources_of_sink (findings : OutJ.cli_match list) :
     (OutJ.location * string) list =
   findings |> List_.filter_map source_of_finding
 
-(* [s] cut to [width] columns, an ellipsis standing for what was dropped.
-   A source that spans several lines becomes one long line, which would
-   otherwise run off the side of the report. *)
+(* [s] cut to [width] characters, an ellipsis standing for what was
+   dropped. A source that spans several lines becomes one long line, which
+   would otherwise run off the side of the report.
+
+   Counted in characters rather than bytes: a byte count clips a CJK or
+   accented line to a third of the room it was given. Characters are not
+   columns either -- a CJK character occupies two -- so a line of them
+   still overruns, but by a factor of two rather than three, and nothing
+   else in the report models double-width characters yet. *)
 let ellipsize ~(width : int) (s : string) : string =
-  if width <= 0 || String.length s <= width then s
+  (* A budget of nothing still means the text does not fit; returning it
+     whole is the one answer that cannot be right. The ellipsis alone says
+     as much as there is room to say. *)
+  if width <= 1 then "…"
   else
-    (* back off any trailing continuation byte, so the cut never lands
-       inside a UTF-8 character *)
-    let rec cut_at (i : int) : int =
-      if i <= 0 then 0
+    let offsets = Utf8.code_point_offsets s in
+    (* the array carries the length of [s] as its last element, so it holds
+       one more entry than the string has characters *)
+    let characters = Array.length offsets - 1 in
+    if characters <= width then s
+    else String_.safe_sub s 0 offsets.(max 0 (width - 1)) ^ "…"
+
+(* The lines of a "from" clause, wrapped to [width]: where the taint came
+   from, and the code there. Each line comes as (located, code) so that a
+   skin can give the two different colours -- the path is a locator, the
+   code is code -- which a single wrapped string could not express.
+
+   The path is never shortened: it is what a reader opens. The code is,
+   since a source spanning several lines arrives here collapsed onto one.
+   The code shares the last line of the path when it fits and takes lines
+   of its own when it does not. *)
+let from_clause_lines ~(width : int) ~(located : string) ~(code : string) :
+    (string * string) list =
+  let wrap (txt : string) : string list =
+    wrap_lines ~filler:Textwrap ~width:(safe_width width) ~initial_indent:0
+      ~subsequent_indent:0 txt
+    |> List_.map snd
+  in
+  let code = ellipsize ~width code in
+  match wrap located with
+  | [] -> [ ("", code) ]
+  | located_lines ->
+      let last = List.length located_lines - 1 in
+      let tail = List.nth located_lines last in
+      if Utf8.length tail + 2 + Utf8.length code <= width then
+        located_lines
+        |> List.mapi (fun (i : int) (txt : string) ->
+               if i = last then (txt, code) else (txt, ""))
       else
-        let c = Char.code s.[i] in
-        if c >= 0x80 && c < 0xc0 then cut_at (i - 1) else i
-    in
-    String_.safe_sub s 0 (cut_at (width - 1)) ^ "…"
+        List_.map (fun (txt : string) -> (txt, "")) located_lines
+        @ List_.map (fun (txt : string) -> ("", txt)) (wrap code)
 
 (* python compatibility: the 22m and 24m are "normal color or
     intensity", and "underline off" *)
@@ -673,62 +724,387 @@ let esc_prefix (ppf : Format.formatter) =
   if Fmt.style_renderer ppf = `Ansi_tty then Fmt.any "\027[22m\027[24m  "
   else Fmt.any "  "
 
-(* One located line (or several, when the location spans them), under
-   [prefix] and in the skin's gutter, with the located span picked out.
+(* The widest line number the traces of these findings will draw. A skin
+   sizes its trace gutter from this rather than from the finding's own line
+   number: a trace step lives wherever the taint came from, which is often
+   another file entirely and may be thousands of lines further down. Sizing
+   it from the finding leaves a wider number overflowing its column and the
+   code beside it out of line with its neighbours. *)
+let trace_line_digits (findings : OutJ.cli_match list) : int =
+  let widest =
+    findings
+    |> List.fold_left
+         (fun (acc : int) (finding : OutJ.cli_match) ->
+           match finding.extra.dataflow_trace with
+           | None -> acc
+           | Some trace ->
+               steps_of_dataflow_trace trace
+               |> List.fold_left
+                    (fun (acc : int) (step : trace_step) ->
+                      step.locations
+                      |> List.fold_left
+                           (fun (acc : int) (loc : OutJ.location) ->
+                             max acc loc.start.line)
+                           acc)
+                    acc)
+         1
+  in
+  String.length (string_of_int (max 1 widest))
+
+(*****************************************************************************)
+(* What a report is made of *)
+(*****************************************************************************)
+
+(* A group of findings where a report places it: one finding, or all of
+   those that share a sink under --interfile-dedup-by source-sink, [lead]
+   being the first. [opens_file] when it is the first in its file.
+   [heading] when it is to be headed with its rule and message: not when
+   the group before it said the same thing about the same file -- the
+   message and not just the rule, since the message carries the
+   metavariables of its match. [continued] when the next group carries on
+   from this one, unheaded. *)
+type placed = {
+  lead : OutJ.cli_match;
+  group : OutJ.cli_match list;
+  opens_file : bool;
+  heading : bool;
+  continued : bool;
+}
+
+(* the findings of a report, in the order given, as [placed] groups *)
+let place_findings (interfile_dedup_by : Core_match.interfile_dedup_by)
+    (matches : OutJ.cli_match list) : placed list =
+  let groups =
+    match interfile_dedup_by with
+    | Core_match.Sink -> List_.map (fun (m : OutJ.cli_match) -> [ m ]) matches
+    | Core_match.Source_sink -> group_findings_by_sink matches
+  in
+  let headed =
+    groups
+    |> List.filter_map (fun (group : OutJ.cli_match list) ->
+           match group with
+           | lead :: _ -> Some (lead, group)
+           | [] -> None)
+    |> List.fold_left_map
+         (fun (previous : OutJ.cli_match option)
+              ((lead : OutJ.cli_match), (group : OutJ.cli_match list)) ->
+           let opens_file, heading =
+             match previous with
+             | None -> (true, true)
+             | Some (p : OutJ.cli_match) ->
+                 let opens_file = not (Fpath.equal p.path lead.path) in
+                 ( opens_file,
+                   opens_file
+                   || (not (Rule_ID.equal p.check_id lead.check_id))
+                   || not (String.equal p.extra.message lead.extra.message) )
+           in
+           (Some lead, (lead, group, opens_file, heading)))
+         None
+    |> snd
+  in
+  let next_headings =
+    match headed with
+    | [] -> []
+    | _ :: rest ->
+        List_.map (fun (_, _, _, (heading : bool)) -> Some heading) rest
+        @ [ None ]
+  in
+  List.combine headed next_headings
+  |> List_.map (fun ((lead, group, opens_file, heading), next_heading) ->
+         {
+           lead;
+           group;
+           opens_file;
+           heading;
+           continued =
+             (match next_heading with
+             | Some (next : bool) -> not next
+             | None -> false);
+         })
+
+(* A line of the code of a match, with the part of it the match covers
+   as offsets into [text]. *)
+type code_line = {
+  line_number : int;
+  text : string;
+  match_start : int;
+  match_end : int;
+}
+
+(* The code of a match as a report shows it: the lines as the autofix
+   leaves them when there is one, their shared indentation dropped, and no
+   more than [max_lines_per_finding] of them (0 for all), with how many
+   were left out. On a match that starts and ends on one line, the covered
+   part is as long as the match. *)
+let code_lines ~(max_lines_per_finding : int) (m : OutJ.cli_match) :
+    code_line list * int option =
+  let lines, dedented =
+    Option.value
+      ~default:(String.split_on_char '\n' m.extra.lines)
+      m.extra.fixed_lines
+    |> dedent_lines
+  in
+  let total = List.length lines in
+  let keep =
+    if max_lines_per_finding = 0 then total
+    else min total max_lines_per_finding
+  in
+  let col (c : int) : int = max 0 (c - 1 - dedented) in
+  let start_line = m.start.line in
+  ( List_.take keep lines
+    |> List.mapi (fun (i : int) (text : string) ->
+           let line_number = start_line + i in
+           let match_start =
+             if line_number > start_line then 0 else col m.start.col
+           in
+           let match_end =
+             max match_start
+               (if line_number >= m.end_.line then
+                  min
+                    (if m.start.line = m.end_.line then
+                       match_start + (m.end_.col - m.start.col)
+                     else col m.end_.col)
+                    (String.length text)
+                else String.length text)
+           in
+           { line_number; text; match_start; match_end }),
+    if keep = total then None else Some (total - keep) )
+
+(* What a report shows under the code of a finding, one entry for the
+   finding or for each of [group], the findings that share its sink. For an
+   interfile rule, the [source] of each, as its locator, "path:line", and
+   its code: provenance rather than a way of telling duplicates apart, since
+   for a flow across files the sink says nothing about where the untrusted
+   value entered. With --dataflow-traces, the [trace] of each.
+
+   A gap opens the block when a source leads it, and divides one entry from
+   the next only once each carries a trace: a trace after the snippet needs
+   no gap of its own, its spine already joins the two, and a bare list of
+   sources reads better tight. *)
+type origin = {
+  finding : OutJ.cli_match;
+  gap_before : bool;
+  source : (string * string) option;
+  trace : OutJ.match_dataflow_trace option;
+}
+
+let origins ~(is_interfile : Rule_ID.t -> bool) ~(show_dataflow_traces : bool)
+    (m : OutJ.cli_match) (group : OutJ.cli_match list) : origin list =
+  let name_sources = is_interfile m.check_id in
+  if not (name_sources || show_dataflow_traces) then []
+  else
+    (if List_.null group then [ m ] else group)
+    |> List.mapi (fun (i : int) (finding : OutJ.cli_match) ->
+           {
+             finding;
+             gap_before =
+               (i = 0 && name_sources) || (i > 0 && show_dataflow_traces);
+             source =
+               (if name_sources then
+                  source_of_finding finding
+                  |> Option.map (fun ((loc : OutJ.location), (code : string)) ->
+                         ( Printf.sprintf "%s:%d" (Fpath.to_string loc.path)
+                             loc.start.line,
+                           code ))
+                else None);
+             trace =
+               (if show_dataflow_traces then finding.extra.dataflow_trace
+                else None);
+           })
+
+(* A line of the fix a report shows under a finding: the first, which the
+   skin's label opens; a blank one, drawn blank, as an indent alone would
+   be trailing whitespace; or another, under the first. *)
+type fix_line =
+  | Fix_first of string
+  | Fix_blank
+  | Fix_more of string
+
+(* The fix of a finding as a report shows it: None without one, Some [] for
+   a fix with no text, which deletes the match and has to be said, and
+   otherwise its lines, each wrapped at [width] as the legacy report wraps
+   it, since a one-line fix can be far wider than the report. *)
+let fix_display ~(width : int) (m : OutJ.cli_match) : fix_line list option =
+  m.extra.fix
+  |> Option.map (fun (fix : string) ->
+         fix_lines ~first_col:m.start.col fix
+         |> List.concat_map (fun (line : string) ->
+                wrap_lines ~filler:Textwrap ~width ~initial_indent:0
+                  ~subsequent_indent:0 line
+                |> List_.map snd)
+         |> List.mapi (fun (i : int) (txt : string) ->
+                if i = 0 then Fix_first txt
+                else if String.equal txt "" then Fix_blank
+                else Fix_more txt))
+
+(* The timing table --time adds after the findings.
+   python: a blank line separates the two, and the last finding printed one
+   already *)
+let pp_time ppf (cli_output : OutJ.cli_output) : unit =
+  match cli_output.time with
+  | Some time ->
+      if List_.null cli_output.results then Fmt.pf ppf "@.";
+      Time_report.pp_time_summary ppf time cli_output.errors
+  | None -> ()
+
+(* The findings of a report, sorted, and the timing table after them. A ci
+   report is read to answer one question first -- what fails the run -- so
+   the findings that do come first, under a heading of their own, then the
+   others under theirs, and the rules behind the first close the report.
+   The skin draws each piece: the findings by file, the heading of a ci
+   section with its count, and the rules fired. *)
+let pp_findings ~(is_ci_invocation : bool)
+    ~(pp_by_file : OutJ.cli_match list Fmt.t)
+    ~(pp_ci_heading : blocking:bool -> int Fmt.t)
+    ~(pp_rules_fired : OutJ.cli_match list Fmt.t) ppf
+    (cli_output : OutJ.cli_output) : unit =
+  let sorted = cli_output.results |> Semgrep_output_utils.sort_cli_matches in
+  (if not is_ci_invocation then pp_by_file ppf sorted
+   else
+     let blocking, advisory =
+       List.partition
+         (fun (m : OutJ.cli_match) -> is_blocking m.extra.metadata)
+         sorted
+     in
+     let section ~(blocking : bool) (matches : OutJ.cli_match list) : unit =
+       if not (List_.null matches) then begin
+         pp_ci_heading ~blocking ppf (List.length matches);
+         pp_by_file ppf matches
+       end
+     in
+     section ~blocking:true blocking;
+     section ~blocking:false advisory;
+     pp_rules_fired ppf blocking);
+  pp_time ppf cli_output
+
+(* The path of a step that left the file of the finding, so that a trace
+   crossing files can be followed. *)
+let pp_step_path ?(finding_path : Fpath.t option) ~(prefix : string) ppf
+    (loc : OutJ.location) : unit =
+  match finding_path with
+  | Some path when not (Fpath.equal loc.path path) ->
+      Fmt.pf ppf "%s%a@." prefix
+        Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
+        (Fpath.to_string loc.path)
+  | Some _
+  | None ->
+      ()
+
+(* The lines of a location as they stand in the file. *)
+let located_lines (loc : OutJ.location) : string list =
+  let lines =
+    UFile.read_file loc.path |> String.split_on_char '\n' |> Array.of_list
+  in
+  Array.sub lines (loc.start.line - 1) (loc.end_.line - loc.start.line + 1)
+  |> Array.to_list
+
+(* A location the way the legacy report prints it: the located lines joined
+   into one string, and the highlight cut out of that with the columns of
+   the location. For a location that spans lines those are the start
+   column of the first and the end column of the last, so the highlight
+   runs from the start to wherever the end column falls in the joined text,
+   and a location whose end column comes before its start column raises in
+   [cut] and is left out.
+
    NOTE: We need to consider that the location can span > 1 lines, which
    seems to happen with matches related to macroexpanded clojure code.
 
-   [finding_path] is the file the finding itself is in: a step that left it
-   is named, so that a trace crossing files can be followed.
-
-   [dedent] drops the indentation the located lines share, so that a step
-   deep inside a function does not push the code off to the right. A skin
-   with a narrow gutter wants it; the legacy report prints the lines as they
-   stand in the file. *)
-let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
-    ~(prefix : string) ~(gutter : int -> string) ~(gutter_blank : string)
+   python: the report pysemgrep printed, which the legacy skin keeps *)
+let pp_joined_location ?(finding_path : Fpath.t option) ~(prefix : string)
+    ~(gutter : int -> string) ~(gutter_blank : string)
     ~(highlight : Fmt.style list) ppf (loc : OutJ.location) : unit =
   let pp_highlight : string Fmt.t =
     List.fold_left (fun acc style -> Fmt.styled style acc) Fmt.string highlight
   in
   let start_line_num = loc.start.line in
-  let end_line_num = loc.end_.line in
   let start_col = max 0 (loc.start.col - 1) in
   let end_col =
-    if Int.(equal start_line_num end_line_num) then
+    if Int.(equal start_line_num loc.end_.line) then
       max start_col (loc.end_.col - 1)
     else max 0 (loc.end_.col - 1)
   in
   try
-    let file_content = UFile.read_file loc.path in
-    let lines = String.split_on_char '\n' file_content |> Array.of_list in
-    let located, dedented =
-      let located =
-        Array.sub lines (start_line_num - 1) (end_line_num - start_line_num + 1)
-        |> Array.to_list
-      in
-      if dedent then dedent_lines located else (located, 0)
-    in
-    let start_col = max 0 (start_col - dedented) in
-    let end_col = max start_col (end_col - dedented) in
     let lines_to_print =
-      located |> String.concat ("\n" ^ prefix ^ gutter_blank)
+      located_lines loc |> String.concat ("\n" ^ prefix ^ gutter_blank)
     in
     let a, b, c = cut lines_to_print start_col end_col in
-    (match finding_path with
-    | Some path when not (Fpath.equal loc.path path) ->
-        Fmt.pf ppf "%s%a@." prefix
-          Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
-          (Fpath.to_string loc.path)
-    | Some _
-    | None ->
-        ());
+    pp_step_path ?finding_path ~prefix ppf loc;
     Fmt.pf ppf "%s%s%s%a%s@." prefix (gutter start_line_num) a pp_highlight b c
   with
   | ex ->
       Log.debug (fun m ->
           m "Could not read file %a (line_num = %d, start_col = %d, end_col = %d): %s"
             Fpath.pp loc.path start_line_num start_col end_col
+            (Exception.(catch ex |> to_string)));
+      Log.debug (fun m -> m "Location: %a" OutJ.pp_location loc);
+      ()
+
+(* The part of each located line that the location covers: from the start
+   column on the first line, and up to the end column on the last. A line
+   after the first is covered from its first non-blank character, so that a
+   highlight with a background does not paint the indentation. Columns are
+   0-based offsets into the lines as given. *)
+let covered_spans ~(start_col : int) ~(end_col : int) (lines : string list) :
+    (int * int) list =
+  let last = List.length lines - 1 in
+  lines
+  |> List.mapi (fun (i : int) (line : string) ->
+         let len = String.length line in
+         let rec first_non_blank (k : int) : int =
+           if k < len && (line.[k] = ' ' || line.[k] = '\t') then
+             first_non_blank (k + 1)
+           else k
+         in
+         let from = if i = 0 then min start_col len else first_non_blank 0 in
+         let upto = if i = last then min end_col len else len in
+         (from, max from upto))
+
+(* One located line (or several, when the location spans them), under
+   [prefix] and in the skin's gutter, with the located span picked out on
+   each line it covers. The lines are printed one by one, [gutter_blank]
+   standing in for the gutter after the first, so the highlight never
+   reaches into the prefix or the gutter, which a skin may have styled.
+
+   [finding_path] is the file the finding itself is in: a step that left it
+   is named, so that a trace crossing files can be followed.
+
+   [dedent] drops the indentation the located lines share, so that a step
+   deep inside a function does not push the code off to the right. *)
+let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
+    ~(prefix : string) ~(gutter : int -> string) ~(gutter_blank : string)
+    ~(highlight : Fmt.style list) ppf (loc : OutJ.location) : unit =
+  let pp_highlight : string Fmt.t =
+    List.fold_left (fun acc style -> Fmt.styled style acc) Fmt.string highlight
+  in
+  try
+    let located, dedented =
+      let located = located_lines loc in
+      if dedent then dedent_lines located else (located, 0)
+    in
+    let spans =
+      covered_spans
+        ~start_col:(max 0 (loc.start.col - 1 - dedented))
+        ~end_col:(max 0 (loc.end_.col - 1 - dedented))
+        located
+    in
+    pp_step_path ?finding_path ~prefix ppf loc;
+    List.combine located spans
+    |> List.iteri (fun (i : int) ((line : string), ((from : int), (upto : int))) ->
+           let gutter = if i = 0 then gutter loc.start.line else gutter_blank in
+           let before = String.sub line 0 from
+           and covered = String.sub line from (upto - from)
+           and after = Str.string_after line upto in
+           (* an empty styled string is just two escapes *)
+           if String.equal covered "" then
+             Fmt.pf ppf "%s%s%s%s@." prefix gutter before after
+           else
+             Fmt.pf ppf "%s%s%s%a%s@." prefix gutter before pp_highlight covered
+               after)
+  with
+  | ex ->
+      Log.debug (fun m ->
+          m "Could not read file %a (lines %d-%d): %s" Fpath.pp loc.path
+            loc.start.line loc.end_.line
             (Exception.(catch ex |> to_string)));
       Log.debug (fun m -> m "Location: %a" OutJ.pp_location loc);
       ()
@@ -767,11 +1143,14 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
    [indent] opens every line and [gutter] precedes the code of a located
    line, [gutter_blank] standing in for it on the continuation lines of a
    location that spans several; [gap] is what goes on the blank line before
-   each step. A skin that colours any of them passes it already rendered,
-   since whole lines are printed here rather than handed back. A skin that
-   wants a different shape altogether builds it from
-   steps_of_dataflow_trace and pp_trace_location. *)
-let pp_dataflow_trace ?(finding_path : Fpath.t option) ?(dedent = false)
+   each step.
+
+   This is the legacy report's trace, and its locations are printed as that
+   report always has (see pp_joined_location), which cuts the highlight out
+   of the located lines joined with [gutter_blank]: a skin that styles its
+   gutter wants pp_dataflow_tree, or steps_of_dataflow_trace and
+   pp_trace_location. *)
+let pp_dataflow_trace ?(finding_path : Fpath.t option)
     ?(indent = findings_indent)
     ?(gutter = fun (n : int) -> Printf.sprintf "%4d┆ " n)
     ?(gutter_blank = "    ┆ ") ?(gap = "")
@@ -782,5 +1161,5 @@ let pp_dataflow_trace ?(finding_path : Fpath.t option) ?(dedent = false)
          Fmt.pf ppf "%s@.%s %s@." gap indent step.label;
          step.locations
          |> List.iter
-              (pp_trace_location ?finding_path ~dedent ~prefix:indent ~gutter
+              (pp_joined_location ?finding_path ~prefix:indent ~gutter
                  ~gutter_blank ~highlight ppf))

@@ -157,27 +157,6 @@ let pr2 s =
 let pr2_gen x = pr2 (Dumper.dump x)
 
 (* ---------------------------------------------------------------------- *)
-let xxx_once f s =
-  match () with
-  | _ when !UCommon.disable_pr2_once ->
-      (* nosemgrep: no-pr2 *)
-      UCommon.pr2 s
-  | _ when Saturn.Htbl.try_add UCommon._already_printed s true ->
-      f ("(ONCE) " ^ s)
-  | _else_ -> ()
-
-let pr2_once s = xxx_once pr2 s
-
-(* ---------------------------------------------------------------------- *)
-let mk_pr2_wrappers aref =
-  let fpr2 s =
-    if (Domain.DLS.get aref) then pr2 s else (* just to the log file *)
-                          out_chan_pr2 s
-  in
-  let fpr2_once s = if (Domain.DLS.get aref) then pr2_once s else xxx_once out_chan_pr2 s in
-  (fpr2, fpr2_once)
-
-(* ---------------------------------------------------------------------- *)
 (* could also be in File section *)
 
 (* ---------------------------------------------------------------------- *)

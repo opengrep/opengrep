@@ -1,5 +1,4 @@
 module OutJ = Semgrep_output_v1_t
-open Fpath_.Operators
 
 (*****************************************************************************)
 (* Prelude *)
@@ -15,6 +14,8 @@ open Fpath_.Operators
  * Everything here degrades: with $NO_COLOR, off a terminal, or in a file,
  * the stripe stays as a character and the bands simply vanish, which leaves
  * the report readable on its structure alone.
+ *
+ * Only the look is here: Skin_common draws the report with it.
  *)
 
 module M = Skin_model
@@ -26,7 +27,6 @@ module M = Skin_model
 (* The report sits at the left edge: the banner, the file names, the scan
    lines and the summary all start there. Only the findings are inset, so a
    file's contents read as belonging to the name above them. *)
-let margin = ""
 let finding_margin = "  "
 let stripe_glyph = "▌"
 
@@ -39,6 +39,10 @@ let prefix_width = 4
 
 (* the spaces around the line number inside its band *)
 let band_padding = 2
+
+(* the band the line numbers of a finding sit in, for numbers [digits]
+   wide *)
+let band_width (digits : int) : int = digits + (2 * band_padding)
 
 (*****************************************************************************)
 (* Styling *)
@@ -79,6 +83,19 @@ let severity_word (severity : OutJ.match_severity) : string =
   | `Experiment ->
       "NOTE"
 
+(* Every badge is as wide as the longest severity word, so that the filled
+   rectangles line up down the page and the id after them starts at one
+   column whatever the severity.
+   coupling: a severity added to [severity_word] belongs here too, or a
+   badge of that severity will be the one that sticks out. *)
+let severity_field_width : int =
+  [ `Critical; `Error; `High; `Warning; `Medium; `Info; `Low; `Inventory;
+    `Experiment ]
+  |> List.fold_left
+       (fun (acc : int) (s : OutJ.match_severity) ->
+         max acc (String.length (severity_word s)))
+       0
+
 (* A light foreground on a dark band, so that the band reads on a light
    terminal as well as a dark one. *)
 let band_style : Fmt.style list = [ `Bg (`Hi `Black); `Fg (`Hi `White) ]
@@ -94,397 +111,215 @@ let pp_stripe (color : tone) ppf : unit =
 let pp_blank_stripe (color : tone) ppf : unit =
   Fmt.pf ppf "%s%a@." finding_margin Fmt.(styled (`Fg color) string) stripe_glyph
 
+let pp_band ppf (label : string) : unit =
+  Fmt.pf ppf "%a " (styles band_style Fmt.string) label
+
 (*****************************************************************************)
 (* A finding *)
 (*****************************************************************************)
 
-(* "  a.py ────────────────────────────" *)
-(* a name with a rule running out to the width of the report *)
-let pp_section (ctx : Skin.ctx) ppf (name : string) : unit =
-  let used = String.length margin + Utf8.length name + 1 in
-  let rule =
-    String.concat "" (List.init (max 3 (ctx.width - used)) (fun _ -> "─"))
+(* A line of the match. The number sits in a band of its own; the matched
+   span is tinted in the severity's colour rather than emboldened. *)
+let pp_code_line (color : tone) ~(digits : int) ~(width : int) ppf
+    (line : Findings_layout.code_line) : unit =
+  let text, offset_of = Findings_layout.munge_whitespace_with_offsets line.text in
+  (* the tinted range of the match, moved as the whitespace is *)
+  let moved (x : int) : int = offset_of.(max 0 (min (String.length line.text) x)) in
+  let tint_start = moved line.match_start and tint_end = moved line.match_end in
+  Findings_layout.fill_chunks ~filler:Textwrap ~width ~initial_indent:0
+    ~subsequent_indent:0 text
+  |> List.iteri (fun (j : int) ((offset : int), (length : int)) ->
+         let chunk = String.sub text offset length in
+         let from = max 0 (min length (tint_start - offset)) in
+         let upto = max from (min length (tint_end - offset)) in
+         let a, b, c = Findings_layout.cut chunk from upto in
+         pp_stripe color ppf;
+         pp_band ppf
+           (if j = 0 then
+              Printf.sprintf "%*s%*d%*s" band_padding "" digits line.line_number
+                band_padding ""
+            else String.make (band_width digits) ' ');
+         Fmt.pf ppf "%s%a%s@." a
+           (styles [ `Bg color; `Fg (`Hi `White) ] Fmt.string)
+           b c)
+
+(* The trace keeps the stripe: it opens every line the trace prints, so it
+   is handed over already rendered, with the numbers in the same band as
+   the code's. *)
+let trace (color : tone) ppf ~(digits : int) : Skin_common.trace_look =
+  let bar =
+    Fmt.str_like ppf "%s%a" finding_margin
+      Fmt.(styled (`Fg color) string)
+      stripe_glyph
   in
-  Fmt.pf ppf "%s%a %a@." margin
-    Fmt.(styled `Bold string)
-    name
-    Fmt.(styled `Faint string)
-    rule
+  let banded (label : string) : string =
+    Fmt.str_like ppf "%a " (styles band_style Fmt.string) label
+  in
+  {
+    line_prefix = bar ^ trace_inset;
+    gutter =
+      (fun (n : int) ->
+        banded
+          (Printf.sprintf "%*s%*d%*s" band_padding "" digits n band_padding ""));
+    gutter_blank = banded (String.make (band_width digits) ' ');
+    highlight = [ `Bg color; `Fg (`Hi `White) ];
+  }
+
+(* Every line of a finding opens with the stripe: the heading, a filled
+   badge and the id; the message; the code; the sources; the fix. *)
+let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
+  let color = severity_color severity in
+  {
+    pp_head_margin = pp_stripe color;
+    head_width = prefix_width;
+    pp_body_margin = pp_stripe color;
+    body_width = prefix_width;
+    pp_blank = pp_blank_stripe color;
+    badge = Printf.sprintf " %-*s " severity_field_width (severity_word severity);
+    pp_badge = styles [ `Bg color; `Fg (`Hi `White); `Bold ] Fmt.string;
+    pp_rule_id = Fmt.(styled `Faint string);
+    code_width =
+      (fun ~width ~digits -> width - prefix_width - band_width digits - 1);
+    pp_code_line = pp_code_line color;
+    pp_more_lines =
+      (fun ~digits ppf (txt : string) ->
+        Fmt.pf ppf "%a@."
+          Fmt.(styled `Faint string)
+          (String.make (band_width digits) ' ' ^ txt));
+    pp_from_label =
+      (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled `Faint string) "from");
+    from_label_width = String.length "from ";
+    trace = trace color;
+    pp_fix_label =
+      (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled (`Fg (`Hi `Green)) string) "fix");
+    fix_label_width = String.length "fix ";
+  }
+
+(*****************************************************************************)
+(* Around the findings *)
+(*****************************************************************************)
+
+(* "a.py ──────────────": a name with a rule running out to the width of
+   the report. A deep path is wrapped rather than shortened: it is what a
+   reader opens, and the report has no other copy of it. The rule closes
+   the last line, so the header still reads as one band however many lines
+   it took. *)
+let pp_section (ctx : Skin.ctx) ppf (name : string) : unit =
+  let width = Findings_layout.safe_width (ctx.width - 1) in
+  let lines =
+    Findings_layout.wrap_lines ~filler:Textwrap ~width ~initial_indent:0
+      ~subsequent_indent:0 name
+    |> List_.map snd
+  in
+  let last = List.length lines - 1 in
+  lines
+  |> List.iteri (fun (i : int) (txt : string) ->
+         if i < last then Fmt.pf ppf "%a@." Fmt.(styled `Bold string) txt
+         else
+           let used = Utf8.length txt + 1 in
+           let rule =
+             String.concat ""
+               (List.init (max 3 (ctx.width - used)) (fun _ -> "─"))
+           in
+           Fmt.pf ppf "%a %a@."
+             Fmt.(styled `Bold string)
+             txt
+             Fmt.(styled `Faint string)
+             rule)
 
 let pp_file_header (ctx : Skin.ctx) ppf (path : string) : unit =
-  pp_section ctx ppf path
-
-(* Whether a finding is one that fails a ci run. Severity does not say: a
-   rule of any severity can be advisory, so a ci report has to mark it. *)
-let pp_ci_marker (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
-  if ctx.is_ci_invocation then
-    if Findings_layout.is_blocking m.extra.metadata then
-      Fmt.pf ppf "  %a"
-        (styles [ `Bg `Red; `Fg (`Hi `White); `Bold ] Fmt.string)
-        " BLOCKING "
-    else Fmt.pf ppf "  %a" Fmt.(styled `Faint string) "non-blocking"
-
-let pp_heading (ctx : Skin.ctx) (color : tone) ppf (m : OutJ.cli_match) : unit =
-  pp_stripe color ppf;
-  (* the marker sits between the badge and the id, so that the id ends the
-     line: a padded badge there would leave a trailing space *)
-  Fmt.pf ppf "%a%a  %a@."
-    (styles [ `Bg color; `Fg (`Hi `White); `Bold ] Fmt.string)
-    (Printf.sprintf " %s " (severity_word m.extra.severity))
-    (pp_ci_marker ctx) m
-    Fmt.(styled `Faint string)
-    (Rule_ID.to_string m.check_id)
-
-let pp_message (ctx : Skin.ctx) (color : tone) ppf (message : string) :
-    unit =
-  message |> Findings_layout.message_paragraphs
-  |> List.iteri (fun (i : int) ((extra_indent : int), (paragraph : string)) ->
-         if i > 0 then pp_blank_stripe color ppf;
-         Findings_layout.wrap_lines ~filler:Click
-           ~width:
-             (Findings_layout.safe_width
-                (ctx.width - prefix_width - extra_indent))
-           ~initial_indent:0 ~subsequent_indent:0 paragraph
-         |> List.iter (fun ((_indentation : string), (txt : string)) ->
-                pp_stripe color ppf;
-                Fmt.pf ppf "%s%s@." (String.make extra_indent ' ') txt))
-
-(* The lines of the match. The number sits in a band of its own; the matched
-   span is tinted in the severity's colour rather than emboldened. *)
-let pp_code (ctx : Skin.ctx) (color : tone) ppf (m : OutJ.cli_match) :
-    unit =
-  let lines =
-    Option.value
-      ~default:(String.split_on_char '\n' m.extra.lines)
-      m.extra.fixed_lines
-  in
-  let lines, dedented = Findings_layout.dedent_lines lines in
-  let lines, trimmed =
-    let total = List.length lines in
-    let keep =
-      if ctx.max_lines_per_finding = 0 then total
-      else min total ctx.max_lines_per_finding
-    in
-    if keep = total then (lines, None)
-    else (List_.take keep lines, Some (total - keep))
-  in
-  let start_line = m.start.line in
-  let digits =
-    String.length (string_of_int (start_line + max 0 (List.length lines - 1)))
-  in
-  let band_width = digits + (2 * band_padding) in
-  let available = ctx.width - prefix_width - band_width - 1 in
-  let width =
-    Findings_layout.safe_width
-      (if ctx.max_chars_per_line > 0 then min ctx.max_chars_per_line available
-       else available)
-  in
-  let pp_band ppf (label : string) : unit =
-    Fmt.pf ppf "%a " (styles band_style Fmt.string) label
-  in
-  let blank_band = String.make band_width ' ' in
-  lines
-  |> List.iteri (fun (i : int) (line : string) ->
-         let line_number = start_line + i in
-         (* the tinted range of the match, moved by the dedent, exactly as
-            the legacy skin computes it *)
-         let col c = max 0 (c - 1 - dedented) in
-         let tint_start =
-           if line_number > start_line then 0 else col m.start.col
-         in
-         let tint_end =
-           max tint_start
-             (if line_number >= m.end_.line then
-                min
-                  (if m.start.line = m.end_.line then
-                     tint_start + (m.end_.col - m.start.col)
-                   else col m.end_.col)
-                  (String.length line)
-              else String.length line)
-         in
-         let text, offset_of = Findings_layout.munge_whitespace_with_offsets line in
-         let moved (x : int) : int =
-           offset_of.(max 0 (min (String.length line) x))
-         in
-         let tint_start = moved tint_start and tint_end = moved tint_end in
-         Findings_layout.fill_chunks ~filler:Textwrap ~width ~initial_indent:0
-           ~subsequent_indent:0 text
-         |> List.iteri (fun (j : int) ((offset : int), (length : int)) ->
-                let chunk = String.sub text offset length in
-                let from = max 0 (min length (tint_start - offset)) in
-                let upto = max from (min length (tint_end - offset)) in
-                let a, b, c = Findings_layout.cut chunk from upto in
-                pp_stripe color ppf;
-                pp_band ppf
-                  (if j = 0 then
-                     Printf.sprintf "%*s%*d%*s" band_padding "" digits
-                       line_number band_padding ""
-                   else blank_band);
-                Fmt.pf ppf "%s%a%s@." a
-                  (styles [ `Bg color; `Fg (`Hi `White) ] Fmt.string)
-                  b c));
-  trimmed
-  |> Option.iter (fun (n : int) ->
-         pp_stripe color ppf;
-         Fmt.pf ppf "%a@."
-           Fmt.(styled `Faint string)
-           (Printf.sprintf "%s… %s more" blank_band
-              (String_.unit_str n "line")));
-  ()
-
-(* Under --interfile-dedup-by source-sink the findings sharing this sink
-   differ only in where the taint started, so the sink is drawn once and
-   each source named under it, inside the stripe. Each source is followed by
-   its own trace rather than all the sources first and all the traces after:
-   the pairing is what makes a trace readable, since on its own it does not
-   say which source it explains.
-
-   The stripe has to open every line a trace prints, so it is handed over
-   already rendered. It is rendered with the renderer of this formatter, not
-   of stdout: the same report also goes to -o/--text-output, whose buffer
-   has no renderer and must stay free of escapes even while the terminal is
-   getting colour. *)
-let pp_origins (ctx : Skin.ctx) (color : tone) ppf (m : OutJ.cli_match)
-    (group : OutJ.cli_match list) : unit =
-  let entries = if group = [] then [ m ] else group in
-  let several = List.length entries > 1 in
-  let name_sources = ctx.is_interfile m.check_id && several in
-  let traces = ctx.show_dataflow_traces in
-  if name_sources || traces then begin
-    (* the same band width the snippet above used, so the two line up *)
-    let digits = String.length (string_of_int m.end_.line) in
-    let band_width = digits + (2 * band_padding) in
-    let bar =
-      Fmt.str_like ppf "%s%a" finding_margin
-        Fmt.(styled (`Fg color) string)
-        stripe_glyph
-    in
-    let banded (label : string) : string =
-      Fmt.str_like ppf "%a " (styles band_style Fmt.string) label
-    in
-    let gutter (n : int) : string =
-      banded
-        (Printf.sprintf "%*s%*d%*s" band_padding "" digits n band_padding "")
-    in
-    let gutter_blank = banded (String.make band_width ' ') in
-    let faint (glyph : string) : string =
-      Fmt.str_like ppf "%a" Fmt.(styled `Faint string) glyph
-    in
-    entries
-    |> List.iteri (fun (i : int) (finding : OutJ.cli_match) ->
-           (* a gap opens the block when a source line leads it, and
-              divides one entry from the next only once each carries a
-              trace. A trace following the snippet needs no gap of its own:
-              its spine already joins the two, and a bare list of sources
-              reads better tight. *)
-           if (i = 0 && name_sources) || (i > 0 && traces) then pp_blank_stripe color ppf;
-           if name_sources then
-             Findings_layout.source_of_finding finding
-             |> Option.iter (fun ((loc : OutJ.location), (code : string)) ->
-                    let where =
-                      Printf.sprintf "%s:%d" !!(loc.path) loc.start.line
-                    in
-                    (* a source spanning several lines arrives as one long
-                       line, so it is cut to what is left of the width *)
-                    let code =
-                      Findings_layout.ellipsize
-                        ~width:
-                          (ctx.width - prefix_width - String.length "from "
-                         - String.length where - 2)
-                        code
-                    in
-                    pp_stripe color ppf;
-                    Fmt.pf ppf "%a %a  %s@."
-                      Fmt.(styled `Faint string)
-                      "from"
-                      Fmt.(styled (`Fg `Cyan) string)
-                      where code);
-           if traces then
-             finding.extra.dataflow_trace
-             |> Option.iter (fun trace ->
-                    Findings_layout.pp_dataflow_tree
-                      ~finding_path:finding.path
-                      ~line_prefix:(bar ^ trace_inset) ~glyph:faint ~gutter
-                      ~gutter_blank
-                      ~highlight:[ `Bg color; `Fg (`Hi `White) ]
-                      ppf trace))
-  end
-
-let pp_finding ?(group : OutJ.cli_match list = []) (ctx : Skin.ctx) ppf
-    (m : OutJ.cli_match) : unit =
-  let color = severity_color m.extra.severity in
-  pp_heading ctx color ppf m;
-  pp_message ctx color ppf m.extra.message;
-  (* the stripe carries on across the gap between the message and the code *)
-  pp_blank_stripe color ppf;
-  pp_code ctx color ppf m;
-  pp_origins ctx color ppf m group;
-  (match Option.map (Findings_layout.fix_lines ~first_col:m.start.col) m.extra.fix with
-  (* a fix with no text deletes the match, which the report has to say:
-     the code goes away when --autofix runs *)
-  | Some [] ->
-      pp_blank_stripe color ppf;
-      pp_stripe color ppf;
-      Fmt.pf ppf "%a %a@."
-        Fmt.(styled (`Fg (`Hi `Green)) string)
-        "fix"
-        Fmt.(styled (`Fg `Red) string)
-        "delete"
-  | Some (first :: rest) ->
-      (* set apart from the snippet, as the snippet is from the message; the
-         bar opens every line of the fix, not just its first *)
-      pp_blank_stripe color ppf;
-      pp_stripe color ppf;
-      Fmt.pf ppf "%a %s@."
-        Fmt.(styled (`Fg (`Hi `Green)) string)
-        "fix" first;
-      let hanging = String.make (String.length "fix ") ' ' in
-      rest
-      |> List.iter (fun (l : string) ->
-             pp_stripe color ppf;
-             Fmt.pf ppf "%s%s@." hanging l)
-  | None -> ());
+  pp_section ctx ppf path;
   Fmt.pf ppf "@."
 
-(* the findings of one file under a header of its own, in the order they
-   were reported *)
-let pp_by_file (ctx : Skin.ctx) ppf (matches : OutJ.cli_match list) : unit =
-  let groups =
-    match ctx.interfile_dedup_by with
-    | Core_match.Sink -> List_.map (fun (m : OutJ.cli_match) -> [ m ]) matches
-    | Core_match.Source_sink -> Findings_layout.group_findings_by_sink matches
+(* The heading of a ci section: nothing is repeated on every finding, as
+   the section it sits in already says which kind it is. The heading
+   outweighs the file rules beneath it by carrying a badge rather than a
+   second rule. *)
+let pp_ci_section ppf ~(badge : bool) (label : string)
+    (style : Fmt.style list) (count : int) : unit =
+  (* the padding belongs to a filled badge, which has a background to put
+     it on; plain text would only gain a stray space either side *)
+  let text = if badge then Printf.sprintf " %s " label else label in
+  Fmt.pf ppf "%a %a@.@."
+    (styles style Fmt.string)
+    text
+    Fmt.(styled `Faint string)
+    (Printf.sprintf "· %s" (String_.unit_str count "finding"))
+
+(* what 'opengrep ci' runs in, under a rule of its own *)
+let pp_ci_environment (ctx : Skin.ctx) ppf (env : M.Start.ci_env) : unit =
+  pp_section ctx ppf "Debugging info";
+  Fmt.pf ppf "@.";
+  Fmt.pf ppf "  versions     opengrep %a on OCaml %a@."
+    Fmt.(styled `Bold string)
+    env.version
+    Fmt.(styled `Bold string)
+    env.ocaml_version;
+  Fmt.pf ppf "  environment  %a, triggering event is %a@."
+    Fmt.(styled `Bold string)
+    env.environment
+    Fmt.(styled `Bold string)
+    env.event_name
+
+(* A --baseline-commit scan states its plan twice; the second is the
+   replay, and says so. *)
+let pp_plan (run : M.Plan.run) ppf (counts : (string * string) option) : unit
+    =
+  let nothing, scanning =
+    match run with
+    | M.Plan.Current -> ("Nothing to scan.", "Scanning")
+    | M.Plan.Baseline -> ("Baseline: nothing to scan.", "Baseline: scanning")
   in
-  groups
-  |> List.fold_left
-       (fun (previous : string option) (group : OutJ.cli_match list) ->
-         match group with
-         | [] -> previous
-         | (m : OutJ.cli_match) :: _ ->
-             let path = !!(m.path) in
-             let here = Some path in
-             if previous <> here then (
-               pp_file_header ctx ppf path;
-               Fmt.pf ppf "@.");
-             pp_finding ~group ctx ppf m;
-             here)
-       None
-  |> ignore
+  match counts with
+  | None -> Fmt.string ppf nothing
+  | Some (files, rules) ->
+      Fmt.pf ppf "%s %a with %a." scanning
+        Fmt.(styled `Bold string)
+        files
+        Fmt.(styled `Bold string)
+        rules
+
+(* "in 0 files" says nothing; a clean scan just says so *)
+let pp_tally ppf (t : M.Result.tally) : unit =
+  if Int.equal t.findings 0 then
+    Fmt.pf ppf "%a." Fmt.(styled `Bold string) "No findings"
+  else
+    Fmt.pf ppf "%a in %s, from %s."
+      Fmt.(styled `Bold string)
+      (String_.unit_str t.findings "finding")
+      (String_.unit_str t.files_with_findings "file")
+      (String_.unit_str t.rules_with_findings "rule")
+
+let look : Skin_common.look =
+  {
+    finding;
+    pp_file_header;
+    pp_ci_heading =
+      (fun ~(blocking : bool) ppf (count : int) ->
+        if blocking then
+          pp_ci_section ppf ~badge:true "BLOCKING"
+            [ `Bg `Red; `Fg (`Hi `White); `Bold ]
+            count
+        else pp_ci_section ppf ~badge:false "non-blocking" [ `Faint ] count);
+    pp_rules_fired_title =
+      (fun (ctx : Skin.ctx) ppf (title : string) ->
+        pp_section ctx ppf title;
+        Fmt.pf ppf "@.");
+    pp_ci_environment;
+    pp_plan;
+    sentences = true;
+    pp_tally;
+  }
 
 (*****************************************************************************)
 (* The skin *)
 (*****************************************************************************)
 
-let name = "vivid"
 let doc = "A colourful report: a severity stripe, banded line numbers."
-
-let line (f : Format.formatter -> unit) : Skin.chunk =
-  Skin.Line (Skin.Stderr Logs.App, f)
-
-(* Only on a terminal, so a log does not gain it. *)
-(* what 'opengrep ci' runs in, under a rule of its own *)
-let ci_environment (ctx : Skin.ctx) (env : M.Start.ci_env) : Skin.chunk list =
-  [
-    line (fun ppf ->
-        pp_section ctx ppf "Debugging info";
-        Fmt.pf ppf "@.";
-        Fmt.pf ppf "%s  versions     opengrep %a on OCaml %a@." margin
-          Fmt.(styled `Bold string)
-          env.version
-          Fmt.(styled `Bold string)
-          env.ocaml_version;
-        Fmt.pf ppf "%s  environment  %a, triggering event is %a@." margin
-          Fmt.(styled `Bold string)
-          env.environment
-          Fmt.(styled `Bold string)
-          env.event_name);
-  ]
-
-let on_start (ctx : Skin.ctx) (start : M.Start.t) : Skin.chunk list =
-  (match start.ci with
-  | Some env -> ci_environment ctx env
-  | None -> [])
-  @
-  if not start.banner then []
-  else [ line (fun ppf -> Skin_banner.pp ~margin:margin ppf) ]
-
-(* No status line, and so no spinner either: this skin says nothing until
-   it has something to report. *)
-let rules_status (_ctx : Skin.ctx) (_start : M.Start.t) : string option = None
-
-let on_plan (_ctx : Skin.ctx) (plan : M.Plan.t) : Skin.chunk list =
-  [
-    line (fun ppf ->
-        if plan.num_rules_with_a_target = 0 || plan.num_files_with_a_rule = 0
-        then Fmt.pf ppf "%sNothing to scan." margin
-        else
-          Fmt.pf ppf "%sScanning %a with %a." margin
-            Fmt.(styled `Bold string)
-            (String_.unit_str plan.num_targets "file")
-            Fmt.(styled `Bold string)
-            (String_.unit_str plan.num_rules "rule"));
-    (* the findings start their own block *)
-    line (fun _ppf -> ());
-  ]
-
-let pp_summary ppf (summary : M.Summary.t) : unit =
-  let str = M.string_of_phrase in
-  Option.iter
-    (fun (txt : string) -> Fmt.pf ppf "%s%s@." margin txt)
-    summary.limited;
-  summary.partially_analyzed
-  |> Option.iter (fun p ->
-         Fmt.pf ppf "%sPartially analyzed: %s@." margin (str p));
-  if summary.unplaced_warnings > 0 then
-    Fmt.pf ppf "%sAnalysis limited: %s about the scan, see --verbose.@." margin
-      (String_.unit_str summary.unplaced_warnings "warning");
-  match summary.skipped with
-  | [] -> ()
-  | xs ->
-      Fmt.pf ppf "%sSkipped: %s@." margin
-        (xs |> List_.map str |> String.concat ", ")
-
-let on_result (_ctx : Skin.ctx) (result : M.Result.t) : Skin.chunk list =
-  let summary =
-    if M.Summary.is_empty result.summary then []
-    else [ line (fun ppf -> pp_summary ppf result.summary) ]
-  in
-  let tally =
-    match result.tally with
-    | None -> []
-    | Some (t : M.Result.tally) ->
-        [
-          line (fun ppf ->
-              (* "in 0 files" says nothing; a clean scan just says so *)
-              if Int.equal t.findings 0 then
-                Fmt.pf ppf "%s%a." margin
-                  Fmt.(styled `Bold string)
-                  "No findings"
-              else
-                Fmt.pf ppf "%s%a in %s, from %s." margin
-                  Fmt.(styled `Bold string)
-                  (String_.unit_str t.findings "finding")
-                  (String_.unit_str t.files_with_findings "file")
-                  (String_.unit_str t.rules_ran "rule"));
-        ]
-  in
-  (Skin.Findings :: summary) @ tally
-
-let pp_matches (ctx : Skin.ctx) ppf (matches : OutJ.cli_match list) : unit =
-  pp_by_file ctx ppf matches
-
-
-(* the "time" field is there with --time *)
-let pp_time ppf (cli_output : OutJ.cli_output) : unit =
-  match cli_output.time with
-  | Some time ->
-      if List_.null cli_output.results then Fmt.pf ppf "@.";
-      Time_report.pp_time_summary ppf time cli_output.errors
-  | None -> ()
-
-let pp_findings (ctx : Skin.ctx) ppf (cli_output : OutJ.cli_output) : unit =
-  cli_output.results |> Semgrep_output_utils.sort_cli_matches
-  |> pp_by_file ctx ppf;
-  pp_time ppf cli_output
-
+let on_start = Skin_common.on_start look
+let rules_status = Skin_common.rules_status
+let on_plan = Skin_common.on_plan look
+let on_result = Skin_common.on_result look
+let pp_findings = Skin_common.pp_findings look
+let pp_matches = Skin_common.pp_by_file look
 let wants_status_bar = true
-let live = None

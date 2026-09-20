@@ -119,6 +119,15 @@ val get_exn : t -> exn
 (* Get the trace. *)
 val get_trace : t -> Printexc.raw_backtrace
 
+(* Whether a handler that contains the failure of some other code must let
+   this exception through: the runtime out of memory or out of stack, or
+   the interrupt of a time or memory limit on the current thread
+   (Memprof_limits). Swallowing an interrupt does not cancel it -- it is
+   raised again at a later allocation -- but it delays the end of the
+   limited task. Use it as [| exn when not (Exception.is_critical exn) -> ...].
+*)
+val is_critical : exn -> bool
+
 (*
    Convert the exception and the trace into a string in a multiline format
    suitable for error messages. It always includes a terminal newline ('\n').

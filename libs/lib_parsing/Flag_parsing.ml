@@ -2,14 +2,6 @@
  * You can switch to Logs src if you want logging for your parser.
  *)
 
-(* HACK: Needed for tools/languages_dumper/Main.ml.
- * Seems unused anyway... *)
-let verbose_lexing_dummy = ref false
-let verbose_parsing_dummy = ref true
-
-let verbose_lexing = Domain.DLS.new_key (fun () -> false)
-let verbose_parsing = Domain.DLS.new_key (fun () -> true)
-
 (* see Parse_info.lexical_error helper and Lexical_error exn *)
 let exn_when_lexical_error = ref true
 
@@ -33,12 +25,6 @@ let show_parsing_error = Domain.DLS.new_key (fun () -> true)
  * One quick fix is to put this in DLS, even if it incures a performance
  * penalty. It's not invoked for source code parsing. *)
 let sgrep_mode = Domain.DLS.new_key (fun () -> false)
-
-let cmdline_flags_verbose () =
-  [
-    ("-no_verbose_parsing", Arg.Clear verbose_parsing_dummy, "  ");
-    ("-no_verbose_lexing", Arg.Clear verbose_lexing_dummy, "  ");
-  ]
 
 let cmdline_flags_debugging () =
   [

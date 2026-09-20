@@ -10,30 +10,26 @@
  * in the order it wants them. An empty list draws nothing, so a skin is free
  * to drop a section, merge two, or keep everything until the end.
  *
- * The pieces are documents, not effects: the driver decides which stream
- * they reach and renders them. That keeps a skin a pure function of the
- * data, which is also what lets the file destinations reuse it. A skin that
- * genuinely needs to repaint the terminal while the scan runs implements
- * LIVE as well.
+ * The pieces are documents, not effects: the driver renders them. That
+ * keeps a skin a pure function of the data, which is also what lets the
+ * file destinations reuse it. Repainting the terminal while the scan runs
+ * is the status bar's job, which a skin asks for with wants_status_bar.
  *)
 
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
 
-(* Where a piece of the report goes.
- *
- * Stdout is the report proper: it survives --quiet, as the findings must.
- * Stderr carries the chrome around it, through Logs, so that --quiet and
- * --verbose keep deciding what is shown; Logs.App is the level that prints
- * without a "[LEVEL]" prefix.
- *)
-type dest =
-  | Stdout
-  | Stderr of Logs.level
-
 type chunk =
-  | Line of dest * (Format.formatter -> unit)
+  (* A piece of the chrome around the findings, written to stderr through
+     Logs at this level, so that --quiet and --verbose keep deciding what is
+     shown; Logs.App is the level that prints without a "[LEVEL]" prefix.
+
+     The document is rendered inside the log message, with the log mutex
+     held. So it must not log, nor call anything that does -- which a
+     document has no reason to do, being a rendering of data the builder
+     already gathered. *)
+  | Line of Logs.level * (Format.formatter -> unit)
   (* Where the findings belong. The driver renders them at this point, in
      whichever format was asked for, together with the diagnostics that
      accompany them. A skin that leaves it out reports no findings at all. *)
@@ -41,12 +37,6 @@ type chunk =
 
 (* What a skin needs to know about the terminal it draws on. *)
 type ctx = {
-  (* whether ANSI styling reaches the reader; decided by the destination
-   * this report is going to, as the style renderer of its formatter is *)
-  color : bool;
-  is_tty : bool;
-  (* --verbose or --debug *)
-  verbose : bool;
   (* the columns the report draws within, already clamped *)
   width : int;
   (* --max-chars-per-line and --max-lines-per-finding *)
@@ -68,31 +58,28 @@ type ctx = {
 (* The interface *)
 (*****************************************************************************)
 
-(* Only for a skin that repaints while the scan runs; ordinary skins answer
- * None and stay pure. *)
-module type LIVE = sig
-  type t
-
-  val start : ctx -> t
-  val stop : t -> unit
-end
-
 module type S = sig
-  val name : string
+  (* what --skin says this skin looks like; Scan_CLI builds its help from
+     these, so a skin describes itself in one place only *)
   val doc : string
 
   (* before the rules are fetched: the banner, and what the rules come from *)
   val on_start : ctx -> Skin_model.Start.t -> chunk list
 
   (* The line shown while the rules are fetched, which the spinner animates
-     and which is erased when the fetch ends. None for a skin that shows no
-     such line, and then there is no spinner either. *)
+     and erases when the fetch ends, where there is a spinner. None for a
+     skin that shows no such line, and then there is no spinner either;
+     None off a terminal too, where nothing would erase it. *)
   val rules_status : ctx -> Skin_model.Start.t -> string option
 
-  (* once targeting and rule loading have paired files with rules *)
+  (* Once targeting and rule loading have paired files with rules. The
+     plan is chrome, and costs a walk of every job to build: it is not
+     built, and this is not called, while logging is off (--quiet). *)
   val on_plan : ctx -> Skin_model.Plan.t -> chunk list
 
-  (* the end of the scan: where the findings go, and what follows them *)
+  (* The end of the scan: where the findings go, and what follows them.
+     The summary is chrome too, and stats every ignored path to build: it
+     is Summary.empty while logging is off. *)
   val on_result : ctx -> Skin_model.Result.t -> chunk list
 
   (* The findings themselves, in the text format. Called where the skin put
@@ -106,8 +93,6 @@ module type S = sig
   (* Whether this skin wants the status bar the scan draws while it works.
      A skin that keeps the terminal quiet says no. *)
   val wants_status_bar : bool
-
-  val live : (module LIVE) option
 end
 
 (*****************************************************************************)

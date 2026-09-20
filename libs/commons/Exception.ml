@@ -14,6 +14,13 @@ let create exn trace = (exn, trace)
 let get_exn (exn, _trace) = exn
 let get_trace (_exn, trace) = trace
 
+let is_critical (exn : exn) : bool =
+  match exn with
+  | Out_of_memory
+  | Stack_overflow ->
+      true
+  | _ -> Memprof_limits.is_interrupted ()
+
 let to_string (exn, trace) =
   let msg =
     Printf.sprintf "%s\n%s" (Printexc.to_string exn)

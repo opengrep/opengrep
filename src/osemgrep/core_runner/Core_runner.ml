@@ -88,7 +88,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
-    ?on_plan:(Skin_model.Plan.t -> unit) ->
+    ?on_plan:(Scan_plan.t -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -457,7 +457,7 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook ?(on_plan = fun (_ : Skin_model.Plan.t) -> ())
+  let run ?file_match_hook ?(on_plan : (Scan_plan.t -> unit) option)
       ?(progress_hook : (Core_scan_config.progress -> unit) option)
       ~(git_repo : bool)
       ~(scanning_roots : Scanning_root.directory list) (conf : conf)
@@ -495,12 +495,15 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
     *)
     let lang_jobs = split_jobs_by_language targeting_conf valid_rules targets in
     (* the targets are those tracked by git only when git listed them and
-       its exclusions were respected *)
+       its exclusions were respected; the plan is built only for a caller
+       that asks for it *)
     on_plan
-      (Scan_plan.of_lang_jobs ~rules:valid_rules
-         ~num_targets:(List.length targets)
-         ~tracked_by_git:(targeting_conf.respect_gitignore && git_repo)
-         lang_jobs);
+    |> Option.iter (fun (on_plan : Scan_plan.t -> unit) ->
+           on_plan
+             (Scan_plan.of_lang_jobs ~rules:valid_rules
+                ~num_targets:(List.length targets)
+                ~tracked_by_git:(targeting_conf.respect_gitignore && git_repo)
+                lang_jobs));
     let code_targets, applicable_rules =
       targets_and_rules_of_lang_jobs lang_jobs
     in

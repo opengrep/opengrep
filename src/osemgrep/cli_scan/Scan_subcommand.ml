@@ -87,9 +87,13 @@ let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
   |> List_.map (fun (e : Rule_error.t) -> Core_error.error_of_rule_error e)
 
 (* we require stdout here to give the proper output, such as with --json *)
-let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
+(* The bar is stopped first: it redraws its line on stderr until then, and
+   on a terminal that is also where the document goes. *)
+let output_and_exit_from_fatal_core_errors_exn
+    ?(status_bar : Status_bar.t option) ~(text_message : string)
     ~(exit_code : Exit_code.t) (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
     (profiler : Profiler.t) (errors : Core_error.t list) : Exit_code.t =
+  Option.iter Status_bar.finish status_bar;
   match conf.output_conf.output_format with
   (* For textual output, it seems that we do not have a unified way to
      display errors, other than raising an exception and dispatching to the
@@ -108,9 +112,7 @@ let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
         Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors)
       in
 
-      Output.output_result
-        ~skin:(Skins.resolve conf.output_conf.skin)
-        ~keep_ignored:false
+      Output.output_result ~keep_ignored:false
         (caps :> < Cap.stdout >)
         (* TODO: choose output conf? *)
         conf.output_conf profiler res
@@ -155,10 +157,10 @@ let exit_code_of_invalid_config_errors (errors : Core_error.t list) :
 (* A configuration that cannot be loaded aborts the run, with the exit code
  * its kinds of error decide and the per-error codes in the entries of the
  * JSON. *)
-let output_and_exit_from_invalid_config_exn ~(text_message : string)
-    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
-    (errors : Core_error.t list) : Exit_code.t =
-  output_and_exit_from_fatal_core_errors_exn ~text_message
+let output_and_exit_from_invalid_config_exn ?status_bar
+    ~(text_message : string) (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+    (profiler : Profiler.t) (errors : Core_error.t list) : Exit_code.t =
+  output_and_exit_from_fatal_core_errors_exn ?status_bar ~text_message
     ~exit_code:(exit_code_of_invalid_config_errors errors)
     caps conf profiler errors
 
@@ -176,8 +178,8 @@ let output_and_exit_from_fatal_exn ~(msg : string) ~(exit_code : Exit_code.t)
 (* A scanning root that does not exist aborts the scan, as pysemgrep's
  * FilesNotFoundError does: one fatal error per missing root, reported in
  * the output format asked for, exit code 2. *)
-let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) :
+let get_targets_or_exit ?status_bar (caps : < Cap.stdout >)
+    (conf : Scan_CLI.conf) (profiler : Profiler.t) :
     (Target_and_root.t Find_targets.targets, Exit_code.t) result =
   let missing_roots : Fpath.t list =
     conf.target_roots
@@ -198,7 +200,7 @@ let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
                  Out.SemgrepError)
       in
       Error
-        (output_and_exit_from_fatal_core_errors_exn
+        (output_and_exit_from_fatal_core_errors_exn ?status_bar
            ~text_message:
              (errors
              |> List_.map (fun (error : Core_error.t) -> error.msg)
@@ -275,7 +277,7 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
   if cli_matches <> [] then (
     Mutex.protect file_match_hook_mutex (fun () -> printer conf cli_matches))
 
-(* coupling: similar to Output.dispatch_output_format for Text *)
+(* coupling: similar to Output.dispatch for Text *)
 let incremental_text_printer (_caps : < Cap.stdout >)
     ~(is_interfile : Rule_ID.t -> bool) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =
@@ -351,8 +353,6 @@ let features () : Skin_model.Start.feature list =
         "Basic security coverage for first-party code vulnerabilities.";
       enabled = true;
     };
-    (* Semgrep Code (SAST) and Semgrep Secrets used to be listed here, gated
-       on the api token and the engine's secrets config. *)
   ]
 
 let rule_source_of (source : Rule_fetching.source) : Skin_model.Start.rule_source
@@ -386,18 +386,19 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >) :
 let rules_from_rules_source ?(skip_invalid_configs = false)
     ?(status : string option) ~rewrite_rule_ids ~strict caps
     (source : Rule_fetching.source) =
-  (* the status the spinner animates, printed for it to draw on; it is
-     erased again when the rules are in. Only a terminal gets it: nothing
-     erases it elsewhere, and it would only pile up in a log. *)
-  let status = if Console_Spinner.should_show_spinner () then status else None in
+  (* The status line, which a skin gives only on a terminal (legacy's
+     comes with the banner). Where the spinner runs, it animates the line
+     and erases it when the rules are in; where it does not -- Windows --
+     the line stays. *)
   Option.iter (fun (text : string) -> Logs.app (fun m -> m "%s" text)) status;
-  (* The spinner animates the status line, so a skin that shows no status
-     gets no spinner either. *)
+  (* a skin that shows no status gets no spinner either *)
   let spinner_ls =
     match status with
     | Some _ when Console_Spinner.should_show_spinner () ->
-        [ Console_Spinner.spinner_async ~takes_previous_line:true () ]
-    | _ -> []
+        [ Console_Spinner.spinner_async () ]
+    | Some _
+    | None ->
+        []
   in
   (* Fetch the rules *)
   let rules_and_origins =
@@ -461,6 +462,7 @@ let adjust_nosemgrep_and_autofix (res : Core_runner.result) :
  * caps = topevel caps - Cap.network
  *)
 let check_targets_with_rules ?(print_summary = true)
+    ?(status_bar : Status_bar.t option)
     (caps :
       < Cap.stdout
       ; Cap.chdir
@@ -517,7 +519,7 @@ let check_targets_with_rules ?(print_summary = true)
               Rule_errors_report.invalid_configs_message core_errors )
       in
       Error
-        (output_and_exit_from_invalid_config_exn ~text_message
+        (output_and_exit_from_invalid_config_exn ?status_bar ~text_message
            (caps :> < Cap.stdout >)
            conf profiler core_errors)
   | _ -> (
@@ -561,24 +563,24 @@ let check_targets_with_rules ?(print_summary = true)
       let output_format, file_match_hook =
         choose_output_format_and_match_hook (caps :> < Cap.stdout >) conf rules
       in
-      let on_plan (plan : Skin_model.Plan.t) : unit =
-        Skin_emit.emit (Sk.on_plan skin_ctx plan)
-      in
-      (* Started here, a step before the Common.protect below that stops it:
-         the bar runs a thread and installs hooks, so nothing that could
-         raise belongs between the two. It is drawn on stderr while the scan
-         works and stopped before the report, so findings are not printed
-         over it. Under --incremental-output findings reach stdout during
-         the scan, so there is no bar at all then; under --quiet, which
-         silences the log stream the bar shares that terminal with, there is
-         none either. *)
+      (* Incremental streams findings to stdout as they are found, so
+         nothing may be drawing over them. The conf flag is not the only
+         way in: --develop selects it for a text report too, which is why
+         this looks at the format chosen rather than at the flag. *)
       let status_bar =
-        if
-          conf.no_progress_bar || conf.incremental_output
-          || Option.is_none conf.common.logging_level
-          || not Sk.wants_status_bar
-        then None
-        else Status_bar.create Status_bar.Analyzing_targets
+        match output_format with
+        | Output_format.Incremental ->
+            Option.iter Status_bar.finish status_bar;
+            None
+        | _else_ -> status_bar
+      in
+      (* chrome, not built while logging is off: see Skin.S.on_plan *)
+      let on_plan : (Skin_model.Plan.t -> unit) option =
+        if Skin_emit.stderr_is_shown () then
+          Some
+            (fun (plan : Skin_model.Plan.t) ->
+              Skin_emit.emit (Sk.on_plan skin_ctx plan))
+        else None
       in
       let progress_hook (progress : Core_scan_config.progress) : unit =
         Option.iter
@@ -623,7 +625,7 @@ let check_targets_with_rules ?(print_summary = true)
                 let { run } : Core_runner.func =
                   mk_core_run_for_osemgrep caps
                 in
-                run ?file_match_hook ~on_plan ~progress_hook
+                run ?file_match_hook ?on_plan ~progress_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
                   ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
@@ -631,9 +633,36 @@ let check_targets_with_rules ?(print_summary = true)
         | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
-            let mk_diff_scan_func ?file_match_hook () : Diff_scan.diff_scan_func
-                =
+            (* [baseline] runs are the replay against the baseline commit.
+               They say so and send no progress of their own: their counts
+               are a second pass over the same files, and letting them
+               through would restart the bar from zero. *)
+            let mk_diff_scan_func ?file_match_hook ?(baseline = false) () :
+                Diff_scan.diff_scan_func =
              fun ?explicit_targets ~scanning_roots targets rules ->
+              if baseline then
+                status_bar
+                |> Option.iter (fun (bar : Status_bar.t) ->
+                       Status_bar.set_phase bar
+                         Status_bar.Comparing_with_baseline);
+              let progress_hook =
+                if baseline then fun (_ : Core_scan_config.progress) -> ()
+                else progress_hook
+              in
+              (* The replay states a plan of its own, and has to say which
+                 scan it belongs to: it is a second pass over the same
+                 paths and frequently has nothing to look at there. *)
+              let on_plan =
+                on_plan
+                |> Option.map (fun on_plan (plan : Scan_plan.t) ->
+                       on_plan
+                         (if baseline then
+                            {
+                              plan with
+                              Skin_model.Plan.run = Skin_model.Plan.Baseline;
+                            }
+                          else plan))
+              in
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               (* the baseline scan names its targets relative to the current
                  directory, and the targets of the command line are named
@@ -647,7 +676,7 @@ let check_targets_with_rules ?(print_summary = true)
                       Find_targets.explicit_targets = table;
                     }
               in
-              run ?file_match_hook ~on_plan ~progress_hook
+              run ?file_match_hook ?on_plan ~progress_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf
                 conf.matching_conf (rules, invalid_rules) targets
@@ -662,7 +691,7 @@ let check_targets_with_rules ?(print_summary = true)
                 ~explicit_targets:conf.targeting_conf.explicit_targets
                 ~scanning_roots:targets_and_skipped.Find_targets.roots
                 ~head_scan_func:(mk_diff_scan_func ?file_match_hook ())
-                ~baseline_scan_func:(mk_diff_scan_func ())
+                ~baseline_scan_func:(mk_diff_scan_func ~baseline:true ())
             in
             (* python: run_scan.py saves core_time right after the scan of
                the head, before the baseline worktree is scanned, so the
@@ -800,26 +829,31 @@ let check_targets_with_rules ?(print_summary = true)
           let skipped_groups = Skipped_report.group_skipped skipped in
           let (result_view : Skin_model.Result.t) =
             {
+              (* chrome, not built while logging is off: see
+                 Skin.S.on_result *)
               summary =
-                Summary_report.summary_of_skipped
-                  ~respect_gitignore:conf.targeting_conf.respect_gitignore
-                  ~is_git_repo:targets_and_skipped.Find_targets.git_repo
-                  ~is_baseline_scan:
-                    (Option.is_some conf.targeting_conf.baseline_commit)
-                  ~maturity:conf.common.maturity
-                  ~max_target_bytes:conf.targeting_conf.max_target_bytes
-                  ~skipped_groups
-                  (* the warnings about the scan rather than about a file,
-                     such as the targets the interfile graph leaves out *)
-                  ~unplaced_warnings:
-                    (result.Core_result.errors
-                    |> List.filter (fun (e : Core_error.t) ->
-                           (match e.typ with
-                           | SemgrepWarning -> true
-                           | _ -> false)
-                           && Option.is_none e.loc)
-                    |> List.length)
-                  ();
+                (if not (Skin_emit.stderr_is_shown ()) then
+                   Skin_model.Summary.empty
+                 else
+                   Summary_report.summary_of_skipped
+                     ~respect_gitignore:conf.targeting_conf.respect_gitignore
+                     ~is_git_repo:targets_and_skipped.Find_targets.git_repo
+                     ~is_baseline_scan:
+                       (Option.is_some conf.targeting_conf.baseline_commit)
+                     ~maturity:conf.common.maturity
+                     ~max_target_bytes:conf.targeting_conf.max_target_bytes
+                     ~skipped_groups
+                     (* the warnings about the scan rather than about a file,
+                        such as the targets the interfile graph leaves out *)
+                     ~unplaced_warnings:
+                       (result.Core_result.errors
+                       |> List.filter (fun (e : Core_error.t) ->
+                              (match e.typ with
+                              | SemgrepWarning -> true
+                              | _ -> false)
+                              && Option.is_none e.loc)
+                       |> List.length)
+                     ());
               (* python: the print_summary parameter of output(); 'opengrep ci'
                  prints its own completion lines instead *)
               tally =
@@ -827,6 +861,11 @@ let check_targets_with_rules ?(print_summary = true)
                    Some
                      {
                        Skin_model.Result.rules_ran = num_rules_ran;
+                       rules_with_findings =
+                         cli_output.results
+                         |> List_.map (fun (m : Out.cli_match) ->
+                                Rule_ID.to_string m.check_id)
+                         |> List_.deduplicate |> List.length;
                        files_scanned = List.length cli_output.paths.scanned;
                        files_with_findings =
                          cli_output.results
@@ -844,7 +883,7 @@ let check_targets_with_rules ?(print_summary = true)
             Logs.info (fun m -> m "reporting matches if any");
             (* outputting the result on stdout! in JSON/Text/... depending on
                conf *)
-            Output.dispatch ~skin:(module Sk)
+            Output.dispatch
               (caps :> < Cap.stdout >)
               profiler output_conf cli_output res.hrules
               ~interfile_dedup_by:res.interfile_dedup_by
@@ -855,14 +894,12 @@ let check_targets_with_rules ?(print_summary = true)
                results (not with --quiet, on either side) *)
             (match output_format with
             | Text ->
-                let timeouts =
-                  Summary_report.timeouts_of_errors
-                    ~timeout_threshold:conf.core_runner_conf.timeout_threshold
-                    cli_output.errors
-                in
                 let warnings =
                   Fmt_.with_buffer_to_string (fun ppf ->
-                      Summary_report.pp_timeout_warnings ppf timeouts)
+                      Summary_report.pp_timeout_warnings
+                        ~timeout_threshold:
+                          conf.core_runner_conf.timeout_threshold
+                        ppf cli_output.errors)
                 in
                 if not (String.equal warnings "") then
                   Logs.warn (fun m -> m "%s" (String.trim warnings))
@@ -987,6 +1024,34 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
 
   Core_profiling.profiling := conf.core_runner_conf.time_flag;
 
+  (* The bar covers the whole run, rule fetching included: a large ruleset
+     comes over the network and the wait is long enough that silence reads
+     as a hang. The skins that show no status of their own say so through
+     wants_status_bar. A run whose logging is off keeps its terminal quiet,
+     and one at --verbose or --debug has no bar either: its messages scroll
+     past anyway, and while the bar is up they wait in a queue with no
+     bound. Both by the level in force, not the one the flags asked for,
+     since Logs_.setup lets the environment override it. *)
+  let bar_level =
+    match Logs.level () with
+    | Some (Logs.App | Logs.Error | Logs.Warning) -> true
+    | Some (Logs.Info | Logs.Debug)
+    | None ->
+        false
+  in
+  let status_bar =
+    if
+      conf.no_progress_bar || conf.incremental_output || (not bar_level)
+      || not Sk.wants_status_bar
+    then None
+    else Status_bar.create Status_bar.Loading_rules
+  in
+  (* Whatever prints to stdout stops it first: check_targets_with_rules
+     before the report, output_and_exit_from_fatal_core_errors_exn before
+     an error document. This is the net for every other path, an exception
+     among them. Stopping twice is harmless. *)
+  Common.protect ~finally:(fun () -> Option.iter Status_bar.finish status_bar)
+  @@ fun () ->
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
   let rules_and_origins, fatal_errors =
@@ -994,7 +1059,13 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
         rules_from_rules_source
           (caps :> < Cap.network ; Cap.tmp >)
           ~skip_invalid_configs:conf.skip_invalid_configs
-          ?status:(Sk.rules_status skin_ctx start)
+          (* The status line comes with a spinner, which would fight the
+             bar over the terminal; when there is a bar, it says what is
+             happening. *)
+          ?status:
+            (match status_bar with
+            | None -> Sk.rules_status skin_ctx start
+            | Some _ -> None)
           ~rewrite_rule_ids:conf.rewrite_rule_ids
           ~strict:conf.core_runner_conf.strict source)
   in
@@ -1003,20 +1074,28 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
   (* if there are fatal errors, we must exit :( *)
   | _ :: _ ->
       let core_errors = core_errors_of_fatal_rule_errors fatal_errors in
-      output_and_exit_from_invalid_config_exn
+      output_and_exit_from_invalid_config_exn ?status_bar
         ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
         (caps :> < Cap.stdout >)
         conf profiler core_errors
   (* but with no fatal rule errors, we can proceed with the scan! *)
   | [] -> (
       (* step2: getting the targets *)
+      (* the rules are in; on a large repo the walk below is the slowest
+         thing before the scan, and calling it "Loading rules" would name
+         the wrong phase *)
+      status_bar
+      |> Option.iter (fun (bar : Status_bar.t) ->
+             Status_bar.set_phase bar Status_bar.Analyzing_targets);
       Logs.info (fun m -> m "Computing the targets");
-      match get_targets_or_exit (caps :> < Cap.stdout >) conf profiler with
+      match
+        get_targets_or_exit ?status_bar (caps :> < Cap.stdout >) conf profiler
+      with
       | Error exit_code -> exit_code
       | Ok targets_and_skipped -> (
           (* step3: let's go *)
           let res =
-            check_targets_with_rules
+            check_targets_with_rules ?status_bar
               (caps
                 :> < Cap.stdout
                    ; Cap.chdir

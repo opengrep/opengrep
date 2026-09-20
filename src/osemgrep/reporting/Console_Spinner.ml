@@ -33,17 +33,15 @@ let erase_spinner () : unit =
   ANSITerminal.move_bol ();
   ANSITerminal.erase ANSITerminal.Eol
 
-(* [takes_previous_line] says the caller has just printed a line for the
-   spinner to animate: the glyph is drawn in its first column and the whole
-   line is erased when the spinner stops, so it reads as a status of what is
-   happening rather than a record of what happened. Without it the spinner
-   uses the line it is already on, which is what a caller that printed
-   nothing needs — jumping up would take a line it does not own. *)
-let spinner_async ?(takes_previous_line = false) () : 'a Lwt.t =
+(* The spinner animates the line the caller has just printed: the glyph is
+   drawn in its first column and the whole line is erased when the spinner
+   stops, so it reads as a status of what is happening rather than a record
+   of what happened. *)
+let spinner_async () : 'a Lwt.t =
   (* nosemgrep *)
   ANSITerminal.(print_string [] "\027[?25l");
   (* hide cursor to make progess indicator more visible *)
-  let jump_y = ref takes_previous_line in
+  let jump_y = ref true in
   let print_frame ~frame_index:i : unit Lwt.t =
     let spinner = spinner.(i mod Array.length spinner) in
     ANSITerminal.move_bol ();
