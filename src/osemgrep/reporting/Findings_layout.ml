@@ -608,6 +608,65 @@ let steps_of_dataflow_trace (trace : OutJ.match_dataflow_trace) :
           "This is how taint reaches the sink:" sink
   | _ -> []
 
+(* Which findings are the same sink. Under --interfile-dedup-by source-sink
+   the engine emits one finding per source that reaches a sink, so several
+   of them share a sink and differ only in where the taint came from. A
+   report that does not group them shows the same block twice over with
+   nothing to tell the two apart. *)
+let same_sink (a : OutJ.cli_match) (b : OutJ.cli_match) : bool =
+  Fpath.equal a.path b.path
+  && Rule_ID.equal a.check_id b.check_id
+  && Int.equal a.start.offset b.start.offset
+  && Int.equal a.end_.offset b.end_.offset
+
+let group_findings_by_sink (matches : OutJ.cli_match list) :
+    OutJ.cli_match list list =
+  List.fold_left
+    (fun (groups : OutJ.cli_match list list) (m : OutJ.cli_match) ->
+      match groups with
+      | (previous :: _ as group) :: older when same_sink previous m ->
+          (m :: group) :: older
+      | _ -> [ m ] :: groups)
+    [] matches
+  |> List_.map List.rev |> List.rev
+
+let one_line_of_code (code : string) : string =
+  code |> String.split_on_char '\n' |> List_.map String.trim
+  |> List.filter (fun (s : string) -> not (String.equal s ""))
+  |> String.concat " "
+
+(* Where a finding's taint came from. The skin decides how to draw it;
+   finding it is not a matter of taste. *)
+let source_of_finding (finding : OutJ.cli_match) :
+    (OutJ.location * string) option =
+  match finding.extra.dataflow_trace with
+  | Some { OutJ.taint_source = Some source; _ } ->
+      let loc, code = Core_json_output.leaf_of_call_trace source in
+      Some (loc, one_line_of_code code)
+  | Some _
+  | None ->
+      None
+
+let sources_of_sink (findings : OutJ.cli_match list) :
+    (OutJ.location * string) list =
+  findings |> List_.filter_map source_of_finding
+
+(* [s] cut to [width] columns, an ellipsis standing for what was dropped.
+   A source that spans several lines becomes one long line, which would
+   otherwise run off the side of the report. *)
+let ellipsize ~(width : int) (s : string) : string =
+  if width <= 0 || String.length s <= width then s
+  else
+    (* back off any trailing continuation byte, so the cut never lands
+       inside a UTF-8 character *)
+    let rec cut_at (i : int) : int =
+      if i <= 0 then 0
+      else
+        let c = Char.code s.[i] in
+        if c >= 0x80 && c < 0xc0 then cut_at (i - 1) else i
+    in
+    String_.safe_sub s 0 (cut_at (width - 1)) ^ "…"
+
 (* python compatibility: the 22m and 24m are "normal color or
     intensity", and "underline off" *)
 let esc_prefix (ppf : Format.formatter) =

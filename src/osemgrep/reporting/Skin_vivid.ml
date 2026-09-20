@@ -230,43 +230,95 @@ let pp_code (ctx : Skin.ctx) (color : tone) ppf (m : OutJ.cli_match) :
            Fmt.(styled `Faint string)
            (Printf.sprintf "%s… %s more" blank_band
               (String_.unit_str n "line")));
-  (* --dataflow-traces. The stripe has to open every line the trace prints,
-     so it is handed over already rendered. It is rendered with the renderer
-     of this formatter, not of stdout: the same report also goes to
-     -o/--text-output, whose buffer has no renderer and must stay free of
-     escapes even while the terminal is getting colour. *)
-  match m.extra.dataflow_trace with
-  | Some trace when ctx.show_dataflow_traces ->
-      let bar =
-        Fmt.str_like ppf "%s%a" finding_margin
-          Fmt.(styled (`Fg color) string)
-          stripe_glyph
-      in
-      (* the same band the snippet above puts its numbers in *)
-      let banded (label : string) : string =
-        Fmt.str_like ppf "%a " (styles band_style Fmt.string) label
-      in
-      let gutter (n : int) : string =
-        banded
-          (Printf.sprintf "%*s%*d%*s" band_padding "" digits n band_padding "")
-      in
-      let gutter_blank = banded (String.make band_width ' ') in
-      let faint (glyph : string) : string =
-        Fmt.str_like ppf "%a" Fmt.(styled `Faint string) glyph
-      in
-      Findings_layout.pp_dataflow_tree ~finding_path:m.path
-        ~line_prefix:(bar ^ trace_inset) ~glyph:faint ~gutter ~gutter_blank
-        ~highlight:[ `Bg color; `Fg (`Hi `White) ]
-        ppf trace
-  | _ -> ()
+  ()
 
-let pp_finding (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
+(* Under --interfile-dedup-by source-sink the findings sharing this sink
+   differ only in where the taint started, so the sink is drawn once and
+   each source named under it, inside the stripe. Each source is followed by
+   its own trace rather than all the sources first and all the traces after:
+   the pairing is what makes a trace readable, since on its own it does not
+   say which source it explains.
+
+   The stripe has to open every line a trace prints, so it is handed over
+   already rendered. It is rendered with the renderer of this formatter, not
+   of stdout: the same report also goes to -o/--text-output, whose buffer
+   has no renderer and must stay free of escapes even while the terminal is
+   getting colour. *)
+let pp_origins (ctx : Skin.ctx) (color : tone) ppf (m : OutJ.cli_match)
+    (group : OutJ.cli_match list) : unit =
+  let entries = if group = [] then [ m ] else group in
+  let several = List.length entries > 1 in
+  let name_sources = ctx.is_interfile m.check_id && several in
+  let traces = ctx.show_dataflow_traces in
+  if name_sources || traces then begin
+    (* the same band width the snippet above used, so the two line up *)
+    let digits = String.length (string_of_int m.end_.line) in
+    let band_width = digits + (2 * band_padding) in
+    let bar =
+      Fmt.str_like ppf "%s%a" finding_margin
+        Fmt.(styled (`Fg color) string)
+        stripe_glyph
+    in
+    let banded (label : string) : string =
+      Fmt.str_like ppf "%a " (styles band_style Fmt.string) label
+    in
+    let gutter (n : int) : string =
+      banded
+        (Printf.sprintf "%*s%*d%*s" band_padding "" digits n band_padding "")
+    in
+    let gutter_blank = banded (String.make band_width ' ') in
+    let faint (glyph : string) : string =
+      Fmt.str_like ppf "%a" Fmt.(styled `Faint string) glyph
+    in
+    entries
+    |> List.iteri (fun (i : int) (finding : OutJ.cli_match) ->
+           (* a gap opens the block when a source line leads it, and
+              divides one entry from the next only once each carries a
+              trace. A trace following the snippet needs no gap of its own:
+              its spine already joins the two, and a bare list of sources
+              reads better tight. *)
+           if (i = 0 && name_sources) || (i > 0 && traces) then pp_blank_stripe color ppf;
+           if name_sources then
+             Findings_layout.source_of_finding finding
+             |> Option.iter (fun ((loc : OutJ.location), (code : string)) ->
+                    let where =
+                      Printf.sprintf "%s:%d" !!(loc.path) loc.start.line
+                    in
+                    (* a source spanning several lines arrives as one long
+                       line, so it is cut to what is left of the width *)
+                    let code =
+                      Findings_layout.ellipsize
+                        ~width:
+                          (ctx.width - prefix_width - String.length "from "
+                         - String.length where - 2)
+                        code
+                    in
+                    pp_stripe color ppf;
+                    Fmt.pf ppf "%a %a  %s@."
+                      Fmt.(styled `Faint string)
+                      "from"
+                      Fmt.(styled (`Fg `Cyan) string)
+                      where code);
+           if traces then
+             finding.extra.dataflow_trace
+             |> Option.iter (fun trace ->
+                    Findings_layout.pp_dataflow_tree
+                      ~finding_path:finding.path
+                      ~line_prefix:(bar ^ trace_inset) ~glyph:faint ~gutter
+                      ~gutter_blank
+                      ~highlight:[ `Bg color; `Fg (`Hi `White) ]
+                      ppf trace))
+  end
+
+let pp_finding ?(group : OutJ.cli_match list = []) (ctx : Skin.ctx) ppf
+    (m : OutJ.cli_match) : unit =
   let color = severity_color m.extra.severity in
   pp_heading ctx color ppf m;
   pp_message ctx color ppf m.extra.message;
   (* the stripe carries on across the gap between the message and the code *)
   pp_blank_stripe color ppf;
   pp_code ctx color ppf m;
+  pp_origins ctx color ppf m group;
   (match Option.map (Findings_layout.fix_lines ~first_col:m.start.col) m.extra.fix with
   (* a fix with no text deletes the match, which the report has to say:
      the code goes away when --autofix runs *)
@@ -297,16 +349,24 @@ let pp_finding (ctx : Skin.ctx) ppf (m : OutJ.cli_match) : unit =
 (* the findings of one file under a header of its own, in the order they
    were reported *)
 let pp_by_file (ctx : Skin.ctx) ppf (matches : OutJ.cli_match list) : unit =
-  matches
+  let groups =
+    match ctx.interfile_dedup_by with
+    | Core_match.Sink -> List_.map (fun (m : OutJ.cli_match) -> [ m ]) matches
+    | Core_match.Source_sink -> Findings_layout.group_findings_by_sink matches
+  in
+  groups
   |> List.fold_left
-       (fun (previous : string option) (m : OutJ.cli_match) ->
-         let path = !!(m.path) in
-         let here = Some path in
-         if previous <> here then (
-           pp_file_header ctx ppf path;
-           Fmt.pf ppf "@.");
-         pp_finding ctx ppf m;
-         here)
+       (fun (previous : string option) (group : OutJ.cli_match list) ->
+         match group with
+         | [] -> previous
+         | (m : OutJ.cli_match) :: _ ->
+             let path = !!(m.path) in
+             let here = Some path in
+             if previous <> here then (
+               pp_file_header ctx ppf path;
+               Fmt.pf ppf "@.");
+             pp_finding ~group ctx ppf m;
+             here)
        None
   |> ignore
 
