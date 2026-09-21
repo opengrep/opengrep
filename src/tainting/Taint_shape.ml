@@ -175,20 +175,45 @@ let rec unify_cell cell1 cell2 =
   (* TODO: Apply 'Flag_semgrep.max_taint_set_size' here too ? *)
   let xtaint = Xtaint.union xtaint1 xtaint2 in
   let shape =
-    match (cell1, cell2) with
-    (* A value that is tainted as a whole, with no structure, is tainted at
-     * every offset. When the other side is an object, that taint goes into
-     * its fields: 'unify_shape' gives 'Bot ∪ Obj = Obj', and a field that the
-     * object records as 'Clean' would hide it, e.g. 'q' in
-     *
-     *     p, q = s.split("?", 1) if c else (s, "")
-     *)
-    | (Cell (`Tainted _, Bot) as whole), Cell (_, Obj obj)
-    | Cell (_, Obj obj), (Cell (`Tainted _, Bot) as whole) ->
-        Obj (Fields.map (unify_cell whole) obj)
-    | _ -> unify_shape shape1 shape2
+    unify_shape
+      (taint_untracked_fields ~other:cell2 shape1)
+      (taint_untracked_fields ~other:cell1 shape2)
   in
   Cell (xtaint, shape)
+
+(* [shape] as it must be seen at a join whose other side is [other].
+ *
+ * When [other] is tainted as a whole, a field that it does not track has that
+ * taint on its path: a read of such a field falls back to the taint of the
+ * whole value. So the field is tainted after the join, whatever [shape] says
+ * of it, 'Clean' included: a literal records its untainted fields as 'Clean',
+ * and so does a sanitizer. Otherwise the field survives the join as it is,
+ * because 'unify_shape' keeps the object ('Bot ∪ Obj = Obj', 'Arg ∪ Obj = Obj')
+ * and 'unify_obj' keeps a field that is on one side only, and a 'Clean' field
+ * hides the taint of the whole value, e.g. 'q' in
+ *
+ *     p, q = s.split("?", 1) if c else (s, "")
+ *
+ * This holds whatever the shape of [other]: none, a parameter's, or an object
+ * of its own that lacks the field. *)
+and taint_untracked_fields ~other:(Cell (xtaint, other_shape)) shape =
+  match (xtaint, shape) with
+  | `Tainted _, Obj obj ->
+      let is_tracked o =
+        match other_shape with
+        | Obj other_obj -> Fields.mem o other_obj || Fields.mem T.Oany other_obj
+        | Bot
+        | Arg _
+        | Fun _ ->
+            false
+      in
+      Obj
+        (Fields.mapi
+           (fun o field ->
+             if is_tracked o then field
+             else unify_cell (Cell (xtaint, Bot)) field)
+           obj)
+  | (`Tainted _ | `None | `Clean), (Bot | Obj _ | Arg _ | Fun _) -> shape
 
 and unify_shape shape1 shape2 =
   match (shape1, shape2) with

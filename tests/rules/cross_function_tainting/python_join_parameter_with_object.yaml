@@ -1,10 +1,12 @@
 rules:
-  - id: conditional_tuple
-    message: taint through a value that is a tuple on one path and tainted as a whole on the other
+  - id: python_join_parameter_with_object
+    message: taint through a parameter that is joined with an object
     languages:
       - python
     severity: WARNING
     mode: taint
+    options:
+      taint_intrafile: true
     pattern-sources:
       - pattern: self.path
     pattern-sinks:
