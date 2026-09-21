@@ -57,6 +57,14 @@ let strip_wrapping_char (c : char) (s : string) : string =
   in
   s |> String.trim |> drop_prefix |> String.trim |> drop_suffix |> String.trim
 
+let lstrip_while (drop : char -> bool) (s : string) : string =
+  let len = String.length s in
+  let rec first_kept (i : int) : int =
+    if i < len && drop s.[i] then first_kept (i + 1) else i
+  in
+  let start = first_kept 0 in
+  String.sub s start (len - start)
+
 let lines_of_range (start_offset, end_offset) str =
   let len = String.length str in
   if

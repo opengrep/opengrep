@@ -44,6 +44,10 @@ val trim_cr : string -> string
  * form onto the bare name. *)
 val strip_wrapping_char : char -> string -> string
 
+(* [lstrip_while drop s] removes the leading characters of [s] for which
+ * [drop] holds, as Python's str.lstrip does with a set of characters. *)
+val lstrip_while : (char -> bool) -> string -> string
+
 (* Returns the entirety of all of the lines in the given string that are
  * included in the given range. Strips trailing newline characters from each
  * line. See unit tests for examples. *)
