@@ -165,38 +165,44 @@ let dedent (indentation : int) (text : string) : string =
 
 (* tree-sitter starts a body at the end of the marker line, but the newline
  * ending that line is not part of the string. *)
-let drop_marker_newline (contents : CST.string_literal_content) =
+let drop_marker_newline contents =
+  let after_newline s = String.sub s 1 (String.length s - 1) in
   match contents with
-  | `Deli_str_content ((loc : Tree_sitter_run.Loc.t), text) :: rest
-    when String.starts_with ~prefix:"\n" text -> (
+  | `Here_text (value, ((loc : Tree_sitter_run.Loc.t), text)) :: rest
+    when String.starts_with ~prefix:"\n" value -> (
       let start = { Tree_sitter_run.Loc.row = loc.start.row + 1; column = 0 } in
-      match String.sub text 1 (String.length text - 1) with
+      match after_newline value with
       | "" -> rest
-      | text -> `Deli_str_content ({ loc with start }, text) :: rest)
+      | value ->
+          `Here_text (value, ({ loc with start }, after_newline text)) :: rest)
   | _ -> contents
 
-(* A heredoc as the equivalent double-quoted literal, with the '<<-FOO' marker
- * and the terminator as its quotes. *)
-let string_of_heredoc (env : env) (marker : CST.heredoc_start) :
-    CST.string_ option =
+(* The parts of a heredoc, as those of the equivalent double-quoted literal:
+ * each text with the string it stands for. Its token stays the one of the
+ * source, so that its range is the real one. *)
+let parts_of_heredoc (env : env) (marker : CST.heredoc_start) =
   match heredoc_body env marker with
   | None -> None
   | Some (_start, contents, terminator) ->
       let indentation = terminator_indentation contents in
       (* sgrep-ext: a line that is just '...' is the ellipsis of "..." *)
       let ellipsis text = if String.trim text = "..." then "..." else text in
-      let contents =
+      let parts =
         contents
         |> List_.map (function
-             | `Here_content (loc, text) ->
-                 `Deli_str_content (loc, ellipsis (dedent indentation text))
+             | `Here_content ((_, text) as tok) ->
+                 `Here_text (ellipsis (dedent indentation text), tok)
              | `Interp x -> `Interp x
-             | `Pat_a84aa85_str_esc_seq (_blanks, tok) -> `Str_esc_seq tok
-             | `Pat_a84aa85_igno_back (_blanks, tok) -> `Igno_back tok
-             | `Line_cont_expl_ tok -> `Line_cont_expl tok)
+             | `Pat_a84aa85_str_esc_seq (_blanks, tok)
+             | `Pat_a84aa85_igno_back (_blanks, tok) ->
+                 `Text (str env tok)
+             | `Line_cont_expl_ _ -> `Text ("", fake "\\"))
         |> drop_marker_newline
+        |> List_.map (function
+             | `Here_text (value, tok) -> `Text (value, token env tok)
+             | (`Text _ | `Interp _) as x -> x)
       in
-      Some (marker, Some contents, terminator)
+      Some (token env marker, parts, token env terminator)
 
 let map_regex_content env = function
   | None -> ""
@@ -399,46 +405,47 @@ and map_statement_expr env (x : CST.statement) : G.expr =
   | _ -> G.stmt_to_expr (map_statement env x)
 
 and map_string env ((l, contents, r) : CST.string_) : G.expr =
-  let l = token env l in
-  let r = token env r in
-  let has_interpolation =
-    match contents with
-    | None -> false
-    | Some xs ->
-        List.exists
-          (function
-            | `Interp _ -> true
-            | _ -> false)
-          xs
+  let parts =
+    Option.value contents ~default:[]
+    |> List_.map (function
+         | `Deli_str_content tok | `Str_esc_seq tok | `Igno_back tok ->
+             `Text (str env tok)
+         | `Line_cont_expl _ -> `Text ("", fake "\\")
+         | `Interp x -> `Interp x)
   in
-  if not has_interpolation then
-    G.L (G.String (G.string_ (l, map_string_content env contents, r))) |> G.e
+  map_string_parts env (token env l, parts, token env r)
+
+(* A string from its quotes and its parts: texts, each the string it stands
+ * for with its token, and interpolations. *)
+and map_string_parts env (l, parts, r) : G.expr =
+  let texts =
+    parts
+    |> List_.filter_map (function
+         | `Text x -> Some x
+         | `Interp _ -> None)
+  in
+  if List.length texts = List.length parts then
+    G.L (G.String (G.string_ (l, texts, r))) |> G.e
   else
-    let parts =
-      match contents with
-      | None -> []
-      | Some xs ->
-          xs
-          |> List_.map (function
-               | `Deli_str_content tok | `Str_esc_seq tok | `Igno_back tok ->
-                   G.L (G.String (fb (str env tok))) |> G.e
-               | `Line_cont_expl _ -> G.L (G.String (fb ("", fake "\\"))) |> G.e
-               | `Interp (start, body, end_) ->
-                   let tok = token env start in
-                   let e =
-                     match body with
-                     | `Exp x -> map_expression env x
-                     | `Inline_stmt x ->
-                         G.stmt_to_expr (map_inline_statement env x)
-                   in
-                   G.Call
-                     ( G.IdSpecial (G.InterpolatedElement, tok) |> G.e,
-                       (tok, [ G.Arg e ], token env end_) )
-                   |> G.e)
+    let args =
+      parts
+      |> List_.map (function
+           | `Text x -> G.L (G.String (fb x)) |> G.e
+           | `Interp ((start, body, end_) : CST.interpolation) ->
+               let tok = token env start in
+               let e =
+                 match body with
+                 | `Exp x -> map_expression env x
+                 | `Inline_stmt x -> G.stmt_to_expr (map_inline_statement env x)
+               in
+               G.Call
+                 ( G.IdSpecial (G.InterpolatedElement, tok) |> G.e,
+                   (tok, [ G.Arg e ], token env end_) )
+               |> G.e)
     in
     G.Call
       ( G.IdSpecial (G.ConcatString G.InterpolatedConcat, l) |> G.e,
-        (l, List_.map G.arg parts, r) )
+        (l, List_.map G.arg args, r) )
     |> G.e
 
 and map_statements env (x : CST.statements) : G.stmt list =
@@ -627,8 +634,8 @@ and map_expression_inner env x =
   | `Str_array_perc_lit _ -> opaque_expr "PercentStringArray"
   | `Symb_array_perc_lit _ -> opaque_expr "PercentSymbolArray"
   | `Here_start marker -> (
-      match string_of_heredoc env marker with
-      | Some x -> map_string env x
+      match parts_of_heredoc env marker with
+      | Some x -> map_string_parts env x
       | None -> opaque_expr "HeredocStart")
   | `Proc _ -> opaque_expr "ProcLiteral"
   | `Meth_proc _ -> opaque_expr "MethodProc"
@@ -1284,10 +1291,17 @@ let heredocs (cst : CST.expressions) (extras : CST.extras) =
          | `Heredoc_body (loc, body) -> Some (loc, body)
          | _ -> None)
   in
+  (* "<<-'SQL'" -> "SQL". "<-" is the set of characters of '<<-'. *)
+  let delimiter marker =
+    marker
+    |> String_.lstrip_while (String.contains "<-")
+    |> String_.strip_wrapping_char '\''
+    |> String_.strip_wrapping_char '"'
+  in
   let is_body_of (marker_loc, marker) ((loc : Tree_sitter_run.Loc.t), body) =
     let _, _, (_, terminator) = body in
     compare loc.start marker_loc.Tree_sitter_run.Loc.end_ >= 0
-    && String_.contains ~term:(String.trim terminator) marker
+    && String.equal (String.trim terminator) (delimiter marker)
   in
   match bodies with
   | [] -> []

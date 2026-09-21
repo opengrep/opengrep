@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_block_after_rest
+    message: taint into a block or a last parameter declared after a rest parameter
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

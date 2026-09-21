@@ -333,7 +333,8 @@ let instantiate_taints inst_var inst_trace taints =
 (* NOTE: 'a is either:
  * - IL.exp in instantiate_lval_using_actual_exps
  * - Taints.t * shape in instantiate_lval_using_shape *)
-let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
+let find_pos_in_actual_args ?(err_ctx = "???")
+    ?(rest_leaves_trailing_args = false) (args : 'a IL.argument list)
     (fparams : Signature.params) ~(combine_rest_args : 'a list -> 'a) : T.arg -> 'a option =
   Log.debug (fun m ->
       m "FIND_POS_IN_ACTUAL_ARGS: err_ctx=%s, num_args=%d, num_fparams=%d, fparams=%s"
@@ -383,9 +384,24 @@ let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
       * available positional arg *)
      | Some (Signature.P name, None) :: name_vals, v :: pos_args ->
         (Some name, v) :: merge name_vals pos_args
-     (* The rest argument takes all positional args *)
+     (* The rest argument takes all positional args. In Ruby and Crystal it
+      * leaves the last ones to the parameters declared after it, among
+      * them the block: 'def f(a, *xs, b, &blk)'. *)
      | Some (Signature.PRest name, None) :: name_vals, _ ->
-        (Some name, combine_rest_args pos_args) :: merge name_vals []
+        let needs_positional_arg = function
+          | Some (_, Some _) -> false
+          | Some (_, None)
+          | None ->
+              true
+        in
+        let n_trailing =
+          if rest_leaves_trailing_args then
+            List.length (List.filter needs_positional_arg name_vals)
+          else 0
+        in
+        let n_rest = max 0 (List.length pos_args - n_trailing) in
+        (Some name, combine_rest_args (List_.take n_rest pos_args))
+        :: merge name_vals (List_.drop n_rest pos_args)
      (* The formal arg does not have a name *)
      | None :: name_vals, v :: pos_args ->
          (None, v) :: merge name_vals pos_args
@@ -429,6 +445,14 @@ let%test _ =
   Option.equal (=|=) (func {name = "";  index = 1})  (Some 0) &&
   Option.equal (=|=) (func {name = "";  index = 2})  (Some 2) &&
   Option.equal (=|=) (func {name = "";  index = 3})  (Some 3)
+
+(* See [find_pos_in_actual_args]. *)
+let rest_leaves_trailing_args (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Ruby
+  | Lang.Crystal ->
+      true
+  | _ -> false
 
 let combine_rest_args_exp (es : IL.exp list) : IL.exp =
   let e = IL.Composite (IL.CList, Tok.unsafe_fake_bracket es) in
@@ -1232,6 +1256,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) (fun_exp : IL.exp)
       let* (arg_exp : IL.exp) =
         find_pos_in_actual_args
           ~err_ctx:(Display_IL.string_of_exp fun_exp)
+          ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
           args_exps fparams pos
       in
@@ -1370,8 +1395,8 @@ let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
   in
   (taints, shape) 
 
-let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
-    lval : (Taints.t * shape) option =
+let instantiate_lval_using_shape ~(lang : Lang.t) lval_env fparams
+    (fun_exp : IL.exp) args_taints lval : (Taints.t * shape) option =
   let { T.base; offset } = lval in
   let* base, offset =
     match base with
@@ -1401,6 +1426,7 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
     | `Arg pos ->
         find_pos_in_actual_args
           ~err_ctx:(Display_IL.string_of_exp fun_exp)
+          ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_taint
           args_taints fparams pos
     | `Var var ->
@@ -1421,7 +1447,8 @@ let instantiate_lval ~(lang : Lang.t) lval_env fparams fun_exp args_exps
         (T.show_lval sig_lval) (List.length args_taints)
         (fparams |> List.map Signature.show_param |> String.concat ","));
   match
-    instantiate_lval_using_shape lval_env fparams fun_exp args_taints sig_lval
+    instantiate_lval_using_shape ~lang lval_env fparams fun_exp args_taints
+      sig_lval
   with
   | Some (taints, shape) -> Some (taints, shape)
   | None -> (
@@ -1557,6 +1584,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | None -> fun _ -> None
     | Some args ->
         find_pos_in_actual_args args taint_sig.params
+          ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
   in
   (* Lval-side resolver: maps a [T.lval] anchored in [taint_sig] to the

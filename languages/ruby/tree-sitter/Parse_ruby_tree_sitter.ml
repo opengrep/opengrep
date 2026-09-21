@@ -82,19 +82,20 @@ let dedent (indentation : int) (text : string) : string =
 
 (* tree-sitter starts a body at the end of the marker line, but the newline
  * ending that line is not part of the string. *)
-let drop_marker_newline (contents : CST.literal_contents) : CST.literal_contents
-    =
+let drop_marker_newline contents =
+  let after_newline s = String.sub s 1 (String.length s - 1) in
   match contents with
-  | `Str_content ((loc : Tree_sitter_run.Loc.t), text) :: rest
-    when String.starts_with ~prefix:"\n" text -> (
+  | `Text (((loc : Tree_sitter_run.Loc.t), text), value) :: rest
+    when String.starts_with ~prefix:"\n" value -> (
       let start = { Tree_sitter_run.Loc.row = loc.start.row + 1; column = 0 } in
-      match String.sub text 1 (String.length text - 1) with
+      match after_newline value with
       | "" -> rest
-      | text -> `Str_content ({ loc with start }, text) :: rest)
+      | value -> `Text (({ loc with start }, after_newline text), value) :: rest)
   | _ -> contents
 
-(* The contents of a heredoc body as those of a double-quoted string. *)
-let heredoc_contents (marker : string) contents : CST.literal_contents =
+(* The contents of a heredoc body, each text with the string it stands for.
+ * Its token stays the one of the source, so that its range is the real one. *)
+let heredoc_contents (marker : string) contents =
   let indentation =
     if String.starts_with ~prefix:"<<~" marker then
       contents
@@ -110,8 +111,8 @@ let heredoc_contents (marker : string) contents : CST.literal_contents =
   let ellipsis text = if String.trim text = "..." then "..." else text in
   contents
   |> List_.map (function
-       | `Here_content (loc, text) ->
-           `Str_content (loc, ellipsis (dedent indentation text))
+       | `Here_content ((_, text) as tok) ->
+           `Text (tok, ellipsis (dedent indentation text))
        | (`Interp _ | `Esc_seq _) as x -> x)
   |> drop_marker_newline
 
@@ -2420,7 +2421,10 @@ and heredoc (env : env) (marker : CST.heredoc_beginning) : AST.expr =
   | None -> Literal (String (Single (str env marker)))
   | Some (_start, contents, terminator) ->
       let contents =
-        literal_contents env (heredoc_contents (snd marker) contents)
+        heredoc_contents (snd marker) contents
+        |> List.concat_map (function
+             | `Text (tok, value) -> [ StrChars (value, token2 env tok) ]
+             | (`Interp _ | `Esc_seq _) as x -> literal_contents env [ x ])
       in
       Literal
         (String (Double (token2 env marker, contents, token2 env terminator)))
@@ -2531,10 +2535,22 @@ let heredocs (cst : CST.program) (extras : CST.extras) =
          | `Heredoc_body (loc, body) -> Some (loc, body)
          | `Comment _ -> None)
   in
+  (* "<<~'SQL'" -> "SQL". "<-~" is the set of characters of '<<', '<<-'
+   * and '<<~'. *)
+  let delimiter marker =
+    marker
+    |> String_.lstrip_while (String.contains "<-~")
+    |> String_.strip_wrapping_char '\''
+    |> String_.strip_wrapping_char '"'
+    |> String_.strip_wrapping_char '`'
+  in
+  (* The terminator is empty when it ends a file that has no last newline:
+   * the scanner does not close the heredoc then. *)
   let is_body_of (marker_loc, marker) ((loc : Tree_sitter_run.Loc.t), body) =
     let _, _, (_, terminator) = body in
+    let terminator = String.trim terminator in
     Stdlib.compare loc.start marker_loc.Tree_sitter_run.Loc.end_ >= 0
-    && String_.contains ~term:(String.trim terminator) marker
+    && (String_.empty terminator || terminator = delimiter marker)
   in
   match bodies with
   | [] -> []

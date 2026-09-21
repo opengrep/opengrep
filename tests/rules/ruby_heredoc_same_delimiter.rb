@@ -27,4 +27,18 @@ def a(t)
   foo(<<~A, "two #{t}")
     one
   A
+
+  # ruleid: ruby_heredoc_same_delimiter
+  foo(<<~AB, <<~A)
+    one
+  AB
+    two #{t}
+  A
+
+  # ok: ruby_heredoc_same_delimiter
+  foo(<<~A, <<~AB)
+    one #{t}
+  A
+    two
+  AB
 end
