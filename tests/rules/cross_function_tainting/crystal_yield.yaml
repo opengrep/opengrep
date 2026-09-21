@@ -1,0 +1,13 @@
+rules:
+  - id: crystal_yield
+    message: taint through a yield, into the block and back
+    languages:
+      - crystal
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

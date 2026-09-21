@@ -1,0 +1,11 @@
+rules:
+  - id: for_loop
+    message: taint through the variable of a for loop
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

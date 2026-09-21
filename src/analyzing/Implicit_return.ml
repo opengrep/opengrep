@@ -52,7 +52,11 @@ let rec mark_first_instr_ancestor (cfg : IL.cfg) i =
   | NInstr instr -> (
       match instr with
       | { i = Assign (_, { eorig = SameAs e; _ }); _ }
-      | { i = Call _; iorig = SameAs e } ->
+      | { i = Call _; iorig = SameAs e }
+      (* an interpolated string, a 'yield' that has a value, a lambda *)
+      | { i = CallSpecial (_, (Concat, _), _); iorig = SameAs e }
+      | { i = CallSpecial (Some _, (Yield, _), _); iorig = SameAs e }
+      | { i = AssignAnon _; iorig = SameAs e } ->
           Log.debug (fun m ->
             m "IMPL_RET_MARK: flag set on %s"
               (match AST_generic_helpers.range_of_any_opt (E e) with

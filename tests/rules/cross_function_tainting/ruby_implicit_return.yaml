@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_implicit_return
+    message: taint through the last expression of a method
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

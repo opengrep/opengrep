@@ -606,14 +606,14 @@ and stmt st =
       let elseopt = option_tok_stmts elseopt in
       let special = G.IdSpecial (G.Op G.Not, t) |> G.e in
       let e = G.Call (special, fb [ G.Arg e ]) |> G.e in
-      let st1 =
-        match elseopt with
-        | None -> G.Block (fb []) |> G.s
-        | Some st -> st
-      in
-      G.If (t, G.Cond e, st1, Some st) |> G.s
+      G.If (t, G.Cond e, st, elseopt) |> G.s
   | For (t1, pat, t2, e, st) ->
-      let pat = pattern pat in
+      (* 'for i in xs' binds 'i', and 'for a, b in xs' binds both *)
+      let pat =
+        match pat with
+        | PatExpr e -> H.expr_to_pattern (expr e)
+        | _ -> pattern pat
+      in
       let e = expr e in
       let st = list_stmt1 st in
       let header = G.ForEach (pat, t2, e) in

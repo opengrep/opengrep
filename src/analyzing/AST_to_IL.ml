@@ -84,6 +84,9 @@ type env = {
    * statement boundary by [stmt] so it cannot leak into a nested
    * function body. *)
   pattern_binds_lvals : bool;
+  (* Ruby, Crystal: the block parameter that a 'yield' in the method being
+   * lowered calls, see [function_definition]. *)
+  yield_block : name option;
 }
 
 let empty_env (lang : Lang.t) : env =
@@ -93,6 +96,7 @@ let empty_env (lang : Lang.t) : env =
     rec_point_lvals = None;
     inside_function = false;
     pattern_binds_lvals = false;
+    yield_block = None;
     lang }
 
 (* Enter a destructuring-assignment context; see [pattern_binds_lvals]. *)
@@ -305,11 +309,16 @@ let is_constructor env ret_ty id_info : bool =
  * [is_implicit_return] on the inner value-producing G.expr (e.g. the Call), but
  * the lowering sites check the flag on the outer ExprStmt's eorig, which is
  * the wrapper, not the inner expression. This helper treats a wrapper as
- * implicitly-returned when its last sub-expression is. *)
-let effective_implicit_return env (eorig : G.expr) : bool =
+ * implicitly-returned when its last sub-expression is.
+ *
+ * Likewise for a conditional expression, 'c ? e1 : e2': the flag is set on
+ * the two branches, which are what the last instructions compute. *)
+let rec effective_implicit_return env (eorig : G.expr) : bool =
   if eorig.is_implicit_return then true
   else
     match eorig.e with
+    | G.Conditional (_, e1, e2) ->
+        effective_implicit_return env e1 && effective_implicit_return env e2
     | G.OtherExpr ((kind, _), exprs)
       when env.lang =*= Lang.Clojure
            && CLJ_ME1.expands_as_block kind -> (
@@ -2296,8 +2305,23 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
             let ss, y = expr env e1orig in
             (ss, [ y ])
       in
-      let instr = mk_s (Instr (mk_i (CallSpecial (None, (Yield, tok), mk_unnamed_args yield_args)) eorig)) in
-      (ss_yield @ [instr], mk_unit tok NoOrig)
+      (* In Ruby and Crystal 'yield' calls the block, and its value is what
+       * the block returns. In a generator it is what the caller sends in,
+       * which the arguments say nothing about. *)
+      if env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal then
+        let tmp = fresh_lval env tok in
+        let call =
+          match env.yield_block with
+          | Some block ->
+              let block = mk_e (Fetch (lval_of_base (Var block))) NoOrig in
+              Call (Some tmp, block, mk_unnamed_args yield_args)
+          | None -> CallSpecial (Some tmp, (Yield, tok), mk_unnamed_args yield_args)
+        in
+        let instr = mk_s (Instr (mk_i call eorig)) in
+        (ss_yield @ [instr], mk_e (Fetch tmp) NoOrig)
+      else
+        let instr = mk_s (Instr (mk_i (CallSpecial (None, (Yield, tok), mk_unnamed_args yield_args)) eorig)) in
+        (ss_yield @ [instr], mk_unit tok NoOrig)
   | G.Ref (tok, e1orig) ->
       let ss_e1, e1 = expr env e1orig in
       let tmp = fresh_lval tok in
@@ -4431,8 +4455,54 @@ and function_body env fbody : stmts =
   let body_stmt = H.funcbody_to_stmt fbody in
   stmt env body_stmt
 
+(* Ruby, Crystal: a method that yields takes a block, whether it declares it
+ * ('&block') or not, and the caller passes the block as its last argument.
+ * The block of an undeclared one becomes a last parameter, so that a 'yield'
+ * is a call of a parameter like 'block.call' is. A 'yield' in a block of the
+ * method still calls the block of the method. *)
+and block_of_yielding_method env fdef fparams : (name * param list) option =
+  let is_method =
+    match fst fdef.G.fkind with
+    | G.Function
+    | G.Method ->
+        true
+    | G.LambdaKind
+    | G.Arrow
+    | G.BlockCases ->
+        false
+  in
+  let is_yield (e : G.expr) =
+    match e.G.e with
+    | G.Yield _ -> true
+    | _ -> false
+  in
+  if
+    (env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal)
+    && is_method
+    && Walker.fold_exprs_in_fdef (fun found e -> found || is_yield e) false fdef
+  then
+    let declared_block =
+      fdef.G.fparams |> Tok.unbracket
+      |> List.find_map (function
+           | G.OtherParam
+               (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; _ }) ]) ->
+               Some (var_of_id_info i pinfo)
+           | _ -> None)
+    in
+    match declared_block with
+    | Some block -> Some (block, fparams)
+    | None ->
+        let block = fresh_var env ~str:"block" (snd fdef.G.fkind) in
+        Some (block, fparams @ [ Param { pname = block; pdefault = None } ])
+  else None
+
 and function_definition env fdef : function_definition =
   let fparams = parameters fdef.G.fparams in
+  let fparams, env =
+    match block_of_yielding_method env fdef fparams with
+    | None -> (fparams, env)
+    | Some (block, fparams) -> (fparams, { env with yield_block = Some block })
+  in
   let env, rec_point_label_stmts = match env.lang, fparams with
     (* NOTE: Clojure functions are translated to have one formal parameter,
      * which is then destructured in a Switch (this is how multi-arity works). *)
