@@ -1,0 +1,11 @@
+rules:
+  - id: conditional_tuple
+    message: taint through a value that is a tuple on one path and tainted as a whole on the other
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: self.path
+    pattern-sinks:
+      - pattern: sink(...)

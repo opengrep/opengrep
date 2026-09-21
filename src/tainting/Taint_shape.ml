@@ -174,7 +174,20 @@ let rec unify_cell cell1 cell2 =
   let (Cell (xtaint2, shape2)) = cell2 in
   (* TODO: Apply 'Flag_semgrep.max_taint_set_size' here too ? *)
   let xtaint = Xtaint.union xtaint1 xtaint2 in
-  let shape = unify_shape shape1 shape2 in
+  let shape =
+    match (cell1, cell2) with
+    (* A value that is tainted as a whole, with no structure, is tainted at
+     * every offset. When the other side is an object, that taint goes into
+     * its fields: 'unify_shape' gives 'Bot ∪ Obj = Obj', and a field that the
+     * object records as 'Clean' would hide it, e.g. 'q' in
+     *
+     *     p, q = s.split("?", 1) if c else (s, "")
+     *)
+    | (Cell (`Tainted _, Bot) as whole), Cell (_, Obj obj)
+    | Cell (_, Obj obj), (Cell (`Tainted _, Bot) as whole) ->
+        Obj (Fields.map (unify_cell whole) obj)
+    | _ -> unify_shape shape1 shape2
+  in
   Cell (xtaint, shape)
 
 and unify_shape shape1 shape2 =
