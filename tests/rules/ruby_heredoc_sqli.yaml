@@ -1,0 +1,19 @@
+rules:
+  - id: ruby_heredoc_sqli
+    mode: taint
+    languages: [ruby]
+    severity: ERROR
+    message: tainted SQL
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $M(..., $S, ...)
+                ...
+              end
+          - focus-metavariable: $S
+    pattern-sinks:
+      - patterns:
+          - pattern: Database.fetch($Q)
+          - metavariable-regex:
+              metavariable: $Q
+              regex: (?s).*SELECT.*

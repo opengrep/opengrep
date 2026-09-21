@@ -37,7 +37,11 @@ module H = Parse_tree_sitter_helpers
 (*****************************************************************************)
 
 type context = Program | Pattern
-type env = context H.env
+
+(* The heredocs come with the context, each as the location of its '<<FOO'
+ * marker and its body: tree-sitter-ruby declares 'heredoc_body' as an extra,
+ * so the bodies are not in the main CST. See [heredocs]. *)
+type env = (context * (Tree_sitter_run.Loc.t * CST.heredoc_body) list) H.env
 
 let fb = Tok.unsafe_fake_bracket
 
@@ -53,9 +57,68 @@ let mk_string_kind (t1, xs, t2) =
   | _ -> Double (t1, xs, t2)
 
 let if_in_pattern (env : env) x =
-  match env.extra with
+  match fst env.extra with
   | Program -> raise Parsing.Parse_error
   | Pattern -> x
+
+(* The indentation of each non-blank line. *)
+let indentation_rex = Pcre2_.regexp ~flags:[ `MULTILINE ] "^[ \t]*(?=\\S)"
+
+(* A '<<~' heredoc does not contain the indentation of its least indented
+ * non-blank line. [body] is its text, with an "x" for each interpolation. *)
+let squiggly_indentation (body : string) : int =
+  let indentations =
+    Pcre2_.exec_all_noerr ~rex:indentation_rex body
+    |> Array.to_list
+    |> List_.map (fun m -> String.length (Pcre2.get_substring m 0))
+  in
+  match indentations with
+  | [] -> 0
+  | n :: ns -> List.fold_left min n ns
+
+let dedent (indentation : int) (text : string) : string =
+  let rex = Pcre2_.regexp (spf "\n[ \t]{0,%d}" indentation) in
+  Pcre2_.replace ~rex ~template:"\n" text
+
+(* tree-sitter starts a body at the end of the marker line, but the newline
+ * ending that line is not part of the string. *)
+let drop_marker_newline (contents : CST.literal_contents) : CST.literal_contents
+    =
+  match contents with
+  | `Str_content ((loc : Tree_sitter_run.Loc.t), text) :: rest
+    when String.starts_with ~prefix:"\n" text -> (
+      let start = { Tree_sitter_run.Loc.row = loc.start.row + 1; column = 0 } in
+      match String.sub text 1 (String.length text - 1) with
+      | "" -> rest
+      | text -> `Str_content ({ loc with start }, text) :: rest)
+  | _ -> contents
+
+(* The contents of a heredoc body as those of a double-quoted string. *)
+let heredoc_contents (marker : string) contents : CST.literal_contents =
+  let indentation =
+    if String.starts_with ~prefix:"<<~" marker then
+      contents
+      |> List_.map (function
+           | `Here_content (_, text) -> text
+           | `Interp _
+           | `Esc_seq _ ->
+               "x")
+      |> String.concat "" |> squiggly_indentation
+    else 0
+  in
+  (* sgrep-ext: a line that is just '...' is the ellipsis of "..." *)
+  let ellipsis text = if String.trim text = "..." then "..." else text in
+  contents
+  |> List_.map (function
+       | `Here_content (loc, text) ->
+           `Str_content (loc, ellipsis (dedent indentation text))
+       | (`Interp _ | `Esc_seq _) as x -> x)
+  |> drop_marker_newline
+
+(* The body of the heredoc opened by a marker, e.g. "<<~SQL". *)
+let heredoc_body (env : env) ((marker_loc, _) : CST.heredoc_beginning) :
+    CST.heredoc_body option =
+  List.assoc_opt marker_loc (snd env.extra)
 
 (*****************************************************************************)
 (* Boilerplate converter *)
@@ -399,7 +462,7 @@ and simple_formal_parameter (env : env) (x : CST.simple_formal_parameter) :
       Formal_hash_splat (v1, Some v2)
   | `Forw_param tok -> (
       let x = (* "..." *) token2 env tok in
-      match env.extra with
+      match fst env.extra with
       | Program -> Formal_fwd x
       | Pattern -> ParamEllipsis x)
   | `Blk_param (v1, v2) ->
@@ -1015,9 +1078,7 @@ and pattern_literal (env : env) (x : CST.pattern_literal) : expr =
   | `Lit x -> literal env x
   | `Str x -> Literal (String (mk_string_kind (string_ env x)))
   | `Subs x -> subshell env x
-  | `Here_begin tok ->
-      (* heredoc_beginning *)
-      Literal (String (Single (str env tok)))
+  | `Here_begin tok -> heredoc env tok
   | `Regex x -> Literal (Regexp (regex env x, None))
   | `Str_array x -> string_array env x
   | `Symb_array x -> symbol_array env x
@@ -1326,7 +1387,7 @@ and primary (env : env) (x : CST.primary) : AST.expr =
   match x with
   | `Semg_ellips tok
   | `Semg_ellips_foll_by_nl tok -> (
-      match env.extra with
+      match fst env.extra with
       | Program ->
           (* This is an example of argument forwarding.
              Let's just consider it an identifier named ...
@@ -1634,9 +1695,7 @@ and primary (env : env) (x : CST.primary) : AST.expr =
           let lp, v2, rp = parenthesized_statements env v2 in
           let block = S (Block (lp, v2, rp)) in
           Unary (v1, block)
-      | `Here_begin tok ->
-          let x = str env tok in
-          Literal (String (Single x)))
+      | `Here_begin tok -> heredoc env tok)
 
 and guard (env : env) (x : CST.guard) =
   match x with
@@ -1743,7 +1802,7 @@ and command_call_with_block (env : env) (x : CST.command_call_with_block) :
       let v1 = arg env v1 in
       let v2 = (* "..." *) token2 env v2 in
       let v3 = do_block env v3 in
-      match env.extra with
+      match fst env.extra with
       | Pattern -> Call (v1, fb [ Arg (Ellipsis v2) ], Some v3)
       | Program ->
           (* This shouldn't actually happen in a non-pattern case. *)
@@ -1752,7 +1811,7 @@ and command_call_with_block (env : env) (x : CST.command_call_with_block) :
       let v1 = arg env v1 in
       let v2 = (* "..." *) token2 env v2 in
       let v3 = block env v3 in
-      match env.extra with
+      match fst env.extra with
       | Pattern -> Call (v1, fb [ Arg (Ellipsis v2) ], Some v3)
       | Program ->
           (* This shouldn't actually happen in a non-pattern case. *)
@@ -1875,7 +1934,7 @@ and argument (env : env) (x : CST.argument) : AST.argument =
   match x with
   | `Forw_arg tok -> (
       let t = (* "..." *) token2 env tok in
-      match env.extra with
+      match fst env.extra with
       | Program ->
           (* Close enough. It's not actually strictly a splat, but it behaves
              similarly.
@@ -2188,7 +2247,7 @@ and range (env : env) (x : CST.range) : AST.expr =
       let v1 = arg env v1 in
       let ((_, v2_tok) as v2) = anon_choice_DOTDOT_ed078ec env v2 in
       let t = snd v2 in
-      match env.extra with
+      match fst env.extra with
       | Pattern -> Call (v1, fb [ Arg (Ellipsis v2_tok) ], None)
       | _ -> Binop (v1, v2, fake_nil t))
 
@@ -2354,6 +2413,18 @@ and literal_contents (env : env) (xs : CST.literal_contents) : AST.interp list =
           Some (StrChars x))
     xs
 
+(* Same string as the equivalent double-quoted literal, with the '<<FOO'
+ * marker and the terminator as its quotes. *)
+and heredoc (env : env) (marker : CST.heredoc_beginning) : AST.expr =
+  match heredoc_body env marker with
+  | None -> Literal (String (Single (str env marker)))
+  | Some (_start, contents, terminator) ->
+      let contents =
+        literal_contents env (heredoc_contents (snd marker) contents)
+      in
+      Literal
+        (String (Double (token2 env marker, contents, token2 env terminator)))
+
 and mlhs (env : env) ((v1, v2, v3) : CST.mlhs) : AST.expr list =
   let v1 = anon_choice_lhs_3a98eae env v1 in
   let v2 =
@@ -2431,6 +2502,59 @@ let program (env : env) ((v1, _v2interpreted) : CST.program) : AST.stmts =
   | None -> []
 
 (*****************************************************************************)
+(* Heredocs *)
+(*****************************************************************************)
+
+module R = Tree_sitter_run.Raw_tree
+
+let rec heredoc_markers (tree : _ R.t) : CST.heredoc_beginning list =
+  match tree with
+  | R.Case ("Here_begin", R.Token marker) -> [ marker ]
+  | R.Case (_, x)
+  | R.Option (Some x) ->
+      heredoc_markers x
+  | R.List xs
+  | R.Tuple xs ->
+      List.concat_map heredoc_markers xs
+  | R.Option None
+  | R.Token _
+  | R.Any _ ->
+      []
+
+(* Each heredoc marker with its body. The markers are taken in source order,
+ * and each takes the first body left after it that its delimiter closes:
+ * the bodies of the markers of a line follow that line, in the same order. *)
+let heredocs (cst : CST.program) (extras : CST.extras) =
+  let bodies =
+    extras
+    |> List_.filter_map (function
+         | `Heredoc_body (loc, body) -> Some (loc, body)
+         | `Comment _ -> None)
+  in
+  let is_body_of (marker_loc, marker) ((loc : Tree_sitter_run.Loc.t), body) =
+    let _, _, (_, terminator) = body in
+    Stdlib.compare loc.start marker_loc.Tree_sitter_run.Loc.end_ >= 0
+    && String_.contains ~term:(String.trim terminator) marker
+  in
+  match bodies with
+  | [] -> []
+  | _ ->
+      (* a marker can also be in an interpolation of a body *)
+      Boilerplate.map_program () cst
+      :: List_.map (fun (_, body) -> Boilerplate.map_heredoc_body () body) bodies
+      |> List.concat_map heredoc_markers
+      |> List.sort Stdlib.compare
+      |> List.fold_left
+           (fun (heredocs, bodies) ((marker_loc, _) as marker) ->
+             match List.find_opt (is_body_of marker) bodies with
+             | Some ((_, body) as claimed) ->
+                 ( (marker_loc, body) :: heredocs,
+                   List.filter (fun x -> not (phys_equal x claimed)) bodies )
+             | None -> (heredocs, bodies))
+           ([], bodies)
+      |> fst
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -2438,19 +2562,33 @@ let parse file =
   let debug = false in
   H.wrap_parser
     (fun () -> Tree_sitter_ruby.Parse.file !!file)
-    (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = Program } in
+    (fun cst extras ->
+      let env =
+        {
+          H.file;
+          conv = H.line_col_to_pos file;
+          extra = (Program, heredocs cst extras);
+        }
+      in
       if debug then Boilerplate.dump_tree cst;
       program env cst)
 
 let parse_pattern string =
   let debug = false in
+  (* A heredoc whose terminator ends the input is never closed. *)
+  let string =
+    if String_.contains ~term:"<<" string then string ^ "\n" else string
+  in
   H.wrap_parser
     (fun () -> Tree_sitter_ruby.Parse.string string)
-    (fun cst _extras ->
+    (fun cst extras ->
       let file = Fpath.v "<file>" in
       let env =
-        { H.file; conv = H.line_col_to_pos_pattern string; extra = Pattern }
+        {
+          H.file;
+          conv = H.line_col_to_pos_pattern string;
+          extra = (Pattern, heredocs cst extras);
+        }
       in
       if debug then Boilerplate.dump_tree cst;
       Ss (program env cst))

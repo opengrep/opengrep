@@ -1,0 +1,7 @@
+rules:
+  - id: ruby_heredoc_same_delimiter
+    message: each heredoc marker gets its own body
+    languages:
+      - ruby
+    severity: WARNING
+    pattern: foo("=~/one/", "...#{...}...")
