@@ -205,6 +205,28 @@ let mk_unit tok eorig : exp =
   let unit = G.Unit tok in
   mk_e (Literal unit) eorig
 
+(* Fold over every expression reachable from a function definition: the
+ * parameter defaults, the return-type annotation, and the body.
+ *
+ * 'iter_no_id_info' rather than plain 'iter', so that the walk does not
+ * follow 'id_svalue' 'Sym' refs into expressions outside the fdef. *)
+let fold_exprs_in_fdef (f : 'acc -> G.expr -> 'acc) (init : 'acc)
+    (fdef : G.function_definition) : 'acc =
+  let acc = ref init in
+  let visitor =
+    object
+      inherit [_] G.iter_no_id_info as super
+
+      method! visit_expr () expr =
+        acc := f !acc expr;
+        super#visit_expr () expr
+    end
+  in
+  visitor#visit_parameters () fdef.G.fparams;
+  Option.iter (visitor#visit_type_ ()) fdef.G.frettype;
+  visitor#visit_stmt () (AST_generic_helpers.funcbody_to_stmt fdef.G.fbody);
+  !acc
+
 (* Create an auxiliary variable for an expression.
  *
  * If 'force' is 'false' and the expression itself is already a variable then
@@ -2309,7 +2331,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
        * the block returns. In a generator it is what the caller sends in,
        * which the arguments say nothing about. *)
       if env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal then
-        let tmp = fresh_lval env tok in
+        let tmp = fresh_lval tok in
         let call =
           match env.yield_block with
           | Some block ->
@@ -4479,7 +4501,7 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
   if
     (env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal)
     && is_method
-    && Walker.fold_exprs_in_fdef (fun found e -> found || is_yield e) false fdef
+    && fold_exprs_in_fdef (fun found e -> found || is_yield e) false fdef
   then
     let declared_block =
       fdef.G.fparams |> Tok.unbracket
@@ -4492,7 +4514,7 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
     match declared_block with
     | Some block -> Some (block, fparams)
     | None ->
-        let block = fresh_var env ~str:"block" (snd fdef.G.fkind) in
+        let block = fresh_var ~str:"block" (snd fdef.G.fkind) in
         Some (block, fparams @ [ Param { pname = block; pdefault = None } ])
   else None
 
