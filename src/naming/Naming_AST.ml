@@ -1158,10 +1158,20 @@ class ['self] resolve_visitor env lang =
           | _ ->
               let s, tok = id in
               error tok (spf "could not find '%s' field in environment" s);
-              (* The field is not a variable in scope of the same name, except
-               * in JS/TS where 'this.x' finds the constructor parameter 'x'
-               * and its type, see tests/rules/js_constructor_naming. *)
-              if not (Lang.is_js env.lang) then recurse := false)
+              (* The field is not the variable in scope of the same name, so it
+               * does not take its identity. It still takes its type, like the
+               * bare name of any other field below: a typed metavariable reads
+               * the type of 'this.http' off the constructor parameter
+               * 'http: Ty', see tests/rules/js_constructor_naming. *)
+              (match lookup_scope_opt id env with
+               | Some { enttype = Some { t = TyFun _; _ }; _ }
+               | Some { enttype = None; _ }
+               | None ->
+                   ()
+               | Some { enttype = Some ty; _ } ->
+                   if Option.is_none !(id_info.id_type) && not !(env.in_type)
+                   then id_info.id_type := Some ty);
+              recurse := false)
       | DotAccess (e1, _, fname) ->
           (* The receiver of a dot-access is read even when the whole
            * expression is the LHS of an assignment ([obj.field = v]

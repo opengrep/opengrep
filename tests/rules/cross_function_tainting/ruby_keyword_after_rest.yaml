@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_keyword_after_rest
+    message: taint a keyword parameter after a rest parameter takes no positional argument
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

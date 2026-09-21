@@ -95,7 +95,7 @@ let drop_marker_newline contents =
 
 (* The contents of a heredoc body, each text with the string it stands for.
  * Its token stays the one of the source, so that its range is the real one. *)
-let heredoc_contents (marker : string) contents =
+let heredoc_contents (context : context) (marker : string) contents =
   let indentation =
     if String.starts_with ~prefix:"<<~" marker then
       contents
@@ -107,8 +107,16 @@ let heredoc_contents (marker : string) contents =
       |> String.concat "" |> squiggly_indentation
     else 0
   in
-  (* sgrep-ext: a line that is just '...' is the ellipsis of "..." *)
-  let ellipsis text = if String.trim text = "..." then "..." else text in
+  (* sgrep-ext: in a pattern, a text between two interpolations, or the whole
+   * body when there is none, that is just '...' is the ellipsis of "...".
+   * In a target it is text. *)
+  let ellipsis text =
+    match context with
+    | Pattern when String.trim text = "..." -> "..."
+    | Pattern
+    | Program ->
+        text
+  in
   contents
   |> List_.map (function
        | `Here_content ((_, text) as tok) ->
@@ -2421,7 +2429,7 @@ and heredoc (env : env) (marker : CST.heredoc_beginning) : AST.expr =
   | None -> Literal (String (Single (str env marker)))
   | Some (_start, contents, terminator) ->
       let contents =
-        heredoc_contents (snd marker) contents
+        heredoc_contents (fst env.extra) (snd marker) contents
         |> List.concat_map (function
              | `Text (tok, value) -> [ StrChars (value, token2 env tok) ]
              | (`Interp _ | `Esc_seq _) as x -> literal_contents env [ x ])

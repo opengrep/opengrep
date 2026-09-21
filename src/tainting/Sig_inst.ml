@@ -357,10 +357,13 @@ let find_pos_in_actual_args ?(err_ctx = "???")
     fparams |>
     List.map (function
        | (Signature.P name as p)
+       | (Signature.POpt name as p)
        | (Signature.PRest name as p) -> Some (p, List.assoc_opt name named_args)
-       | _ -> None)
+       | Signature.Other -> None)
   in
-  let rec merge formal_args_with_vals pos_args =
+  (* Each formal arg with its value, [None] when it gets none: a formal arg
+   * keeps its position either way, see 'Taint.arg'. *)
+  let rec merge ~after_rest formal_args_with_vals pos_args =
      match formal_args_with_vals, pos_args with
      (* No more formal args, no more actual args: we're done *)
      | [], [] -> []
@@ -369,51 +372,66 @@ let find_pos_in_actual_args ?(err_ctx = "???")
         Log.err (fun m ->
           m "function applied to more arguments than expected by the signature (%s)" err_ctx);
           []
-     (* The formal arg doesn't get a value (not found among named args, 
+     (* The value for the formal arg is found among named actual args *)
+     | Some ((Signature.P name | Signature.POpt name | Signature.PRest name),
+             Some v) :: avs, _ ->
+        (Some name, Some v) :: merge ~after_rest avs pos_args
+     (* A formal arg with a default that comes after a rest argument is a
+      * keyword argument: 'sep' in Ruby's 'def f(a, *xs, sep: nil)' and in
+      * Python's 'def f(a, *xs, sep=None)'. It was not found among named actual
+      * args, so it keeps its default. *)
+     | Some (Signature.POpt name, None) :: name_vals, _ when after_rest ->
+        (Some name, None) :: merge ~after_rest name_vals pos_args
+     (* Not found among named actual args, so we assign the first
+      * available positional arg *)
+     | Some ((Signature.P name | Signature.POpt name), None) :: name_vals,
+       v :: pos_args ->
+        (Some name, Some v) :: merge ~after_rest name_vals pos_args
+     (* The formal arg does not have a name *)
+     | None :: name_vals, v :: pos_args ->
+         (None, Some v) :: merge ~after_rest name_vals pos_args
+     (* The formal arg doesn't get a value (not found among named args,
       * and no more positional args) *)
-     | None :: _ , []
-     | Some (Signature.P _, None) :: _, [] ->
+     | Some (Signature.POpt name, None) :: name_vals, [] ->
+        (Some name, None) :: merge ~after_rest name_vals []
+     | Some (Signature.P name, None) :: name_vals, [] ->
         Log.err (fun m ->
           m "function applied to fewer arguments than expected by the signature (%s)" err_ctx);
-          []
-     (* The value for the formal arg is found among named actual args *)
-     | Some (Signature.P name, Some v) :: avs, _
-     | Some (Signature.PRest name, Some v) :: avs, _ (* possible? *) ->
-        (Some name, v) :: merge avs pos_args
-     (* Not found among named actual args, so we assign the first 
-      * available positional arg *)
-     | Some (Signature.P name, None) :: name_vals, v :: pos_args ->
-        (Some name, v) :: merge name_vals pos_args
+        (Some name, None) :: merge ~after_rest name_vals []
+     | None :: name_vals, [] ->
+        Log.err (fun m ->
+          m "function applied to fewer arguments than expected by the signature (%s)" err_ctx);
+        (None, None) :: merge ~after_rest name_vals []
      (* The rest argument takes all positional args. In Ruby and Crystal it
-      * leaves the last ones to the parameters declared after it, among
-      * them the block: 'def f(a, *xs, b, &blk)'. *)
+      * leaves the last ones to the parameters declared after it that take a
+      * positional arg, among them the block: 'def f(a, *xs, b, &blk)'. *)
      | Some (Signature.PRest name, None) :: name_vals, _ ->
-        let needs_positional_arg = function
-          | Some (_, Some _) -> false
-          | Some (_, None)
+        let takes_positional_arg = function
+          | Some (Signature.P _, None)
           | None ->
               true
+          | Some _ -> false
         in
         let n_trailing =
           if rest_leaves_trailing_args then
-            List.length (List.filter needs_positional_arg name_vals)
+            List.length (List.filter takes_positional_arg name_vals)
           else 0
         in
         let n_rest = max 0 (List.length pos_args - n_trailing) in
-        (Some name, combine_rest_args (List_.take n_rest pos_args))
-        :: merge name_vals (List_.drop n_rest pos_args)
-     (* The formal arg does not have a name *)
-     | None :: name_vals, v :: pos_args ->
-         (None, v) :: merge name_vals pos_args
+        (Some name, Some (combine_rest_args (List_.take n_rest pos_args)))
+        :: merge ~after_rest:true name_vals (List_.drop n_rest pos_args)
      | Some (Signature.Other, _) :: _, _ ->
          raise Impossible
   in
-  let name_opt_value_list = merge formal_args_with_vals pos_args in
+  let name_opt_value_list =
+    merge ~after_rest:false formal_args_with_vals pos_args
+  in
   let param_index_array = Array.of_list (List.map snd name_opt_value_list) in
   let param_name_map =
     name_opt_value_list
-    |> List.filter_map
-         (fun (a, b) -> Option.map (fun a -> (a, b)) a)
+    |> List.filter_map (function
+         | Some name, Some v -> Some (name, v)
+         | _ -> None)
     |> SMap.of_list
   in
   (* lookup function *)
@@ -426,7 +444,7 @@ let find_pos_in_actual_args ?(err_ctx = "???")
           m ~tags:bad_tag
             "Cannot match taint variable with function arguments (%i: %s)" i s);
         None
-    | _ -> Some (Array.get param_index_array i)
+    | _ -> Array.get param_index_array i
 
 (* Test find_pos_in_actual_args.
  * Function: foo(x, y, _, z)
@@ -856,7 +874,8 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
   let bound_in_sig (arg : T.arg) : bool =
     match List.nth_opt sig_.params arg.index with
     | None -> false
-    | Some (Signature.P n | Signature.PRest n) -> String.equal n arg.name
+    | Some (Signature.P n | Signature.POpt n | Signature.PRest n) ->
+        String.equal n arg.name
     | Some Signature.Other -> String.equal arg.name ""
   in
   (* Walk a guard's cond, substituting Fetches that name the outer

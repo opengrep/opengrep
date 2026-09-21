@@ -185,8 +185,16 @@ let parts_of_heredoc (env : env) (marker : CST.heredoc_start) =
   | None -> None
   | Some (_start, contents, terminator) ->
       let indentation = terminator_indentation contents in
-      (* sgrep-ext: a line that is just '...' is the ellipsis of "..." *)
-      let ellipsis text = if String.trim text = "..." then "..." else text in
+      (* sgrep-ext: in a pattern, a text between two interpolations, or the
+       * whole body when there is none, that is just '...' is the ellipsis of
+       * "...". In a target it is text. *)
+      let ellipsis text =
+        match fst env.extra with
+        | Pattern when String.trim text = "..." -> "..."
+        | Pattern
+        | Target ->
+            text
+      in
       let parts =
         contents
         |> List_.map (function
@@ -1093,9 +1101,16 @@ and map_param_choice env = function
       G.ParamRest (token env tok, G.param_of_id ?ptype:(Option.map (fun (_c, ty) -> map_bare_type env ty) ty) id)
   | `Semg_ellips tok -> G.ParamEllipsis (token env tok)
 
+(* '&block' is the block the method is called with, not a rest parameter. Same
+ * tree as Ruby's. *)
 and map_block_param env (_attrs, tok, id, ty) =
-  let id = Option.value ~default:("&", token env tok) (Option.map (map_param_id env) id) in
-  G.ParamRest (token env tok, G.param_of_id ?ptype:(Option.map (fun (_c, ty) -> map_bare_type env ty) ty) id)
+  let ptype = Option.map (fun (_c, ty) -> map_bare_type env ty) ty in
+  let param =
+    match id with
+    | None -> []
+    | Some id -> [ G.Pa (G.Param (G.param_of_id ?ptype (map_param_id env id))) ]
+  in
+  G.OtherParam (("Ref", token env tok), param)
 
 and map_param env (_attrs, _external_name, id, ty, default) =
   let id = map_regular_param_id env id in

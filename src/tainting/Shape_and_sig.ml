@@ -954,6 +954,7 @@ and Signature : sig
       of a parameter to represent taint variables, see 'Taint.arg'. *)
   type param =
     | P of string
+    | POpt of string
     | PRest of string
     | Other
   [@@deriving eq, ord, show]
@@ -1000,12 +1001,14 @@ end = struct
   (* TODO: Now with HOFs we run the risk of shadowing... *)
   type param =
     | P of string
+    | POpt of string (* a parameter that has a default *)
     | PRest of string
     | Other [@@deriving eq, ord, show]
   type params = param list
 
   let show_param = function
     | P s -> s
+    | POpt s -> s ^ "=_"
     | PRest s -> "*" ^ s (* Python syntax for "rest" params *)
     | Other -> "_?"
 
@@ -1019,7 +1022,8 @@ end = struct
   let of_IL_params il_params =
     il_params
     |> List_.map (function
-         | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
+         | IL.Param { pname = { ident = s, _; _ }; pdefault = Some _ } -> POpt s
+         | IL.Param { pname = { ident = s, _; _ }; pdefault = None } -> P s
          (* function signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
          (* Destructuring parameter: use the synthetic implicit binder's
