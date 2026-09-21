@@ -27,7 +27,7 @@
 (opam_file_location inside_opam_directory)
 
 ;; set here so the semgrep package below can use it and we can easily bump it
-(version 1.30.0)
+(version 1.30.1)
 
 ;; Default attributes of opam packages
 (source (github opengrep/opengrep))
