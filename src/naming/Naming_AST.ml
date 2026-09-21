@@ -1157,7 +1157,11 @@ class ['self] resolve_visitor env lang =
               recurse := false
           | _ ->
               let s, tok = id in
-              error tok (spf "could not find '%s' field in environment" s))
+              error tok (spf "could not find '%s' field in environment" s);
+              (* The field is not a variable in scope of the same name, except
+               * in JS/TS where 'this.x' finds the constructor parameter 'x'
+               * and its type, see tests/rules/js_constructor_naming. *)
+              if not (Lang.is_js env.lang) then recurse := false)
       | DotAccess (e1, _, fname) ->
           (* The receiver of a dot-access is read even when the whole
            * expression is the LHS of an assignment ([obj.field = v]

@@ -1,0 +1,11 @@
+rules:
+  - id: ivar_param_collision
+    message: taint through an instance variable
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -3880,8 +3880,13 @@ and (fixpoint :
            (* Store constructor taint only when we have proper class context *)
            match class_name with
            | Some cls ->
+               (* Not the constructor's temporaries: they are numbered per
+                  function, so they would alias the temporaries of the
+                  methods this is unioned into. They have fake tokens. *)
                let final_env =
                  mapping.(fun_cfg.cfg.exit).Dataflow_core.out_env
+                 |> Lval_env.filter_tainted (fun var ->
+                        not (Tok.is_fake (snd var.IL.ident)))
                in
                let storage_key =
                  Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
