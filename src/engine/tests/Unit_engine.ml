@@ -234,8 +234,6 @@ let language_exceptions =
     (Lang.Move_on_sui, [ "metavar_key_value"; "regexp_string" ]);
     (Lang.Move_on_aptos, [ "metavar_key_value"; "regexp_string" ]);
     (* Experimental languages *)
-
-    (* Experimental languages *)
     ( Lang.Haskell,
       [
         "metavar_class_def";
@@ -705,6 +703,7 @@ let lang_tainting_tests () =
       (Lang.Dart, "dart", ".dart");
       (Lang.Elixir, "elixir", ".ex");
       (Lang.Go, "go", ".go");
+      (Lang.Haskell, "haskell", ".hs");
       (Lang.Java, "java", ".java");
       (Lang.Js, "js", ".js");
       (Lang.Kotlin, "kotlin", ".kt");

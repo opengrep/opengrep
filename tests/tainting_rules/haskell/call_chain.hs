@@ -1,11 +1,12 @@
 module CallChain where
 
+transform :: String -> String
 transform x = reverse x
 
---ruleid: test-call-chain
 flow =
   let a = tainted
       b = transform a
+  --ruleid: test-call-chain
   in unsafeEval b
 
 --OK:

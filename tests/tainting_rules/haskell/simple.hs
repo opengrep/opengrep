@@ -6,9 +6,9 @@ direct = sink source
 --OK:
 nontainted = sink 1
 
---ruleid: test-simple
 viaLet =
   let x = source
+  --ruleid: test-simple
   in sink x
 
 --OK:

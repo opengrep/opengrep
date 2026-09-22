@@ -252,7 +252,7 @@ parsers, especially ocamlyacc/menhir based parsers.
 )
 (package (name parser_haskell)
   (synopsis "Haskell parser")
-  (description "Parser for Haskell language (stub implementation)")
+  (description "Parser for the Haskell language (tree-sitter based)")
 )
 (package (name parser_html)
   (synopsis "XXX")

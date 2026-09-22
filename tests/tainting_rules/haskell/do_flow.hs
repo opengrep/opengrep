@@ -1,8 +1,8 @@
 module DoFlow where
 
---ruleid: test-do-flow
 unsafe = do
   x <- getUserInput
+  --ruleid: test-do-flow
   writeFile "log.txt" x
 
 --OK:

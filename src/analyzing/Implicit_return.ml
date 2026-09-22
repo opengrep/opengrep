@@ -79,6 +79,7 @@ let lang_supports_implicit_return (lang : Lang.t) =
   | Clojure
   | Crystal
   | Elixir
+  | Haskell
   | Ruby
   | Rust
   | Scala
