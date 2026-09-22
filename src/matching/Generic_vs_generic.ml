@@ -3659,8 +3659,9 @@ and m_or_type a b =
   match (a, b) with
   | G.OrConstructor (a1, a2), B.OrConstructor (b1, b2) ->
       m_ident a1 b1 >>= fun () ->
-      (* TODO: m_list__m_type_ ? *)
-      (m_list m_type_) a2 b2
+      (* dots: `C (..., T, ...)` — a TyEllipsis stands for any number of
+       * constructor arguments (e.g. Haskell `$C { ..., $F :: T, ... }`) *)
+      m_list__m_type_ a2 b2
   | G.OrEnum (a1, a2), B.OrEnum (b1, b2) ->
       m_ident a1 b1 >>= fun () -> m_option m_expr a2 b2
   | G.OrUnion (a1, a2), B.OrUnion (b1, b2) ->
@@ -3672,15 +3673,15 @@ and m_or_type a b =
   | G.OrUnion _, _ ->
       fail ()
 
-and _m_list__m_type_ (xsa : G.type_ list) (xsb : G.type_ list) =
+and m_list__m_type_ (xsa : G.type_ list) (xsb : G.type_ list) =
   m_list_with_dots m_type_
-    (* dots: '...', this is very Python Specific I think *)
+    (* dots: '...' *)
       (function
       | { t = G.TyEllipsis _; _ } -> true
       | { t = G.TyExpr { G.e = G.Ellipsis _i; _ }; _ } -> true
       | _ -> false)
-      (* less-is-ok: it's ok to not specify all the parents I think *)
-    ~less_is_ok:true xsa xsb
+      (* without an explicit '...' the pattern must list every element *)
+    ~less_is_ok:false xsa xsb
 
 and m_list__m_type_any_order (xsa : G.type_ list) (xsb : G.type_ list) =
   (* TODO? filter existing ellipsis?
