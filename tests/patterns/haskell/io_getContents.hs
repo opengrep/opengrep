@@ -1,7 +1,6 @@
 module IOGetcontents where
 
-
---ERROR:
 main = do
+--ERROR:
   x <- getContents
   putStrLn x

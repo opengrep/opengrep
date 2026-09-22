@@ -11,13 +11,9 @@ module G = AST_generic
 type extra = {
   is_pattern_mode : bool;
   metavar_map : (string, string) Hashtbl.t;
+  col_shift : int array;
 }
 
 type env = extra Parse_tree_sitter_helpers.env
-
-type placeholder_case = Lower | Upper
-
-val preprocess_metavariables_with_case :
-  placeholder_case -> string -> string * (string, string) Hashtbl.t
 
 val program : env -> CST.haskell -> G.program

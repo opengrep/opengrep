@@ -17,8 +17,6 @@ module CST = Tree_sitter_haskell.CST
 module H = Parse_tree_sitter_helpers
 module G = AST_generic
 
-[@@@warning "-27-39"]
-
 (*****************************************************************************)
 (* Env                                                                        *)
 (*****************************************************************************)
@@ -26,12 +24,34 @@ module G = AST_generic
 type extra = {
   is_pattern_mode : bool;
   metavar_map : (string, string) Hashtbl.t;
+  (* Per-row number of characters removed at the start of the line by the
+   * source preprocessing (literate Haskell bird tracks). Empty when the
+   * source was parsed verbatim. env.conv already accounts for it in the
+   * byte offset; this restores the column of each token. *)
+  col_shift : int array;
 }
 
 type env = extra H.env
 
-let token = H.token
-let str = H.str
+let shift_column (env : env) (t : Tok.t) : Tok.t =
+  let shift = env.H.extra.col_shift in
+  if Array.length shift = 0 then t
+  else
+    match t with
+    | Tok.OriginTok loc ->
+        let row = loc.Tok.pos.Pos.line - 1 in
+        if row >= 0 && row < Array.length shift && shift.(row) <> 0 then
+          let pos = { loc.Tok.pos with Pos.column = loc.Tok.pos.Pos.column + shift.(row) } in
+          Tok.OriginTok { loc with Tok.pos }
+        else t
+    | _ -> t
+
+let token (env : env) (tok : Tree_sitter_run.Token.t) : Tok.t =
+  shift_column env (H.token env tok)
+
+let str (env : env) (tok : Tree_sitter_run.Token.t) : string * Tok.t =
+  let (s, t) = H.str env tok in
+  (s, shift_column env t)
 
 let fb = Tok.unsafe_fake_bracket
 let fake_tok = Tok.unsafe_fake_tok
@@ -74,53 +94,11 @@ let pattern_body_or_ellipsis (env : env) (stmts : G.stmt list) : G.stmt list =
   else stmts
 
 (*****************************************************************************)
-(* Metavariable preprocessing — textual, identical to the raw walker         *)
+(* Metavariable resolution                                                    *)
+(* The textual $VAR -> placeholder rewrite lives in                           *)
+(* Parse_haskell_tree_sitter.preprocess_metavariables_with_case; here we only *)
+(* map placeholders back to their original metavariable text.                *)
 (*****************************************************************************)
-
-type placeholder_case = Lower | Upper
-
-let preprocess_metavariables_with_case (case : placeholder_case)
-    (pattern : string) : string * (string, string) Hashtbl.t =
-  let re =
-    Str.regexp "\\$\\.\\.\\([A-Z_][A-Z0-9_]*\\)\\|\\$[A-Z_][A-Z0-9_]*"
-  in
-  let buf = Buffer.create (String.length pattern) in
-  let mapping = Hashtbl.create 16 in
-  let rec loop idx =
-    if idx >= String.length pattern then ()
-    else
-      match (try Some (Str.search_forward re pattern idx)
-             with Not_found -> None) with
-      | None ->
-          Buffer.add_substring buf pattern idx (String.length pattern - idx)
-      | Some pos ->
-          Buffer.add_substring buf pattern idx (pos - idx);
-          let matched = Str.matched_string pattern in
-          let placeholder, original =
-            if String.length matched >= 4
-               && String.sub matched 0 4 = "$..." then
-              let name = Str.matched_group 1 pattern in
-              let ph = match case with
-                | Lower -> "__semgrep_ellipsis_" ^ name
-                | Upper -> "SemgrepEllipsis" ^ name
-              in
-              (ph, matched)
-            else
-              let name =
-                String.sub matched 1 (String.length matched - 1)
-              in
-              let ph = match case with
-                | Lower -> "__semgrep_metavar_" ^ name
-                | Upper -> "SemgrepMv" ^ name
-              in
-              (ph, matched)
-          in
-          Hashtbl.replace mapping placeholder original;
-          Buffer.add_string buf placeholder;
-          loop (pos + String.length matched)
-  in
-  loop 0;
-  (Buffer.contents buf, mapping)
 
 let resolve_text (env : env) (text : string) : string =
   match Hashtbl.find_opt env.H.extra.metavar_map text with
@@ -247,6 +225,34 @@ let map_qconid (env : env) (x : CST.qconid) : G.ident list =
   match x with
   | `Qual_cons (q, t) -> dotted_of_qual env q (map_tyconid env t)
   | `Cons t -> [ map_tyconid env t ]
+
+(* Type-level operators: `:+:`, `~>`, `` `Either` `` … Kept as idents so
+ * infix type applications and infix data constructors keep their name. *)
+let map_type_operator (env : env) (x : CST.type_operator) : G.ident =
+  match x with
+  | `Tyco tok -> resolved_ident env tok
+  | `Cons_op tok -> resolved_ident env tok
+
+let map_qtyconsym (env : env) (x : CST.qtyconsym) : G.ident list =
+  match x with
+  | `Qual_type_op_ (`Qual_type_op (q, tok)) ->
+      dotted_of_qual env q (resolved_ident env tok)
+  | `Qual_type_op_ (`Qual_cons_op (q, tok)) ->
+      dotted_of_qual env q (resolved_ident env tok)
+  | `Type_op op -> [ map_type_operator env op ]
+
+let map_qtyconops (env : env) (x : CST.qtyconops) : G.ident list =
+  match x with
+  | `Ticked_qtycon (_, qtid, _) ->
+      (match qtid with
+       | `Qual_type (q, tok) -> dotted_of_qual env q (map_tyconid env tok)
+       | `Cons tok -> [ map_tyconid env tok ])
+  | `Choice_qual_type_op_ sym -> map_qtyconsym env sym
+
+let map_qtyconop (env : env) (x : CST.qtyconop) : G.ident list =
+  match x with
+  | `Prom_tyco (_, ops) -> map_qtyconops env ops
+  | `Qtycos ops -> map_qtyconops env ops
 
 let map_qvarsym (env : env) (x : CST.qvarsym) : G.ident list =
   match x with
@@ -633,6 +639,17 @@ and map_exp_apply (env : env) (x : CST.exp_apply) : G.expr =
         * `__semgrep_deep__ (e)` at preprocessing time. *)
        | G.N (G.Id (("<...>", t), _)), [ e ] ->
            G.DeepEllipsis (t, e, t) |> G.e
+       (* A fully applied prefix Prelude operator (`div x 2`, `(+) a b`)
+        * is the same call as its infix form (`x `div` 2`, `a + b`), so
+        * lower both to Call(IdSpecial(Op _)) and let either pattern
+        * shape match either target shape. Partial applications keep the
+        * curried Call(N(Id)) form. *)
+       | G.N (G.Id ((name, t), _)), [ a; b ]
+         when haskell_op_to_special name <> None
+              && not (is_metavar name) ->
+           let op = Option.get (haskell_op_to_special name) in
+           G.Call (G.IdSpecial (G.Op op, t) |> G.e,
+                   fb [ G.Arg a; G.Arg b ]) |> G.e
        | _ ->
            (* Curry: one Call per argument — matches the raw walker's
             * convention so patterns against `f x y` match structurally. *)
@@ -658,9 +675,9 @@ and map_aexp (env : env) (x : CST.aexp) : G.expr =
       G.Container (G.List, (token env l, first :: rest, token env r)) |> G.e
   | `Exp_th_quoted_name q ->
       map_exp_th_quoted_name env q
-  | `Exp_type_app (_at, aty) ->
+  | `Exp_type_app (at, aty) ->
       let ty = map_atype env aty in
-      other_expr "type_app" (fake_tok "@") [G.T ty]
+      other_expr "type_app" (token env at) [G.T ty]
   | `Exp_lambda_case (bs, _case, alts_opt) ->
       let bt = token env bs in
       let cases = match alts_opt with
@@ -694,7 +711,8 @@ and map_aexp (env : env) (x : CST.aexp) : G.expr =
       let args = map_exp_field_arg env first ::
                  List.map (fun (_c, f) -> map_exp_field_arg env f) rest in
       G.Call (base_e, (lb, args, rb)) |> G.e
-  | `Exp_arit_seq (_l, first, mid, _dd, end_opt, _r) ->
+  | `Exp_arit_seq (_l, first, mid, dd, end_opt, _r) ->
+      let dd_tok = token env dd in
       let first_e = map_exp env first in
       (* `[1,3..9]` carries a step element (the `3`). Keep it. *)
       let step_es = match mid with
@@ -702,10 +720,10 @@ and map_aexp (env : env) (x : CST.aexp) : G.expr =
         | Some (_c, e) -> [ map_exp env e ]
       in
       let end_e = match end_opt with
-        | None -> other_expr "arith_seq_infinite" (fake_tok "..") []
+        | None -> other_expr "arith_seq_infinite" dd_tok []
         | Some e -> map_exp env e
       in
-      other_expr "arith_seq" (fake_tok "..")
+      other_expr "arith_seq" dd_tok
         [G.E (G.Container (G.List, fb (first_e :: step_es @ [end_e])) |> G.e)]
   | `Exp_list_comp (_l, base, _bar, q1, qs, _r) ->
       let base = map_exp env base in
@@ -753,7 +771,8 @@ and map_exp_name (env : env) (x : CST.exp_name) : G.expr =
        | [] -> raise Common.Impossible
        | [ id ] ->
            let resolved = resolve_text env (fst id) in
-           if env.H.extra.is_pattern_mode && is_metavar resolved then
+           if fst id = "..." then G.Ellipsis (snd id) |> G.e
+           else if env.H.extra.is_pattern_mode && is_metavar resolved then
              G.N (G.Id (id, G.empty_id_info ())) |> G.e
            else if fst id = "True" || fst id = "False" then
              (* Lower the Bool data constructors to literals, like every
@@ -1200,8 +1219,7 @@ and map_apat (env : env) (x : CST.apat) : G.pattern =
       let (name, tok) = map_pat_name env pn in
       let resolved = resolve_text env name in
       if name = "_" then G.PatWildcard tok
-      else if env.H.extra.is_pattern_mode && is_metavar resolved then
-        G.PatId ((resolved, tok), G.empty_id_info ())
+      else if resolved = "..." then G.PatEllipsis tok
       else G.PatId ((resolved, tok), G.empty_id_info ())
   | `Pat_as (var, at, inner) ->
       let var_id = map_variable env var in
@@ -1213,7 +1231,8 @@ and map_apat (env : env) (x : CST.apat) : G.pattern =
       let ctor_id = ident_of_idents ids in
       let text = fst ctor_id in
       let tok = snd ctor_id in
-      if env.H.extra.is_pattern_mode && is_metavar text then
+      if text = "..." then G.PatEllipsis tok
+      else if env.H.extra.is_pattern_mode && is_metavar text then
         (* In pattern mode, an uppercase metavariable that landed in a
          * Pat_cons position is still a metavariable — preserve it as
          * PatId so it binds to the corresponding pattern element. *)
@@ -1402,10 +1421,7 @@ and map_constraint_as_type (env : env) (c : CST.constraint_) : G.type_ =
        | _ ->
            let args = List.map (fun a -> G.TA (map_atype env a)) atypes in
            { G.t = G.TyApply (head, fb args); t_attrs = [] })
-  | `Type_infix_ (lhs, _op, rhs) ->
-      let l = map_btype env lhs in
-      let r = map_type_infix env rhs in
-      { G.t = G.TyApply (l, fb [ G.TA r ]); t_attrs = [] }
+  | `Type_infix_ ti -> map_type_infix_ env ti
 
 (* `constraint__` wraps a constraint_ through optional forall / context /
  * parens. Descend to the inner constraint_. *)
@@ -1433,12 +1449,18 @@ and context_constraints_to_types (env : env) (cc : CST.context_constraints)
 
 and map_type_infix (env : env) (x : CST.type_infix) : G.type_ =
   match x with
-  | `Type_infix_ (lhs, op, rhs) ->
-      let l = map_btype env lhs in
-      let _op = op in
-      let r = map_type_infix env rhs in
-      { G.t = G.TyApply (l, fb [G.TA r]); t_attrs = [] }
+  | `Type_infix_ ti -> map_type_infix_ env ti
   | `Btype b -> map_btype env b
+
+(* `a :+: b` is the type operator `:+:` applied to `a` and `b`:
+ * TyApply(TyN ":+:", [a; b]), so the operator name stays matchable. *)
+and map_type_infix_ (env : env) ((lhs, op, rhs) : CST.type_infix_)
+    : G.type_ =
+  let l = map_btype env lhs in
+  let op_id = ident_of_idents (map_qtyconop env op) in
+  let r = map_type_infix env rhs in
+  let head = { G.t = G.TyN (G.Id (op_id, G.empty_id_info ())); t_attrs = [] } in
+  { G.t = G.TyApply (head, fb [ G.TA l; G.TA r ]); t_attrs = [] }
 
 and map_btype (env : env) (x : CST.btype) : G.type_ =
   match x with
@@ -1492,15 +1514,15 @@ and map_type_name (env : env) (x : CST.type_name) : G.type_ =
             (match qt with
              | `Choice_qual_type (`Qual_type (_, tok))
              | `Choice_qual_type (`Cons tok) -> Some (map_tyconid env tok)
-             | `LPAR_choice_qual_type_op__RPAR _ -> None)
+             | `LPAR_choice_qual_type_op__RPAR (_, sym, _) ->
+                 Some (ident_of_idents (map_qtyconsym env sym)))
         | `Tycon_arrow (_, arr, _) -> Some ("->", map_arrow env arr)
       in
       (match id_opt with
+       | Some ("...", tok) -> { G.t = G.TyEllipsis tok; t_attrs = [] }
        | Some id ->
            { G.t = G.TyN (G.Id (id, G.empty_id_info ())); t_attrs = [] }
-       | None ->
-           { G.t = G.TyN (G.Id (("<tycon>", fake_tok ""), G.empty_id_info ()));
-             t_attrs = [] })
+       | None -> raise Common.Impossible)
 
 and map_tyvar (env : env) (x : CST.tyvar) : G.type_ =
   match x with
@@ -1510,7 +1532,8 @@ and map_tyvar (env : env) (x : CST.tyvar) : G.type_ =
   | `Type_var vid ->
       let id = resolved_ident env vid in
       let resolved = fst id in
-      if is_metavar resolved then
+      if resolved = "..." then { G.t = G.TyEllipsis (snd id); t_attrs = [] }
+      else if is_metavar resolved then
         { G.t = G.TyN (G.Id (id, G.empty_id_info ())); t_attrs = [] }
       else
         { G.t = G.TyVar id; t_attrs = [] }
@@ -1768,7 +1791,8 @@ and find_first_conid_in_qtycon (env : env) (x : CST.qtycon)
       (match qtid with
        | `Qual_type (_q, tok) -> Some (map_tyconid env tok)
        | `Cons tok -> Some (map_tyconid env tok))
-  | `LPAR_choice_qual_type_op__RPAR _ -> None
+  | `LPAR_choice_qual_type_op__RPAR (_, sym, _) ->
+      Some (ident_of_idents (map_qtyconsym env sym))
 
 (*****************************************************************************)
 (* topdecl                                                                    *)
@@ -1852,11 +1876,11 @@ let name_from_tyfam_head (env : env) (head : CST.tyfam_head) : G.ident option =
     | `Simp_infix (_lhs, op, _rhs) ->
         (match op with
          | `Ticked_tycon (_, tc, _) -> Some (map_tyconid env tc)
-         | `Type_op _ -> None)
+         | `Type_op op -> Some (map_type_operator env op))
     | `Choice_cons_rep_choice_anno_type_var (head, _vars) ->
         (match head with
          | `Cons tok -> Some (map_tyconid env tok)
-         | `LPAR_type_op_RPAR _ -> None)
+         | `LPAR_type_op_RPAR (_, op, _) -> Some (map_type_operator env op))
   in
   aux head
 
@@ -1885,13 +1909,17 @@ let vars_from_tyfam_head (env : env) (head : CST.tyfam_head) : G.type_ list =
 
 (* The type parameters of a `data`/`newtype`/`type` head as entity
  * tparams: `data Map k v` -> [k; v]. Mirrors what class declarations do. *)
+(* A type variable, or a metavariable standing for one (`class $C $A`),
+ * as a type parameter. *)
+let tparam_of_type (ty : G.type_) : G.type_parameter option =
+  match ty.G.t with
+  | G.TyVar id -> Some (G.tparam_of_id id)
+  | G.TyN (G.Id (id, _)) when is_metavar (fst id) -> Some (G.tparam_of_id id)
+  | _ -> None
+
 let tparams_from_tyfam_head (env : env) (head : CST.tyfam_head)
     : G.type_parameter list =
-  List.filter_map (fun ty ->
-    match ty.G.t with
-    | G.TyVar id -> Some (G.tparam_of_id id)
-    | _ -> None
-  ) (vars_from_tyfam_head env head)
+  List.filter_map tparam_of_type (vars_from_tyfam_head env head)
 
 (* Attach tparams to an entity, leaving it untouched when there are none. *)
 let entity_with_tparams (base_ent : G.entity)
@@ -1922,8 +1950,8 @@ let inst_atypes_to_lhs (env : env) (name : G.ident)
       { G.t = G.TyApply (head_ty, fb args); t_attrs = [] }
 
 (* Walk a record-style field group `{ x, y :: T }`, returning each field
- * as an OtherType("record_field:NAME", [T inner_ty]) so patterns can
- * match field names + types structurally. *)
+ * as an OtherType("record_field", [I name; T inner_ty]) so patterns can
+ * match field names (metavariables included) + types structurally. *)
 let record_fields_to_arg_types (env : env) (rf : CST.record_fields)
     : G.type_ list =
   let (_lc, first_field, rest_fields, _rc) = rf in
@@ -1943,7 +1971,10 @@ let record_fields_to_arg_types (env : env) (rf : CST.record_fields)
     @ List.concat_map (fun (_c, f) -> walk_field f) rest_fields
   in
   List.map (fun (n, ty) ->
-    other_type ("record_field:" ^ fst n) (snd n) [G.T ty]
+    (* `{ ..., f :: T }` in a pattern: the `...` field was rewritten to
+     * `... :: ...` and stands for any number of fields. *)
+    if fst n = "..." then { G.t = G.TyEllipsis (snd n); t_attrs = [] }
+    else other_type "record_field" (snd n) [G.I n; G.T ty]
   ) all_fields
 
 (* Walk a `data` constructor variant: yields the constructor ident and
@@ -1953,18 +1984,23 @@ let map_data_constructor (env : env) (x : CST.anon_choice_data_cons_3ed9ff3)
   match x with
   | `Data_cons (tycon, args) ->
       let name = map_tyconid env tycon in
+      (* `data $T = ...` in a pattern: match any constructor list. *)
+      if fst name = "..." then G.OrEllipsis (snd name)
+      else
       let arg_types = List.map (fun a ->
         match a with
         | `Strict_type st -> map_strict_type env st
         | `Atype at -> map_atype env at
       ) args in
       G.OrConstructor (name, arg_types)
-  | `Data_cons_infix (_lhs, op, _rhs) ->
-      let op_id = match op with
-        | `Cons_op tok -> str env tok
-        | `BQUOT_cons_BQUOT (_, tc, _) -> map_tyconid env tc
+  | `Data_cons_infix (lhs, op, rhs) ->
+      (* `a :+: b`: the infix constructor with its two field types. *)
+      let op_id = map_conop env op in
+      let side (x : CST.anon_choice_strict_type_5770e7f) = match x with
+        | `Strict_type st -> map_strict_type env st
+        | `Type_infix ti -> map_type_infix env ti
       in
-      G.OrConstructor (op_id, [])
+      G.OrConstructor (op_id, [ side lhs; side rhs ])
   | `Data_cons_record (tycon, rec_fields) ->
       let name = map_tyconid env tycon in
       G.OrConstructor (name, record_fields_to_arg_types env rec_fields)
@@ -2138,7 +2174,8 @@ let single_record_field_to_arg_types (env : env)
     :: List.map (fun (_c, v) -> map_variable env v) varsN
   in
   List.map (fun n ->
-    other_type ("record_field:" ^ fst n) (snd n) [G.T ty]
+    if fst n = "..." then { G.t = G.TyEllipsis (snd n); t_attrs = [] }
+    else other_type "record_field" (snd n) [G.I n; G.T ty]
   ) var_names
 
 (* Walk a newtype constructor: (tyconid, atype | record_field).
@@ -2275,11 +2312,7 @@ let class_params_from_head (env : env) (head : CST.constraint_)
     : G.type_parameter list =
   match head with
   | `Type_name_rep_atype (_tn, atypes) ->
-      List.filter_map (fun a ->
-        match (map_atype env a).G.t with
-        | G.TyVar id -> Some (G.tparam_of_id id)
-        | _ -> None
-      ) atypes
+      List.filter_map (fun a -> tparam_of_type (map_atype env a)) atypes
   | `Type_infix_ _ -> []
 
 let map_decl_class (env : env) class_tok ctx head _fundeps body_opt
@@ -2520,7 +2553,8 @@ let map_topdecl (env : env) (x : CST.topdecl) : G.stmt list =
                         | `Choice_qual_type (`Qual_type (_, tok))
                         | `Choice_qual_type (`Cons tok) ->
                             Some (map_tyconid env tok)
-                        | `LPAR_choice_qual_type_op__RPAR _ -> None)
+                        | `LPAR_choice_qual_type_op__RPAR (_, sym, _) ->
+                            Some (ident_of_idents (map_qtyconsym env sym)))
                    | `Tycon_arrow _ -> None
                  in
                  (match id_opt with
@@ -2644,136 +2678,20 @@ let map_topdecl (env : env) (x : CST.topdecl) : G.stmt list =
       [ G.ExprStmt (e, fake_tok ";") |> G.s ]
 
 (*****************************************************************************)
-(* Multi-clause grouping                                                      *)
+(* Multi-clause functions                                                     *)
 (*****************************************************************************)
 
-(* Identify a DefStmt(FuncDef) and extract (name, fdef). *)
-let extract_fun_stmt (s : G.stmt) : (G.ident * G.function_definition) option =
-  match s.G.s with
-  | G.DefStmt (ent, G.FuncDef fdef) ->
-      (match ent.G.name with
-       | G.EN (G.Id (id, _)) -> Some (id, fdef)
-       | _ -> None)
-  | _ -> None
-
-(* Group consecutive DefStmt(FuncDef) with the same name into a single
- * FuncDef whose body is a Switch on the parameter tuple. *)
-let rec group_consecutive_clauses ?(in_pattern=false) (stmts : G.stmt list)
-    : G.stmt list =
-  (* In pattern mode we skip clause merging so that
-   * `$A +++ $B = $E` parses as a single FuncDef and matches each clause
-   * of the target individually — same convention as Python's
-   * `def $X(...): ...` matching every def site. *)
-  if in_pattern then stmts
-  else
-  let rec go (acc : G.stmt list) (stmts : G.stmt list) =
-    match stmts with
-    | [] -> List.rev acc
-    | s :: rest ->
-        (match extract_fun_stmt s with
-         | None -> go (s :: acc) rest
-         | Some (name, _fdef_first) ->
-             (* Collect consecutive clauses with the same name. *)
-             let rec take_same ss got =
-               match ss with
-               | s' :: rest' ->
-                   (match extract_fun_stmt s' with
-                    | Some (n, _) when fst n = fst name ->
-                        take_same rest' (s' :: got)
-                    | _ -> (List.rev got, ss))
-               | [] -> (List.rev got, [])
-             in
-             let (same, rest2) = take_same rest [s] in
-             if List.length same <= 1 then go (s :: acc) rest
-             else begin
-               let clauses = List.filter_map extract_fun_stmt same in
-               let merged = merge_clauses name clauses in
-               go (merged :: acc) rest2
-             end)
-  in
-  go [] stmts
-
-and merge_clauses (name : G.ident) (clauses : (G.ident * G.function_definition) list)
-    : G.stmt =
-  (* A type signature `f :: T` is walked as a FuncDef with an FBDecl body
-   * (see map_gendecl `Sign). It is not a pattern-matching clause: it only
-   * contributes the return type. Separate signatures from real clauses so
-   * a signature + single clause stays a clean FuncDef instead of becoming
-   * a spurious Switch. *)
-  let is_sig (_, (fdef : G.function_definition)) =
-    match fdef.G.fbody with G.FBDecl _ -> true | _ -> false
-  in
-  let sigs, reals = List.partition is_sig clauses in
-  (* Return type: prefer the signature's, else the first real clause's. *)
-  let frettype =
-    match sigs with
-    | (_, sfdef) :: _ -> sfdef.G.frettype
-    | [] -> (match reals with (_, f) :: _ -> f.G.frettype | [] -> None)
-  in
-  match reals with
-  | [] ->
-      (* Only signature(s): keep the signature declaration as-is. *)
-      let (_, sfdef) = List.hd clauses in
-      G.DefStmt (G.basic_entity name, G.FuncDef sfdef) |> G.s
-  | [ (_, only) ] ->
-      (* One real clause (+ optional signature): clean FuncDef, just
-       * inject the signature's return type. *)
-      let fdef = { only with G.frettype } in
-      G.DefStmt (G.basic_entity name, G.FuncDef fdef) |> G.s
-  | _ ->
-  let clauses = reals in
-  let first = List.hd clauses in
-  let (_, first_fdef) = first in
-  let num_params =
-    let (_, ps, _) = first_fdef.G.fparams in
-    List.length ps
-  in
-  let tk = snd name in
-  let implicit_ids = List.init num_params (fun _ -> G.implicit_param_id tk) in
-  let implicit_params = List.map (fun id -> G.Param (G.param_of_id id)) implicit_ids in
-  let scrutinee = match implicit_ids with
-    | [] -> G.L (G.Unit tk) |> G.e
-    | [id] -> G.N (AST_generic_helpers.name_of_id id) |> G.e
-    | ids ->
-        G.Container (G.Tuple,
-          fb (List.map (fun id -> G.N (AST_generic_helpers.name_of_id id) |> G.e) ids))
-        |> G.e
-  in
-  let cases = List.map (fun (_name, fdef) ->
-    let (_, ps, _) = fdef.G.fparams in
-    let patterns = List.map (fun p ->
-      match p with
-      | G.Param { G.pname = Some id; _ } ->
-          G.PatId (id, G.empty_id_info ())
-      | G.Param _ -> G.PatWildcard tk
-      | G.ParamPattern (pat, _) -> pat
-      | _ -> G.PatWildcard tk
-    ) ps in
-    let case_pat = match patterns with
-      | [] -> G.PatWildcard tk
-      | [p] -> p
-      | ps -> G.PatTuple (fb ps)
-    in
-    let body_stmt = match fdef.G.fbody with
-      | G.FBExpr e -> G.ExprStmt (e, fake_tok ";") |> G.s
-      | G.FBStmt s -> s
-      (* A signature-only clause (FBDecl) and an absent body (FBNothing)
-       * are inert vis-à-vis the matcher: emit OS_Pass so we don't carry
-       * a "Todo" tag through grouped clauses. *)
-      | G.FBDecl _ | G.FBNothing ->
-          G.OtherStmt (G.OS_Pass, []) |> G.s
-    in
-    G.CasesAndBody ([G.Case (tk, case_pat)], body_stmt)
-  ) clauses in
-  let sw = G.Switch (tk, Some (G.Cond scrutinee), cases) |> G.s in
-  let fdef = G.FuncDef {
-    G.fkind = (G.Function, tk);
-    fparams = fb implicit_params;
-    frettype;
-    fbody = G.FBStmt sw;
-  } in
-  let ent = G.basic_entity name in
-  G.DefStmt (ent, fdef) |> G.s
+(* A Haskell function is usually written as several consecutive clauses
+ * (`fact 0 = 1` / `fact n = n * fact (n - 1)`), optionally preceded by a
+ * type signature. Each clause is kept as its own DefStmt(FuncDef) so that
+ * a definition pattern such as `fact 0 = $E` or `$F $X = $E` matches every
+ * clause individually (the same convention as Python's `def $X(...): ...`
+ * matching every def site), and each finding is reported on its own
+ * clause. The signature stays a separate DefStmt with an FBDecl body:
+ * `f :: $T` patterns match it, and callee resolution prefers concrete
+ * definitions over declaration-only ones (see
+ * Callee_resolution.prefer_concrete), so taint still flows through the
+ * clauses. *)
 
 (*****************************************************************************)
 (* topdecl sequence + module body                                             *)
@@ -2783,12 +2701,11 @@ let map_topdecls_seq (env : env)
     ((first, rest, _trailing)
        : CST.anon_topd_rep_choice_SEMI_topd_opt_choice_SEMI_eb02f02)
     : G.stmt list =
-  let raw = map_topdecl env first
-            @ List.concat_map (fun (_sep, td) -> map_topdecl env td) rest in
-  group_consecutive_clauses ~in_pattern:env.H.extra.is_pattern_mode raw
+  map_topdecl env first
+  @ List.concat_map (fun (_sep, td) -> map_topdecl env td) rest
 
 let map_module_body (env : env) body : G.stmt list =
-  let raw = match body with
+  match body with
     | `LCURL_opt_topd_rep_SEMI_topd_opt_SEMI_RCURL
         (_lcurl, inner, _semi, _rcurl) ->
         (match inner with
@@ -2804,8 +2721,6 @@ let map_module_body (env : env) body : G.stmt list =
              let (first, rest, _trailing) = tds in
              map_topdecl env first
              @ List.concat_map (fun (_sep, td) -> map_topdecl env td) rest)
-  in
-  group_consecutive_clauses ~in_pattern:env.H.extra.is_pattern_mode raw
 
 (* One export entry yields the exported name(s): a value `foo`, a type
  * `Bar(..)`/`Qux(A,B)` (the type-constructor name), or a module re-export

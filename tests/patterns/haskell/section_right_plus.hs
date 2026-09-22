@@ -2,4 +2,4 @@ module SectRPlus where
 
 
 --ERROR:
-dbl = (2 +)
+inc = (+ 1)

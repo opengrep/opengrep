@@ -1,6 +1,5 @@
 module DoSingle where
 
-
---ERROR:
 main = do
+--ERROR:
   putStrLn "hi"

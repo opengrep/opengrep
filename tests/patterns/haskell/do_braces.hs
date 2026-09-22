@@ -7,7 +7,7 @@ compactDo = do { x <- getLine; putStrLn x }
 compactDo2 = do { input <- readFile "f"; print input }
 
 -- This also matches because the AST unifies brace and layout syntax
---ERROR:
 regularDo = do
+--ERROR:
   x <- getLine
   putStrLn x

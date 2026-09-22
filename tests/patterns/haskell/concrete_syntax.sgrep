@@ -1,1 +1,1 @@
-putStrLn "hello"
+foo 1 2

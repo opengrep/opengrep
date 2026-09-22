@@ -15,10 +15,6 @@ typeQuote = [t| Int -> Bool |]
 declQuote :: Q [Dec]
 declQuote = [d| myId x = x |]
 
--- Typed expression quote
-typedQuote :: Q (TExp Int)
-typedQuote = [|| 42 ||]
-
 -- Splice (calling a TH function)
 -- $(makeLenses ''Person)  -- would require lens library
 

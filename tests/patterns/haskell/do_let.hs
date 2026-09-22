@@ -1,7 +1,6 @@
 module DoLet where
 
-
---ERROR:
 main = do
+--ERROR:
   let greet = "hi"
   putStrLn greet

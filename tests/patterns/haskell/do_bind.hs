@@ -1,7 +1,6 @@
 module DoBind where
 
-
---ERROR:
 main = do
+--ERROR:
   line <- getLine
   putStrLn line

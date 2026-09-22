@@ -1,5 +1,5 @@
-module SectLDiv_Op where
+module SectLDivOp where
 
 
 --ERROR:
-inc = (/ 1)
+dbl = (2 /)

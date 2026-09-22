@@ -1,7 +1,6 @@
 module IOGetline where
 
-
---ERROR:
 main = do
+--ERROR:
   x <- getLine
   putStrLn x

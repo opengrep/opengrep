@@ -1,6 +1,9 @@
 module ConcrSyntax where
 
 --ERROR:
-main = putStrLn "hello"
+x = foo 1 2
 
-other = putStrLn "world"
+--ERROR:
+y = foo 1 2
+
+z = foo 2 1

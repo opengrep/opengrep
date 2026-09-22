@@ -1,5 +1,5 @@
-module SectRDiv_Op where
+module SectRDivOp where
 
 
 --ERROR:
-dbl = (2 /)
+inc = (/ 1)

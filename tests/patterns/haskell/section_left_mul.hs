@@ -2,4 +2,4 @@ module SectLMul where
 
 
 --ERROR:
-inc = (* 1)
+dbl = (2 *)
