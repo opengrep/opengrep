@@ -75,17 +75,6 @@ type tainted_tokens = tainted_token list [@@deriving show]
  * taint from its input.
  *)
 
-type 'a call_trace =
-  | PM of PM.t * 'a
-  | Call of G.expr * tainted_tokens * 'a call_trace
-
-let length_of_call_trace ct =
-  let rec loop acc = function
-    | PM _ -> acc
-    | Call (_, _, ct') -> loop (acc + 1) ct'
-  in
-  loop 0 ct
-
 let compare_metavar_env env1 env2 =
   (* Returns 0 only for bindings that [Metavariable.equal_bindings] treats
      as equal. Otherwise, there will be many duplicates. *)
@@ -102,29 +91,6 @@ let compare_matches pm1 pm2 =
       if compare_range_loc <> 0 then compare_range_loc
       else compare_metavar_env pm1.env pm2.env
   | other -> other
-
-let rec pm_of_trace = function
-  | PM (pm, x) -> (pm, x)
-  | Call (_, _, trace) -> pm_of_trace trace
-
-let trace_of_pm (pm, x) = PM (pm, x)
-
-let rec show_call_trace show_thing = function
-  | PM (pm, x) ->
-      let matched_str =
-        let tok1, tok2 = pm.range_loc in
-        let r = Range.range_of_token_locations tok1 tok2 in
-        Range.content_at_range pm.path.internal_path_to_content r
-      in
-      let matched_line =
-        let loc1, _ = pm.range_loc in
-        loc1.Tok.pos.line
-      in
-      Printf.sprintf "%s at l.%d [%s]" matched_str matched_line (show_thing x)
-  | Call (_e, _, trace) ->
-      Printf.sprintf "call to %s -> ... %s"
-        (Pretty_print_AST.expr_to_string Lang.Java _e)
-        (show_call_trace show_thing trace)
 
 (*****************************************************************************)
 (* Taint arguments ("variables", kind of) *)
@@ -268,7 +234,11 @@ let lval_of_arg arg = { base = BArg arg; offset = [] }
 (* Taint *)
 (*****************************************************************************)
 
-type source = {
+type 'a call_trace =
+  | PM of PM.t * 'a
+  | Call of G.expr * call_site * tokens * nodes * 'a call_trace
+
+and source = {
   call_trace : R.taint_source call_trace;
   label : string;
       (* This is needed because we may change the label of a taint,
@@ -285,7 +255,260 @@ and orig = Src of source | Var of lval | Shape_var of lval | Control
  * 'Var' with a "kind" parameter. But we need to be careful about perf when
  * adding an extra level of indirection here (due to memory allocations). *)
 
-and taint = { orig : orig; tokens : tainted_tokens }
+and taint = { orig : orig; tokens : tokens; nodes : nodes }
+and tokens = tainted_tokens
+and nodes = trace_node list
+
+and trace_node =
+  | Merge of { at : int; kept : side; other : side }
+  | Through of {
+      at : int;
+      site : call_site;
+      join_tok : tainted_token option;
+      inner_tokens : tokens;
+      inner_nodes : nodes;
+    }
+  | Reversed of { at : int; inner_tokens : tokens; inner_nodes : nodes }
+
+and side = {
+  side_guard : EG.t;
+  side_taint : taint;
+  side_sink_trace : unit call_trace option;
+}
+
+and call_site = {
+  actual_args : IL.exp IL.argument list option;
+  callee_params : Signature_params.params;
+  callee_params_il : IL.param list;
+  caller_params : IL.param list option;
+  can_freeze : bool;
+  subst : [ `Effect | `Nested_sig ];
+}
+
+let length_of_call_trace ct =
+  let rec loop acc = function
+    | PM _ -> acc
+    | Call (_, _, _, _, ct') -> loop (acc + 1) ct'
+  in
+  loop 0 ct
+
+let rec pm_of_trace = function
+  | PM (pm, x) -> (pm, x)
+  | Call (_, _, _, _, trace) -> pm_of_trace trace
+
+let trace_of_pm (pm, x) = PM (pm, x)
+
+let rec show_call_trace show_thing = function
+  | PM (pm, x) ->
+      let matched_str =
+        let tok1, tok2 = pm.range_loc in
+        let r = Range.range_of_token_locations tok1 tok2 in
+        Range.content_at_range pm.path.internal_path_to_content r
+      in
+      let matched_line =
+        let loc1, _ = pm.range_loc in
+        loc1.Tok.pos.line
+      in
+      Printf.sprintf "%s at l.%d [%s]" matched_str matched_line (show_thing x)
+  | Call (_e, _, _, _, trace) ->
+      Printf.sprintf "call to %s -> ... %s"
+        (Pretty_print_AST.expr_to_string Lang.Java _e)
+        (show_call_trace show_thing trace)
+
+let taint_of_orig (orig : orig) : taint = { orig; tokens = []; nodes = [] }
+
+let push_token (tok : tainted_token) (t : taint) : taint =
+  { t with tokens = tok :: t.tokens }
+
+let reverse_trace (t : taint) : taint =
+  match t.nodes with
+  | [] -> { t with tokens = List.rev t.tokens }
+  | nodes ->
+      {
+        t with
+        tokens = [];
+        nodes = [ Reversed { at = 0; inner_tokens = t.tokens; inner_nodes = nodes } ];
+      }
+
+let call_of_taint (callee : G.expr) (site : call_site) (t : taint)
+    (inner : 'a call_trace) : 'a call_trace =
+  Call (callee, site, t.tokens, t.nodes, inner)
+
+let through (site : call_site) ~(join_tok : tainted_token option)
+    ~(inner : taint) (outer : taint) : taint =
+  match inner.nodes with
+  | [] ->
+      {
+        outer with
+        tokens =
+          inner.tokens @ Option.to_list join_tok @ outer.tokens;
+      }
+  | inner_nodes ->
+      {
+        outer with
+        nodes =
+          Through
+            {
+              at = List.length outer.tokens;
+              site;
+              join_tok;
+              inner_tokens = inner.tokens;
+              inner_nodes;
+            }
+          :: outer.nodes;
+      }
+
+let record_merge ~(kept : side) ~(other : side) : taint =
+  let t = kept.side_taint in
+  {
+    t with
+    nodes = [ Merge { at = List.length t.tokens; kept; other } ];
+  }
+
+let merge_items ~(kept : EG.t * taint * unit call_trace)
+    ~(other : EG.t * taint * unit call_trace) : taint =
+  let kept_guard, kept_taint, kept_sink_trace = kept in
+  let other_guard, other_taint, other_sink_trace = other in
+  record_merge
+    ~kept:
+      { side_guard = kept_guard; side_taint = kept_taint;
+        side_sink_trace = Some kept_sink_trace }
+    ~other:
+      { side_guard = other_guard; side_taint = other_taint;
+        side_sink_trace = Some other_sink_trace }
+
+let same_trace (t1 : taint) (t2 : taint) : bool =
+  phys_equal t1.tokens t2.tokens
+  && phys_equal t1.orig t2.orig
+  && List_.null t1.nodes && List_.null t2.nodes
+
+let at_of_node (node : trace_node) : int =
+  match node with
+  | Merge { at; _ }
+  | Through { at; _ }
+  | Reversed { at; _ } ->
+      at
+
+let rec flat_length (tokens : tokens) (nodes : nodes) : int =
+  match nodes with
+  | [] -> List.length tokens
+  | node :: rest -> (
+      let newer = List.length tokens - at_of_node node in
+      match node with
+      | Merge { kept; _ } ->
+          newer + flat_length kept.side_taint.tokens kept.side_taint.nodes
+      | Through { join_tok; inner_tokens; inner_nodes; _ } ->
+          newer
+          + flat_length inner_tokens inner_nodes
+          + List.length (Option.to_list join_tok)
+          + flat_length (List_.drop newer tokens) rest
+      | Reversed { inner_tokens; inner_nodes; _ } ->
+          newer
+          + flat_length inner_tokens inner_nodes
+          + flat_length (List_.drop newer tokens) rest)
+
+let compare_trace_lengths (t1 : taint) (t2 : taint) : int =
+  match (t1.nodes, t2.nodes) with
+  | [], [] -> List.compare_lengths t1.tokens t2.tokens
+  | _ ->
+      Int.compare
+        (flat_length t1.tokens t1.nodes)
+        (flat_length t2.tokens t2.nodes)
+
+type 'a flat_call_trace =
+  | Flat_PM of PM.t * 'a
+  | Flat_call of G.expr * tainted_tokens * 'a flat_call_trace
+
+type resolved = {
+  resolved_orig : orig option;
+  resolved_tokens : tainted_tokens;
+  resolved_sink_trace : unit call_trace option;
+}
+
+let choose_side ~(valid : call_site list -> EG.t -> bool)
+    (ctx : call_site list) (kept : side) (other : side) : side =
+  if valid ctx kept.side_guard then kept
+  else if valid ctx other.side_guard then other
+  else kept
+
+let first_some (a : 'a option) (b : 'a option) : 'a option =
+  match a with
+  | Some _ -> a
+  | None -> b
+
+let rec resolve_segment ~valid (ctx : call_site list) (tokens : tokens)
+    (nodes : nodes) : resolved =
+  match nodes with
+  | [] ->
+      { resolved_orig = None; resolved_tokens = tokens; resolved_sink_trace = None }
+  | node :: rest -> (
+      let newer_count = List.length tokens - at_of_node node in
+      let newer = List_.take newer_count tokens in
+      let older = List_.drop newer_count tokens in
+      match node with
+      | Merge { kept; other; _ } ->
+          let side = choose_side ~valid ctx kept other in
+          let r =
+            resolve_segment ~valid ctx side.side_taint.tokens
+              side.side_taint.nodes
+          in
+          {
+            resolved_orig =
+              first_some r.resolved_orig (Some side.side_taint.orig);
+            resolved_tokens = newer @ r.resolved_tokens;
+            resolved_sink_trace =
+              first_some r.resolved_sink_trace side.side_sink_trace;
+          }
+      | Through { site; join_tok; inner_tokens; inner_nodes; _ } ->
+          let inner =
+            resolve_segment ~valid (site :: ctx) inner_tokens inner_nodes
+          in
+          let r = resolve_segment ~valid ctx older rest in
+          {
+            r with
+            resolved_tokens =
+              newer @ inner.resolved_tokens @ Option.to_list join_tok
+              @ r.resolved_tokens;
+          }
+      | Reversed { inner_tokens; inner_nodes; _ } ->
+          let inner = resolve_segment ~valid ctx inner_tokens inner_nodes in
+          let r = resolve_segment ~valid ctx older rest in
+          {
+            resolved_orig = first_some inner.resolved_orig r.resolved_orig;
+            resolved_tokens =
+              newer @ List.rev inner.resolved_tokens @ r.resolved_tokens;
+            resolved_sink_trace =
+              first_some inner.resolved_sink_trace r.resolved_sink_trace;
+          })
+
+let resolve_taint ~valid (t : taint) : resolved =
+  resolve_segment ~valid [] t.tokens t.nodes
+
+let rec resolve_source_trace ~valid (ctx : call_site list)
+    (ct : R.taint_source call_trace) : R.taint_source flat_call_trace =
+  match ct with
+  | PM (pm, x) -> Flat_PM (pm, x)
+  | Call (callee, site, tokens, nodes, inner) ->
+      let ctx = site :: ctx in
+      let r = resolve_segment ~valid ctx tokens nodes in
+      let inner =
+        match r.resolved_orig with
+        | Some (Src src) -> src.call_trace
+        | Some (Var _ | Shape_var _ | Control)
+        | None ->
+            inner
+      in
+      Flat_call (callee, r.resolved_tokens, resolve_source_trace ~valid ctx inner)
+
+let rec resolve_sink_trace ~valid (ctx : call_site list)
+    (ct : unit call_trace) : unit flat_call_trace =
+  match ct with
+  | PM (pm, x) -> Flat_PM (pm, x)
+  | Call (callee, site, tokens, nodes, inner) ->
+      let ctx = site :: ctx in
+      let r = resolve_segment ~valid ctx tokens nodes in
+      let inner = Option.value r.resolved_sink_trace ~default:inner in
+      Flat_call (callee, r.resolved_tokens, resolve_sink_trace ~valid ctx inner)
 
 let compare_precondition (_ts1, f1) (_ts2, f2) =
   (* We don't consider the "incoming" taints here, assuming both
@@ -423,19 +646,19 @@ module Taint_set = struct
    *
    * Each element is a [guarded_taint] carrying the taint plus the
    * [Effect_guard.t] under which that taint is live. Identity is the
-   * taint only ([compare_taint]), so when a bundle with the same taint
+   * taint only ([compare_taint]), so when a guarded taint with the same taint
    * identity but a different guard is added, [add] fuses guards via
    * [EG.compose_or] and picks the best taint via [pick_best_taint].
    *
-   * Represented as a [Map] from taint identity to bundle rather than a
-   * [Set] of bundles: the merge-on-collision access pattern is then one
+   * Represented as a [Map] from taint identity to guarded taint rather than a
+   * [Set] of guarded taints: the merge-on-collision access pattern is then one
    * [Taints.update] descent (instead of find + remove + add), and
    * [union] is the hedge [Map.union], which links non-overlapping
    * subtrees wholesale instead of re-inserting every element — the
    * dominant cost on big env joins and instantiation unions, where the
    * two sides share most of their structure. The key is a
    * representative taint of the equivalence class; merging may store a
-   * "better" taint in the bundle without rekeying (both compare equal
+   * "better" taint in the guarded taint without rekeying (both compare equal
    * by [compare_taint]). *)
   module Taints = Map.Make (struct
     type t = taint
@@ -450,7 +673,7 @@ module Taint_set = struct
   let cardinal set = Taints.cardinal set
 
   (* Equality/order on the taint identities (keys) only, matching the
-     previous [Set.Make] over taint-only bundle compare: guards and
+     previous [Set.Make] over taint-only guarded-taint compare: guards and
      trace details do not participate. *)
   let equal set1 set2 = Taints.equal (fun _ _ -> true) set1 set2
   let compare set1 set2 = Taints.compare (fun _ _ -> 0) set1 set2
@@ -495,37 +718,63 @@ module Taint_set = struct
    *
    * coupling: If this changes, make sure to update docs for the `Taint.signature` type.
    *)
-  let rec add alt_bundle set =
-    Taints.update alt_bundle.taint
+  let rec add alt_guarded_taint set =
+    Taints.update alt_guarded_taint.taint
       (function
-        | None -> Some alt_bundle
-        | Some curr_bundle -> Some (merge_bundles alt_bundle curr_bundle))
+        | None -> Some alt_guarded_taint
+        | Some curr_guarded_taint ->
+            Some (merge_guarded_taints alt_guarded_taint curr_guarded_taint))
       set
 
-  (* Merge two bundles with the same taint identity: best taint by the
+  (* Merge two guarded taints with the same taint identity: best taint by the
    * shortest-trace rule, guards fused disjunctively. Returns
-   * [curr_bundle] physically when nothing changes, so [Taints.update]
+   * [curr_guarded_taint] physically when nothing changes, so [Taints.update]
    * returns the map unchanged. (For [Src] taints [pick_best_taint]
    * rebuilds the source to merge preconditions, so [best_taint] is never
-   * physically [curr_bundle.taint] and this shortcut only fires for
+   * physically [curr_guarded_taint.taint] and this shortcut only fires for
    * [Var]/[Shape_var]/[Control].) *)
-  and merge_bundles alt_bundle curr_bundle =
-    let best_taint = pick_best_taint alt_bundle.taint curr_bundle.taint in
-    let merged_guard = EG.compose_or alt_bundle.guard curr_bundle.guard in
+  and merge_guarded_taints alt_guarded_taint curr_guarded_taint =
+    let alt_taint, curr_taint, alt_is_best =
+      pick_best_taint alt_guarded_taint.taint curr_guarded_taint.taint
+    in
+    let best_taint, best_guard, other_taint, other_guard =
+      if alt_is_best then
+        (alt_taint, alt_guarded_taint.guard, curr_taint, curr_guarded_taint.guard)
+      else
+        (curr_taint, curr_guarded_taint.guard, alt_taint, alt_guarded_taint.guard)
+    in
+    let merged_guard =
+      EG.compose_or alt_guarded_taint.guard curr_guarded_taint.guard
+    in
     if
-      Common.phys_equal best_taint curr_bundle.taint
-      && EG.equal merged_guard curr_bundle.guard
-    then curr_bundle
-    else { taint = best_taint; guard = merged_guard }
+      Common.phys_equal best_taint curr_guarded_taint.taint
+      && EG.equal merged_guard curr_guarded_taint.guard
+    then curr_guarded_taint
+    else
+      let taint =
+        if
+          EG.equal best_guard other_guard
+          || same_trace alt_guarded_taint.taint curr_guarded_taint.taint
+        then best_taint
+        else
+          record_merge
+            ~kept:
+              { side_guard = best_guard; side_taint = best_taint;
+                side_sink_trace = None }
+            ~other:
+              { side_guard = other_guard; side_taint = other_taint;
+                side_sink_trace = None }
+      in
+      { taint; guard = merged_guard }
 
   (* Hedge union: non-overlapping subtrees are linked without visiting
    * their elements; colliding keys merge like [add] (set1 is the
    * incoming side, matching the previous [fold add set1 set2]). *)
   and union set1 set2 =
-    Taints.union (fun _taint b1 b2 -> Some (merge_bundles b1 b2)) set1 set2
+    Taints.union (fun _taint b1 b2 -> Some (merge_guarded_taints b1 b2)) set1 set2
 
-  and of_list bundles =
-    List.fold_left (fun set b -> add b set) Taints.empty bundles
+  and of_list guarded_taints =
+    List.fold_left (fun set b -> add b set) Taints.empty guarded_taints
 
   and pick_best_taint taint1 taint2 =
     (* Here we assume that 'compare taint1 taint2 = 0' so we could keep any
@@ -535,8 +784,7 @@ module Taint_set = struct
     | Shape_var _, Shape_var _
     | Control, Control ->
         (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
-        if List.compare_lengths taint1.tokens taint2.tokens < 0 then taint1
-        else taint2
+        (taint1, taint2, compare_trace_lengths taint1 taint2 < 0)
     | Src src1, Src src2 ->
         let precondition =
           (* We don't pick a precondition, but we merge them! *)
@@ -580,17 +828,18 @@ module Taint_set = struct
             (length_of_call_trace src1.call_trace)
             (length_of_call_trace src2.call_trace)
         in
-        if call_trace_cmp < 0 then taint1
-        else if call_trace_cmp > 0 then taint2
-        else if
-          (* same length *)
-          List.compare_lengths taint1.tokens taint2.tokens < 0
-        then taint1
-        else taint2
+        let first_is_best =
+          if call_trace_cmp < 0 then true
+          else if call_trace_cmp > 0 then false
+          else
+            (* same length *)
+            compare_trace_lengths taint1 taint2 < 0
+        in
+        (taint1, taint2, first_is_best)
     | (Src _ | Var _ | Shape_var _ | Control), _ ->
         Log.err (fun m ->
             m "Taint_set.pick_taint: Ooops, the impossible happened!");
-        taint2
+        (taint1, taint2, false)
 
   (* Keep set1's bindings whose key is absent in set2. [Taints.filter]
      shares the subtrees it retains, where [Taints.merge] rebuilds the
@@ -600,9 +849,9 @@ module Taint_set = struct
 
   let singleton (t : taint) : t = add (lift_taint t) empty
 
-  (* Map over the bundles. The fast path leaves keys untouched, which is
+  (* Map over the guarded taints. The fast path leaves keys untouched, which is
      only sound while [f] preserves the taint identity ([orig]) of every
-     bundle — true for the hot mappers ([with_guard] and the token-only
+     guarded taint — true for the hot mappers ([with_guard] and the token-only
      [map_taint] uses). Some [map_taint] callers DO change identity
      (offset rewriting in [Taint_shape], label propagation in
      [Dataflow_tainting]); when we detect that, rebuild the map with
@@ -649,11 +898,11 @@ module Taint_set = struct
   let of_taint_list (taints : taint list) : t =
     of_list (List_.map lift_taint taints)
 
-  (* Conjoin [g] into every bundle's guard. *)
+  (* Conjoin [g] into every guarded taint's guard. *)
   let conjoin_guard (g : EG.t) (set : t) : t =
     set |> map (with_guard g)
 
-  (* The disjunction of the per-bundle guards: the condition under which at
+  (* The disjunction of the guards of the guarded taints: the condition under which at
    * least one taint in the set is live. Used to derive the effect-level
    * guard of a [ToLval] synthesised at function exit from the guards its
    * written taints carry. [empty] yields [top] (no constraint); callers
@@ -673,7 +922,7 @@ module Taint_set = struct
   let add_taint_with_guard (t : taint) (g : EG.t) (set : t) : t =
     add { taint = t; guard = g } set
 
-  (* Map the inner [taint] of every bundle, leaving guards untouched. *)
+  (* Map the inner [taint] of every guarded taint, leaving guards untouched. *)
   let map_taint (f : taint -> taint) (set : t) : t =
     set |> map (fun (b : guarded_taint) -> { b with taint = f b.taint })
 end
@@ -904,7 +1153,7 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
 
 let taint_of_pm ~incoming pm =
   match src_of_pm ~incoming pm with
-  | Some orig -> Some { orig; tokens = [] }
+  | Some orig -> Some (taint_of_orig orig)
   | None -> None
 
 let taints_of_pms ~incoming pms =

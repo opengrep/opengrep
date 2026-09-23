@@ -18,6 +18,18 @@ type tainted_tokens = tainted_token list [@@deriving show]
   * when passing through a statement like `x = tainted`, the token
   * corresponding to `x` will be added to this list. *)
 
+type tokens
+type nodes
+
+type call_site = {
+  actual_args : IL.exp IL.argument list option;
+  callee_params : Signature_params.params;
+  callee_params_il : IL.param list;
+  caller_params : IL.param list option;
+  can_freeze : bool;
+  subst : [ `Effect | `Nested_sig ];
+}
+
 (** A call trace to a source or sink match.
   * E.g. Call('foo()', PM('sink(x)')) tells us that by calling `foo(a)` we reach
   * 'sink(x)' (here `a` is the actual argument passed to `foo`, and `x` could be
@@ -26,7 +38,7 @@ type 'spec call_trace =
   | PM of Core_match.t * 'spec
       (** A direct match. The `'spec` would typically contain the pattern that
         * was used to produce the match, e.g. one of the `pattern-sources`.  *)
-  | Call of AST_generic.expr * tainted_tokens * 'spec call_trace
+  | Call of AST_generic.expr * call_site * tokens * nodes * 'spec call_trace
       (** An indirect match through a function call. *)
 
 val show_call_trace : ('spec -> string) -> 'spec call_trace -> string
@@ -171,9 +183,51 @@ and orig =
         * shape of the 'lval', see 'Taint_sig.gather_all_taints_in_shape'. *)
   | Control  (** Polymorphic taint variable, but for the "control-flow". *)
 
-and taint = { orig : orig; tokens : tainted_tokens }
+and taint = { orig : orig; tokens : tokens; nodes : nodes }
 (** At a given program location, taint is given by its origin (i.e. 'orig') and
  * the path it took from that origin to the current location (i.e. 'tokens'). *)
+
+val taint_of_orig : orig -> taint
+val push_token : tainted_token -> taint -> taint
+val reverse_trace : taint -> taint
+
+val call_of_taint :
+  AST_generic.expr -> call_site -> taint -> 'a call_trace -> 'a call_trace
+
+val through :
+  call_site -> join_tok:tainted_token option -> inner:taint -> taint -> taint
+
+val same_trace : taint -> taint -> bool
+
+val merge_items :
+  kept:Effect_guard.t * taint * unit call_trace ->
+  other:Effect_guard.t * taint * unit call_trace ->
+  taint
+
+type 'a flat_call_trace =
+  | Flat_PM of Core_match.t * 'a
+  | Flat_call of AST_generic.expr * tainted_tokens * 'a flat_call_trace
+
+type resolved = {
+  resolved_orig : orig option;
+  resolved_tokens : tainted_tokens;
+  resolved_sink_trace : unit call_trace option;
+}
+
+val resolve_taint :
+  valid:(call_site list -> Effect_guard.t -> bool) -> taint -> resolved
+
+val resolve_source_trace :
+  valid:(call_site list -> Effect_guard.t -> bool) ->
+  call_site list ->
+  Rule.taint_source call_trace ->
+  Rule.taint_source flat_call_trace
+
+val resolve_sink_trace :
+  valid:(call_site list -> Effect_guard.t -> bool) ->
+  call_site list ->
+  unit call_trace ->
+  unit flat_call_trace
 
 val trace_of_pm : Core_match.t * 'a -> 'a call_trace
 val pm_of_trace : 'a call_trace -> Core_match.t * 'a
@@ -194,9 +248,9 @@ val compare_taint : taint -> taint -> int
 (* Taint sets *)
 (*****************************************************************************)
 
-(** A bundle pairing a taint identity with the [Effect_guard.t] under which it
+(** A guarded taint pairs a taint identity with the [Effect_guard.t] under which it
     is live. Set membership is by taint identity only ([compare_taint]) — when
-    two bundles share a taint but differ in their guard, [Taint_set.add] fuses
+    two guarded taints share a taint but differ in their guard, [Taint_set.add] fuses
     via [Effect_guard.compose_or] (different paths converging contribute
     disjunctively) and picks the best taint via the legacy "shortest trace"
     rule. *)
@@ -206,7 +260,7 @@ val lift_taint : taint -> guarded_taint
 (** [lift_taint t] is [{ taint = t; guard = Effect_guard.top }]. *)
 
 val with_guard : Effect_guard.t -> guarded_taint -> guarded_taint
-(** Conjoin [g] into the bundle's guard via [Effect_guard.compose_and]. *)
+(** Conjoin [g] into the guarded taint's guard via [Effect_guard.compose_and]. *)
 
 (** A set of guarded taints. Where two pieces of taint are the same except
  * for "details" such as their call trace, the set picks the "best" one
@@ -252,14 +306,14 @@ module Taint_set : sig
   (** Strip per-taint guards; yields the bare taint identities. *)
 
   val conjoin_guard : Effect_guard.t -> t -> t
-  (** Conjoin [g] into every bundle's guard via [Effect_guard.compose_and]. *)
+  (** Conjoin [g] into every guarded taint's guard via [Effect_guard.compose_and]. *)
 
   val guards_disjunction : t -> Effect_guard.t
-  (** The disjunction of every bundle's guard: the condition under which at
+  (** The disjunction of every guarded taint's guard: the condition under which at
       least one taint in the set is live. [empty] yields [Effect_guard.top]. *)
 
   val map_taint : (taint -> taint) -> t -> t
-  (** Map the inner taint of every bundle, leaving guards untouched.
+  (** Map the inner taint of every guarded taint, leaving guards untouched.
       [f] MAY change taint identity: the set detects it and rebuilds
       itself with correct keys, fusing guards of identity-colliding
       results as [add]/[union] would. Identity-preserving [f] (e.g.

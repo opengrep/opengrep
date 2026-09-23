@@ -28,13 +28,69 @@ type ('node, 'edge) t = {
   entry : nodei;
   exit : nodei;
   reachable : NodeiSet.t;
+  reverse_postorder : nodei array;
+  reverse_postorder_index : int array;
+  loop_header : int array;
+  max_loop_depth : int;
 }
 
 type ('node, 'edge) cfg = ('node, 'edge) t
 
+(* For each node, the entry node of its innermost loop (-1 outside loops),
+ * and the deepest loop nesting. *)
+let loops_of (graph : _ Ograph_extended.ograph_mutable)
+    (reverse_postorder : nodei array) (reverse_postorder_index : int array) :
+    int array * int =
+  let index (ni : nodei) : int = reverse_postorder_index.(ni) in
+  let has_back_edge =
+    Array.exists
+      (fun (h : nodei) ->
+        (graph#predecessors h)#fold
+          (fun found (p, _) -> found || index p >= index h)
+          false)
+      reverse_postorder
+  in
+  if not has_back_edge then ([||], 0)
+  else
+    let size = Array.length reverse_postorder_index in
+    let loop_header = Array.make size (-1) in
+    let loop_depth = Array.make size 0 in
+    let mark = Array.make size (-1) in
+    let stack = Array.make size 0 in
+    let top = ref 0 in
+    let header = ref 0 in
+    let enter (ni : nodei) : unit =
+      mark.(ni) <- !header;
+      loop_header.(ni) <- !header;
+      loop_depth.(ni) <- loop_depth.(ni) + 1
+    in
+    let push () ((p, _) : nodei * _) : unit =
+      if index p >= 0 && not (Int.equal mark.(p) !header) then (
+        enter p;
+        stack.(!top) <- p;
+        incr top)
+    in
+    let push_back_source () ((p, _) as edge : nodei * _) : unit =
+      if index p >= index !header then push () edge
+    in
+    Array.iter
+      (fun (h : nodei) ->
+        header := h;
+        top := 0;
+        (graph#predecessors h)#fold push_back_source ();
+        if !top > 0 then (
+          if not (Int.equal mark.(h) h) then enter h;
+          while !top > 0 do
+            decr top;
+            let ni = stack.(!top) in
+            if not (Int.equal ni h) then (graph#predecessors ni)#fold push ()
+          done))
+      reverse_postorder;
+    (loop_header, Array.fold_left Int.max 0 loop_depth)
+
 let make (graph : _ Ograph_extended.ograph_mutable) entry exit : _ t =
-  let rec aux nodei seen =
-    if NodeiSet.mem nodei seen then seen
+  let rec aux nodei ((seen, finished) : NodeiSet.t * nodei list) =
+    if NodeiSet.mem nodei seen then (seen, finished)
     else
       let seen = NodeiSet.add nodei seen in
       let succs =
@@ -42,9 +98,31 @@ let make (graph : _ Ograph_extended.ograph_mutable) entry exit : _ t =
           (fun s (ni, _) -> NodeiSet.add ni s)
           NodeiSet.empty
       in
-      NodeiSet.fold aux succs seen
+      let seen, finished = NodeiSet.fold aux succs (seen, finished) in
+      (seen, nodei :: finished)
   in
-  { graph; entry; exit; reachable = aux entry NodeiSet.empty }
+  let reachable, finished = aux entry (NodeiSet.empty, []) in
+  let reverse_postorder = Array.of_list finished in
+  let max_nodei =
+    graph#nodes#fold (fun acc (ni, _) -> Int.max acc ni) (-1)
+  in
+  let reverse_postorder_index = Array.make (max_nodei + 1) (-1) in
+  Array.iteri
+    (fun i ni -> reverse_postorder_index.(ni) <- i)
+    reverse_postorder;
+  let loop_header, max_loop_depth =
+    loops_of graph reverse_postorder reverse_postorder_index
+  in
+  {
+    graph;
+    entry;
+    exit;
+    reachable;
+    reverse_postorder;
+    reverse_postorder_index;
+    loop_header;
+    max_loop_depth;
+  }
 
 let reachable_nodes cfg =
   cfg.reachable |> NodeiSet.to_seq |> Seq.map cfg.graph#nodes#assoc

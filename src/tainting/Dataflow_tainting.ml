@@ -35,14 +35,6 @@ module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
-(* Domain-local storage for constructor instance variable taint *)
-let constructor_instance_vars : (string, Lval_env.t) Hashtbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
-
-(* Reset domain-local hashtable *)
-let reset_constructor () =
-  Hashtbl.clear (Domain.DLS.get constructor_instance_vars)
-
 (* TODO: Rename things to make clear that there are "sub-matches" and there are
  * "best matches". *)
 
@@ -90,7 +82,7 @@ let mk_empty_java_props_cache () = Hashtbl.create 30
 
 type func = {
   name : IL.name option;
-  sig_params : Signature.params;
+  sig_params : Signature_params.params;
       (** Signature-level parameters of the function under analysis. Used to
           synthesise a "self-sig" view of the in-progress signature for
           self-recursive calls (see [lookup_signature_with_object_context]). *)
@@ -118,6 +110,7 @@ type func = {
 (* THINK: Separate read-only enviroment into a new a "cfg" type? *)
 type env = {
   taint_inst : Taint_rule_inst.t;
+  shared_tables : Taint_shared_tables.t;
   func : func;
   in_lambda : IL.name option;
   needed_vars : IL.NameSet.t;
@@ -168,6 +161,12 @@ let add_taints_from_shape shape =
 let log_timeout_warning (taint_inst : Taint_rule_inst.t) opt_name timeout =
   match timeout with
   | `Ok -> ()
+  | `Capped ->
+      Log.debug (fun m ->
+          m "Fixpoint visit cap reached [rule: %s file: %s func: %s]"
+            (Rule_ID.to_string taint_inst.rule_id)
+            !!(taint_inst.file)
+            (Option.map IL.str_of_name opt_name ||| "???"))
   | `Timeout ->
       (* nosemgrep: no-logs-in-library *)
       Logs.warn (fun m ->
@@ -664,7 +663,7 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
                  | Control ->
                      []
                in
-               let new_taint = { taint with tokens = List.rev taint.tokens } in
+               let new_taint = T.reverse_trace taint in
                ({ item with taint = new_taint }, bindings))
       in
       (* If `unify_mvars` is set, then we will just do the previous behavior,
@@ -755,8 +754,8 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
   let has_ctrl = not (Taints.is_empty control_taints) in
   if (not relevant_data) && not has_ctrl then []
   else
-    (* Emit one [ToReturn] per [(taint, guard)] bundle so that disjunctive
-     * provenance survives instantiation: each bundle's [guard] becomes the
+    (* Emit one [ToReturn] per guarded taint [(taint, guard)] so that disjunctive
+     * provenance survives instantiation: each guarded taint's [guard] becomes the
      * effect's own [guards] field, which [Sig_inst.classify_guards]
      * evaluates per effect at the caller. *)
     let data_returns =
@@ -777,18 +776,24 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
         ]
       else
         Taints.elements taints
-        |> List_.map (fun (b : T.guarded_taint) ->
-               let t = { b.taint with T.tokens = List.rev b.taint.T.tokens } in
-               let single =
-                 Taints.add (T.lift_taint t) Taints.empty
-               in
+        |> List.stable_sort (fun (b1 : T.guarded_taint) (b2 : T.guarded_taint) ->
+               Effect_guard.compare b1.guard b2.guard)
+        |> List.fold_left
+             (fun groups (b : T.guarded_taint) ->
+               let t = T.lift_taint (T.reverse_trace b.taint) in
+               match groups with
+               | (guard, group) :: rest when Effect_guard.equal guard b.guard ->
+                   (guard, Taints.add t group) :: rest
+               | _ -> (b.guard, Taints.add t Taints.empty) :: groups)
+             []
+        |> List_.map (fun (guard, group) ->
                Effect.ToReturn
                  {
-                   data_taints = single;
+                   data_taints = group;
                    data_shape = shape;
                    control_taints = Taints.empty;
                    return_tok;
-                   guards = b.guard;
+                   guards = guard;
                  })
     in
     let ctrl_return =
@@ -2009,7 +2014,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                   m "Resolving ToSinkInCall for '%s' at use site"
                     (IL.str_of_name callee_name));
               Sig_inst.instantiate_function_signature
-                ~lang:env.taint_inst.lang
+                ~lang:env.taint_inst.lang ~atoms:env.shared_tables.guard_atoms
                 ~max_offset:(poly_offset_bound env callee)
                 ~outer_params:env.func.il_params
                 env.lval_env callee_sig ~callee ~args:None args_taints
@@ -2247,6 +2252,7 @@ let check_function_call env fun_exp args
       (* Callback lookup in both modes; effects-explosion hazard contained by [Sig_inst.preserve_effect]. *)
       let invoke_inst () =
         Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
+          ~atoms:env.shared_tables.guard_atoms
           ~max_offset:(poly_offset_bound env fun_exp)
           ~outer_params:env.func.il_params env.lval_env fun_sig
           ~callee:fun_exp ~args:(Some args) args_taints
@@ -2328,14 +2334,14 @@ let check_function_call env fun_exp args
                      guards = inner_guards;
                      _;
                    } ->
-                   (* Conjoin the callee's rebound guard onto each per-taint
-                    * bundle. The bundles travel with the value through the
+                   (* Conjoin the callee's rebound guard onto each guarded
+                    * taint. The guarded taints travel with the value through the
                     * outer's storage; at outer's later emission sites
                     * ([effects_of_tainted_return], [record_effects],
                     * [effects_from_arg_updates_at_exit]) one effect emerges
-                    * per bundle, each carrying its own guard. Fan-in of
+                    * per guarded taint, each carrying its own guard. Fan-in of
                     * disjoint inner branches is preserved as separate
-                    * bundles in [Taint_set] and fused via [compose_or] at
+                    * guarded taints in [Taint_set] and fused via [compose_or] at
                     * joins — the smart-constructor complement rule then
                     * folds [G or not G] to [top]. *)
                    let taints = Taints.conjoin_guard inner_guards taints in
@@ -2529,7 +2535,7 @@ let call_with_intrafile lval_opt e env args instr =
                 (* Callback lookup in both modes; hazard contained by [preserve_effect]. *)
                 (match
                    Sig_inst.instantiate_function_signature
-                     ~lang:env.taint_inst.lang
+                     ~lang:env.taint_inst.lang ~atoms:env.shared_tables.guard_atoms
                      ~max_offset:(poly_offset_bound env inner_e)
                      ~outer_params:env.func.il_params env.lval_env
                      fun_sig ~callee:inner_e
@@ -3000,7 +3006,23 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           then Taints.empty
           else all_args_taints
         in
-        (all_args_taints, Bot, lval_env)
+        let shape =
+          match
+            args_taints
+            |> List.filter_map (function
+                 | IL.Named (ident, (taints, shape)) ->
+                     let field : IL.name =
+                       { ident;
+                         sid = G.SId.unsafe_default;
+                         id_info = G.empty_id_info () }
+                     in
+                     Some (`Field (field, taints, shape))
+                 | IL.Unnamed _ -> None)
+          with
+          | [] -> S.Bot
+          | fields -> Shape.record_or_dict_like_obj ~lang:env.taint_inst.lang fields
+        in
+        (all_args_taints, shape, lval_env)
     | CallSpecial (_, (op, _), args) ->
         let args_taints, all_args_taints, lval_env =
           check_function_call_arguments env args
@@ -3018,9 +3040,10 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
         let shape =
           match (op, args) with
           | IL.Ref, [ IL.Unnamed exp ] -> (
-              match lookup_signature env exp 0 with
-              | Some fun_sig -> S.Fun fun_sig
-              | None -> Bot)
+              match (lookup_signature env exp 0, args_taints) with
+              | Some fun_sig, _ -> S.Fun fun_sig
+              | None, [ IL.Unnamed (_, arg_shape) ] -> arg_shape
+              | None, _ -> Bot)
           | _ -> Bot
         in
         (all_args_taints, shape, lval_env)
@@ -3072,7 +3095,8 @@ let check_tainted_return env tok e : Taints.t * S.shape * Lval_env.t =
   record_effects env effects;
   (taints, shape, var_env')
 
-let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
+let effects_from_arg_updates_at_exit ~(lang : Lang.t) enter_env exit_env :
+    Effect.t list =
   (* TOOD: We need to get a map of `lval` to `Taint.arg`, and if an extension
    * of `lval` has new taints, then we can compute its correspoding `Taint.arg`
    * extension and generate a `ToLval` effect too. *)
@@ -3081,7 +3105,7 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
          match Lval_env.find_var enter_env var with
          | None -> Seq.empty
          | Some (Cell ((`Clean | `None), _)) -> Seq.empty
-         | Some (Cell (`Tainted enter_taints, _)) -> (
+         | Some (Cell (`Tainted enter_taints, _) as enter_cell) -> (
              (* For each lval in the enter_env, we get its `T.lval`, and check
               * if it got new taints at the exit_env. If so, we generate a 'ToLval'. *)
              match
@@ -3100,7 +3124,15 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
                         let lval =
                           { lval with offset = lval.offset @ offset }
                         in
-                        let new_taints = Taints.diff exit_taints enter_taints in
+                        let enter_taints_at_offset =
+                          match Shape.find_in_cell ~lang offset enter_cell with
+                          | `Found (Cell (xtaint, _)) -> Xtaint.to_taints xtaint
+                          | `Not_found (carried, _, _) -> carried
+                          | `Clean -> Taints.empty
+                        in
+                        let new_taints =
+                          Taints.diff exit_taints enter_taints_at_offset
+                        in
                         (* TODO: Also report if taints are _cleaned_. *)
                         if not (Taints.is_empty new_taints) then
                           Some
@@ -3387,7 +3419,7 @@ let mk_lambda_in_env env lcfg =
                           { base = BArg taint_arg; offset }
                         in
                         let leaf_taint =
-                          T.{ orig = Var leaf_taint_lval; tokens = [] }
+                          T.(taint_of_orig (Var leaf_taint_lval))
                         in
                         let leaf_taints =
                           T.Taint_set.add_taint leaf_taint source_taints
@@ -3436,11 +3468,13 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
 let recognised_guards (env : env) ~(negated : bool) (params : IL.param list)
     (cond : IL.exp) : Effect_guard.t list =
   if env.taint_inst.options.effect_guards then
-    Effect_guard.of_branch_cond ~negated params cond
+    Effect_guard.of_branch_cond ~lang:env.taint_inst.lang
+      env.shared_tables.guard_atoms ~negated params cond
   else if Lang.equal env.taint_inst.lang Lang.Clojure then
-    Effect_guard.of_branch_cond ~negated params cond
+    Effect_guard.of_branch_cond ~lang:env.taint_inst.lang
+      env.shared_tables.guard_atoms ~negated params cond
     |> List.filter (fun (g : Effect_guard.t) ->
-           g.cond
+           (g.cond :> Effect_guard.clause list)
            |> List.for_all (fun clause ->
                   clause
                   |> List.for_all (fun (l : Effect_guard.literal) ->
@@ -3624,7 +3658,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
     lambdas_to_analyze
     |> List_.map (fun (lambda_name, lambda_cfg) ->
            let lambda_in_env = mk_lambda_in_env env lambda_cfg in
-           fixpoint_lambda env.taint_inst env.func env.needed_vars lambda_name
+           fixpoint_lambda env.taint_inst env.shared_tables env.func env.needed_vars lambda_name
              lambda_cfg lambda_in_env ?signature_db:env.signature_db
              ?builtin_signature_db:env.builtin_signature_db
              ?call_graph:env.call_graph
@@ -3642,7 +3676,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
    * function's guards are applied here at the upflow boundary where the
    * parameter anchoring is the enclosing function's. *)
   let effects =
-    let active = Lval_env.active_guards env.lval_env in
+    let active = Lval_env.live_guards env.lval_env in
     if Effect_guard.Set.is_empty active then effects
     else
       let g = Effect_guard.conjoin (Effect_guard.Set.elements active) in
@@ -3679,7 +3713,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   in
   (effects, out_env)
 
-and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
+and fixpoint_lambda taint_inst shared_tables func needed_vars lambda_name lambda_cfg in_env
     ?signature_db ?builtin_signature_db ?call_graph
     ~(call_graph_caller : IL.name option) () :
     Effects.t * Lval_env.t =
@@ -3688,7 +3722,7 @@ and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
         (IL.str_of_name lambda_name)
         (Lval_env.to_string in_env));
   let effects, mapping =
-    fixpoint_aux taint_inst func ~needed_vars ~enter_lval_env:in_env
+    fixpoint_aux taint_inst shared_tables func ~needed_vars ~enter_lval_env:in_env
       ~in_lambda:(Some lambda_name) ~class_name:None ?signature_db
       ?builtin_signature_db ?call_graph
       ~call_graph_caller lambda_cfg
@@ -3718,7 +3752,7 @@ and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
         (Lval_env.to_string out_env'));
   (effects, out_env')
 
-and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
+and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
     ~enter_lval_env ~in_lambda ?class_name ?signature_db ?builtin_signature_db ?call_graph
     ~(call_graph_caller : IL.name option) fun_cfg =
   let flow = fun_cfg.cfg in
@@ -3731,6 +3765,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   let env =
     {
       taint_inst;
+      shared_tables;
       func;
       in_lambda;
       lval_env = enter_lval_env;
@@ -3835,7 +3870,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   in
   log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-  effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
+  effects_from_arg_updates_at_exit ~lang:taint_inst.lang enter_lval_env
+    exit_lval_env
   |> record_effects env;
   (!(env.effects_acc), end_mapping)
 
@@ -3845,6 +3881,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
 
 and (fixpoint :
       Taint_rule_inst.t ->
+      Taint_shared_tables.t ->
       ?in_env:Lval_env.t ->
       ?name:IL.name ->
       ?class_name:string ->
@@ -3853,7 +3890,7 @@ and (fixpoint :
       ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
       F.fun_cfg ->
       Effects.t * mapping) =
- fun taint_inst ?(in_env = Lval_env.empty) ?name ?class_name
+ fun taint_inst shared_tables ?(in_env = Lval_env.empty) ?name ?class_name
      ?signature_db ?call_graph
      ?builtin_signature_db fun_cfg ->
   let taint_intrafile_ = taint_inst.options.taint_intrafile in
@@ -3875,7 +3912,7 @@ and (fixpoint :
                 try
                   let class_instance_vars =
                     Hashtbl.find
-                      (Domain.DLS.get constructor_instance_vars)
+                      shared_tables.Taint_shared_tables.constructor_envs
                       storage_key
                   in
                   Lval_env.union ~lang:taint_inst.lang in_env
@@ -3924,7 +3961,7 @@ and (fixpoint :
   let func =
     {
       name;
-      sig_params = Signature.of_IL_params fun_cfg.params;
+      sig_params = Signature_params.of_IL_params fun_cfg.params;
       il_params = fun_cfg.params;
       param_sids = mk_param_sids fun_cfg.params;
       best_matches;
@@ -3951,6 +3988,7 @@ and (fixpoint :
       let probe_env =
         {
           taint_inst;
+          shared_tables;
           func;
           in_lambda = None;
           needed_vars = IL.NameSet.empty;
@@ -4054,7 +4092,7 @@ and (fixpoint :
                    Log.debug (fun m ->
                        m "Extracting signature for lambda %s"
                          (IL.str_of_name lambda_name));
-                   let params = Signature.of_IL_params lambda_cfg.params in
+                   let params = Signature_params.of_IL_params lambda_cfg.params in
                    (* Create assumptions for lambda parameters using Fold_IL_params.
                     * [fold_top_level] yields one entry per declared parameter;
                     * the loop index [i] must line up with actual call-site args,
@@ -4080,7 +4118,7 @@ and (fixpoint :
                                     { base = BArg taint_arg; offset = [] }
                                   in
                                   let generic_taint =
-                                    Taint.{ orig = Var taint_lval; tokens = [] }
+                                    Taint.(taint_of_orig (Var taint_lval))
                                   in
                                   let taint_set =
                                     Taint.Taint_set.singleton generic_taint
@@ -4121,11 +4159,7 @@ and (fixpoint :
                                                  { base = BArg taint_arg; offset }
                                                in
                                                let leaf_taint =
-                                                 Taint.
-                                                   {
-                                                     orig = Var leaf_taint_lval;
-                                                     tokens = [];
-                                                   }
+                                                 Taint.(taint_of_orig (Var leaf_taint_lval))
                                                in
                                                let leaf_taints =
                                                  Taint.Taint_set.singleton
@@ -4180,7 +4214,7 @@ and (fixpoint :
                      {
                        name = Some lambda_name;
                        sig_params =
-                         Signature.of_IL_params lambda_cfg.params;
+                         Signature_params.of_IL_params lambda_cfg.params;
                        il_params = lambda_cfg.params;
                        param_sids = mk_param_sids lambda_cfg.params;
                        best_matches = lambda_best_matches;
@@ -4189,7 +4223,7 @@ and (fixpoint :
                    in
                    let lambda_effects, _lambda_mapping =
                      (* Lambda body's call_graph_caller is the enclosing named function, not the lambda: projidx emits closure calls as edges to the enclosing method (skip_anon), so the lambda-as-caller misses every edge. *)
-                     fixpoint_aux taint_inst lambda_func
+                     fixpoint_aux taint_inst shared_tables lambda_func
                        ~enter_lval_env:combined_env
                        ~in_lambda:(Some lambda_name) ~class_name:None
                        ~signature_db:acc_db ?builtin_signature_db
@@ -4223,7 +4257,7 @@ and (fixpoint :
 
   let effects, mapping =
     Taint_timing.accum "main dataflow pass" @@ fun () ->
-    fixpoint_aux taint_inst func ~enter_lval_env:enhanced_in_env ~in_lambda:None
+    fixpoint_aux taint_inst shared_tables func ~enter_lval_env:enhanced_in_env ~in_lambda:None
       ~class_name ?signature_db:signature_db_with_lambdas ?builtin_signature_db ?call_graph
       ~call_graph_caller:name fun_cfg
   in
@@ -4247,13 +4281,13 @@ and (fixpoint :
                  Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
                in
                Hashtbl.replace
-                 (Domain.DLS.get constructor_instance_vars)
+                 shared_tables.Taint_shared_tables.constructor_envs
                  storage_key final_env
            | None -> ())
      | None -> ());
   (effects, mapping)
 [@@profiling]
 
-let fixpoint taint_inst ?in_env ?name ?class_name ?signature_db ?builtin_signature_db ?call_graph fun_cfg =
-  fixpoint taint_inst ?in_env ?name ?class_name ?signature_db ?builtin_signature_db ?call_graph fun_cfg
+let fixpoint taint_inst shared_tables ?in_env ?name ?class_name ?signature_db ?builtin_signature_db ?call_graph fun_cfg =
+  fixpoint taint_inst shared_tables ?in_env ?name ?class_name ?signature_db ?builtin_signature_db ?call_graph fun_cfg
 [@@profiling]

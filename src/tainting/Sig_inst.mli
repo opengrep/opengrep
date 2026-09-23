@@ -57,8 +57,12 @@ val merge_dispatch_signatures :
  * signature, returned unchanged when there are no impls. On incompatible
  * params the first signature is returned. *)
 
+val guard_valid_under :
+  lang:Lang.t -> Effect_guard.t -> Taint.call_site list -> Effect_guard.t -> bool
+
 val instantiate_function_signature :
   lang:Lang.t ->
+  atoms:Effect_guard.atoms ->
   ?max_offset:int ->
   ?outer_params:IL.param list ->
   Taint_lval_env.t ->

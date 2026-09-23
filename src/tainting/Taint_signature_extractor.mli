@@ -20,6 +20,7 @@ type signature_database = Shape_and_sig.signature_database
 
 val extract_signature :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   ?in_env:Taint_lval_env.t ->
   ?name:IL.name ->
   ?signature_db:signature_database ->
@@ -45,6 +46,7 @@ val extract_signature_with_file_context :
   ?method_properties:AST_generic.expr list ->
   ?call_graph:Call_graph.G.t option ->
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   IL.fun_cfg ->
   AST_generic.program ->
   signature_database * Shape_and_sig.Signature.t

@@ -430,7 +430,7 @@ and unify_shape ~lang shape1 shape2 =
         | Some n1, Some n2 -> IL.equal_name n1 n2
         | _ -> false
       in
-      if Signature.equal_params params1 params2
+      if Signature_params.equal_params params1 params2
          && List.equal equal_il_param params_il1 params_il2
       then
         Fun {
@@ -448,8 +448,8 @@ and unify_shape ~lang shape1 shape2 =
             m
               "Trying to unify two fun shapes with different parameters: %s ~ \
                %s"
-              (Signature.show_params params1)
-              (Signature.show_params params2));
+              (Signature_params.show_params params1)
+              (Signature_params.show_params params2));
         shape1)
   | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_arg arg1 arg2 ->
       (* Same parameter — set-union the alternative offsets so a value
@@ -591,7 +591,7 @@ and gather_all_taints_in_shape_acc acc = function
       List.fold_left
         (fun acc off ->
           let lval = { T.base = T.BArg arg; offset = off } in
-          let taint = { T.orig = T.Shape_var lval; tokens = [] } in
+          let taint = T.taint_of_orig (T.Shape_var lval) in
           Taints.add_taint taint acc)
         acc offsets
   | Fun _ ->

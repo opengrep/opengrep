@@ -219,7 +219,7 @@ let add_shape lang var offset new_taints new_shape lval_env =
         else
           new_taints
           |> Taints.map_taint (fun (t : T.taint) ->
-                 { t with tokens = var_tok :: t.tokens })
+                 T.push_token var_tok t)
       in
       {
         lval_env with

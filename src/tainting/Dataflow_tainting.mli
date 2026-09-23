@@ -22,6 +22,7 @@ val pattern_leaves_with_offsets :
 
 val fixpoint :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   ?in_env:Taint_lval_env.t ->
   ?name:IL.name ->
   ?class_name:string ->
@@ -42,4 +43,3 @@ val fixpoint :
 (* TODO: Move to module 'Taint' maybe. *)
 val drop_taints_if_bool_or_number :
   Rule_options.t -> Taint.Taint_set.t -> 'a Type.t -> Taint.Taint_set.t
-val reset_constructor: unit -> unit

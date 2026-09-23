@@ -14,7 +14,7 @@ let make_callback_var () =
     real IL body, but [Signature.t] requires [length params_il =
     length params]. Each slot is [ParamFixme], whose [pname_of_param]
     is [None], so guard substitution never finds an anchor here. *)
-let synthetic_params_il (params : Signature.params) : IL.param list =
+let synthetic_params_il (params : Signature_params.params) : IL.param list =
   List_.map (fun _ -> IL.ParamFixme) params
 
 (** Helper to create args_taints list with taint at specified index *)
@@ -37,7 +37,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
 
   (* Create a taint from BThis to pass to the callback *)
   let this_taint =
-    Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
+    Taint.(taint_of_orig (Var { base = BThis; offset = [] }))
   in
   let this_taint_set = Taint.Taint_set.singleton this_taint in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
@@ -59,7 +59,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   in
 
   (* The signature of the function that will be returned *)
-  let params = [ Signature.P "callback" ] in
+  let params = [ Signature_params.P "callback" ] in
   let returned_fun_sig =
     {
       Signature.params;
@@ -110,7 +110,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     @param taint_arg_index
       Which callback argument receives the taint (default 0) *)
 let add_function_hof_signatures db function_names arity ?(callback_index = 0)
-    ?(data_index = 1) ?(params = [ Signature.P "callback"; Signature.Other ])
+    ?(data_index = 1) ?(params = [ Signature_params.P "callback"; Signature_params.Other ])
     ?(taint_arg_index = 0) () =
   let callback_arg = { Taint.name = "callback"; index = callback_index } in
   let callback_var = make_callback_var () in
@@ -118,7 +118,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
   (* Create a taint from the data parameter to pass to the callback *)
   let data_arg = { Taint.name = "data"; index = data_index } in
   let data_param_taint =
-    Taint.{ orig = Var { base = BArg data_arg; offset = [] }; tokens = [] }
+    Taint.(taint_of_orig (Var { base = BArg data_arg; offset = [] }))
   in
   let data_taint_set = Taint.Taint_set.singleton data_param_taint in
   let args_taints = make_args_taints data_taint_set taint_arg_index in
@@ -184,14 +184,14 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
       Which callback argument receives the taint (default 0). For reduce, use 1.
 *)
 let add_hof_signatures db method_names arity ?(callback_index = 0)
-    ?(params = [ Signature.P "callback" ]) ?(method_name_transform = fun x -> x)
+    ?(params = [ Signature_params.P "callback" ]) ?(method_name_transform = fun x -> x)
     ?(taint_arg_index = 0) () =
   let callback_arg = { Taint.name = "callback"; index = callback_index } in
   let callback_var = make_callback_var () in
 
   (* Create a taint from BThis to pass to the callback *)
   let this_taint =
-    Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
+    Taint.(taint_of_orig (Var { base = BThis; offset = [] }))
   in
   let this_taint_set = Taint.Taint_set.singleton this_taint in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
@@ -243,8 +243,8 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
 (** Create params list from arity and callback_index *)
 let make_params arity callback_index =
   List.init arity (fun i ->
-    if i = callback_index then Signature.P "callback"
-    else Signature.Other)
+    if i = callback_index then Signature_params.P "callback"
+    else Signature_params.Other)
 
 (** Build the effects contributed by a single FunctionHOF overload in the
     packed-CList form Clojure uses. Each effect is guarded by
@@ -256,15 +256,12 @@ let make_params arity callback_index =
     The callback invocation is itself packed in Clojure — [(cb x y)] lowers
     to [cb(CList[x, y])] — so we emit a single-element [args_taints] whose
     sole shape is an [Obj] with the per-position taints indexed. *)
-let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
+let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~callback_index
+    ~data_index ~taint_arg_index =
   let impl_arg = { Taint.name = "impl"; index = 0 } in
   let callback_var = make_callback_var () in
   let data_param_taint =
-    Taint.
-      {
-        orig = Var { base = BArg impl_arg; offset = [ Oint data_index ] };
-        tokens = [];
-      }
+    Taint.(taint_of_orig (Var { base = BArg impl_arg; offset = [ Oint data_index ] }))
   in
   let data_taint_set = Taint.Taint_set.singleton data_param_taint in
   (* Packed callback args: a single Obj-shaped CList whose [taint_arg_index]
@@ -317,7 +314,7 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
         eorig = IL.NoOrig;
       }
     in
-    { Effect_guard.cond = Effect_guard.of_exp cond;
+    { Effect_guard.cond = Effect_guard.of_exp ~lang atoms cond;
       param_refs = [ (impl_il_name, 0) ] }
   in
   let hof_effect =
@@ -368,7 +365,8 @@ let group_function_hofs_by_name (hof_configs : Lang_config.hof_kind list) :
 (** Register Clojure FunctionHOF overloads grouped by name, one packed-form
     signature per name. Each overload contributes effects guarded by its
     language-level arity. *)
-let add_function_hof_signatures_clojure db (grouped : (string * Lang_config.hof_kind list) list) =
+let add_function_hof_signatures_clojure ~(lang : Lang.t)
+    ~(atoms : Effect_guard.atoms) db (grouped : (string * Lang_config.hof_kind list) list) =
   List.fold_left
     (fun acc_db (function_name, overloads) ->
       let effects =
@@ -376,11 +374,11 @@ let add_function_hof_signatures_clojure db (grouped : (string * Lang_config.hof_
         |> List.concat_map (function
              | Lang_config.FunctionHOF
                  { arity; callback_index; data_index; taint_arg_index; _ } ->
-                 clojure_hof_effects ~arity ~callback_index ~data_index
+                 clojure_hof_effects ~lang ~atoms ~arity ~callback_index ~data_index
                    ~taint_arg_index
              | _ -> [])
       in
-      let params = [ Signature.P "impl" ] in
+      let params = [ Signature_params.P "impl" ] in
       let hof_sig =
         {
           Signature.params;
@@ -393,7 +391,8 @@ let add_function_hof_signatures_clojure db (grouped : (string * Lang_config.hof_
     db grouped
 
 (** Create a builtin signature database with built-in models for standard library HOFs *)
-let create_builtin_models (lang : Lang.t) : builtin_signature_database =
+let create_builtin_models ~(atoms : Effect_guard.atoms) (lang : Lang.t) :
+    builtin_signature_database =
   let db = empty_builtin_signature_database () in
   let config = Lang_config.get lang in
   let is_clojure = Lang.equal lang Lang.Clojure in
@@ -402,7 +401,7 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
    * signature per name with per-overload guards to disambiguate. *)
   let db =
     if is_clojure then
-      add_function_hof_signatures_clojure db
+      add_function_hof_signatures_clojure ~lang ~atoms db
         (group_function_hofs_by_name config.hof_configs)
     else db
   in
@@ -428,12 +427,12 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
 (* ========================================================================== *)
 
 let this_taint_set () =
-  let taint = Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] } in
+  let taint = Taint.(taint_of_orig (Var { base = BThis; offset = [] })) in
   Taint.Taint_set.singleton taint
 
 let arg_taint_set index =
   let arg = { Taint.name = "value"; index } in
-  let taint = Taint.{ orig = Var { base = BArg arg; offset = [] }; tokens = [] } in
+  let taint = Taint.(taint_of_orig (Var { base = BArg arg; offset = [] })) in
   Taint.Taint_set.singleton taint
 
 let return_effect taint_set =
@@ -455,7 +454,7 @@ let to_lval_this taint_set =
     }
 
 let add_method_signatures db method_names arity effects =
-  let params = List.init arity (fun _ -> Signature.Other) in
+  let params = List.init arity (fun _ -> Signature_params.Other) in
   let sig_ =
     { Signature.params; params_il = synthetic_params_il params; effects }
   in
@@ -502,8 +501,9 @@ let add_collection_models db (lang : Lang.t) : builtin_signature_database =
     db config.collection_configs
 
 (** Create a builtin signature database with all built-in models (HOFs + collections) *)
-let create_all_builtin_models (lang : Lang.t) : builtin_signature_database =
-  let db = create_builtin_models lang in
+let create_all_builtin_models ~(atoms : Effect_guard.atoms) (lang : Lang.t) :
+    builtin_signature_database =
+  let db = create_builtin_models ~atoms lang in
   add_collection_models db lang
 
 (** Initialize the signature database. Now that builtin signatures are separate,

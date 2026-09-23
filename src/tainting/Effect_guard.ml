@@ -67,6 +67,13 @@ module G = AST_generic
 (* Atoms *)
 (*****************************************************************************)
 
+type atom_facts = {
+  fetch_bases : (IL.name * bool) list;
+  value : bool option;
+  always_frozen : bool;
+  freezing_names : IL.name list;
+}
+
 (* Hash-consed atom. [node] is the canonical [IL.exp]: structurally-equal
  * atoms interned in the same epoch share it physically, and its child [exp]s
  * are themselves canonical. [hash] is the full (depth-distinguishing)
@@ -79,6 +86,8 @@ module G = AST_generic
 type hcond = {
   node : IL.exp;
   hash : int;
+  id : int;
+  mutable facts : atom_facts option;
 }
 
 type literal = {
@@ -145,15 +154,17 @@ module ICondTbl = Hashtbl.Make (struct
   let hash (h : hcond) : int = h.hash
 end)
 
-let intern_table : hcond ICondTbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> ICondTbl.create 1024)
+type atoms = {
+  table : hcond ICondTbl.t;
+  mutable next_id : int;
+}
 
 (* The table grows monotonically until the per-target [reset_intern] in
  * [Match_tainting_mode.check_rules]: the atom-size cap bounds each
  * entry, not the entry count, which is bounded only by the distinct
  * atoms the target's analysis creates. Accepted: atoms are small and
  * a target's atom population is proportional to its conds. *)
-let reset_intern () : unit = ICondTbl.clear (Domain.DLS.get intern_table)
+let create_atoms () : atoms = { table = ICondTbl.create 1024; next_id = 0 }
 
 (* Canonicalise [e] bottom-up: children are interned first, so a node's table
  * lookup compares already-shared children ([equal_exp] short-circuits on
@@ -162,8 +173,7 @@ let reset_intern () : unit = ICondTbl.clear (Domain.DLS.get intern_table)
  * atom's distinct nodes (the atom is itself a shared DAG from [Sig_inst]).
  * Also returns the number of distinct canonical nodes in the result ([seen]
  * collects them across duplicate inputs), for the atom-size cap. *)
-let intern_counted (e : IL.exp) : hcond * int =
-  let tbl = Domain.DLS.get intern_table in
+let intern_counted (atoms : atoms) (e : IL.exp) : hcond * int =
   let memo : hcond IL_helpers.PhysExpTbl.t =
     IL_helpers.PhysExpTbl.create 64
   in
@@ -182,13 +192,15 @@ let intern_counted (e : IL.exp) : hcond * int =
             [] e
         in
         let hash = node_hash node (List.rev_map (fun k -> k.hash) rev_kids) in
-        let cand = { node; hash } in
+        let cand = { node; hash; id = -1; facts = None } in
         let canon =
-          match ICondTbl.find_opt tbl cand with
+          match ICondTbl.find_opt atoms.table cand with
           | Some c -> c
           | None ->
-              ICondTbl.replace tbl cand cand;
-              cand
+              let c = { cand with id = atoms.next_id } in
+              atoms.next_id <- atoms.next_id + 1;
+              ICondTbl.replace atoms.table c c;
+              c
         in
         if not (IL_helpers.PhysExpTbl.mem seen canon.node) then
           IL_helpers.PhysExpTbl.add seen canon.node ();
@@ -197,6 +209,137 @@ let intern_counted (e : IL.exp) : hcond * int =
   in
   let h = go e in
   (h, IL_helpers.PhysExpTbl.length seen)
+
+let fetch_bases_of (e : IL.exp) : (IL.name * bool) list =
+  let visited : unit IL_helpers.PhysExpTbl.t =
+    IL_helpers.PhysExpTbl.create 16
+  in
+  let rec go (acc : (IL.name * bool) list) (e : IL.exp) :
+      (IL.name * bool) list =
+    if IL_helpers.PhysExpTbl.mem visited e then acc
+    else (
+      IL_helpers.PhysExpTbl.add visited e ();
+      match e.e with
+      | IL.Fetch { base = IL.Var name; rev_offset } ->
+          let resolvable =
+            List.for_all IL_helpers.offset_is_resolvable rev_offset
+          in
+          if
+            List.exists
+              (fun (n, r) -> IL.equal_name n name && Bool.equal r resolvable)
+              acc
+          then acc
+          else (name, resolvable) :: acc
+      | IL.Fetch _
+      | IL.Literal _
+      | IL.FixmeExp (_, _, None) ->
+          acc
+      | IL.Operator (_, args) ->
+          List.fold_left (fun acc a -> go acc (IL_helpers.exp_of_arg a)) acc args
+      | IL.Cast (_, sub)
+      | IL.FixmeExp (_, _, Some sub) ->
+          go acc sub
+      | IL.Composite (_, (_, exps, _)) -> List.fold_left go acc exps
+      | IL.RecordOrDict fields ->
+          List.fold_left
+            (fun acc (f : IL.field_or_entry) ->
+              match f with
+              | IL.Field (_, v)
+              | IL.Spread v ->
+                  go acc v
+              | IL.Entry (k, v) -> go (go acc k) v)
+            acc fields)
+  in
+  go [] e
+
+(* A literal freezes when it crosses a call boundary if its atom can
+ * neither be substituted further up nor folded at match time. An atom is
+ * decidable through exactly two mechanisms: substitution grounds a Fetch
+ * anchored in the enclosing function's params (resolvable offsets
+ * included — a caller may pass a literal struct), and the final
+ * evaluation folds literals and offset-free local variables via their
+ * [id_svalue]. A Fetch with offsets on a non-param base, or a
+ * [Mem]/[VarSpecial] base, is [NotCst] forever once its frame is gone —
+ * e.g. Go's [_tmp != 0] temporaries and local field reads, which
+ * dominate carried guards on real code and are pure carry/compare cost.
+ * Dropping the literal weakens its clause (the guarded effect applies at
+ * least as often), the same sound direction as the caps. Length atoms
+ * are exempt (dispatch). *)
+(* The walk is memoised on physical identity: substituted atoms are shared
+ * DAGs whose tree unfolding is exponential ([lvals_of_exp] is a plain tree
+ * walk and must not be used here). A [Fetch] freezes the atom when it is
+ * an offsetted read that does not anchor in [params]; offset [Index]
+ * expressions and [Mem] bases are descended into. *)
+let frozen_facts_of (atom : IL.exp) : bool * IL.name list =
+  let visited : unit IL_helpers.PhysExpTbl.t =
+    IL_helpers.PhysExpTbl.create 16
+  in
+  let rec go ((always, _) as acc : bool * IL.name list) (e : IL.exp) :
+      bool * IL.name list =
+    if always || IL_helpers.PhysExpTbl.mem visited e then acc
+    else (
+      IL_helpers.PhysExpTbl.add visited e ();
+      match e.e with
+      | IL.Fetch lv -> go_lval acc lv
+      | _ ->
+          fst (IL_helpers.fold_map_children (fun acc c -> (go acc c, c)) acc e))
+  and go_lval (acc : bool * IL.name list) (lv : IL.lval) : bool * IL.name list =
+    let always, names =
+      List.fold_left
+        (fun acc (o : IL.offset) ->
+          match o.IL.o with
+          | IL.Index e -> go acc e
+          | IL.Dot _
+          | IL.Slice _ ->
+              acc)
+        acc lv.IL.rev_offset
+    in
+    if always then (always, names)
+    else
+      match lv.IL.base with
+      | IL.Var name -> (
+          match lv.IL.rev_offset with
+          | [] -> (false, names)
+          | offsets ->
+              if not (List.for_all IL_helpers.offset_is_resolvable offsets) then
+                (true, names)
+              else if List.exists (IL.equal_name name) names then (false, names)
+              else (false, name :: names))
+      | IL.VarSpecial _
+      | IL.Mem _ ->
+          (true, names)
+  in
+  go (false, []) atom
+
+let eval_atom ~(lang : Lang.t) (atom : IL.exp) : bool option =
+  let eval_env = Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty in
+  match Eval_il_partial.eval eval_env atom with
+  | G.Lit (G.Bool (b, _)) -> Some b
+  | _ -> None
+
+let facts_of (h : hcond) : atom_facts =
+  match h.facts with
+  | Some facts -> facts
+  | None -> invalid_arg "Effect_guard.facts_of: node never formed as an atom"
+
+let as_atom ~(lang : Lang.t) (h : hcond) : hcond =
+  (match h.facts with
+  | Some _ -> ()
+  | None ->
+      let always_frozen, freezing_names = frozen_facts_of h.node in
+      h.facts <-
+        Some
+          {
+            fetch_bases = fetch_bases_of h.node;
+            value = eval_atom ~lang h.node;
+            always_frozen;
+            freezing_names;
+          });
+  h
+
+let reads_any (names : IL.name list) (h : hcond) : bool =
+  (facts_of h).fetch_bases
+  |> List.exists (fun (n, _) -> List.exists (IL.equal_name n) names)
 
 (* An atom of shape [length(e) <cmp> int-literal] (either operand order),
  * possibly under a single [Not] (atoms built before negation moved into
@@ -232,7 +375,7 @@ let is_length_atom (e : IL.exp) : bool =
 (*****************************************************************************)
 
 let compare_literal (l1 : literal) (l2 : literal) : int =
-  let c = IL_helpers.compare_exp l1.atom.node l2.atom.node in
+  let c = Int.compare l1.atom.id l2.atom.id in
   if c <> 0 then c else Bool.compare l1.negated l2.negated
 
 let compare_clause (c1 : clause) (c2 : clause) : int =
@@ -270,30 +413,11 @@ let distinct_same_type_constants (l1 : G.literal) (l2 : G.literal) : bool =
   | G.Bool (b1, _), G.Bool (b2, _) -> not (Bool.equal b1 b2)
   | _ -> false
 
-(* A clause is unsatisfiable when it contains the same atom positive and
- * negated, or two positive equalities binding the same (canonical)
- * expression to distinct same-type constants — e.g. [x == 1 && x == 2],
- * or [length(v) == 1 && length(v) == 2] from cross-arity fusion. Atoms
- * are canonical, so the pairwise checks compare mostly by physical
- * identity; clauses are small. *)
-let clause_inconsistent (c : clause) : bool =
-  let complementary =
-    (* Sorted by atom then polarity: a complementary pair is adjacent. *)
-    let rec adjacent = function
-      | l1 :: (l2 :: _ as rest) ->
-          (IL_helpers.equal_exp l1.atom.node l2.atom.node
-          && not (Bool.equal l1.negated l2.negated))
-          || adjacent rest
-      | _ -> false
-    in
-    adjacent c
-  in
-  complementary
-  ||
+let equalities_inconsistent (lits : (IL.exp * bool) list) : bool =
   let eqs =
-    c
-    |> List.filter_map (fun l ->
-           if l.negated then None else eq_parts l.atom.node)
+    lits
+    |> List.filter_map (fun (atom, negated) ->
+           if negated then None else eq_parts atom)
   in
   let rec pairwise = function
     | (e1, v1) :: rest ->
@@ -306,6 +430,43 @@ let clause_inconsistent (c : clause) : bool =
   in
   pairwise eqs
 
+(* A clause is unsatisfiable when it contains the same atom positive and
+ * negated, or two positive equalities binding the same (canonical)
+ * expression to distinct same-type constants — e.g. [x == 1 && x == 2],
+ * or [length(v) == 1 && length(v) == 2] from cross-arity fusion. Atoms
+ * are canonical, so the pairwise checks compare mostly by physical
+ * identity; clauses are small. *)
+let clause_inconsistent (c : clause) : bool =
+  let complementary =
+    (* Sorted by atom then polarity: a complementary pair is adjacent. *)
+    let rec adjacent = function
+      | l1 :: (l2 :: _ as rest) ->
+          (Int.equal l1.atom.id l2.atom.id
+          && not (Bool.equal l1.negated l2.negated))
+          || adjacent rest
+      | _ -> false
+    in
+    adjacent c
+  in
+  complementary
+  || equalities_inconsistent
+       (c |> List.map (fun l -> (l.atom.node, l.negated)))
+
+let literals_consistent (lits : (IL.exp * bool) list) : bool =
+  let rec complementary = function
+    | (a1, n1) :: rest ->
+        List.exists
+          (fun (a2, n2) ->
+            (not (Bool.equal n1 n2)) && IL_helpers.equal_exp a1 a2)
+          rest
+        || complementary rest
+    | [] -> false
+  in
+  not (complementary lits || equalities_inconsistent lits)
+
+let raw_clauses (c : cond) : (IL.exp * bool) list list =
+  c |> List.map (List.map (fun l -> (l.atom.node, l.negated)))
+
 (* Sort, dedup, and consistency-check a conjunction of literals.
  * [None] means the clause is unsatisfiable and must be dropped.
  * Constant boolean atoms decide their literal outright — substitution
@@ -316,10 +477,10 @@ let clause_inconsistent (c : clause) : bool =
  * [Drop_effect] fast path until match time). *)
 let mk_clause (lits : literal list) : clause option =
   let falsified (l : literal) : bool =
-    IL_helpers.is_lit_bool l.negated l.atom.node
+    Option.equal Bool.equal (facts_of l.atom).value (Some l.negated)
   in
   let satisfied (l : literal) : bool =
-    IL_helpers.is_lit_bool (not l.negated) l.atom.node
+    Option.equal Bool.equal (facts_of l.atom).value (Some (not l.negated))
   in
   if List.exists falsified lits then None
   else
@@ -339,25 +500,21 @@ let cond_false : cond = []
 let cond_is_top (c : cond) : bool = List.exists List_.null c
 let cond_is_bot (c : cond) : bool = List_.null c
 
+let has_complementary_singletons (cs : cond) : bool =
+  let rec adjacent = function
+    | l1 :: (l2 :: _ as rest) ->
+        (Int.equal l1.atom.id l2.atom.id
+        && not (Bool.equal l1.negated l2.negated))
+        || adjacent rest
+    | _ -> false
+  in
+  adjacent (List.filter_map (function [ l ] -> Some l | _ -> None) cs)
+
 let mk_cond (clauses : clause list) : cond =
   let cs = List.sort_uniq compare_clause clauses in
   if List.exists List_.null cs then cond_true
-  else
-    let complementary_singletons =
-      let singles = cs |> List.filter_map (function [ l ] -> Some l | _ -> None) in
-      let rec pairwise = function
-        | l1 :: rest ->
-            List.exists
-              (fun l2 ->
-                IL_helpers.equal_exp l1.atom.node l2.atom.node
-                && not (Bool.equal l1.negated l2.negated))
-              rest
-            || pairwise rest
-        | [] -> false
-      in
-      pairwise singles
-    in
-    if complementary_singletons then cond_true else cs
+  else if has_complementary_singletons cs then cond_true
+  else cs
 
 (* Cap-and-widen on clause count. Each clause is widened to its length
  * literals (arity dispatch survives: [or(and(len==1, P), and(len==2, Q))]
@@ -382,9 +539,26 @@ let cap_clauses (c : cond) : cond =
 (* Cond algebra *)
 (*****************************************************************************)
 
+let merge_clauses (c1 : cond) (c2 : cond) : cond =
+  let rec go (acc : clause list) (a : cond) (b : cond) : cond =
+    match (a, b) with
+    | [], rest
+    | rest, [] ->
+        List.rev_append acc rest
+    | x :: xs, y :: ys ->
+        let k = compare_clause x y in
+        if k = 0 then go (x :: acc) xs ys
+        else if k < 0 then go (x :: acc) xs b
+        else go (y :: acc) a ys
+  in
+  go [] c1 c2
+
 let or_cond (c1 : cond) (c2 : cond) : cond =
   if cond_is_top c1 || cond_is_top c2 then cond_true
-  else cap_clauses (mk_cond (c1 @ c2))
+  else if c1 == c2 then c1
+  else
+    let cs = merge_clauses c1 c2 in
+    if has_complementary_singletons cs then cond_true else cap_clauses cs
 
 let and_cond (c1 : cond) (c2 : cond) : cond =
   if cond_is_bot c1 || cond_is_bot c2 then cond_false
@@ -406,7 +580,8 @@ let and_cond (c1 : cond) (c2 : cond) : cond =
  * larger than [taint_MAX_GUARD_COND_NODES] distinct nodes is dropped
  * (true / not contributing a literal — a sound weakening of its clause);
  * anything else becomes an interned literal. *)
-let rec dnf_of ~(negated : bool) (e : IL.exp) : cond =
+let rec dnf_of ~(lang : Lang.t) (atoms : atoms) ~(negated : bool) (e : IL.exp) :
+    cond =
   let all_unnamed args =
     if
       List.for_all
@@ -419,93 +594,46 @@ let rec dnf_of ~(negated : bool) (e : IL.exp) : cond =
   in
   match e.e with
   | IL.Operator ((G.Not, _), [ IL.Unnamed inner ]) ->
-      dnf_of ~negated:(not negated) inner
+      dnf_of ~lang atoms ~negated:(not negated) inner
   | IL.Operator ((G.And, _), args) when Option.is_some (all_unnamed args) ->
       let exps = Option.get (all_unnamed args) in
       let combine = if negated then or_cond else and_cond in
       let unit_ = if negated then cond_false else cond_true in
-      List.fold_left (fun acc a -> combine acc (dnf_of ~negated a)) unit_ exps
+      List.fold_left (fun acc a -> combine acc (dnf_of ~lang atoms ~negated a)) unit_ exps
   | IL.Operator ((G.Or, _), args) when Option.is_some (all_unnamed args) ->
       let exps = Option.get (all_unnamed args) in
       let combine = if negated then and_cond else or_cond in
       let unit_ = if negated then cond_true else cond_false in
-      List.fold_left (fun acc a -> combine acc (dnf_of ~negated a)) unit_ exps
+      List.fold_left (fun acc a -> combine acc (dnf_of ~lang atoms ~negated a)) unit_ exps
   | _ ->
       if IL_helpers.is_lit_bool (not negated) e then cond_true
       else if IL_helpers.is_lit_bool negated e then cond_false
       else
-        let atom, distinct_nodes = intern_counted e in
+        let atom, distinct_nodes = intern_counted atoms e in
         if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
           cond_true
-        else [ [ { atom; negated } ] ]
+        else
+          match mk_clause [ { atom = as_atom ~lang atom; negated } ] with
+          | None -> cond_false
+          | Some [] -> cond_true
+          | Some clause -> [ clause ]
 
-let of_exp (e : IL.exp) : cond = dnf_of ~negated:false e
-
-(* A literal freezes when it crosses a call boundary if its atom can
- * neither be substituted further up nor folded at match time. An atom is
- * decidable through exactly two mechanisms: substitution grounds a Fetch
- * anchored in the enclosing function's params (resolvable offsets
- * included — a caller may pass a literal struct), and the final
- * evaluation folds literals and offset-free local variables via their
- * [id_svalue]. A Fetch with offsets on a non-param base, or a
- * [Mem]/[VarSpecial] base, is [NotCst] forever once its frame is gone —
- * e.g. Go's [_tmp != 0] temporaries and local field reads, which
- * dominate carried guards on real code and are pure carry/compare cost.
- * Dropping the literal weakens its clause (the guarded effect applies at
- * least as often), the same sound direction as the caps. Length atoms
- * are exempt (dispatch). *)
-(* The walk is memoised on physical identity: substituted atoms are shared
- * DAGs whose tree unfolding is exponential ([lvals_of_exp] is a plain tree
- * walk and must not be used here). A [Fetch] freezes the atom when it is
- * an offsetted read that does not anchor in [params]; offset [Index]
- * expressions and [Mem] bases are descended into. *)
-let atom_has_frozen_fetch (params : IL.param list) (atom : IL.exp) : bool =
-  let memo : bool IL_helpers.PhysExpTbl.t = IL_helpers.PhysExpTbl.create 16 in
-  let rec go (e : IL.exp) : bool =
-    match IL_helpers.PhysExpTbl.find_opt memo e with
-    | Some r -> r
-    | None ->
-        let r =
-          match e.e with
-          | IL.Fetch lv -> go_lval lv
-          | _ ->
-              let found, _ =
-                IL_helpers.fold_map_children
-                  (fun acc c -> (acc || go c, c))
-                  false e
-              in
-              found
-        in
-        IL_helpers.PhysExpTbl.add memo e r;
-        r
-  and go_lval (lv : IL.lval) : bool =
-    let offset_exps_frozen =
-      lv.IL.rev_offset
-      |> List.exists (fun (o : IL.offset) ->
-             match o.IL.o with
-             | IL.Index e -> go e
-             | IL.Dot _
-             | IL.Slice _ ->
-                 false)
-    in
-    offset_exps_frozen
-    ||
-    match lv.IL.base with
-    | IL.Var name -> (
-        match lv.IL.rev_offset with
-        | [] -> false (* offset-free local: svalue-foldable *)
-        | offsets ->
-            not
-              (List.for_all IL_helpers.offset_is_resolvable offsets
-              && Option.is_some (IL_helpers.param_index params name)))
-    | IL.VarSpecial _ -> true
-    | IL.Mem _ -> true
-  in
-  go atom
+let of_exp ~(lang : Lang.t) (atoms : atoms) (e : IL.exp) : cond =
+  dnf_of ~lang atoms ~negated:false e
 
 let literal_is_frozen (params : IL.param list) (l : literal) : bool =
   (not (is_length_atom l.atom.node))
-  && atom_has_frozen_fetch params l.atom.node
+  &&
+  let facts = facts_of l.atom in
+  facts.always_frozen
+  || List.exists
+       (fun (n : IL.name) -> Option.is_none (IL_helpers.param_index params n))
+       facts.freezing_names
+  || not
+       (List.exists
+          (fun ((n, _) : IL.name * bool) ->
+            Option.is_some (IL_helpers.param_index params n))
+          facts.fetch_bases)
 
 let drop_frozen_literals (params : IL.param list) (c : cond) : cond =
   c
@@ -517,8 +645,9 @@ let drop_frozen_literals (params : IL.param list) (c : cond) : cond =
  * substitution call sites that need the variable-bearing parts. *)
 let atoms_of_cond (c : cond) : IL.exp list =
   c
-  |> List.concat_map (fun clause -> clause |> List.map (fun l -> l.atom.node))
-  |> List.sort_uniq IL_helpers.compare_exp
+  |> List.concat_map (fun clause -> clause |> List.map (fun l -> l.atom))
+  |> List.sort_uniq (fun (a1 : hcond) (a2 : hcond) -> Int.compare a1.id a2.id)
+  |> List.map (fun (a : hcond) -> a.node)
 
 (* Rewrite every atom with [f] (substitution at a call site) and
  * re-normalise: substituted atoms are re-interned, re-capped, and the
@@ -526,74 +655,55 @@ let atoms_of_cond (c : cond) : IL.exp list =
  * complementary, or contradictory. The clause structure never changes
  * under [f] (atoms are the only variable-bearing parts), so this is a
  * map, not a re-conversion. *)
-let map_atoms (f : IL.exp -> IL.exp) (c : cond) : cond =
-  c
-  |> List.map (fun clause ->
-         clause
-         |> List.filter_map (fun l ->
-                let e = f l.atom.node in
-                if IL_helpers.is_lit_bool (not l.negated) e then
-                  (* literal true: contributes nothing to the clause *)
-                  None
-                else if IL_helpers.is_lit_bool l.negated e then
-                  (* literal false: kills the clause *)
-                  Some { atom = fst (intern_counted e); negated = l.negated }
-                else
-                  let atom, distinct_nodes = intern_counted e in
-                  if
-                    distinct_nodes
-                    > Limits_semgrep.taint_MAX_GUARD_COND_NODES
-                  then None
-                  else Some { atom; negated = l.negated }))
-  |> List.filter_map mk_clause
-  |> mk_cond |> cap_clauses
-
-(* Simplify with a partial atom evaluator: [eval_atom] returns
- * [Some true]/[Some false] for atoms it can decide and [None] for the
- * rest. A decided-true literal leaves its clause; a decided-false
- * literal kills its clause. Used by [Sig_inst.classify_guards] to fold
- * dispatch (length) atoms at instantiation while carrying the rest. *)
-let simplify_with (eval_atom : IL.exp -> bool option) (c : cond) : cond =
-  c
-  |> List.filter_map (fun clause ->
-         let with_verdicts =
-           clause
-           |> List.map (fun l ->
-                  let verdict =
-                    eval_atom l.atom.node
-                    |> Option.map (fun b -> if l.negated then not b else b)
-                  in
-                  (l, verdict))
-         in
-         let falsified (_, verdict) =
-           match verdict with
-           | Some false -> true
-           | Some true
-           | None ->
-               false
-         in
-         if List.exists falsified with_verdicts then None
-         else
-           Some
-             (with_verdicts
-             |> List.filter_map (fun (l, verdict) ->
-                    match verdict with
-                    | Some true -> None (* satisfied: contributes nothing *)
-                    | Some false
-                    | None ->
-                        Some l)))
-  |> mk_cond
+let map_atoms ~(lang : Lang.t) (atoms : atoms) (substituted : IL.name list)
+    (f : IL.exp -> IL.exp) (c : cond) : cond =
+  let map_literal (l : literal) : bool * literal option =
+    if not (reads_any substituted l.atom) then (false, Some l)
+    else
+      let e = f l.atom.node in
+      if IL_helpers.is_lit_bool (not l.negated) e then
+        (* literal true: contributes nothing to the clause *)
+        (true, None)
+      else if IL_helpers.is_lit_bool l.negated e then
+        (* literal false: kills the clause *)
+        ( true,
+          Some
+            {
+              atom = as_atom ~lang (fst (intern_counted atoms e));
+              negated = l.negated;
+            }
+        )
+      else
+        let atom, distinct_nodes = intern_counted atoms e in
+        if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
+          (true, None)
+        else (atom != l.atom, Some { atom = as_atom ~lang atom; negated = l.negated })
+  in
+  let rewritten, clauses =
+    List.fold_left_map
+      (fun (rewritten : bool) (clause : clause) ->
+        let rewritten, lits = List.fold_left_map
+            (fun (rewritten : bool) (l : literal) ->
+              let changed, l' = map_literal l in
+              (rewritten || changed, l'))
+            rewritten clause
+        in
+        (rewritten, List.filter_map Fun.id lits))
+      false c
+  in
+  if not rewritten then c
+  else clauses |> List.filter_map mk_clause |> mk_cond |> cap_clauses
 
 (* Three-valued evaluation: [Some b] when decided, [None] when some atom
  * is undecided in a way that leaves the verdict open. *)
-let eval_with (eval_atom : IL.exp -> bool option) (c : cond) : bool option =
+let eval (c : cond) : bool option =
   let clause_value clause =
     List.fold_left
       (fun acc l ->
         match acc with
         | Some false -> Some false
         | _ -> (
-            match eval_atom l.atom.node with
+            match (facts_of l.atom).value with
             | Some b ->
                 let v = if l.negated then not b else b in
                 if v then acc else Some false
@@ -740,7 +850,8 @@ let conjoin (gs : t list) : t = List.fold_left compose_and top gs
  * reassignment ([cond_vars]) drops exactly the affected atoms — while a
  * disjunctive cond stays one guard. [param_refs] anchor each guard's
  * atoms in [params]. *)
-let of_branch_cond ~(negated : bool) (params : IL.param list) (e : IL.exp) :
+let of_branch_cond ~(lang : Lang.t) (atoms : atoms) ~(negated : bool) (params : IL.param list)
+    (e : IL.exp) :
     t list =
   let refs_of_cond (c : cond) : (IL.name * int) list =
     atoms_of_cond c
@@ -750,7 +861,7 @@ let of_branch_cond ~(negated : bool) (params : IL.param list) (e : IL.exp) :
          []
   in
   let mk (c : cond) : t = { cond = c; param_refs = refs_of_cond c } in
-  match dnf_of ~negated e with
+  match dnf_of ~lang atoms ~negated e with
   | [ clause ] when List.length clause > 1 ->
       clause |> List.map (fun l -> mk [ [ l ] ])
   | c -> if cond_is_top c then [] else [ mk c ]

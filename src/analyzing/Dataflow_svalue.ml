@@ -520,8 +520,13 @@ and fixpoint_with_env lang enter_env fun_cfg =
         (* svalue is a forward analysis! *)
       ~forward:true ~flow
   in
-  if timeout =*= `Timeout then
-    Log.warn (fun m -> m "Fixpoint timeout while performing svalue-propagation");
+  (match timeout with
+  | `Timeout ->
+      Log.warn (fun m -> m "Fixpoint timeout while performing svalue-propagation")
+  | `Capped ->
+      Log.debug (fun m ->
+          m "Fixpoint visit cap reached while performing svalue-propagation")
+  | `Ok -> ());
   mapping
 
 (*****************************************************************************)

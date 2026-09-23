@@ -51,6 +51,7 @@ type rule_state = {
   info_map : Match_tainting_mode.fun_info FunctionMap.t;
   file_envs : file_env FpathMap.t;
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
+  shared_tables : Taint_shared_tables.t;
   match_on : [ `Sink | `Source ];
   target_root_map : path_with_root FpathMap.t;  (* by canonical path *)
   scanning_roots : Scanning_root.directory list;
@@ -348,6 +349,7 @@ type file_init_acc = {
 (* [fid_set] filters which functions get IL+CFG construction. *)
 let init_file
     ~(lang : Lang.t)
+    ~(shared_tables : Taint_shared_tables.t)
     ~(rule : R.taint_rule)
     ~(xconf : Match_env.xconfig)
     ~(path_root : Fpath.t option)
@@ -414,7 +416,9 @@ let init_file
         java_props_cache = Hashtbl.create 0;
       }
   in
-  let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
+  let glob_env, glob_effects =
+    Taint_input_env.mk_file_env taint_inst shared_tables ast
+  in
   let file_env = { ast; taint_inst; glob_env; glob_effects } in
   let fid_filter (fid : Function_id.t) : bool =
     FidSet.mem (Interfile_graph.absolutify_fid path_root fid) fid_set
@@ -649,12 +653,13 @@ let init_rule_state
   let lang = rsg.rsg_lang_context.lc_lang in
   let rule = rsg.rsg_specs.rs_rule in
   let rule_id = fst rule.R.id in
+  let shared_tables = Taint_shared_tables.create (Effect_guard.create_atoms ()) in
   let init_acc =
     List.fold_left
       (fun (acc : file_init_acc) (file_path : Fpath.t) ->
          let path_root = path_root_for_file target_root_map file_path in
          try
-           init_file ~lang ~rule ~xconf:rsg.rsg_xconf ~path_root
+           init_file ~lang ~shared_tables ~rule ~xconf:rsg.rsg_xconf ~path_root
              ~fid_set:rsg.rsg_fid_set
              ~ast_table ~function_maps
              ~spec_matches:rsg.rsg_specs.rs_spec_matches ~file_path acc
@@ -686,7 +691,10 @@ let init_rule_state
     info_map = init_acc.fi_info_map;
     file_envs = init_acc.fi_file_envs;
     builtin_signature_db =
-      Some (Builtin_models.create_all_builtin_models lang);
+      Some
+        (Builtin_models.create_all_builtin_models
+           ~atoms:shared_tables.Taint_shared_tables.guard_atoms lang);
+    shared_tables;
     match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
     scanning_roots;
@@ -758,7 +766,7 @@ let extract_and_check_function
         ?builtin_signature_db:rs.builtin_signature_db
         ~glob_env
         ~lang:rs.lang ~db ~match_on:rs.match_on
-        ~taint_inst:fn_taint_inst ~ast:fun_ast
+        ~taint_inst:fn_taint_inst ~shared_tables:rs.shared_tables ~ast:fun_ast
         ~detect_findings
         info
     in
@@ -867,7 +875,8 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       let db', fresh =
         Match_tainting_mode.extract_signatures
           ?builtin_signature_db:rs.builtin_signature_db
-          ~lang:rs.lang ~db ~taint_inst:fn_taint_inst ~ast:fun_ast info
+          ~lang:rs.lang ~db ~taint_inst:fn_taint_inst
+          ~shared_tables:rs.shared_tables ~ast:fun_ast info
       in
       (* growth of a function's signature across the fixpoint rounds *)
       Log.debug (fun m ->
@@ -1106,14 +1115,6 @@ let rebase_pm (scanning_roots : Scanning_root.directory list)
   { pm with PM.path; range_loc; taint_trace; tokens }
 
 let run_rule (rs : rule_state) : PM.t list =
-  (* The constructor-instance-vars table is domain-local and keyed only by
-     [file:class]; without this reset it would carry a prior rule's
-     constructor taint into this rule when both run on the same domain. *)
-  Dataflow_tainting.reset_constructor ();
-  (* Same task boundary for the guard-atom intern table: it is domain-local
-     and cleared per target in the intrafile path, but a run of interfile
-     rules on one domain would otherwise let it grow unbounded. *)
-  Effect_guard.reset_intern ();
   let effects_to_matches =
     Match_tainting_mode.pms_of_effects ~lang:rs.lang ~match_on:rs.match_on
   in
@@ -1170,7 +1171,7 @@ let run_rule (rs : rule_state) : PM.t list =
            in
            let class_init_effects =
              accum epilogue_class_init_secs @@ fun () ->
-             Match_tainting_mode.check_class_inits_prebuilt fe.taint_inst
+             Match_tainting_mode.check_class_inits_prebuilt fe.taint_inst rs.shared_tables
                class_init_cfgs
                ~signature_db:final_db
                ?builtin_signature_db:rs.builtin_signature_db
@@ -1178,7 +1179,7 @@ let run_rule (rs : rule_state) : PM.t list =
            in
            let top_effects, top_secs =
              Common.with_time @@ fun () ->
-             Match_tainting_mode.check_top_level_prebuilt fe.taint_inst
+             Match_tainting_mode.check_top_level_prebuilt fe.taint_inst rs.shared_tables
                top_cfg
                ~signature_db:final_db
                ?builtin_signature_db:rs.builtin_signature_db

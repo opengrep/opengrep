@@ -468,7 +468,7 @@ and Effect : sig
   val fuse_guards : t -> t -> t
   (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with every
       guard-bearing payload fused disjunctively: the effect-level guard, the
-      per-item [ToSink] guards, and the bundle guards inside the [Taints.t]
+      per-item [ToSink] guards, and the guards of the guarded taints inside the [Taints.t]
       payloads. The fused effect applies iff either of the two would. *)
 
   val guards_equal : t -> t -> bool
@@ -770,7 +770,20 @@ end = struct
         let items =
           List.map2
             (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
-              { i1 with guard = Effect_guard.compose_or i1.guard i2.guard })
+              let side1_guard = Effect_guard.compose_and tts1.guards i1.guard in
+              let side2_guard = Effect_guard.compose_and tts2.guards i2.guard in
+              let taint =
+                if
+                  Effect_guard.equal side1_guard side2_guard
+                  || T.same_trace i1.taint i2.taint
+                     && phys_equal i1.sink_trace i2.sink_trace
+                then i1.taint
+                else
+                  T.merge_items
+                    ~kept:(side1_guard, i1.taint, i1.sink_trace)
+                    ~other:(side2_guard, i2.taint, i2.sink_trace)
+              in
+              { i1 with taint; guard = Effect_guard.compose_or i1.guard i2.guard })
             items1 items2
         in
         ToSink
@@ -778,8 +791,8 @@ end = struct
             taints_with_precondition = (items, pre);
             guards = Effect_guard.compose_or tts1.guards tts2.guards }
     | ToReturn ttr1, ToReturn ttr2 ->
-        (* [Taints.union] fuses identity-equal bundles' guards via
-         * [compose_or]; on identity-equal sets that is exactly per-bundle
+        (* [Taints.union] fuses identity-equal guarded taints' guards via
+         * [compose_or]; on identity-equal sets that is exactly per-guarded-taint
          * guard fusion. *)
         ToReturn
           { ttr1 with
@@ -815,7 +828,7 @@ end = struct
 
   (* Whether two identity-equal effects ([compare] = 0) carry the same
    * guards, including every guard-bearing payload: [ToSink] item guards
-   * and the bundle guards inside the [Taints.t] payloads (effect
+   * and the guards of the guarded taints inside the [Taints.t] payloads (effect
    * identity compares those guard-blind). The [Effects] insertion no-op
    * check and the fixpoint stability tests must use this: comparing
    * [guards_of] alone misses payload-guard refinement, so a fused
@@ -881,7 +894,7 @@ end = struct
    * already-fused effect a no-op (disjunction is idempotent under the
    * clause-set dedup), so the dataflow fixpoint still reaches a fixed
    * point; it compares every guard-bearing payload, not just the
-   * effect-level guard — an item- or bundle-guard-only refinement must
+   * effect-level guard — a refinement of only an item guard or a guarded taint's guard must
    * not be discarded. *)
   let add eff set =
     match find_opt eff set with
@@ -953,22 +966,8 @@ end
  * THINK: Could we have a "taint shape" for functions/methods ?
  *)
 and Signature : sig
-  (** A simplified version of 'AST_generic.parameter', we use 'Other' to
-      represent parameter kinds that we do not support yet. We don't want to
-      just remove those unsupported parameters because we rely on the position
-      of a parameter to represent taint variables, see 'Taint.arg'. *)
-  type param =
-    | P of string
-    | POpt of string
-    | PRest of string
-    | PKwd of string
-    | Other
-  [@@deriving eq, ord, show]
-
-  type params = param list [@@deriving eq, ord]
-
   type t = {
-    params : params;
+    params : Signature_params.params;
     params_il : IL.param list;
         (** The IL.param list the signature was extracted from. Added
             so that the call-site instantiator can rewrite [Fetch]es
@@ -996,63 +995,14 @@ and Signature : sig
       test, via [Shape.equal_cell_with_guards] on [Fun] shapes. *)
 
   val compare : t -> t -> int
-  val of_IL_params : IL.param list -> params
-  val show_params : params -> string
   val show : ?truncate_guards:bool -> t -> string
 end = struct
-  (*************************************)
-  (* Param(eter)s *)
-  (*************************************)
-
-  (* TODO: Now with HOFs we run the risk of shadowing... *)
-  type param =
-    | P of string
-    | POpt of string (* a parameter that has a default *)
-    | PRest of string
-    | PKwd of string (* takes a named argument only: Ruby 'sep:' *)
-    | Other [@@deriving eq, ord, show]
-  type params = param list
-
-  let show_param = function
-    | P s -> s
-    | POpt s -> s ^ "=_"
-    | PRest s -> "*" ^ s (* Python syntax for "rest" params *)
-    | PKwd s -> s ^ ":"
-    | Other -> "_?"
-
-  let equal_params params1 params2 = List.equal equal_param params1 params2
-
-  let compare_params params1 params2 =
-    List.compare compare_param params1 params2
-
-  let show_params params = params |> List_.map show_param |> String.concat ", "
-
-  let of_IL_params il_params =
-    il_params
-    |> List.filter (function
-         | IL.ParamReceiver _ -> false
-         | _ -> true)
-    |> List_.map (function
-         | IL.Param { pname = { ident = s, _; _ }; pdefault = Some _ } -> POpt s
-         | IL.Param { pname = { ident = s, _; _ }; pdefault = None } -> P s
-         (* function signatures don't look into the shape of the argument. *)
-         | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
-         | IL.ParamKwd { pname = { ident = s, _; _ }; _ } -> PKwd s
-         | IL.ParamPattern ({ pname = { ident = s, _; _ }; _ }, pat) -> (
-             match pat with
-             | AST_generic.PatId (name, _) -> P (fst name)
-             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
-                 P (fst name)
-             | _ -> P s)
-         | IL.ParamReceiver _ -> Other (* filtered above *)
-         | IL.ParamFixme -> Other)
-
   (*************************************)
   (* Signatures *)
   (*************************************)
 
   type t = {
-    params : params;
+    params : Signature_params.params;
     params_il : IL.param list;
     effects : Effects.t;
   }
@@ -1061,21 +1011,22 @@ end = struct
      [params] and [effects] alone. *)
   let equal { params = params1; params_il = _; effects = effects1 }
       { params = params2; params_il = _; effects = effects2 } =
-    equal_params params1 params2 && Effects.equal effects1 effects2
+    Signature_params.equal_params params1 params2
+    && Effects.equal effects1 effects2
 
   let equal_with_guards { params = params1; params_il = _; effects = effects1 }
       { params = params2; params_il = _; effects = effects2 } =
-    equal_params params1 params2
+    Signature_params.equal_params params1 params2
     && Effects.equal_with_guards effects1 effects2
 
   let compare { params = params1; params_il = _; effects = effects1 }
       { params = params2; params_il = _; effects = effects2 } =
-    match compare_params params1 params2 with
+    match Signature_params.compare_params params1 params2 with
     | 0 -> Effects.compare effects1 effects2
     | other -> other
 
   let show ?(truncate_guards = true) { params; params_il = _; effects } =
-    spf "%s => {%s}" (show_params params)
+    spf "%s => {%s}" (Signature_params.show_params params)
       (Effects.show ~truncate_guards effects)
 end
 

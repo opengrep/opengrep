@@ -31,6 +31,7 @@ let test_tainting taint_inst def =
   in
   let fcfg, _effects_IGNORED, mapping =
     Match_tainting_mode.check_fundef taint_inst
+      (Taint_shared_tables.create (Effect_guard.create_atoms ()))
       test_name
       def
   in

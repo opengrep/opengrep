@@ -45,6 +45,7 @@ val extract_signatures :
   lang:Lang.t ->
   db:Shape_and_sig.signature_database ->
   taint_inst:Taint_rule_inst.t ->
+  shared_tables:Taint_shared_tables.t ->
   ast:AST_generic.program ->
   fun_info ->
   Shape_and_sig.signature_database * Shape_and_sig.extended_sig list
@@ -61,6 +62,7 @@ val extract_and_check :
   db:Shape_and_sig.signature_database ->
   match_on:[ `Sink | `Source ] ->
   taint_inst:Taint_rule_inst.t ->
+  shared_tables:Taint_shared_tables.t ->
   ast:AST_generic.program ->
   detect_findings:bool ->
   fun_info ->
@@ -74,6 +76,7 @@ val build_class_init_cfgs :
 
 val check_class_inits_prebuilt :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   (IL.name option * IL.fun_cfg) list ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
@@ -88,6 +91,7 @@ val build_top_level_cfg :
 
 val check_top_level_prebuilt :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   IL.name * IL.fun_cfg ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
@@ -97,6 +101,7 @@ val check_top_level_prebuilt :
 
 val check_fundef :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   IL.name (** entity being analyzed *) ->
   ?glob_env:Taint_lval_env.t ->
   ?class_name:string ->
@@ -116,6 +121,7 @@ val check_rule :
   Formula_cache.t ->
   Rule.taint_rule ->
   (Core_match.t list -> Core_match.t list) ->
+  shared_tables:Taint_shared_tables.t ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?local_ast_call_graph:Call_graph.G.t option ->

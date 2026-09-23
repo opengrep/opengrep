@@ -135,28 +135,85 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
-  let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
-      workset =
+  let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow)
+      ~(forward : bool) workset =
     (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
     let max_nodei = Array.length mapping - 1 in
     let num_vertices = flow.graph#nb_nodes in
     let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
-    let max_iterations = min 100000 (num_vertices * max_visits_per_node) in
+    let rec visits_per_loop_nest (visits : int) (depth : int) : int =
+      if depth <= 0 || visits >= 100000 then visits
+      else visits_per_loop_nest (visits * max_visits_per_node) (depth - 1)
+    in
+    let max_iterations =
+      min 100000
+        (num_vertices
+        * visits_per_loop_nest max_visits_per_node flow.max_loop_depth)
+    in
+    let last = Array.length flow.reverse_postorder - 1 in
+    let position (ni : nodei) : int =
+      let index = flow.reverse_postorder_index.(ni) in
+      if forward || index < 0 then index else last - index
+    in
+    let node_at (pos : int) : nodei =
+      if forward then flow.reverse_postorder.(pos)
+      else flow.reverse_postorder.(last - pos)
+    in
+    (* The visit limit counts visits since the node's innermost loop was
+     * last entered from outside, so a nested loop gets the full limit on
+     * every pass of the enclosing loop. Nodes outside loops have no limit. *)
+    let track_loops = forward && flow.max_loop_depth > 0 in
     let visit_counts = Array.make (max_nodei + 1) 0 in
+    let activation =
+      if track_loops then Array.make (max_nodei + 1) 0 else [||]
+    in
+    let node_activation =
+      if track_loops then Array.make (max_nodei + 1) 0 else [||]
+    in
+    let capped = ref false in
+    let source = ref 0 in
+    let add_succ (work : NodeiSet.t) ((succ, _) : nodei * _) : NodeiSet.t =
+      let pos = position succ in
+      if pos < 0 then work
+      else (
+        if
+          track_loops
+          && Int.equal flow.loop_header.(succ) succ
+          && flow.reverse_postorder_index.(!source) < pos
+        then activation.(succ) <- activation.(succ) + 1;
+        NodeiSet.add pos work)
+    in
+    let add_succs (ni : nodei) (work : NodeiSet.t) : NodeiSet.t =
+      source := ni;
+      if forward then (flow.graph#successors ni)#fold add_succ work
+      else (flow.graph#predecessors ni)#fold add_succ work
+    in
     let rec loop i work =
-      if NodeiSet.is_empty work then (mapping, `Ok)
+      if NodeiSet.is_empty work then
+        (mapping, if !capped then `Capped else `Ok)
       else
         (* Check iteration limit first (deterministic) *)
         if i >= max_iterations then (mapping, `Timeout)
         else
           (* Use min_elt instead of choose for deterministic processing order *)
-          let ni = NodeiSet.min_elt work in
-          let work' = NodeiSet.remove ni work in
+          let pos = NodeiSet.min_elt work in
+          let ni = node_at pos in
+          let work' = NodeiSet.remove pos work in
+          (if track_loops then
+             let h = flow.loop_header.(ni) in
+             if h >= 0 && not (Int.equal node_activation.(ni) activation.(h))
+             then (
+               node_activation.(ni) <- activation.(h);
+               visit_counts.(ni) <- 0));
           visit_counts.(ni) <- visit_counts.(ni) + 1;
           (* Limit all nodes to max visits to prevent infinite loops *)
-          if visit_counts.(ni) > max_visits_per_node then
+          if
+            (not forward || (track_loops && flow.loop_header.(ni) >= 0))
+            && visit_counts.(ni) > max_visits_per_node
+          then (
             (* Skip this node and continue *)
-            loop (i + 1) work'
+            capped := true;
+            loop (i + 1) work')
           else
             let old = mapping.(ni) in
             let new_ = trans mapping ni in
@@ -164,21 +221,11 @@ module Make (F : Flow) = struct
               if eq_inout eq_env old new_ then work'
               else (
                 mapping.(ni) <- new_;
-                NodeiSet.union work' (succs flow ni))
+                add_succs ni work')
             in
             loop (i + 1) work''
     in
-    loop 0 workset
-
-  let forward_succs (f : F.flow) n =
-    (f.graph#successors n)#fold
-      (fun s (ni, _) -> NodeiSet.add ni s)
-      NodeiSet.empty
-
-  let backward_succs (f : F.flow) n =
-    (f.graph#predecessors n)#fold
-      (fun s (ni, _) -> NodeiSet.add ni s)
-      NodeiSet.empty
+    loop 0 (NodeiSet.map position workset)
 
   let (fixpoint :
         timeout:float ->
@@ -187,14 +234,13 @@ module Make (F : Flow) = struct
         trans:'env transfn ->
         flow:F.flow ->
         forward:bool ->
-        'env mapping * [ `Ok | `Timeout ]) =
+        'env mapping * [ `Ok | `Timeout | `Capped ]) =
    fun ~timeout ~eq_env ~init ~trans ~flow ~forward ->
-    let succs = if forward then forward_succs else backward_succs in
     let work =
       (* This prevents dead code from getting analyzed. *)
       flow.reachable
     in
-    fixpoint_worker ~timeout eq_env init trans flow succs work
+    fixpoint_worker ~timeout eq_env init trans flow ~forward work
 
   (*****************************************************************************)
   (* Helpers *)

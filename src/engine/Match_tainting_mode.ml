@@ -95,10 +95,10 @@ let preferred_label_of_sink ({ rule_sink; _ } : Effect.sink) =
       None
 
 let rec convert_taint_call_trace = function
-  | Taint.PM (pm, _) ->
+  | Taint.Flat_PM (pm, _) ->
       let toks = Lazy.force pm.tokens |> List.filter Tok.is_origintok in
       Taint_trace.Toks toks
-  | Taint.Call (expr, toks, ct) ->
+  | Taint.Flat_call (expr, toks, ct) ->
       Taint_trace.Call
         {
           call_toks =
@@ -113,14 +113,20 @@ let rec convert_taint_call_trace = function
  * of heuristics to make sure the first trace in this list is the most
  * relevant one. This is particularly important when using (experimental)
  * taint labels, because not all labels are equally relevant for the finding. *)
-let sources_of_taints ?preferred_label taints =
+let sources_of_taints ~valid ?preferred_label taints =
   (* We only report actual sources reaching a sink. If users want Semgrep to
    * report function parameters reaching a sink without sanitization, then
    * they need to specify the parameters as taint sources. *)
   let taint_sources =
     taints
     |> List_.filter_map
-         (fun { Effect.taint = { orig; tokens }; sink_trace; guard = _ } ->
+         (fun { Effect.taint; sink_trace; guard = _ } ->
+           let resolved = T.resolve_taint ~valid taint in
+           let orig = Option.value resolved.resolved_orig ~default:taint.orig in
+           let tokens = resolved.resolved_tokens in
+           let sink_trace =
+             Option.value resolved.resolved_sink_trace ~default:sink_trace
+           in
            match orig with
            | Src src -> Some (src, tokens, sink_trace)
            (* even if there is any taint "variable", it's irrelevant for the
@@ -163,12 +169,15 @@ let sources_of_taints ?preferred_label taints =
            taint trace from the source with precondition.");
     with_req)
 
-let trace_of_source source =
+let trace_of_source ~valid source =
   let src, tokens, sink_trace = source in
   {
-    Taint_trace.source_trace = convert_taint_call_trace src.T.call_trace;
+    Taint_trace.source_trace =
+      convert_taint_call_trace
+        (T.resolve_source_trace ~valid [] src.T.call_trace);
     tokens;
-    sink_trace = convert_taint_call_trace sink_trace;
+    sink_trace =
+      convert_taint_call_trace (T.resolve_sink_trace ~valid [] sink_trace);
   }
 
 (* Carried guards ([Sig_inst.classify_guards] defers every non-dispatch
@@ -178,16 +187,10 @@ let trace_of_source source =
  * item. This runs before any match deduplication ([PM.uniq] and reporting's
  * dedup_and_sort), so a finding survives iff some candidate's guard is not
  * false. An undecided guard reports, as a guard-less effect would. *)
-let guard_folds_false ~lang (g : Effect_guard.t) : bool =
+let guard_folds_false (g : Effect_guard.t) : bool =
   (not (Effect_guard.is_top g))
   &&
-  let eval_env = Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty in
-  let eval_atom atom =
-    match Eval_il_partial.eval eval_env atom with
-    | AST_generic.Lit (AST_generic.Bool (b, _)) -> Some b
-    | _ -> None
-  in
-  match Effect_guard.eval_with eval_atom g.cond with
+  match Effect_guard.eval g.cond with
   | Some false -> true
   | Some true
   | None ->
@@ -208,7 +211,7 @@ let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
   | ToReturn _
   | ToSinkInCall _ ->
       []
-  | _ when guard_folds_false ~lang (Effect.guards_of effect_) -> []
+  | _ when guard_folds_false (Effect.guards_of effect_) -> []
   | ToSink
       {
         taints_with_precondition = taints, requires;
@@ -216,10 +219,15 @@ let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
         merged_env;
         _;
       } -> (
+      let valid =
+        Sig_inst.guard_valid_under ~lang (Effect.guards_of effect_)
+      in
       let taints =
         taints
         |> List.filter (fun (i : Effect.taint_to_sink_item) ->
-               not (guard_folds_false ~lang i.guard))
+               not (guard_folds_false i.guard))
+        |> List.filter (fun (i : Effect.taint_to_sink_item) ->
+               valid [] i.guard)
       in
       let actual_taints = List_.map (fun t -> t.Effect.taint) taints in
       let satisfies =
@@ -229,7 +237,7 @@ let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
       if not satisfies then []
       else
         let preferred_label = preferred_label_of_sink sink in
-        let taint_sources = sources_of_taints ?preferred_label taints in
+        let taint_sources = sources_of_taints ~valid ?preferred_label taints in
         match match_on with
         | `Sink ->
             (* The old behavior used to be that, for sinks with a `requires`, we would
@@ -239,7 +247,7 @@ let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
                do some postprocessing to report only relevant sources later on, but for now we
                will lazily (again) defer that computation to later.
             *)
-            let traces = List_.map trace_of_source taint_sources in
+            let traces = List_.map (trace_of_source ~valid) taint_sources in
             (* We always report the finding on the sink that gets tainted, the call trace
                 * must be used to explain how exactly the taint gets there. At some point
                 * we experimented with reporting the match on the `sink`'s function call that
@@ -260,16 +268,9 @@ let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
         | `Source ->
             taint_sources
             |> List_.map (fun source ->
-                   let src, tokens, sink_trace = source in
+                   let src, _tokens, _sink_trace = source in
                    let src_pm, _ = T.pm_of_trace src.T.call_trace in
-                   let trace =
-                     {
-                       Taint_trace.source_trace =
-                         convert_taint_call_trace src.T.call_trace;
-                       tokens;
-                       sink_trace = convert_taint_call_trace sink_trace;
-                     }
-                   in
+                   let trace = trace_of_source ~valid source in
                    {
                      src_pm with
                      env = merged_env;
@@ -287,24 +288,26 @@ let pms_of_effects ~lang ~match_on (effects : Effects.t) : PM.t list =
 (*****************************************************************************)
 
 (* Analyse a function from a pre-built [IL.fun_cfg]. *)
-let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t) (name : IL.name)
+let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t) (name : IL.name)
     ?glob_env ?class_name ?signature_db ?builtin_signature_db ?call_graph
     (fcfg : IL.fun_cfg) =
   let in_env, env_effects =
-    Taint_input_env.mk_fun_input_env taint_inst ?glob_env fcfg.IL.params
+    Taint_input_env.mk_fun_input_env taint_inst shared_tables ?glob_env fcfg.IL.params
   in
   let effects, mapping =
-    Dataflow_tainting.fixpoint taint_inst ~in_env ~name ?class_name
+    Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env ~name ?class_name
       ?signature_db ?builtin_signature_db ?call_graph fcfg
   in
   let effects = Effects.union env_effects effects in
   (fcfg, effects, mapping)
 
 (* [check_fundef_with_cfg] on a freshly-lowered [fdef]. *)
-let check_fundef (taint_inst : Taint_rule_inst.t) (name : IL.name) ?glob_env
+let check_fundef (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t) (name : IL.name) ?glob_env
     ?class_name ?signature_db ?builtin_signature_db ?call_graph fdef =
   let fdef = AST_to_IL.function_definition taint_inst.lang fdef in
-  check_fundef_with_cfg taint_inst name ?glob_env ?class_name ?signature_db
+  check_fundef_with_cfg taint_inst shared_tables name ?glob_env ?class_name ?signature_db
     ?builtin_signature_db ?call_graph (CFG_build.cfg_of_fdef fdef)
 
 (* The implicit receiver is reached as [BThis] not [BArg], so stripping it
@@ -449,6 +452,7 @@ let extract_signatures
     ~(lang : Lang.t)
     ~(db : Shape_and_sig.signature_database)
     ~(taint_inst : Taint_rule_inst.t)
+    ~(shared_tables : Taint_shared_tables.t)
     ~(ast : G.program)
     (info : fun_info)
     : Shape_and_sig.signature_database * Shape_and_sig.extended_sig list =
@@ -466,7 +470,8 @@ let extract_signatures
   let arity_t = Shape_and_sig.Arity_exact arity in
   let db', sig_ =
     Taint_signature_extractor.extract_signature_with_file_context
-      ~arity:arity_t ~db ?builtin_signature_db taint_inst ~name:info.name
+      ~arity:arity_t ~db ?builtin_signature_db taint_inst shared_tables
+      ~name:info.name
       ~method_properties:info.method_properties ~call_graph:call_graph
       sig_cfg ast
   in
@@ -478,7 +483,7 @@ let extract_signatures
         let arity_t' = Shape_and_sig.Arity_exact (arity - 1) in
         let db'', sig_' =
           Taint_signature_extractor.extract_signature_with_file_context
-            ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst
+            ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst shared_tables
             ~name:info.name ~method_properties:info.method_properties
             ~call_graph:call_graph sig_cfg ast
         in
@@ -494,13 +499,14 @@ let extract_and_check
     ~(db : Shape_and_sig.signature_database)
     ~(match_on : [ `Sink | `Source ])
     ~(taint_inst : Taint_rule_inst.t)
+    ~(shared_tables : Taint_shared_tables.t)
     ~(ast : G.program)
     ~(detect_findings : bool)
     (info : fun_info)
     : Shape_and_sig.signature_database * PM.t list =
   let updated_db, _fresh_sigs =
     extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
-      ~taint_inst ~ast info
+      ~taint_inst ~shared_tables ~ast info
   in
   (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
@@ -534,7 +540,7 @@ let extract_and_check
     (updated_db, [])
   else
     let _flow, fdef_effects, _mapping =
-      check_fundef_with_cfg taint_inst info.name
+      check_fundef_with_cfg taint_inst shared_tables info.name
         ?glob_env ?class_name:info.class_name_str
         ~signature_db:updated_db ?builtin_signature_db
         ?call_graph
@@ -572,6 +578,7 @@ let build_class_init_cfgs (lang : Lang.t) (ast : G.program)
 
 let check_class_inits_prebuilt
     (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t)
     (cfgs : (IL.name option * IL.fun_cfg) list)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
@@ -580,7 +587,7 @@ let check_class_inits_prebuilt
   List.fold_left
     (fun acc (opt_name, fun_cfg) ->
       let init_effects, _mapping =
-        Dataflow_tainting.fixpoint taint_inst ?name:opt_name
+        Dataflow_tainting.fixpoint taint_inst shared_tables ?name:opt_name
           ?signature_db ?builtin_signature_db
           ?call_graph
           fun_cfg
@@ -590,12 +597,13 @@ let check_class_inits_prebuilt
 
 let check_class_inits
     (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t)
     (ast : G.program)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
-  check_class_inits_prebuilt taint_inst
+  check_class_inits_prebuilt taint_inst shared_tables
     (build_class_init_cfgs taint_inst.lang ast)
     ?signature_db ?builtin_signature_db ?call_graph ()
 
@@ -611,13 +619,14 @@ let build_top_level_cfg (lang : Lang.t) (ast : G.program)
 
 let check_top_level_prebuilt
     (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t)
     ((top_level_name, fun_cfg) : IL.name * IL.fun_cfg)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
   let top_effects, _mapping =
-    Dataflow_tainting.fixpoint taint_inst ~name:top_level_name
+    Dataflow_tainting.fixpoint taint_inst shared_tables ~name:top_level_name
       ?signature_db ?builtin_signature_db
       ?call_graph
       fun_cfg
@@ -626,16 +635,18 @@ let check_top_level_prebuilt
 
 let check_top_level
     (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t)
     (ast : G.program)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
-  check_top_level_prebuilt taint_inst
+  check_top_level_prebuilt taint_inst shared_tables
     (build_top_level_cfg taint_inst.lang ast)
     ?signature_db ?builtin_signature_db ?call_graph ()
 
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
+    ~(shared_tables : Taint_shared_tables.t)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(local_ast_call_graph : Call_graph.G.t option = None)
@@ -692,7 +703,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       let taint_inst =
         { taint_inst with Taint_rule_inst.project_root = xtarget.project_root }
       in
-      let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
+      let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst shared_tables ast in
       let glob_matches = pms_of_effects ~lang ~match_on glob_effects in
 
       let final_signature_db, relevant_graph, branch_matches =
@@ -794,7 +805,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               let db', fresh =
                 extract_signatures ?builtin_signature_db
                   ~call_graph:relevant_graph ~lang ~db
-                  ~taint_inst:(taint_inst_of node) ~ast info
+                  ~taint_inst:(taint_inst_of node) ~shared_tables ~ast info
               in
               Sig_fixpoint.store node fresh db'
           in
@@ -820,7 +831,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                     extract_and_check ?builtin_signature_db
                       ~call_graph:relevant_graph ~glob_env ~lang
                       ~db:signature_db_after_order ~match_on
-                      ~taint_inst:(taint_inst_of node) ~ast
+                      ~taint_inst:(taint_inst_of node) ~shared_tables ~ast
                       ~detect_findings:true info
                   in
                   if not (List_.null findings) then
@@ -863,7 +874,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                              --------------------"
                             (IL.str_of_name name));
                       let _flow, fdef_effects, _mapping =
-                        check_fundef taint_inst name ~glob_env
+                        check_fundef taint_inst shared_tables name ~glob_env
                           ?builtin_signature_db fdef
                       in
                       fdef_matches :=
@@ -875,7 +886,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       in
 
       let class_init_effects =
-        check_class_inits taint_inst ast
+        check_class_inits taint_inst shared_tables ast
           ?signature_db:final_signature_db ?builtin_signature_db
           ?call_graph:relevant_graph ()
       in
@@ -885,7 +896,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
 
       let top_matches =
         let top_effects =
-          check_top_level taint_inst ast
+          check_top_level taint_inst shared_tables ast
             ?signature_db:final_signature_db ?builtin_signature_db
             ?call_graph:relevant_graph ()
         in
@@ -924,12 +935,7 @@ let check_rules ~match_hook
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
   (* Check for language support warnings when taint_intrafile is enabled *)
-  (Dataflow_tainting.reset_constructor ();
-   (* Clear the per-domain guard-cond intern table: rules run on a domain in
-    * sequence, so a previous rule's canonical conds must not leak into this
-    * one. *)
-   Effect_guard.reset_intern ();
-   match rules with
+  (match rules with
    | rule :: _ -> (
        (* Check if any rule has taint_intrafile enabled *)
        let has_taint_intrafile =
@@ -1023,10 +1029,14 @@ let check_rules ~match_hook
       langs_needing_call_graph LangMap.empty
   in
 
+  let guard_atoms = Effect_guard.create_atoms () in
+
   let builtin_db_by_lang =
     LangSet.fold
       (fun lang acc ->
-        let builtin_db = Builtin_models.create_all_builtin_models lang in
+        let builtin_db =
+          Builtin_models.create_all_builtin_models ~atoms:guard_atoms lang
+        in
         LangMap.add lang builtin_db acc)
       langs_needing_call_graph LangMap.empty
   in
@@ -1059,6 +1069,7 @@ let check_rules ~match_hook
                  (fun () ->
                    let report, _signature_db =
                      check_rule per_file_formula_cache rule match_hook
+                       ~shared_tables:(Taint_shared_tables.create guard_atoms)
                        ?builtin_signature_db:rule_builtin_signature_db
                        ~local_ast_call_graph:rule_local_ast_call_graph
                        xconf xtarget
