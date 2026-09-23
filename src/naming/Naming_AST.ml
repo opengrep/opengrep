@@ -887,7 +887,13 @@ class ['self] resolve_visitor env lang =
                * without the new_params (this would also prevent cycle if
                * a parameter name is the same than type name used in ptype
                * (see tests/naming/python/shadow_name_type.py) *)
-              super#visit_function_definition venv x)))
+              (* The parameters and the body's top level are one scope. *)
+              match x.fbody with
+              | FBStmt { s = Block (_, stmts, _); _ } ->
+                  super#visit_function_definition venv
+                    { x with fbody = FBNothing };
+                  List.iter (self#visit_stmt venv) stmts
+              | _ -> super#visit_function_definition venv x)))
 
     method! visit_definition venv x =
       match x with
