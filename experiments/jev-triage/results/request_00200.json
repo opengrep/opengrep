@@ -1,0 +1,143 @@
+{
+ "model": "jev-latest",
+ "state": {
+  "rule": {
+   "id": "tainted-sql-from-http-request",
+   "message": "Detected input from a HTTPServletRequest going into a SQL sink or statement. This could lead to SQL injection if variables in the SQL statement are not properly sanitized. Use parameterized SQL queries or properly sanitize user input instead.",
+   "cwe": [
+    "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+   ]
+  },
+  "finding": {
+   "line": 66,
+   "code": "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.batchUpdate(sql);"
+  },
+  "source_file": "  27  @WebServlet(value = \"/sqli-00/BenchmarkTest00200\")\n  28  public class BenchmarkTest00200 extends HttpServlet {\n  30      private static final long serialVersionUID = 1L;\n  32      @Override\n  33      public void doGet(HttpServletRequest request, HttpServletResponse response)\n  34              throws ServletException, IOException {\n  35          doPost(request, response);\n  36      }\n  38      @Override\n  39      public void doPost(HttpServletRequest request, HttpServletResponse response)\n  40              throws ServletException, IOException {\n  41          response.setContentType(\"text/html;charset=UTF-8\");\n  43          String param = \"\";\n  44          if (request.getHeader(\"BenchmarkTest00200\") != null) {\n  45              param = request.getHeader(\"BenchmarkTest00200\");\n  46          }\n  48          // URL Decode the header value since req.getHeader() doesn't. Unlike req.getParameter().\n  49          param = java.net.URLDecoder.decode(param, \"UTF-8\");\n  51          String bar = \"alsosafe\";\n  52          if (param != null) {\n  53              java.util.List<String> valuesList = new java.util.ArrayList<String>();\n  54              valuesList.add(\"safe\");\n  55              valuesList.add(param);\n  56              valuesList.add(\"moresafe\");\n  58              valuesList.remove(0); // remove the 1st safe value\n  60              bar = valuesList.get(1); // get the last 'safe' value\n  61          }\n  63          try {\n  64              String sql = \"SELECT * from USERS where USERNAME='foo' and PASSWORD='\" + bar + \"'\";\n  66              org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.batchUpdate(sql);\n  67              response.getWriter()\n  68                      .println(\n  69                              \"No results can be displayed for query: \"\n  70                                      + org.owasp.esapi.ESAPI.encoder().encodeForHTML(sql)\n  71                                      + \"<br>\"\n  72                                      + \" because the Spring batchUpdate method doesn't return results.\");\n  73          } catch (org.springframework.dao.DataAccessException e) {\n  74              if (org.owasp.benchmark.helpers.DatabaseHelper.hideSQLErrors) {\n  75                  response.getWriter().println(\"Error processing request.\");\n  76              } else throw new ServletException(e);\n  77          }\n  78      }\n  79  }",
+  "dataflow": {
+   "source": {
+    "line": 45,
+    "code": "request.getHeader(\"BenchmarkTest00200\")"
+   },
+   "intermediate_variables": [
+    {
+     "line": 45,
+     "code": "param"
+    },
+    {
+     "line": 55,
+     "code": "valuesList"
+    },
+    {
+     "line": 55,
+     "code": "valuesList"
+    },
+    {
+     "line": 60,
+     "code": "get"
+    },
+    {
+     "line": 60,
+     "code": "bar"
+    },
+    {
+     "line": 64,
+     "code": "sql"
+    }
+   ],
+   "sink": {
+    "line": 66,
+    "code": "org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.batchUpdate(sql);"
+   }
+  },
+  "vulnerability_class": {
+   "name": "SQL injection",
+   "neutralizers": [
+    "binding the value to a ? placeholder with setString/setInt/setParameter",
+    "SQL-specific escaping such as ESAPI encodeForSQL with the matching codec",
+    "allow-list validation or conversion to a number"
+   ],
+   "not_neutralizers": [
+    "HTML or URL encoding",
+    "URL decoding",
+    "case changes",
+    "trimming",
+    "an encoding immediately followed by the matching decoding, such as Base64 encode then decode, which leaves the value unchanged"
+   ],
+   "safe_sink": [
+    "the request value is bound as a parameter of a prepared statement; the SQL text passed to prepareStatement does not contain the value"
+   ],
+   "unsafe_sink": [
+    "the value is concatenated into the SQL string, even if that string is later given to prepareStatement or a template method"
+   ]
+  },
+  "value_path": {
+   "variables": [
+    "bar",
+    "get",
+    "param",
+    "sql",
+    "valuesList"
+   ],
+   "lines": [
+    "  43  String param = \"\";",
+    "  45  param = request.getHeader(\"BenchmarkTest00200\");",
+    "  49  param = java.net.URLDecoder.decode(param, \"UTF-8\");",
+    "  51  String bar = \"alsosafe\";",
+    "  52  if (param != null) {",
+    "  53  java.util.List<String> valuesList = new java.util.ArrayList<String>();",
+    "  54  valuesList.add(\"safe\");",
+    "  55  valuesList.add(param);",
+    "  56  valuesList.add(\"moresafe\");",
+    "  58  valuesList.remove(0); // remove the 1st safe value",
+    "  60  bar = valuesList.get(1); // get the last 'safe' value",
+    "  64  String sql = \"SELECT * from USERS where USERNAME='foo' and PASSWORD='\" + bar + \"'\";",
+    "  66  org.owasp.benchmark.helpers.DatabaseHelper.JDBCtemplate.batchUpdate(sql);",
+    "  70  + org.owasp.esapi.ESAPI.encoder().encodeForHTML(sql)"
+   ]
+  }
+ },
+ "questions": {
+  "exploitable": {
+   "type": "noul",
+   "instructions": "A static analysis rule flagged the operation at `finding` in `source_file`. Judging the code as written, is this a real, exploitable instance of `vulnerability_class.name`?",
+   "criteria": {
+    "true": "A client controlling request input can trigger the weakness at this location.",
+    "false": "The flagged code is safe here."
+   }
+  },
+  "sink_receives": {
+   "type": "choice",
+   "instructions": "Follow the value used by the flagged operation at `finding` backwards through `value_path` and `dataflow`. Take collection indices, removals, map keys, switch cases and conditions literally, step by step. What does the operation actually receive?",
+   "criteria": {
+    "request_value": "The request-derived value itself, possibly decoded, trimmed, re-cased or encoded in a way that keeps attacker-chosen characters.",
+    "constant": "A hard-coded literal, because the step that would carry the request value is not the one used: a fixed index after inserts or removals, a lookup with a fixed key, a switch or condition whose outcome is fixed, or a literal assigned afterwards.",
+    "transformed_safe": "The request value after a transformation that removes or escapes every character that could change the meaning of the operation for this class.",
+    "unclear": "The code does not show enough to tell."
+   }
+  },
+  "constant_reaches_sink": {
+   "type": "noul",
+   "instructions": "Does the flagged operation at `finding` receive a hard-coded constant rather than the request value, because of how indices, removals, keys, branches or reassignments in `value_path` are arranged? Work through each collection or branch operation literally.",
+   "criteria": {
+    "true": "The request value is stored or computed but the element actually used at the sink is a literal.",
+    "false": "The request value, or something derived from it, is what the sink uses."
+   }
+  },
+  "neutralized_for_class": {
+   "type": "noul",
+   "instructions": "Before the flagged operation at `finding`, is the request value made harmless for `vulnerability_class.name` by a step listed in `vulnerability_class.neutralizers`? Steps in `vulnerability_class.not_neutralizers` do not count.",
+   "criteria": {
+    "true": "An effective neutralizer for this class is applied on the path to the sink.",
+    "false": "No effective neutralizer for this class is applied; unrelated encodings or decodings do not count."
+   }
+  },
+  "sink_safe_by_construction": {
+   "type": "noul",
+   "instructions": "Is the flagged operation at `finding` itself safe for `vulnerability_class.name` regardless of the value, matching `vulnerability_class.safe_sink` rather than `vulnerability_class.unsafe_sink`?",
+   "criteria": {
+    "true": "The sink API is used in the safe shape for this class.",
+    "false": "The sink API is used in an unsafe shape, or the shape does not matter for this class."
+   }
+  }
+ }
+}
