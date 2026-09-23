@@ -5,7 +5,8 @@ val cfg_of_stmts : ?tok:Tok.t -> IL.stmt list -> IL.cfg * IL.lambdas_cfgs
  * do not constitute actual function definitions.
  *)
 
-val cfg_of_fdef : IL.function_definition -> IL.fun_cfg
+val cfg_of_fdef :
+  ?source_range:IL.source_range -> IL.function_definition -> IL.fun_cfg
 (** Compute the control flow graph of an IL function definition. *)
 
 val cfg_of_gfdef :

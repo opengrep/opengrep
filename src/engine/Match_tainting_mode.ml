@@ -306,9 +306,8 @@ let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t)
 let check_fundef (taint_inst : Taint_rule_inst.t)
     (shared_tables : Taint_shared_tables.t) (name : IL.name) ?glob_env
     ?class_name ?signature_db ?builtin_signature_db ?call_graph fdef =
-  let fdef = AST_to_IL.function_definition taint_inst.lang fdef in
   check_fundef_with_cfg taint_inst shared_tables name ?glob_env ?class_name ?signature_db
-    ?builtin_signature_db ?call_graph (CFG_build.cfg_of_fdef fdef)
+    ?builtin_signature_db ?call_graph (CFG_build.cfg_of_gfdef taint_inst.lang fdef)
 
 (* The implicit receiver is reached as [BThis] not [BArg], so stripping it
    keeps [BArg] indices aligned. *)
@@ -352,8 +351,7 @@ let build_info_map
       ~(method_properties : G.expr list) ~(is_static : bool)
       ~(is_lambda_assignment : bool)
       (fdef : G.function_definition) : fun_info =
-    let fdef_il = AST_to_IL.function_definition lang fdef in
-    let cfg = CFG_build.cfg_of_fdef fdef_il in
+    let cfg = CFG_build.cfg_of_gfdef lang fdef in
     { name; class_name_str; method_properties; is_static;
       cfg; fdef; is_lambda_assignment;
       file_ast = None; taint_inst = None }
@@ -572,7 +570,7 @@ let build_class_init_cfgs (lang : Lang.t) (ast : G.program)
       in
       let stmts = AST_to_IL.stmt lang fields in
       let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
-      acc := (opt_name, IL.{ params = []; cfg; lambdas }) :: !acc)
+      acc := (opt_name, IL.{ params = []; cfg; lambdas; source_range = None }) :: !acc)
     ast;
   !acc
 
@@ -615,7 +613,7 @@ let build_top_level_cfg (lang : Lang.t) (ast : G.program)
     : IL.name * IL.fun_cfg =
   let xs = AST_to_IL.stmt lang (G.stmt1 ast) in
   let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-  (Graph_from_AST.top_level_name_of_ast ast, IL.{ params = []; cfg; lambdas })
+  (Graph_from_AST.top_level_name_of_ast ast, IL.{ params = []; cfg; lambdas; source_range = None })
 
 let check_top_level_prebuilt
     (taint_inst : Taint_rule_inst.t)

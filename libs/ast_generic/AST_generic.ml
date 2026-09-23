@@ -315,6 +315,7 @@ module SId : sig
      [Function_id.of_sid] without consulting the call graph. *)
   val to_loc : t -> string * string * int * int
   val same_site : t -> t -> bool
+  val is_temp : t -> bool
   val unsafe_default : t
   val is_unsafe_default : t -> bool
 end = struct
@@ -374,6 +375,13 @@ end = struct
             t.site.col (to_int t)
 
   let to_loc t = (t.site.name, t.file, t.site.line, t.site.col)
+
+  let is_temp t =
+    match t.identity with
+    | Temp _ -> true
+    | Binding _
+    | Site _ ->
+        false
 
   let same_site a b =
     String.equal a.file b.file

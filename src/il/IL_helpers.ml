@@ -470,6 +470,28 @@ let rlvals_of_instr x =
 (* Public *)
 (*****************************************************************************)
 
+let source_range_of_locs (first : Tok.location) (last : Tok.location) :
+    IL.source_range =
+  {
+    file = Fpath.to_string (Fpath.normalize first.pos.file);
+    first = (first.pos.line, first.pos.column);
+    last = (last.pos.line, last.pos.column);
+  }
+
+let position_leq ((l1, c1) : int * int) ((l2, c2) : int * int) : bool =
+  l1 < l2 || (Int.equal l1 l2 && c1 <= c2)
+
+(* Whether [name] is declared inside [range]: its sid's site lies in the
+ * span, or it is an IL temporary. A name with no site (unresolved, or made
+ * by a converter) is outside. *)
+let declared_in_range (range : IL.source_range) (name : IL.name) : bool =
+  G.SId.is_temp name.sid
+  ||
+  let _, file, line, col = G.SId.to_loc name.sid in
+  String.equal file range.file
+  && position_leq range.first (line, col)
+  && position_leq (line, col) range.last
+
 let is_pro_resolved_global name =
   match !(name.id_info.id_resolved) with
   | Some (GlobalName _, _sid) -> true

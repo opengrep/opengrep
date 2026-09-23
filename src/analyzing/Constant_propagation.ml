@@ -642,7 +642,7 @@ let propagate_dataflow lang ast =
       in
       (* Top-level function. No need to use CFG_build.cfg_of_gfdef here. *)
       let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-      propagate_dataflow_one_function lang IL.{ params = []; cfg; lambdas }
+      propagate_dataflow_one_function lang IL.{ params = []; cfg; lambdas; source_range = None }
   | _ ->
       ast
       |> Visit_function_defs.visit (fun _ent fdef ->
@@ -658,5 +658,5 @@ let propagate_dataflow lang ast =
       let xs = AST_to_IL.stmt lang (G.stmt1 ast) in
       (* Top-level function. No need to use CFG_build.cfg_of_gfdef here. *)
       let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-      propagate_dataflow_one_function lang IL.{ params = []; cfg; lambdas }
+      propagate_dataflow_one_function lang IL.{ params = []; cfg; lambdas; source_range = None }
 [@@trace_trace]

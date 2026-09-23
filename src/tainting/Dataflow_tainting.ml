@@ -3095,8 +3095,57 @@ let check_tainted_return env tok e : Taints.t * S.shape * Lval_env.t =
   record_effects env effects;
   (taints, shape, var_env')
 
-let effects_from_arg_updates_at_exit ~(lang : Lang.t) enter_env exit_env :
-    Effect.t list =
+(* A write to a variable declared inside the function cannot be observed
+ * outside it; a lambda's writes to variables it captures stay. *)
+let drop_writes_to_own_vars (fun_cfg : IL.fun_cfg) (effects : Effects.t) :
+    Effects.t =
+  match fun_cfg.source_range with
+  | None -> effects
+  | Some range ->
+      effects
+      |> Effects.filter (function
+           | Effect.ToLval { lval = { base = T.BGlob var; _ }; _ } ->
+               not (IL_helpers.declared_in_range range var)
+           | _ -> true)
+
+let rebound_vars (cfg : IL.cfg) : IL.NameSet.t =
+  CFG.NodeiSet.fold
+    (fun ni acc ->
+      match (cfg.graph#nodes#assoc ni).IL.n with
+      | NInstr instr -> (
+          match LV.lval_of_instr_opt instr with
+          | Some { base = Var name; rev_offset = [] } -> IL.NameSet.add name acc
+          | _ -> acc)
+      | _ -> acc)
+    cfg.reachable IL.NameSet.empty
+
+(* A change to a parameter as a whole reaches the caller unless the function
+ * rebinds the parameter, which the caller does not see for a parameter
+ * passed by value; in-place changes and field writes reach it. *)
+let caller_sees_update (params : IL.param list) (rebound : IL.NameSet.t)
+    (lval : T.lval) : bool =
+  match (lval.base, lval.offset) with
+  | T.BArg arg, [] -> (
+      let own_param =
+        List.find_opt
+          (fun (p : IL.param) ->
+            match IL_helpers.pname_of_param p with
+            | Some pname -> String.equal (fst pname.ident) arg.name
+            | None -> false)
+          params
+      in
+      match own_param with
+      | Some (IL.Param { pname; by_reference; _ }) ->
+          by_reference || not (IL.NameSet.mem pname rebound)
+      | Some p -> (
+          match IL_helpers.pname_of_param p with
+          | Some pname -> not (IL.NameSet.mem pname rebound)
+          | None -> true)
+      | None -> true)
+  | _ -> true
+
+let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
+    ~(rebound : IL.NameSet.t) enter_env exit_env : Effect.t list =
   (* TOOD: We need to get a map of `lval` to `Taint.arg`, and if an extension
    * of `lval` has new taints, then we can compute its correspoding `Taint.arg`
    * extension and generate a `ToLval` effect too. *)
@@ -3124,6 +3173,9 @@ let effects_from_arg_updates_at_exit ~(lang : Lang.t) enter_env exit_env :
                         let lval =
                           { lval with offset = lval.offset @ offset }
                         in
+                        if not (caller_sees_update params rebound lval) then
+                          None
+                        else
                         let enter_taints_at_offset =
                           match Shape.find_in_cell ~lang offset enter_cell with
                           | `Found (Cell (xtaint, _)) -> Xtaint.to_taints xtaint
@@ -3870,7 +3922,8 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   in
   log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-  effects_from_arg_updates_at_exit ~lang:taint_inst.lang enter_lval_env
+  effects_from_arg_updates_at_exit ~lang:taint_inst.lang
+    ~params:fun_cfg.params ~rebound:(rebound_vars fun_cfg.cfg) enter_lval_env
     exit_lval_env
   |> record_effects env;
   (!(env.effects_acc), end_mapping)
@@ -4234,7 +4287,7 @@ and (fixpoint :
                      {
                        Signature.params;
                        params_il = lambda_cfg.params;
-                       effects = lambda_effects;
+                       effects = drop_writes_to_own_vars lambda_cfg lambda_effects;
                      }
                    in
                    let arity =

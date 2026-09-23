@@ -43,3 +43,6 @@ val fixpoint :
 (* TODO: Move to module 'Taint' maybe. *)
 val drop_taints_if_bool_or_number :
   Rule_options.t -> Taint.Taint_set.t -> 'a Type.t -> Taint.Taint_set.t
+
+val drop_writes_to_own_vars :
+  IL.fun_cfg -> Shape_and_sig.Effects.t -> Shape_and_sig.Effects.t

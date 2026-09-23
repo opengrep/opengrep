@@ -190,7 +190,11 @@ let any_of_orig = function
 (* Parameters and arguments *)
 (*****************************************************************************)
 
-type name_param = { pname : name; pdefault : G.expr option }
+type name_param = {
+  pname : name;
+  pdefault : G.expr option;
+  by_reference : bool;
+}
 [@@deriving show { with_path = false }, ord]
 
 type param =
@@ -233,11 +237,11 @@ class virtual ['self] iter_parent =
 
     method visit_param env param =
       match param with
-      | Param { pname; pdefault = _ }
-      | ParamReceiver { pname; pdefault = _ }
-      | ParamRest { pname; pdefault = _ }
-      | ParamKwd { pname; pdefault = _ }
-      | ParamPattern ({ pname; pdefault = _ }, _) ->
+      | Param { pname; pdefault = _; _ }
+      | ParamReceiver { pname; pdefault = _; _ }
+      | ParamRest { pname; pdefault = _; _ }
+      | ParamKwd { pname; pdefault = _; _ }
+      | ParamPattern ({ pname; pdefault = _; _ }, _) ->
           self#visit_name env pname
       | ParamFixme -> ()
 
@@ -509,8 +513,18 @@ and node_kind =
 type edge = Direct
 type cfg = (node, edge) CFG.t
 
-type fun_cfg = { params : param list; cfg : cfg; lambdas : lambdas_cfgs }
+type fun_cfg = {
+  params : param list;
+  cfg : cfg;
+  lambdas : lambdas_cfgs;
+  source_range : source_range option;
+}
+
 and lambdas_cfgs = fun_cfg NameMap.t
+
+(* The span of a function in its source file, inclusive, as (line, column)
+ * pairs; the file as naming records it in a sid. *)
+and source_range = { file : string; first : int * int; last : int * int }
 
 (* an int representing the index of a node in the graph *)
 type nodei = Ograph_extended.nodei

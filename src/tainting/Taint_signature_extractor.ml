@@ -290,7 +290,9 @@ let extract_signature (taint_inst : TRI.t)
       m "SIG_RAW_EFFECTS: %s has %d effect(s): [%s]" fn
         (List.length (Effects.elements fixpoint_effects)) items);
   let effects_with_preconditions =
-    fixpoint_effects |> Effects.elements
+    fixpoint_effects
+    |> Dataflow_tainting.drop_writes_to_own_vars func_cfg
+    |> Effects.elements
     |> List.fold_left
          (fun acc eff ->
            match eff with
