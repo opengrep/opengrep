@@ -2087,7 +2087,7 @@ and equals_value : G.expr parser = fun __n -> (
   expression
 ) __n
 
-and event_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
+and event_block (attrs : G.attribute list) : G.stmt list parser = fun __n -> (
   (* event_block -> event_statement (event_accessor_elem* end_event_statement)? *)
   let* id, stmt = event_statement attrs in
   let* elems = optional
@@ -2101,8 +2101,8 @@ and event_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
     G.DefStmt stmt |> G.s
   in
   match elems with
-  | None | Some [] -> pure stmt
-  | Some xs -> pure (G.Block (fb (stmt :: xs)) |> G.s)
+  | None -> pure [ stmt ]
+  | Some xs -> pure (stmt :: xs)
 ) __n
 
 and event_statement (attrs : G.attribute list) : (G.ident * G.definition) parser = fun __n -> (
@@ -3028,7 +3028,7 @@ and namespace_block : G.stmt parser = fun __n -> (
   pure (G.DefStmt (entity, def) |> G.s)
 ) __n
 
-and property_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
+and property_block (attrs : G.attribute list) : G.stmt list parser = fun __n -> (
   (* property_block -> property_statement (property_accessor_block* end_property_statement)? *)
   let* _property = token "PROPERTY" in
   let* id = identifier_name in
@@ -3067,8 +3067,8 @@ and property_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   in
   let var_stmt = G.DefStmt (entity, def) |> G.s in
   match accessors_opt with
-  | None | Some [] -> pure var_stmt
-  | Some accessors -> pure (G.Block (fb (var_stmt :: accessors)) |> G.s)
+  | None -> pure [ var_stmt ]
+  | Some accessors -> pure (var_stmt :: accessors)
 ) __n
 
 and property_accessor_block ((property_name_str, _) : G.ident)
@@ -3197,13 +3197,30 @@ and class_block_declaration (class_name : G.name) : G.field list parser = fun __
     end;
     begin
       (* class_block_declaration -> attribute_list* method_modifier* class_block_kw_declaration *)
-      let* s = class_block_kw_declaration attrs class_name in
-      pure [G.F s]
+      let* ss = class_block_kw_declarations attrs class_name in
+      pure (List.map (fun s -> G.F s) ss)
     end;
     begin
       (* class_block_declaration -> field_declaration *)
       let* _ = if List.is_empty attrs then fail else pure () in
       field_declaration attrs
+    end;
+  ]
+) __n
+
+and class_block_kw_declarations (attrs : G.attribute list) (class_name : G.name) : G.stmt list parser = fun __n -> (
+  choice [
+    begin
+      (* class_block_kw_declaration -> property_block *)
+      property_block attrs
+    end;
+    begin
+      (* class_block_kw_declaration -> event_block *)
+      event_block attrs
+    end;
+    begin
+      let* s = class_block_kw_declaration attrs class_name in
+      pure [ s ]
     end;
   ]
 ) __n
@@ -3223,10 +3240,6 @@ and class_block_kw_declaration (attrs : G.attribute list) (class_name : G.name) 
       constructor_block attrs class_name
     end;
     begin
-      (* class_block_kw_declaration -> property_block *)
-      property_block attrs
-    end;
-    begin
       (* class_block_kw_declaration -> class_block *)
       class_block attrs
     end;
@@ -3241,10 +3254,6 @@ and class_block_kw_declaration (attrs : G.attribute list) (class_name : G.name) 
     begin
       (* class_block_kw_declaration -> structure_block *)
       structure_block attrs
-    end;
-    begin
-      (* class_block_kw_declaration -> event_block *)
-      event_block attrs
     end;
     begin
       (* class_block_kw_declaration -> operator_block *)

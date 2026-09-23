@@ -381,6 +381,12 @@ let top_func () =
     | String v1 ->
         let v1 = wrap string v1 in
         G.String (fb v1)
+    | Bool v1 ->
+        let v1 = wrap id v1 in
+        G.Bool v1
+    | Nil v1 ->
+        let v1 = tok v1 in
+        G.Null v1
   and index v = expr v
   and arguments v = list argument v
   and argument = function
@@ -544,9 +550,11 @@ let top_func () =
     | Fallthrough v1 ->
         let v1 = tok v1 in
         [ G.OtherStmt (G.OS_Fallthrough, [ G.Tk v1 ]) |> G.s ]
-    | Label (v1, v2) ->
-        let v1 = ident v1 and v2 = stmt v2 in
-        [ G.Label (v1, v2) |> G.s ]
+    | Label (v1, v2) -> (
+        let v1 = ident v1 in
+        match stmt_aux v2 with
+        | first :: rest -> (G.Label (v1, first) |> G.s) :: rest
+        | [] -> [ G.Label (v1, G.stmt1 []) |> G.s ])
     | Go (v1, v2) ->
         let _v1 = tok v1 and e, args = call_expr v2 in
         [ G.OtherStmt (G.OS_Go, [ G.E (G.Call (e, args) |> G.e) ]) |> G.s ]

@@ -76,16 +76,13 @@ let type_parameters_with_constraints (tparams : type_parameters option)
       in
       Some (lt, tparams', gt)
 
-let var_def_stmt (attrs : attribute list)
-    (decls : (entity * variable_definition) list) (sc : Tok.t) : G.stmt =
-  let stmts =
-    decls
-    |> List_.map (fun (ent, def) ->
-           let ent = { ent with attrs = ent.attrs @ attrs } in
-           (ent, def))
-    |> H2.add_semicolon_to_last_var_def_and_convert_to_stmts sc
-  in
-  G.stmt1 stmts
+let var_def_stmts (attrs : attribute list)
+    (decls : (entity * variable_definition) list) (sc : Tok.t) : G.stmt list =
+  decls
+  |> List_.map (fun (ent, def) ->
+         let ent = { ent with attrs = ent.attrs @ attrs } in
+         (ent, def))
+  |> H2.add_semicolon_to_last_var_def_and_convert_to_stmts sc
 
 (* TODO? integrate in AST_generic at some point? or extend
  * AST_generic.comprehension to support also the Group/Into/Join/OrderBy?
@@ -883,7 +880,7 @@ and binary_expression (env : env) (x : CST.binary_expression) : G.expr =
 
 and block (env : env) ((v1, v2, v3) : CST.block) : stmt =
   let v1 = token env v1 (* "{" *) in
-  let v2 = List_.map (statement env) v2 in
+  let v2 = List.concat_map (statements env) v2 in
   let v3 = token env v3 (* "}" *) in
   G.Block (v1, v2, v3) |> G.s
 
@@ -1792,6 +1789,25 @@ and expr_statement (env : env) (x : CST.expression_statement) : stmt =
       let v2 = (* ";" *) token env v2 in
       G.ExprStmt (v1, v2) |> G.s
 
+and local_declaration_statement (env : env) (v1, v2, v3, v4, v5) : stmt list =
+  let _V1TODO = Option.map (token env) v1 (* "await" *) in
+  let _V2TODO = Option.map (token env) v2 (* "using" *) in
+  let attrs = List_.map (modifier env) v3 in
+  let vardefs = variable_declaration env v4 in
+  let sc = token env v5 (* ";" *) in
+  var_def_stmts attrs vardefs sc
+
+and statements (env : env) (x : CST.statement) : stmt list =
+  match x with
+  | `Local_decl_stmt x -> local_declaration_statement env x
+  | `Labe_stmt (v1, v2, v3) -> (
+      let v1 = identifier env v1 (* identifier *) in
+      let _v2 = token env v2 (* ":" *) in
+      match statements env v3 with
+      | first :: rest -> (Label (v1, first) |> G.s) :: rest
+      | [] -> [ Label (v1, G.stmt1 []) |> G.s ])
+  | _ -> [ statement env x ]
+
 and statement (env : env) (x : CST.statement) =
   match x with
   | `Blk x -> block env x
@@ -1837,11 +1853,10 @@ and statement (env : env) (x : CST.statement) =
       let v3 =
         variable_declaration env v3
         |> List_.map (fun (ent, vardef) -> DefStmt (ent, VarDef vardef) |> G.s)
-        |> G.stmt1
       in
       let _v4 = token env v4 (* ")" *) in
       let v5 = statement env v5 in
-      WithUsingResource (v1, [ v3 ], v5) |> G.s
+      WithUsingResource (v1, v3, v5) |> G.s
   | `For_each_stmt (v1, v2, v3, v4, v5, v6, v7, v8) ->
       let v1 = Option.map (token env) v1 (* "await" *) in
       let v2 = token env v2 (* "foreach" *) in
@@ -1949,13 +1964,7 @@ and statement (env : env) (x : CST.statement) =
       let _v2 = token env v2 (* ":" *) in
       let v3 = statement env v3 in
       Label (v1, v3) |> G.s
-  | `Local_decl_stmt (v1, v2, v3, v4, v5) ->
-      let _V1TODO = Option.map (token env) v1 (* "await" *) in
-      let _V2TODO = Option.map (token env) v2 (* "using" *) in
-      let attrs = List_.map (modifier env) v3 in
-      let vardefs = variable_declaration env v4 in
-      let sc = token env v5 (* ";" *) in
-      var_def_stmt attrs vardefs sc
+  | `Local_decl_stmt x -> G.stmt1 (local_declaration_statement env x)
   | `Local_func_stmt (v1, v2, v3, v4, v5, v6, v7, v8) ->
       let v1 = List.concat_map (attribute_list env) v1 in
       let v2 = List_.map (modifier env) v2 in
@@ -2029,14 +2038,13 @@ and statement (env : env) (x : CST.statement) =
             vardefs
             |> List_.map (fun (ent, vardef) ->
                    DefStmt (ent, VarDef vardef) |> G.s)
-            |> G.stmt1
         | `Exp x ->
             let expr = expression env x in
-            ExprStmt (expr, sc) |> G.s
+            [ ExprStmt (expr, sc) |> G.s ]
       in
       let _v5 = token env v5 (* ")" *) in
       let v6 = statement env v6 in
-      WithUsingResource (v2, [ v4 ], v6) |> G.s
+      WithUsingResource (v2, v4, v6) |> G.s
   | `While_stmt (v1, v2, v3, v4, v5) ->
       let v1 = token env v1 (* "while" *) in
       let _v2 = token env v2 (* "(" *) in
@@ -2235,7 +2243,7 @@ and switch_section (env : env) ((v1, v2) : CST.switch_section) :
         | `Defa_switch_label x -> default_switch_label env x)
       v1
   in
-  let v2 = List_.map (statement env) v2 in
+  let v2 = List.concat_map (statements env) v2 in
   (* TODO: we convert list of statements to a block with fake brackets. Does this make sense? *)
   CasesAndBody (v1, G.stmt1 v2)
 
@@ -2953,7 +2961,7 @@ let enum_member_declaration_list (env : env)
 
 let rec declaration_list ?(this_param=None) (env : env)
     ((open_bracket, body, close_bracket) : CST.declaration_list) =
-  let xs = List_.map (declaration ~this_param env) body in
+  let xs = List.concat_map (declaration ~this_param env) body in
   (token env open_bracket, xs, token env close_bracket)
 
 and extern_alias_directive (env : env)
@@ -3054,7 +3062,7 @@ and global_attribute_list (env : env)
   (* TODO: better as OtherStmt *)
   ExprStmt (OtherExpr (v2, anys) |> G.e, v1) |> G.s
 
-and global_statement (env : env) (x : CST.global_statement) = statement env x
+and global_statement (env : env) (x : CST.global_statement) = statements env x
 
 and namespace_member_declaration (env : env)
     (x : CST.namespace_member_declaration) =
@@ -3069,10 +3077,10 @@ and compilation_unit (env : env) (xs : CST.compilation_unit) : any =
       let v2 = v2 |> List_.map (using_directive env) in
       let v3 = v3 |> List_.map (global_attribute_list env) in
       let v4 =
-        List.map
+        List.concat_map
           (function
             | `Global_stmt x -> global_statement env x
-            | `Name_member_decl x -> namespace_member_declaration env x)
+            | `Name_member_decl x -> [ namespace_member_declaration env x ])
           v4
       in
       let v5 = match v5 with
@@ -3368,98 +3376,9 @@ and fix_s_range (new_range : (Tok.location * Tok.location) option) (s : stmt) : 
   | _ -> ());
   s
   
-and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
+and declaration ?(this_param=None) (env : env) (x : CST.declaration) :
+    stmt list =
   match x with
-  | `Ellips v1 ->
-      let v1 = token env v1 in
-      G.ExprStmt (G.Ellipsis v1 |> G.e, sc) |> G.s
-  | `Class_decl x -> class_struct env Class x
-  | `Dele_decl x -> delegate_declaration env x
-  | `Enum_decl x -> enum_declaration env x
-  | `Inte_decl x -> interface_struct env Interface x
-  | `Record_decl x -> record_declaration env x
-  | `Record_struct_decl x -> record_struct_declaration env x
-  | `Struct_decl x -> struct_declaration env x
-  | `Cons_decl (v1, v2, v3, v4, v5, v6) ->
-      let v1 = List.concat_map (attribute_list env) v1 in
-      let v2 = List_.map (modifier env) v2 in
-      let v3 = identifier env v3 (* identifier *) in
-      let _, tok = v3 in
-      let v4 = parameter_list env v4 in
-      let v5 = Option.map (constructor_initializer env) v5 in
-      let v6 = function_body env v6 in
-      (* TODO? separate ctor initializer from body in G.function_definition?*)
-      let fbody =
-        match v5 with
-        | Some init ->
-            G.FBStmt (Block (fb [ init; H2.funcbody_to_stmt v6 ]) |> G.s)
-        | None -> v6
-      in
-      let def =
-        G.FuncDef
-          { fkind = (G.Method, tok); fparams = v4; frettype = None; fbody }
-      in
-      let ctor = KeywordAttr (Ctor, tok) in
-      let attrs = (ctor :: v1) @ v2 in
-      let ent = basic_entity v3 ~attrs in
-      G.DefStmt (ent, def) |> G.s
-  | `Conv_op_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
-      (* https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/user-defined-conversion-operators *)
-      let v1 = List.concat_map (attribute_list env) v1 in
-      let v2 = List_.map (modifier env) v2 in
-      let v3 =
-        match v3 with
-        | `Impl tok -> ("op_Implicit", token env tok) (* "implicit" *)
-        | `Expl tok -> ("op_Explicit", token env tok)
-        (* "explicit" *)
-      in
-      let _v4TODO =
-        match v4 with
-        | Some x -> Some (explicit_interface_specifier env x)
-        | None -> None
-      in
-      let v5 = token env v5 (* "operator" *) in
-      let _v6TODO =
-        match v6 with
-        | Some tok -> Some ((* "checked" *) token env tok)
-        | None -> None
-      in
-      let v7 = type_pattern env v7 in
-      let v8 = parameter_list env v8 in
-      let v9 = function_body env v9 in
-      let idinfo = empty_id_info () in
-      let ent =
-        { name = EN (Id (v3, idinfo)); attrs = v1 @ v2; tparams = None }
-      in
-      let def =
-        G.FuncDef
-          {
-            fkind = (G.Method, v5);
-            fparams = v8;
-            frettype = Some v7;
-            fbody = v9;
-          }
-      in
-      G.DefStmt (ent, def) |> G.s
-  | `Dest_decl (v1, v2, v3, v4, v5, v6) ->
-      let v1 = List.concat_map (attribute_list env) v1 in
-      let v2 =
-        match v2 with
-        | Some tok -> [ KeywordAttr (Extern, token env tok) ] (* "extern" *)
-        | None -> []
-      in
-      let v3 = token env v3 (* "~" *) in
-      let _v4TODO = identifier env v4 (* identifier *) in
-      let v5 = parameter_list env v5 in
-      let v6 = function_body env v6 in
-      let name = ("Finalize", v3) in
-      let def =
-        G.FuncDef
-          { fkind = (G.Method, v3); fparams = v5; frettype = None; fbody = v6 }
-      in
-      let dtor = KeywordAttr (Dtor, v3) in
-      let ent = basic_entity name ~attrs:((dtor :: v1) @ v2) in
-      G.DefStmt (ent, def) |> G.s
   | `Event_decl (v1, v2, v3, v4, v5, v6, v7) ->
       let v1 = List.concat_map (attribute_list env) v1 in
       let _v2TODO = List_.map (modifier env) v2 in
@@ -3520,9 +3439,8 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       in
       let ent = basic_entity id ~attrs:(v1 @ v1 @ [ v3 ]) in
       let vardef = { vinit = None; vtype = Some v4; vtok = G.no_sc } in
-      let open_br, funcs, close_br = v7 in
-      Block (open_br, (DefStmt (ent, VarDef vardef) |> G.s) :: funcs, close_br)
-      |> G.s
+      let _, funcs, _ = v7 in
+      (DefStmt (ent, VarDef vardef) |> G.s) :: funcs
   | `Event_field_decl (v1, v2, v3, v4, v5) ->
       let v1 = List.concat_map (attribute_list env) v1 in
       let v2 = List_.map (modifier env) v2 in
@@ -3530,146 +3448,14 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       let attrs = (v3 :: v1) @ v2 in
       let vardefs = variable_declaration env v4 in
       let sc = token env v5 (* ";" *) in
-      var_def_stmt attrs vardefs sc
+      var_def_stmts attrs vardefs sc
   | `Field_decl (v1, v2, v3, v4) ->
       let v1 = List.concat_map (attribute_list env) v1 in
       let v2 = List_.map (modifier env) v2 in
       let attrs = v1 @ v2 in
       let vardefs = variable_declaration env v3 in
       let sc = token env v4 (* ";" *) in
-      var_def_stmt attrs vardefs sc
-  | `Inde_decl (v1, v2, v3, v4, v5, v6, v7) -> (
-      let v1 = List.concat_map (attribute_list env) v1 in
-      let v2 = List_.map (modifier env) v2 in
-      let v3 = type_pattern env v3 in
-      let _v4TODO = Option.map (explicit_interface_specifier env) v4 in
-      let _v5 = token env v5 (* "this" *) in
-      let lbra, params, rbra = bracketed_parameter_list env v6 in
-      let indexer_attrs = v1 @ v2 in
-      match v7 with
-      | `Acce_list x ->
-          let open_br, accs, close_br = accessor_list env x in
-          let funcs =
-            accs
-            |> List_.map (fun (attrs, id, fbody) ->
-                   let iname, itok = id in
-                   match iname with
-                   | "get" ->
-                       let ent = basic_entity ("get_Item", itok) ~attrs in
-                       let funcdef =
-                         FuncDef
-                           {
-                             fkind = (Method, itok);
-                             fparams = (lbra, params, rbra);
-                             frettype = Some v3;
-                             fbody;
-                           }
-                       in
-                       DefStmt (ent, funcdef) |> G.s
-                   | "set" ->
-                       let valparam =
-                         Param
-                           {
-                             pname = Some ("value", fake "value");
-                             ptype = Some v3;
-                             pdefault = None;
-                             pattrs = [];
-                             pinfo = empty_id_info ();
-                           }
-                       in
-                       let ent = basic_entity ("set_Item", itok) ~attrs in
-                       let funcdef =
-                         FuncDef
-                           {
-                             fkind = (Method, itok);
-                             fparams = (lbra, params @ [ valparam ], rbra);
-                             frettype = None;
-                             fbody;
-                           }
-                       in
-                       DefStmt (ent, funcdef) |> G.s
-                   | _ -> raise Impossible)
-          in
-          Block (open_br, funcs, close_br) |> G.s
-      | `Arrow_exp_clause_SEMI (v1, v2) ->
-          let v1 = arrow_expression_clause env v1 in
-          let v2 = token env v2 (* ";" *) in
-          let arrow, expr = v1 in
-          let fbody = G.FBStmt (ExprStmt (expr, v2) |> G.s) in
-          let ent = basic_entity ("get_Item", arrow) ~attrs:indexer_attrs in
-          let funcdef =
-            FuncDef
-              {
-                fkind = (Arrow, arrow);
-                fparams = (lbra, params, rbra);
-                frettype = Some v3;
-                fbody;
-              }
-          in
-          DefStmt (ent, funcdef) |> G.s)
-  | `Meth_decl (v1, v2, v3, _v4TODO, v5, v6, v7, v8, v9) ->
-      (*
-        [Attr] static int IList<T>.MyMethod<T>(int p1) where T : Iterator { ... }
-          v1     v2   v3    v4        v5    v6  v7           v8              v9
-      *)
-      let v1 = List.concat_map (attribute_list env) v1 in
-      let v2 = List_.map (modifier env) v2 in
-      let v3 = type_pattern env v3 in
-      let v5 = identifier env v5 (* identifier *) in
-      let _, tok = v5 in
-      let v6 = Option.map (type_parameter_list env) v6 in
-      let l, v7, r = parameter_list env v7 in
-      let v8 = List_.map (type_parameter_constraints_clause env) v8 in
-      let v9 = function_body env v9 in
-      let tparams = type_parameters_with_constraints v6 v8 in
-      let idinfo = empty_id_info () in
-      let ent = { name = EN (Id (v5, idinfo)); attrs = v1 @ v2; tparams } in
-      let def =
-        G.FuncDef
-          {
-            fkind = (G.Method, tok);
-            fparams = (l, v7, r);
-            frettype = Some v3;
-            fbody = v9;
-          }
-      in
-      G.DefStmt (ent, def)
-      |> G.s
-      |> add_this_param ~this_param ~anchor:(snd v5)
-  | `Name_decl x -> namespace_declaration env x
-  | `Op_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
-      let v1 = List.concat_map (attribute_list env) v1 in
-      let v2 = List_.map (modifier env) v2 in
-      let v3 = type_pattern env v3 in
-      let _v4TODO =
-        match v4 with
-        | Some x -> Some (explicit_interface_specifier env x)
-        | None -> None
-      in
-      let v5 = (* "operator" *) token env v5 in
-      let _v6TODO =
-        match v6 with
-        | Some tok -> Some ((* "checked" *) token env tok)
-        | None -> None
-      in
-      let v7 = overloadable_operator env v7 in
-      let v8 = parameter_list env v8 in
-      let v9 = function_body env v9 in
-      (* TODO make clear that this is an operator overload, by using IdSpecial as the name, or adding a keyword attribute *)
-      let idinfo = empty_id_info () in
-      let ent =
-        { name = EN (Id (v7, idinfo)); attrs = v1 @ v2; tparams = None }
-      in
-      let def =
-        G.FuncDef
-          {
-            fkind = (G.Method, v5);
-            fparams = v8;
-            frettype = Some v3;
-            fbody = v9;
-          }
-      in
-      G.DefStmt (ent, def) |> G.s
+      var_def_stmts attrs vardefs sc
   | `Prop_decl (v1, v2, v3, v4, v5, v6) ->
       (* [Attr] public string IFace.Field { get; public set { ... } } = "hello";
          [Attr] public string IFace.Field => "hello";
@@ -3815,9 +3601,235 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       in
       let ent = basic_entity v5 ~attrs:(v1 @ v2) in
       let vardef = { vinit; vtype = Some v3; vtok = G.no_sc } in
-      let open_br, funcs, close_br = accessors in
-      Block (open_br, (DefStmt (ent, VarDef vardef) |> G.s) :: funcs, close_br)
+      let _, funcs, _ = accessors in
+      (DefStmt (ent, VarDef vardef) |> G.s) :: funcs
+  | _ -> [ member_declaration ~this_param env x ]
+
+and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
+    : stmt =
+  match x with
+  | `Ellips v1 ->
+      let v1 = token env v1 in
+      G.ExprStmt (G.Ellipsis v1 |> G.e, sc) |> G.s
+  | `Class_decl x -> class_struct env Class x
+  | `Dele_decl x -> delegate_declaration env x
+  | `Enum_decl x -> enum_declaration env x
+  | `Inte_decl x -> interface_struct env Interface x
+  | `Record_decl x -> record_declaration env x
+  | `Record_struct_decl x -> record_struct_declaration env x
+  | `Struct_decl x -> struct_declaration env x
+  | `Cons_decl (v1, v2, v3, v4, v5, v6) ->
+      let v1 = List.concat_map (attribute_list env) v1 in
+      let v2 = List_.map (modifier env) v2 in
+      let v3 = identifier env v3 (* identifier *) in
+      let _, tok = v3 in
+      let v4 = parameter_list env v4 in
+      let v5 = Option.map (constructor_initializer env) v5 in
+      let v6 = function_body env v6 in
+      (* TODO? separate ctor initializer from body in G.function_definition?*)
+      let fbody =
+        match v5 with
+        | Some init ->
+            G.FBStmt (Block (fb [ init; H2.funcbody_to_stmt v6 ]) |> G.s)
+        | None -> v6
+      in
+      let def =
+        G.FuncDef
+          { fkind = (G.Method, tok); fparams = v4; frettype = None; fbody }
+      in
+      let ctor = KeywordAttr (Ctor, tok) in
+      let attrs = (ctor :: v1) @ v2 in
+      let ent = basic_entity v3 ~attrs in
+      G.DefStmt (ent, def) |> G.s
+  | `Conv_op_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
+      (* https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/user-defined-conversion-operators *)
+      let v1 = List.concat_map (attribute_list env) v1 in
+      let v2 = List_.map (modifier env) v2 in
+      let v3 =
+        match v3 with
+        | `Impl tok -> ("op_Implicit", token env tok) (* "implicit" *)
+        | `Expl tok -> ("op_Explicit", token env tok)
+        (* "explicit" *)
+      in
+      let _v4TODO =
+        match v4 with
+        | Some x -> Some (explicit_interface_specifier env x)
+        | None -> None
+      in
+      let v5 = token env v5 (* "operator" *) in
+      let _v6TODO =
+        match v6 with
+        | Some tok -> Some ((* "checked" *) token env tok)
+        | None -> None
+      in
+      let v7 = type_pattern env v7 in
+      let v8 = parameter_list env v8 in
+      let v9 = function_body env v9 in
+      let idinfo = empty_id_info () in
+      let ent =
+        { name = EN (Id (v3, idinfo)); attrs = v1 @ v2; tparams = None }
+      in
+      let def =
+        G.FuncDef
+          {
+            fkind = (G.Method, v5);
+            fparams = v8;
+            frettype = Some v7;
+            fbody = v9;
+          }
+      in
+      G.DefStmt (ent, def) |> G.s
+  | `Dest_decl (v1, v2, v3, v4, v5, v6) ->
+      let v1 = List.concat_map (attribute_list env) v1 in
+      let v2 =
+        match v2 with
+        | Some tok -> [ KeywordAttr (Extern, token env tok) ] (* "extern" *)
+        | None -> []
+      in
+      let v3 = token env v3 (* "~" *) in
+      let _v4TODO = identifier env v4 (* identifier *) in
+      let v5 = parameter_list env v5 in
+      let v6 = function_body env v6 in
+      let name = ("Finalize", v3) in
+      let def =
+        G.FuncDef
+          { fkind = (G.Method, v3); fparams = v5; frettype = None; fbody = v6 }
+      in
+      let dtor = KeywordAttr (Dtor, v3) in
+      let ent = basic_entity name ~attrs:((dtor :: v1) @ v2) in
+      G.DefStmt (ent, def) |> G.s
+  | `Inde_decl (v1, v2, v3, v4, v5, v6, v7) -> (
+      let v1 = List.concat_map (attribute_list env) v1 in
+      let v2 = List_.map (modifier env) v2 in
+      let v3 = type_pattern env v3 in
+      let _v4TODO = Option.map (explicit_interface_specifier env) v4 in
+      let _v5 = token env v5 (* "this" *) in
+      let lbra, params, rbra = bracketed_parameter_list env v6 in
+      let indexer_attrs = v1 @ v2 in
+      match v7 with
+      | `Acce_list x ->
+          let open_br, accs, close_br = accessor_list env x in
+          let funcs =
+            accs
+            |> List_.map (fun (attrs, id, fbody) ->
+                   let iname, itok = id in
+                   match iname with
+                   | "get" ->
+                       let ent = basic_entity ("get_Item", itok) ~attrs in
+                       let funcdef =
+                         FuncDef
+                           {
+                             fkind = (Method, itok);
+                             fparams = (lbra, params, rbra);
+                             frettype = Some v3;
+                             fbody;
+                           }
+                       in
+                       DefStmt (ent, funcdef) |> G.s
+                   | "set" ->
+                       let valparam =
+                         Param
+                           {
+                             pname = Some ("value", fake "value");
+                             ptype = Some v3;
+                             pdefault = None;
+                             pattrs = [];
+                             pinfo = empty_id_info ();
+                           }
+                       in
+                       let ent = basic_entity ("set_Item", itok) ~attrs in
+                       let funcdef =
+                         FuncDef
+                           {
+                             fkind = (Method, itok);
+                             fparams = (lbra, params @ [ valparam ], rbra);
+                             frettype = None;
+                             fbody;
+                           }
+                       in
+                       DefStmt (ent, funcdef) |> G.s
+                   | _ -> raise Impossible)
+          in
+          Block (open_br, funcs, close_br) |> G.s
+      | `Arrow_exp_clause_SEMI (v1, v2) ->
+          let v1 = arrow_expression_clause env v1 in
+          let v2 = token env v2 (* ";" *) in
+          let arrow, expr = v1 in
+          let fbody = G.FBStmt (ExprStmt (expr, v2) |> G.s) in
+          let ent = basic_entity ("get_Item", arrow) ~attrs:indexer_attrs in
+          let funcdef =
+            FuncDef
+              {
+                fkind = (Arrow, arrow);
+                fparams = (lbra, params, rbra);
+                frettype = Some v3;
+                fbody;
+              }
+          in
+          DefStmt (ent, funcdef) |> G.s)
+  | `Meth_decl (v1, v2, v3, _v4TODO, v5, v6, v7, v8, v9) ->
+      (*
+        [Attr] static int IList<T>.MyMethod<T>(int p1) where T : Iterator { ... }
+          v1     v2   v3    v4        v5    v6  v7           v8              v9
+      *)
+      let v1 = List.concat_map (attribute_list env) v1 in
+      let v2 = List_.map (modifier env) v2 in
+      let v3 = type_pattern env v3 in
+      let v5 = identifier env v5 (* identifier *) in
+      let _, tok = v5 in
+      let v6 = Option.map (type_parameter_list env) v6 in
+      let l, v7, r = parameter_list env v7 in
+      let v8 = List_.map (type_parameter_constraints_clause env) v8 in
+      let v9 = function_body env v9 in
+      let tparams = type_parameters_with_constraints v6 v8 in
+      let idinfo = empty_id_info () in
+      let ent = { name = EN (Id (v5, idinfo)); attrs = v1 @ v2; tparams } in
+      let def =
+        G.FuncDef
+          {
+            fkind = (G.Method, tok);
+            fparams = (l, v7, r);
+            frettype = Some v3;
+            fbody = v9;
+          }
+      in
+      G.DefStmt (ent, def)
       |> G.s
+      |> add_this_param ~this_param ~anchor:(snd v5)
+  | `Name_decl x -> namespace_declaration env x
+  | `Op_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
+      let v1 = List.concat_map (attribute_list env) v1 in
+      let v2 = List_.map (modifier env) v2 in
+      let v3 = type_pattern env v3 in
+      let _v4TODO =
+        match v4 with
+        | Some x -> Some (explicit_interface_specifier env x)
+        | None -> None
+      in
+      let v5 = (* "operator" *) token env v5 in
+      let _v6TODO =
+        match v6 with
+        | Some tok -> Some ((* "checked" *) token env tok)
+        | None -> None
+      in
+      let v7 = overloadable_operator env v7 in
+      let v8 = parameter_list env v8 in
+      let v9 = function_body env v9 in
+      (* TODO make clear that this is an operator overload, by using IdSpecial as the name, or adding a keyword attribute *)
+      let idinfo = empty_id_info () in
+      let ent =
+        { name = EN (Id (v7, idinfo)); attrs = v1 @ v2; tparams = None }
+      in
+      let def =
+        G.FuncDef
+          {
+            fkind = (G.Method, v5);
+            fparams = v8;
+            frettype = Some v3;
+            fbody = v9;
+          }
+      in
+      G.DefStmt (ent, def) |> G.s
   | `Using_dire x -> using_directive env x
   | `Exte_decl (v1, _type_param, v2, v3, v4, v5, _where_clause, v6) ->
       let _v1 = (* "extension" *) token env v1 in
@@ -3839,7 +3851,12 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       let _v5 = (* ")" *) token env v5 in
       let decls = declaration_list ~this_param env v6 in
       Block decls |> G.s
-    
+  | `Event_decl _
+  | `Event_field_decl _
+  | `Field_decl _
+  | `Prop_decl _ ->
+      G.stmt1 (declaration ~this_param env x)
+
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)

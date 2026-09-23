@@ -737,9 +737,9 @@ and expression (env : env) (x : CST.expression) : expr =
   | `Imag_lit tok ->
       BasicLit (Imag (imaginary_literal env tok)) (* imaginary_literal *)
   | `Rune_lit tok -> BasicLit (Rune (rune_literal env tok)) (* rune_literal *)
-  | `Nil tok -> mk_Id (identifier env tok) (* "nil" *)
-  | `True tok -> mk_Id (identifier env tok) (* "true" *)
-  | `False tok -> mk_Id (identifier env tok) (* "false" *)
+  | `Nil tok -> BasicLit (Nil (token env tok)) (* "nil" *)
+  | `True tok -> BasicLit (Bool (true, token env tok)) (* "true" *)
+  | `False tok -> BasicLit (Bool (false, token env tok)) (* "false" *)
   | `Iota tok -> mk_Id (identifier env tok) (* iota *)
   | `Paren_exp (v1, v2, v3) ->
       let _v1 = token env v1 (* "(" *) in
@@ -1422,7 +1422,9 @@ let source_file (env : env) (xs : CST.source_file) : program =
       | `Stmt_choice_LF (v1, v2) ->
           let v1 = statement env v1 in
           let _v2 = anon_choice_LF_249c99f env v2 in
-          [ STop v1 ]
+          (match v1 with
+          | DeclStmts decls -> List_.map (fun decl -> DTop decl) decls
+          | _ -> [ STop v1 ])
       | `Choice_pack_clause_opt_choice_LF (v1, v2) ->
           let v1 = top_level_declaration env v1 in
           let _v2 = trailing_terminator env v2 in

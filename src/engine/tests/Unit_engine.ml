@@ -823,6 +823,12 @@ let semgrep_rules_repo_tests () : Testo.t list =
              | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-cookie-store-session-security-attributes.yaml" -> None
              | s when s =~ ".*/semgrep-rules/java/spring/security/injection/tainted-sql-string.yaml" -> None
              | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None
+             (* The expected finding relied on the Go tree-sitter parser
+                wrapping a top-level multi-name var declaration in a block,
+                which bounded the rule's [pattern-not-inside: ... =
+                url.Parse(...) ...]; without it the region runs to the end of
+                the file, as it already did for a single-name declaration. *)
+             | s when s =~ ".*/semgrep-rules/go/lang/security/shared-url-struct-mutation.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming

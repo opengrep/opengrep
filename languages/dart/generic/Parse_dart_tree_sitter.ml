@@ -2352,26 +2352,26 @@ and map_switch_block (env : env) ((v1, v2, v3) : CST.switch_block) :
       (fun x ->
         match x with
         | `Switch_label x -> Either.Left (map_switch_label env x)
-        | `Stmt x -> Either.Right (map_statement_as_stmt env x))
+        | `Stmt x -> Either.Right (map_statement env x))
       v2
   in
   let _v3 = (* "}" *) token env v3 in
-  match
-    List_.fold_right
-      (fun either acc ->
-        match (either, acc) with
-        | Either.Left _case, (None, acc) ->
-            (* this means we saw a case with no stmt below, just skip and move on *)
-            (None, acc)
-        | Either.Right stmt, (None, acc) -> (Some ([], stmt), acc)
-        | Either.Left case, (Some (cases, stmt), acc) ->
-            (Some (case :: cases, stmt), acc)
-        | Either.Right stmt, (Some (cases, stmt'), acc) ->
-            (Some ([], stmt), CasesAndBody (cases, stmt') :: acc))
-      v2 (None, [])
-  with
-  | None, acc -> acc
-  | Some (cases, stmt), acc -> CasesAndBody (cases, stmt) :: acc
+  let close (cases : case list) (rev_stmts : stmt list)
+      (acc : case_and_body list) : case_and_body list =
+    match rev_stmts with
+    | [] -> acc
+    | _ :: _ -> CasesAndBody (List.rev cases, G.stmt1 (List.rev rev_stmts)) :: acc
+  in
+  let cases, rev_stmts, acc =
+    List.fold_left
+      (fun (cases, rev_stmts, acc) either ->
+        match (either, rev_stmts) with
+        | Either.Left case, [] -> (case :: cases, [], acc)
+        | Either.Left case, _ :: _ -> ([ case ], [], close cases rev_stmts acc)
+        | Either.Right stmts, _ -> (cases, List.rev_append stmts rev_stmts, acc))
+      ([], [], []) v2
+  in
+  List.rev (close cases rev_stmts acc)
 
 and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
   (* Not clear to me what these are. *)
@@ -3616,24 +3616,21 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
           |> G.s)
         inits
 
-let map_declaration_as_stmt (env : env) (x : CST.declaration_) : stmt =
-  Block (fb (map_declaration_ env x)) |> G.s
-
 let map_class_member_definition ~attrs (env : env)
-    (x : CST.class_member_definition) : field =
+    (x : CST.class_member_definition) : field list =
   match x with
   | `Choice_decl__semi x -> (
       match x with
       | `Decl__semi (v1, v2) ->
-          let v1 = map_declaration_as_stmt env v1 in
+          let v1 = map_declaration_ ~attrs env v1 in
           let _sc = map_semicolon env v2 in
-          G.F v1
+          List_.map (fun st -> G.F st) v1
       | `Meth_sign_func_body (v1, v2) ->
           let v1 = map_method_signature env v1 in
           let fattrs, v2 = map_function_body env v2 in
-          G.F (v1 (attrs @ fattrs, v2)))
+          [ G.F (v1 (attrs @ fattrs, v2)) ])
   (* sgrep-ext: '...' as a class member, e.g. 'class C { ... }' *)
-  | `Semg_ellips tok -> G.field_ellipsis ((* "..." *) token env tok)
+  | `Semg_ellips tok -> [ G.field_ellipsis ((* "..." *) token env tok) ]
 
 let map_extension_body (env : env) ((v1, v2, v3) : CST.extension_body) :
     stmt list =
@@ -3697,15 +3694,14 @@ let map_class_body (env : env) ((v1, v2, v3) : CST.class_body) :
     field list bracket =
   let v1 = (* "{" *) token env v1 in
   let v2 =
-    List_.map
+    List.concat_map
       (fun (v1, v2) ->
         let attrs =
           match v1 with
           | Some x -> map_metadata env x
           | None -> []
         in
-        let v2 = map_class_member_definition ~attrs env v2 in
-        v2)
+        map_class_member_definition ~attrs env v2)
       v2
   in
   let v3 = (* "}" *) token env v3 in

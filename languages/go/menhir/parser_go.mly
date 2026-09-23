@@ -663,7 +663,13 @@ pexpr:
 pexpr_no_paren:
 |   basic_literal { BasicLit $1 }
 
-|   name { Id ($1) }
+|   name
+    { match $1 with
+      | ("nil", tok) -> BasicLit (Nil tok)
+      | ("true", tok) -> BasicLit (Bool (true, tok))
+      | ("false", tok) -> BasicLit (Bool (false, tok))
+      | _ -> Id ($1)
+    }
     (* sgrep-ext: *)
 |   "(" name ":" ntype ")" { Flag_parsing.sgrep_guard (TypedMetavar($2, $3, $4)) }
     (* can be many things *)

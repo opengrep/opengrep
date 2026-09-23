@@ -258,6 +258,12 @@ let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
 let lookup ?(class_attr = false) s xxs =
   lookup_namespace ~class_attr VarName s xxs
 
+let declared_in_current_block (scopes : scopes) (s : string) :
+    scope_info option =
+  match !(scopes.blocks) with
+  | current :: _ -> find_in_scope VarName s current
+  | [] -> None
+
 (* for Python, PHP *)
 let lookup_global_scope (s, _) scopes = lookup s [ !(scopes.global) ]
 
@@ -281,8 +287,19 @@ let has_block_scope (lang : Lang.t) =
   match lang with
   (* These languages don't have block scope *)
   | Ruby
+  | Crystal
   | Python
-  | Php ->
+  | Python2
+  | Python3
+  | Php
+  | Hack
+  | Bash
+  | R
+  | Julia
+  | Dockerfile
+  | Clojure
+  | Lisp
+  | Scheme ->
       false
   | _js_ when Lang.is_js lang -> false
   (* The rest do. *)
@@ -617,6 +634,9 @@ let is_resolvable_name_ctx env lang =
       | Lang.Ts
       | Lang.Php
       | Lang.Scala
+      | Lang.Dart
+      | Lang.Swift
+      | Lang.Solidity
       | Lang.C
       | Lang.Cpp ->
           true
@@ -648,6 +668,9 @@ let resolved_name_kind env lang =
       | Lang.Ts
       | Lang.Php
       | Lang.Scala
+      | Lang.Dart
+      | Lang.Swift
+      | Lang.Solidity
       | Lang.C (* can happen for macros inside structs *)
       | Lang.Cpp ->
           EnclosedVar
@@ -805,6 +828,8 @@ let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
 let assign_implicitly_declares lang =
   lang =*= Lang.Php
   || lang =*= Lang.Python
+  || lang =*= Lang.Python2
+  || lang =*= Lang.Python3
   || lang =*= Lang.Ruby
   || lang =*= Lang.Crystal
   || Lang.is_js lang
@@ -1334,6 +1359,23 @@ class ['self] resolve_visitor env lang =
           super#visit_expr venv x;
           declare_var env lang id id_info ~explicit:true (Some e2) None;
           recurse := false
+      | AssignOp ({ e = Container (Tuple, (_, lhs, _)); _ }, (Eq, tok), e2)
+        when lang =*= Lang.Go
+             && Tok.content_of_tok tok = ":="
+             && is_resolvable_name_ctx env lang ->
+          self#visit_expr venv e2;
+          lhs
+          |> List.iter (fun (lhs_e : expr) ->
+                 match lhs_e.e with
+                 | N (Id (((s, _) as id), id_info))
+                   when (not (String.equal s "_"))
+                        && Option.is_none
+                             (declared_in_current_block env.names s) ->
+                     declare_var env lang id id_info ~explicit:true None None
+                 | _ ->
+                     Common.save_excursion_unsafe env.in_lvalue true (fun () ->
+                         self#visit_expr venv lhs_e));
+          recurse := false
       | Assign ({ e = N (Id (id, id_info)); _ }, _, e2)
         when Option.is_none (lookup_for_implicit_assign_opt id env)
              && assign_implicitly_declares lang
@@ -1540,11 +1582,44 @@ class ['self] resolve_visitor env lang =
               with_new_block_scope env.names (fun () ->
                   self#visit_stmt venv s2))
             s2_opt
+      (* Kotlin: the condition of do-while sees the body's declarations. *)
+      | DoWhile (tok, body, cond) when lang =*= Lang.Kotlin ->
+          self#visit_tok venv tok;
+          with_new_block_scope env.names (fun () ->
+              (match body.s with
+              | Block (_, stmts, _) -> List.iter (self#visit_stmt venv) stmts
+              | _ -> self#visit_stmt venv body);
+              self#visit_expr venv cond)
+      | WithUsingResource (tok, resources, body) when has_block_scope lang ->
+          self#visit_tok venv tok;
+          with_new_block_scope env.names (fun () ->
+              List.iter (self#visit_stmt venv) resources;
+              self#visit_stmt venv body)
+      (* In these languages the whole switch body is one scope. Converters
+       * group a case's statements in a block with fake brackets; a case
+       * written with braces keeps its own scope. *)
+      | Switch (tok, cond_opt, cases)
+        when lang =*= Lang.C || lang =*= Lang.Cpp || lang =*= Lang.Java
+             || lang =*= Lang.Csharp ->
+          self#visit_tok venv tok;
+          Option.iter (self#visit_condition venv) cond_opt;
+          with_new_block_scope env.names (fun () ->
+              cases
+              |> List.iter (function
+                   | CasesAndBody (case_list, body) -> (
+                       List.iter (self#visit_case venv) case_list;
+                       match body.s with
+                       | Block ((l, stmts, _) : stmt list bracket)
+                         when Tok.is_fake l ->
+                           List.iter (self#visit_stmt venv) stmts
+                       | _ -> self#visit_stmt venv body)
+                   | CaseEllipsis _ as case_and_body ->
+                       self#visit_case_and_body venv case_and_body))
       (* But is there any point in doing that? Probably yes. *)
       (* Commented out: docker constant propagation test fails... *)
-      (* | Block (_, stmts, _) when has_block_scope lang ->
-             with_new_block_scope env.names (fun () ->
-                 List.iter (fun stmt -> self#visit_stmt venv stmt) stmts) *)
+      | Block (_, stmts, _) when has_block_scope lang ->
+          with_new_block_scope env.names (fun () ->
+              List.iter (fun stmt -> self#visit_stmt venv stmt) stmts)
       | _else_ -> super#visit_stmt venv x
   end
   

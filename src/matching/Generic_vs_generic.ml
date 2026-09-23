@@ -3569,12 +3569,15 @@ and m_list__m_field ?(mvar_ellipsis = []) ~less_is_ok (xsa : G.field list)
    *)
   | ( G.F
         {
-          s = G.DefStmt (({ G.name = G.EN (G.Id ((s1, _), _)); _ }, _) as adef);
+          s =
+            G.DefStmt (({ G.name = G.EN (G.Id ((s1, _), info1)); _ }, _) as adef);
           _;
         }
       :: xsa,
       xsb )
-    when (not (Mvar.is_metavar_name s1)) && not (Pattern.is_regexp_string s1)
+    when (not (Mvar.is_metavar_name s1))
+         && (not (Pattern.is_regexp_string s1))
+         && not (String.contains s1 '$' && IdFlags.is_hidden !(info1.G.id_flags))
     -> (
       try
         let before, there, after =
