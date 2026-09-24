@@ -1,0 +1,6 @@
+module SigMaybe where
+
+
+--ERROR:
+m :: Maybe Int
+m = Just 1

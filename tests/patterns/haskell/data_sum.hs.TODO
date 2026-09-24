@@ -1,0 +1,6 @@
+module DataSum where
+
+--ERROR:
+data Color = Red | Blue
+
+x = Red

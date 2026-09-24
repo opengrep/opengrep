@@ -1,0 +1,3 @@
+case $X of
+  Just $Y -> $A
+  Nothing -> $B

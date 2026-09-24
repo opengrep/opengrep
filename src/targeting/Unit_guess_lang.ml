@@ -27,6 +27,7 @@ let name_tests : (string * Lang.t * Fpath.t * success) list =
     ("typescript", Ts, "foo.ts", OK);
     ("typescript .d.ts", Ts, "foo.d.ts", OK);
     ("crystal", Crystal, "foo.cr", OK);
+    ("haskell", Haskell, "foo.hs", OK);
     ("spaces", Ruby, " a b  c.rb", OK);
   ]
   |> List_.map (fun (name, (lang : Lang.t), path, expect) ->

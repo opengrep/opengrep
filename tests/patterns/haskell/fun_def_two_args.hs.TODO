@@ -1,0 +1,5 @@
+module Fun2 where
+
+
+--ERROR:
+add x y = x + y

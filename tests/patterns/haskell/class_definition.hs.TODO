@@ -1,0 +1,12 @@
+module ClassDefinition where
+
+--ERROR:
+class Printable a where
+  printMe :: a -> String
+
+--ERROR:
+class Comparable a where
+  cmp :: a -> a -> Ordering
+  lt :: a -> a -> Bool
+
+regularFunction x = x

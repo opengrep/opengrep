@@ -1,0 +1,5 @@
+module Fun1 where
+
+
+--ERROR:
+inc x = x + 1

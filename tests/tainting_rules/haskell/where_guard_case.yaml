@@ -1,0 +1,13 @@
+rules:
+  - id: test-where-guard-case
+    languages:
+      - haskell
+    message: taint through where, guards, case and composition
+    mode: taint
+    pattern-sources:
+      - pattern: source
+    pattern-sanitizers:
+      - pattern: sanitize $X
+    pattern-sinks:
+      - pattern: sink $X
+    severity: WARNING

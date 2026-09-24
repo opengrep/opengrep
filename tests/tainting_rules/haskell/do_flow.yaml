@@ -1,0 +1,11 @@
+rules:
+  - id: test-do-flow
+    languages:
+      - haskell
+    message: taint through do-block
+    mode: taint
+    pattern-sources:
+      - pattern: getUserInput
+    pattern-sinks:
+      - pattern: writeFile $PATH $X
+    severity: WARNING

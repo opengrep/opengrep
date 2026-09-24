@@ -1,0 +1,2 @@
+let $X = $E1
+    $Y = $E2 in $BODY

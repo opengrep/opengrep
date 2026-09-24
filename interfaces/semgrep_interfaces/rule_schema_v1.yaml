@@ -849,6 +849,8 @@ $defs:
             - go
             - golang
             - hack
+            - haskell
+            - hs
             - html
             - java
             - js

@@ -1,0 +1,6 @@
+module SigList where
+
+
+--ERROR:
+xs :: [Int]
+xs = [1, 2, 3]

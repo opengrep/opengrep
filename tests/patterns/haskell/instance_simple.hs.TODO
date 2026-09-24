@@ -1,0 +1,8 @@
+module InstS where
+
+class Greet a where
+  hello :: a -> String
+
+--ERROR:
+instance Greet Int where
+  hello _ = "hi int"

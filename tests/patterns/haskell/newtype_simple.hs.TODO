@@ -1,0 +1,6 @@
+module NTSimple where
+
+--ERROR:
+newtype Age = Age Int
+
+x = Age 42

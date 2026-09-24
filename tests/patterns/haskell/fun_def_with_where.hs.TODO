@@ -1,0 +1,5 @@
+module FunWhere where
+
+
+--ERROR:
+area r = pi * sq where sq = r * r

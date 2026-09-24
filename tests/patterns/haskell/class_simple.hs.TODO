@@ -1,0 +1,5 @@
+module ClassS where
+
+--ERROR:
+class Greet a where
+  hello :: a -> String

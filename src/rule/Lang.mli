@@ -29,6 +29,7 @@ type t = Language.t =
   | Elixir
   | Go
   | Hack
+  | Haskell
   | Html
   | Java
   | Js
