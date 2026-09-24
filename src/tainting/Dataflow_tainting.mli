@@ -54,3 +54,8 @@ val seed_captured_vars :
   (IL.name * AST_generic.capture_mode) list ->
   Taint_lval_env.t ->
   Taint_lval_env.t
+
+val global_vars : IL.fun_cfg -> IL.NameSet.t
+
+val seed_global_vars :
+  Lang.t -> IL.NameSet.t -> Taint_lval_env.t -> Taint_lval_env.t

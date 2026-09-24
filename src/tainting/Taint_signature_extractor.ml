@@ -276,6 +276,8 @@ let extract_signature (taint_inst : TRI.t)
     | Some env ->
         Taint_lval_env.union ~lang:taint_inst.lang env param_assumptions
     | None -> param_assumptions)
+    |> Dataflow_tainting.seed_global_vars taint_inst.lang
+         (Dataflow_tainting.global_vars func_cfg)
     |> Dataflow_tainting.seed_captured_vars taint_inst.lang captured
   in
   let fixpoint_effects, mapping =
@@ -412,68 +414,6 @@ let extract_signature (taint_inst : TRI.t)
         (Signature.show signature));
   { signature; mapping }
 
-let mk_global_assumptions_with_sids (lang : Lang.t)
-    (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
-  global_vars
-  |> List.fold_left
-       (fun env (var_name, sid) ->
-         let fake_tok = Tok.unsafe_fake_tok var_name in
-         let var_id =
-           IL.
-             {
-               ident = (var_name, fake_tok);
-               sid;
-               id_info = G.empty_id_info ();
-             }
-         in
-         let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
-         let taint_lval : Taint.lval = { base = BGlob var_id; offset = [] } in
-         let generic_taint = Taint.(taint_of_orig (Var taint_lval)) in
-         let taint_set = Taint.Taint_set.singleton generic_taint in
-         Taint_lval_env.add_lval lang il_lval taint_set env)
-       Taint_lval_env.empty
-
-let mk_global_tracking_without_taint (lang : Lang.t)
-    (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
-  global_vars
-  |> List.fold_left
-       (fun env (var_name, sid) ->
-         let fake_tok = Tok.unsafe_fake_tok var_name in
-         let var_id =
-           IL.
-             {
-               ident = (var_name, fake_tok);
-               sid;
-               id_info = G.empty_id_info ();
-             }
-         in
-         let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
-         (* Register the lval for tracking but with empty taint set *)
-         Taint_lval_env.add_lval lang il_lval Taint.Taint_set.empty env)
-       Taint_lval_env.empty
-
-let extract_global_var_sids_from_ast (ast : G.program) :
-    (string * G.SId.t) list =
-  ast
-  |> List.fold_left
-       (fun acc stmt ->
-         match stmt with
-         | {
-          G.s =
-            G.ExprStmt ({ e = G.Assign (lhs, _, _); _ }, _);
-          _;
-         } -> (
-             match lhs with
-             | { e = G.N (G.Id ((name, _), id_info)); _ }
-               -> (
-                 match !(id_info.id_resolved) with
-                 | Some (G.Global, sid) -> (name, sid) :: acc
-                 | _ -> acc)
-             | _ -> acc)
-         | _ -> acc)
-       []
-  |> List.rev
-
 let extract_signature_with_file_context
     ~(arity : Shape_and_sig.sig_arity)
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
@@ -483,27 +423,15 @@ let extract_signature_with_file_context
     ?(call_graph : Call_graph.G.t option = None)
     (taint_inst : Taint_rule_inst.t)
     (shared_tables : Taint_shared_tables.t)
-    func_cfg
-    (ast : G.program) : signature_database * Signature.t =
-  let global_sids = extract_global_var_sids_from_ast ast in
-  let global_env =
-    mk_global_assumptions_with_sids taint_inst.lang global_sids
-  in
-
+    func_cfg : signature_database * Signature.t =
   (* Add method property assumptions for methods with properties *)
-  let combined_global_env =
+  let in_env =
     match method_properties with
-    | [] -> global_env
-    | props ->
-        let method_property_env =
-          mk_method_property_assumptions props taint_inst.lang
-        in
-        Taint_lval_env.union ~lang:taint_inst.lang global_env
-          method_property_env
+    | [] -> Taint_lval_env.empty
+    | props -> mk_method_property_assumptions props taint_inst.lang
   in
-
   let { signature; _ } =
-    extract_signature taint_inst shared_tables ~in_env:combined_global_env ~name
+    extract_signature taint_inst shared_tables ~in_env ~name
       ~signature_db:db ?builtin_signature_db ~call_graph func_cfg
   in
   let updated_db = Shape_and_sig.add_signature db (Function_id.of_il_name name) {sig_ = signature; arity} in

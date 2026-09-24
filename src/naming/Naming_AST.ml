@@ -329,6 +329,9 @@ type env = {
   (* The next binding number of this file; bindings are counted in
      traversal order, so two parses of the same bytes agree. *)
   next_binding : int ref;
+  (* The declared field types of each record and class type of the file,
+     by type name, then field name. *)
+  field_types : (string, (string, type_) Hashtbl.t) Hashtbl.t;
 }
 
 let fresh_binding (env : env) : int =
@@ -346,6 +349,7 @@ let default_env lang file =
     lang;
     file;
     next_binding = ref 1;
+    field_types = Hashtbl.create 16;
   }
 
 (*****************************************************************************)
@@ -674,7 +678,10 @@ let params_of_parameters env params : scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
        | Param { pname = Some id; pinfo = id_info; ptype = typ; _ }
-       | ParamReceiver { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
+       | ParamReceiver { pname = Some id; pinfo = id_info; ptype = typ; _ }
+       | ParamRest (_, { pname = Some id; pinfo = id_info; ptype = typ; _ })
+       | ParamHashSplat (_, { pname = Some id; pinfo = id_info; ptype = typ; _ })
+         ->
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
@@ -785,6 +792,52 @@ let declare_func env lang (id : ident) id_info (frettype : type_ option) =
         resolved
   in
   set_resolved env id_info resolved
+
+(* Types are declared at the top level, in modules and in classes, not in
+ * function bodies, so only those are walked. *)
+let rec collect_field_types (env : env) (stmts : stmt list) : unit =
+  let record (tname : string) (fields : field list) =
+    let types = Hashtbl.create 8 in
+    fields
+    |> List.iter (fun (F stmt) ->
+           match stmt.s with
+           | DefStmt
+               ({ name = EN (Id ((fname, _), _)); _ }, VarDef { vtype = Some ty; _ })
+             ->
+               Hashtbl.replace types fname ty
+           | _ -> ());
+    Hashtbl.replace env.field_types tname types;
+    collect_field_types env (List_.map (fun (F stmt) -> stmt) fields)
+  in
+  stmts
+  |> List.iter (fun (stmt : stmt) ->
+         match stmt.s with
+         | DefStmt
+             ( { name = EN (Id ((tname, _), _)); _ },
+               TypeDef
+                 { tbody = NewType { t = TyRecordAnon (_, (_, fields, _)); _ } }
+             )
+         | DefStmt
+             ({ name = EN (Id ((tname, _), _)); _ }, ClassDef { cbody = _, fields, _; _ })
+           ->
+             record tname fields
+         | DefStmt (_, ModuleDef { mbody = ModuleStruct (_, items) }) ->
+             collect_field_types env items
+         | Block (_, stmts, _) -> collect_field_types env stmts
+         | _ -> ())
+
+(* The declared type of field [fname] of the type [receiver_type] names, seen
+ * through pointers. *)
+let rec field_type (env : env) (receiver_type : type_) (fname : string) :
+    type_ option =
+  match receiver_type.t with
+  | TyPointer (_, t)
+  | TyRef (_, t) ->
+      field_type env t fname
+  | TyN (Id ((tname, _), _)) ->
+      Option.bind (Hashtbl.find_opt env.field_types tname) (fun types ->
+          Hashtbl.find_opt types fname)
+  | _ -> None
 
 let declare_class_members env lang (c : class_definition) : unit =
   if is_resolvable_name_ctx env lang then
@@ -1493,12 +1546,29 @@ class ['self] resolve_visitor env lang =
            * as ArrayAccess above. *)
           Common.save_excursion_unsafe env.in_lvalue false (fun () ->
               self#visit_expr venv e1);
-          (* A member that shares the name of a function in scope is not a
-           * reference to that function, so this code sets no [id_resolved]
-           * on the bare name; the project index resolves a method bare name
-           * by receiver type. *)
+          (* The bare name of a field or method identifies a member of the
+           * receiver, never a binding in scope. A member that shares the name
+           * of a function in scope is not a reference to that function, so
+           * this code sets no [id_resolved] on the bare name; the project
+           * index resolves a method bare name by receiver type. The bare name
+           * gets the type the receiver's type declares for the field, which
+           * a typed metavariable reads. *)
           (match fname with
-           | FN (Id (id, id_info)) -> type_field_from_scope env id id_info
+           | FN (Id ((s, _), id_info)) -> (
+               let receiver_type =
+                 match e1.e with
+                 | N (Id (_, info))
+                 | DotAccess (_, _, FN (Id (_, info))) ->
+                     !(info.id_type)
+                 | _ -> None
+               in
+               match
+                 Option.bind receiver_type (fun ty -> field_type env ty s)
+               with
+               | Some ty ->
+                   if Option.is_none !(id_info.id_type) && not !(env.in_type)
+                   then id_info.id_type := Some ty
+               | None -> ())
            | FN (IdQualified _)
            | FDynamic _ ->
                self#visit_field_name venv fname);
@@ -1571,10 +1641,17 @@ class ['self] resolve_visitor env lang =
       if !recurse then super#visit_expr venv x
 
     method! visit_type_ venv x =
-      if !(env.in_type) then super#visit_type_ venv x
-      else
-        Common.save_excursion_unsafe env.in_type true (fun () ->
-            super#visit_type_ venv x)
+      let visit () =
+        match x.t with
+        (* The fields of a record type are members, as in a [ClassDef]. *)
+        | TyRecordAnon _ ->
+            with_new_context InClass env (fun () ->
+                with_new_block_scope env.names (fun () ->
+                    super#visit_type_ venv x))
+        | _ -> super#visit_type_ venv x
+      in
+      if !(env.in_type) then visit ()
+      else Common.save_excursion_unsafe env.in_type true visit
 
     (* TODO: support other types of statements that create block scopes. *)
     method! visit_stmt venv x =
@@ -1659,6 +1736,7 @@ let resolve lang prog =
    *)
   let visitor = new resolve_visitor env lang
   in
+  collect_field_types env prog;
   visitor#visit_program () prog;
   ()
 [@@profiling]

@@ -49,7 +49,6 @@ type fun_info = {
   fdef : G.function_definition;
   is_static : bool;  (* [@staticmethod] and the like: no implicit receiver *)
   is_lambda_assignment : bool;
-  file_ast : G.program option;  (* [Some] cross-file, [None] current file *)
   taint_inst : Taint_rule_inst.t option;  (* [Some] cross-file preds, else current-file *)
 }
 
@@ -336,7 +335,7 @@ let filter_implicit_receiver_params (lang : Lang.t) (info : fun_info)
             | _ -> not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
     |> List.map snd
 
-(* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
+(* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [taint_inst] = [None]; callers set it when needed. *)
 let build_info_map
     ~(lang : Lang.t)
     ?(fid_filter : (Function_id.t -> bool) option)
@@ -354,7 +353,7 @@ let build_info_map
     let cfg = CFG_build.cfg_of_gfdef lang fdef in
     { name; class_name_str; method_properties; is_static;
       cfg; fdef; is_lambda_assignment;
-      file_ast = None; taint_inst = None }
+      taint_inst = None }
   in
   let info_map =
     Visit_function_defs.fold_with_parent_path ~lang
@@ -451,7 +450,6 @@ let extract_signatures
     ~(db : Shape_and_sig.signature_database)
     ~(taint_inst : Taint_rule_inst.t)
     ~(shared_tables : Taint_shared_tables.t)
-    ~(ast : G.program)
     (info : fun_info)
     : Shape_and_sig.signature_database * Shape_and_sig.extended_sig list =
   let to_ext (sig_, arity) : Shape_and_sig.extended_sig =
@@ -471,7 +469,7 @@ let extract_signatures
       ~arity:arity_t ~db ?builtin_signature_db taint_inst shared_tables
       ~name:info.name
       ~method_properties:info.method_properties ~call_graph:call_graph
-      sig_cfg ast
+      sig_cfg
   in
   let fresh = [ to_ext (sig_, arity_t) ] in
   (* Kotlin trailing-lambda syntax f(a){b}: also extract at arity-1. *)
@@ -483,7 +481,7 @@ let extract_signatures
           Taint_signature_extractor.extract_signature_with_file_context
             ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst shared_tables
             ~name:info.name ~method_properties:info.method_properties
-            ~call_graph:call_graph sig_cfg ast
+            ~call_graph:call_graph sig_cfg
         in
         (db'', fresh @ [ to_ext (sig_', arity_t') ])
     | _ -> (db', fresh)
@@ -498,13 +496,12 @@ let extract_and_check
     ~(match_on : [ `Sink | `Source ])
     ~(taint_inst : Taint_rule_inst.t)
     ~(shared_tables : Taint_shared_tables.t)
-    ~(ast : G.program)
     ~(detect_findings : bool)
     (info : fun_info)
     : Shape_and_sig.signature_database * PM.t list =
   let updated_db, _fresh_sigs =
     extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
-      ~taint_inst ~shared_tables ~ast info
+      ~taint_inst ~shared_tables info
   in
   (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
@@ -803,7 +800,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               let db', fresh =
                 extract_signatures ?builtin_signature_db
                   ~call_graph:relevant_graph ~lang ~db
-                  ~taint_inst:(taint_inst_of node) ~shared_tables ~ast info
+                  ~taint_inst:(taint_inst_of node) ~shared_tables info
               in
               Sig_fixpoint.store node fresh db'
           in
@@ -829,7 +826,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                     extract_and_check ?builtin_signature_db
                       ~call_graph:relevant_graph ~glob_env ~lang
                       ~db:signature_db_after_order ~match_on
-                      ~taint_inst:(taint_inst_of node) ~shared_tables ~ast
+                      ~taint_inst:(taint_inst_of node) ~shared_tables
                       ~detect_findings:true info
                   in
                   if not (List_.null findings) then

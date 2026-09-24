@@ -354,6 +354,24 @@ let tests parse_program =
           (* a labelled declaration declares in the enclosing block *)
           check_resolutions ast "e" [ "LocalVar" ];
           check_resolutions ast "e2" [ "LocalVar" ]);
+      t "go rest parameters bind their uses, not a same-named field" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/go/rest_params_and_fields.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          check_resolutions ast "ctx"
+            [ "Parameter"; "Parameter"; "Parameter"; "Parameter" ];
+          check_single_binding ast "ctx");
+      t "python star parameters bind their uses" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/python/rest_params.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          check_resolutions ast "args" [ "Global"; "Parameter" ];
+          check_resolutions ast "kwargs" [ "Parameter" ]);
       t "cpp capture lists refer to the enclosing variables" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/cpp/lambda_captures.cpp")

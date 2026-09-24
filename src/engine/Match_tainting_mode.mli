@@ -6,7 +6,6 @@ type fun_info = {
   fdef : AST_generic.function_definition;
   is_static : bool;
   is_lambda_assignment : bool;
-  file_ast : AST_generic.program option;
   taint_inst : Taint_rule_inst.t option;
 }
 
@@ -46,7 +45,6 @@ val extract_signatures :
   db:Shape_and_sig.signature_database ->
   taint_inst:Taint_rule_inst.t ->
   shared_tables:Taint_shared_tables.t ->
-  ast:AST_generic.program ->
   fun_info ->
   Shape_and_sig.signature_database * Shape_and_sig.extended_sig list
 (** Extract a function's taint signature(s) into the db, returning the freshly
@@ -63,7 +61,6 @@ val extract_and_check :
   match_on:[ `Sink | `Source ] ->
   taint_inst:Taint_rule_inst.t ->
   shared_tables:Taint_shared_tables.t ->
-  ast:AST_generic.program ->
   detect_findings:bool ->
   fun_info ->
   Shape_and_sig.signature_database * Core_match.t list

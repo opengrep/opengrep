@@ -447,7 +447,6 @@ let init_file
     FunctionMap.map
       (fun (info : Match_tainting_mode.fun_info) ->
          { info with
-           file_ast = Some ast;
            taint_inst = Some taint_inst;
            name = IL.absolutify_name path_root info.name })
       raw_info_map
@@ -722,23 +721,15 @@ let init_rule_state
    handler would drop every finding for the rule. *)
 let taint_inst_of_info (rs : rule_state) (fid : Function_id.t)
     (info : Match_tainting_mode.fun_info)
-    : (Taint_rule_inst.t * G.program) option =
-  match info.Match_tainting_mode.taint_inst,
-        info.Match_tainting_mode.file_ast with
-  | Some ti, Some ast ->
+    : Taint_rule_inst.t option =
+  match info.Match_tainting_mode.taint_inst with
+  | Some ti ->
     Some
-      ({ ti with
-         Taint_rule_inst.recursive = FidSet.mem fid rs.recursive_fids },
-       ast)
-  | None, _ ->
+      { ti with
+        Taint_rule_inst.recursive = FidSet.mem fid rs.recursive_fids }
+  | None ->
     Log.warn (fun m ->
         m "interfile: function %s missing taint_inst — skipping (likely \
-           init_file bug)"
-          (Function_id.show_debug fid));
-    None
-  | _, None ->
-    Log.warn (fun m ->
-        m "interfile: function %s missing file_ast — skipping (likely \
            init_file bug)"
           (Function_id.show_debug fid));
     None
@@ -770,7 +761,7 @@ let extract_and_check_function
   match taint_inst_of_info rs fid info with
   | None ->
     (db, [])
-  | Some (fn_taint_inst, fun_ast) ->
+  | Some fn_taint_inst ->
     let glob_env = glob_env_of_fid rs fid in
     let updated_db, findings =
       (* No [~call_graph]: interfile callee resolution is sid-only (the
@@ -780,7 +771,7 @@ let extract_and_check_function
         ?builtin_signature_db:rs.builtin_signature_db
         ~glob_env
         ~lang:rs.lang ~db ~match_on:rs.match_on
-        ~taint_inst:fn_taint_inst ~shared_tables:rs.shared_tables ~ast:fun_ast
+        ~taint_inst:fn_taint_inst ~shared_tables:rs.shared_tables
         ~detect_findings
         info
     in
@@ -885,12 +876,12 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       : Shape_and_sig.signature_database =
     match taint_inst_of_info rs fid info with
     | None -> db
-    | Some (fn_taint_inst, fun_ast) ->
+    | Some fn_taint_inst ->
       let db', fresh =
         Match_tainting_mode.extract_signatures
           ?builtin_signature_db:rs.builtin_signature_db
           ~lang:rs.lang ~db ~taint_inst:fn_taint_inst
-          ~shared_tables:rs.shared_tables ~ast:fun_ast info
+          ~shared_tables:rs.shared_tables info
       in
       (* growth of a function's signature across the fixpoint rounds *)
       Log.debug (fun m ->

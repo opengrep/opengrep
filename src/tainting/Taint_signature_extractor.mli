@@ -30,14 +30,6 @@ val extract_signature :
   extraction_result
 (** Extract both signature and taint mapping from a function *)
 
-val mk_global_assumptions_with_sids :
-  Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
-(** Create global variable taint assumptions with specific SIDs *)
-
-val mk_global_tracking_without_taint :
-  Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
-(** Register global variables for tracking without pre-tainting them *)
-
 val extract_signature_with_file_context :
   arity:Shape_and_sig.sig_arity ->
   ?db:signature_database ->
@@ -48,10 +40,9 @@ val extract_signature_with_file_context :
   Taint_rule_inst.t ->
   Taint_shared_tables.t ->
   IL.fun_cfg ->
-  AST_generic.program ->
   signature_database * Shape_and_sig.Signature.t
-(** Extract signature automatically including global variables from file context
-    and database *)
+(** [extract_signature] with each [this.x]/[self.x] the method reads taken as
+    an input like a parameter; the signature is added to the database. *)
 
 (*****************************************************************************)
 (* Utility functions *)

@@ -1,0 +1,14 @@
+rules:
+  - id: global-through-interface-go
+    languages: [go]
+    severity: ERROR
+    message: >
+      Effects of an interface method's implementations that involve package
+      variables reach the caller.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -2644,67 +2644,6 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         (show_call_effects call_effects));
   Some call_effects
 
-let taints_any_orig (pred : T.orig -> bool) (taints : Taints.t) : bool =
-  Taints.elements taints
-  |> List.exists (fun (gt : T.guarded_taint) -> pred gt.taint.T.orig)
-
-let rec shape_any_orig (pred : T.orig -> bool) (shape : shape) : bool =
-  match shape with
-  | Bot | Arg _ -> false
-  | Obj fields ->
-      Fields.exists (fun (_key : T.offset) (Cell (xtaint, nested) : cell) ->
-        (match xtaint with
-         | `Tainted taints -> taints_any_orig pred taints
-         | `None | `Clean -> false)
-        || shape_any_orig pred nested
-      ) fields
-  | Fun (sig_, env) ->
-      Effects.exists (fun (eff : Effect.t) -> effect_any_orig pred eff)
-        sig_.Signature.effects
-      || List.exists
-           (fun (_, entry) ->
-             match entry with
-             | Ref lval -> pred (T.Var lval)
-             | Val (Cell (xtaint, nested)) ->
-                 (match xtaint with
-                  | `Tainted taints -> taints_any_orig pred taints
-                  | `None | `Clean -> false)
-                 || shape_any_orig pred nested)
-           env
-
-and effect_any_orig (pred : T.orig -> bool) (eff : Effect.t) : bool =
-  match eff with
-  | Effect.ToSink { taints_with_precondition = (items, _); _ } ->
-      List.exists (fun (item : Effect.taint_to_sink_item) ->
-        pred item.Effect.taint.T.orig) items
-  | Effect.ToReturn { data_taints; data_shape; control_taints; _ } ->
-      taints_any_orig pred data_taints
-      || taints_any_orig pred control_taints
-      || shape_any_orig pred data_shape
-  | Effect.ToLval { taints; _ } ->
-      taints_any_orig pred taints
-  | Effect.ToSinkInCall { args_taints; _ } ->
-      List.exists (fun (arg : (Taints.t * shape) IL.argument) ->
-        let (taints : Taints.t), (shp : shape) =
-          match arg with IL.Unnamed v -> v | IL.Named (_, v) -> v
-        in
-        taints_any_orig pred taints || shape_any_orig pred shp
-      ) args_taints
-
-(* BGlob- or BEnv-dependent effect: merge_dispatch_signatures drops these (impl globals and captured variables resolve wrong at the interface call site). *)
-let effect_has_bglob_dependency (eff : Effect.t) : bool =
-  let orig_is_bglob (orig : T.orig) : bool =
-    match orig with
-    | T.Var { base = T.BGlob _ | T.BEnv _; _ }
-    | T.Shape_var { base = T.BGlob _ | T.BEnv _; _ } -> true
-    | _ -> false
-  in
-  effect_any_orig orig_is_bglob eff
-  || (match eff with
-      | Effect.ToLval { lval; _ } ->
-          (match lval.T.base with T.BGlob _ | T.BEnv _ -> true | _ -> false)
-      | _ -> false)
-
 let remap_lval_barg (remap_fn : T.arg -> T.arg) (lval : T.lval) : T.lval =
   match lval.base with
   | T.BArg arg -> { lval with base = T.BArg (remap_fn arg) }
@@ -2918,12 +2857,20 @@ let strip_receiver ~(interface_param_count : int) (params : Signature_params.par
       rest
   | _ -> params
 
+(* A dispatch call has no closure value, so the members' captured variables
+ * resolve as when each member is called by name. *)
+let captured_of_members (members : Signature.t list) :
+    (IL.name * G.capture_mode) list =
+  members
+  |> List.concat_map (fun (sig_ : Signature.t) -> sig_.Signature.captured)
+  |> List.sort_uniq (fun ((x : IL.name), _) ((y : IL.name), _) ->
+         IL.compare_name x y)
+
 (** Merges the dispatch implementation signatures. BArg is normalised to the
     representative's params, else to the first impl's; receivers are
-    stripped; the effects are unioned, except the members' effects that
-    depend on a global or captured variable (a BGlob or BEnv base). The second argument is the
-    interface signature, returned unchanged when there are no impls. On
-    incompatible params the first signature is returned. *)
+    stripped; the effects and the captured variables are unioned. The second
+    argument is the interface signature, returned unchanged when there are no
+    impls. On incompatible params the first signature is returned. *)
 let merge_dispatch_signatures ?(representative_sig : Signature.t option)
     (sigs : Signature.t list) (interface_sig : Signature.t) : Signature.t =
   let interface_param_count = List.length interface_sig.Signature.params in
@@ -2934,11 +2881,6 @@ let merge_dispatch_signatures ?(representative_sig : Signature.t option)
           Signature.params =
             strip_receiver ~interface_param_count sig_.Signature.params })
       sigs
-  in
-  let filter_bglob (effects : Effects.t) : Effects.t =
-    Effects.filter
-      (fun (eff : Effect.t) -> not (effect_has_bglob_dependency eff))
-      effects
   in
   let union_onto ~(canonical : Signature_params.params) (init : Effects.t)
       (members : Signature.t list) : Effects.t =
@@ -2961,21 +2903,23 @@ let merge_dispatch_signatures ?(representative_sig : Signature.t option)
   match representative_sig, sigs with
   | Some (representative : Signature.t), _ ->
       let canonical = representative.Signature.params in
-      let members = filter_bglob (union_onto ~canonical Effects.empty sigs) in
+      let members = union_onto ~canonical Effects.empty sigs in
       { Signature.params = canonical;
         params_il = [];
-        captured = [];
+        captured = captured_of_members (representative :: sigs);
         effects = Effects.union representative.Signature.effects members }
   | None, [] -> interface_sig
   | None, [ single ] ->
-      { single with Signature.effects = filter_bglob single.Signature.effects }
+      single
   | None, first :: rest ->
       let canonical = first.Signature.params in
       let merged_effects = union_onto ~canonical first.Signature.effects rest in
-      let filtered = filter_bglob merged_effects in
       (* [params_il = []]: merged sig fuses impls, so param-anchored guards can't
          re-anchor and stay undecided → may over-report, never under-report. *)
-      { Signature.params = canonical; params_il = []; captured = []; effects = filtered }
+      { Signature.params = canonical;
+        params_il = [];
+        captured = captured_of_members sigs;
+        effects = merged_effects }
 
 let%test "strip_receiver: no Other prefix" =
   let params = Signature_params.[ P "ctx"; P "item" ] in
@@ -3279,7 +3223,7 @@ let mk_glob_return_effect (glob : string) : Effect.t =
       return_tok = Tok.unsafe_fake_tok "test";
       guards = Effect_guard.top }
 
-let%test "merge_dispatch: representative's global effect survives, the member's does not" =
+let%test "merge_dispatch: the global effects of the representative and the members survive" =
   let representative =
     { Signature.params = [ P "x" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_glob_return_effect "rep_glob") }
@@ -3294,5 +3238,5 @@ let%test "merge_dispatch: representative's global effect survives, the member's 
   in
   List.equal Signature_params.equal_param
     merged.Signature.params Signature_params.[ P "x" ]
-  && Effects.cardinal merged.Signature.effects =|= 1
-  && Effects.equal merged.Signature.effects representative.Signature.effects
+  && Effects.equal merged.Signature.effects
+       (Effects.union representative.Signature.effects member.Signature.effects)

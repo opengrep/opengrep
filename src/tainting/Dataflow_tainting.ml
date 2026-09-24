@@ -3261,6 +3261,65 @@ let seed_captured_vars (lang : Lang.t)
         (Lval_env.filter_tainted (fun name -> not (is_captured name)) env)
         captured
 
+(* The globals whose value at a call may differ from their initial one. A
+ * read is left out when constant propagation proved the global holds one
+ * scalar, and when it only names the callee of a call: the function value's
+ * own taint says nothing about the call's result. *)
+let global_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
+  let add_if_global acc (name : IL.name) =
+    match !(name.id_info.id_resolved) with
+    | Some (G.Global, _) -> IL.NameSet.add name acc
+    | _ -> acc
+  in
+  let may_vary (name : IL.name) =
+    match !(name.id_info.id_svalue) with
+    | Some (G.Lit _ | G.Cst _) -> false
+    | Some (G.Sym _ | G.NotCst)
+    | None ->
+        true
+  in
+  LV.reachable_nodes fun_cfg
+  |> Seq.fold_left
+       (fun acc (node : IL.node) ->
+         let written, callee =
+           match node.n with
+           | NInstr ({ i = Call (_, { e = Fetch callee; _ }, _); _ } as instr)
+             ->
+               (Option.to_list (LV.lvar_of_instr_opt instr), Some callee)
+           | NInstr instr -> (Option.to_list (LV.lvar_of_instr_opt instr), None)
+           | _ -> ([], None)
+         in
+         let is_callee (lval : IL.lval) =
+           match callee with
+           | Some ({ base = Var _; rev_offset = [] } as callee) ->
+               phys_equal lval callee
+           | Some _
+           | None ->
+               false
+         in
+         LV.rlvals_of_node node.n
+         |> List.filter_map (fun (lval : IL.lval) ->
+                match lval.base with
+                | Var name when (not (is_callee lval)) && may_vary name ->
+                    Some name
+                | _ -> None)
+         |> List.rev_append written
+         |> List.fold_left add_if_global acc)
+       IL.NameSet.empty
+
+(* While a signature is built, a global stands for the value it has when
+ * the signature is applied. *)
+let seed_global_vars (lang : Lang.t) (globals : IL.NameSet.t)
+    (env : Lval_env.t) : Lval_env.t =
+  IL.NameSet.fold
+    (fun (name : IL.name) env ->
+      Lval_env.add_lval lang
+        { base = Var name; rev_offset = [] }
+        (Taints.singleton
+           (T.taint_of_orig (T.Var { base = T.BGlob name; offset = [] })))
+        env)
+    globals env
+
 let rebound_vars (cfg : IL.cfg) : IL.NameSet.t =
   CFG.NodeiSet.fold
     (fun ni acc ->
