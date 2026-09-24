@@ -89,15 +89,16 @@ type rust_macro_item =
   | MacTree of rust_macro_item list G.bracket
   | MacTreeBis of rust_macro_item list G.bracket * G.ident option * G.tok
 
-let rec macro_items_to_anys (xs : rust_macro_item list) : G.any list =
-  (* A change to how tree sitter parses macro items has led to some nesting in
-   * MacAny macro items. Flatten these before pattern matching below. *)
-  let xs =
-    xs
-    |> List.concat_map (function
-         | MacAny (G.Anys anys) -> anys |> List_.map (fun any -> MacAny any)
-         | other -> [ other ])
-  in
+(* A change to how tree sitter parses macro items has led to some nesting in
+ * MacAny macro items. Flatten these before pattern matching on them. *)
+let flatten_macro_items (xs : rust_macro_item list) : rust_macro_item list =
+  xs
+  |> List.concat_map (function
+    | MacAny (G.Anys anys) -> anys |> List_.map (fun any -> MacAny any)
+    | other -> [ other ])
+
+let rec macro_items_to_anys ~calls (xs : rust_macro_item list) : G.any list =
+  let xs = flatten_macro_items xs in
   (* Note that the commas are considered like any other tokens in a Rust macro;
      * they are not separators between rust_macro_items.
   *)
@@ -124,8 +125,12 @@ let rec macro_items_to_anys (xs : rust_macro_item list) : G.any list =
      where such an argument is either followed by a `.` or prefixed by
      an operator like `&` and `*`, we carry an accumulator argument and
      straightforwardly recurse upon the list.
+     The entries are thunks, forced only once the whole list is known to be
+     expressions, so that a nested macro is converted once, either here or
+     by the fallback below, and not by both.
   *)
-  let rec try_as_normal_exprs acc macros =
+  let rec try_as_normal_exprs (acc : (unit -> G.expr) option) macros :
+      (unit -> G.expr) list option =
     match (acc, macros) with
     (* If we end with a comma, that's pretty weird and probably wrong. *)
     | _, [ MacAny (G.Tk (Tok.OriginTok { str = ","; _ })) ] -> None
@@ -151,8 +156,43 @@ let rec macro_items_to_anys (xs : rust_macro_item list) : G.any list =
         :: MacAny (G.I id)
         :: rest ) ->
         try_as_normal_exprs
-          (Some (G.DotAccess (e, tk, G.FN (Id (id, G.empty_id_info ()))) |> G.e))
+          (Some
+             (fun () ->
+               G.DotAccess (e (), tk, G.FN (Id (id, G.empty_id_info ()))) |> G.e))
           rest
+    (* f(x), x.m(y) *)
+    | Some e, MacTree ((Tok.OriginTok { str = "("; _ } as l), items, r) :: rest
+      when calls ->
+        let* args = try_as_normal_exprs None (flatten_macro_items items) in
+        try_as_normal_exprs
+          (Some
+             (fun () ->
+               G.Call (e (), (l, List_.map (fun arg -> G.Arg (arg ())) args, r))
+               |> G.e))
+          rest
+    (* nested macro, e.g. format!(...) inside vec![...] *)
+    | ( None,
+        MacAny (G.I (s, i1))
+        :: MacAny (G.Tk (Tok.OriginTok { str = "!"; _ } as bang))
+        :: MacTree (l, items, r)
+        :: rest )
+      when calls ->
+        let name =
+          G.Id ((s ^ "!", Tok.combine_toks i1 [ bang ]), G.empty_id_info ())
+        in
+        try_as_normal_exprs
+          (Some
+             (fun () ->
+               G.Call (G.N name |> G.e, (l, macro_args ~calls name items, r))
+               |> G.e))
+          rest
+    (* &mut x, the mut is dropped as for a reference expression outside a
+       macro *)
+    | ( None,
+        (MacAny (G.Tk (Tok.OriginTok { str = "&"; _ })) as amp)
+        :: MacAny (G.I ("mut", _))
+        :: rest ) ->
+        try_as_normal_exprs None (amp :: rest)
     (* For the prefix case, however, we must only handle this if we haven't
        seen an entry, because this should start off the prefix.
     *)
@@ -177,27 +217,63 @@ let rec macro_items_to_anys (xs : rust_macro_item list) : G.any list =
         | e :: es ->
             let* e =
               match str with
-              | "&" -> Some (Ref (tk, e) |> G.e)
-              | "*" -> Some (DeRef (tk, e) |> G.e)
+              | "&" -> Some (fun () -> Ref (tk, e ()) |> G.e)
+              | "*" -> Some (fun () -> DeRef (tk, e ()) |> G.e)
               | _ -> None
             in
             Some (e :: es))
-    | _, mac :: rest ->
+    | None, mac :: rest ->
         let* expr = macro_item_to_expr mac in
-        let* args = try_as_normal_exprs (Some expr) rest in
+        let* args = try_as_normal_exprs (Some (fun () -> expr)) rest in
         Some args
+    (* no comma between entries (macro DSL) *)
+    | Some _, _ :: _ -> None
   in
   match try_as_normal_exprs None xs with
-  | None -> xs |> List_.map macro_item_to_any
-  | Some res -> [ G.Args (List_.map (fun e -> G.Arg e) res) ]
+  (* The body is not an expression list, so it may be any DSL: calls in it
+     stay unparsed, as they are not necessarily run. *)
+  | None -> xs |> List_.map (macro_item_to_any ~calls:false)
+  | Some res -> [ G.Args (List_.map (fun e -> G.Arg (e ())) res) ]
 
-and macro_item_to_any = function
+and macro_call_args (anys : G.any list) : G.argument list =
+  match anys with
+  (* look like a regular function call, just use Arg then *)
+  | [ G.E e ] -> [ G.Arg e ]
+  (* coupling: see `macro_items_to_anys` above *)
+  | [ G.Args args ] -> args
+  | xs -> [ G.OtherArg (("ArgMacro", G.fake ""), xs) ]
+
+(* quote! and parse_quote! emit their tokens as code, they do not run them *)
+and macro_args ~calls (name : G.name) (items : rust_macro_item list) :
+    G.argument list =
+  let s =
+    match name with
+    | G.Id ((s, _), _)
+    | G.IdQualified { name_last = (s, _), _; _ } ->
+        s
+  in
+  let calls =
+    calls
+    &&
+    match s with
+    | "quote!"
+    | "quote_spanned!"
+    | "parse_quote!"
+    | "parse_quote_spanned!" ->
+        false
+    | _ -> true
+  in
+  macro_call_args (macro_items_to_anys ~calls items)
+
+and macro_item_to_any ~calls = function
   | MacAny x -> x
   | MacTree (l, xs, r) ->
-      G.Anys ([ G.Tk l ] @ macro_items_to_anys xs @ [ G.Tk r ])
+      G.Anys ([ G.Tk l ] @ macro_items_to_anys ~calls xs @ [ G.Tk r ])
   | MacTreeBis ((l, xs, r), idopt, t) ->
       G.Anys
-        ([ G.Tk l ] @ macro_items_to_anys xs @ [ G.Tk r ]
+        ([ G.Tk l ]
+        @ macro_items_to_anys ~calls xs
+        @ [ G.Tk r ]
         @ (match idopt with
           | None -> []
           | Some id -> [ G.I id ])
@@ -1030,7 +1106,7 @@ and map_attribute (env : env) tok ((v1, v2) : CST.attribute) : G.attribute =
   | None -> NamedAttr (tok, name, fb [])
   | Some (`Delim_tok_tree x) -> (
       let l, macro_items, r = map_delim_token_tree env x in
-      match macro_items_to_anys macro_items with
+      match macro_items_to_anys ~calls:true macro_items with
       | [ G.Args args ] -> NamedAttr (tok, name, (l, args, r))
       | anys ->
           (* TODO Should these each be an individual arg? *)
@@ -2251,15 +2327,7 @@ and map_macro_invocation (env : env) ((v1, v2, v3) : CST.macro_invocation) :
         G.IdQualified { qualified_info with name_last = ((s, t), topt) }
   in
   let l, xs, r = map_delim_token_tree env v3 in
-  let anys = macro_items_to_anys xs in
-  let args =
-    match anys with
-    (* look like a regular function call, just use Arg then *)
-    | [ G.E e ] -> [ G.Arg e ]
-    (* coupling: see `macro_items_to_anys` above *)
-    | [ G.Args args ] -> args
-    | xs -> [ G.OtherArg (("ArgMacro", G.fake ""), xs) ]
-  in
+  let args = macro_args ~calls:true name xs in
   G.Call (G.N name |> G.e, (l, args, r)) |> G.e
 
 and map_match_arm (env : env) ((v1, v2, v3, v4) : CST.match_arm) :
