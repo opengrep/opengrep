@@ -681,7 +681,8 @@ and parent = function
 and class_ { c_extends; c_implements; c_body; c_kind; c_attrs } =
   let cextends = list parent c_extends in
   let v2 = bracket (list property) c_body in
-  (* a class's [constructor] method is its constructor *)
+  (* a class's [constructor] method is its constructor; a static method of
+   * that name is an ordinary method *)
   let v2 =
     let l, fields, r = v2 in
     ( l,
@@ -695,7 +696,9 @@ and class_ { c_extends; c_implements; c_body; c_kind; c_attrs } =
                          ent),
                         (G.FuncDef _ as def) );
                   _;
-                } as st) ->
+                } as st)
+             when not (AST_generic_helpers.has_keyword_attr G.Static ent.G.attrs)
+             ->
                G.F
                  {
                    st with

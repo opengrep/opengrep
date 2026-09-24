@@ -148,6 +148,8 @@ type scope_info = {
   entname : resolved_name;
   (* variable type, if known *)
   enttype : type_ option;
+  (* declared in a class body: a member of the class, static or not *)
+  member : bool;
 }
 
 type namespace =
@@ -214,7 +216,7 @@ let add_ident_global_scope id resolved scopes =
 
 (* for JS 'var' *)
 let _add_ident_function_scope _id _resolved _scopes = raise Todo
-let untyped_ent name = { entname = name; enttype = None }
+let untyped_ent name = { entname = name; enttype = None; member = false }
 
 let rec find_in_scope_where (ns : namespace) (s : string)
     (p : scope_info -> bool) (xs : scope) : scope_info option =
@@ -229,24 +231,17 @@ let find_in_scope (ns : namespace) (s : string) (xs : scope) :
     scope_info option =
   find_in_scope_where ns s (fun _ -> true) xs
 
-(* [members]: whether the lookup may find a class member ([EnclosedVar]). *)
+(* [members]: whether the lookup may find a class member. *)
 let rec lookup_namespace ?(members = true) ~(class_attr : bool) (ns : namespace)
     (s : string) (xxs : scope list) : scope_info option =
-  let visible (res : scope_info) =
-    members
-    ||
-    match res.entname with
-    | EnclosedVar, _ -> false
-    | _ -> true
-  in
+  let visible (res : scope_info) = members || not res.member in
   match xxs with
   | [] -> None
   | xs :: xxs -> (
       match find_in_scope_where ns s visible xs with
       | None -> lookup_namespace ~members ~class_attr ns s xxs
-      | Some res when class_attr -> (
-          match res.entname with
-          | EnclosedVar, _ -> Some res
+      | Some res when class_attr ->
+          if res.member then Some res
           (* If we are looking for a class attribute, and we encounter something
            * else, e.g. a 'Parameter', then we should keep looking. This happens
            * e.g. in this situation:
@@ -259,7 +254,7 @@ let rec lookup_namespace ?(members = true) ~(class_attr : bool) (ns : namespace)
            *         }
            *     }
            *)
-          | __else__ -> lookup_namespace ~members ~class_attr ns s xxs)
+          else lookup_namespace ~members ~class_attr ns s xxs
       | Some res -> Some res)
 
 (* see also lookup_scope_opt below taking as a parameter the environment *)
@@ -371,6 +366,13 @@ let top_context env =
   match !(env.ctx) with
   | [] -> raise Impossible
   | x :: _xs -> x
+
+let in_class env =
+  match top_context env with
+  | InClass -> true
+  | AtToplevel
+  | InFunction ->
+      false
 
 let set_resolved env id_info x =
   (* TODO? maybe do it only if we have something better than what the
@@ -686,7 +688,7 @@ let params_of_parameters env params : scope =
        | ParamHashSplat (_, { pname = Some id; pinfo = id_info; ptype = typ; _ })
          ->
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
-           let resolved = { entname = (Parameter, sid); enttype = typ } in
+           let resolved = { entname = (Parameter, sid); enttype = typ; member = false } in
            set_resolved env id_info resolved;
            Some (var_key id, resolved)
        (* Destructuring parameter: the synthetic [parameter_classic]
@@ -698,7 +700,7 @@ let params_of_parameters env params : scope =
         * function scope and visits each pattern. *)
        | ParamPattern (_pat, { pname = Some id; pinfo = id_info; ptype = typ; _ }) ->
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
-           let resolved = { entname = (Parameter, sid); enttype = typ } in
+           let resolved = { entname = (Parameter, sid); enttype = typ; member = false } in
            set_resolved env id_info resolved;
            Some (var_key id, resolved)
        (* Ruby [&callback] block parameter and PHP [&$var] by-reference
@@ -716,7 +718,7 @@ let params_of_parameters env params : scope =
                | Lang.Ruby | Lang.Php -> true
                | _ -> false) ->
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
-           let resolved = { entname = (Parameter, sid); enttype = typ } in
+           let resolved = { entname = (Parameter, sid); enttype = typ; member = false } in
            set_resolved env id_info resolved;
            Some (var_key id, resolved)
        | _ -> None)
@@ -781,7 +783,9 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
       | InClass, true -> (Global, add_ident_current_scope)
       | _ -> (resolved_name_kind env lang, add_ident_current_scope)
   in
-  let resolved = { entname = (name_kind, sid); enttype = resolved_type } in
+  let resolved =
+    { entname = (name_kind, sid); enttype = resolved_type; member = in_class env }
+  in
   add_ident_to_its_scope id resolved env.names;
   set_resolved env id_info resolved
 
@@ -794,7 +798,7 @@ let declare_func env lang (id : ident) id_info (frettype : type_ option) =
           ( resolved_name_kind env lang,
             SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) )
         in
-        let resolved = { entname; enttype = frettype } in
+        let resolved = { entname; enttype = frettype; member = in_class env } in
         add_func_ident_current_scope id resolved env.names;
         resolved
   in
@@ -1162,12 +1166,18 @@ class ['self] resolve_visitor env lang =
                  the field's type is what a use of the name carries. *)
               let binding, enttype =
                 match lookup (fst id) [ scope ] with
-                | Some { entname = _, bound; enttype } ->
+                | Some { entname = _, bound; enttype; _ } ->
                     (SId.to_int bound, enttype)
                 | None -> (fresh_binding env, None)
               in
               let sid = SId.of_tok ~binding ~file:env.file (snd id) in
-              let resolved = { entname = (resolved_name_kind env lang, sid); enttype } in
+              let resolved =
+                {
+                  entname = (resolved_name_kind env lang, sid);
+                  enttype;
+                  member = in_class env;
+                }
+              in
               add_to_scope id resolved env.names;
               set_resolved env id_info resolved));
           super#visit_definition venv x
@@ -1542,7 +1552,7 @@ class ['self] resolve_visitor env lang =
            * would handle shadowing of fields from locals, etc. but it's
            * a start.
            *)
-          | Some ({ entname = EnclosedVar, _sid; _ } as resolved) ->
+          | Some ({ member = true; _ } as resolved) ->
               set_resolved env id_info resolved;
               recurse := false
           | _ ->

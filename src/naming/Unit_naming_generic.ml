@@ -107,6 +107,23 @@ let check_uses_shadow_def ast name =
                    (AST_generic.SId.to_string sid)
              | _ -> ())
 
+(* Every use of [name] binds the [n]th definition of that name (from 0, in
+   source order). *)
+let check_uses_bind_nth_def ast name n =
+  match List.nth_opt (def_sids_of_name ast name) n with
+  | None -> Alcotest.failf "no definition #%d named '%s' found" n name
+  | Some def_sid -> (
+      match resolutions_of_name ast name with
+      | [] -> Alcotest.failf "no uses of '%s'" name
+      | resolutions ->
+          resolutions
+          |> List.iteri (fun i resolution ->
+                 match resolution with
+                 | Some (_kind, sid) when AST_generic.SId.equal sid def_sid -> ()
+                 | _ ->
+                     Alcotest.failf "use #%d of '%s' does not bind definition #%d"
+                       i name n))
+
 (* All resolved uses of [name] refer to one and the same binding (sid). *)
 let check_single_binding ast name =
   let sids =
@@ -408,6 +425,16 @@ let tests parse_program =
                  (* [x] in the method is the module's [x], not the field *)
                  check_resolutions ast "x" [ "Global"; "Global" ];
                  check_single_binding ast "x"));
+      t "js and ts static members are reached only through the class" (fun () ->
+          [ ("naming/js/static_member_not_in_scope.js", Lang.Js);
+            ("naming/js/static_member_not_in_scope.ts", Lang.Ts) ]
+          |> List.iter (fun (path, lang) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve lang ast;
+                 (* [x] in the methods is the module's [x], not the static
+                  * field, which is also a global *)
+                 check_uses_bind_nth_def ast "x" 0));
       t "cpp capture lists refer to the enclosing variables" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/cpp/lambda_captures.cpp")

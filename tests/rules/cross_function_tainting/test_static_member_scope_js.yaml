@@ -1,0 +1,13 @@
+rules:
+  - id: test-static-member-scope-js
+    message: a name used without this in a method is not a class member
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
