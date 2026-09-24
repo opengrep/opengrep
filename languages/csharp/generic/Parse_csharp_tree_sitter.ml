@@ -1100,6 +1100,17 @@ and argument (env : env) (x : CST.argument) : G.argument =
       let id = str env v1 in
       G.Arg (N (H2.name_of_id id) |> G.e)
 
+(* [new T(args) { X = v, ... }]: the construction with its initializer. *)
+and object_initializer (env : env) (construction : expr)
+    (init : CST.initializer_expression option) : expr =
+  match init with
+  | None -> construction
+  | Some x ->
+      let l, entries, _r = initializer_expression env x in
+      G.OtherExpr
+        (("ObjectInitializer", l), G.E construction :: List_.map (fun e -> G.E e) entries)
+      |> G.e
+
 and initializer_expression (env : env)
     ((v1, v2, v3, v4) : CST.initializer_expression) : expr list G.bracket =
   let v1 = token env v1 (* "{" *) in
@@ -1369,14 +1380,8 @@ and expression_statement_expression (env : env)
         | Some x -> argument_list env x
         | None -> fb []
       in
-      let v4 =
-        match v4 with
-        | Some x -> initializer_expression env x
-        | None -> fb []
-      in
-      let lp, v3', rp = v3 in
-      let args = (lp, v3' @ [ Arg (Container (Tuple, v4) |> G.e) ], rp) in
-      New (v1, v2, empty_id_info (), args) |> G.e
+      let construction = New (v1, v2, empty_id_info (), v3) |> G.e in
+      object_initializer env construction v4
   | `Paren_exp x -> parenthesized_expression env x
 
 and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
@@ -1496,16 +1501,9 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
   | `Impl_obj_crea_exp (v1, v2, v3) ->
       let v1 = token env v1 (* "new" *) in
       let v2 = argument_list env v2 in
-      let v3 =
-        match v3 with
-        | Some x -> initializer_expression env x
-        | None -> fb []
-      in
-      let lp, v2', rp = v2 in
-      let args = (lp, v2' @ [ Arg (Container (Tuple, v3) |> G.e) ], rp) in
       (* old: was New *)
       let e = G.OtherExpr (("NewNoType", v1), []) |> G.e in
-      Call (e, args) |> G.e
+      object_initializer env (Call (e, v2) |> G.e) v3
   | `Impl_stack_alloc_array_crea_exp (v1, v2, v4, v5) ->
       let _v1 = token env v1 (* "stackalloc" *) in
       let _v2 = token env v2 (* "[" *) in

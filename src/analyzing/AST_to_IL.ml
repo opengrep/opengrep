@@ -2478,6 +2478,60 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.OtherExpr (("PipelineCall", _tk), [ G.E inner ])
     when env.lang =*= Lang.Elixir || env.lang =*= Lang.Php ->
       expr env inner
+  (* [new T(args) { X = v, ... }]: the construction, then a field write per
+   * [X = v] entry; other entries (a collection's elements) are passed to the
+   * construction as arguments. *)
+  | G.OtherExpr (("ObjectInitializer", tok), G.E construction :: entries) ->
+      let field_init (entry : G.any) : (G.ident * G.expr) option =
+        match entry with
+        | G.E
+            {
+              e =
+                ( G.AssignOp ({ e = G.N (G.Id (id, _)); _ }, _, v)
+                | G.Assign ({ e = G.N (G.Id (id, _)); _ }, _, v) );
+              _;
+            } ->
+            Some (id, v)
+        | _ -> None
+      in
+      let field_inits = List.filter_map field_init entries in
+      let elements =
+        entries
+        |> List.filter_map (fun (entry : G.any) ->
+               match (field_init entry, entry) with
+               | None, G.E e -> Some (G.Arg e)
+               | _ -> None)
+      in
+      let construction =
+        match (elements, construction.e) with
+        | [], _ -> construction
+        | _, G.New (t, ty, info, (l, args, r)) ->
+            { construction with e = G.New (t, ty, info, (l, args @ elements, r)) }
+        | _, G.Call (f, (l, args, r)) ->
+            { construction with e = G.Call (f, (l, args @ elements, r)) }
+        | _ -> construction
+      in
+      let ss_obj, obj = expr env construction in
+      let lval = fresh_lval env tok in
+      let assign_obj = mk_s (Instr (mk_i (Assign (lval, obj)) eorig)) in
+      let ss_fields =
+        field_inits
+        |> List.concat_map (fun ((id : G.ident), (v : G.expr)) ->
+               let ss_v, v = expr env v in
+               let field : name =
+                 {
+                   ident = id;
+                   sid = G.SId.unsafe_default;
+                   id_info = G.empty_id_info ();
+                 }
+               in
+               let field_lval =
+                 { lval with rev_offset = [ { o = Dot field; oorig = NoOrig } ] }
+               in
+               ss_v
+               @ [ mk_s (Instr (mk_i (Assign (field_lval, v)) (related_tok (snd id)))) ])
+      in
+      (ss_obj @ [ assign_obj ] @ ss_fields, mk_e (Fetch lval) NoOrig)
   (* The idea here is that this is like a block, and we only
    * really care about the last expression. *)
   (* TODO: What if a statement creeps in? E.g. an If, `fn`..?
