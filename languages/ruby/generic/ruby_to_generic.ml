@@ -99,6 +99,19 @@ let rec mark_static_defs (t : Tok.t) (st : G.stmt) : G.stmt =
       |> G.s
   | _ -> st
 
+(* A class's [initialize] method is its constructor. *)
+let rec mark_ctor (st : G.stmt) : G.stmt =
+  match st.G.s with
+  | G.Block (l, stmts, r) -> G.Block (l, List_.map mark_ctor stmts, r) |> G.s
+  | G.DefStmt
+      (({ name = G.EN (G.Id (("initialize", tok), _)); _ } as ent),
+       (G.FuncDef _ as def_kind)) ->
+      G.DefStmt
+        ({ ent with G.attrs = ent.G.attrs @ [ G.KeywordAttr (G.Ctor, tok) ] },
+         def_kind)
+      |> G.s
+  | _ -> st
+
 let rec expr e =
   (match e with
   | Literal x -> literal x
@@ -865,7 +878,7 @@ and definition def =
               cimplements = [];
               cmixins = [];
               cparams = fb [];
-              cbody = fb [ G.F body ];
+              cbody = fb [ G.F (mark_ctor body) ];
             }
           in
           G.DefStmt (ent, G.ClassDef def) |> G.s

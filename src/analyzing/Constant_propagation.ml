@@ -74,11 +74,21 @@ type class_stats = { mutable num_constructors : int }
 
 type stats = {
   var_stats : (Eval.var, lr_stats) Hashtbl.t;
-  class_stats : (string, class_stats) Hashtbl.t;
+  (* by class, identified by its name and the line and column of its
+   * declaration *)
+  class_stats : (string * int * int, class_stats) Hashtbl.t;
+  (* the fields written through a receiver other than [this], by name: the
+   * receiver's class is not known, so no field of that name is assigned
+   * once *)
+  fields_written_elsewhere : (string, unit) Hashtbl.t;
 }
 
 let new_stats () =
-  { var_stats = Hashtbl.create 100; class_stats = Hashtbl.create 1 }
+  {
+    var_stats = Hashtbl.create 100;
+    class_stats = Hashtbl.create 1;
+    fields_written_elsewhere = Hashtbl.create 8;
+  }
 
 (*****************************************************************************)
 (* Helpers *)
@@ -89,6 +99,58 @@ let ( let/ ) o f = Option.iter f o
 let is_private attr =
   match attr with
   | KeywordAttr (Private, _) -> true
+  | _ -> false
+
+(* A modifier the front end keeps as written, e.g. C#'s [partial] or VB's
+ * [Friend]. *)
+let has_modifier (m : string) (attrs : attribute list) : bool =
+  attrs
+  |> List.exists (function
+       | NamedAttr (_, Id ((s, _), _), _)
+       | OtherAttribute ((s, _), _) ->
+           String.equal (String.lowercase_ascii s) m
+       | _ -> false)
+
+let is_static (attrs : attribute list) : bool = H.has_keyword_attr Static attrs
+
+(* Assigned only while the object or the class is being constructed, as the
+ * language guarantees. *)
+let is_immutable (attrs : attribute list) : bool =
+  H.has_keyword_attr Const attrs || H.has_keyword_attr Final attrs
+
+(* Whether the language guarantees that a private member [name] can be
+ * written only by its own class, all of which is in this file. C#, VB and
+ * Apex members are private unless declared otherwise; a partial class can
+ * have parts in other files. *)
+let private_to_class (lang : Lang.t) (class_attrs : attribute list)
+    (name : string) (attrs : attribute list) : bool =
+  match lang with
+  | Lang.Java
+  | Lang.Kotlin
+  | Lang.Solidity ->
+      List.exists is_private attrs
+  | Lang.Csharp
+  | Lang.Vb
+  | Lang.Apex ->
+      (not (has_modifier "partial" class_attrs))
+      && (List.exists is_private attrs
+         || not
+              (H.has_keyword_attr Public attrs
+              || H.has_keyword_attr Protected attrs
+              || has_modifier "internal" attrs
+              || has_modifier "friend" attrs))
+  | Lang.Js
+  | Lang.Ts ->
+      String.starts_with ~prefix:"#" name
+  | _ -> false
+
+(* A class member: a field, or a static member, which resolves as a
+ * global. *)
+let is_class_member (kind : resolved_name_kind) (attrs : attribute list) : bool
+    =
+  match kind with
+  | EnclosedVar -> true
+  | Global -> is_static attrs
   | _ -> false
 
 (* TODO: incomplete, e.g. Record is not handled *)
@@ -142,20 +204,6 @@ let no_cycles_in_sym_prop sid exp =
 (* Environment Helpers *)
 (*****************************************************************************)
 
-let is_class_field env = function
-  | EnclosedVar (* OSS *)
-  | GlobalName _ (* Pro *) ->
-      Eval.is_lang env Lang.Java
-  | Global
-  | LocalVar
-  | Parameter
-  | ImportedEntity _
-  | ImportedModule _
-  | TypeName
-  | Macro
-  | EnumConstant ->
-      false
-
 let is_resolved_name _kind sid = not (SId.is_unsafe_default sid)
 
 let add_constant_env ident (sid, svalue) (env : Eval.env) =
@@ -177,23 +225,28 @@ let is_assigned_just_once stats var =
           m ~tags "No stats for (%s,%s)" id_str (G.SId.show sid));
       false
 
+let class_key ((cstr, tok) : ident) : string * int * int =
+  match Tok.loc_of_tok tok with
+  | Ok loc -> (cstr, loc.pos.line, loc.pos.column)
+  | Error _ -> (cstr, 0, 0)
+
 let incr_num_constructors stats cid =
   let stats_cid =
-    let cstr, _tok = cid in
-    try Hashtbl.find stats.class_stats cstr with
+    let key = class_key cid in
+    try Hashtbl.find stats.class_stats key with
     | Not_found ->
         let stats_cid = { num_constructors = 0 } in
         (* XXX: Could we change this to [replace]? *)
-        Hashtbl.add stats.class_stats cstr stats_cid;
+        Hashtbl.add stats.class_stats key stats_cid;
         stats_cid
   in
   stats_cid.num_constructors <- stats_cid.num_constructors + 1
 
-let has_just_one_constructor stats cstr =
-  match Hashtbl.find stats cstr with
+let has_just_one_constructor stats cid =
+  match Hashtbl.find stats (class_key cid) with
   | stats -> Int.equal stats.num_constructors 1
   | exception Not_found ->
-      Log.debug (fun m -> m ~tags "No stats for %s" cstr);
+      Log.debug (fun m -> m ~tags "No stats for %s" (fst cid));
       false
 
 let constant_propagation_and_evaluate_literal ?lang =
@@ -236,7 +289,7 @@ class ['self] stats_of_prog_visitor =
               Log.warn (fun m ->
                   m "stats_of_prog: in constructor but not in class");
               ()
-          | Some cid -> incr_num_constructors env cid)
+          | Some { cid; _ } -> incr_num_constructors env cid)
       | ( {
             name =
               EN
@@ -273,6 +326,11 @@ class ['self] stats_of_prog_visitor =
       (match x.e with
       | Assign (* v = ... *) (lhs, _, _e2)
       | AssignOp (* v += ... *) (lhs, _, _e2) ->
+          (match lhs.e with
+          | DotAccess ({ e = IdSpecial ((This | Self), _); _ }, _, _) -> ()
+          | DotAccess (_, _, FN (Id ((fname, _), _))) ->
+              Hashtbl.replace env.fields_written_elsewhere fname ()
+          | _ -> ());
           (* TODO: What if there is an asignment inside the `lhs` ? *)
           lvars_in_lhs lhs
           |> List.iter (fun (id, sid) ->
@@ -426,11 +484,23 @@ let add_special_constants env lang prog =
 (*****************************************************************************)
 
 class ['self] propagate_basic_visitor lang stats =
-  object (_self : 'self)
+  object (self : 'self)
     inherit [_] Iter_with_context.iter_with_context as super
 
     val lang = lang
     val stats = stats
+
+    (* A class member only its own code can write, and none written through
+     * another receiver. *)
+    method private member_written_only_by_class ctx kind attrs name =
+      let class_attrs =
+        match ctx.Iter_with_context.in_class with
+        | Some { cattrs; _ } -> cattrs
+        | None -> []
+      in
+      is_class_member kind attrs
+      && (not (Hashtbl.mem stats.fields_written_elsewhere name))
+      && private_to_class lang class_attrs name attrs
     
     (* the defs *)
     method! visit_definition ((env : Eval.env), ctx) x =
@@ -458,7 +528,7 @@ class ['self] propagate_basic_visitor lang stats =
                 (Id
                   ( id,
                     {
-                      id_resolved = { contents = Some (_kind, sid) };
+                      id_resolved = { contents = Some (kind, sid) };
                       id_flags;
                       _;
                     } ));
@@ -472,11 +542,12 @@ class ['self] propagate_basic_visitor lang stats =
             is_assigned_just_once stats.var_stats (H.str_of_ident id, sid)
           in
           if
-            H.has_keyword_attr Const attrs
-            || H.has_keyword_attr Final attrs
-            || (assigned_just_once && Eval.is_js env)
-            || assigned_just_once && Eval.is_lang env Lang.Java
-               && List.exists is_private attrs
+            is_immutable attrs
+            (* a JS variable, not a class field *)
+            || assigned_just_once && Eval.is_js env
+               && not (is_class_member kind attrs)
+            || assigned_just_once
+               && self#member_written_only_by_class ctx kind attrs (fst id)
           then (
             id_flags := IdFlags.set_final !id_flags;
             match (Eval.eval env e, e.e) with
@@ -565,29 +636,43 @@ class ['self] propagate_basic_visitor lang stats =
             _,
             rexp ) ->
           let opt_svalue = Eval.eval env rexp in
-          let is_private_class_field =
-            match Hashtbl.find env.attributes (fst id, sid) with
-            | exception Not_found -> false
-            | attrs ->
-                List.exists is_private attrs && is_class_field env kind
-          in
-          let in_unique_constructor =
-            match ctx.in_class with
+          (* the declaration's attributes, stored when it has no initialiser *)
+          let decl_attrs = Hashtbl.find_opt env.attributes (fst id, sid) in
+          (* a member assigned once, where it is constructed: a static member
+           * in a static initialiser, an instance member in an instance
+           * initialiser or the class's only constructor *)
+          let constant_member =
+            match decl_attrs with
             | None -> false
-            | Some cid ->
-                ctx.in_constructor
-                && has_just_one_constructor stats.class_stats (fst cid)
+            | Some attrs ->
+                let in_construction =
+                  if is_static attrs then ctx.in_static_block
+                  else
+                    ctx.in_instance_init
+                    ||
+                    match ctx.in_class with
+                    | None -> false
+                    | Some { cid; _ } ->
+                        ctx.in_constructor
+                        && has_just_one_constructor stats.class_stats cid
+                in
+                in_construction
+                && (is_immutable attrs
+                   || self#member_written_only_by_class ctx kind attrs
+                        (fst id))
+          in
+          let module_global =
+            (Eval.is_lang env Lang.Python
+            || Eval.is_lang env Lang.Ruby || Eval.is_lang env Lang.Php
+            || Eval.is_js env)
+            && H.name_is_global kind
+            && not
+                 (is_class_member kind (Option.value decl_attrs ~default:[]))
           in
           if
             is_assigned_just_once stats.var_stats (H.str_of_ident id, sid)
             (* restricted to prevent unexpected const-prop FPs *)
-            && ((Eval.is_lang env Lang.Python
-                || Eval.is_lang env Lang.Ruby || Eval.is_lang env Lang.Php
-                || Eval.is_js env)
-                && H.name_is_global kind
-               (* TODO: Add other Java-like OO languages, maybe Apex and C# ? *)
-               || Eval.is_lang env Lang.Java && is_private_class_field
-                  && (ctx.in_static_block || in_unique_constructor))
+            && (module_global || constant_member)
             && is_resolved_name kind sid
           then (
             id_flags := IdFlags.set_final !id_flags;

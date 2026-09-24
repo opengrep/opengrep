@@ -815,9 +815,10 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
           in
           (ent, ClassDef cdef) |> G.fld
       | `Anon_init (v1, v2) ->
-          let _v1 = token env v1 (* "init" *) in
+          let v1 = token env v1 (* "init" *) in
           let v2 = block env v2 in
-          F v2
+          (* an instance initialiser, run as part of every constructor *)
+          F (G.OtherStmtWithStmt (G.OSWS_Block ("Init", v1), [], v2) |> G.s)
       | `Seco_cons (v1, v2, v3, v4, v5) ->
           let v1 = modifiers_opt env v1 in
           let v2 = str env v2 (* "constructor" *) in
@@ -835,7 +836,9 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
             | Some x -> G.FBStmt (block env x)
             | None -> G.FBDecl G.sc
           in
-          let ent = G.basic_entity v2 ~attrs:v1 in
+          let ent =
+            G.basic_entity v2 ~attrs:(v1 @ [ G.KeywordAttr (G.Ctor, snd v2) ])
+          in
           let def =
             { fkind = (Method, snd v2); fparams; frettype = None; fcaptures = G.no_captures; fbody }
           in

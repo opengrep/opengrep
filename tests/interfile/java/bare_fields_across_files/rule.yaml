@@ -1,0 +1,14 @@
+rules:
+  - id: bare-fields-across-files-java
+    languages: [java]
+    severity: ERROR
+    message: >
+      A field written by its bare name in one class is written for callers in
+      other files.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -15,10 +15,21 @@
 
 module G = AST_generic
 
+type class_context = {
+  cid : G.ident;
+  cattrs : G.attribute list;
+  ckind : G.class_kind;
+}
+
 type context = {
-  in_class : G.ident option;
+  in_class : class_context option;
+  (* code that runs once, before the class is used: a static initialiser *)
   in_static_block : bool;
+  (* code that runs once per object, as part of constructing it: a
+   * constructor or an instance initialiser *)
   in_constructor : bool;
+  (* an instance initialiser, which runs whatever constructor is used *)
+  in_instance_init : bool;
   in_lvalue : bool;
 }
 
@@ -27,8 +38,25 @@ let initial_context =
     in_class = None;
     in_static_block = false;
     in_constructor = false;
+    in_instance_init = false;
     in_lvalue = false;
   }
+
+(* code that does not run as part of the enclosing construction *)
+let outside_construction ctx =
+  {
+    ctx with
+    in_static_block = false;
+    in_constructor = false;
+    in_instance_init = false;
+  }
+
+let has_keyword (kw : G.keyword_attribute) (attrs : G.attribute list) : bool =
+  List.exists
+    (function
+      | G.KeywordAttr (k, _) -> G.equal_keyword_attribute k kw
+      | _ -> false)
+    attrs
 
 (* In principle you should just override the 'visit_xyz' methods and call
  * 'super#visit_xyz' to recurse, so you could mostly ignore the
@@ -51,19 +79,28 @@ class virtual ['self] iter_with_context =
 
     method! visit_definition (env, ctx) x =
       match x with
-      | { name = EN (Id (id, _ii)); _ }, ClassDef _cdef ->
-          self#with_context_visit_definition
-            (env, { ctx with in_class = Some id })
-            x
-      | { name = EN (Id (id, _ii)); _ }, FuncDef _fdef -> (
-          match ctx.in_class with
-          | Some in_class_id when fst in_class_id = fst id ->
-              self#with_context_visit_definition
-                (env, { ctx with in_constructor = true })
-                x
-          | Some _
-          | None ->
-              self#with_context_visit_definition (env, ctx) x)
+      | { name = EN (Id (id, _ii)); attrs; _ }, ClassDef cdef ->
+          let ctx =
+            {
+              (outside_construction ctx) with
+              in_class = Some { cid = id; cattrs = attrs; ckind = fst cdef.ckind };
+              (* the body of a singleton object runs once, as a static
+               * initialiser (Kotlin companion objects, Scala objects) *)
+              in_static_block = G.equal_class_kind (fst cdef.ckind) G.Object;
+            }
+          in
+          self#with_context_visit_definition (env, ctx) x
+      | { attrs; _ }, FuncDef _fdef ->
+          let ctx = outside_construction ctx in
+          let ctx =
+            if has_keyword G.Ctor attrs then
+              if has_keyword G.Static attrs then
+                (* a static constructor (C#, VB) is a static initialiser *)
+                { ctx with in_static_block = true }
+              else { ctx with in_constructor = true }
+            else ctx
+          in
+          self#with_context_visit_definition (env, ctx) x
       | __else__ -> self#with_context_visit_definition (env, ctx) x
 
     method with_context_visit_stmt (env, ctx) x = super#visit_stmt (env, ctx) x
@@ -72,7 +109,16 @@ class virtual ['self] iter_with_context =
       match x.s with
       | OtherStmtWithStmt (OSWS_Block ("Static", _), [], _block) ->
           self#with_context_visit_stmt
-            (env, { ctx with in_static_block = true })
+            (env, { (outside_construction ctx) with in_static_block = true })
+            x
+      | OtherStmtWithStmt (OSWS_Block ("Init", _), [], _block) ->
+          self#with_context_visit_stmt
+            ( env,
+              {
+                (outside_construction ctx) with
+                in_constructor = true;
+                in_instance_init = true;
+              } )
             x
       | __else__ -> self#with_context_visit_stmt (env, ctx) x
 
@@ -94,5 +140,8 @@ class virtual ['self] iter_with_context =
              position (e.g. `*(p = q) = v`, `(x = obj).prop = v`), its RHS is
              a pure read *)
           self#visit_expr (env, { ctx with in_lvalue = false }) e2
+      (* a lambda's body runs when it is called, not where it is written *)
+      | Lambda _ ->
+          self#with_context_visit_expr (env, outside_construction ctx) x
       | __else__ -> self#with_context_visit_expr (env, ctx) x
   end

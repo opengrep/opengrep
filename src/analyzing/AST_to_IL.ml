@@ -2243,8 +2243,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       (ss_e2 @ ss_assign, result)
   | G.AssignOp (e1, (G.Eq, tok), e2) ->
       (* AsssignOp(Eq) is used to represent plain assignment in some languages,
-       * e.g. Go's `:=` is represented as `AssignOp(Eq)`, and C#'s assignments
-       * are all represented this way too. *)
+       * e.g. Go's `:=` is represented as `AssignOp(Eq)`. *)
       let ss_e2, exp = expr env e2 in
       let ss_assign, result = assign env ~g_expr e1 tok exp in
       (ss_e2 @ ss_assign, result)

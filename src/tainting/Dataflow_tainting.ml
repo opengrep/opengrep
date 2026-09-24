@@ -3327,7 +3327,7 @@ let seed_captured_vars (lang : Lang.t)
 
 (* The globals whose value at a call may differ from their initial one. A
  * read is left out when constant propagation proved the global holds one
- * scalar, and when it only names the callee of a call: the function value's
+ * scalar, and when the global is only the callee of a call: the function value's
  * own taint says nothing about the call's result. *)
 let global_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
   let add_if_global acc (name : IL.name) =
@@ -3443,7 +3443,7 @@ let copied_params ~(lang : Lang.t) ~(is_value_type : string -> bool)
  * reaches the caller from a parameter or receiver that holds a copy. *)
 let caller_sees_update (params : IL.param list) (rebound : IL.NameSet.t)
     (copied : IL.NameSet.t) (lval : T.lval) : bool =
-  let own_param_named (name : string) =
+  let own_param_with_name (name : string) =
     List.find_opt
       (fun (p : IL.param) ->
         match IL_helpers.pname_of_param p with
@@ -3458,7 +3458,7 @@ let caller_sees_update (params : IL.param list) (rebound : IL.NameSet.t)
   in
   match (lval.base, lval.offset) with
   | T.BArg arg, _ when Option.fold ~none:false ~some:copied_param
-                         (own_param_named arg.name) ->
+                         (own_param_with_name arg.name) ->
       false
   | T.BThis, _
     when List.exists

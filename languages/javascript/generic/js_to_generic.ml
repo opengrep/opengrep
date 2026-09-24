@@ -681,6 +681,35 @@ and parent = function
 and class_ { c_extends; c_implements; c_body; c_kind; c_attrs } =
   let cextends = list parent c_extends in
   let v2 = bracket (list property) c_body in
+  (* a class's [constructor] method is its constructor *)
+  let v2 =
+    let l, fields, r = v2 in
+    ( l,
+      fields
+      |> List_.map (function
+           | G.F
+               ({
+                  s =
+                    G.DefStmt
+                      ( ({ name = G.EN (G.Id (("constructor", tok), _)); _ } as
+                         ent),
+                        (G.FuncDef _ as def) );
+                  _;
+                } as st) ->
+               G.F
+                 {
+                   st with
+                   s =
+                     G.DefStmt
+                       ( {
+                           ent with
+                           G.attrs = ent.G.attrs @ [ G.KeywordAttr (G.Ctor, tok) ];
+                         },
+                         def );
+                 }
+           | fld -> fld),
+      r )
+  in
   let attrs = list attribute c_attrs in
   let cimplements = list type_ c_implements in
   ( {

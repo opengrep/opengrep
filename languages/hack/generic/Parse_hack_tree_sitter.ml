@@ -1784,7 +1784,12 @@ and method_declaration (env : env) ((v1, v2, v3, v4) : CST.method_declaration) =
   let func_def, identifier, type_args = function_declaration_header env v3 in
   let v4 = inline_compound_statement env v4 in
   let def = { func_def with fbody = G.FBStmt v4 } in
-  let ent = basic_typed_entity identifier (v1 @ v2) type_args in
+  let ctor =
+    if String.equal (String.lowercase_ascii (fst identifier)) "__construct"
+    then [ G.KeywordAttr (G.Ctor, snd identifier) ]
+    else []
+  in
+  let ent = basic_typed_entity identifier (v1 @ v2 @ ctor) type_args in
   G.DefStmt (ent, G.FuncDef def)
 
 and parameter (env : env) (x : CST.parameter) : G.parameter =

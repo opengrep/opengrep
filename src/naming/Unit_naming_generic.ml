@@ -354,7 +354,7 @@ let tests parse_program =
           (* a labelled declaration declares in the enclosing block *)
           check_resolutions ast "e" [ "LocalVar" ];
           check_resolutions ast "e2" [ "LocalVar" ]);
-      t "go rest parameters bind their uses, not a same-named field" (fun () ->
+      t "go rest parameters bind their uses, not a field of the same name" (fun () ->
           let file =
             Fpath.v
               (Filename.concat tests_path "naming/go/rest_params_and_fields.go")
@@ -372,6 +372,42 @@ let tests parse_program =
           Naming_AST.resolve Lang.Python ast;
           check_resolutions ast "args" [ "Global"; "Parameter" ];
           check_resolutions ast "kwargs" [ "Parameter" ]);
+      t "java static fields are globals, instance fields class members"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/static_and_instance_fields.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          check_resolutions ast "s" [ "Global"; "Global" ];
+          check_single_binding ast "s";
+          check_resolutions ast "g" [ "Other"; "Other" ];
+          check_single_binding ast "g");
+      t "csharp static fields are globals, instance fields class members"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/csharp/static_and_instance_fields.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          check_resolutions ast "s" [ "Global"; "Global" ];
+          check_single_binding ast "s";
+          check_resolutions ast "g" [ "Other"; "Other" ];
+          check_single_binding ast "g");
+      t "js and ts class members are reached only through this" (fun () ->
+          [ ("naming/js/member_not_in_scope.js", Lang.Js);
+            ("naming/js/member_not_in_scope.ts", Lang.Ts) ]
+          |> List.iter (fun (path, lang) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve lang ast;
+                 (* [x] in the method is the module's [x], not the field *)
+                 check_resolutions ast "x" [ "Global"; "Global" ];
+                 check_single_binding ast "x"));
       t "cpp capture lists refer to the enclosing variables" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/cpp/lambda_captures.cpp")

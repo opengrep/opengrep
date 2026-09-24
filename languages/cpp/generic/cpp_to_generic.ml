@@ -1691,13 +1691,25 @@ and map_designator env = function
       in
       Right3 v1
 
+(* A constructor's return type is a [void] built from the token of its
+ * name, which is a plain identifier ([A] in [A::A], unlike [~A] or
+ * [operator T]). *)
+and ctor_attrs (ent : entity) (def : function_definition) : G.attribute list =
+  match (def.f_type.ft_ret, ent.name) with
+  | (_, TPrimitive (TVoid, void_tok)), (_, _, IdIdent (_, tok))
+    when Int.equal (Tok.compare_pos void_tok tok) 0 ->
+      [ G.KeywordAttr (G.Ctor, tok) ]
+  | _ -> []
+
 and map_func_definition env (v1, v2) : G.definition =
   let env = { env with in_scope = InFunction } in
+  let ctor = ctor_attrs v1 v2 in
   let v1 = map_entity env v1 and v2 = map_function_definition env v2 in
-  (v1, FuncDef v2) 
+  ({ v1 with G.attrs = v1.G.attrs @ ctor }, FuncDef v2)
 and map_method_definition env (v1, v2) : G.definition =
+  let ctor = ctor_attrs v1 v2 in
   let v1 = map_entity env v1 and v2 = map_function_definition env v2 in
-  (v1, FuncDef v2) 
+  ({ v1 with G.attrs = v1.G.attrs @ ctor }, FuncDef v2)
 
 
 and map_function_definition env

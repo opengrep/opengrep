@@ -1,0 +1,13 @@
+rules:
+  - id: test-bare-fields-java
+    message: a field written by its bare name is written for the callers
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

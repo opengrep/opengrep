@@ -1,6 +1,6 @@
 rules:
   - id: test-hof-callback-forms-python
-    message: Python named-lambda HOF callback (positive vs non-propagating body)
+    message: Python HOF callback that is a lambda assigned to a variable (positive vs non-propagating body)
     languages:
       - python
     severity: WARNING

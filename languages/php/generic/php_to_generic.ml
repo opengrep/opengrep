@@ -655,8 +655,15 @@ and func_def
   in
   let attrs = list attribute f_attrs in
   let body = stmt f_body in
+  let ctor =
+    match fst f_kind with
+    | Method when String.equal (String.lowercase_ascii (fst id)) "__construct"
+      ->
+        [ G.KeywordAttr (G.Ctor, snd id) ]
+    | _ -> []
+  in
   let ent =
-    G.basic_entity id ~attrs:(modifiers @ attrs) ~case_insensitive:true
+    G.basic_entity id ~attrs:(modifiers @ attrs @ ctor) ~case_insensitive:true
   in
   let def =
     { G.fparams = fb params; frettype = fret; fcaptures = G.no_captures; fbody = G.FBStmt body; fkind }

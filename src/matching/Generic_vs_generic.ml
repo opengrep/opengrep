@@ -2444,6 +2444,16 @@ and m_attribute a b =
       fail ()
 
 and m_attributes a b =
+  (* [Ctor] is what a front end concludes about a definition (in Java, a
+   * method written without a return type), not something a pattern asks
+   * for: a pattern without a return type matches any method. *)
+  let a =
+    List.filter
+      (function
+        | G.KeywordAttr (G.Ctor, _) -> false
+        | _ -> true)
+      a
+  in
   if_config
     (fun x -> x.decorators_order_matters)
     ~then_:

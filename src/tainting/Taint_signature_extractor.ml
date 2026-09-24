@@ -49,19 +49,26 @@ let extract_param_labels_from_sink (sink_info : Effect.taints_to_sink) :
          | _ -> acc)
        []
 
-(* Extract this.x and self.x properties from a function definition *)
+(* Extract this.x and self.x properties from a function definition, and the
+ * instance fields it uses without [this], which are this.x too. *)
 let extract_method_properties (fdef : G.function_definition) :
     G.expr list =
   let found_properties = ref [] in
   let visitor =
-    object
+    object (self)
       inherit [_] G.iter as super
 
       method! visit_expr () expr =
-        (match expr.G.e with
-        | G.DotAccess (obj, _, G.FN (G.Id (_, _))) -> (
+        match expr.G.e with
+        | G.N (G.Id (_, { id_resolved = { contents = Some (G.EnclosedVar, _) }; _ }))
+          ->
+            found_properties := expr :: !found_properties
+        | G.Call ({ e = G.N (G.Id _); _ }, args) ->
+            (* A method called by its bare name is not a field. *)
+            self#visit_arguments () args
+        | G.DotAccess (obj, _, G.FN (G.Id (_, _))) ->
             (* Check if base object is IdSpecial This or Self *)
-            match obj.G.e with
+            (match obj.G.e with
             | G.IdSpecial (G.This, _)
             | G.IdSpecial (G.Self, _) ->
                 found_properties := expr :: !found_properties
@@ -70,9 +77,9 @@ let extract_method_properties (fdef : G.function_definition) :
                 | G.IdSpecial (G.This, _) ->
                     found_properties := expr :: !found_properties
                 | _ -> ())
-            | _ -> ())
-        | _ -> ());
-        super#visit_expr () expr
+            | _ -> ());
+            super#visit_expr () expr
+        | _ -> super#visit_expr () expr
     end
   in
   (* Convert function body to statement and visit it *)
@@ -100,6 +107,13 @@ let mk_method_property_assumptions (properties : G.expr list)
                    ~rev_offset:il_lval.rev_offset
                in
                Taint.{ base = BThis; offset = taint_offsets }
+           | Var field ->
+               (* A bare instance field *)
+               let taint_offsets =
+                 Taint.offset_of_rev_IL_offset lang
+                   ~rev_offset:il_lval.rev_offset
+               in
+               Taint.{ base = BThis; offset = Ofld field :: taint_offsets }
            | _ ->
                (* Fallback for other cases *)
                let taint_offsets =

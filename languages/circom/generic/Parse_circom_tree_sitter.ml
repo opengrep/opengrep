@@ -487,7 +487,9 @@ and map_assignment_expression (env : env)
     | `EQ tok -> (* "=" *) (Eq, token env tok)
   in
   let re = map_expression env v3 in
-  G.AssignOp (le, op, re) |> G.e
+  match op with
+  | Eq, tok -> G.Assign (le, tok, re) |> G.e
+  | _ -> G.AssignOp (le, op, re) |> G.e
 
 and map_expression (env : env) (x : CST.expression) =
   match x with

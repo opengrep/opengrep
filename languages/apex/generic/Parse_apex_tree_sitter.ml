@@ -1199,7 +1199,14 @@ and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt
       | `Enum_decl x ->
           [ enum_declaration env x ]
       | `Blk x ->
-          [ block env x ]
+          (* an instance initialiser, run as part of every constructor *)
+          let st = block env x in
+          let tok =
+            match st.G.s with
+            | G.Block (l, _, _) -> l
+            | _ -> G.fake "{"
+          in
+          [ G.OtherStmtWithStmt (G.OSWS_Block ("Init", tok), [], st) |> G.s ]
       | `Static_init x ->
           [ static_initializer env x ]
       | `Cons_decl x ->
@@ -1584,7 +1591,9 @@ and expression (env : env) (x : CST.expression) : G.expr =
       in
       let v2 = assignment_operator env v2 in
       let v3 = expression env v3 in
-      G.AssignOp (v1, v2, v3) |> G.e
+      (match v2 with
+      | Eq, tok -> G.Assign (v1, tok, v3) |> G.e
+      | _ -> G.AssignOp (v1, v2, v3) |> G.e)
   | `Bin_exp x ->
       binary_expression env x
   | `Inst_exp (v1, v2, v3) ->
@@ -2143,9 +2152,11 @@ and local_variable_declaration_data_only (env : env) ((v1, v2, v3))
   in
   let v2 = unannotated_type env v2 in
   let v3 = variable_declarator_list env v3 in
+  (* the modifiers belong to the declaration, not to its type *)
   List_.map
-    (fun (ent, vardef) ->
-      (ent, { vinit = vardef.vinit; vtype = Some (make_type v1 v2); vtok = G.no_sc }))
+    (fun ((ent : entity), vardef) ->
+      ( { ent with attrs = ent.attrs @ v1 },
+        { vinit = vardef.vinit; vtype = Some (make_type [] v2); vtok = G.no_sc } ))
     v3
 
 (* AUX *)
@@ -2845,15 +2856,10 @@ and statement (env : env) (x : CST.statement) : G.stmt =
 
 (* NEW *)
 and static_initializer (env : env) ((v1, v2) : CST.static_initializer) : G.stmt =
-  let _, t as v1 = str env v1 in
+  let _, t = str env v1 in
   let v2 = trigger_body env v2 in
-  let attrs = [KeywordAttr (G.Static, t)] in
-  let ent = basic_entity v1 ~attrs in
-  let def =
-    G.FuncDef
-      { fkind = (G.Method, t); fparams = fb []; frettype = None; fcaptures = G.no_captures; fbody = G.FBStmt v2 }
-  in
-  G.DefStmt (ent, def) |> G.s
+  (* the same construct as Java's static initialiser *)
+  G.OtherStmtWithStmt (G.OSWS_Block ("Static", t), [], v2) |> G.s
 
 (* RAW QUERY *)
 and subquery (env : env) ((v1, v2, v3) : CST.subquery) : raw =

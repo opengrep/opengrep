@@ -1691,18 +1691,23 @@ let map_state_variable_declaration (env : env)
     ((v1, v2, v3, v4, v5) : CST.state_variable_declaration) : definition =
   let ty = map_type_name env v1 in
   let attrs =
-    List_.map
+    List.concat_map
       (fun x ->
         match x with
-        | `Visi x -> map_visibility env x
+        | `Visi x -> [ map_visibility env x ]
         | `Cst tok ->
             let x = (* "constant" *) token env tok in
-            G.attr Const x
+            [ G.attr Const x ]
         | `Over_spec x ->
             let x = map_override_specifier env x in
-            x
+            [ x ]
         (* TODO: difference between constant and immutable? *)
-        | `Immu tok -> (* "immutable" *) str env tok |> G.unhandled_keywordattr)
+        | `Immu tok ->
+            (* "immutable": assigned once, in the constructor *)
+            [
+              str env tok |> G.unhandled_keywordattr;
+              G.attr Final (token env tok);
+            ])
       v2
   in
   let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v3 in

@@ -655,7 +655,13 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
     | _, { s = G.Block (_, [], _); _ } when is_abstract -> G.FBNothing
     | _ -> FBStmt v4
   in
-  ( { ent with G.attrs = ent.G.attrs @ throws },
+  (* a constructor is the method without a return type *)
+  let ctor =
+    match m_var.type_ with
+    | None -> [ G.KeywordAttr (G.Ctor, snd m_var.name) ]
+    | Some _ -> []
+  in
+  ( { ent with G.attrs = ent.G.attrs @ ctor @ throws },
     {
       G.fparams = fb fparams;
       frettype = rett;
@@ -760,7 +766,14 @@ and decl ?cl_kind decl : G.stmt =
       match v1 with
       | Some tstatic ->
           G.OtherStmtWithStmt (G.OSWS_Block ("Static", tstatic), [], st) |> G.s
-      | None -> st)
+      | None ->
+          (* an instance initialiser, run as part of every constructor *)
+          let tok =
+            match st.G.s with
+            | G.Block (l, _, _) -> l
+            | _ -> G.fake "{"
+          in
+          G.OtherStmtWithStmt (G.OSWS_Block ("Init", tok), [], st) |> G.s)
   | DeclEllipsis v1 -> G.ExprStmt (G.Ellipsis v1 |> G.e, G.sc) |> G.s
   | DeclMetavarEllipsis v1 ->
       G.ExprStmt (G.N (Id (v1, G.empty_id_info ())) |> G.e, G.sc) |> G.s

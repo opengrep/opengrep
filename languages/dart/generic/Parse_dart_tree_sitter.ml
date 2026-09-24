@@ -3128,6 +3128,12 @@ let augment_body initializers body =
   | _, FBNothing ->
       FBStmt (Block (fb initializers) |> G.s)
 
+(* The attribute of a constructor, from the identifiers it is declared with. *)
+let ctor_attr (dotted : G.ident list) : G.attribute list =
+  match dotted with
+  | (_, tok) :: _ -> [ KeywordAttr (Ctor, tok) ]
+  | [] -> []
+
 let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
   match x with
   | `Cons_sign_opt_initis (v1, v2) ->
@@ -3137,7 +3143,13 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         | Some x -> map_initializers env x
         | None -> []
       in
-      let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
+      let ent =
+        {
+          name = EN (H2.name_of_ids dotted);
+          attrs = attrs @ ctor_attr dotted;
+          tparams = None;
+        }
+      in
       let fbody =
         augment_body
           (init_formal_assignments (Tok.unbracket fparams) @ v2) body
@@ -3274,7 +3286,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       let ent =
         {
           name = EN (H2.name_of_ids dotted);
-          attrs = [ attr ] @ attrs;
+          attrs = [ attr ] @ attrs @ ctor_attr dotted;
           tparams = None;
         }
       in
@@ -3297,7 +3309,13 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | Some x -> map_anon_choice_redi_3f8cf96 env x
         | None -> []
       in
-      let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
+      let ent =
+        {
+          name = EN (H2.name_of_ids dotted);
+          attrs = attrs @ ctor_attr dotted;
+          tparams = None;
+        }
+      in
       let fbody =
         augment_body
           (init_formal_assignments (Tok.unbracket fparams) @ initializers)
@@ -3370,7 +3388,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
   | `Exte_cst_cons_sign (v1, v2) ->
       let v1 = KeywordAttr (Extern, (* "external" *) token env v1) in
       let attr, dotted, fparams = map_constant_constructor_signature env v2 in
-      let attrs = [ v1; attr ] @ attrs in
+      let attrs = [ v1; attr ] @ attrs @ ctor_attr dotted in
       let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
       [
         DefStmt
@@ -3431,7 +3449,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       let ent =
         {
           name = EN (H2.name_of_ids dotted);
-          attrs = [ v1 ] @ attrs;
+          attrs = [ v1 ] @ attrs @ ctor_attr dotted;
           tparams = None;
         }
       in

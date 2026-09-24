@@ -595,13 +595,20 @@ and stmt_aux env x =
         | InClass -> G.Method
         | _ -> G.Function
       in
+      let in_class = fkind =*= G.Method in
       let env = { env with context = InFunctionOrMethod } in
       let v1 = name env v1
       and v2 = parameters env v2
       and v3 = option (type_ env) v3
       and v4 = list_stmt1 env v4
       and v5 = list (decorator env) v5 in
-      let ent = G.basic_entity v1 ~attrs:v5 in
+      let ctor =
+        (* a class's [__init__] method is its constructor *)
+        if in_class && String.equal (fst v1) "__init__" then
+          [ G.KeywordAttr (G.Ctor, snd v1) ]
+        else []
+      in
+      let ent = G.basic_entity v1 ~attrs:(v5 @ ctor) in
       let def =
         {
           G.fparams = fb v2;

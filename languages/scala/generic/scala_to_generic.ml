@@ -896,8 +896,15 @@ and v_type_parameters v : G.type_parameters option =
 and v_definition x : G.definition list =
   match x with
   | DefEnt (v1, v2) ->
+      let ctor =
+        (* an auxiliary constructor, [def this(...)] *)
+        match (v1.name, v2) with
+        | (s, tok), FuncDef _ when String.equal s AST_scala.this ->
+            [ G.KeywordAttr (G.Ctor, tok) ]
+        | _ -> []
+      in
       let v1 = v_entity v1 and v2 = v_definition_kind v2 in
-      [ (v1, v2) ]
+      [ ({ v1 with G.attrs = v1.G.attrs @ ctor }, v2) ]
   | EnumCaseDef (attrs, v1) ->
       let attrs = v_list v_attribute attrs in
       v_enum_case_definition attrs v1

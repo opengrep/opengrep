@@ -43,6 +43,7 @@ let polyglot_pattern_path = tests_path_patterns / "POLYGLOT"
 (* TODO: infer dir and ext from lang using Lang helper functions *)
 let full_lang_info =
   [
+    (Lang.Apex, "apex", ".cls");
     (Lang.Bash, "bash", ".bash");
     (Lang.C, "c", ".c");
     (Lang.Cairo, "cairo", ".cairo");

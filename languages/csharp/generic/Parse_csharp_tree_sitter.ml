@@ -1363,11 +1363,13 @@ and lvalue_expression (env : env) (x : CST.lvalue_expression) : G.expr =
 and expression_statement_expression (env : env)
     (x : CST.expression_statement_expression) =
   match x with
-  | `Assign_exp (v1, v2, v3) ->
+  | `Assign_exp (v1, v2, v3) -> (
       let v1 = lvalue_expression env v1 in
       let v2 = assignment_operator env v2 in
       let v3 = expression env v3 in
-      AssignOp (v1, v2, v3) |> G.e
+      match v2 with
+      | Eq, tok -> Assign (v1, tok, v3) |> G.e
+      | _ -> AssignOp (v1, v2, v3) |> G.e)
   | `Invo_exp x -> invocation_expression env x
   | `Post_un_exp x -> postfix_unary_expression env x
   | `Prefix_un_exp x -> prefix_unary_expression env x

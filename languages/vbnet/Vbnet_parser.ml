@@ -3454,6 +3454,7 @@ and assignment_statement : G.stmt parser = fun __n -> (
   let expr =
     match op_rhs_opt with
     | None -> lhs
+    | Some ((G.Eq, tok), rhs) -> G.Assign (lhs, tok, rhs) |> G.e
     | Some (op, rhs) -> G.AssignOp (lhs, op, rhs) |> G.e
   in
   pure (G.ExprStmt (expr, Tok.unsafe_sc) |> G.s)
@@ -5898,6 +5899,7 @@ and opengrep_assignment_statement : G.any parser = fun __n -> (
   in
   match op_rhs_opt with
   | None -> pure (G.E lhs)
+  | Some ((G.Eq, tok), rhs) -> pure (G.E (G.Assign (lhs, tok, rhs) |> G.e))
   | Some (op, rhs) -> pure (G.E (G.AssignOp (lhs, op, rhs) |> G.e))
 ) __n
 

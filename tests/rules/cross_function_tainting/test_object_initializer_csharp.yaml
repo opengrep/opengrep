@@ -1,6 +1,6 @@
 rules:
   - id: test-object-initializer-csharp
-    message: An object initializer writes the fields it names
+    message: An object initializer writes the fields it lists
     languages:
       - csharp
     severity: WARNING

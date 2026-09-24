@@ -2084,10 +2084,13 @@ and map_modifierless_function_declaration_no_body (env : env) ~in_class
     ?(attrs = [])
     ((v1, v2, v3, v4, v5, v6, v7) :
       CST.modifierless_function_declaration_no_body) (body : G.function_body) =
-  let is_quest, v1 =
+  let is_quest, v1, ctor =
     match v1 with
-    | `Cons_func_decl x -> map_constructor_function_decl env x
-    | `Non_cons_func_decl x -> (false, map_non_constructor_function_decl env x)
+    | `Cons_func_decl x ->
+        let is_quest, v1 = map_constructor_function_decl env x in
+        (is_quest, v1, [ G.KeywordAttr (G.Ctor, snd v1) ])
+    | `Non_cons_func_decl x ->
+        (false, map_non_constructor_function_decl env x, [])
   in
   let v2 = Option.map (map_type_parameters env) v2 in
   let fparams = map_function_value_parameters env v3 in
@@ -2112,7 +2115,7 @@ and map_modifierless_function_declaration_no_body (env : env) ~in_class
     | None -> None
   in
 
-  let attrs = attrs in
+  let attrs = attrs @ ctor in
   let entity = G.basic_entity ?tparams:v2 ~attrs v1 in
   let kind = if in_class then G.Method else G.Function in
   let definition_kind =

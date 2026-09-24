@@ -229,13 +229,21 @@ let find_in_scope (ns : namespace) (s : string) (xs : scope) :
     scope_info option =
   find_in_scope_where ns s (fun _ -> true) xs
 
-let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
-    (xxs : scope list) : scope_info option =
+(* [members]: whether the lookup may find a class member ([EnclosedVar]). *)
+let rec lookup_namespace ?(members = true) ~(class_attr : bool) (ns : namespace)
+    (s : string) (xxs : scope list) : scope_info option =
+  let visible (res : scope_info) =
+    members
+    ||
+    match res.entname with
+    | EnclosedVar, _ -> false
+    | _ -> true
+  in
   match xxs with
   | [] -> None
   | xs :: xxs -> (
-      match find_in_scope ns s xs with
-      | None -> lookup_namespace ~class_attr ns s xxs
+      match find_in_scope_where ns s visible xs with
+      | None -> lookup_namespace ~members ~class_attr ns s xxs
       | Some res when class_attr -> (
           match res.entname with
           | EnclosedVar, _ -> Some res
@@ -251,7 +259,7 @@ let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
            *         }
            *     }
            *)
-          | __else__ -> lookup_namespace ~class_attr ns s xxs)
+          | __else__ -> lookup_namespace ~members ~class_attr ns s xxs)
       | Some res -> Some res)
 
 (* see also lookup_scope_opt below taking as a parameter the environment *)
@@ -390,6 +398,37 @@ let visible_blocks env =
       let visible = List.length blocks - hidden in
       List.filteri (fun (i : int) (_ : scope) -> i < visible) blocks
 
+(* A class's members are in scope, without [this], in its methods. *)
+let members_in_scope_in_methods (lang : Lang.t) : bool =
+  match lang with
+  (* true for Java so that we can type class fields *)
+  | Lang.Java
+  | Lang.Kotlin
+  | Lang.Apex
+  | Lang.Csharp
+  | Lang.Vb
+  | Lang.Scala
+  | Lang.Dart
+  | Lang.Swift
+  | Lang.Solidity
+  | Lang.C (* can happen for macros inside structs *)
+  | Lang.Cpp ->
+      true
+  | _ -> false
+
+(* The members a class declares are resolved. In JS, TS and PHP a method
+ * reaches them only through [this]. *)
+let members_resolved (lang : Lang.t) : bool =
+  members_in_scope_in_methods lang
+  ||
+  match lang with
+  (* true for JS/TS so that we can resolve class methods *)
+  | Lang.Js
+  | Lang.Ts
+  | Lang.Php ->
+      true
+  | _ -> false
+
 (* accessors *)
 let lookup_namespace_opt ~(class_attr : bool) (ns : namespace) ((s, _) : ident)
     (env : env) : scope_info option =
@@ -423,7 +462,9 @@ let lookup_namespace_opt ~(class_attr : bool) (ns : namespace) ((s, _) : ident)
             visible_blocks env @ file_scope @ [ !(scopes.imported) ]
         | _ -> [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ])
   in
-  lookup_namespace ~class_attr ns s actual_scopes
+  (* without [this], a member is reachable only where the language says so *)
+  let members = class_attr || members_in_scope_in_methods env.lang in
+  lookup_namespace ~members ~class_attr ns s actual_scopes
 
 let lookup_scope_opt ?(class_attr = false) id env =
   lookup_namespace_opt ~class_attr VarName id env
@@ -618,26 +659,7 @@ let is_resolvable_name_ctx env lang =
   | AtToplevel
   | InFunction ->
       true
-  | InClass -> (
-      match lang with
-      (* true for Java so that we can type class fields *)
-      | Lang.Java
-      | Lang.Kotlin
-      | Lang.Apex
-      | Lang.Csharp
-      | Lang.Vb
-      (* true for JS/TS so that we can resolve class methods *)
-      | Lang.Js
-      | Lang.Ts
-      | Lang.Php
-      | Lang.Scala
-      | Lang.Dart
-      | Lang.Swift
-      | Lang.Solidity
-      | Lang.C
-      | Lang.Cpp ->
-          true
-      | _ -> false)
+  | InClass -> members_resolved lang
 
 let has_function_namespace (lang : Lang.t) : bool =
   match lang with
@@ -650,28 +672,9 @@ let resolved_name_kind env lang =
   match top_context env with
   | AtToplevel -> Global
   | InFunction -> LocalVar
-  | InClass -> (
-      match lang with
-      (* true for Java so that we can type class fields.
-       * alt: use a different scope.class?
-       *)
-      | Lang.Java
-      | Lang.Kotlin
-      | Lang.Apex
-      | Lang.Csharp
-      | Lang.Vb
-      (* true for JS/TS to resolve class methods. *)
-      | Lang.Js
-      | Lang.Ts
-      | Lang.Php
-      | Lang.Scala
-      | Lang.Dart
-      | Lang.Swift
-      | Lang.Solidity
-      | Lang.C (* can happen for macros inside structs *)
-      | Lang.Cpp ->
-          EnclosedVar
-      | _ -> raise Impossible)
+  | InClass ->
+      (* alt: use a different scope.class? *)
+      if members_resolved lang then EnclosedVar else raise Impossible
 
 (* !also set the id_info of the parameter as a side effect! *)
 let params_of_parameters env params : scope =
@@ -752,7 +755,7 @@ let current_scope_entry (env : env) (ns : namespace) (id : ident) :
   | _ -> None
 
 let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
-    ~explicit vinit vtype =
+    ?(static = false) ~explicit vinit vtype =
   let sid =
     match current_scope_entry env VarName id with
     | Some { entname = _, sid; _ } -> sid
@@ -772,7 +775,11 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
     then
       (Global, add_ident_global_scope)
     else
-      (resolved_name_kind env lang, add_ident_current_scope)
+      match (top_context env, static) with
+      (* A static member is one variable of its class, not of each object:
+       * a global, visible where the class's members are. *)
+      | InClass, true -> (Global, add_ident_current_scope)
+      | _ -> (resolved_name_kind env lang, add_ident_current_scope)
   in
   let resolved = { entname = (name_kind, sid); enttype = resolved_type } in
   add_ident_to_its_scope id resolved env.names;
@@ -826,8 +833,8 @@ let rec collect_field_types (env : env) (stmts : stmt list) : unit =
          | Block (_, stmts, _) -> collect_field_types env stmts
          | _ -> ())
 
-(* The declared type of data field [fname] of the type [receiver_type] names,
- * seen through pointers. *)
+(* The declared type of data field [fname] of the type [receiver_type] refers
+ * to, seen through pointers. *)
 let rec field_type (env : env) (receiver_type : type_) (fname : string) :
     type_ option =
   match receiver_type.t with
@@ -846,9 +853,11 @@ let declare_class_members env lang (c : class_definition) : unit =
     |> List.iter (fun (F stmt) ->
            match stmt.s with
            | DefStmt
-               ( { name = EN (Id (id, id_info)); _ },
+               ( { name = EN (Id (id, id_info)); attrs; _ },
                  VarDef { vinit; vtype; vtok = _ } ) ->
-               declare_var env lang id id_info ~explicit:true vinit vtype
+               declare_var env lang id id_info
+                 ~static:(H.has_keyword_attr Static attrs)
+                 ~explicit:true vinit vtype
            | DefStmt
                ({ name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ })
              when has_function_namespace lang ->
@@ -1095,7 +1104,9 @@ class ['self] resolve_visitor env lang =
           List.iter (self#visit_attribute venv) attrs;
           Option.iter (self#visit_type_parameters venv) tparams;
           Option.iter (self#visit_type_ venv) vtype;
-          declare_var env lang id id_info ~explicit:true vinit vtype
+          declare_var env lang id id_info
+            ~static:(H.has_keyword_attr Static attrs)
+            ~explicit:true vinit vtype
       (* Left the case above because we have the type information `vtype` which
        * would be lost here. *)
       | ( { name = EPattern (pat); _ }, VarDef { vinit = _; vtype = _; vtok = _ } )
