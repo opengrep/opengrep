@@ -1743,6 +1743,9 @@ and keyword_attribute =
   (* Swift *)
   | Throws
   | Rethrows
+  (* for parameters: a Ruby keyword parameter 'sep:' takes a named
+   * argument only, never a positional one *)
+  | KeywordOnly
 
 (* By name application in Scala, via => T, in parameter *)
 

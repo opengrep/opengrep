@@ -67,6 +67,7 @@ let walk_class_like_defs (ast : G.program) : Observation.t list =
    into expressions outside the scope and pollutes per-fdef analyses. *)
 let make_collecting_visitor
     ~(skip_nested_fdefs : bool)
+    ?(skip_nested_fdef : G.function_definition -> bool = fun _ -> false)
     ?(on_expr : (G.expr -> unit) = fun _ -> ())
     ?(on_stmt : (G.stmt -> unit) = fun _ -> ())
     () =
@@ -75,7 +76,7 @@ let make_collecting_visitor
     method! visit_expr () expr = on_expr expr; super#visit_expr () expr
     method! visit_stmt () stmt = on_stmt stmt; super#visit_stmt () stmt
     method! visit_function_definition () fdef =
-      if skip_nested_fdefs then ()
+      if skip_nested_fdefs || skip_nested_fdef fdef then ()
       else super#visit_function_definition () fdef
   end
 
@@ -116,12 +117,12 @@ let fold_exprs_in_program ?skip_nested_fdefs
 (* Covers parameter defaults, the return-type annotation, and the body;
    walks them directly so the outer fdef itself doesn't trip the
    nested-fdef skip. *)
-let fold_exprs_in_fdef ?(skip_nested_fdefs = false)
+let fold_exprs_in_fdef ?(skip_nested_fdefs = false) ?skip_nested_fdef
     (f : 'acc -> G.expr -> 'acc) (init : 'acc)
     (fdef : G.function_definition) : 'acc =
   let acc = ref init in
   let visitor =
-    make_collecting_visitor ~skip_nested_fdefs
+    make_collecting_visitor ~skip_nested_fdefs ?skip_nested_fdef
       ~on_expr:(fun expr -> acc := f !acc expr) ()
   in
   visitor#visit_parameters () fdef.G.fparams;

@@ -402,6 +402,7 @@ let instantiate_taints inst_var inst_trace taints =
    rendering an expression goes through [Format] and this runs once per
    signature instantiation, where it dominated the profiling. *)
 let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
+    ?(rest_leaves_trailing_args = false)
     (args : 'a IL.argument list)
     (fparams : Signature.params) ~(combine_rest_args : 'a list -> 'a) : T.arg -> 'a option =
   Log.debug (fun m ->
@@ -425,10 +426,14 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
     fparams |>
     List.map (function
        | (Signature.P name as p)
-       | (Signature.PRest name as p) -> Some (p, List.assoc_opt name named_args)
-       | _ -> None)
+       | (Signature.POpt name as p)
+       | (Signature.PRest name as p)
+       | (Signature.PKwd name as p) -> Some (p, List.assoc_opt name named_args)
+       | Signature.Other -> None)
   in
-  let rec merge formal_args_with_vals pos_args =
+  (* Each formal arg with its value, [None] when it gets none: a formal arg
+   * keeps its position either way, see 'Taint.arg'. *)
+  let rec merge ~after_rest formal_args_with_vals pos_args =
      match formal_args_with_vals, pos_args with
      (* No more formal args, no more actual args: we're done *)
      | [], [] -> []
@@ -437,36 +442,70 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
         Log.err (fun m ->
           m "function applied to more arguments than expected by the signature (%s)" (err_ctx ()));
           []
-     (* The formal arg doesn't get a value (not found among named args, 
-      * and no more positional args) *)
-     | None :: _ , []
-     | Some (Signature.P _, None) :: _, [] ->
-        Log.err (fun m ->
-          m "function applied to fewer arguments than expected by the signature (%s)" (err_ctx ()));
-          []
      (* The value for the formal arg is found among named actual args *)
-     | Some (Signature.P name, Some v) :: avs, _
-     | Some (Signature.PRest name, Some v) :: avs, _ (* possible? *) ->
-        (Some name, v) :: merge avs pos_args
-     (* Not found among named actual args, so we assign the first 
+     | Some ((Signature.P name | Signature.POpt name | Signature.PRest name
+             | Signature.PKwd name),
+             Some v) :: avs, _ ->
+        (Some name, Some v) :: merge ~after_rest avs pos_args
+     (* A keyword argument takes no positional arg: 'sep' in Ruby's
+      * 'def f(a, sep: nil)', and a formal arg with a default that comes after
+      * a rest argument, 'sep' in Crystal's 'def f(a, *xs, sep = nil)' and in
+      * Python's 'def f(a, *xs, sep=None)'. It was not found among named actual
+      * args, so it keeps its default. *)
+     | Some (Signature.PKwd name, None) :: name_vals, _ ->
+        (Some name, None) :: merge ~after_rest name_vals pos_args
+     | Some (Signature.POpt name, None) :: name_vals, _ when after_rest ->
+        (Some name, None) :: merge ~after_rest name_vals pos_args
+     (* Not found among named actual args, so we assign the first
       * available positional arg *)
-     | Some (Signature.P name, None) :: name_vals, v :: pos_args ->
-        (Some name, v) :: merge name_vals pos_args
-     (* The rest argument takes all positional args *)
-     | Some (Signature.PRest name, None) :: name_vals, _ ->
-        (Some name, combine_rest_args pos_args) :: merge name_vals []
+     | Some ((Signature.P name | Signature.POpt name), None) :: name_vals,
+       v :: pos_args ->
+        (Some name, Some v) :: merge ~after_rest name_vals pos_args
      (* The formal arg does not have a name *)
      | None :: name_vals, v :: pos_args ->
-         (None, v) :: merge name_vals pos_args
+         (None, Some v) :: merge ~after_rest name_vals pos_args
+     (* The formal arg doesn't get a value (not found among named args,
+      * and no more positional args) *)
+     | Some (Signature.POpt name, None) :: name_vals, [] ->
+        (Some name, None) :: merge ~after_rest name_vals []
+     | Some (Signature.P name, None) :: name_vals, [] ->
+        Log.err (fun m ->
+          m "function applied to fewer arguments than expected by the signature (%s)" (err_ctx ()));
+        (Some name, None) :: merge ~after_rest name_vals []
+     | None :: name_vals, [] ->
+        Log.err (fun m ->
+          m "function applied to fewer arguments than expected by the signature (%s)" (err_ctx ()));
+        (None, None) :: merge ~after_rest name_vals []
+     (* The rest argument takes all positional args. In Ruby and Crystal it
+      * leaves the last ones to the parameters declared after it that take a
+      * positional arg, among them the block: 'def f(a, *xs, b, &blk)'. *)
+     | Some (Signature.PRest name, None) :: name_vals, _ ->
+        let takes_positional_arg = function
+          | Some (Signature.P _, None)
+          | None ->
+              true
+          | Some _ -> false
+        in
+        let n_trailing =
+          if rest_leaves_trailing_args then
+            List.length (List.filter takes_positional_arg name_vals)
+          else 0
+        in
+        let n_rest = max 0 (List.length pos_args - n_trailing) in
+        (Some name, Some (combine_rest_args (List_.take n_rest pos_args)))
+        :: merge ~after_rest:true name_vals (List_.drop n_rest pos_args)
      | Some (Signature.Other, _) :: _, _ ->
          raise Impossible
   in
-  let name_opt_value_list = merge formal_args_with_vals pos_args in
+  let name_opt_value_list =
+    merge ~after_rest:false formal_args_with_vals pos_args
+  in
   let param_index_array = Array.of_list (List.map snd name_opt_value_list) in
   let param_name_map =
     name_opt_value_list
-    |> List.filter_map
-         (fun (a, b) -> Option.map (fun a -> (a, b)) a)
+    |> List.filter_map (function
+         | Some name, Some v -> Some (name, v)
+         | _ -> None)
     |> SMap.of_list
   in
   (* lookup function *)
@@ -479,7 +518,7 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
           m ~tags:bad_tag
             "Cannot match taint variable with function arguments (%i: %s)" i s);
         None
-    | _ -> Some (Array.get param_index_array i)
+    | _ -> Array.get param_index_array i
 
 (* Test find_pos_in_actual_args.
  * Function: foo(x, y, _, z)
@@ -498,6 +537,14 @@ let%test _ =
   Option.equal (=|=) (func {name = "";  index = 1})  (Some 0) &&
   Option.equal (=|=) (func {name = "";  index = 2})  (Some 2) &&
   Option.equal (=|=) (func {name = "";  index = 3})  (Some 3)
+
+(* See [find_pos_in_actual_args]. *)
+let rest_leaves_trailing_args (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Ruby
+  | Lang.Crystal ->
+      true
+  | _ -> false
 
 let combine_rest_args_exp (es : IL.exp list) : IL.exp =
   let e = IL.Composite (IL.CList, Tok.unsafe_fake_bracket es) in
@@ -901,7 +948,10 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
   let bound_in_sig (arg : T.arg) : bool =
     match List.nth_opt sig_.params arg.index with
     | None -> false
-    | Some (Signature.P n | Signature.PRest n) -> String.equal n arg.name
+    | Some
+        (Signature.P n | Signature.POpt n | Signature.PRest n | Signature.PKwd n)
+      ->
+        String.equal n arg.name
     | Some Signature.Other -> String.equal arg.name ""
   in
   (* Walk a guard's cond, substituting Fetches that name the outer
@@ -1311,6 +1361,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
       let* (arg_exp : IL.exp) =
         find_pos_in_actual_args
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
+          ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
           args_exps fparams pos
       in
@@ -1487,6 +1538,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
     | `Arg pos ->
         find_pos_in_actual_args
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
+          ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_taint
           args_taints fparams pos
     | `Var var ->
@@ -1657,6 +1709,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | None -> fun _ -> None
     | Some args ->
         find_pos_in_actual_args args taint_sig.params
+          ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
   in
   (* Lval-side resolver: maps a [T.lval] anchored in [taint_sig] to the
@@ -2520,6 +2573,26 @@ and remap_effect_barg (remap_fn : T.arg -> T.arg) (eff : Effect.t)
    incompatible param structures. *)
 let build_barg_remap (canonical_params : Signature.params)
     (impl_params : Signature.params) : (T.arg -> T.arg) option =
+  (* A keyword slot is matched by name and every other slot by position, so
+     the two layouts must have the same keyword names, in any order: the other
+     slots keep their order once the keyword slots are taken out of both. A
+     keyword name of one side only would leave a positional param of the other
+     with no synthetic arg to take, a rest param with none at all, and shift
+     the later params. *)
+  let keyword_names (params : Signature.params) : string list =
+    params
+    |> List.filter_map (function
+         | Signature.PKwd name -> Some name
+         | Signature.P _
+         | Signature.POpt _
+         | Signature.PRest _
+         | Signature.Other ->
+             None)
+    |> List.sort String.compare
+  in
+  let same_keyword_names canonical impl =
+    List.equal String.equal (keyword_names canonical) (keyword_names impl)
+  in
   if List.compare_lengths canonical_params impl_params <> 0 then (
     Log.warn (fun m ->
         m
@@ -2527,11 +2600,28 @@ let build_barg_remap (canonical_params : Signature.params)
           (List.length canonical_params)
           (List.length impl_params));
     None)
+  else if not (same_keyword_names canonical_params impl_params) then (
+    Log.warn (fun m ->
+        m "build_barg_remap: keyword params differ, canonical=[%s] vs impl=[%s]"
+          (Signature.show_params canonical_params)
+          (Signature.show_params impl_params));
+    None)
   else
-    (* Synthetic positional Unnamed args so find_pos_in_actual_args matches by position. *)
+    (* Synthetic args carrying their canonical index, so that
+       find_pos_in_actual_args maps each impl param to a canonical slot. A
+       keyword param takes no positional arg, so its slot is a named arg: as
+       an Unnamed one it would go to the next positional param and shift
+       every later one, a block param onto the keyword slot. *)
     let synthetic_args =
       List.mapi
-        (fun (i : int) (_param : Signature.param) -> IL.Unnamed i)
+        (fun (i : int) (param : Signature.param) ->
+          match param with
+          | Signature.PKwd name -> IL.Named ((name, G.fake name), i)
+          | Signature.P _
+          | Signature.POpt _
+          | Signature.PRest _
+          | Signature.Other ->
+              IL.Unnamed i)
         canonical_params
     in
     let lookup =
@@ -2542,7 +2632,11 @@ let build_barg_remap (canonical_params : Signature.params)
       Array.of_list
         (List.map
            (function
-             | Signature.P name | Signature.PRest name -> name
+             | Signature.P name
+             | Signature.POpt name
+             | Signature.PRest name
+             | Signature.PKwd name ->
+                 name
              | Signature.Other -> "")
            canonical_params)
     in
@@ -2759,6 +2853,60 @@ let%test "build_barg_remap: Other params" =
   | Some remap ->
       let r = remap { T.name = "y"; index = 1 } in
       String.equal r.T.name "x" && r.T.index =|= 1
+
+(* Ruby 'def run(a, sep: nil, &blk)': the keyword parameter takes no
+   positional argument, so the block parameter must still map onto the
+   block slot of the canonical signature, not onto the keyword slot. *)
+let%test "build_barg_remap: keyword param before block param" =
+  let canonical = Signature.[ P "a"; PKwd "sep"; P "blk" ] in
+  let impl = Signature.[ P "x"; PKwd "sep"; P "block" ] in
+  match build_barg_remap canonical impl with
+  | None -> false
+  | Some remap ->
+      let rx = remap { T.name = "x"; index = 0 } in
+      let rsep = remap { T.name = "sep"; index = 1 } in
+      let rblk = remap { T.name = "block"; index = 2 } in
+      String.equal rx.T.name "a" && rx.T.index =|= 0
+      && String.equal rsep.T.name "sep" && rsep.T.index =|= 1
+      && String.equal rblk.T.name "blk" && rblk.T.index =|= 2
+
+(* A keyword slot on one side and a rest param on the other: the rest param
+   would receive no synthetic argument, so the layouts cannot be mapped. *)
+let%test "build_barg_remap: keyword slot against rest param" =
+  Option.is_none
+    (build_barg_remap Signature.[ PKwd "sep" ] Signature.[ PRest "xs" ])
+  && Option.is_none
+       (build_barg_remap
+          Signature.[ P "a"; PKwd "sep" ]
+          Signature.[ P "x"; PRest "xs" ])
+
+(* A keyword slot against positional params: 'x' would take the block slot
+   and 'y' nothing, so the layouts cannot be mapped. *)
+let%test "build_barg_remap: keyword slot against positional params" =
+  Option.is_none
+    (build_barg_remap
+       Signature.[ PKwd "sep"; P "blk" ]
+       Signature.[ P "x"; P "y" ])
+
+(* Keyword slots at the same position but under different names. *)
+let%test "build_barg_remap: keyword slots differ by name" =
+  Option.is_none
+    (build_barg_remap
+       Signature.[ P "a"; PKwd "sep" ]
+       Signature.[ P "x"; PKwd "delim" ])
+
+(* The same keyword name in another position: the keyword slot is matched by
+   name and the positional one keeps its order, so the layouts map. *)
+let%test "build_barg_remap: keyword slot in another position" =
+  let canonical = Signature.[ P "a"; PKwd "s" ] in
+  let impl = Signature.[ PKwd "s"; P "x" ] in
+  match build_barg_remap canonical impl with
+  | None -> false
+  | Some remap ->
+      let rs = remap { T.name = "s"; index = 0 } in
+      let rx = remap { T.name = "x"; index = 1 } in
+      String.equal rs.T.name "s" && rs.T.index =|= 1
+      && String.equal rx.T.name "a" && rx.T.index =|= 0
 
 let empty_sig : Signature.t =
   { Signature.params = []; params_il = []; effects = Effects.empty }

@@ -197,6 +197,7 @@ type param =
   | Param of name_param
   | ParamReceiver of name_param  (** Go/Java method receiver (maps to BThis) *)
   | ParamRest of name_param
+  | ParamKwd of name_param  (** takes a named argument only: Ruby 'sep:' *)
   | ParamPattern of name_param * G.pattern
   | ParamFixme
 [@@deriving show { with_path = false }, ord]
@@ -235,6 +236,7 @@ class virtual ['self] iter_parent =
       | Param { pname; pdefault = _ }
       | ParamReceiver { pname; pdefault = _ }
       | ParamRest { pname; pdefault = _ }
+      | ParamKwd { pname; pdefault = _ }
       | ParamPattern ({ pname; pdefault = _ }, _) ->
           self#visit_name env pname
       | ParamFixme -> ()

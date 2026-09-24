@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_ivar_across_methods
+    message: taint through an instance variable
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

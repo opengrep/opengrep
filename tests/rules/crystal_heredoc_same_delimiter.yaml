@@ -1,0 +1,7 @@
+rules:
+  - id: crystal_heredoc_same_delimiter
+    message: each heredoc marker gets its own body
+    languages:
+      - crystal
+    severity: WARNING
+    pattern: foo("=~/one/", "...#{...}...")

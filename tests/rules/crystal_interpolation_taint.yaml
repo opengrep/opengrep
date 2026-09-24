@@ -1,0 +1,11 @@
+rules:
+  - id: crystal_interpolation_taint
+    message: taint through an interpolated string
+    languages:
+      - crystal
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,11 @@
+rules:
+  - id: yield_sent_value
+    message: taint through the value of yield
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

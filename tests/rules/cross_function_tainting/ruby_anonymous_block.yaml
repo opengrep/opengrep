@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_anonymous_block
+    message: taint into the block of a method that declares it anonymously
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

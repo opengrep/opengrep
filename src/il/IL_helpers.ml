@@ -264,6 +264,7 @@ let pname_of_param (p : IL.param) : IL.name option =
   | IL.Param { pname; _ } -> Some pname
   | IL.ParamReceiver { pname; _ } -> Some pname
   | IL.ParamRest { pname; _ } -> Some pname
+  | IL.ParamKwd { pname; _ } -> Some pname
   | IL.ParamPattern ({ pname; _ }, _) -> Some pname
   | IL.ParamFixme -> None
 

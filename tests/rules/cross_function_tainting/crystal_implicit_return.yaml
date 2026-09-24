@@ -1,0 +1,13 @@
+rules:
+  - id: crystal_implicit_return
+    message: taint through an interpolated string that is the last expression
+    languages:
+      - crystal
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

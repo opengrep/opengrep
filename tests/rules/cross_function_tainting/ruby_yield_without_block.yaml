@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_yield_without_block
+    message: taint through a method that yields, called with and without a block
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

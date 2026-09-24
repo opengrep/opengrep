@@ -1,0 +1,11 @@
+rules:
+  - id: this_field_is_not_a_parameter
+    message: a field reached through this is not the parameter of the same name
+    languages:
+      - typescript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

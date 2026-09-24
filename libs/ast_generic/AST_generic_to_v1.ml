@@ -720,6 +720,7 @@ and map_keyword_attribute = function
   | Throws -> Left `Throws
   | Rethrows -> Left `Rethrows
   | Lazy -> Left `Lazy
+  | KeywordOnly -> Right "keyword_only"
   | RecordClass -> Left `RecordClass
   | AnnotationClass -> Left `AnnotationClass
   | EnumClass -> Left `EnumClass

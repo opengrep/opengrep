@@ -88,3 +88,13 @@ def f(x)
     "implicit return else case"
   end
 end
+
+def f(x)
+  # ERROR:
+  "implicit return #{x}"
+end
+
+def f(x)
+  # ERROR:
+  ->(y) { x }
+end

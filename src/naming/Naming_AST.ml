@@ -417,6 +417,22 @@ let lookup_scope_opt ?(class_attr = false) id env =
 let lookup_func_scope_opt (id : ident) (env : env) : scope_info option =
   lookup_namespace_opt ~class_attr:false FuncName id env
 
+(* The bare name of a field or method identifies a member of the receiver,
+ * never a binding in scope, so it takes no identity from a same-named binding. It
+ * still takes its type: a struct field declaration is recorded in the file
+ * scope as a typed global, a constructor parameter 'http: Ty' types the
+ * field 'this.http' (see tests/rules/js_constructor_naming), and a typed
+ * metavariable reads the type off the bare name. *)
+let type_field_from_scope env id id_info =
+  match lookup_scope_opt id env with
+  | Some { enttype = Some { t = TyFun _; _ }; _ }
+  | Some { enttype = None; _ }
+  | None ->
+      ()
+  | Some { enttype = Some ty; _ } ->
+      if Option.is_none !(id_info.id_type) && not !(env.in_type) then
+        id_info.id_type := Some ty
+
 (* Decides whether an implicit assignment [x = e] rebinds an existing
  * variable (Some _) or declares a new one (None).
  *
@@ -1404,7 +1420,9 @@ class ['self] resolve_visitor env lang =
               recurse := false
           | _ ->
               let s, tok = id in
-              error tok (spf "could not find '%s' field in environment" s))
+              error tok (spf "could not find '%s' field in environment" s);
+              type_field_from_scope env id id_info;
+              recurse := false)
       | DotAccess (e1, _, fname) ->
           (* The receiver of a dot-access is read even when the whole
            * expression is the LHS of an assignment ([obj.field = v]
@@ -1412,24 +1430,12 @@ class ['self] resolve_visitor env lang =
            * as ArrayAccess above. *)
           Common.save_excursion_unsafe env.in_lvalue false (fun () ->
               self#visit_expr venv e1);
-          (* The bare name of a field or method identifies a member of the
-           * receiver, never a binding in scope. A member that shares the name
-           * of a function in scope is not a reference to that function, so
-           * this code sets no [id_resolved] on the bare name; the project
-           * index resolves a method bare name by receiver type. A same-named
-           * typed binding still gives the bare name a type: a struct field
-           * declaration is recorded in the file scope as a typed global, and
-           * a typed metavariable reads the type from the bare name. *)
+          (* A member that shares the name of a function in scope is not a
+           * reference to that function, so this code sets no [id_resolved]
+           * on the bare name; the project index resolves a method bare name
+           * by receiver type. *)
           (match fname with
-           | FN (Id (id, id_info)) -> (
-               match lookup_scope_opt id env with
-               | Some { enttype = Some ({ t = TyFun _; _ }); _ }
-               | Some { enttype = None; _ }
-               | None ->
-                   ()
-               | Some { enttype = Some ty; _ } ->
-                   if Option.is_none !(id_info.id_type) && not !(env.in_type)
-                   then id_info.id_type := Some ty)
+           | FN (Id (id, id_info)) -> type_field_from_scope env id id_info
            | FN (IdQualified _)
            | FDynamic _ ->
                self#visit_field_name venv fname);
