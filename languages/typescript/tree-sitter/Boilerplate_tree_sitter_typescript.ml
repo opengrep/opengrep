@@ -545,7 +545,11 @@ and map_anon_choice_export_stmt_f90d83f (env : env)
             | Some tok -> R.Option (Some ((* "readonly" *) token env tok))
             | None -> R.Option None
           in
-          let v5 = map_property_name env v5 in
+          let v5 =
+            match v5 with
+            | `Prop_name x -> R.Case ("Prop_name", map_property_name env x)
+            | `New tok -> R.Case ("New", (* "new" *) token env tok)
+          in
           let v6 =
             match v6 with
             | Some tok -> R.Option (Some ((* "?" *) token env tok))

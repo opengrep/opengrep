@@ -348,7 +348,7 @@ and anon_choice_export_stmt_f90d83f = [
       * Token.t (* "static" *) option
       * Token.t (* "override" *) option
       * Token.t (* "readonly" *) option
-      * property_name
+      * [ `Prop_name of property_name | `New of Token.t (* "new" *) ]
       * Token.t (* "?" *) option
       * type_annotation option
     )
