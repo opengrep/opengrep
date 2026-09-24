@@ -1,0 +1,13 @@
+rules:
+  - id: test-callback-result-js
+    message: the result of calling a callback is what the callback returns, where it is used
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -97,14 +97,6 @@ let compare_matches pm1 pm2 =
 (*****************************************************************************)
 
 type arg = { name : string; index : int } [@@deriving eq, ord]
-type formal =
-  | Param of arg
-  | Captured of
-      (IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
-[@@deriving eq, ord]
-
-type base = BGlob of IL.name | BThis | BArg of arg | BEnv of IL.name
-[@@deriving ord]
 
 (* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple
  * scrutinee starting at index [n]. Reading element [k] of a slice
@@ -119,6 +111,27 @@ type offset =
   | Oany
 [@@deriving eq, ord]
 
+type call_loc = { file : string; line : int; col : int } [@@deriving eq, ord]
+
+type formal =
+  | Param of arg
+  | Captured of
+      (IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
+  | Result of call
+
+(* A call, at [loc], of the function held at [callee_offset] in [callee].
+ * Its result is known only when the signature is applied. *)
+and call = { callee : formal; callee_offset : offset list; loc : call_loc }
+[@@deriving eq, ord]
+
+type base =
+  | BGlob of IL.name
+  | BThis
+  | BArg of arg
+  | BEnv of IL.name
+  | BCall of call
+[@@deriving ord]
+
 type lval = { base : base; offset : offset list }
 
 let compare_lval { base = base1; offset = offset1 }
@@ -128,13 +141,6 @@ let compare_lval { base = base1; offset = offset1 }
   | other -> other
 
 let show_arg { name = s; index = i } = Printf.sprintf "arg(%s#%d)" s i
-
-let show_base base =
-  match base with
-  | BGlob name -> fst name.ident
-  | BThis -> "this"
-  | BArg arg -> show_arg arg
-  | BEnv name -> "env(" ^ fst name.ident ^ ")"
 
 let show_offset offset =
   match offset with
@@ -146,6 +152,24 @@ let show_offset offset =
 
 let show_offset_list offset =
   offset |> List_.map show_offset |> String.concat ""
+
+let rec show_formal = function
+  | Param arg -> show_arg arg
+  | Captured name -> "env(" ^ fst name.ident ^ ")"
+  | Result call -> show_call call
+
+and show_call { callee; callee_offset; loc } =
+  Printf.sprintf "result(%s%s@%d:%d)" (show_formal callee)
+    (show_offset_list callee_offset)
+    loc.line loc.col
+
+let show_base base =
+  match base with
+  | BGlob name -> fst name.ident
+  | BThis -> "this"
+  | BArg arg -> show_arg arg
+  | BEnv name -> "env(" ^ fst name.ident ^ ")"
+  | BCall call -> show_call call
 
 let show_lval { base; offset } = show_base base ^ show_offset_list offset
 
@@ -238,13 +262,18 @@ let rev_IL_offset_of_offset offset =
 
 let lval_of_arg arg = { base = BArg arg; offset = [] }
 
-let show_formal = function
-  | Param arg -> show_arg arg
-  | Captured name -> "env(" ^ fst name.ident ^ ")"
-
 let base_of_formal = function
   | Param arg -> BArg arg
   | Captured name -> BEnv name
+  | Result call -> BCall call
+
+(* The location of a call, from its callee expression. Calls with no
+ * location share one. *)
+let call_loc_of_exp (callee : IL.exp) : call_loc =
+  match AST_generic_helpers.range_of_any_opt (IL.any_of_orig callee.eorig) with
+  | Some (loc, _) ->
+      { file = Fpath.to_string loc.Tok.pos.file; line = loc.pos.line; col = loc.pos.column }
+  | None -> { file = ""; line = 0; col = 0 }
 
 (*****************************************************************************)
 (* Taint *)

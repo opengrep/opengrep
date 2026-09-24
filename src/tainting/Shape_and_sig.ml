@@ -517,10 +517,10 @@ and Effect : sig
             (** See note on [taints_to_sink.guards]. *)
       }
         (** Essentially a preliminary form of "effect variable". It represents *
-            the 'ToSink' effects of a function call where the function is not *
+            the effects of a function call where the function is not *
             yet known (the function is an argument to be instantiated at call *
-            site). * * TODO: Handle 'ToReturn' (probably easy) and 'ToLval' (may
-            be trickier). *)
+            site). The call's result is the base [BCall] of that call, which *
+            resolves to what the callback returns. *)
 
   val compare : t -> t -> int
   (** Guard-excluding: two effects equal up to their [guards] compare as 0,

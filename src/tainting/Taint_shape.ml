@@ -157,6 +157,21 @@ let compose_offset ?(max : int option) ~(lang : Lang.t)
   in
   go (List.rev base) (List.length base) offset
 
+(* A field offset of function type is a method, unless naming found it to be
+ * a data field of the receiver's type, which holds a function. *)
+let is_method_offset (o : T.offset) : bool =
+  match o with
+  | T.Ofld n -> (
+      match !(n.id_info.id_type) with
+      | Some { t = G.TyFun _; _ } ->
+          not (IdFlags.is_data_field !(n.id_info.id_flags))
+      | _ -> false)
+  | T.Oint _
+  | T.Ostr _
+  | T.Oslice _
+  | T.Oany ->
+      false
+
 let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
     taints =
   let type_of_offset o =
@@ -204,7 +219,7 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
   |> List.fold_left
        (fun taints o ->
          match (type_of_offset o, o) with
-         | Some { t = TyFun _; _ }, _ ->
+         | Some { t = TyFun _; _ }, _ when is_method_offset o ->
             (* We have an l-value like `o.f` where `f` has a function type,
              * so it's a method call, we return nothing here. We cannot just
              * return `xtaint`, which is the taint of `o` in the environment;
@@ -244,16 +259,7 @@ let find_in_arg ?max ~lang ~taints offset arg base_offsets =
    * value (e.g. [arr.begin()] in C++). Extending the Arg shape through
    * the method would make the receiver look like a callback and fire
    * false HOF dispatch. Fall through to the poly-taint path instead. *)
-  let offset_is_method =
-    List.exists
-      (function
-        | T.Ofld n -> (
-            match !(n.id_info.id_type) with
-            | Some { t = G.TyFun _; _ } -> true
-            | _ -> false)
-        | _ -> false)
-      offset
-  in
+  let offset_is_method = List.exists is_method_offset offset in
   if offset_is_method then None
   else
     (* Extend each alternative path with the additional [offset],

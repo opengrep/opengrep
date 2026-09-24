@@ -826,8 +826,8 @@ let rec collect_field_types (env : env) (stmts : stmt list) : unit =
          | Block (_, stmts, _) -> collect_field_types env stmts
          | _ -> ())
 
-(* The declared type of field [fname] of the type [receiver_type] names, seen
- * through pointers. *)
+(* The declared type of data field [fname] of the type [receiver_type] names,
+ * seen through pointers. *)
 let rec field_type (env : env) (receiver_type : type_) (fname : string) :
     type_ option =
   match receiver_type.t with
@@ -1566,8 +1566,13 @@ class ['self] resolve_visitor env lang =
                  Option.bind receiver_type (fun ty -> field_type env ty s)
                with
                | Some ty ->
-                   if Option.is_none !(id_info.id_type) && not !(env.in_type)
-                   then id_info.id_type := Some ty
+                   id_info.id_flags := IdFlags.set_data_field !(id_info.id_flags);
+                   (* On an offset a function type marks a method. *)
+                   (match ty.t with
+                   | TyFun _ -> ()
+                   | _ ->
+                       if Option.is_none !(id_info.id_type) && not !(env.in_type)
+                       then id_info.id_type := Some ty)
                | None -> ())
            | FN (IdQualified _)
            | FDynamic _ ->

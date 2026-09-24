@@ -1075,10 +1075,11 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
       (fun (y, _) -> Int.equal (IL.compare_name x y) 0)
       sig_.captured
   in
-  let bound_formal_in_sig (formal : T.formal) : bool =
+  let rec bound_formal_in_sig (formal : T.formal) : bool =
     match formal with
     | Param arg -> bound_in_sig arg
     | Captured x -> captured_in_sig x
+    | Result call -> bound_formal_in_sig call.callee
   in
   let f_param_names =
     List.filter_map IL_helpers.pname_of_param inst_var.f_params_il
@@ -1126,13 +1127,15 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
         match lval.base with
         | T.BArg arg when bound_in_sig arg -> keep ()
         | T.BEnv x when captured_in_sig x -> keep ()
+        | T.BCall call when bound_formal_in_sig (Result call) -> keep ()
         | T.BArg _ -> (
             match inst_var.inst_lval lval with
             | Some _ -> delegate ()
             | None -> keep ())
         | T.BGlob _
         | T.BThis
-        | T.BEnv _ ->
+        | T.BEnv _
+        | T.BCall _ ->
             delegate ())
     | T.Src _
     | T.Control ->
@@ -1493,6 +1496,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
   in
   match tlval.base with
   | BGlob gvar -> Some (gvar, tlval.offset, snd gvar.ident)
+  | BCall _ -> None
   | BEnv x -> (
       match find_in_env env x with
       | Ref { base = BGlob var; offset } ->
@@ -1635,7 +1639,8 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
   in
   match lval.base with
   | BArg _
-  | BEnv _ ->
+  | BEnv _
+  | BCall _ ->
       lval_taints
   | BThis when not is_method_in_this_class -> lval_taints
   | BGlob _
@@ -1668,6 +1673,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
   let* base, offset =
     match base with
     | T.BArg pos -> Some (`Arg pos, offset)
+    | BCall _ -> None
     | BEnv x -> (
         match find_in_env env x with
         | Ref { base = BGlob var; offset = ref_offset } ->
@@ -1711,6 +1717,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
           match ref_lval.base with
           | BArg arg -> Arg (T.Param arg, [ ref_lval.offset ])
           | BEnv y -> Arg (T.Captured y, [ ref_lval.offset ])
+          | BCall call -> Arg (T.Result call, [ ref_lval.offset ])
           | BGlob _
           | BThis ->
               Bot
@@ -1850,7 +1857,22 @@ let rec instantiate_function_signature ~(lang : Lang.t)
          Log.debug (fun m ->
              m "INST_SIG:   arg[%d]: taints=%d shape=%s" i
                (Taints.cardinal taints) (show_shape shape)));
-  let lval_to_taints lval =
+  (* The value a call of a formal returns, set below once the effects can
+   * be instantiated: the result of a call is the return of the callback
+   * its [ToSinkInCall] effects resolve to. *)
+  let call_result : (T.call -> (Taints.t * shape) option) ref =
+    ref (fun _ -> None)
+  in
+  let lval_to_taints (lval : T.lval) =
+    match lval.base with
+    | T.BCall call ->
+        let* taints, shape = !call_result call in
+        Shape.find_in_shape_poly ~max:max_offset ~lang ~taints lval.offset
+          shape
+    | T.BGlob _
+    | T.BThis
+    | T.BArg _
+    | T.BEnv _ ->
     (* This function simply produces the corresponding taints to the
         given argument, within the body of the function.
     *)
@@ -1902,6 +1924,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         instantiate_lval_using_actual_exps ~lang ~max_offset ~env callee
           taint_sig.params (Option.value args ~default:[]) lval
     | (T.BArg _ | T.BThis), None -> None
+    | T.BCall _, _ -> None
   in
   (* Freezing is allowed only with concrete actuals: the recursive-HOF
    * path ([args = None]) re-classifies in the right frame later. *)
@@ -2201,7 +2224,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         in
         let fun_closure_opt =
           match fun_formal with
-          | Captured _ -> (
+          | Captured _
+          | Result _ -> (
               match lval_to_taints fun_lval with
               | Some (_, Fun (fun_sig, fun_env)) -> Some (fun_sig, fun_env)
               | _ -> None)
@@ -2586,7 +2610,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                               [])))
              | None -> (
                  match (fun_formal, rebind_arg_to_outer) with
-                 | Captured _, Some (outer_arg, outer_offsets) ->
+                 | (Captured _ | Result _), Some (outer_arg, outer_offsets) ->
                      outer_offsets
                      |> List.map (fun arg_offset ->
                             ToSinkInCall
@@ -2595,7 +2619,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                 arg_offset;
                                 args_taints;
                                 guards = Effect_guard.top; })
-                 | Captured _, None -> []
+                 | (Captured _ | Result _), None -> []
                  | Param _, _ ->
                      [ ToSinkInCall
                          { callee = fun_exp;
@@ -2605,7 +2629,105 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                            guards = Effect_guard.top; } ]))))
   in
   let effects_list = taint_sig.effects |> Effects.elements in
-  let call_effects = effects_list |> List.concat_map inst_effect in
+  let call_of_effect (eff : Effect.t) : T.call option =
+    match eff with
+    | Effect.ToSinkInCall { callee = fun_exp; arg; arg_offset; _ } ->
+        Some
+          {
+            T.callee = arg;
+            callee_offset = arg_offset;
+            loc = T.call_loc_of_exp fun_exp;
+          }
+    | Effect.ToReturn _
+    | Effect.ToSink _
+    | Effect.ToLval _ ->
+        None
+  in
+  (* The effects of each call of a formal, instantiated once; [None] while
+   * they are being instantiated, so a call whose arguments depend on its
+   * own result, as in a loop, sees no result. *)
+  let calls : (T.call * call_effects option) list ref = ref [] in
+  let effects_of_call (call : T.call) : call_effects option =
+    match List.find_opt (fun (c, _) -> T.equal_call c call) !calls with
+    | Some (_, effects) -> effects
+    | None ->
+        calls := (call, None) :: !calls;
+        let effects =
+          effects_list
+          |> List.concat_map (fun eff ->
+                 match call_of_effect eff with
+                 | Some c when T.equal_call c call -> inst_effect eff
+                 | Some _
+                 | None ->
+                     [])
+        in
+        calls :=
+          (call, Some effects)
+          :: List.filter (fun (c, _) -> not (T.equal_call c call)) !calls;
+        Some effects
+  in
+  (call_result :=
+     fun (call : T.call) ->
+       let* effects = effects_of_call call in
+       let results =
+         effects
+         |> List.filter_map (function
+              | ToReturn { data_taints; data_shape; guards; _ } ->
+                  Some (Taints.conjoin_guard guards data_taints, data_shape)
+              | ToSinkInCall { callee; arg; arg_offset; guards; _ } ->
+                  (* The callback is a formal of the enclosing function:
+                   * the result stays a call of that formal. *)
+                  let call =
+                    {
+                      T.callee = arg;
+                      callee_offset = arg_offset;
+                      loc = T.call_loc_of_exp callee;
+                    }
+                  in
+                  Some
+                    ( Taints.conjoin_guard guards
+                        (Taints.singleton
+                           (T.taint_of_orig
+                              (T.Var { base = T.BCall call; offset = [] }))),
+                      Arg (T.Result call, [ [] ]) )
+              | ToSink _
+              | ToLval _
+              | ToLvalThis _ ->
+                  None)
+       in
+       match results with
+       | [] -> None
+       | (taints, shape) :: rest ->
+           Some
+             (List.fold_left
+                (fun (taints_acc, shape_acc) (taints, shape) ->
+                  ( Taints.union taints taints_acc,
+                    Shape.unify_shape ~lang shape shape_acc ))
+                (taints, shape) rest));
+  (* The callback's return is the value of its call inside the function,
+   * not of the call being instantiated; it reaches the caller only where
+   * the function's own effects use that call's result. *)
+  let call_effects =
+    let calls_of_sig =
+      effects_list |> List.filter_map call_of_effect
+      |> List.sort_uniq T.compare_call
+    in
+    (effects_list
+    |> List.concat_map (fun eff ->
+           match call_of_effect eff with
+           | None -> inst_effect eff
+           | Some _ -> []))
+    @ (calls_of_sig
+      |> List.concat_map (fun call ->
+             effects_of_call call |> Option.value ~default:[]
+             |> List.filter (function
+                  | ToReturn _ -> false
+                  | ToSink _
+                  | ToLval _
+                  | ToLvalThis _
+                  | ToSinkInCall _ ->
+                      true)))
+  in
   (* Post-instantiation invariant: every [Effect_guard.t] on an output
    * [ToSink]/[ToReturn] must refer to [outer_params]. Guards that were
    * anchored in the callee's parameters have been either evaluated to a
@@ -2644,16 +2766,21 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         (show_call_effects call_effects));
   Some call_effects
 
-let remap_lval_barg (remap_fn : T.arg -> T.arg) (lval : T.lval) : T.lval =
-  match lval.base with
-  | T.BArg arg -> { lval with base = T.BArg (remap_fn arg) }
-  | T.BGlob _ | T.BThis | T.BEnv _ -> lval
-
-let remap_formal_barg (remap_fn : T.arg -> T.arg) (formal : T.formal) :
+let rec remap_formal_barg (remap_fn : T.arg -> T.arg) (formal : T.formal) :
     T.formal =
   match formal with
   | Param arg -> Param (remap_fn arg)
   | Captured _ -> formal
+  | Result call -> Result (remap_call_barg remap_fn call)
+
+and remap_call_barg (remap_fn : T.arg -> T.arg) (call : T.call) : T.call =
+  { call with callee = remap_formal_barg remap_fn call.callee }
+
+let remap_lval_barg (remap_fn : T.arg -> T.arg) (lval : T.lval) : T.lval =
+  match lval.base with
+  | T.BArg arg -> { lval with base = T.BArg (remap_fn arg) }
+  | T.BCall call -> { lval with base = T.BCall (remap_call_barg remap_fn call) }
+  | T.BGlob _ | T.BThis | T.BEnv _ -> lval
 
 let rec remap_taint_barg (remap_fn : T.arg -> T.arg) (taint : T.taint)
     : T.taint =

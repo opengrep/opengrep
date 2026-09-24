@@ -855,6 +855,27 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
+(* The result of the calls [effects_of_call_func_arg] records. *)
+let result_of_call_func_arg ~(lang : Lang.t) fun_exp fun_shape :
+    Taints.t * S.shape =
+  match fun_shape with
+  | S.Arg (fun_arg, arg_offsets) ->
+      let loc = T.call_loc_of_exp fun_exp in
+      arg_offsets
+      |> List.fold_left
+           (fun (taints, shape) arg_offset ->
+             let call =
+               { T.callee = fun_arg; callee_offset = arg_offset; loc }
+             in
+             ( Taints.union
+                 (Taints.singleton
+                    (T.taint_of_orig
+                       (T.Var { base = T.BCall call; offset = [] })))
+                 taints,
+               Shape.unify_shape ~lang (S.Arg (T.Result call, [ [] ])) shape ))
+           (Taints.empty, S.Bot)
+  | __else__ -> (Taints.empty, S.Bot)
+
 (* Fast path via [id_callee_definition] sid (= sig DB key), skipping the edge
    scan.
    The stamp is trusted whatever name it resolves to, gated only by the
@@ -2775,20 +2796,38 @@ let call_with_intrafile lval_opt e env args instr =
                     | _ -> is_method_callback_invoke
                   in
                   (* Record ToSinkInCall effects for any callback arguments being passed. *)
+                  (* [f.apply(x)] calls the receiver; [o.cb(x)] calls the
+                   * function held in the field [cb] of the receiver. *)
                   let callee_shape =
-                    match e_obj with
-                    | `Obj (_, (S.Arg _ as shape)) -> shape
+                    match (e_obj, e.e) with
+                    | `Obj (_, (S.Arg _ as shape)), _ when is_method_callback_invoke
+                      ->
+                        shape
+                    | ( `Obj (_, (S.Arg _ as shape)),
+                        Fetch { rev_offset = { o = Dot fld; _ } :: _; _ } ) -> (
+                        match
+                          Shape.find_in_shape_poly
+                            ~max:(Shape.max_poly_offset env.taint_inst.lang)
+                            ~lang:env.taint_inst.lang ~taints:Taints.empty
+                            [ T.Ofld fld ] shape
+                        with
+                        | Some (_, field_shape) -> field_shape
+                        | None -> e_shape)
                     | _ -> e_shape
                   in
                   effects_of_call_func_arg e callee_shape args_taints
                   |> record_effects { env with lval_env };
-                  (* If the callee IS a callback parameter, return empty taints - the callback's
-                   * return value will be handled when the ToSinkInCall effect is instantiated.
+                  (* If the callee IS a callback parameter, its result is the
+                   * result of that call, known when the signature is applied.
                    * This prevents false positives like sink(app(b, source())) where b doesn't
                    * propagate taint. But if we're just passing a callback TO another function,
                    * we still need to propagate taints normally. *)
                   if callee_is_callback then
-                    (Taints.empty, Bot, lval_env)
+                    let taints, shape =
+                      result_of_call_func_arg ~lang:env.taint_inst.lang e
+                        callee_shape
+                    in
+                    (taints, shape, lval_env)
                   else (
                     (* Callee is not a callback - propagate taints normally *)
                     let call_taints =
@@ -2796,7 +2835,11 @@ let call_with_intrafile lval_opt e env args instr =
                       | `Fun -> call_taints
                       | `Obj (obj_taints, _) -> call_taints |> Taints.union obj_taints
                     in
-                    (call_taints, Bot, lval_env)))))
+                    let result_taints, result_shape =
+                      result_of_call_func_arg ~lang:env.taint_inst.lang e
+                        callee_shape
+                    in
+                    (Taints.union result_taints call_taints, result_shape, lval_env)))))
   in
   (* We add the taint of the function itselt (i.e., 'e_taints') too. *)
   let all_call_taints =
@@ -3571,7 +3614,8 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
               lval))
     | BArg _
     | BThis
-    | BEnv _ ->
+    | BEnv _
+    | BCall _ ->
         lval
   in
   let rec convert_shape (shape : S.shape) : S.shape =
