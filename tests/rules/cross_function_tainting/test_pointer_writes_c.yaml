@@ -1,0 +1,13 @@
+rules:
+  - id: test-pointer-writes-c
+    message: A write through a pointer reaches what it points to
+    languages:
+      - c
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -3146,6 +3146,59 @@ let caller_sees_update (params : IL.param list) (rebound : IL.NameSet.t)
       | None -> true)
   | _ -> true
 
+(* The writes to the caller's objects that [var]'s value in [exit_var_ref]
+ * shows, compared with [var] on entry. *)
+let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
+    (var : IL.name) exit_var_ref : Effect.t Seq.t =
+  match Lval_env.find_var enter_env var with
+  | None -> Seq.empty
+  | Some (Cell ((`Clean | `None), _)) -> Seq.empty
+  | Some (Cell (`Tainted enter_taints, _) as enter_cell) -> (
+      (* For each lval in the enter_env, we get its `T.lval`, and check
+       * if it got new taints at the exit_env. If so, we generate a 'ToLval'. *)
+      match
+        enter_taints |> Taints.to_taint_list
+        |> List_.filter_map (fun (taint : T.taint) ->
+               match taint.T.orig with
+               | T.Var lval -> Some lval
+               | _ -> None)
+      with
+      | []
+      | _ :: _ :: _ ->
+          Seq.empty
+      | [ lval ] ->
+          Shape.enum_in_cell exit_var_ref
+          |> Seq.filter_map (fun (offset, exit_taints) ->
+                 let lval =
+                   { lval with offset = lval.offset @ offset }
+                 in
+                 if not (keep lval) then None
+                 else
+                 let enter_taints_at_offset =
+                   match Shape.find_in_cell ~lang offset enter_cell with
+                   | `Found (Cell (xtaint, _)) -> Xtaint.to_taints xtaint
+                   | `Not_found (carried, _, _) -> carried
+                   | `Clean -> Taints.empty
+                 in
+                 let new_taints =
+                   Taints.diff exit_taints enter_taints_at_offset
+                 in
+                 (* TODO: Also report if taints are _cleaned_. *)
+                 if not (Taints.is_empty new_taints) then
+                   Some
+                     (Effect.ToLval
+                        {
+                          taints = new_taints;
+                          lval;
+                          (* The write may have happened under a branch
+                           * guard; recover it from the guards the
+                           * written taints carry (tagged at the write
+                           * site) so a caller can drop the effect when
+                           * its argument makes the guard false. *)
+                          guards = Taints.guards_disjunction new_taints;
+                        })
+                 else None))
+
 let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
     ~(rebound : IL.NameSet.t) enter_env exit_env : Effect.t list =
   (* TOOD: We need to get a map of `lval` to `Taint.arg`, and if an extension
@@ -3153,56 +3206,19 @@ let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
    * extension and generate a `ToLval` effect too. *)
   exit_env |> Lval_env.seq_of_tainted
   |> Seq.map (fun (var, exit_var_ref) ->
-         match Lval_env.find_var enter_env var with
-         | None -> Seq.empty
-         | Some (Cell ((`Clean | `None), _)) -> Seq.empty
-         | Some (Cell (`Tainted enter_taints, _) as enter_cell) -> (
-             (* For each lval in the enter_env, we get its `T.lval`, and check
-              * if it got new taints at the exit_env. If so, we generate a 'ToLval'. *)
-             match
-               enter_taints |> Taints.to_taint_list
-               |> List_.filter_map (fun (taint : T.taint) ->
-                      match taint.T.orig with
-                      | T.Var lval -> Some lval
-                      | _ -> None)
-             with
-             | []
-             | _ :: _ :: _ ->
-                 Seq.empty
-             | [ lval ] ->
-                 Shape.enum_in_cell exit_var_ref
-                 |> Seq.filter_map (fun (offset, exit_taints) ->
-                        let lval =
-                          { lval with offset = lval.offset @ offset }
-                        in
-                        if not (caller_sees_update params rebound lval) then
-                          None
-                        else
-                        let enter_taints_at_offset =
-                          match Shape.find_in_cell ~lang offset enter_cell with
-                          | `Found (Cell (xtaint, _)) -> Xtaint.to_taints xtaint
-                          | `Not_found (carried, _, _) -> carried
-                          | `Clean -> Taints.empty
-                        in
-                        let new_taints =
-                          Taints.diff exit_taints enter_taints_at_offset
-                        in
-                        (* TODO: Also report if taints are _cleaned_. *)
-                        if not (Taints.is_empty new_taints) then
-                          Some
-                            (Effect.ToLval
-                               {
-                                 taints = new_taints;
-                                 lval;
-                                 (* The write may have happened under a branch
-                                  * guard; recover it from the guards the
-                                  * written taints carry (tagged at the write
-                                  * site) so a caller can drop the effect when
-                                  * its argument makes the guard false. *)
-                                 guards = Taints.guards_disjunction new_taints;
-                               })
-                        else None)))
+         arg_updates_of_var ~lang ~keep:(caller_sees_update params rebound)
+           enter_env var exit_var_ref)
   |> Seq.concat |> List.of_seq
+
+(* Before a by-value parameter is rebound it still refers to the caller's
+ * object, so its changes so far reach the caller. *)
+let effects_before_param_rebinding ~(lang : Lang.t) enter_env current_env
+    (var : IL.name) : Effect.t list =
+  match Lval_env.find_var current_env var with
+  | None -> []
+  | Some var_ref ->
+      arg_updates_of_var ~lang ~keep:(fun _ -> true) enter_env var var_ref
+      |> List.of_seq
 
 let check_tainted_control_at_exit node env =
   match node.F.n with
@@ -3615,6 +3631,18 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
          * it is dropped at stamp time: the IL is non-SSA, so a later read of
          * this name may observe a different value than a guard established
          * earlier on the path assumed. *)
+        (match opt_lval with
+        | Some { IL.base = IL.Var name; rev_offset = [] }
+          when List.exists
+                 (function
+                   | IL.Param { pname; by_reference = false; _ } ->
+                       IL.equal_name pname name
+                   | _ -> false)
+                 fun_cfg.params ->
+            effects_before_param_rebinding ~lang:env.taint_inst.lang
+              enter_env.lval_env in' name
+            |> record_effects env
+        | _ -> ());
         let out_lval_env =
           match (opt_lval, x.i) with
           | ( Some { IL.base = IL.Var name; rev_offset = [] },

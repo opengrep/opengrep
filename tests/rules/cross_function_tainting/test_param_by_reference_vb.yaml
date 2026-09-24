@@ -1,0 +1,13 @@
+rules:
+  - id: test-param-by-reference-vb
+    message: A write to a ByRef parameter reaches the caller
+    languages:
+      - vb
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

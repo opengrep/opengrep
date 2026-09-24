@@ -1,0 +1,13 @@
+rules:
+  - id: test-param-rebinding-split
+    message: Rebinding a parameter in another file does not reach the caller
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

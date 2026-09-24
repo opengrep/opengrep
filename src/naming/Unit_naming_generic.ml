@@ -123,6 +123,27 @@ let check_single_binding ast name =
                (spf "all uses of '%s' share one binding" name)
                first sid)
 
+(* Each use of [name] numbered by its binding, in order of first
+   appearance; -1 for an unresolved use. *)
+let binding_groups ast name : int list =
+  let seen = Hashtbl.create 8 in
+  resolutions_of_name ast name
+  |> List.map (function
+       | None -> -1
+       | Some (_kind, sid) -> (
+           let key = AST_generic.SId.to_int sid in
+           match Hashtbl.find_opt seen key with
+           | Some group -> group
+           | None ->
+               let group = Hashtbl.length seen in
+               Hashtbl.add seen key group;
+               group))
+
+let check_binding_groups ast name expected =
+  Alcotest.(check (list int))
+    (spf "bindings of '%s'" name)
+    expected (binding_groups ast name)
+
 let tests parse_program =
   Testo.categorize "naming generic"
     [
@@ -315,4 +336,123 @@ let tests parse_program =
           (* JS keeps the full-chain lookup: the bare assignment in setup()
              mutates the module-level `state`, it does not declare a local. *)
           check_resolutions ast "state" [ "Global"; "Global" ]);
+      t "go short variable declarations follow Go's scopes" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/go/short_var_scopes.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* [ctx, span := start(ctx)] reuses the parameter: the parameters
+             and the body's top level are one scope. *)
+          check_resolutions ast "ctx" [ "Parameter"; "Parameter"; "Parameter" ];
+          (* [a, err := g()] declares err; [if err := h(); ...] declares a
+             second err local to the if; [b, err := k()] reuses the first. *)
+          check_binding_groups ast "err" [ 0; 0; 0; 1; 1; 1; 0; 0; 0 ];
+          (* a top-level declaration group is not a scope *)
+          check_resolutions ast "ga" [ "Global" ];
+          check_resolutions ast "gb" [ "Global" ];
+          (* a labelled declaration declares in the enclosing block *)
+          check_resolutions ast "e" [ "LocalVar" ];
+          check_resolutions ast "e2" [ "LocalVar" ]);
+      t "c switch body is one scope" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/c/switch_scope.c")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.C ast;
+          check_resolutions ast "y" [ "LocalVar"; "LocalVar"; "LocalVar"; "LocalVar" ];
+          check_single_binding ast "y");
+      t "java switch body is one scope" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/java/switch_scope.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          check_resolutions ast "y" [ "LocalVar"; "LocalVar"; "LocalVar" ];
+          check_single_binding ast "y");
+      t "csharp members, declarators, using resources and switch" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/csharp/members_and_scopes.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* fields with several declarators, a property and an event are
+             class members; locals with several declarators, using
+             resources and a declaration in one case are locals *)
+          check_resolutions ast "fa" [ "Other" ];
+          check_resolutions ast "fb" [ "Other" ];
+          check_resolutions ast "P" [ "Other"; "Other"; "Other" ];
+          check_resolutions ast "E" [ "Other" ];
+          check_resolutions ast "a" [ "LocalVar" ];
+          check_resolutions ast "b" [ "LocalVar" ];
+          check_resolutions ast "r" [ "LocalVar" ];
+          check_resolutions ast "s" [ "LocalVar" ];
+          check_resolutions ast "y" [ "LocalVar"; "LocalVar"; "LocalVar" ];
+          check_single_binding ast "y");
+      t "apex fields, property and locals" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/apex/members.cls")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Apex ast;
+          check_resolutions ast "fa" [ "Other" ];
+          check_resolutions ast "fb" [ "Other" ];
+          check_resolutions ast "P" [ "Other" ];
+          check_resolutions ast "a" [ "LocalVar" ];
+          check_resolutions ast "b" [ "LocalVar" ]);
+      t "vb.net property resolves in methods" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/vb/property.vb")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Vb ast;
+          check_resolutions ast "fa" [ "Other"; "Other"; "Other" ];
+          check_resolutions ast "P" [ "Other" ]);
+      t "dart class fields and switch cases" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/dart/fields_and_switch.dart")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Dart ast;
+          check_resolutions ast "fa" [ "Other" ];
+          check_resolutions ast "fb" [ "Other" ];
+          check_resolutions ast "a" [ "LocalVar" ];
+          check_resolutions ast "b" [ "LocalVar" ];
+          (* a case's statements share one scope *)
+          check_resolutions ast "c" [ "LocalVar" ];
+          check_resolutions ast "d" [ "LocalVar" ]);
+      t "swift class fields resolve in methods" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/swift/fields.swift")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Swift ast;
+          check_resolutions ast "fa" [ "Other" ];
+          check_resolutions ast "fb" [ "Other" ];
+          check_resolutions ast "fc" [ "Other" ]);
+      t "solidity state variables resolve in functions" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/solidity/fields.sol")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Solidity ast;
+          check_resolutions ast "fa" [ "Other" ];
+          check_resolutions ast "fb" [ "Other" ]);
+      t "kotlin do-while condition sees the body" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/kotlin/do_while.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          check_resolutions ast "x" [ "LocalVar" ]);
+      t "elixir parenthesised sequence is not a scope" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/elixir/parenthesised.ex")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Elixir ast;
+          check_resolutions ast "a" [ "LocalVar" ];
+          check_resolutions ast "b" [ "LocalVar" ];
+          (* a binding inside if does not leak *)
+          check_resolutions ast "c" [ "Unresolved" ]);
     ]

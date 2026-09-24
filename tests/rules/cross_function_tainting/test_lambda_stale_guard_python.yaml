@@ -1,0 +1,14 @@
+rules:
+  - id: test-lambda-stale-guard-python
+    message: A lambda's effect does not carry a guard over a reassigned variable
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+      guarded_taint_signatures: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

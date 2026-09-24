@@ -1,0 +1,13 @@
+rules:
+  - id: test-pointer-writes-split
+    message: A write through a pointer in another file reaches what it points to
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

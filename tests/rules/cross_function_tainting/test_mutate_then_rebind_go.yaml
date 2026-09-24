@@ -1,0 +1,13 @@
+rules:
+  - id: test-mutate-then-rebind-go
+    message: Changes made before a parameter is rebound reach the caller
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

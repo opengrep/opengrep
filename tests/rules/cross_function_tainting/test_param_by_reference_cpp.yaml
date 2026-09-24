@@ -1,0 +1,13 @@
+rules:
+  - id: test-param-by-reference-cpp
+    message: A write to a reference parameter reaches the caller
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
