@@ -32,6 +32,7 @@ val tuple_like_obj : (Taint.taints * shape) list -> shape
 
 (* THINK: Replace polymorphic variant with a parameterized IL.field_or_entry ? *)
 val record_or_dict_like_obj :
+  lang:Lang.t ->
   [< `Entry of IL.exp * Taint.taints * shape
   | `Field of IL.name * Taint.taints * shape
   | `Spread of shape ]
@@ -41,10 +42,10 @@ val record_or_dict_like_obj :
 (** Constructs an 'Obj' shape from a list of taints and shapes associated with
     a record/dict expression. *)
 
-val unify_cell : cell -> cell -> cell
+val unify_cell : lang:Lang.t -> cell -> cell -> cell
 (** Unify two 'cell's into one. *)
 
-val unify_shape : shape -> shape -> shape
+val unify_shape : lang:Lang.t -> shape -> shape -> shape
 (** Unify two 'shapes's into one. *)
 
 val gather_all_taints_in_cell : cell -> Taint.taints
@@ -125,7 +126,12 @@ val update_offset_in_cell :
   cell option
 
 val update_offset_and_unify :
-  Taint.taints -> shape -> Taint.offset list -> cell option -> cell option
+  lang:Lang.t ->
+  Taint.taints ->
+  shape ->
+  Taint.offset list ->
+  cell option ->
+  cell option
 (** Given a 'cell' and an 'offset', it finds the corresponding sub-'cell'
  * for that 'offset', and it updates its 'taints' and 'shape'. If no 'cell'
  * is given (i.e. 'None'), it creates a fresh one. If 'taints' are empty

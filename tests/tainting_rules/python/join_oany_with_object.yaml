@@ -1,0 +1,11 @@
+rules:
+  - id: join_oany_with_object
+    message: taint held by an arbitrary index on one path reaches a field that is clean on the other
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: self.path
+    pattern-sinks:
+      - pattern: sink(...)

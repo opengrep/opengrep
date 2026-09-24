@@ -1,0 +1,13 @@
+rules:
+  - id: python_join_returns_with_object
+    message: taint through a function that returns a whole value or an object
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: self.path
+    pattern-sinks:
+      - pattern: sink(...)

@@ -92,7 +92,7 @@ let empty =
 
 let empty_inout = { Dataflow_core.in_env = empty; out_env = empty }
 
-let union le1 le2 =
+let union ~lang le1 le2 =
   match (le1.dead, le2.dead) with
   (* Both dead: result stays dead. Return a clean empty env with the
    * flag set, so a debugger inspecting post-Join state sees just the
@@ -104,7 +104,7 @@ let union le1 le2 =
   | false, false ->
       let tainted =
         NameMap.union
-          (fun _ x y -> Some (Shape.unify_cell x y))
+          (fun _ x y -> Some (Shape.unify_cell ~lang x y))
           le1.tainted le2.tainted
       in
       {
@@ -130,7 +130,8 @@ let union le1 le2 =
           IL.NameSet.union le1.reassigned_vars le2.reassigned_vars;
       }
 
-let union_list ?(default = empty) les = List.fold_left union default les
+let union_list ~lang ?(default = empty) les =
+  List.fold_left (union ~lang) default les
 
 (* Reduces an l-value into the form x.a_1. ... . a_N, the resulting l-value may
  * not represent the exact same object as the original l-value, but an
@@ -208,7 +209,7 @@ let check_tainted_lvals_limit tainted new_var =
         None)
   else Some tainted
 
-let add_shape var offset new_taints new_shape lval_env =
+let add_shape lang var offset new_taints new_shape lval_env =
   match check_tainted_lvals_limit lval_env.tainted var with
   | None -> lval_env
   | Some tainted ->
@@ -225,7 +226,7 @@ let add_shape var offset new_taints new_shape lval_env =
         tainted =
           NameMap.update var
             (fun opt_var_ref ->
-              Shape.update_offset_and_unify new_taints new_shape offset
+              Shape.update_offset_and_unify ~lang new_taints new_shape offset
                 opt_var_ref)
             tainted;
       }
@@ -236,10 +237,11 @@ let add_lval_shape lang lval new_taints new_shape lval_env =
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)
       lval_env
-  | Some (var, offset) -> add_shape var offset new_taints new_shape lval_env
+  | Some (var, offset) ->
+      add_shape lang var offset new_taints new_shape lval_env
 
-let add var offset new_taints lval_env =
-  add_shape var offset new_taints Bot lval_env
+let add lang var offset new_taints lval_env =
+  add_shape lang var offset new_taints Bot lval_env
 
 let add_lval lang lval new_taints lval_env =
   add_lval_shape lang lval new_taints Bot lval_env
