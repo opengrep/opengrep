@@ -105,7 +105,7 @@ type sig_inst_cache_entry = {
   cached_actual_args : IL.exp IL.argument list option;
   cached_args_taints : Effect.args_taints;
   cached_depth : int;
-  cached_result : call_effects option;
+  cached_result : call_effects;
 }
 
 type sig_inst_cache = (int, sig_inst_cache_entry list) Hashtbl.t
@@ -148,7 +148,7 @@ let equal_actual_args (a1 : IL.exp IL.argument list option)
 let sig_cache_lookup (cache : sig_inst_cache) (callback_sig : Signature.t)
     (callback_env : env) (callee : IL.exp) (actual_args : IL.exp IL.argument list option)
     (args_taints : Effect.args_taints) (depth : int) :
-    call_effects option option =
+    call_effects option =
   match Hashtbl.find_opt cache (IL_helpers.hash_exp callee) with
   | None -> None
   | Some entries ->
@@ -1185,10 +1185,18 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
               (fun acc off ->
                 Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
-    | Fun (inner_sig, inner_env) ->
-        Fun
-          ( substitute_in_sig ~lang inst_var inst_trace inner_sig,
-            instantiate_env inst_var ~inst_cell:walk_cell inner_env )
+    | Fun (c, cs) ->
+        let c, cs =
+          Shape_and_sig.map_closures
+            (fun (closure : closure) ->
+              {
+                closure with
+                sig_ = substitute_in_sig ~lang inst_var inst_trace closure.sig_;
+                env = instantiate_env inst_var ~inst_cell:walk_cell closure.env;
+              })
+            (c, cs)
+        in
+        Fun (c, cs)
   and walk_cell (Cell (xtaint, shape)) =
     let xtaint, shape = walk_xtaint xtaint shape in
     Cell (xtaint, shape)
@@ -1351,7 +1359,7 @@ let instantiate_shape ~lang inst_var inst_trace shape =
               (fun acc off ->
                 Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
-    | Fun (inner_sig, inner_env) ->
+    | Fun (c, cs) ->
         (* A [Fun] shape's signature may reference parameters of the
          * outer function being applied (lambdas can close over their
          * enclosing function's parameters). Refine the inner sig by
@@ -1359,13 +1367,21 @@ let instantiate_shape ~lang inst_var inst_trace shape =
          * actuals via [substitute_in_sig]; bound references to the
          * inner sig's own parameters stay intact for resolution when
          * the inner sig is itself applied later. *)
-        Fun
-          ( substitute_in_sig ~lang inst_var inst_trace inner_sig,
-            instantiate_env inst_var
-              ~inst_cell:(fun (Cell (xtaint, shape)) ->
-                let xtaint, shape = inst_xtaint xtaint shape in
-                Cell (xtaint, shape))
-              inner_env )
+        let inst_cell (Cell (xtaint, shape)) =
+          let xtaint, shape = inst_xtaint xtaint shape in
+          Cell (xtaint, shape)
+        in
+        let c, cs =
+          Shape_and_sig.map_closures
+            (fun (closure : closure) ->
+              {
+                closure with
+                sig_ = substitute_in_sig ~lang inst_var inst_trace closure.sig_;
+                env = instantiate_env inst_var ~inst_cell closure.env;
+              })
+            (c, cs)
+        in
+        Fun (c, cs)
   and inst_xtaint xtaint shape =
     (* This may break INVARIANT(cell) but 'update_offset_in_cell' will restore it. *)
     let xtaint =
@@ -1835,10 +1851,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     ?(outer_params : IL.param list option) ?(env : env option) lval_env
     (taint_sig : Signature.t) ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
-    ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
+    ?(lookup_sig :
+       (IL.exp -> int -> (Function_id.t * Signature.t) option) option)
     ?(depth : int = 0)
     ?(recursive_cache : sig_inst_cache option)
-    () : call_effects option =
+    () : call_effects =
   (* Memoize callback instantiations; without it nested HOFs walk the call chain exponentially. *)
   let recursive_cache =
     match recursive_cache with
@@ -2238,7 +2255,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           | Captured _
           | Result _ -> (
               match lval_to_taints fun_lval with
-              | Some (_, Fun (fun_sig, fun_env)) -> Some (fun_sig, fun_env)
+              | Some (_, Fun (c, cs)) -> Some (c, cs)
               | _ -> None)
           | Param fun_arg ->
           (* Get the actual function expression from args if available. When
@@ -2286,9 +2303,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                       (IL.str_of_name var_name)
                       (T.show_offset_list leftover_offset));
                 (match lval_to_taints taint_lval with
-                | Some (_taints, Fun (sig_, fun_env)) ->
+                | Some (_taints, Fun (c, cs)) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found signature in lval_env");
-                    Some (sig_, fun_env)
+                    Some (c, cs)
                 | Some (_taints, _other_shape) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found non-Fun shape in lval_env");
                     None
@@ -2307,13 +2324,13 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                     m "TOSINKINCALL: Falling back to fun_lval lookup: %s"
                       (T.show_lval fun_lval));
                 (match lval_to_taints fun_lval with
-                | Some (_fun_taints, Fun (fun_sig, fun_env)) ->
+                | Some (_fun_taints, Fun (c, cs)) ->
                     Log.debug (fun m ->
                         m "TOSINKINCALL: fun_lval resolved to Fun signature");
                     (* The '_fun_taints' are the taints (not its signature) of the actual
                      * function argument, and they are not used for instantiation, they are
                      * tracked by the caller like any other intra-procedural taint. *)
-                    Some (fun_sig, fun_env)
+                    Some (c, cs)
                 | Some (_fun_taints, other_shape) ->
                     Log.debug (fun m ->
                         m "TOSINKINCALL: fun_lval resolved to non-Fun: %s"
@@ -2386,11 +2403,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                       m "TOSINKINCALL: Looking up signature for '%s' with arity %d"
                         (Display_IL.string_of_exp exp_to_lookup) lookup_arity);
                   (match lookup_fn exp_to_lookup lookup_arity with
-                  | Some sig_ ->
+                  | Some (def, sig_) ->
                       Log.debug (fun m ->
                           m "TOSINKINCALL: Found signature for '%s'"
                             (Display_IL.string_of_exp exp_to_lookup));
-                      Some (sig_, identity_env sig_)
+                      Some ({ def; sig_; env = identity_env sig_ }, [])
                   | None ->
                       (* For anonymous classes, try looking up just the method name without the object *)
                       Log.debug (fun m ->
@@ -2407,11 +2424,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                               m "TOSINKINCALL: Looking up method name only: '%s' with arity %d"
                                 (Display_IL.string_of_exp method_only_exp) (List.length fun_args_taints));
                           (match lookup_fn method_only_exp (List.length fun_args_taints) with
-                          | Some sig_ ->
+                          | Some (def, sig_) ->
                               Log.debug (fun m ->
                                   m "TOSINKINCALL: Found signature for method name '%s'"
                                     (Display_IL.string_of_exp method_only_exp));
-                              Some (sig_, identity_env sig_)
+                              Some ({ def; sig_; env = identity_env sig_ }, [])
                           | None ->
                               Log.err (fun m ->
                                   m "%s: Could not find the shape of function argument '%s', and no signature found"
@@ -2478,24 +2495,24 @@ let rec instantiate_function_signature ~(lang : Lang.t)
            identity ([fun_exp], [fun_arg_offset]) and [args_taints], so two
            syntactically identical but distinct callbacks (different sids) do
            not share a cache entry within one instantiation tree. *)
-        let instantiate_callback ((fun_sig, fun_env) : Signature.t * env) :
-            call_effects option =
+        let instantiate_callback (closure : closure) : call_effects =
           match
-            sig_cache_lookup recursive_cache fun_sig fun_env fun_exp
+            sig_cache_lookup recursive_cache closure.sig_ closure.env fun_exp
               callback_actual_args args_taints (depth + 1)
           with
           | Some cached -> cached
           | None ->
               let result =
                 instantiate_function_signature ~lang ~atoms ~max_offset
-                  ?outer_params ~env:fun_env lval_env fun_sig ~callee:fun_exp
+                  ?outer_params ~env:closure.env lval_env closure.sig_
+                  ~callee:fun_exp
                   ~args:callback_actual_args args_taints ?lookup_sig
                   ~depth:(depth + 1) ~recursive_cache ()
               in
               sig_cache_store recursive_cache
                 {
-                  cached_sig = fun_sig;
-                  cached_env = fun_env;
+                  cached_sig = closure.sig_;
+                  cached_env = closure.env;
                   cached_callee = fun_exp;
                   cached_actual_args = callback_actual_args;
                   cached_args_taints = args_taints;
@@ -2506,7 +2523,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         in
         under_out_guards
         (match fun_closure_opt with
-        | Some fun_closure ->
+        | Some (c, cs) ->
             Log.debug (fun m ->
                 m ~tags:sigs_tag
                   "** %s: Instantiated function call '%s' arguments: %s -> %s"
@@ -2522,51 +2539,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                     "TOSINKINCALL: Recursively instantiating sig with \
                      args_taints=%s"
                     (Effect.show_args_taints args_taints));
-              (match instantiate_callback fun_closure with
-              | Some call_effects ->
-                  Log.debug (fun m ->
-                      m
-                        "TOSINKINCALL: Recursive instantiation returned %d \
-                         effects"
-                        (List.length call_effects));
-                  call_effects
-             | None ->
-                 (* Preserve the ToSinkInCall only if the actual callback maps to
-                  * an enclosing param (BArg); else DROP — the inner [fun_arg]
-                  * index would alias a wrong param and explode effects. *)
-                 (match param_actual with
-                  | Some actual -> (
-                      match actual with
-                      | IL.Unnamed exp | IL.Named (_, exp) ->
-                          (match enclosing_param_of_exp exp with
-                           | Some updated_arg ->
-                               Log.debug (fun m ->
-                                   m "%s: Could not instantiate signature of '%s', preserving ToSinkInCall effect with actual callee '%s' (arg index=%d)"
-                                     (Display_IL.string_of_exp callee)
-                                     (Display_IL.string_of_exp fun_exp)
-                                     (Display_IL.string_of_exp exp)
-                                     updated_arg.index);
-                               [ ToSinkInCall
-                                   { callee = exp;
-                                     arg = Param updated_arg;
-                                     arg_offset = fun_arg_offset;
-                                     args_taints;
-                                     guards = Effect_guard.top; } ]
-                           | None ->
-                               Log.debug (fun m ->
-                                   m "%s: Dropping ToSinkInCall for '%s' — actual callee '%s' does not map to an enclosing parameter"
-                                     (Display_IL.string_of_exp callee)
-                                     (Display_IL.string_of_exp fun_exp)
-                                     (Display_IL.string_of_exp exp));
-                               []))
-                  | None ->
-                      [ ToSinkInCall
-                          { callee = fun_exp;
-                            arg = fun_formal;
-                            arg_offset = fun_arg_offset;
-                            args_taints;
-                            guards = Effect_guard.top; } ]))
-              )
+              List.concat_map instantiate_callback (c :: cs))
         | None ->
             (* No signature found for callback (parameter during signature
              * extraction). Preserve the ToSinkInCall effect, but update arg
@@ -2775,7 +2748,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
       m ~tags:sigs_tag "Instantiated call to %s: %s"
         (Display_IL.string_of_exp callee)
         (show_call_effects call_effects));
-  Some call_effects
+  call_effects
 
 let rec remap_formal_barg (remap_fn : T.arg -> T.arg) (formal : T.formal) :
     T.formal =
@@ -2822,19 +2795,29 @@ let rec remap_shape_barg (remap_fn : T.arg -> T.arg) (shape : shape) : shape =
   | Bot -> Bot
   | Obj obj -> Obj (Fields.map (remap_cell_barg remap_fn) obj)
   | Arg (arg, offsets) -> Arg (remap_formal_barg remap_fn arg, offsets)
-  | Fun (sig_, env) ->
-      Fun
-        ( {
-            sig_ with
-            Signature.effects =
-              remap_effects_barg remap_fn sig_.Signature.effects;
-          },
-          List_.map
-            (fun (x, entry) ->
-              match entry with
-              | Ref lval -> (x, Ref (remap_lval_barg remap_fn lval))
-              | Val cell -> (x, Val (remap_cell_barg remap_fn cell)))
-            env )
+  | Fun (c, cs) ->
+      let c, cs =
+        Shape_and_sig.map_closures
+          (fun (closure : closure) ->
+            {
+              closure with
+              sig_ =
+                {
+                  closure.sig_ with
+                  Signature.effects =
+                    remap_effects_barg remap_fn closure.sig_.Signature.effects;
+                };
+              env =
+                List_.map
+                  (fun (x, entry) ->
+                    match entry with
+                    | Ref lval -> (x, Ref (remap_lval_barg remap_fn lval))
+                    | Val cell -> (x, Val (remap_cell_barg remap_fn cell)))
+                  closure.env;
+            })
+          (c, cs)
+      in
+      Fun (c, cs)
 
 and remap_cell_barg (remap_fn : T.arg -> T.arg) (cell : cell) : cell =
   let (Cell (xtaint, shape)) = cell in

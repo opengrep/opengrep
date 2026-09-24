@@ -1,0 +1,14 @@
+rules:
+  - id: closure-join-across-files
+    languages: [python]
+    severity: ERROR
+    message: >
+      Different closures that meet at a join in another file are each
+      called.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

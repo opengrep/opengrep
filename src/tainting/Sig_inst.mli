@@ -71,11 +71,12 @@ val instantiate_function_signature :
   callee:IL.exp ->
   args:IL.exp IL.argument list option (** actual arguments *) ->
   (Taint.Taint_set.t * Shape_and_sig.Shape.shape) IL.argument list ->
-  ?lookup_sig:(IL.exp -> int -> Shape_and_sig.Signature.t option) ->
+  ?lookup_sig:
+    (IL.exp -> int -> (Function_id.t * Shape_and_sig.Signature.t) option) ->
   ?depth:int ->
   ?recursive_cache:sig_inst_cache ->
   unit ->
-  call_effects option
+  call_effects
 (** Replaces taint, shape and guard variables in the callee's signature
     with the caller-side values, and constructs the call trace.
 

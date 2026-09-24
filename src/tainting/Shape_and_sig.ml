@@ -101,9 +101,20 @@ module rec Shape : sig
             [Arg (arg, [[]])]: one path, empty. At HOF dispatch the engine
             enumerates each path; at call-site instantiation each path is
             resolved against the caller's actual argument. *)
-    | Fun of Signature.t * env
-        (** A closure: its code and the environment binding the variables
-            the code captures. These enable Semgrep to handle HOFs. *)
+    | Fun of closure * closure list
+        (** The closures a function value may be, at least one, each of a
+            different definition, in increasing [Function_id.compare] order
+            of their definitions.
+            These enable Semgrep to handle HOFs. *)
+
+  and closure = {
+    def : Function_id.t;
+        (** The function definition whose code the closure runs. *)
+    sig_ : Signature.t;
+    env : env;
+        (** Binds the variables the code captures; one definition always
+            captures the same variables, in the same order. *)
+  }
 
   and env = (IL.name * env_entry) list
 
@@ -196,7 +207,12 @@ end = struct
     | Bot
     | Obj of obj
     | Arg of T.formal * T.offset list list
-    | Fun of Signature.t * env
+    | Fun of closure * closure list
+  and closure = {
+    def : (Function_id.t[@equal Function_id.equal]);
+    sig_ : Signature.t;
+    env : env;
+  }
   and env =
     ((IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
     * env_entry)
@@ -227,6 +243,16 @@ end = struct
             false)
       env1 env2
 
+  let equal_closures_by (equal_sig : Signature.t -> Signature.t -> bool)
+      (equal_cell : cell -> cell -> bool) ((c1, cs1) : closure * closure list)
+      ((c2, cs2) : closure * closure list) : bool =
+    let equal_closure (c1 : closure) (c2 : closure) =
+      Function_id.equal c1.def c2.def
+      && equal_sig c1.sig_ c2.sig_
+      && equal_env_by equal_cell c1.env c2.env
+    in
+    equal_closure c1 c2 && List.equal equal_closure cs1 cs2
+
   (* Depth-limited equality to prevent infinite recursion and force convergence
    * for pathological patterns like obj[key] = [obj[key], item] that create
    * unbounded recursive structures. If both shapes exceed MAX_SHAPE_DEPTH,
@@ -250,9 +276,10 @@ end = struct
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun (sig1, env1), Fun (sig2, env2) ->
-          Signature.equal sig1 sig2
-          && equal_env_by (equal_cell_depth (depth + 1)) env1 env2
+      | Fun (c1, cs1), Fun (c2, cs2) ->
+          equal_closures_by Signature.equal
+            (equal_cell_depth (depth + 1))
+            (c1, cs1) (c2, cs2)
       | Bot, _
       | Obj _, _
       | Arg _, _
@@ -288,9 +315,10 @@ end = struct
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun (sig1, env1), Fun (sig2, env2) ->
-          Signature.equal_with_guards sig1 sig2
-          && equal_env_by (equal_cell_with_guards_depth (depth + 1)) env1 env2
+      | Fun (c1, cs1), Fun (c2, cs2) ->
+          equal_closures_by Signature.equal_with_guards
+            (equal_cell_with_guards_depth (depth + 1))
+            (c1, cs1) (c2, cs2)
       | Bot, _
       | Obj _, _
       | Arg _, _
@@ -324,9 +352,9 @@ end = struct
         match T.compare_formal formal1 formal2 with
         | 0 -> List.compare (List.compare T.compare_offset) offsets1 offsets2
         | other -> other)
-    | Fun (sig1, env1), Fun (sig2, env2) -> (
-        match Signature.compare sig1 sig2 with
-        | 0 -> compare_env env1 env2
+    | Fun (c1, cs1), Fun (c2, cs2) -> (
+        match compare_closure c1 c2 with
+        | 0 -> List.compare compare_closure cs1 cs2
         | other -> other)
     | Bot, (Obj _ | Arg _ | Fun _)
     | Obj _, (Arg _ | Fun _)
@@ -338,6 +366,14 @@ end = struct
         1
 
   and compare_obj obj1 obj2 = Fields.compare compare_cell obj1 obj2
+
+  and compare_closure (c1 : closure) (c2 : closure) =
+    match Function_id.compare c1.def c2.def with
+    | 0 -> (
+        match Signature.compare c1.sig_ c2.sig_ with
+        | 0 -> compare_env c1.env c2.env
+        | other -> other)
+    | other -> other
 
   and compare_env env1 env2 =
     List.compare
@@ -385,8 +421,12 @@ end = struct
           offsets |> List.map show_offset_path |> String.concat " | "
         in
         "'{" ^ T.show_formal arg ^ offsets_str ^ "}"
-    | Fun (fsig, []) -> Signature.show fsig
-    | Fun (fsig, env) -> spf "%s with [%s]" (Signature.show fsig) (show_env env)
+    | Fun (c, cs) -> c :: cs |> List.map show_closure |> String.concat " | "
+
+  and show_closure (c : closure) =
+    match c.env with
+    | [] -> Signature.show c.sig_
+    | env -> spf "%s with [%s]" (Signature.show c.sig_) (show_env env)
 
   and show_env env =
     env
@@ -1181,6 +1221,18 @@ module SignatureSet = struct
          (elements s1) (elements s2)
 end
 
+(* [f] keeps the definition of each closure, so the order of the set holds;
+   the list is physically unchanged when [f] changes none of its closures. *)
+let map_closures (f : Shape.closure -> Shape.closure)
+    ((c, cs) : Shape.closure * Shape.closure list) :
+    Shape.closure * Shape.closure list =
+  let cs' = List_.map f cs in
+  (f c, if List.for_all2 phys_equal cs' cs then cs else cs')
+
+let closure_of_definition ((def, sig_) : Function_id.t * Signature.t)
+    (env : Shape.env) : Shape.shape =
+  Shape.Fun ({ Shape.def; sig_; env }, [])
+
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
 }
@@ -1213,9 +1265,9 @@ let int_of_sig_arity : sig_arity -> int = function
 (** Given a non-empty set of signatures, find the best match for [arity].
     Returns the unique sig if only one exists, then tries [Arity_exact arity],
     then falls back to the most specific [Arity_at_least n] where [n <= arity]. *)
-let find_by_arity (sigs : SignatureSet.t) (arity : int) : Signature.t option =
+let find_by_arity (sigs : SignatureSet.t) (arity : int) : extended_sig option =
   if Int.equal (SignatureSet.cardinal sigs) 1 then
-    Some (SignatureSet.choose sigs).sig_
+    Some (SignatureSet.choose sigs)
   else
     let exact =
       SignatureSet.filter
@@ -1223,7 +1275,7 @@ let find_by_arity (sigs : SignatureSet.t) (arity : int) : Signature.t option =
         sigs
     in
     if Int.equal (SignatureSet.cardinal exact) 1 then
-      Some (SignatureSet.choose exact).sig_
+      Some (SignatureSet.choose exact)
     else
       (* Find the best Arity_at_least match: the largest n where n <= arity.
          In practice at most one variadic arity exists per function (Clojure,
@@ -1238,10 +1290,9 @@ let find_by_arity (sigs : SignatureSet.t) (arity : int) : Signature.t option =
                   if n > int_of_sig_arity prev.arity then Some x else acc)
           | Arity_at_least _ | Arity_exact _ -> acc)
         sigs None
-      |> Option.map (fun (x : extended_sig) -> x.sig_)
 
 let lookup_builtin_signature (db : builtin_signature_database)
-    (func_name : string) (arity : int) : Signature.t option =
+    (func_name : string) (arity : int) : (Function_id.t * Signature.t) option =
   match BuiltinMap.find_opt func_name db with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
     (* NOTE: We do not use [find_by_arity sigs arity] because for built-ins we require an exact
@@ -1251,7 +1302,10 @@ let lookup_builtin_signature (db : builtin_signature_database)
       in
       let signatures_card = SignatureSet.cardinal filtered_sigs in
       if Int.equal signatures_card 1 then
-        Some (SignatureSet.choose filtered_sigs).sig_
+        Some
+          ( Function_id.of_string_and_tok func_name
+              (Tok.unsafe_fake_tok func_name),
+            (SignatureSet.choose filtered_sigs).sig_ )
       else None
   | _ -> None
 
@@ -1267,8 +1321,12 @@ let lookup_signature (db : signature_database) (name : Function_id.t)
     (arity : int) : Signature.t option =
   match FunctionMap.find_opt name db.signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      find_by_arity sigs arity
+      find_by_arity sigs arity |> Option.map (fun (ext : extended_sig) -> ext.sig_)
   | _ -> None
+
+let lookup_definition (db : signature_database) (name : Function_id.t)
+    (arity : int) : (Function_id.t * Signature.t) option =
+  lookup_signature db name arity |> Option.map (fun sig_ -> (name, sig_))
 
 let lookup_all_signatures (db : signature_database) (name : Function_id.t)
     : extended_sig list =

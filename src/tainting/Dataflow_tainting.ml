@@ -918,7 +918,7 @@ let signature_via_callee_definition ~project_root db (id_info : G.id_info)
       | Some root -> Function_id.make_absolute root fid
       | None -> fid
     in
-    Shape_and_sig.lookup_signature db fid arity
+    Shape_and_sig.lookup_definition db fid arity
   | _ -> None
 
 let get_signature_for_object ?(callee_id_info : G.id_info option)
@@ -939,8 +939,8 @@ let get_signature_for_object ?(callee_id_info : G.id_info option)
     let call_tok = Tok.abs_tok project_root (Function_id.tok method_name) in
     (match Call_graph.lookup_callee_from_graph graph caller call_tok with
      | Some callee_node ->
-       Shape_and_sig.lookup_signature db callee_node arity
-     | None -> Shape_and_sig.lookup_signature db method_name arity)
+       Shape_and_sig.lookup_definition db callee_node arity
+     | None -> Shape_and_sig.lookup_definition db method_name arity)
 
 (* Helper to fallback to builtin signature database if regular lookup fails *)
 let try_builtin_fallback env func_name arity result =
@@ -988,15 +988,15 @@ let lookup_bare_function_name env db (name : IL.name) arity =
       call_tok
   with
   | Some callee_node ->
-      Shape_and_sig.(lookup_signature db callee_node arity)
+      Shape_and_sig.(lookup_definition db callee_node arity)
   | None -> (
       match env.class_name with
       | Some _ ->
-          Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity
+          Shape_and_sig.lookup_definition db (Function_id.of_il_name name) arity
       | None ->
           let func_name = fst name.ident in
           let result =
-            Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity
+            Shape_and_sig.lookup_definition db (Function_id.of_il_name name) arity
           in
           try_builtin_fallback env func_name arity result)
 
@@ -1067,9 +1067,9 @@ let lookup_signature_with_object_context env fun_exp arity =
               call_tok
           with
           | Some callee_node ->
-              Shape_and_sig.lookup_signature db callee_node arity
+              Shape_and_sig.lookup_definition db callee_node arity
           | None ->
-              Shape_and_sig.lookup_signature db (Function_id.of_il_name method_name) arity)
+              Shape_and_sig.lookup_definition db (Function_id.of_il_name method_name) arity)
       | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } -> (
           match
             get_signature_for_object
@@ -1091,7 +1091,7 @@ let lookup_signature_with_object_context env fun_exp arity =
                   id_info = method_name.id_info;
                 }
               in
-              let result = Shape_and_sig.lookup_signature db (Function_id.of_il_name qualified_name) arity in
+              let result = Shape_and_sig.lookup_definition db (Function_id.of_il_name qualified_name) arity in
               (* Try builtin fallback - first with qualified name, then with just method name *)
               let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
@@ -1115,10 +1115,10 @@ let lookup_signature_with_object_context env fun_exp arity =
               call_tok
           with
           | Some callee_node ->
-              Shape_and_sig.lookup_signature db callee_node arity
+              Shape_and_sig.lookup_definition db callee_node arity
           | None ->
               let result =
-                Shape_and_sig.lookup_signature db
+                Shape_and_sig.lookup_definition db
                   (Function_id.of_il_name method_name) arity
               in
               try_builtin_fallback env (fst method_name.ident) arity result)
@@ -1152,7 +1152,7 @@ let lookup_signature_with_object_context env fun_exp arity =
                   call_tok
               with
               | Some callee_node ->
-                  Shape_and_sig.lookup_signature db callee_node arity
+                  Shape_and_sig.lookup_definition db callee_node arity
               | None -> None))
       | Fetch
           {
@@ -1183,7 +1183,7 @@ let lookup_signature_with_object_context env fun_exp arity =
                   call_tok
               with
               | Some callee_node ->
-                  Shape_and_sig.lookup_signature db callee_node arity
+                  Shape_and_sig.lookup_definition db callee_node arity
               | None -> None))
       | _ -> None)
 
@@ -1220,16 +1220,20 @@ let closure_env (env : env) (sig_ : Signature.t) : S.env =
                  | None -> S.Cell (`None, S.Bot)) ))
 
 let self_sig_if_recursive env fun_exp =
-  if is_self_call env fun_exp then (
-    env.did_self_recurse := true;
-    Some
-      {
-        Signature.params = env.func.sig_params;
-        params_il = env.func.il_params;
-        captured = Lazy.force env.func.captured;
-        effects = !(env.effects_acc);
-      })
-  else None
+  match env.func.name with
+  | Some self_name when is_self_call env fun_exp ->
+      env.did_self_recurse := true;
+      Some
+        ( Function_id.of_il_name self_name,
+          {
+            Signature.params = env.func.sig_params;
+            params_il = env.func.il_params;
+            captured = Lazy.force env.func.captured;
+            effects = !(env.effects_acc);
+          } )
+  | Some _
+  | None ->
+      None
 
 (* Bound on the offsets composed for a call: one field access on a
    recursive edge (the caller is in a recursive component, or the call is
@@ -1997,7 +2001,9 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                   if is_temp_var then shape
                   else
                     (match lookup_signature env exp arity with
-                    | Some fun_sig -> S.Fun (fun_sig, closure_env env fun_sig)
+                    | Some ((_, fun_sig) as found) ->
+                        Shape_and_sig.closure_of_definition found
+                          (closure_env env fun_sig)
                     | None -> shape)
             in
             (taints, shape, lval_env)
@@ -2081,19 +2087,20 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
       | Some callee_name ->
           let arity = List.length args_taints in
           (match lookup_signature env callee arity with
-          | Some callee_sig ->
+          | Some (_, callee_sig) ->
               Log.debug (fun m ->
                   m "Resolving ToSinkInCall for '%s' at use site"
                     (IL.str_of_name callee_name));
-              Sig_inst.instantiate_function_signature
-                ~lang:env.taint_inst.lang ~atoms:env.shared_tables.guard_atoms
-                ~max_offset:(poly_offset_bound env callee)
-                ~outer_params:env.func.il_params
-                env.lval_env callee_sig ~callee ~args:None args_taints
-                ~lookup_sig:(fun exp _depth ->
-                  let arity = List.length args_taints in
-                  lookup_signature env exp arity)
-                ()
+              Some
+                (Sig_inst.instantiate_function_signature
+                   ~lang:env.taint_inst.lang ~atoms:env.shared_tables.guard_atoms
+                   ~max_offset:(poly_offset_bound env callee)
+                   ~outer_params:env.func.il_params
+                   env.lval_env callee_sig ~callee ~args:None args_taints
+                   ~lookup_sig:(fun exp _depth ->
+                     let arity = List.length args_taints in
+                     lookup_signature env exp arity)
+                   ())
           | None ->
               Log.debug (fun m ->
                   m "ToSinkInCall: No signature found for '%s'"
@@ -2273,18 +2280,22 @@ let check_function_call env fun_exp args
         match
           Lval_env.find_lval env.taint_inst.lang env.lval_env lval_to_check
         with
-        | Some (S.Cell (_, S.Fun (fun_sig, fun_env))) ->
+        | Some (S.Cell (_, S.Fun (c, cs))) ->
             Log.debug (fun m ->
                 m "SIG_FROM_SHAPE: Found Fun shape for %s"
                   (Display_IL.string_of_exp fun_exp));
-            Some (fun_sig, Some fun_env)
+            Some
+              (List_.map
+                 (fun (closure : S.closure) ->
+                   (closure.sig_, Some closure.env))
+                 (c :: cs))
         | _ -> None
       in
       match from_shape with
       | Some _ -> from_shape
       | None -> (
           match lookup_signature env fun_exp arity with
-          | Some fun_sig -> Some (fun_sig, None)
+          | Some (_, fun_sig) -> Some [ (fun_sig, None) ]
           | None -> (
               (* Sym-prop fallback: if the variable's [id_svalue] resolves
                * to a bare function reference (e.g. [cb = handler]), look
@@ -2318,27 +2329,29 @@ let check_function_call env fun_exp args
                             (IL.str_of_name x)
                             (IL.str_of_name il_name));
                       lookup_signature env aliased_exp arity
-                      |> Option.map (fun fun_sig -> (fun_sig, None))
+                      |> Option.map (fun (_, fun_sig) -> [ (fun_sig, None) ])
                   | _ -> None)
               | _ -> None))
     else None
   in
   match sig_result with
-  | Some (fun_sig, fun_env) ->
-      Log.debug (fun m ->
-          m "SIG_FOUND: %s -> %s"
-            (Display_IL.string_of_exp fun_exp)
-            (Signature.show fun_sig));
+  | Some members ->
       (* Callback lookup in both modes; effects-explosion hazard contained by [Sig_inst.preserve_effect]. *)
-      let invoke_inst () =
-        Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
-          ~atoms:env.shared_tables.guard_atoms
-          ~max_offset:(poly_offset_bound env fun_exp)
-          ~outer_params:env.func.il_params ?env:fun_env env.lval_env fun_sig
-          ~callee:fun_exp ~args:(Some args) args_taints
-          ~lookup_sig:(lookup_signature env) ()
+      let call_effects =
+        members
+        |> List.concat_map (fun (fun_sig, fun_env) ->
+               Log.debug (fun m ->
+                   m "SIG_FOUND: %s -> %s"
+                     (Display_IL.string_of_exp fun_exp)
+                     (Signature.show fun_sig));
+               Sig_inst.instantiate_function_signature
+                 ~lang:env.taint_inst.lang
+                 ~atoms:env.shared_tables.guard_atoms
+                 ~max_offset:(poly_offset_bound env fun_exp)
+                 ~outer_params:env.func.il_params ?env:fun_env env.lval_env
+                 fun_sig ~callee:fun_exp ~args:(Some args) args_taints
+                 ~lookup_sig:(lookup_signature env) ())
       in
-      let* call_effects = invoke_inst () in
       Log.debug (fun m ->
           m "INSTANTIATE_SIG: %s returned %d call_effects"
             (Display_IL.string_of_exp fun_exp)
@@ -2592,7 +2605,7 @@ let call_with_intrafile lval_opt e env args instr =
             (match
                Lval_env.find_lval env.taint_inst.lang env.lval_env lval
              with
-            | Some (S.Cell (var_taints, S.Fun (fun_sig, fun_env))) ->
+            | Some (S.Cell (var_taints, S.Fun (c, cs))) ->
                 (* The variable has a Fun shape. Instantiate it directly instead of
                  * doing signature database lookup. *)
                 let lambda_arg = IL.Unnamed lambda_exp in
@@ -2614,16 +2627,18 @@ let call_with_intrafile lval_opt e env args instr =
                 let lambda_arg_taint = IL.Unnamed (callback_arg_taints, lambda_shape) in
                 let args_taints = [lambda_arg_taint] in
                 (* Callback lookup in both modes; hazard contained by [preserve_effect]. *)
-                (match
-                   Sig_inst.instantiate_function_signature
-                     ~lang:env.taint_inst.lang ~atoms:env.shared_tables.guard_atoms
-                     ~max_offset:(poly_offset_bound env inner_e)
-                     ~outer_params:env.func.il_params ~env:fun_env env.lval_env
-                     fun_sig ~callee:inner_e
-                     ~args:(Some [ lambda_arg ]) args_taints
-                     ~lookup_sig:(lookup_signature env) ()
-                 with
-                | Some call_effects ->
+                let call_effects =
+                  c :: cs
+                  |> List.concat_map (fun (closure : S.closure) ->
+                         Sig_inst.instantiate_function_signature
+                           ~lang:env.taint_inst.lang
+                           ~atoms:env.shared_tables.guard_atoms
+                           ~max_offset:(poly_offset_bound env inner_e)
+                           ~outer_params:env.func.il_params ~env:closure.env
+                           env.lval_env closure.sig_ ~callee:inner_e
+                           ~args:(Some [ lambda_arg ]) args_taints
+                           ~lookup_sig:(lookup_signature env) ())
+                in
                     (* ToSinkInCall effects should have been recursively instantiated by Sig_inst,
                      * so we just need to process the resulting effects *)
                     (* Process the call effects to get taints and shape *)
@@ -2637,7 +2652,8 @@ let call_with_intrafile lval_opt e env args instr =
                               (taints_acc, shape_acc, lval_env)
                           | ToReturn { data_taints; data_shape; _ } ->
                               (Taints.union taints_acc data_taints,
-                               data_shape,  (* Just use the latest shape *)
+                               Shape.unify_shape ~lang:env.taint_inst.lang
+                                 data_shape shape_acc,
                                lval_env)
                           | ToLval { taints; var = lval_name; offset; _ } ->
                               let lval_env =
@@ -2668,7 +2684,6 @@ let call_with_intrafile lval_opt e env args instr =
                         call_effects
                     in
                     (call_taints, shape, lval_env)
-                | None -> (all_args_taints, S.Bot, lval_env))
             | Some (S.Cell (_, _)) ->
                 (* Try signature lookup instead *)
                 (match check_function_call { env with lval_env } inner_e args args_taints () with
@@ -2975,9 +2990,12 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             match (lval.base, env.signature_db, anon_entity) with
             | Var lambda_name, Some db, Lambda fdef ->
                 let arity = List.length fdef.fparams in
-                (match Shape_and_sig.lookup_signature db (Function_id.of_il_name lambda_name) arity with
-                | Some sig_ ->
-                    let fun_shape = S.Fun (sig_, closure_env env sig_) in
+                (match Shape_and_sig.lookup_definition db (Function_id.of_il_name lambda_name) arity with
+                | Some ((_, sig_) as found) ->
+                    let fun_shape =
+                      Shape_and_sig.closure_of_definition found
+                        (closure_env env sig_)
+                    in
                     Log.debug (fun m ->
                         m "AssignAnon: lambda %s has signature shape %s"
                           (IL.str_of_name lambda_name)
@@ -3124,7 +3142,9 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           match (op, args) with
           | IL.Ref, [ IL.Unnamed exp ] -> (
               match (lookup_signature env exp 0, args_taints) with
-              | Some fun_sig, _ -> S.Fun (fun_sig, closure_env env fun_sig)
+              | Some ((_, fun_sig) as found), _ ->
+                  Shape_and_sig.closure_of_definition found
+                    (closure_env env fun_sig)
               | None, [ IL.Unnamed (_, arg_shape) ] -> arg_shape
               | None, _ -> Bot)
           | _ -> Bot
@@ -3188,14 +3208,17 @@ let vars_shared_with_closures (effects : Effects.t) : IL.NameSet.t =
         Shape_and_sig.Fields.fold
           (fun _ (S.Cell (_, shape)) acc -> of_shape acc shape)
           obj acc
-    | Fun (_, env) ->
+    | Fun (c, cs) ->
         List.fold_left
-          (fun acc (_, entry) ->
-            match entry with
-            | S.Ref { base = T.BGlob v; _ } -> IL.NameSet.add v acc
-            | S.Ref _ -> acc
-            | S.Val (S.Cell (_, shape)) -> of_shape acc shape)
-          acc env
+          (fun acc (closure : S.closure) ->
+            List.fold_left
+              (fun acc (_, entry) ->
+                match entry with
+                | S.Ref { base = T.BGlob v; _ } -> IL.NameSet.add v acc
+                | S.Ref _ -> acc
+                | S.Val (S.Cell (_, shape)) -> of_shape acc shape)
+              acc closure.env)
+          acc (c :: cs)
   in
   Effects.fold
     (fun eff acc ->
@@ -3538,7 +3561,10 @@ let rec shape_has_closure_env (shape : S.shape) : bool =
       Shape_and_sig.Fields.exists
         (fun _ (S.Cell (_, shape)) -> shape_has_closure_env shape)
         obj
-  | Fun (_, env) -> not (List_.null env)
+  | Fun (c, cs) ->
+      List.exists
+        (fun (closure : S.closure) -> not (List_.null closure.env))
+        (c :: cs)
 
 let effect_has_closure_env (eff : Effect.t) : bool =
   match eff with
@@ -3620,15 +3646,23 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
     | Arg _ ->
         shape
     | Obj obj -> Obj (Shape_and_sig.Fields.map convert_cell obj)
-    | Fun (sig_, env) ->
-        Fun
-          ( sig_,
-            List_.map
-              (fun (x, entry) ->
-                match entry with
-                | S.Ref lval -> (x, S.Ref (convert_ref lval))
-                | S.Val cell -> (x, S.Val (convert_cell cell)))
-              env )
+    | Fun (c, cs) ->
+        let c, cs =
+          Shape_and_sig.map_closures
+            (fun (closure : S.closure) ->
+              {
+                closure with
+                env =
+                  List_.map
+                    (fun (x, entry) ->
+                      match entry with
+                      | S.Ref lval -> (x, S.Ref (convert_ref lval))
+                      | S.Val cell -> (x, S.Val (convert_cell cell)))
+                    closure.env;
+              })
+            (c, cs)
+        in
+        Fun (c, cs)
   and convert_cell (Cell (xtaint, shape)) = Cell (xtaint, convert_shape shape) in
   let convert_arg = function
     | IL.Unnamed (taints, shape) -> IL.Unnamed (taints, convert_shape shape)

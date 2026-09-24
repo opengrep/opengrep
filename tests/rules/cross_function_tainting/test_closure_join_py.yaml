@@ -1,0 +1,13 @@
+rules:
+  - id: test-closure-join-py
+    message: different closures that meet at a join are each called
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

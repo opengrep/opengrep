@@ -74,7 +74,13 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     Effect.ToReturn
       {
         data_taints = this_taint_set;
-        data_shape = Shape.Fun (returned_fun_sig, []);
+        data_shape =
+          closure_of_definition
+            ( Function_id.of_string_and_tok
+                (Printf.sprintf "builtin_hof/%d" taint_arg_index)
+                (Tok.unsafe_fake_tok "builtin_hof"),
+              returned_fun_sig )
+            [];
         several_results = false;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
