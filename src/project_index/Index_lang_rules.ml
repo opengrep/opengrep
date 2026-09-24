@@ -500,8 +500,7 @@ let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
   | G.TypeDef
       { G.tbody = G.NewType
           { G.t = G.TyRecordAnon ((kind, fk), (_, fields, _)); _ } }
-    when (match kind with G.Class | G.Interface -> true | _ -> false) ->
-    let kind = match kind with G.Class -> G.Struct | kind -> kind in
+    when (match kind with G.Struct | G.Interface -> true | _ -> false) ->
     Some (ent, go_class_of_fields kind fk fields)
   | G.TypeDef { G.tbody = G.NewType (ty : G.type_) } ->
     let fk =

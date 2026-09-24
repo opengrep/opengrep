@@ -2887,6 +2887,32 @@ let call_with_intrafile lval_opt e env args instr =
   in
   (all_call_taints, shape, lval_env)
 
+(* An object built without a known constructor carries the taints of all its
+ * arguments, and each named argument is the field of that name. *)
+let new_without_signature env args_taints all_args_taints lval_env =
+  let all_args_taints =
+    if env.taint_inst.options.taint_only_propagate_through_assignments then
+      Taints.empty
+    else
+      all_args_taints
+      |> Taints.union (gather_all_taints_in_args_taints args_taints)
+  in
+  let shape =
+    match
+      args_taints
+      |> List.filter_map (function
+           | IL.Named (ident, (taints, shape)) ->
+               let field : IL.name =
+                 { ident; sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
+               in
+               Some (`Field (field, taints, shape))
+           | IL.Unnamed _ -> None)
+    with
+    | [] -> S.Bot
+    | fields -> Shape.record_or_dict_like_obj ~lang:env.taint_inst.lang fields
+  in
+  (all_args_taints, shape, lval_env)
+
 let new_with_intrafile env _result_lval _ty args constructor =
   (* 'New' with reference to constructor - use constructor signatures *)
   let args_taints, all_args_taints, lval_env =
@@ -2907,17 +2933,7 @@ let new_with_intrafile env _result_lval _ty args constructor =
   in
   match call_result with
   | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
-  | None ->
-      let all_args_taints =
-        all_args_taints
-        |> Taints.union (gather_all_taints_in_args_taints args_taints)
-      in
-      let all_args_taints =
-        if env.taint_inst.options.taint_only_propagate_through_assignments then
-          Taints.empty
-        else all_args_taints
-      in
-      (all_args_taints, Bot, lval_env)
+  | None -> new_without_signature env args_taints all_args_taints lval_env
 
 let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
   let check_expr env = check_tainted_expr env in
@@ -3083,49 +3099,13 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           with
           | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
           | None ->
-              let all_args_taints =
-                all_args_taints
-                |> Taints.union (gather_all_taints_in_args_taints args_taints)
-              in
-              let all_args_taints =
-                if
-                  env.taint_inst.options
-                    .taint_only_propagate_through_assignments
-                then Taints.empty
-                else all_args_taints
-              in
-              (all_args_taints, Bot, lval_env))
+              new_without_signature env args_taints all_args_taints lval_env)
     | New (_lval, _ty, None, args) ->
         (* 'New' without reference to constructor *)
         let args_taints, all_args_taints, lval_env =
           check_function_call_arguments env args
         in
-        let all_args_taints =
-          all_args_taints
-          |> Taints.union (gather_all_taints_in_args_taints args_taints)
-        in
-        let all_args_taints =
-          if env.taint_inst.options.taint_only_propagate_through_assignments
-          then Taints.empty
-          else all_args_taints
-        in
-        let shape =
-          match
-            args_taints
-            |> List.filter_map (function
-                 | IL.Named (ident, (taints, shape)) ->
-                     let field : IL.name =
-                       { ident;
-                         sid = G.SId.unsafe_default;
-                         id_info = G.empty_id_info () }
-                     in
-                     Some (`Field (field, taints, shape))
-                 | IL.Unnamed _ -> None)
-          with
-          | [] -> S.Bot
-          | fields -> Shape.record_or_dict_like_obj ~lang:env.taint_inst.lang fields
-        in
-        (all_args_taints, shape, lval_env)
+        new_without_signature env args_taints all_args_taints lval_env
     | CallSpecial (_, (op, _), args) ->
         let args_taints, all_args_taints, lval_env =
           check_function_call_arguments env args
@@ -3404,25 +3384,20 @@ let type_name (t : G.type_) : string option =
 
 (* The parameter holds a copy of the caller's value (a struct passed by
  * value), so nothing the callee does to it reaches the caller. *)
-let param_is_copy ~(lang : Lang.t) ~(is_value_type : string -> bool)
-    (p : IL.name_param) : bool =
+let param_is_copy ~(is_value_type : string -> bool) (p : IL.name_param) :
+    bool =
   (not p.by_reference)
   &&
   match p.ptype with
   | None -> false
+  | Some { t = G.OtherType ((("struct" | "union" | "class"), _), _); _ } ->
+      true
   | Some t -> (
-      match (lang, t.t) with
-      | (Lang.C | Lang.Cpp), G.OtherType ((("struct" | "union" | "class"), _), _)
-        ->
-          true
-      | (Lang.C | Lang.Cpp | Lang.Rust | Lang.Go | Lang.Csharp | Lang.Swift), _
-        -> (
-          match type_name t with
-          | Some name -> is_value_type name
-          | None -> false)
-      | _ -> false)
+      match type_name t with
+      | Some name -> is_value_type name
+      | None -> false)
 
-let copied_params ~(lang : Lang.t) ~(is_value_type : string -> bool)
+let copied_params ~(is_value_type : string -> bool)
     (params : IL.param list) : IL.NameSet.t =
   params
   |> List.fold_left
@@ -3432,7 +3407,7 @@ let copied_params ~(lang : Lang.t) ~(is_value_type : string -> bool)
          | IL.ParamKwd np
          | IL.ParamReceiver np
          | IL.ParamPattern (np, _)
-           when param_is_copy ~lang ~is_value_type np ->
+           when param_is_copy ~is_value_type np ->
              IL.NameSet.add np.pname acc
          | _ -> acc)
        IL.NameSet.empty
@@ -4117,7 +4092,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
                    | IL.ParamKwd ({ pname; by_reference = false; _ } as np) ->
                        IL.equal_name pname name
                        && not
-                            (param_is_copy ~lang:env.taint_inst.lang
+                            (param_is_copy
                                ~is_value_type:env.taint_inst.is_value_type np)
                    | _ -> false)
                  fun_cfg.params ->
@@ -4455,7 +4430,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
   let rebound = rebound_vars fun_cfg.cfg in
   let copied =
-    copied_params ~lang:taint_inst.lang
+    copied_params
       ~is_value_type:taint_inst.is_value_type fun_cfg.params
   in
   effects_from_arg_updates_at_exit ~lang:taint_inst.lang

@@ -3156,6 +3156,7 @@ and m_field_pattern a b =
 and m_list__m_field_pattern xsa xsb =
   match (xsa, xsb) with
   | [], _ -> return ()
+  | (_, G.PatEllipsis _) :: xsa, xsb -> m_list__m_field_pattern xsa xsb
   | a :: xsa, xsb ->
       let candidates = all_elem_and_rest_of_list xsb in
       let rec aux xs =

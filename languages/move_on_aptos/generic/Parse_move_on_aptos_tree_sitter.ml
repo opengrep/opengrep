@@ -690,22 +690,20 @@ let rec map_bind (env : env) (x : CST.bind) : G.pattern =
       let struct_name = map_name_access_chain env v1 in
       let type_args = v2 |> Option.map (fun x -> map_type_args env x) in
       let struct_type =
-        G.PatType
-          ((match type_args with
-           | Some x -> G.TyApply (G.TyN struct_name |> G.t, x)
-           | None -> G.TyN struct_name)
-          |> G.t)
+        (match type_args with
+        | Some x -> G.TyApply (G.TyN struct_name |> G.t, x)
+        | None -> G.TyN struct_name)
+        |> G.t
       in
       match v3 with
       | Some v3 -> (
           match v3 with
           | `Bind_fields x ->
               let lbrace, fields, rbrace = map_bind_fields env x in
-              (* abused for record binding in move, so that struct is matchable *)
-              G.PatDisj (struct_type, G.PatRecord (lbrace, fields, rbrace))
+              G.PatTyped (G.PatRecord (lbrace, fields, rbrace), struct_type)
           | `Bind_tuple x -> G.PatConstructor (struct_name, map_bind_tuple env x)
           )
-      | None -> struct_type)
+      | None -> G.PatType struct_type)
   | `Ellips tok -> G.PatEllipsis (token env tok)
 
 and map_bind_tuple (env : env) ((v1, v2, v3, v4) : CST.bind_tuple) =
@@ -742,7 +740,6 @@ and map_bind_field (env : env) (x : CST.bind_field) : G.dotted_ident * G.pattern
           ([ ident ], pat))
   | `Ellips tok ->
       (* "..." *)
-      (* Unfortunately, this is not working. *)
       let ident = str env tok in
       ([ ident ], G.PatEllipsis (token env tok))
 
@@ -1186,7 +1183,7 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
       in
       let struct_def =
         {
-          ckind = (G.Class, struct_);
+          ckind = (G.Struct, struct_);
           cextends = [];
           cimplements = abilities;
           cmixins = [];
@@ -1207,7 +1204,7 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
       let v5 = (* ";" *) token env v5 in
       let struct_def =
         {
-          ckind = (G.Class, struct_);
+          ckind = (G.Struct, struct_);
           cextends = [];
           cimplements = abilities;
           cmixins = [];
@@ -1241,7 +1238,7 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
       in
       let struct_def =
         {
-          ckind = (G.Class, struct_);
+          ckind = (G.Struct, struct_);
           cextends = [];
           cimplements = abilities;
           cmixins = [];
@@ -1369,65 +1366,6 @@ let map_spec_block_target (env : env) (x : CST.spec_block_target) : G.any =
 
       let entity = G.basic_entity ?tparams:type_params (str env v2) in
       G.Anys [ v1; G.En entity ]
-
-let rec transpile_let_bind (env : env) (left : G.pattern) (right : G.expr) :
-    G.field list =
-  match left with
-  | G.PatId (var, _) -> [ G.basic_field var (Some right) None ]
-  | G.PatEllipsis tok -> [ G.F (G.Ellipsis tok |> G.e |> G.exprstmt) ]
-  | G.PatDisj (G.PatType inner_type, inner) ->
-      (* SomeStruct { ... } | right: expr
-         =>            ...  | (expr as SomeStruct) *)
-      let typed_right = G.Cast (inner_type, sc, right) |> G.e in
-      transpile_let_bind env inner typed_right
-  | G.PatWildcard _ -> []
-  | G.PatRecord (_, fields, _) ->
-      let fields =
-        fields
-        |> List_.map (fun (field, pat) ->
-               match pat with
-               | PatEllipsis tok ->
-                   [ G.F (G.Ellipsis tok |> G.e |> G.exprstmt) ]
-               | PatId (var, _) ->
-                   let ident = List.nth field 0 in
-                   let field_name = G.FN (H2.name_of_id ident) in
-                   let vinit =
-                     Some (G.DotAccess (right, sc, field_name) |> G.e)
-                   in
-                   [ G.basic_field var vinit None ]
-               | PatWildcard _ -> []
-               | _ -> transpile_let_bind env pat right)
-      in
-      let inner = List_.flatten fields in
-      [ G.F (G.Record (sc, inner, sc) |> G.e |> G.exprstmt) ]
-  | G.PatTuple (_, elements, _) ->
-      elements
-      |> List_.mapi (fun idx pat ->
-             let idx = G.L (G.Int (Some (Int64.of_int idx), sc)) |> G.e in
-             (* (element, ..., _) | expr
-                =>        element | expr.idx *)
-             let element = G.DotAccess (right, sc, G.FDynamic idx) |> G.e in
-             transpile_let_bind env pat element)
-      |> List_.flatten
-  | G.PatConstructor (name, elements) ->
-      elements
-      |> List_.mapi (fun idx pat ->
-             let idx = G.L (G.Int (Some (Int64.of_int idx), sc)) |> G.e in
-             let right = G.Cast (G.TyN name |> G.t, sc, right) |> G.e in
-             (* Name(_, element, ..., _) | expr
-                =>               element | (expr as Name).idx *)
-             let element = G.DotAccess (right, sc, G.FDynamic idx) |> G.e in
-             transpile_let_bind env pat element)
-      |> List_.flatten
-  | G.PatWhen (pat, cond) ->
-      (* when(cond, pat) | expr
-         =>          pat | if(cond) expr *)
-      let if_stmt =
-        G.If (sc, G.Cond cond, right |> G.exprstmt, None)
-        |> G.s |> G.stmt_to_expr
-      in
-      transpile_let_bind env pat right
-  | _ -> failwith "Unsupported pattern in let binding"
 
 let map_function_signature (env : env) attrs
     ((v1, v2, v3, v4, v5, v6, v7) : CST.function_signature) =
@@ -1829,20 +1767,13 @@ and map_let_expr (env : env) ((v1, v2, v3, v4) : CST.let_expr) : G.expr =
            let v2 = map_expr env v2 in
            v2)
   in
-  match bind with
-  | G.PatId (var, _) ->
-      let var_def = { G.vinit = value; G.vtype = type_hint; vtok = None } in
-      G.DefStmt (G.basic_entity var, G.VarDef var_def) |> G.s |> G.stmt_to_expr
-  | G.PatEllipsis _ ->
-      let ent = { name = G.EPattern bind; attrs = []; tparams = None } in
-      let var_def = { G.vinit = value; G.vtype = type_hint; vtok = None } in
-      G.DefStmt (ent, G.VarDef var_def) |> G.s |> G.stmt_to_expr
-  | _ ->
-      let transpiled =
-        transpile_let_bind env bind
-          (Option.value ~default:(G.L (G.Null sc) |> G.e) value)
-      in
-      G.Record (sc, transpiled, sc) |> G.e
+  let var_def = { G.vinit = value; G.vtype = type_hint; vtok = None } in
+  let ent =
+    match bind with
+    | G.PatId (var, _) -> G.basic_entity var
+    | _ -> { name = G.EPattern bind; attrs = []; tparams = None }
+  in
+  G.DefStmt (ent, G.VarDef var_def) |> G.s |> G.stmt_to_expr
 
 and map_name_expr (env : env) (x : CST.name_expr) : G.expr =
   match x with
@@ -2238,20 +2169,7 @@ and map_match_arm (env : env) (x : CST.match_arm) : G.case_and_body =
 
       let v3 = (* "=>" *) token env v3 in
       let body = map_control_body env v4 in
-
-      match pat with
-      | G.PatType _
-      | G.PatId _
-      | G.PatEllipsis _
-      | G.PatWildcard _ ->
-          G.CasesAndBody ([ G.Case (v3, cond) ], body)
-      | _ ->
-          let transpiled =
-            transpile_let_bind env cond (G.L (G.Null sc) |> G.e)
-          in
-          G.CasesAndBody
-            ( [ G.CaseEqualExpr (v3, G.Record (sc, transpiled, sc) |> G.e) ],
-              body ))
+      G.CasesAndBody ([ G.Case (v3, cond) ], body))
   | `Ellips tok -> (* "..." *) G.CaseEllipsis (token env tok)
 
 and map_for_loop_expr (env : env) (x : CST.for_loop_expr) =
@@ -2677,7 +2595,7 @@ let map_source_file (env : env) (x : CST.source_file) =
           let struct_, abilities, ent = map_struct_signature env attrs x in
           let struct_def =
             {
-              ckind = (G.Class, struct_);
+              ckind = (G.Struct, struct_);
               cextends = [];
               cimplements = abilities;
               cmixins = [];

@@ -669,13 +669,15 @@ and pattern env pat : stmts * lval * stmts =
       let pre_ss, _ = type_ env ty in
       let inner_pre_ss, lval, post_ss = pattern env pat1 in
       (pre_ss @ inner_pre_ss, lval, post_ss)
-  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
+  | G.PatConstructor (name, pats)
     when pats <> [] && List.for_all is_map_pair_pattern pats ->
       (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
        * a flat list of [PatKeyVal]s over the incoming map. Lower as a
        * map destructure rather than a positional tuple. *)
+      let (_s, tok), _id_info = H.id_of_name name in
       pattern env (G.PatList (G.fake "[", pats, tok))
-  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
+  | G.PatConstructor (name, pats) ->
+      let (_s, tok), _id_info = H.id_of_name name in
       pattern env (G.PatTuple (G.fake "(", pats, tok))
   | G.PatKeyVal (key_pat, val_pat) ->
       (* Standalone [PatKeyVal] outside a [PatList]/[PatConstructor]

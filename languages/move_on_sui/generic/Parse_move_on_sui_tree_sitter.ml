@@ -257,22 +257,16 @@ let map_member_to_directive member_list : G.directive_kind list =
   in
   out
 
-let map_parameter (is_mutable, is_dollar, ident, func_type) : G.parameter =
-  let func_type =
-    match is_mutable with
-    | true ->
-        {
-          t = G.TyRef (fake "&mut", func_type);
-          t_attrs = [ G.KeywordAttr (G.Mutable, fake "&mut") ];
-        }
-    | false -> func_type
-  in
+let map_parameter (mut_tok, is_dollar, ident, func_type) : G.parameter =
   G.Param
     {
       G.pname = Some ident;
       G.ptype = Some func_type;
       G.pdefault = None;
-      G.pattrs = [];
+      G.pattrs =
+        mut_tok
+        |> Option.map (fun tok -> G.KeywordAttr (G.Mutable, tok))
+        |> Option.to_list;
       G.pinfo = G.empty_id_info ();
     }
 
@@ -1153,7 +1147,7 @@ let map_struct_item (env : env) (x : CST.struct_item) : G.stmt =
   in
   let struct_def =
     {
-      ckind = (G.Class, struct_);
+      ckind = (G.Struct, struct_);
       cextends = [];
       cimplements = all_abilities;
       cmixins = [];
@@ -1197,56 +1191,6 @@ let map_spec_block_target (env : env) (x : CST.spec_block_target) : G.any =
       in
       let entity = G.basic_entity ~tparams:type_params identifier in
       G.Anys [ schema; G.En entity ]
-
-let rec transpile_let_bind (env : env) (left : G.pattern) (right : G.expr) :
-    G.field list =
-  match left with
-  | G.PatId (var, _) -> [ G.basic_field var (Some right) None ]
-  | G.PatEllipsis tok -> [ G.F (G.Ellipsis tok |> G.e |> G.exprstmt) ]
-  | G.PatDisj (G.PatType inner_type, inner) ->
-      let typed_right = G.Cast (inner_type, sc, right) |> G.e in
-      transpile_let_bind env inner typed_right
-  | G.PatWildcard _ -> []
-  | G.PatRecord (_, fields, _) ->
-      let fields =
-        fields
-        |> List_.map (fun (field, pat) ->
-               match pat with
-               | PatEllipsis tok ->
-                   [ G.F (G.Ellipsis tok |> G.e |> G.exprstmt) ]
-               | PatId (var, _) ->
-                   let ident = List.nth field 0 in
-                   let field_name = G.FN (H2.name_of_id ident) in
-                   let vinit =
-                     Some (G.DotAccess (right, sc, field_name) |> G.e)
-                   in
-                   [ G.basic_field var vinit None ]
-               | PatWildcard _ -> []
-               | _ -> transpile_let_bind env pat right)
-      in
-      let inner = List_.flatten fields in
-      [ G.F (G.Record (sc, inner, sc) |> G.e |> G.exprstmt) ]
-  | G.PatTuple (_, elements, _) ->
-      elements
-      |> List_.mapi (fun idx pat ->
-             let idx = G.L (G.Int (Some (Int64.of_int idx), sc)) |> G.e in
-             let element = G.ArrayAccess (right, (sc, idx, sc)) |> G.e in
-             transpile_let_bind env pat element)
-      |> List_.flatten
-  | G.OtherPat (("ExprToPattern", _), [ E e ]) -> (
-      match e.e with
-      | G.IdSpecial (G.Spread, tok) ->
-          [ G.F (G.IdSpecial (G.Spread, tok) |> G.e |> G.exprstmt) ]
-      | _ ->
-          Log.err (fun m ->
-              m "Unsupported pattern in let binding %s \n\n \n %s "
-                (G.show_pattern left) (G.show_expr right));
-          failwith "Unsupported pattern in let binding")
-  | _ ->
-      Log.err (fun m ->
-          m "Unsupported pattern in let binding %s \n\n \n %s "
-            (G.show_pattern left) (G.show_expr right));
-      failwith "Unsupported pattern in let binding"
 
 let map_use_declaration (env : env) ((v1, v2, v3, v4) : CST.use_declaration) :
     G.directive list =
@@ -1309,16 +1253,12 @@ let map_function_parameter (env : env) (x : CST.function_parameter) :
     G.parameter =
   match x with
   | `Opt_mut_id_or_meta_COLON_type (v1, v2, v3, v4) ->
-      let is_mutable =
-        match v1 with
-        | Some tok -> true
-        | None -> false
-      in
+      let mut_tok = Option.map (token env) v1 in
       let param_name, attribs = map_identifier_or_metavariable env v2 in
       let v3 = token env v3 in
       (* ":" *)
       let func_type = map_type_ env v4 in
-      let param = map_parameter (is_mutable, attribs, param_name, func_type) in
+      let param = map_parameter (mut_tok, attribs, param_name, func_type) in
       param
   | `Ellips tok -> (* "..." *) G.ParamEllipsis (token env tok)
 
@@ -1369,28 +1309,11 @@ and map_anon_choice_lit_value_3ef3d77 (env : env)
 
 let rec map_bind (env : env) (x : CST.bind) : G.pattern =
   match x with
-  | `Opt_mut_var_id (v1, v2) ->
+  | `Opt_mut_var_id (_mut, v2) -> (
       let name : G.ident = (* identifier *) str env v2 in
-      let name_name = H2.name_of_id name in
-      let name_pattern =
-        match name with
-        | "_", tok -> G.PatWildcard tok
-        | _ -> G.PatId (name, G.empty_id_info ())
-      in
-      let final_pattern =
-        match v1 with
-        (* mut& *)
-        | Some x ->
-            G.PatDisj
-              ( G.PatType
-                  {
-                    t = G.TyN name_name;
-                    t_attrs = [ G.KeywordAttr (G.Mutable, token env x) ];
-                  },
-                name_pattern )
-        | None -> name_pattern
-      in
-      final_pattern
+      match name with
+      | "_", tok -> G.PatWildcard tok
+      | _ -> G.PatId (name, G.empty_id_info ()))
   | `Bind_unpack (v1, v2, v3) ->
       let mod_name = map_module_access env v1 in
       let type_args = Option.map (map_type_arguments env) v2 in
@@ -1403,24 +1326,23 @@ let rec map_bind (env : env) (x : CST.bind) : G.pattern =
       let full_pattern =
         match v3 with
         (*bind_fields *)
-        | Some x ->
+        | Some (`Bind_posi_fields _ as x) ->
+            let _lp, fields, _rp = map_bind_fields env x in
+            G.PatConstructor (type_arg_name, List_.map snd fields)
+        | Some (`Bind_named_fields _ as x) ->
             let lbrace, fields, rbrace = map_bind_fields env x in
-            G.PatDisj
-              ( G.PatType (type_arg_kind |> G.t),
-                G.PatRecord (lbrace, fields, rbrace) )
+            G.PatTyped
+              (G.PatRecord (lbrace, fields, rbrace), type_arg_kind |> G.t)
         | None -> G.PatType (type_arg_kind |> G.t)
       in
       full_pattern
-  | `Var_id_AT_bind (v1, v2, v3) ->
+  | `Var_id_AT_bind (v1, v2, v3) -> (
       let name : G.ident = (* identifier *) str env v1 in
-      let name_pattern =
-        match name with
-        | "_", tok -> G.PatWildcard tok
-        | _ -> G.PatId (name, G.empty_id_info ())
-      in
-      let v2 = (* "@" *) token env v2 in
+      let _at = (* "@" *) token env v2 in
       let bind = map_bind env v3 in
-      G.PatDisj (name_pattern, bind)
+      match name with
+      | "_", _ -> bind
+      | _ -> G.PatAs (bind, (name, G.empty_id_info ())))
   | `Ellips tok -> G.PatEllipsis (token env tok)
 
 and map_bind_field (env : env) (x : CST.bind_field) =
@@ -1440,6 +1362,7 @@ and map_bind_field (env : env) (x : CST.bind_field) =
           in
           let dot_id =
             match expr.e with
+            | G.Ellipsis tok -> [ ("...", tok) ]
             | G.N name ->
                 let dot_id = H2.dotted_ident_of_name name in
                 dot_id
@@ -1456,16 +1379,16 @@ and map_bind_field (env : env) (x : CST.bind_field) =
           let out =
             match v3 with
             | Some (v1, v2) -> (dot_id, map_bind env v2)
-            | None ->
-                let ident = List.nth dot_id 0 in
-                (dot_id, G.PatId (ident, G.empty_id_info ()))
+            | None -> (
+                match List.nth dot_id 0 with
+                | "_", tok -> (dot_id, G.PatWildcard tok)
+                | "...", tok -> (dot_id, G.PatEllipsis tok)
+                | ident -> (dot_id, G.PatId (ident, G.empty_id_info ())))
           in
           out
       | `Spread_op tok ->
           let ident : G.ident = str env tok in
-          let spread_tok = token env tok in
-          ( [ ident ],
-            G.IdSpecial (G.Spread, spread_tok) |> G.e |> H2.expr_to_pattern ))
+          ([ ident ], G.OtherPat (("..", token env tok), [])))
   | `Ellips tok ->
       let ident = str env tok in
       ([ ident ], G.PatEllipsis (token env tok))
@@ -1876,8 +1799,25 @@ and map_access_field (env : env) ((v1, v2, v3) : CST.access_field) =
     match v3 with
     | `Exp x -> map_expression env x
   in
-  let field = G.FDynamic field_exp in
-  G.DotAccess (expr, dot, field) |> G.e
+  (* The grammar parses the field as a whole expression, so the operators
+     after it end up inside: `s.f = e` arrives as `s.(f = e)`. The field is
+     the leftmost operand, and the access moves down onto it. *)
+  let rec access (e : G.expr) : G.expr =
+    G.e
+      (match e.e with
+      | G.N name -> G.DotAccess (expr, dot, G.FN name)
+      | G.DotAccess (e1, tok, fld) -> G.DotAccess (access e1, tok, fld)
+      | G.ArrayAccess (e1, idx) -> G.ArrayAccess (access e1, idx)
+      | G.Assign (e1, tok, e2) -> G.Assign (access e1, tok, e2)
+      | G.AssignOp (e1, op, e2) -> G.AssignOp (access e1, op, e2)
+      | G.Cast (ty, tok, e1) -> G.Cast (ty, tok, access e1)
+      | G.Call
+          (({ e = G.IdSpecial (G.Op _, _); _ } as op), (l, G.Arg e1 :: args, r))
+        ->
+          G.Call (op, (l, G.Arg (access e1) :: args, r))
+      | _ -> G.DotAccess (expr, dot, G.FDynamic e))
+  in
+  access field_exp
 
 and map_receiver_call (env : env) ((v1, v2, v3, v4) : CST.receiver_call) =
   let expr_ = map_dot_or_index_chain env v1 in
@@ -2201,7 +2141,7 @@ and map_expression_term (env : env) (x : CST.expression_term) =
           in
           let v5 = (* ")" *) token env v5 in
           let all_exprs = expr :: exprs in
-          G.Seq all_exprs |> G.e (*todo is this right?*)
+          G.Container (G.Tuple, (v1, all_exprs, v5)) |> G.e
       | `Anno_exp (v1, v2, v3, v4, v5) ->
           let v1 = (* "(" *) token env v1 in
           let expr = map_expression env v2 in
@@ -2334,11 +2274,12 @@ and map_index_expression (env : env)
     | None -> index_exp
   in
   let v5 = (* "]" *) token env v5 in
-  let array_acceses =
-    all_index_exp
-    |> List_.map (fun x -> G.ArrayAccess (arr, (v2, x, v5)) |> G.e)
+  let index =
+    match all_index_exp with
+    | [ x ] -> x
+    | xs -> G.Container (G.Tuple, (v2, xs, v5)) |> G.e
   in
-  G.Seq array_acceses |> G.e
+  G.ArrayAccess (arr, (v2, index, v5)) |> G.e
 
 and map_match_arm (env : env) ((v1, v2, v3, v4) : CST.match_arm) :
     G.pattern * G.expr =
@@ -2806,20 +2747,19 @@ and map_let_expr (env : env) ((v1, v2, v3, v4) : CST.let_statement) : G.expr =
            let v2 = map_expression env v2 in
            v2)
   in
-  match bind with
-  | G.PatId (var, _) ->
-      let var_def = { G.vinit = value; G.vtype = type_hint; vtok = None } in
-      G.DefStmt (G.basic_entity var, G.VarDef var_def) |> G.s |> G.stmt_to_expr
-  | G.PatEllipsis _ ->
-      let ent = { name = G.EPattern bind; attrs = []; tparams = None } in
-      let var_def = { G.vinit = value; G.vtype = type_hint; vtok = None } in
-      G.DefStmt (ent, G.VarDef var_def) |> G.s |> G.stmt_to_expr
-  | _ ->
-      let transpiled =
-        transpile_let_bind env bind
-          (Option.value ~default:(G.L (G.Null sc) |> G.e) value)
-      in
-      G.Record (sc, transpiled, sc) |> G.e
+  let attrs =
+    match v2 with
+    | `Bind (`Opt_mut_var_id (Some mut, _)) ->
+        [ G.KeywordAttr (G.Mutable, token env mut) ]
+    | _ -> []
+  in
+  let var_def = { G.vinit = value; G.vtype = type_hint; vtok = None } in
+  let ent =
+    match bind with
+    | G.PatId (var, _) -> G.basic_entity ~attrs var
+    | _ -> { name = G.EPattern bind; attrs; tparams = None }
+  in
+  G.DefStmt (ent, G.VarDef var_def) |> G.s |> G.stmt_to_expr
 
 let map_semgrep_expression (env : env) (x : CST.semgrep_expression) =
   G.E
@@ -2938,7 +2878,7 @@ let map_source_file (env : env) (x : CST.source_file) =
           let struct_, abilities, ent = map_struct_signature env [] x in
           let struct_def =
             {
-              ckind = (G.Class, struct_);
+              ckind = (G.Struct, struct_);
               cextends = [];
               cimplements = abilities;
               cmixins = [];

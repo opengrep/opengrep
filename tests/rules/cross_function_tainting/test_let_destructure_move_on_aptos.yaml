@@ -1,0 +1,13 @@
+rules:
+  - id: test-let-destructure-move-on-aptos
+    message: Destructuring binds each part of the value
+    languages:
+      - move_on_aptos
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

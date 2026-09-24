@@ -3347,11 +3347,9 @@ and module_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   pure (G.DefStmt (entity, def) |> G.s)
 ) __n
 
-(* TODO: structures are represented the same way as classes, so we cannot distinguish them
- * by matching. Is it fixable? *)
 and structure_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   (* structure_block -> structure_statement inherits_statement* implements_statement* class_block_declaration* end_structure_statement *)
-  let* class_ = token "STRUCTURE" in
+  let* structure = token "STRUCTURE" in
   let* qname = qualified_name in
   let* tparams = optional type_parameter_list in
   let* inherits = list_of inherits_statement in
@@ -3365,7 +3363,7 @@ and structure_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   in
   let def =
     G.ClassDef
-      G.{ ckind = (G.Class, class_.tok);
+      G.{ ckind = (G.Struct, structure.tok);
           cextends = List.concat inherits;
           cimplements = List.concat implements;
           cmixins = [];

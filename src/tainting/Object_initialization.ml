@@ -167,7 +167,7 @@ let collect_class_names (ast : G.program) : G.name list =
         (* Handle Go struct definitions - TypeDef with TyRecordAnon *)
         | entity, G.TypeDef type_def -> (
             match (entity.G.name, type_def.G.tbody) with
-            | G.EN name, G.NewType { G.t = G.TyRecordAnon ((G.Class, _), _); _ }
+            | G.EN name, G.NewType { G.t = G.TyRecordAnon ((G.Struct, _), _); _ }
               ->
                 class_names := name :: !class_names
             | _ -> ())
@@ -194,9 +194,9 @@ let classes_are_value_types (lang : Lang.t) : bool =
       true
   | _ -> false
 
-(* The names of the value types the program declares: structs (C# and Swift
-   [Struct] classes, Go struct types) and, where [classes_are_value_types],
-   every class. *)
+(* The names of the value types the program declares: structs (C#, Swift, VB,
+   Move and Cairo [Struct] classes, Go struct types) and, where
+   [classes_are_value_types], every class. *)
 let value_type_names (lang : Lang.t) (ast : G.program) : string list =
   let all_classes = classes_are_value_types lang in
   let names = ref [] in
@@ -210,7 +210,7 @@ let value_type_names (lang : Lang.t) (ast : G.program) : string list =
           G.ClassDef { ckind = G.Struct, _; _ }
         | { G.name = G.EN (G.Id ((s, _), _)); _ },
           G.TypeDef
-            { tbody = G.NewType { G.t = G.TyRecordAnon ((G.Class, _), _); _ } }
+            { tbody = G.NewType { G.t = G.TyRecordAnon ((G.Struct, _), _); _ } }
           ->
             names := s :: !names
         | { G.name = G.EN (G.Id ((s, _), _)); _ }, G.ClassDef _

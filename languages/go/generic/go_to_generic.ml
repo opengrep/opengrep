@@ -145,7 +145,7 @@ let top_func () =
         G.TyApply (G.TyN (mk_name "chan" t) |> G.t, fb [ G.TA v1; G.TA v2 ])
     | TStruct (t, v1) ->
         let v1 = bracket (list struct_field) v1 in
-        G.TyRecordAnon ((G.Class, t), v1)
+        G.TyRecordAnon ((G.Struct, t), v1)
     | TInterface (t, v1) ->
         let v1 = bracket (list interface_field) v1 in
         G.TyRecordAnon ((G.Interface, t), v1)
