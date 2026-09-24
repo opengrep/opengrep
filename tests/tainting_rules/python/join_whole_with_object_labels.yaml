@@ -1,0 +1,17 @@
+rules:
+  - id: join_whole_with_object_labels
+    message: a field that is Clean on one path reads the other path's whole taint, and only that
+    severity: ERROR
+    languages:
+      - python
+    mode: taint
+    pattern-sources:
+      - label: A
+        pattern: source_a()
+      - label: B
+        pattern: source_b()
+    pattern-sinks:
+      - requires: A
+        pattern: sink_a(...)
+      - requires: B
+        pattern: sink_b(...)

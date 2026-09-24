@@ -1,0 +1,13 @@
+rules:
+  - id: python_join_parameter_with_object
+    message: taint through a parameter that is joined with an object
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: self.path
+    pattern-sinks:
+      - pattern: sink(...)

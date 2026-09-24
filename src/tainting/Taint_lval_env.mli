@@ -29,7 +29,7 @@ val normalize_lval : Lang.t -> IL.lval -> (IL.name * Taint.offset list) option
     offsets are language-sensitive (JS/TS integer-vs-string keys). *)
 
 val add_shape :
-  IL.name -> Taint.offset list -> Taint.taints -> shape -> env -> env
+  Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> shape -> env -> env
 
 val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
 (** Add taints & shape to an l-value.
@@ -38,7 +38,7 @@ val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
     x.a_1. ... .a_i (i < N) (unless they become tainted separately).
  *)
 
-val add : IL.name -> Taint.offset list -> Taint.taints -> env -> env
+val add : Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> env -> env
 
 val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
 (** Assign a set of taints (but no specific shape) to an l-value. *)
@@ -146,7 +146,7 @@ val mark_dead : env -> env
 (** Mark the env as unreachable. Set at a branch whose condition folds
     to a constant that contradicts the branch direction. *)
 
-val union : env -> env -> env
+val union : lang:Lang.t -> env -> env -> env
 (** Compute the environment for the join of two branches.
 
      If an lvalue x.a_1. ... .a_N was clean in one branch, we still consider it
@@ -155,7 +155,7 @@ val union : env -> env -> env
      branch, then x.a_1. ... . a_N may no longer be clean, but we assume the
      best case scenario to reduce FPs. *)
 
-val union_list : ?default:env -> env list -> env
+val union_list : lang:Lang.t -> ?default:env -> env list -> env
 val equal : env -> env -> bool
 
 val equal_by_lval : Lang.t -> env -> env -> IL.lval -> bool

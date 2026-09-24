@@ -1,0 +1,11 @@
+rules:
+  - id: join_whole_with_object
+    message: taint through a value that is an object on one path and tainted as a whole on the other
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

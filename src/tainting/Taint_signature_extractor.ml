@@ -272,7 +272,8 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
   let combined_env =
     match in_env with
-    | Some env -> Taint_lval_env.union env param_assumptions
+    | Some env ->
+        Taint_lval_env.union ~lang:taint_inst.lang env param_assumptions
     | None -> param_assumptions
   in
   let fixpoint_effects, mapping =
@@ -491,7 +492,8 @@ let extract_signature_with_file_context
         let method_property_env =
           mk_method_property_assumptions props taint_inst.lang
         in
-        Taint_lval_env.union global_env method_property_env
+        Taint_lval_env.union ~lang:taint_inst.lang global_env
+          method_property_env
   in
 
   let { signature; _ } =

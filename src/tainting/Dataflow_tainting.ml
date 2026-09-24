@@ -372,9 +372,10 @@ let record_this_field_write env taints offset guards =
    sees it. [this.x…] normalizes to the field [x] as a var (see
    [normalize_lval]); not representable when the offset does not start with a
    field (an index/slice base), in which case the env is unchanged. *)
-let add_this_field_to_lval_env lval_env offset taints =
+let add_this_field_to_lval_env env lval_env offset taints =
   match offset with
-  | T.Ofld field :: rest -> Lval_env.add field rest taints lval_env
+  | T.Ofld field :: rest ->
+      Lval_env.add env.taint_inst.lang field rest taints lval_env
   | _ -> lval_env
 
 (* Own formal parameters are bound in the sig being computed; anything
@@ -1875,7 +1876,10 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                      ((lval_env, taints_acc), `Entry (ke, ve_taints, ve_shape)))
                (env.lval_env, Taints.empty)
         in
-        let record_shape = Shape.record_or_dict_like_obj taints_and_shapes in
+        let record_shape =
+          Shape.record_or_dict_like_obj ~lang:env.taint_inst.lang
+            taints_and_shapes
+        in
         (taints, record_shape, lval_env)
     | Cast (_, e) -> check env e
   in
@@ -2084,7 +2088,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                   taints
               in
               ( Taints.union taints taints_acc,
-                Shape.unify_shape shape shape_acc,
+                Shape.unify_shape ~lang:env.taint_inst.lang shape shape_acc,
                 Lval_env.add_control_taints lval_env control_taints )
           | ToLval { taints; var; offset; guards } ->
               if not (is_own_param env var) then
@@ -2103,7 +2107,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               in
               ( taints_acc,
                 shape_acc,
-                lval_env |> Lval_env.add var offset taints )
+                lval_env |> Lval_env.add env.taint_inst.lang var offset taints )
           | ToLvalThis { taints; offset; guards } ->
               let guards = Effect_guard.compose_and rebound_guards guards in
               record_this_field_write env taints offset guards;
@@ -2112,7 +2116,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               let taints = Taints.conjoin_guard guards taints in
               ( taints_acc,
                 shape_acc,
-                add_this_field_to_lval_env lval_env offset taints )
+                add_this_field_to_lval_env env lval_env offset taints )
           | ToSinkInCall
               {
                 callee;
@@ -2335,8 +2339,16 @@ let check_function_call env fun_exp args
                     * joins — the smart-constructor complement rule then
                     * folds [G or not G] to [top]. *)
                    let taints = Taints.conjoin_guard inner_guards taints in
-                   ( Taints.union taints taints_acc,
-                     Shape.unify_shape shape shape_acc,
+                   (* One ToReturn per return statement: fold them as the
+                    * join of the returned values, so a Clean field of one
+                    * does not hide the whole taint of another. *)
+                   let (S.Cell (xtaint, shape)) =
+                     Shape.unify_cell ~lang:env.taint_inst.lang
+                       (S.Cell (Xtaint.of_taints taints, shape))
+                       (S.Cell (Xtaint.of_taints taints_acc, shape_acc))
+                   in
+                   ( Xtaint.to_taints xtaint,
+                     shape,
                      Lval_env.add_control_taints lval_env control_taints )
                | ToLval { taints; var; offset; guards } ->
                    if not (is_own_param env var) then
@@ -2351,14 +2363,15 @@ let check_function_call env fun_exp args
                    let taints = Taints.conjoin_guard guards taints in
                    ( taints_acc,
                      shape_acc,
-                     lval_env |> Lval_env.add var offset taints )
+                     lval_env
+                     |> Lval_env.add env.taint_inst.lang var offset taints )
                | ToLvalThis { taints; offset; guards } ->
                    record_this_field_write env taints offset guards;
                    (* Mirror the sibling [ToLval] arm's local write. *)
                    let taints = Taints.conjoin_guard guards taints in
                    ( taints_acc,
                      shape_acc,
-                     add_this_field_to_lval_env lval_env offset taints )
+                     add_this_field_to_lval_env env lval_env offset taints )
                | ToSinkInCall
                    {
                      callee;
@@ -2540,7 +2553,10 @@ let call_with_intrafile lval_opt e env args instr =
                                data_shape,  (* Just use the latest shape *)
                                lval_env)
                           | ToLval { taints; var = lval_name; offset; _ } ->
-                              let lval_env = Lval_env.add lval_name offset taints lval_env in
+                              let lval_env =
+                                Lval_env.add env.taint_inst.lang lval_name
+                                  offset taints lval_env
+                              in
                               (taints_acc, shape_acc, lval_env)
                           | ToLvalThis { taints; offset; guards } ->
                               record_this_field_write env taints offset guards;
@@ -2548,7 +2564,7 @@ let call_with_intrafile lval_opt e env args instr =
                                  (no guard conjoin here, as in the sibling). *)
                               ( taints_acc,
                                 shape_acc,
-                                add_this_field_to_lval_env lval_env offset
+                                add_this_field_to_lval_env env lval_env offset
                                   taints )
                           | ToSinkInCall
                               {
@@ -3132,7 +3148,7 @@ let check_tainted_control_at_exit node env =
 (* Transfer *)
 (*****************************************************************************)
 
-let input_env ~enter_env ~(flow : F.cfg) mapping ni =
+let input_env ~lang ~enter_env ~(flow : F.cfg) mapping ni =
   let node = flow.graph#nodes#assoc ni in
   match node.F.n with
   | Enter -> enter_env
@@ -3144,7 +3160,7 @@ let input_env ~enter_env ~(flow : F.cfg) mapping ni =
       match pred_envs with
       | [] -> Lval_env.empty
       | [ penv ] -> penv
-      | penv1 :: penvs -> List.fold_left Lval_env.union penv1 penvs)
+      | penv1 :: penvs -> List.fold_left (Lval_env.union ~lang) penv1 penvs)
 
 (* Walk a [ParamPattern]'s inner pattern and enumerate each leaf
  * together with its offset path from the enclosing implicit binder.
@@ -3438,7 +3454,8 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
   let flow = fun_cfg.cfg in
   (* DataflowX.display_mapping flow mapping show_tainted; *)
   let in' : Lval_env.t =
-    input_env ~enter_env:enter_env.lval_env ~flow mapping ni
+    input_env ~lang:enter_env.taint_inst.lang ~enter_env:enter_env.lval_env
+      ~flow mapping ni
   in
   let node = flow.graph#nodes#assoc ni in
   let env = { enter_env with lval_env = in' } in
@@ -3643,7 +3660,8 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
        * We assume that these lambdas are being evaluated and that their side-effects
        * should affect the subsequent statements.
        *)
-      Lval_env.union_list ~default:env.lval_env out_envs_lambdas
+      Lval_env.union_list ~lang:env.taint_inst.lang ~default:env.lval_env
+        out_envs_lambdas
     else
       (* If lambdas are not part of a call, we don't make their side-effects visible.
        * E.g.
@@ -3860,7 +3878,8 @@ and (fixpoint :
                       (Domain.DLS.get constructor_instance_vars)
                       storage_key
                   in
-                  Lval_env.union in_env class_instance_vars
+                  Lval_env.union ~lang:taint_inst.lang in_env
+                    class_instance_vars
                 with
                 | Not_found -> in_env)
             | None ->
@@ -4127,7 +4146,8 @@ and (fixpoint :
                      env
                    in
                    let combined_env =
-                     Lval_env.union enhanced_in_env param_assumptions
+                     Lval_env.union ~lang:taint_inst.lang enhanced_in_env
+                       param_assumptions
                    in
                    (* Run fixpoint on lambda to get its effects *)
                    let lambda_best_matches =

@@ -939,7 +939,7 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
  * itself applied later. Free [BArg]s that match the outer function's
  * parameters are substituted; free [BArg]s that match neither are kept
  * verbatim (they name a yet-deeper enclosing scope). *)
-let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
+let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     (sig_ : Signature.t) : Signature.t =
   (* A [Taint.arg] is bound in [sig_] iff its (name, index) names a slot
    * of [sig_.params]: both the index points within range AND the name
@@ -1046,9 +1046,11 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
         | [] -> Bot
         | first :: rest ->
             List.fold_left
-              (fun acc off -> Shape.unify_shape acc (resolve_offset off))
+              (fun acc off ->
+                Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
-    | Fun inner_sig -> Fun (substitute_in_sig inst_var inst_trace inner_sig)
+    | Fun inner_sig ->
+        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
   and walk_xtaint xtaint shape =
     let xtaint =
       match xtaint with
@@ -1161,7 +1163,7 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
 (* Public entry point retaining the original location's contract.
  * Walks a shape, substituting against [inst_var]; nested [Fun] shapes
  * are refined via [substitute_in_sig]. *)
-let instantiate_shape inst_var inst_trace shape =
+let instantiate_shape ~lang inst_var inst_trace shape =
   let inst_taints = instantiate_taints inst_var inst_trace in
   let rec inst_shape = function
     | Bot -> Bot
@@ -1196,7 +1198,8 @@ let instantiate_shape inst_var inst_trace shape =
             Bot
         | first :: rest ->
             List.fold_left
-              (fun acc off -> Shape.unify_shape acc (resolve_offset off))
+              (fun acc off ->
+                Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
     | Fun inner_sig ->
         (* A [Fun] shape's signature may reference parameters of the
@@ -1206,7 +1209,7 @@ let instantiate_shape inst_var inst_trace shape =
          * actuals via [substitute_in_sig]; bound references to the
          * inner sig's own parameters stay intact for resolution when
          * the inner sig is itself applied later. *)
-        Fun (substitute_in_sig inst_var inst_trace inner_sig)
+        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
   and inst_xtaint xtaint shape =
     (* This may break INVARIANT(cell) but 'update_offset_in_cell' will restore it. *)
     let xtaint =
@@ -1757,7 +1760,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   let inst_taints taints =
     instantiate_taints inst_var inst_trace taints
   in
-  let inst_shape shape = instantiate_shape inst_var inst_trace shape in
+  let inst_shape shape = instantiate_shape ~lang inst_var inst_trace shape in
   let inst_taints_and_shape (taints, shape) =
     let taints = inst_taints taints in
     let shape = inst_shape shape in
