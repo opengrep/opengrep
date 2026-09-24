@@ -15,7 +15,8 @@ val load_interfile_build :
   ?ncores:int ->
   targeting_conf:Find_targets.conf ->
   Lang.t -> Fpath.t ->
-  (interfile_graph * resolved_asts * skipped_tokens * Core_error.t list)
+  (interfile_graph * resolved_asts * skipped_tokens * Core_error.t list
+   * Type_state.t)
   option
 (** The third component is the skipped tokens of each partially parsed file.
     The fourth is the files the index failed to process, each with its error;

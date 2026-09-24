@@ -1460,6 +1460,7 @@ and vof_class_kind x = vof_wrap vof_class_kind_bis x
 
 and vof_class_kind_bis = function
   | Class -> OCaml.VSum ("Class", [])
+  | Struct -> OCaml.VSum ("Struct", [])
   | Interface -> OCaml.VSum ("Interface", [])
   | Trait -> OCaml.VSum ("Trait", [])
   | Object -> OCaml.VSum ("Object", [])

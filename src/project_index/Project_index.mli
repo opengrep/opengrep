@@ -40,3 +40,4 @@ val collect_resolved :
   Call_graph.G.t * (string, AST_generic.program) Hashtbl.t
   * (string, Tok.location list) Hashtbl.t
   * Core_error.t list
+  * Type_state.t

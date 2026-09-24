@@ -52,12 +52,17 @@ val taint_config_of_rule :
 val taint_config_of_spec_matches :
   ?handle_effects:Taint_rule_inst.effects_handler ->
   ?allow_partial:bool ->
+  ?is_value_type:(string -> bool) ->
   Match_env.xconfig ->
   Lang.t ->
   Fpath.t ->
   Rule.taint_rule ->
   spec_matches ->
   Taint_rule_inst.t option
+
+(* The value types (structs) a program declares, as a predicate on type
+   names. *)
+val value_type_predicate : Lang.t -> AST_generic.program -> string -> bool
 
 (* The raw spec matches, ungated: unlike [taint_config_of_rule] it applies
    no source/sink emptiness rule and builds no [Taint_rule_inst.t]. *)

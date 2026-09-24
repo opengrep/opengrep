@@ -1,8 +1,8 @@
-// We parse all of these as classes, so they all match a class pattern
+// A class pattern matches classes and extensions (parsed as classes), not
+// structs, which are a distinct kind of type
 
 // MATCH:
 class Foo {}
-// MATCH:
 struct Foo {}
 // MATCH:
 extension Foo {}

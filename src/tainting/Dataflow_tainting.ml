@@ -3121,12 +3121,78 @@ let rebound_vars (cfg : IL.cfg) : IL.NameSet.t =
       | _ -> acc)
     cfg.reachable IL.NameSet.empty
 
+let type_name (t : G.type_) : string option =
+  match t.t with
+  | G.TyN (G.Id ((s, _), _))
+  | G.TyN (G.IdQualified { name_last = (s, _), _; _ }) ->
+      Some s
+  | _ -> None
+
+(* The parameter holds a copy of the caller's value (a struct passed by
+ * value), so nothing the callee does to it reaches the caller. *)
+let param_is_copy ~(lang : Lang.t) ~(is_value_type : string -> bool)
+    (p : IL.name_param) : bool =
+  (not p.by_reference)
+  &&
+  match p.ptype with
+  | None -> false
+  | Some t -> (
+      match (lang, t.t) with
+      | (Lang.C | Lang.Cpp), G.OtherType ((("struct" | "union" | "class"), _), _)
+        ->
+          true
+      | (Lang.C | Lang.Cpp | Lang.Rust | Lang.Go | Lang.Csharp | Lang.Swift), _
+        -> (
+          match type_name t with
+          | Some name -> is_value_type name
+          | None -> false)
+      | _ -> false)
+
+let copied_params ~(lang : Lang.t) ~(is_value_type : string -> bool)
+    (params : IL.param list) : IL.NameSet.t =
+  params
+  |> List.fold_left
+       (fun acc (p : IL.param) ->
+         match p with
+         | IL.Param np
+         | IL.ParamKwd np
+         | IL.ParamReceiver np
+         | IL.ParamPattern (np, _)
+           when param_is_copy ~lang ~is_value_type np ->
+             IL.NameSet.add np.pname acc
+         | _ -> acc)
+       IL.NameSet.empty
+
 (* A change to a parameter as a whole reaches the caller unless the function
  * rebinds the parameter, which the caller does not see for a parameter
- * passed by value; in-place changes and field writes reach it. *)
+ * passed by value; in-place changes and field writes reach it. Nothing
+ * reaches the caller from a parameter or receiver that holds a copy. *)
 let caller_sees_update (params : IL.param list) (rebound : IL.NameSet.t)
-    (lval : T.lval) : bool =
+    (copied : IL.NameSet.t) (lval : T.lval) : bool =
+  let own_param_named (name : string) =
+    List.find_opt
+      (fun (p : IL.param) ->
+        match IL_helpers.pname_of_param p with
+        | Some pname -> String.equal (fst pname.ident) name
+        | None -> false)
+      params
+  in
+  let copied_param (p : IL.param) =
+    match IL_helpers.pname_of_param p with
+    | Some pname -> IL.NameSet.mem pname copied
+    | None -> false
+  in
   match (lval.base, lval.offset) with
+  | T.BArg arg, _ when Option.fold ~none:false ~some:copied_param
+                         (own_param_named arg.name) ->
+      false
+  | T.BThis, _
+    when List.exists
+           (function
+             | IL.ParamReceiver np -> IL.NameSet.mem np.pname copied
+             | _ -> false)
+           params ->
+      false
   | T.BArg arg, [] -> (
       let own_param =
         List.find_opt
@@ -3200,13 +3266,15 @@ let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
                  else None))
 
 let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
-    ~(rebound : IL.NameSet.t) enter_env exit_env : Effect.t list =
+    ~(rebound : IL.NameSet.t) ~(copied : IL.NameSet.t) enter_env exit_env :
+    Effect.t list =
   (* TOOD: We need to get a map of `lval` to `Taint.arg`, and if an extension
    * of `lval` has new taints, then we can compute its correspoding `Taint.arg`
    * extension and generate a `ToLval` effect too. *)
   exit_env |> Lval_env.seq_of_tainted
   |> Seq.map (fun (var, exit_var_ref) ->
-         arg_updates_of_var ~lang ~keep:(caller_sees_update params rebound)
+         arg_updates_of_var ~lang
+           ~keep:(caller_sees_update params rebound copied)
            enter_env var exit_var_ref)
   |> Seq.concat |> List.of_seq
 
@@ -3635,8 +3703,12 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         | Some { IL.base = IL.Var name; rev_offset = [] }
           when List.exists
                  (function
-                   | IL.Param { pname; by_reference = false; _ } ->
+                   | IL.Param ({ pname; by_reference = false; _ } as np)
+                   | IL.ParamKwd ({ pname; by_reference = false; _ } as np) ->
                        IL.equal_name pname name
+                       && not
+                            (param_is_copy ~lang:env.taint_inst.lang
+                               ~is_value_type:env.taint_inst.is_value_type np)
                    | _ -> false)
                  fun_cfg.params ->
             effects_before_param_rebinding ~lang:env.taint_inst.lang
@@ -3967,8 +4039,11 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
   effects_from_arg_updates_at_exit ~lang:taint_inst.lang
-    ~params:fun_cfg.params ~rebound:(rebound_vars fun_cfg.cfg) enter_lval_env
-    exit_lval_env
+    ~params:fun_cfg.params ~rebound:(rebound_vars fun_cfg.cfg)
+    ~copied:
+      (copied_params ~lang:taint_inst.lang
+         ~is_value_type:taint_inst.is_value_type fun_cfg.params)
+    enter_lval_env exit_lval_env
   |> record_effects env;
   (!(env.effects_acc), end_mapping)
 

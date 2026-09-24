@@ -53,9 +53,12 @@ type t = {
   function_returns : AST_generic.name Method_name_map.t;
   function_return_tuples : AST_generic.name option list Method_name_map.t;
   method_return_tuples : AST_generic.name option list Method_map.t;
+  (* The files that declare the class as a value type (a struct). *)
+  value_types : Fpath.t list Class_name_map.t;
 }
 
 let empty = {
+  value_types = Class_name_map.empty;
   class_files = Class_name_map.empty;
   inherited_methods = Class_name_map.empty;
   parent_class = Class_name_map.empty;
@@ -69,6 +72,11 @@ let empty = {
 }
 
 let get_methods t cls = Class_name_map.find_opt cls t.methods
+
+let add_value_type t cls file =
+  let cur = Option.value (Class_name_map.find_opt cls t.value_types) ~default:[] in
+  if List.exists (Fpath.equal file) cur then t
+  else { t with value_types = Class_name_map.add cls (file :: cur) t.value_types }
 
 let add_class_file t cls file =
   let cur = Option.value (Class_name_map.find_opt cls t.class_files) ~default:[] in
@@ -319,9 +327,20 @@ let equal a b =
        a.function_return_tuples b.function_return_tuples
   && Method_map.equal (list_equal g_name_opt_equal)
        a.method_return_tuples b.method_return_tuples
+  && Class_name_map.equal (list_equal Fpath.equal) a.value_types b.value_types
 
 (* String-keyed class views for the engine's callee resolver. [empty] behaves
    as "no project info": every lookup misses. *)
+(* A class this state sees defined in a file that declares it a value
+   type. *)
+let is_value_type t cls =
+  let cn = Names.Class_name.of_string cls in
+  match Class_name_map.find_opt cn t.value_types with
+  | None -> false
+  | Some value_files ->
+      class_files_of t cn
+      |> List.exists (fun f -> List.exists (Fpath.equal f) value_files)
+
 let has_class t cls =
   let cn = Names.Class_name.of_string cls in
   has_methods t cn || get_inherited t cn <> []

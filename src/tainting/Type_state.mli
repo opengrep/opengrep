@@ -8,6 +8,9 @@ val empty : t
 
 val add_class_file : t -> Names.Class_name.t -> Fpath.t -> t
 
+(* The file declares the class as a value type (a struct). *)
+val add_value_type : t -> Names.Class_name.t -> Fpath.t -> t
+
 val add_inherited :
   t -> Names.Class_name.t -> Fpath.t -> Func_info.t list -> t
 
@@ -99,6 +102,10 @@ val equal : t -> t -> bool
 
 (* String-keyed class views for the engine's callee resolver; [empty] misses. *)
 val has_class : t -> string -> bool
+
+(* The class is declared as a value type in a file this state sees it
+   defined in. *)
+val is_value_type : t -> string -> bool
 
 val find_methods :
   t -> fallback:Func_info.t list -> class_name:string -> method_name:string ->

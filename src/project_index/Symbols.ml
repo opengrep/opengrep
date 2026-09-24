@@ -306,7 +306,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                  cfg.Index_lang_rules.companion_object_has_own_name)
               with
               | G.Object, true -> true
-              | (G.Object | G.Class | G.Interface | G.Trait), _ -> false
+              | (G.Object | G.Class | G.Struct | G.Interface | G.Trait), _ ->
+                  false
             in
             let qn_name = if is_companion then name ^ "$" else name in
             let parent_paths =

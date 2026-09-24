@@ -3754,11 +3754,13 @@ and m_class_kind a b = m_wrap m_class_kind_bis a b
 and m_class_kind_bis a b =
   match (a, b) with
   | G.Class, B.Class
+  | G.Struct, B.Struct
   | G.Interface, B.Interface
   | G.Trait, B.Trait
   | G.Object, B.Object ->
       return ()
   | G.Class, _
+  | G.Struct, _
   | G.Interface, _
   | G.Trait, _
   | G.Object, _ ->

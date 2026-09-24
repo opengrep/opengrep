@@ -194,6 +194,7 @@ type name_param = {
   pname : name;
   pdefault : G.expr option;
   by_reference : bool;
+  ptype : G.type_ option;
 }
 [@@deriving show { with_path = false }, ord]
 

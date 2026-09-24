@@ -156,6 +156,7 @@ let build
         && (match ci.ci_class_kind with
             | G.Object -> true
             | G.Class
+            | G.Struct
             | G.Interface
             | G.Trait -> false))
       ~class_parent_paths

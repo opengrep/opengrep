@@ -3737,14 +3737,20 @@ and parameters env params : param list =
   params |> Tok.unbracket
   |> List_.mapi (fun idx gparam ->
        match gparam with
-       | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ }
+       | G.Param { pname = Some i; pinfo; pdefault; pattrs; ptype; _ }
          when List.exists
                 (function
                   | G.KeywordAttr (G.KeywordOnly, _) -> true
                   | _ -> false)
                 pattrs ->
-           ParamKwd { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
-       | G.Param ({ pname = Some i; pinfo; pdefault; _ } as classic) ->
+           ParamKwd
+             {
+               pname = var_of_id_info i pinfo;
+               pdefault;
+               by_reference = false;
+               ptype;
+             }
+       | G.Param ({ pname = Some i; pinfo; pdefault; ptype; _ } as classic) ->
            let pname = var_of_id_info i pinfo in
            (* Clojure/Elixir/OCaml encode multi-clause functions with a
               single synthetic !!_implicit_param! that already receives the
@@ -3756,11 +3762,12 @@ and parameters env params : param list =
                pname;
                pdefault;
                by_reference = parameter_is_by_reference env.lang classic;
+               ptype;
              }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
            ParamRest
-             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
-       | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; _ }) ->
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false; ptype = None }
+       | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; ptype; _ }) ->
            (* The synthetic [!!_implicit_param!] binder from
             * [implicit_param_classic] becomes the IL name_param. Rename
             * it to [!!_implicit_param!_idx] so multiple destructuring
@@ -3772,10 +3779,15 @@ and parameters env params : param list =
            let _, tk = i in
            let i = G.implicit_param_id_indexed idx tk in
            let pname = var_of_id_info i pinfo in
-           ParamPattern ({ pname; pdefault; by_reference = false }, pat)
-       | G.ParamReceiver { pname = Some i; pinfo; pdefault; _ } ->
+           ParamPattern ({ pname; pdefault; by_reference = false; ptype }, pat)
+       | G.ParamReceiver { pname = Some i; pinfo; pdefault; ptype; _ } ->
            ParamReceiver
-             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
+             {
+               pname = var_of_id_info i pinfo;
+               pdefault;
+               by_reference = false;
+               ptype;
+             }
        (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
        | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
          ->
@@ -3784,15 +3796,22 @@ and parameters env params : param list =
                pname = var_of_id_info i pinfo;
                pdefault;
                by_reference = Lang.equal env.lang Lang.Php;
+               ptype = None;
              }
        (* Ruby, Crystal: the anonymous block parameter '&' takes the block
         * like a named one does *)
        | G.OtherParam (("Ref", t), []) ->
-           Param { pname = fresh_var env ~str:"block" t; pdefault = None; by_reference = false }
+           Param
+             {
+               pname = fresh_var env ~str:"block" t;
+               pdefault = None;
+               by_reference = false;
+               ptype = None;
+             }
        | G.ParamHashSplat (_, { pname = Some i; pinfo; pdefault; _ }) ->
            (* **kwargs in Python / **opts in Ruby: treat as rest param *)
            ParamRest
-             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false; ptype = None }
        | G.Param { pname = None; _ }
        | G.ParamReceiver { pname = None; _ }
        | G.ParamRest (_, _)
@@ -4615,7 +4634,8 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
     | Some block -> Some (block, fparams)
     | None ->
         let block = fresh_var env ~str:"block" (snd fdef.G.fkind) in
-        Some (block, fparams @ [ Param { pname = block; pdefault = None; by_reference = false } ])
+        Some (block, fparams @ [ Param
+                 { pname = block; pdefault = None; by_reference = false; ptype = None } ])
   else None
 
 and function_definition env fdef : function_definition =

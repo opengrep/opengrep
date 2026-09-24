@@ -106,6 +106,10 @@ type t = {
           offset grows at every call, and the longer offsets multiply the
           polymorphic taints and add no finding. See
           [Taint_shape.max_poly_offset]. *)
+  is_value_type : string -> bool;
+      (** Whether a type name denotes a value type (a struct): a parameter
+          of that type is a copy, so the callee's writes to it do not reach
+          the caller. *)
   java_props_cache : java_props_cache;
       (** Getters/setters without a definition are resolved to the property
     * named after them.

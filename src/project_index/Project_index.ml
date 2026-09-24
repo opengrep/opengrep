@@ -245,7 +245,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     ?(reexport_map = Hashtbl.create 0)
     ~(go_packages : Scope_go.package_index)
     (file_infos : file_info list)
-    : Call_graph.G.t * class_fun_info list * Core_error.t list =
+    : Call_graph.G.t * class_fun_info list * Core_error.t list * Type_state.t =
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
@@ -284,6 +284,16 @@ let build_project_call_graph (caps : < Cap.fork >)
            | last :: _ -> Some last
            | [] -> None)
         | [] -> None
+      in
+      let state =
+        match (child, ci.ci_class_kind) with
+        | Some child_name, G.Struct
+        | Some child_name, G.Class
+          when Object_initialization.classes_are_value_types lang
+               || G.equal_class_kind ci.ci_class_kind G.Struct ->
+          Type_state.add_value_type state
+            (Names.Class_name.of_string child_name) ci.ci_file
+        | _ -> state
       in
       match child, parent with
       | Some child_name, Some parent_name ->
@@ -818,6 +828,7 @@ let build_project_call_graph (caps : < Cap.fork >)
                    Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) ()
                      objects
                  | G.Class
+                 | G.Struct
                  | G.Interface
                  | G.Trait -> objects)
                Common.SMap.empty indexed_classes
@@ -1101,7 +1112,7 @@ let build_project_call_graph (caps : < Cap.fork >)
       m "[interfile timing] project index: call graph: edge merge (add edges, \
          dispatch/override/overload): %.2fs"
         (Unix.gettimeofday () -. t_merge_start));
-  (graph, inherited_by_class, phase1_failures @ phase2_failures)
+  (graph, inherited_by_class, phase1_failures @ phase2_failures, type_state)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =
   fst (Fpath_.absolutify ~cwd:(Fpath.v (Sys.getcwd ())) project_root)
@@ -1112,7 +1123,7 @@ let run_pipeline (caps : < Cap.fork >)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
   : entry list * Call_graph.G.t * int * int * file_info list
-    * (Fpath.t * Tok.location list) list * Core_error.t list =
+    * (Fpath.t * Tok.location list) list * Core_error.t list * Type_state.t =
   let cfg = Index_lang_rules.for_lang lang in
   (* Absolutize paths: interface dispatch's [family_key] needs consistent
      directory prefixes. *)
@@ -1248,7 +1259,7 @@ let run_pipeline (caps : < Cap.fork >)
   Log.debug (fun m -> m "Wrapper synthesis: %d dunders emitted"
     (List.length synth_from_wrappers));
   let entries_pre_mro = all_entries @ synth_from_wrappers in
-  let graph, inherited_by_class, worker_failures =
+  let graph, inherited_by_class, worker_failures, type_state =
     timed "call graph (edges + fixpoint)" @@ fun () ->
     build_project_call_graph caps ~cfg ~lang ~ncores ~entries:entries_pre_mro
       ~class_infos:all_classes ~reexport_map ~go_packages all_files
@@ -1283,7 +1294,7 @@ let run_pipeline (caps : < Cap.fork >)
   Log.info (fun m -> m "Call graph: %d vertices, %d edges"
     (Call_graph.G.nb_vertex graph) (Call_graph.G.nb_edges graph));
   (final_entries, graph, scanned, skipped, all_files, all_skipped_tokens,
-   parse_failures @ worker_failures)
+   parse_failures @ worker_failures, type_state)
 
 let collect (caps : < Cap.fork >)
     ?(targeting_conf : Find_targets.conf =
@@ -1292,7 +1303,7 @@ let collect (caps : < Cap.fork >)
     ~(includes : string list) ~(excludes : string list) ()
   : entry list * Call_graph.G.t * int * int =
   let (entries, graph, scanned, skipped, _all_files, _skipped_tokens,
-       _failures) =
+       _failures, _type_state) =
     run_pipeline caps ~targeting_conf ~lang ~project_root ~ncores
       ~includes ~excludes ()
   in
@@ -1304,13 +1315,14 @@ let collect_resolved (caps : < Cap.fork >)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
   : Call_graph.G.t * (string, G.program) Hashtbl.t
-    * (string, Tok.location list) Hashtbl.t * Core_error.t list =
+    * (string, Tok.location list) Hashtbl.t * Core_error.t list
+    * Type_state.t =
   let project_root_abs = project_root_abs_of project_root in
   let absnorm (file : Fpath.t) : string =
     fst (Fpath_.absolutify ~cwd:project_root_abs file) |> Fpath.to_string
   in
   let (_entries, graph, _scanned, _skipped, all_files, all_skipped_tokens,
-       failures) =
+       failures, type_state) =
     run_pipeline caps ~targeting_conf ~lang ~project_root:project_root_abs
       ~ncores ~includes ~excludes ()
   in
@@ -1322,7 +1334,7 @@ let collect_resolved (caps : < Cap.fork >)
   List.iter (fun ((file : Fpath.t), (locs : Tok.location list)) ->
     Hashtbl.replace skipped_tokens_tbl (absnorm file) locs)
     all_skipped_tokens;
-  (graph, tbl, skipped_tokens_tbl, failures)
+  (graph, tbl, skipped_tokens_tbl, failures, type_state)
 
 let resolve_ast_for_file (caps : < Cap.fork >)
     ?(targeting_conf : Find_targets.conf =
@@ -1334,7 +1346,7 @@ let resolve_ast_for_file (caps : < Cap.fork >)
   let target_key =
     fst (Fpath_.absolutify ~cwd:project_root_abs target) |> Fpath.to_string
   in
-  let _graph, asts, _skipped_tokens, _failures =
+  let _graph, asts, _skipped_tokens, _failures, _type_state =
     collect_resolved caps ~targeting_conf ~lang ~project_root ~ncores
       ~includes:[] ~excludes:[] ()
   in

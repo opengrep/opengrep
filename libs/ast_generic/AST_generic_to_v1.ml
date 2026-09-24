@@ -1281,7 +1281,9 @@ and map_class_parent (v1, v2) =
   (v1, v2)
 
 and map_class_kind = function
-  | Class -> `Class
+  | Class
+  | Struct ->
+      `Class
   | Interface -> `Interface
   | Trait -> `Trait
   | Object -> `Object

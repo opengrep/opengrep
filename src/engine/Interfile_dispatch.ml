@@ -71,6 +71,7 @@ type lang_context = {
   lc_lang : Lang.t;
   lc_rules : R.taint_rule list;
   lc_interfile_graph : Interfile_graph.interfile_graph;
+  lc_type_state : Type_state.t;
   lc_matching_targets : interfile_target list;
 }
 
@@ -358,6 +359,7 @@ let init_file
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(spec_matches : (Fpath.t, Match_taint_spec.spec_matches) Hashtbl.t)
+    ~(type_state : Type_state.t)
     ~(file_path : Fpath.t)
     (acc : file_init_acc)
     : file_init_acc =
@@ -395,7 +397,14 @@ let init_file
   let taint_inst =
     match inst_opt with
     | Some ti ->
-      { ti with Taint_rule_inst.project_root = path_root }
+      let file_value_type = Match_taint_spec.value_type_predicate lang ast in
+      {
+        ti with
+        Taint_rule_inst.project_root = path_root;
+        is_value_type =
+          (fun name ->
+            file_value_type name || Type_state.is_value_type type_state name);
+      }
     | None ->
       let empty_preds : Taint_rule_inst.spec_predicates = {
         is_source = (fun _any -> []);
@@ -413,6 +422,10 @@ let init_file
         preds = empty_preds;
         handle_effects = (fun _fn_name effects -> effects);
         recursive = false;
+        is_value_type =
+          (let file_value_type = Match_taint_spec.value_type_predicate lang ast in
+           fun name ->
+             file_value_type name || Type_state.is_value_type type_state name);
         java_props_cache = Hashtbl.create 0;
       }
   in
@@ -660,6 +673,7 @@ let init_rule_state
          let path_root = path_root_for_file target_root_map file_path in
          try
            init_file ~lang ~shared_tables ~rule ~xconf:rsg.rsg_xconf ~path_root
+             ~type_state:rsg.rsg_lang_context.lc_type_state
              ~fid_set:rsg.rsg_fid_set
              ~ast_table ~function_maps
              ~spec_matches:rsg.rsg_specs.rs_spec_matches ~file_path acc
@@ -1510,7 +1524,7 @@ let build_rule_states
      each rule's run. *)
   let bounded_build (lang : Lang.t) (project_root : Fpath.t) :
       ((Interfile_graph.interfile_graph * Interfile_graph.resolved_asts
-        * Interfile_graph.skipped_tokens * E.t list) option,
+        * Interfile_graph.skipped_tokens * E.t list * Type_state.t) option,
        E.t) result =
     match
       Memory_limit.run_with_global_memory_limit
@@ -1560,7 +1574,7 @@ let build_rule_states
                     rules )
           in
           (match build_opt with
-           | Some (_, asts, skipped_tokens, _) ->
+           | Some (_, asts, skipped_tokens, _, _) ->
              Hashtbl.iter (Hashtbl.replace projidx_asts) asts;
              Hashtbl.iter (Hashtbl.replace skipped_tokens_by_file)
                skipped_tokens
@@ -1569,7 +1583,7 @@ let build_rule_states
           let file_failures : E.t list =
             match build_opt with
             | None -> []
-            | Some (_, _, _, failures) -> failures
+            | Some (_, _, _, failures, _) -> failures
           in
           (* A file with an index error is absent from the graph because
              of it; it is not reported a second time as absent. *)
@@ -1623,7 +1637,7 @@ let build_rule_states
                   (Lang.to_string lang) (Fpath.to_string project_root));
             (None,
              not_covered lang_targets "the interfile graph could not be built")
-          | Some (interfile_graph, asts, _, _) ->
+          | Some (interfile_graph, asts, _, _, type_state) ->
             (* covered: every file the index parsed, a file with nothing to
                index (an empty package file) included *)
             let interfile_files = interfile_file_set interfile_graph in
@@ -1673,6 +1687,7 @@ let build_rule_states
                (Some { lc_lang = lang;
                        lc_rules = rules;
                        lc_interfile_graph = interfile_graph;
+                       lc_type_state = type_state;
                        lc_matching_targets = matching_targets },
                 uncovered))
           in

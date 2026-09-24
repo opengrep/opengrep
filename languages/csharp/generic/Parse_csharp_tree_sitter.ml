@@ -3238,7 +3238,7 @@ and struct_declaration (env : env)
     ( ent,
       G.ClassDef
         {
-          ckind = (Class, v4);
+          ckind = (Struct, v4);
           cextends = v7;
           cimplements = [];
           cmixins = [];
@@ -3347,7 +3347,7 @@ and record_declaration env
 and record_struct_declaration env
     (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, _v11) =
   let _v4 = token env v4 (* "struct" *) in
-  build_record_def env ~class_kind:Class ~attrs_extra:[]
+  build_record_def env ~class_kind:Struct ~attrs_extra:[]
     (v1, v2, v3, v5, v6, v7, v8, v9, v10)
 
 and add_this_param ~(this_param : (G.tok -> G.parameter) option) ~(anchor : G.tok) (s : stmt) : stmt =

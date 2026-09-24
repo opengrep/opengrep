@@ -2018,19 +2018,19 @@ and map_modifierless_class_declaration (env : env) (attrs : G.attribute list)
   match x with
   | `Choice_class_simple_id_opt_type_params_opt_COLON_inhe_specis_opt_type_consts_class_body
       (v1, v2, v3, v4, v5, v6) ->
-      let v1 =
+      let kind, v1 =
         (* TODO differentiate between class, struct, and actor? Maybe use
          * RecordClass attribute? *)
         match v1 with
-        | `Class tok -> (* "class" *) token env tok
-        | `Struct tok -> (* "struct" *) token env tok
-        | `Actor tok -> (* "actor" *) token env tok
+        | `Class tok -> (* "class" *) (G.Class, token env tok)
+        | `Struct tok -> (* "struct" *) (G.Struct, token env tok)
+        | `Actor tok -> (* "actor" *) (G.Class, token env tok)
       in
       let v2 = map_simple_identifier env v2 in
       let tparams = Option.map (map_type_parameters env) v3 in
 
       let entity = G.basic_entity ?tparams ~attrs v2 in
-      construct_class_def env v1 v4 entity v5 v6 map_class_body
+      construct_class_def env ~kind v1 v4 entity v5 v6 map_class_body
   | `Exte_unan_type_opt_type_params_opt_COLON_inhe_specis_opt_type_consts_class_body
       (v1, v2, v3, v4, v5, v6) ->
       let v1 = (* "extension" *) token env v1 in

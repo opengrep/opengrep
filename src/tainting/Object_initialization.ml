@@ -184,6 +184,52 @@ let collect_class_names (ast : G.program) : G.name list =
     ast;
   !class_names
 
+(* A class of this language is a value type: in C, C++ and Rust a class,
+   struct or union passed by value is copied or moved. *)
+let classes_are_value_types (lang : Lang.t) : bool =
+  match lang with
+  | Lang.C
+  | Lang.Cpp
+  | Lang.Rust ->
+      true
+  | _ -> false
+
+(* The names of the value types the program declares: structs (C# and Swift
+   [Struct] classes, Go struct types) and, where [classes_are_value_types],
+   every class. *)
+let value_type_names (lang : Lang.t) (ast : G.program) : string list =
+  let all_classes = classes_are_value_types lang in
+  let names = ref [] in
+  let visitor =
+    object
+      inherit [_] G.iter as super
+
+      method! visit_definition () def =
+        (match def with
+        | { G.name = G.EN (G.Id ((s, _), _)); _ },
+          G.ClassDef { ckind = G.Struct, _; _ }
+        | { G.name = G.EN (G.Id ((s, _), _)); _ },
+          G.TypeDef
+            { tbody = G.NewType { G.t = G.TyRecordAnon ((G.Class, _), _); _ } }
+          ->
+            names := s :: !names
+        | { G.name = G.EN (G.Id ((s, _), _)); _ }, G.ClassDef _
+        | ( { G.name = G.EN (G.Id ((s, _), _)); _ },
+            G.TypeDef
+              {
+                tbody =
+                  G.AliasType
+                    { G.t = G.OtherType ((("struct" | "union" | "class"), _), _); _ };
+              } )
+          when all_classes ->
+            names := s :: !names
+        | _ -> ());
+        super#visit_definition () def
+    end
+  in
+  visitor#visit_program () ast;
+  !names
+
 (*****************************************************************************)
 (* Object Initialization Detection *)
 (*****************************************************************************)

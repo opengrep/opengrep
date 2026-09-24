@@ -2105,6 +2105,8 @@ and class_definition = {
  *)
 and class_kind =
   | Class (* or Struct for C/Solidity *)
+  (* a value type distinct from classes: C# and Swift struct *)
+  | Struct
   | Interface (* abused for Contract in Solidity *)
   | Trait
   (* Kotlin/Scala/OCaml *)
