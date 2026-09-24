@@ -35,8 +35,22 @@ let log_shell_command cmd =
    not a general-purpose library. Bos doesn't seem to provide a simple
    equivalent (?)
 *)
+(* Called around every stderr capture below, so that anything drawing on
+ * stderr (Status_bar) stops while the descriptor is redirected — its output
+ * would otherwise land in the captured text instead of on the terminal. *)
+let pause_stderr_hook : (unit -> unit) ref = ref (fun () -> ())
+let unpause_stderr_hook : (unit -> unit) ref = ref (fun () -> ())
+
+(* Every redirection of stderr goes through here, so that no capture site
+ * can forget to suspend what draws there. *)
+let with_stderr_captured (func : unit -> 'a) : 'a * string =
+  !pause_stderr_hook ();
+  Common.protect
+    ~finally:(fun () -> !unpause_stderr_hook ())
+    (fun () -> Testo.with_capture UStdlib.stderr func)
+
 let capture_and_log_stderr func =
-  let res, err = Testo.with_capture UStdlib.stderr func in
+  let res, err = with_stderr_captured func in
   if err <> "" then
     (* nosemgrep: no-logs-in-library *)
     Logs.info (fun m -> m "error output: %s" (Redact.apply err));
@@ -95,14 +109,14 @@ let string_of_run ~trim cmd =
  * outputs a lot of log spew. We should add a limit on the data read. *)
 let string_of_run_with_stderr ~trim cmd =
   log_command cmd;
-  let res, err =
-    Testo.with_capture UStdlib.stderr (fun () ->
-        (* nosemgrep: forbid-exec *)
-        let out = Cmd.bos_apply Bos.OS.Cmd.run_out cmd in
-        (* nosemgrep: forbid-exec *)
-        Bos.OS.Cmd.out_string ~trim out)
-  in
-  (res, err)
+  (* the captured stderr is handed back to the caller and ends up in its
+     error message, so a status-bar frame landing in here would corrupt what
+     the user is shown, not merely a log line *)
+  with_stderr_captured (fun () ->
+      (* nosemgrep: forbid-exec *)
+      let out = Cmd.bos_apply Bos.OS.Cmd.run_out cmd in
+      (* nosemgrep: forbid-exec *)
+      Bos.OS.Cmd.out_string ~trim out)
 
 let lines_of_run ~trim cmd =
   log_command cmd;

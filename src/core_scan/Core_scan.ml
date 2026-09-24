@@ -787,6 +787,24 @@ type scan_work_error =
   | Target_error of Target.t * Core_error.t
   | Interfile_error of Rule_ID.t * Core_error.t
 
+(* The hook belongs to a caller, and [Target_done]/[Interfile_rule_done]
+   reach it from the [finally] of a work item, where an exception becomes
+   [Finally_raised]: it would fail the unit, and where the unit was already
+   unwinding it would put a fault from the progress display in place of the
+   one that mattered. So the engine contains it rather than leaving a
+   reporting fault free to become a scan error -- the bargain Logs_.run_hook
+   makes for its own hooks.
+   Nothing is logged in its place: this runs once per target in every
+   domain, so a hook that fails would say so thousands of times. The
+   contract in Core_scan_config stands; this is its backstop, not leave to
+   ignore it. *)
+let report_progress (config : Core_scan_config.t)
+    (p : Core_scan_config.progress) : unit =
+  config.progress_hook
+  |> Option.iter (fun h ->
+         try h p with
+         | _ -> ())
+
 let handle_work_item
     (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
     (config : Core_scan_config.t)
@@ -794,8 +812,14 @@ let handle_work_item
     (item : scan_work_item) : scan_work_result =
   match item with
   | Per_target (target, file_size, rules) ->
+    (* Counted here rather than from [file_match_hook]: a target that raises
+       or is skipped never reaches that hook, and interfile matches reach it
+       for files that are not units of work of their own. *)
     let result, target_opt =
-      handle_target_with_protection caps config target_handler target rules
+      Common.protect
+        ~finally:(fun () -> report_progress config Core_scan_config.Target_done)
+        (fun () ->
+          handle_target_with_protection caps config target_handler target rules)
     in
     let result =
       Core_result.map_profiling
@@ -805,6 +829,9 @@ let handle_work_item
     in
     Target_result (result, target_opt)
   | Interfile_rule rs ->
+    Common.protect ~finally:(fun () ->
+        report_progress config Core_scan_config.Interfile_rule_done)
+    @@ fun () ->
     (* Run under the global memory limit so [--max-memory] applies to
        interfile dispatch too, and under [--interfile-timeout], which bounds
        the dispatch of one rule; the per-target [--timeout] does not apply
@@ -916,6 +943,10 @@ let iter_unified_and_get_matches_and_exn_to_errors
     in
     interfile_items @ target_items
   in
+  report_progress config
+    (Core_scan_config.Scanning_started
+       { targets = List.length to_run;
+         interfile_rules = List.length interfile_rule_states });
   let dispatched_results =
     dispatched
     |> List_.map (fun ((target : Target.t), (size : int)) ->
@@ -1018,6 +1049,17 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
     else NoPrefiltering
   in
   let equivs = parse_equivalences config.equivalences_file in
+  let report_progress = report_progress config in
+  (* The graph build below runs before any target is visited and, on a large
+     project, takes most of the scan. Say so, but only when there is a graph
+     to build: otherwise the phase would flip twice with nothing between. *)
+  let interfile_rule_ids =
+    Interfile_dispatch.interfile_taint_rule_ids
+      ~taint_interfile:config.taint_interfile valid_rules
+  in
+  let has_interfile_work = not (List_.null interfile_rule_ids) in
+  if has_interfile_work then
+    report_progress Core_scan_config.Building_interfile_graph;
   let interfile_rule_states, interfile_languages_used, interfile_errors,
       skipped_tokens_of_target =
     Interfile_dispatch.build_rule_states
@@ -1031,10 +1073,8 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       ~scanning_roots:config.scanning_roots
       ~xconf:(interfile_xconfig config ~equivs)
   in
-  let interfile_rule_ids =
-    Interfile_dispatch.interfile_taint_rule_ids
-      ~taint_interfile:config.taint_interfile valid_rules
-  in
+  if has_interfile_work then
+    report_progress Core_scan_config.Analyzing_targets;
   (* An interfile rule runs in its interfile task only, never per target. *)
   let interfile_rule_id_set : (Rule_ID.t, unit) Hashtbl.t =
     Hashtbl.create (List.length interfile_rule_ids)

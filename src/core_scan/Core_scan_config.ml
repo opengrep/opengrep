@@ -45,6 +45,22 @@ type target_source = Target_file of Fpath.t | Targets of Target.t list
 (* This is mostly the flags of the semgrep-core program.
  * LATER: should delete or merge with osemgrep Core_runner.conf
  *)
+(* What the scan is doing, for a caller that reports progress. Only the
+ * engine knows how many units of work a scan really has: a target the
+ * language jobs selected still drops out if no rule's [paths:] accepts it,
+ * and one file can be several units when several analyzers claim it. So the
+ * counts travel with [Scanning_started] rather than being guessed earlier.
+ *
+ * Targets and interfile rules are counted apart because they are not
+ * comparable units: they run in the same pool, but one interfile rule can
+ * outlast every target put together. *)
+type progress =
+  | Analyzing_targets
+  | Building_interfile_graph
+  | Scanning_started of { targets : int; interfile_rules : int }
+  | Target_done
+  | Interfile_rule_done
+
 type t = {
   (* Main flags, input *)
   rule_source : rule_source;
@@ -72,6 +88,18 @@ type t = {
    * This is also now used in Runner_service.ml and Git_remote.ml.
    *)
   file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;
+  (* Called as the scan moves through its phases and once per unit of work
+   * it finishes.
+   *
+   * [Target_done] and [Interfile_rule_done] arrive from whichever domain
+   * ran the unit, so the hook must be safe to call concurrently. It should
+   * not raise either: those two are sent from the [finally] of the work
+   * item, where an exception would become [Finally_raised] and fail the
+   * unit. [Core_scan.report_progress] catches one so that a reporting
+   * fault cannot become a scan error, but it is contained and not
+   * reported: a hook that raises simply stops counting. Counting into an
+   * atomic is the shape this expects. *)
+  progress_hook : (progress -> unit) option;
   (* Limits *)
   (* maximum time to spend running a rule on a single file *)
   timeout : float;
@@ -129,6 +157,7 @@ let default =
     matching_conf = Match_patterns.default_matching_conf;
     respect_rule_paths = true;
     file_match_hook = None;
+    progress_hook = None;
     (* Limits *)
     (* maximum time to spend running a rule on a single file *)
     timeout = 0.;

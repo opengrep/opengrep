@@ -177,3 +177,36 @@ val array : ('a -> string) -> 'a array -> string
 (* The mutex used for logging, exposed so it can
  * be shared by pretty-printing functions. *)
 val logs_mutex : Mutex.t
+
+(* Called inside the log mutex, before and after any log output. Used by a
+   caller that draws on the terminal itself, to erase its line before a
+   message and redraw it after.
+
+   A hook runs with [logs_mutex] HELD, which constrains what it may do:
+
+   - it must not log. The reporter would take [logs_mutex] again, and the
+     mutex is not re-entrant, so the process stops dead on the next message.
+   - it must not take [logs_mutex], for the same reason, nor call anything
+     that does. [UCmd.capture_and_log_stderr] is one such caller.
+   - it must not block for long. Every log message in every domain queues
+     behind it.
+   - it should not raise. An exception is caught here rather than left to
+     escape through an unrelated log call, but the hook is the only place
+     that knows what failing meant.
+
+   Writing to a terminal is the intended use, and a terminal can fail or
+   block: see Status_bar.fmt_eprintf for what that costs. *)
+val before_log_hook : (unit -> unit) ref
+val after_log_hook : (unit -> unit) ref
+
+(* Do what a log message does around [f], without logging: take
+   [logs_mutex], run [before_log_hook], run [f], run [after_log_hook].
+
+   For a caller that writes to the terminal outside the log reporter --
+   another stream, say -- and so has to be held apart from the bar that a
+   hook draws there, and from other writers.
+
+   [f] runs under [logs_mutex] and is bound by the contract above: it must
+   not log, must not take [logs_mutex], and must not block for long. It
+   should do its own flushing, since nothing after it will. *)
+val with_reporter_lock : (unit -> unit) -> unit

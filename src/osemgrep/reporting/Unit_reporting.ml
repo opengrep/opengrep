@@ -233,8 +233,57 @@ let test_match_based_id_formula _caps =
                             title)))))
 
 (*****************************************************************************)
+(* Skin_emit *)
+(*****************************************************************************)
+
+(* [Skin.Stdout] is the one destination that does not travel through Logs,
+   and so has to hold the terminal itself: the status bar draws on stderr
+   through the hooks a log message runs, and a write that skipped them
+   would land on the bar's own line. No shipped skin emits one, so the
+   branch is exercised here rather than through a report.
+   coupling: Skin_emit.emit *)
+let test_stdout_chunk_holds_the_terminal () =
+  let events : string list ref = ref [] in
+  let note (what : string) : unit = events := what :: !events in
+  let saved_before = !Logs_.before_log_hook
+  and saved_after = !Logs_.after_log_hook in
+  let _res, captured =
+    Common.protect
+      ~finally:(fun () ->
+        Logs_.before_log_hook := saved_before;
+        Logs_.after_log_hook := saved_after)
+      (fun () ->
+        Logs_.before_log_hook := (fun () -> note "erase");
+        Logs_.after_log_hook := (fun () -> note "redraw");
+        Testo.with_capture stdout (fun () ->
+            Skin_emit.emit
+              [
+                Skin.Line
+                  ( Skin.Stdout,
+                    fun ppf ->
+                      note "write";
+                      Fmt.pf ppf "a chunk@." );
+              ]))
+  in
+  Alcotest.(check (list string))
+    "the bar is erased, written over, and put back" [ "erase"; "write"; "redraw" ]
+    (List.rev !events);
+  (* flushed where it was written, not at some later flush *)
+  Alcotest.(check bool)
+    "and the text reached stdout" true
+    (String_.contains ~term:"a chunk" captured)
+
+let skin_emit_tests =
+  Testo.categorize "Skin_emit"
+    [
+      t "a stdout chunk holds the terminal around itself"
+        test_stdout_chunk_holds_the_terminal;
+    ]
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
 let tests caps =
-  Testo.categorize_suites "Osemgrep reporting" [ test_match_based_id_formula caps ]
+  Testo.categorize_suites "Osemgrep reporting"
+    [ test_match_based_id_formula caps; skin_emit_tests ]
