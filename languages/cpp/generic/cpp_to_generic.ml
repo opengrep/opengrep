@@ -1515,6 +1515,7 @@ and map_declared_var env (v : var_decl) : G.definition =
             G.fkind = (function_kind env, G.fake "");
             fparams = (G.fake "(", params, G.fake ")");
             frettype = Some ret;
+            fcaptures = G.no_captures;
             fbody = G.FBDecl G.sc;
           } )
   | _ -> (ent, G.VarDef vardef)
@@ -1707,7 +1708,7 @@ and map_function_definition env
   let _v_f_specsTODO = map_of_list (map_specifier env) v_f_specs in
   let fbody, _attrsTODO = map_function_body env v_f_body in
   let fparams, fret = map_functionType env v_f_type in
-  { G.fkind = (kind, G.fake ""); fparams; frettype = Some fret; fbody }
+  { G.fkind = (kind, G.fake ""); fparams; frettype = Some fret; fcaptures = G.no_captures; fbody }
 
 and map_functionType env x : G.parameters * G.type_ =
   match x with
@@ -1828,20 +1829,41 @@ and map_function_definition_body env x =
       (l, (G.OtherStmt (OS_Todo, l2) |> G.s) :: body, r)
 
 and map_lambda_definition env (v1, v2) : G.function_definition =
-  let _v1TODO = map_bracket env (map_of_list (map_lambda_capture env)) v1
+  let _, captures, _ = map_bracket env (map_of_list (map_lambda_capture env)) v1
   and v2 = map_function_definition env v2 in
-  v2
+  let fcaptures =
+    List.fold_left
+      (fun (acc : G.captures) capture ->
+        match capture with
+        | Left mode -> { acc with cdefault = Some mode }
+        | Right (Some c) -> { acc with clist = acc.clist @ [ c ] }
+        | Right None -> acc)
+      G.no_captures captures
+  in
+  { v2 with fcaptures }
 
+(* [this] and [*this] capture the object, not a variable. *)
 and map_lambda_capture env = function
   | CaptureEq v1 ->
-      let v1 = map_tok env v1 in
-      Left v1
+      let _v1 = map_tok env v1 in
+      Left G.Capture_by_value
   | CaptureRef v1 ->
-      let v1 = map_tok env v1 in
-      Left v1
+      let _v1 = map_tok env v1 in
+      Left G.Capture_by_reference
   | CaptureOther v1 ->
-      let v1 = map_expr env v1 in
-      Right v1
+      let capture cmode cname cinit = Some { G.cmode; cname; cinit } in
+      Right
+        (match (map_expr env v1).G.e with
+        | G.N (G.Id (id, id_info)) -> capture G.Capture_by_value (id, id_info) None
+        | G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }) ->
+            capture G.Capture_by_reference (id, id_info) None
+        | G.Assign ({ e = G.N (G.Id (id, id_info)); _ }, _, init) ->
+            capture G.Capture_by_value (id, id_info) (Some init)
+        | G.Assign
+            ({ e = G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }); _ }, _, init)
+          ->
+            capture G.Capture_by_reference (id, id_info) (Some init)
+        | _ -> None)
 
 and map_enum_definition env
     {

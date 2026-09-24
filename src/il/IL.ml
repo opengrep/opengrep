@@ -262,6 +262,7 @@ class virtual ['self] iter_parent =
     method visit_any _env _any = ()
     method visit_definition _env _def = ()
     method visit_function_kind _env _def = ()
+    method visit_capture_mode _env _mode = ()
     method visit_class_definition _env _class_def = ()
     method visit_directive _env _directive = ()
   end
@@ -473,7 +474,13 @@ and function_definition = {
   fkind : G.function_kind wrap;
   fparams : param list;
   frettype : G.type_ option;
+  fcaptures : captures;
   fbody : stmt list;
+}
+
+and captures = {
+  cdefault : G.capture_mode option;
+  clist : (name * G.capture_mode) list;
 }
 
 (*****************************************************************************)
@@ -516,6 +523,7 @@ type cfg = (node, edge) CFG.t
 
 type fun_cfg = {
   params : param list;
+  captures : captures;
   cfg : cfg;
   lambdas : lambdas_cfgs;
   source_range : source_range option;
@@ -531,6 +539,7 @@ and source_range = { file : string; first : int * int; last : int * int }
 type nodei = Ograph_extended.nodei
 
 let mk_node n = { n; at_exit = false }
+let no_captures = { cdefault = None; clist = [] }
 
 (*****************************************************************************)
 (* Any *)

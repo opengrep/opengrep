@@ -29,6 +29,7 @@ dune runtest -f --no-buffer libs/commons
 dune runtest -f --no-buffer libs/lib_parsing
 dune runtest -f --no-buffer src/call_graph
 dune runtest -f --no-buffer src/engine
+dune runtest -f --no-buffer src/tainting
 dune runtest -f --no-buffer src/fixing
 
 # osemgrep expect tests

@@ -589,7 +589,7 @@ and fun_ { f_kind; f_attrs = f_props; f_params; f_body; f_rettype } =
   let v2 = bracket (list parameter_binding) f_params in
   let v3 = stmt f_body |> as_block in
   let frettype = option type_ f_rettype in
-  ({ G.fparams = v2; frettype; fbody = G.FBStmt v3; fkind = f_kind }, v1)
+  ({ G.fparams = v2; frettype; fcaptures = G.no_captures; fbody = G.FBStmt v3; fkind = f_kind }, v1)
 
 and parameter_binding = function
   | ParamClassic x -> parameter x

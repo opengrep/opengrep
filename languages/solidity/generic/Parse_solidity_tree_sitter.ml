@@ -1673,6 +1673,7 @@ and map_yul_statement (env : env) (x : CST.yul_statement) : stmt =
           fkind = (Function, tfunc);
           fparams = fb params;
           frettype = tret;
+          fcaptures = G.no_captures;
           fbody = FBStmt body;
         }
       in
@@ -1958,7 +1959,7 @@ let map_event_definition (env : env)
   let ent = G.basic_entity id ~attrs in
   (* TODO? make a new fkind? *)
   let fdef =
-    { fkind = (Function, tevent); fparams; frettype = None; fbody = FBDecl sc }
+    { fkind = (Function, tevent); fparams; frettype = None; fcaptures = G.no_captures; fbody = FBDecl sc }
   in
   (ent, FuncDef fdef)
 
@@ -2095,6 +2096,7 @@ and map_statement (env : env) (x : CST.statement) : stmt =
           fkind = (LambdaKind, ttry);
           fparams = params;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = FBStmt st;
         }
       in
@@ -2226,7 +2228,7 @@ let map_constructor_definition (env : env)
   let attrs = ctor_attr :: attrs in
   let ent = G.basic_entity ("constructor", tctor) ~attrs in
   let def =
-    { fkind = (Method, tctor); fparams = params; frettype = None; fbody }
+    { fkind = (Method, tctor); fparams = params; frettype = None; fcaptures = G.no_captures; fbody }
   in
   (ent, FuncDef def)
 
@@ -2273,7 +2275,7 @@ let map_fallback_receive_definition (env : env)
   let attrs = List_.map (fun x -> visi_and_co env x) v3 in
   let ent = G.basic_entity ~attrs id in
   let fbody = map_anon_choice_semi_f2fe6be env v4 in
-  let def = { fkind = (Function, snd id); fparams; frettype = None; fbody } in
+  let def = { fkind = (Function, snd id); fparams; frettype = None; fcaptures = G.no_captures; fbody } in
   (ent, FuncDef def)
 
 let map_function_definition (env : env)
@@ -2290,7 +2292,7 @@ let map_function_definition (env : env)
   let fbody = map_anon_choice_semi_f2fe6be env v6 in
   let ent = G.basic_entity id ~attrs in
   let def =
-    { fkind = (Function, tfunc); fparams = params; frettype = None; fbody }
+    { fkind = (Function, tfunc); fparams = params; frettype = None; fcaptures = G.no_captures; fbody }
   in
   (ent, FuncDef def)
 
@@ -2322,7 +2324,7 @@ let map_modifier_definition (env : env)
       fkind = (Function, tmodif);
       fparams = params;
       frettype = None;
-      fbody;
+      fcaptures = G.no_captures; fbody;
     }
   in
   (ent, FuncDef def)

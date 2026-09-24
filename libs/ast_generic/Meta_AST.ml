@@ -1277,10 +1277,19 @@ and vof_function_kind = function
   | BlockCases -> OCaml.VSum ("BlockCases", [])
 
 and vof_function_definition
-    { fkind; fparams = v_fparams; frettype = v_frettype; fbody = v_fbody } =
+    {
+      fkind;
+      fparams = v_fparams;
+      frettype = v_frettype;
+      fcaptures = v_fcaptures;
+      fbody = v_fbody;
+    } =
   let bnds = [] in
   let arg = vof_function_body v_fbody in
   let bnd = ("fbody", arg) in
+  let bnds = bnd :: bnds in
+  let arg = vof_captures v_fcaptures in
+  let bnd = ("fcaptures", arg) in
   let bnds = bnd :: bnds in
   let arg = OCaml.vof_option vof_type_ v_frettype in
   let bnd = ("frettype", arg) in
@@ -1292,6 +1301,25 @@ and vof_function_definition
   let bnd = ("fkind", arg) in
   let bnds = bnd :: bnds in
   OCaml.VDict bnds
+
+and vof_captures { cdefault; clist } =
+  OCaml.VDict
+    [
+      ("cdefault", OCaml.vof_option vof_capture_mode cdefault);
+      ("clist", OCaml.vof_list vof_capture clist);
+    ]
+
+and vof_capture { cmode; cname; cinit } =
+  OCaml.VDict
+    [
+      ("cmode", vof_capture_mode cmode);
+      ("cname", vof_ident_and_id_info cname);
+      ("cinit", OCaml.vof_option vof_expr cinit);
+    ]
+
+and vof_capture_mode = function
+  | Capture_by_reference -> OCaml.VSum ("Capture_by_reference", [])
+  | Capture_by_value -> OCaml.VSum ("Capture_by_value", [])
 
 and vof_parameters v = vof_bracket (OCaml.vof_list vof_parameter) v
 

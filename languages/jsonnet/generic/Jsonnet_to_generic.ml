@@ -306,6 +306,7 @@ and map_function_definition env v : G.function_definition =
   {
     fkind = (G.LambdaKind, f_tok);
     fparams;
+    fcaptures = G.no_captures;
     fbody = G.FBExpr f_body;
     frettype = None;
   }

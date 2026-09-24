@@ -456,7 +456,7 @@ and cfg_of_stmts ?tok (xs : stmt list) : IL.cfg * IL.lambdas_cfgs =
 and cfg_of_fdef ?source_range fdef =
   let cfg, lambdas = cfg_of_stmts ~tok:(snd fdef.fkind) fdef.fbody in
   mark_at_exit_nodes cfg;
-  IL.{ params = fdef.fparams; cfg; lambdas; source_range }
+  IL.{ params = fdef.fparams; captures = fdef.fcaptures; cfg; lambdas; source_range }
 
 let source_range_of_gfdef (fdef : G.function_definition) :
     IL.source_range option =
@@ -468,11 +468,19 @@ let source_range_of_gfdef (fdef : G.function_definition) :
     | G.FBNothing ->
         None
   in
-  let* _, last = body_range in
-  let* first =
-    match Tok.loc_of_tok (snd fdef.fkind) with
-    | Ok loc -> Some loc
-    | Error _ -> Option.map fst body_range
+  let* body_first, last = body_range in
+  let first =
+    [
+      Result.to_option (Tok.loc_of_tok (snd fdef.fkind));
+      AST_generic_helpers.range_of_any_opt
+        (G.Params (Tok.unbracket fdef.fparams))
+      |> Option.map fst;
+    ]
+    |> List.filter_map Fun.id
+    |> List.fold_left
+         (fun (a : Tok.location) (b : Tok.location) ->
+           if b.pos.bytepos < a.pos.bytepos then b else a)
+         body_first
   in
   Some (IL_helpers.source_range_of_locs first last)
 

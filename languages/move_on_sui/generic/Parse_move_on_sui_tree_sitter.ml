@@ -1647,6 +1647,7 @@ and map_function_signature (env : env) attrs body
       fkind = (G.Function, fun_);
       fparams = function_parameters;
       frettype = Some ret_type;
+      fcaptures = G.no_captures;
       fbody =
         (match body with
         | None -> G.FBNothing
@@ -2016,6 +2017,7 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
               fkind = (G.LambdaKind, lp);
               fparams = params;
               frettype = ret_type;
+              fcaptures = G.no_captures;
               fbody = G.FBExpr body;
             }
           in
@@ -2591,6 +2593,7 @@ and map_spec_function (env : env) (x : CST.spec_function) : G.stmt =
           fkind = (G.Function, fun_lit);
           fparams = params;
           frettype = Some ret_type;
+          fcaptures = G.no_captures;
           fbody = G.FBNothing;
         }
       in
@@ -2604,6 +2607,7 @@ and map_spec_function (env : env) (x : CST.spec_function) : G.stmt =
           fkind = (G.Function, fun_lit);
           fparams = params;
           frettype = Some ret_type;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body;
         }
       in
@@ -2617,6 +2621,7 @@ and map_spec_function (env : env) (x : CST.spec_function) : G.stmt =
           fkind = (G.Function, fun_lit);
           fparams = params;
           frettype = Some ret_type;
+          fcaptures = G.no_captures;
           fbody = G.FBNothing;
         }
       in

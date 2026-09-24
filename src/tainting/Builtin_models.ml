@@ -51,7 +51,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = { Taint.name = "callback"; index = 0 };
+        arg = Taint.Param { Taint.name = "callback"; index = 0 };
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -64,6 +64,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     {
       Signature.params;
       params_il = synthetic_params_il params;
+      captured = [];
       effects = Effects.singleton hof_effect;
     }
   in
@@ -73,7 +74,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     Effect.ToReturn
       {
         data_taints = this_taint_set;
-        data_shape = Shape.Fun returned_fun_sig;
+        data_shape = Shape.Fun (returned_fun_sig, []);
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
         guards = Effect_guard.top;
@@ -83,6 +84,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     {
       Signature.params = [];
       params_il = synthetic_params_il [];
+      captured = [];
       effects = Effects.singleton return_effect;
     }
   in
@@ -131,7 +133,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = callback_arg;
+        arg = Taint.Param callback_arg;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -155,6 +157,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
     {
       Signature.params;
       params_il = synthetic_params_il params;
+      captured = [];
       effects = Effects.of_list [ hof_effect; return_effect ];
     }
   in
@@ -204,7 +207,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = callback_arg;
+        arg = Taint.Param callback_arg;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -229,6 +232,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
     {
       Signature.params;
       params_il = synthetic_params_il params;
+      captured = [];
       effects = Effects.of_list [ hof_effect; return_effect ];
     }
   in
@@ -325,7 +329,7 @@ let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~c
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = impl_arg;
+        arg = Taint.Param impl_arg;
         arg_offset = [ Oint callback_index ];
         args_taints;
         guards;
@@ -383,6 +387,7 @@ let add_function_hof_signatures_clojure ~(lang : Lang.t)
         {
           Signature.params;
           params_il = synthetic_params_il params;
+      captured = [];
           effects = Effects.of_list effects;
         }
       in
@@ -456,7 +461,8 @@ let to_lval_this taint_set =
 let add_method_signatures db method_names arity effects =
   let params = List.init arity (fun _ -> Signature_params.Other) in
   let sig_ =
-    { Signature.params; params_il = synthetic_params_il params; effects }
+    { Signature.params; params_il = synthetic_params_il params;
+      captured = []; effects }
   in
   List.fold_left
     (fun acc_db name -> add_builtin_signature acc_db name { sig_; arity = Arity_exact arity })

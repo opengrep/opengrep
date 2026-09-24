@@ -570,7 +570,7 @@ let build_class_init_cfgs (lang : Lang.t) (ast : G.program)
       in
       let stmts = AST_to_IL.stmt lang fields in
       let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
-      acc := (opt_name, IL.{ params = []; cfg; lambdas; source_range = None }) :: !acc)
+      acc := (opt_name, IL.{ params = []; captures = IL.no_captures; cfg; lambdas; source_range = None }) :: !acc)
     ast;
   !acc
 
@@ -613,7 +613,7 @@ let build_top_level_cfg (lang : Lang.t) (ast : G.program)
     : IL.name * IL.fun_cfg =
   let xs = AST_to_IL.stmt lang (G.stmt1 ast) in
   let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-  (Graph_from_AST.top_level_name_of_ast ast, IL.{ params = []; cfg; lambdas; source_range = None })
+  (Graph_from_AST.top_level_name_of_ast ast, IL.{ params = []; captures = IL.no_captures; cfg; lambdas; source_range = None })
 
 let check_top_level_prebuilt
     (taint_inst : Taint_rule_inst.t)

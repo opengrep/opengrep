@@ -97,7 +97,14 @@ let compare_matches pm1 pm2 =
 (*****************************************************************************)
 
 type arg = { name : string; index : int } [@@deriving eq, ord]
-type base = BGlob of IL.name | BThis | BArg of arg [@@deriving ord]
+type formal =
+  | Param of arg
+  | Captured of
+      (IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
+[@@deriving eq, ord]
+
+type base = BGlob of IL.name | BThis | BArg of arg | BEnv of IL.name
+[@@deriving ord]
 
 (* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple
  * scrutinee starting at index [n]. Reading element [k] of a slice
@@ -127,6 +134,7 @@ let show_base base =
   | BGlob name -> fst name.ident
   | BThis -> "this"
   | BArg arg -> show_arg arg
+  | BEnv name -> "env(" ^ fst name.ident ^ ")"
 
 let show_offset offset =
   match offset with
@@ -229,6 +237,14 @@ let rev_IL_offset_of_offset offset =
        (Some [])
 
 let lval_of_arg arg = { base = BArg arg; offset = [] }
+
+let show_formal = function
+  | Param arg -> show_arg arg
+  | Captured name -> "env(" ^ fst name.ident ^ ")"
+
+let base_of_formal = function
+  | Param arg -> BArg arg
+  | Captured name -> BEnv name
 
 (*****************************************************************************)
 (* Taint *)

@@ -879,11 +879,11 @@ and map_block_arg env = function
   | `Brace (l, params, body, r) ->
       let body = Option.value ~default:[] (Option.map (map_statements env) body) in
       let fparams = map_block_params env params in
-      G.Arg (G.Lambda { fkind = (G.LambdaKind, token env l); fparams; frettype = None; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) } |> G.e)
+      G.Arg (G.Lambda { fkind = (G.LambdaKind, token env l); fparams; frettype = None; fcaptures = G.no_captures; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) } |> G.e)
   | `Do (l, params, body, _rescue, r) ->
       let body = Option.value ~default:[] (Option.map (map_statements env) body) in
       let fparams = map_block_params env params in
-      G.Arg (G.Lambda { fkind = (G.LambdaKind, token env l); fparams; frettype = None; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) } |> G.e)
+      G.Arg (G.Lambda { fkind = (G.LambdaKind, token env l); fparams; frettype = None; fcaptures = G.no_captures; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) } |> G.e)
 
 and map_block_params env = function
   | None -> fb []
@@ -1063,7 +1063,7 @@ and map_base_method_def env (tok, recv, name, params, ret, _forall) body =
     | Some (lp, params, rp) -> (token env lp, Option.value ~default:[] (Option.map (map_param_list env) params), token env rp)
   in
   let body = G.Block (fb (Option.value ~default:[] (Option.map (map_statements env) body))) |> G.s in
-  (ent, G.FuncDef { fkind = (G.Method, token env tok); fparams; frettype = map_return_type env ret; fbody = G.FBStmt body })
+  (ent, G.FuncDef { fkind = (G.Method, token env tok); fparams; frettype = map_return_type env ret; fcaptures = G.no_captures; fbody = G.FBStmt body })
 
 and map_fun_def env (tok, name, _extern, params, ret) body =
   let id =
@@ -1077,7 +1077,7 @@ and map_fun_def env (tok, name, _extern, params, ret) body =
     | Some (lp, params, rp) -> (token env lp, Option.value ~default:[] (Option.map (map_fun_param_list env) params), token env rp)
   in
   let body = G.Block (fb (Option.value ~default:[] (Option.map (map_statements env) body))) |> G.s in
-  (ent, G.FuncDef { fkind = (G.Function, token env tok); fparams; frettype = map_return_type env ret; fbody = G.FBStmt body })
+  (ent, G.FuncDef { fkind = (G.Function, token env tok); fparams; frettype = map_return_type env ret; fcaptures = G.no_captures; fbody = G.FBStmt body })
 
 and map_param_list env = function
   | `Choice_param_rep_COMMA_choice_param_opt_COMMA_opt_blk_param (first, rest, block) ->

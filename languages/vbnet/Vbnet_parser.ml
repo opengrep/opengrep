@@ -2129,6 +2129,7 @@ and event_statement (attrs : G.attribute list) : (G.ident * G.definition) parser
           | None -> fb []
           | Some ps -> ps);
         frettype = as_clause;
+        fcaptures = G.no_captures;
         fbody = G.FBDecl Tok.unsafe_sc
       }
   in
@@ -2182,6 +2183,7 @@ and event_accessor_block ((event_name_str, _) : G.ident) (attrs : G.attribute li
       { fkind = (G.Function, tok.tok);
         fparams = params;
         frettype = None;
+        fcaptures = G.no_captures;
         fbody = G.FBStmt stmt
       }
   in
@@ -2509,6 +2511,7 @@ and declare_statement (attrs : G.attribute list) : G.stmt parser = fun __n -> (
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBDecl Tok.unsafe_sc
         }
   in
@@ -2749,6 +2752,7 @@ and function_statement (where_am_i : G.function_kind) (attrs : G.attribute list)
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBDecl Tok.unsafe_sc
         }
   in
@@ -2856,6 +2860,7 @@ and sub_statement (where_am_i : G.function_kind) (attrs : G.attribute list)
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBDecl Tok.unsafe_sc
         }
   in
@@ -2941,6 +2946,7 @@ and constructor_block (attrs : G.attribute list) (class_name : G.name) : G.stmt 
             | None -> fb []
             | Some p -> p);
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt stmt
         }
   in
@@ -3005,6 +3011,7 @@ and operator_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt stmt
         }
   in
@@ -3093,6 +3100,7 @@ and property_accessor_block ((property_name_str, _) : G.ident)
           { fkind = (G.Method, get.tok);
             fparams = fb [];
             frettype = typ;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt
           }
       in
@@ -3119,6 +3127,7 @@ and property_accessor_block ((property_name_str, _) : G.ident)
               | Some p -> p
               | None -> fb []);
             frettype = typ;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt
           }
       in
@@ -4502,6 +4511,7 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt (G.Block (fb [G.ExprStmt ({expr with is_implicit_return = true}, Tok.unsafe_sc) |> G.s]) |> G.s) }
       in
       pure (G.Lambda fdef |> G.e)
@@ -4519,6 +4529,7 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt (stmt_of_stmts ~always_block:true stmts) }
       in
       pure (G.Lambda fdef |> G.e)
@@ -4546,6 +4557,7 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt }
       in
       pure (G.Lambda fdef |> G.e)
@@ -4566,6 +4578,7 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt }
       in
       pure (G.Lambda fdef |> G.e)

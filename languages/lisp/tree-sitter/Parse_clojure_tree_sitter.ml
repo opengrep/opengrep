@@ -1346,6 +1346,7 @@ and map_fn_form
         G.fparams = Tok.unsafe_fake_bracket param_implicit;
         frettype = None;
         fkind = (G.LambdaKind, fn_tok);
+        fcaptures = G.no_captures;
         fbody = G.FBStmt body_stmt;
       }
     |> G.e
@@ -1446,6 +1447,7 @@ and map_defn_form (env : env) (forms : CST.form list) =
           G.fparams = Tok.unsafe_fake_bracket param_implicit;
           frettype = None;
           fkind = (G.Function, defn_tok);
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body_stmt;
         }
     in

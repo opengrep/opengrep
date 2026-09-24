@@ -1585,13 +1585,12 @@ and map_closure_expression (env : env)
         G.KeywordAttr (G.Static, tok))
       v1
   in
-  let _is_moveTODO =
-    Option.map
-      (fun tok ->
-        let tok = token env tok in
-        (* "move" *)
-        G.KeywordAttr (G.Mutable, tok))
-      v2
+  let fcaptures =
+    match v2 with
+    | Some tok ->
+        let _move = token env tok (* "move" *) in
+        { G.no_captures with cdefault = Some G.Capture_by_value }
+    | None -> G.no_captures
   in
   let params = map_closure_parameters env v3 in
   let lpipe, _, _ = params in
@@ -1620,7 +1619,7 @@ and map_closure_expression (env : env)
       G.fkind = (G.LambdaKind, lpipe);
       G.fparams = params;
       G.frettype = ret_type;
-      G.fbody = body;
+      G.fcaptures; fbody = body;
     }
   in
   G.Lambda func_def
@@ -2052,7 +2051,7 @@ and map_function_item (env : env) outer_attrs
       G.fparams = fn_decl.params;
       G.frettype = fn_decl.retval;
       G.fkind = (G.Function, id);
-      G.fbody = G.FBStmt body;
+      G.fcaptures = G.no_captures; fbody = G.FBStmt body;
     }
   in
   let ent =
@@ -3459,7 +3458,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
           G.frettype = fn_decl.retval;
           G.fkind = (G.Function, fn);
           (* no body defined *)
-          G.fbody = G.FBDecl t;
+          G.fcaptures = G.no_captures; fbody = G.FBDecl t;
         }
       in
       let ent =

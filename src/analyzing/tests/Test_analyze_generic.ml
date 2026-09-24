@@ -60,7 +60,7 @@ let test_cfg_il (caps : < Cap.exec >) ~parse_program file =
   Implicit_return.mark_implicit_return lang ast;
   Visit_function_defs.visit
     (fun _ent fdef ->
-      let IL.{ params = _; cfg; lambdas = _; source_range = _ } =
+      let IL.{ params = _; captures = _; cfg; lambdas = _; source_range = _ } =
         CFG_build.cfg_of_gfdef lang fdef
       in
       Display_IL.display_cfg caps cfg)

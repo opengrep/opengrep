@@ -320,6 +320,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     G.fkind = (G.Method, tok);
     fparams = Tok.unsafe_fake_bracket [];
     frettype = None;
+    fcaptures = G.no_captures;
     fbody = G.FBNothing;
   } in
   let synth_func_info_for_class

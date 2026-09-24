@@ -381,6 +381,7 @@ and expr e =
         {
           G.fparams = fb fparams;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v2;
           fkind = (G.Arrow, t);
         }
@@ -658,7 +659,7 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
     {
       G.fparams = fb fparams;
       frettype = rett;
-      fbody;
+      fcaptures = G.no_captures; fbody;
       fkind = (G.Method, G.fake "");
     } )
 

@@ -80,7 +80,7 @@ let list_to_tuple_or_expr xs =
   | xs -> G.Container (G.Tuple, Tok.unsafe_fake_bracket xs) |> G.e
 
 let mk_func_def fkind params ret st : G.function_definition =
-  { G.fparams = params; frettype = ret; fbody = st; fkind }
+  { G.fparams = params; frettype = ret; fcaptures = G.no_captures; fbody = st; fkind }
 
 (* TODO: use CondDecl *)
 let wrap_init_in_block_maybe x v =

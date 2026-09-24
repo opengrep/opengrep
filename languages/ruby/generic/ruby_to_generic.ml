@@ -186,6 +186,7 @@ let rec expr e =
         {
           G.fparams = fb params;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt st;
           fkind = (G.LambdaKind, t1);
         }
@@ -203,6 +204,7 @@ let rec expr e =
         {
           G.fparams = fb params;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt st;
           fkind = (G.LambdaKind, tok);
         }
@@ -801,6 +803,7 @@ and definition def =
         {
           G.fparams = fb params;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body;
           fkind = (G.Method, t);
         }

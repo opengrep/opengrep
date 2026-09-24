@@ -1,0 +1,13 @@
+rules:
+  - id: test-capture-modes-rust
+    message: a closure holds a variable captured by value as it was at creation
+    languages:
+      - rust
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

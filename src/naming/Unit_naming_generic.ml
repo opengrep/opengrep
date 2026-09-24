@@ -354,6 +354,17 @@ let tests parse_program =
           (* a labelled declaration declares in the enclosing block *)
           check_resolutions ast "e" [ "LocalVar" ];
           check_resolutions ast "e2" [ "LocalVar" ]);
+      t "cpp capture lists refer to the enclosing variables" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/cpp/lambda_captures.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* [a] and [&b] are the enclosing variables inside the closure. *)
+          check_resolutions ast "a" [ "Parameter"; "Parameter" ];
+          check_single_binding ast "b";
+          (* [y = b + 1] is a variable of the closure, not the outer [y]. *)
+          check_binding_groups ast "y" [ 0; 1 ]);
       t "c switch body is one scope" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/c/switch_scope.c")

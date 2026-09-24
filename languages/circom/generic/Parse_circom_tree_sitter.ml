@@ -768,7 +768,7 @@ let map_definition (env : env) (x : CST.definition) =
       let fbody = map_function_body env v4 in
       let ent = G.basic_entity id in
       let def =
-        { fkind = (Function, tfunc); fparams = params; frettype = None; fbody }
+        { fkind = (Function, tfunc); fparams = params; frettype = None; fcaptures = G.no_captures; fbody }
       in
       (ent, FuncDef def)
   | `Temp_defi (v1, v2, v3, v4, v5) ->
@@ -785,7 +785,7 @@ let map_definition (env : env) (x : CST.definition) =
       let fbody = map_template_body env v5 in
       let ent = G.basic_entity id ~attrs in
       let def =
-        { fkind = (Function, tfunc); fparams = params; frettype = None; fbody }
+        { fkind = (Function, tfunc); fparams = params; frettype = None; fcaptures = G.no_captures; fbody }
       in
       (ent, FuncDef def)
   | `Main_comp_defi (v1, v2, v3, v4, v5, v6) ->

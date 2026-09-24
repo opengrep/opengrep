@@ -1337,7 +1337,7 @@ and constructor_declaration (env : env) ((v1, v2, v3) : CST.constructor_declarat
       fkind = (G.Method, t);
       fparams;
       frettype = None;
-      fbody;
+      fcaptures = G.no_captures; fbody;
     }
   in
   G.DefStmt (ent, def) |> G.s
@@ -1391,6 +1391,7 @@ and declaration (env : env) (x : CST.declaration) : G.stmt =
         { fkind = (G.Function, v1);
           fparams = fb [];
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v9
         }
       in
@@ -1716,7 +1717,7 @@ match v4 with
                         else []);
                   frettype = (if has_return then ptype else None);
                   (* TODO Should this be "void"? *)
-                  fbody;
+                  fcaptures = G.no_captures; fbody;
                 }
             in
             DefStmt (ent, funcdef) |> G.s)
@@ -2239,6 +2240,7 @@ and method_header (env : env) ((v1, v2, v3) : CST.method_header)
     fkind = (G.Method, tok);
     fparams = params;
     frettype = Some (make_type annots v2);
+    fcaptures = G.no_captures;
     fbody = G.FBNothing;
   }
 
@@ -2849,7 +2851,7 @@ and static_initializer (env : env) ((v1, v2) : CST.static_initializer) : G.stmt 
   let ent = basic_entity v1 ~attrs in
   let def =
     G.FuncDef
-      { fkind = (G.Method, t); fparams = fb []; frettype = None; fbody = G.FBStmt v2 }
+      { fkind = (G.Method, t); fparams = fb []; frettype = None; fcaptures = G.no_captures; fbody = G.FBStmt v2 }
   in
   G.DefStmt (ent, def) |> G.s
 

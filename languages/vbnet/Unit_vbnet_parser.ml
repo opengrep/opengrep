@@ -64,6 +64,7 @@ let smoke2 _ : bool =
                    {fkind = (Method, _);
                     fparams = (_, [], _);
                     frettype = None;
+                    fcaptures = { cdefault = None; clist = [] };
                     fbody =
                      FBStmt
                       {s =

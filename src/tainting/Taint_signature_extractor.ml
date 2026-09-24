@@ -115,7 +115,7 @@ let mk_method_property_assumptions (properties : G.expr list)
 
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env lang il_lval taint_set taint_arg env =
-  let param_shape = Shape.Arg (taint_arg, [ [] ]) in
+  let param_shape = Shape.Arg (Taint.Param taint_arg, [ [] ]) in
   Taint_lval_env.add_lval_shape lang il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
@@ -201,7 +201,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                              *   so the only way a source match at the
                              *   declaration can taint the leaf is by
                              *   consulting the rule predicate here. *)
-                            let leaf_shape = Shape.Arg (taint_arg, [ offset ]) in
+                            let leaf_shape = Shape.Arg (Taint.Param taint_arg, [ offset ]) in
                             let leaf_taint_lval : Taint.lval =
                               { base = BArg taint_arg; offset }
                             in
@@ -270,11 +270,13 @@ let extract_signature (taint_inst : TRI.t)
     (func_cfg : IL.fun_cfg) : extraction_result =
   let params = Signature_params.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
+  let captured = Dataflow_tainting.captured_of_fun_cfg func_cfg in
   let combined_env =
-    match in_env with
+    (match in_env with
     | Some env ->
         Taint_lval_env.union ~lang:taint_inst.lang env param_assumptions
-    | None -> param_assumptions
+    | None -> param_assumptions)
+    |> Dataflow_tainting.seed_captured_vars taint_inst.lang captured
   in
   let fixpoint_effects, mapping =
     Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env:combined_env ?name
@@ -399,6 +401,7 @@ let extract_signature (taint_inst : TRI.t)
     {
       Signature.params;
       params_il = func_cfg.params;
+      captured;
       effects = effects_with_preconditions;
     }
   in

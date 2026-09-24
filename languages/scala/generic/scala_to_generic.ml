@@ -55,6 +55,7 @@ let cases_to_lambda lb cases : G.function_definition =
     fkind = (G.BlockCases, lb);
     frettype = None;
     fparams = fb [ param ];
+    fcaptures = G.no_captures;
     fbody = G.FBStmt body;
   }
 
@@ -1084,6 +1085,7 @@ and v_function_definition
     fparams = fb (List_.flatten params);
     (* TODO? *)
     frettype = tret;
+    fcaptures = G.no_captures;
     fbody =
       (match fbody with
       | None -> G.FBDecl G.sc

@@ -435,6 +435,7 @@ and command (env : env) (cmd : command) : stmt_or_expr =
             G.fkind = (G.Function, first_tok);
             fparams = fb [];
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt (command env def.body |> as_stmt);
           }
       in

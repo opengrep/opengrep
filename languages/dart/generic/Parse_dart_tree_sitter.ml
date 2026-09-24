@@ -1299,7 +1299,7 @@ and map_function_signature ~attrs (env : env)
     | _ ->
         DefStmt
           ( basic_entity ~attrs ?tparams id,
-            FuncDef { fkind; fparams; frettype; fbody } )
+            FuncDef { fkind; fparams; frettype; fcaptures = G.no_captures; fbody } )
         |> G.s
 
 and map_function_type (env : env) (x : CST.function_type) : type_ =
@@ -1842,7 +1842,7 @@ and map_primary (env : env) (p : CST.primary) : expr =
             let lparen, _, _ = fparams in
             let fbody = map_function_expression_body env v2 in
             Lambda
-                { fkind = (LambdaKind, lparen); fparams; frettype = None; fbody }
+                { fkind = (LambdaKind, lparen); fparams; frettype = None; fcaptures = G.no_captures; fbody }
             |> G.e
         | `Id tok ->
             N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
@@ -2720,7 +2720,7 @@ let map_setter_signature ~attrs (env : env)
   fun fbody ->
     DefStmt
       ( basic_entity ?tparams ~attrs v3,
-        FuncDef { fkind = (Function, v2); fparams; frettype; fbody } )
+        FuncDef { fkind = (Function, v2); fparams; frettype; fcaptures = G.no_captures; fbody } )
     |> G.s
 
 let map_operator_signature ?(attrs = []) (env : env)
@@ -2752,6 +2752,7 @@ let map_operator_signature ?(attrs = []) (env : env)
         {
           fkind = (Function, fake "function");
           fparams;
+          fcaptures = G.no_captures;
           fbody = FBNothing;
           frettype;
         } )
@@ -2825,7 +2826,7 @@ let map_getter_signature ~attrs (env : env)
   fun fbody ->
     DefStmt
       ( basic_entity ~attrs v3,
-        FuncDef { fkind = (Function, t); fparams = fb []; frettype; fbody } )
+        FuncDef { fkind = (Function, t); fparams = fb []; frettype; fcaptures = G.no_captures; fbody } )
     |> G.s
 
 let map_constant_constructor_signature (env : env)
@@ -3144,7 +3145,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
       DefStmt
         ( ent,
           FuncDef
-            { fkind = (Method, fake "Method"); fparams; frettype = None; fbody }
+            { fkind = (Method, fake "Method"); fparams; frettype = None; fcaptures = G.no_captures; fbody }
         )
       |> G.s
   | `Fact_cons_sign x ->
@@ -3163,6 +3164,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
               fkind = (Method, fake "Method");
               fparams;
               frettype = None;
+              fcaptures = G.no_captures;
               fbody = body;
             } )
       |> G.s
@@ -3284,7 +3286,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
-                fbody;
+                fcaptures = G.no_captures; fbody;
               } )
         |> G.s;
       ]
@@ -3309,7 +3311,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
-                fbody;
+                fcaptures = G.no_captures; fbody;
               } )
         |> G.s;
       ]
@@ -3337,6 +3339,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3359,6 +3362,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3376,6 +3380,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3412,6 +3417,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Method, fake "method");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody =
                   FBExpr
                     (OtherExpr (("Redirect", fake "Redirect"), [ G.T v7 ] @ v8)
@@ -3437,6 +3443,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;

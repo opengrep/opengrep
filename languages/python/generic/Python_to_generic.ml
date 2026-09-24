@@ -311,6 +311,7 @@ let rec expr env (x : expr) =
       G.Lambda
         {
           G.fparams = fb v1;
+          fcaptures = G.no_captures;
           fbody = G.FBExpr v2;
           frettype = None;
           fkind = (G.LambdaKind, t0);
@@ -605,6 +606,7 @@ and stmt_aux env x =
         {
           G.fparams = fb v2;
           frettype = v3;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v4;
           fkind = (fkind, t);
         }

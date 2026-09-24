@@ -1897,9 +1897,27 @@ and function_definition = {
   (* return type *)
   frettype : type_ option;
   (* TODO: fthrow *)
+  fcaptures : captures;
   (* newscope: *)
   fbody : function_body;
 }
+
+(* The capture list of a closure, as written: empty when the language has
+ * none or the closure declares none. *)
+and captures = {
+  (* C++ [=] and [&], Rust move, PHP fn: the mode of implicit captures *)
+  cdefault : capture_mode option;
+  clist : capture list;
+}
+
+and capture = {
+  cmode : capture_mode;
+  cname : ident * id_info;
+  (* C++ and Swift [y = e]: a variable of the closure, set at creation *)
+  cinit : expr option;
+}
+
+and capture_mode = Capture_by_reference | Capture_by_value
 
 (* We don't really care about the function_kind in semgrep, but who
  * knows, maybe one day we will. We care about the token in the
@@ -2394,6 +2412,8 @@ let p x = x
 (* ------------------------------------------------------------------------- *)
 
 let empty_var = { vinit = None; vtype = None; vtok = no_sc }
+
+let no_captures = { cdefault = None; clist = [] }
 
 let empty_id_info ?(hidden = false) ?(case_insensitive = false) () =
   {

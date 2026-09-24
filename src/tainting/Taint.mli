@@ -48,13 +48,21 @@ type arg = { name : string; index : int } [@@deriving eq, ord]
 
 val show_arg : arg -> string
 
+(** A value supplied when a signature is applied: by the call for a
+    parameter, by the closure's environment for a captured variable. *)
+type formal = Param of arg | Captured of IL.name [@@deriving eq, ord]
+
+val show_formal : formal -> string
+
 (** Base of an 'lval'. *)
 type base =
   | BGlob of IL.name  (** A global variable or a static class field. *)
   | BThis  (** The 'this' or 'self' object. *)
   | BArg of arg  (** A formal parameter in a function/method definition. *)
+  | BEnv of IL.name  (** A variable captured by a closure. *)
 
 val show_base : base -> string
+val base_of_formal : formal -> base
 
 (** Offset of an 'lval'. *)
 type offset =

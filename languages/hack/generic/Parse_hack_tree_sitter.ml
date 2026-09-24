@@ -459,26 +459,17 @@ let scoped_identifier (env : env) ((v1, v2, v3) : CST.scoped_identifier) :
   in
   v1 @ [ v3 ]
 
-let _anonymous_function_use_clause (env : env)
-    ((v1, v2, v3, v4, v5, v6) : CST.anonymous_function_use_clause) =
-  let v1 = (* "use" *) token env v1 in
-  let v2 = (* "(" *) token env v2 in
-  let v3 = (* variable *) token env v3 in
-  let v4 =
-    List_.map
-      (fun (v1, v2) ->
-        let v1 = (* "," *) token env v1 in
-        let v2 = (* variable *) token env v2 in
-        todo env (v1, v2))
-      v4
+let anonymous_function_use_clause (env : env)
+    ((_v1, _v2, v3, v4, _v5, _v6) : CST.anonymous_function_use_clause) :
+    G.capture list =
+  let capture tok =
+    {
+      G.cmode = G.Capture_by_value;
+      cname = (str env tok, G.empty_id_info ());
+      cinit = None;
+    }
   in
-  let v5 =
-    match v5 with
-    | Some tok -> (* "," *) token env tok
-    | None -> todo env ()
-  in
-  let v6 = (* ")" *) token env v6 in
-  todo env (v1, v2, v3, v4, v5, v6)
+  capture v3 :: List_.map (fun (_comma, tok) -> capture tok) v4
 
 let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
   (* Q: How to represent `use` type? *)
@@ -1576,6 +1567,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               (* Q: Is the arrow the token here? Arrow vs LambdaKind? *)
               fparams;
               frettype = return_type;
+              fcaptures = { cdefault = Some G.Capture_by_value; clist = [] };
               fbody = v5;
             }
           in
@@ -1628,11 +1620,10 @@ and expression (env : env) (x : CST.expression) : G.expr =
                 Some v2
             | None -> None
           in
-          let _v5TODO =
+          let clist =
             match v5 with
-            (* TODO: No way to capture this in generic *)
-            | Some _x -> None (* Some (anonymous_function_use_clause env x) *)
-            | None -> None
+            | Some x -> anonymous_function_use_clause env x
+            | None -> []
           in
           let v6 = compound_statement env v6 in
           let def : G.function_definition =
@@ -1640,6 +1631,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               fkind = (G.LambdaKind, v2);
               fparams = v3;
               frettype = v4;
+              fcaptures = { cdefault = None; clist };
               fbody = G.FBStmt v6;
             }
           in
@@ -1730,6 +1722,7 @@ and function_declaration_header (env : env)
       fkind = (G.Function, function_keyword);
       fparams = parameters;
       frettype = attribute_modifier_and_return_type;
+      fcaptures = G.no_captures;
       fbody =
         G.FBDecl G.sc
         (* To be replaced in parent with real statement. Could also replace with passthrough strategy *);

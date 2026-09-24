@@ -57,7 +57,7 @@ let ident v = wrap string v
 let var v = wrap string v
 
 (* a variable bound to an enclosing scope's by a directive such as
- * [global $x;] or a closure's [use ($x)] *)
+ * [global $x;] *)
 let use_outer_decl (tok : Tok.t) (id : G.ident) : G.stmt =
   let ent = G.basic_entity ~case_insensitive:false id in
   G.DefStmt (ent, G.UseOuterDecl tok) |> G.s
@@ -512,27 +512,32 @@ and expr e : G.expr =
             | ShortLambda -> G.Arrow
             | _ -> error tok "unsupported lambda variant"
           in
-          (* [function () use ($x, &$y) { ... }]: the captured variables
-           * are the enclosing scope's, declared at the head of the body
-           * as a [use] directive for naming to bind them there. *)
-          let uses =
-            l_uses
-            |> List_.map (fun ((_is_ref : bool), (v : var)) ->
-                   use_outer_decl (Tok.fake_tok t "use") (var v))
+          let fcaptures =
+            {
+              G.cdefault =
+                (match lambdakind with
+                | G.Arrow -> Some G.Capture_by_value
+                | _ -> None);
+              clist =
+                l_uses
+                |> List_.map (fun ((is_ref : bool), (v : var)) ->
+                       {
+                         G.cmode =
+                           (if is_ref then G.Capture_by_reference
+                            else G.Capture_by_value);
+                         cname = (var v, G.empty_id_info ());
+                         cinit = None;
+                       });
+            }
           in
-          let body =
-            match (uses, stmt body) with
-            | [], body -> body
-            | _, { G.s = G.Block (l, stmts, r); _ } ->
-                G.Block (l, uses @ stmts, r) |> G.s
-            | _, body -> G.Block (Tok.unsafe_fake_bracket (uses @ [ body ])) |> G.s
-          in
+          let body = stmt body in
           let ps = parameters ps in
           let rett = option hint_type rett in
           G.Lambda
             {
               G.fparams = fb ps;
               frettype = rett;
+              fcaptures;
               fbody = G.FBStmt body;
               fkind = (lambdakind, t);
             }
@@ -654,7 +659,7 @@ and func_def
     G.basic_entity id ~attrs:(modifiers @ attrs) ~case_insensitive:true
   in
   let def =
-    { G.fparams = fb params; frettype = fret; fbody = G.FBStmt body; fkind }
+    { G.fparams = fb params; frettype = fret; fcaptures = G.no_captures; fbody = G.FBStmt body; fkind }
   in
   (ent, def)
 
@@ -859,6 +864,7 @@ and property_hook { ph_attrs; ph_modifiers; ph_ref; ph_kind; ph_params; ph_body 
     G.fkind = (G.Method, tok);
     fparams = (fake "(", params, fake ")");
     frettype = None;
+    fcaptures = G.no_captures;
     fbody = body;
   } in
   let ent =

@@ -3174,8 +3174,32 @@ and m_definition a b =
        * which can leads to errors in type_of_string.
        *)
       let* () = m_entity a1 b1 in
-      let* () = m_definition_kind a2 b2 in
-      return ()
+      match (a2, b2) with
+      | G.ClassDef a_class, B.ClassDef b_class
+        when record_kind_left_open a1 b1 ->
+          m_class_definition { a_class with ckind = b_class.ckind } b_class
+      | _ ->
+          let* () = m_definition_kind a2 b2 in
+          return ()
+
+(* A record whose kind is stated by an attribute: a record pattern that
+ * does not state the kind matches a record of either kind. *)
+and record_kind_left_open (a : G.entity) (b : G.entity) : bool =
+  let is_record (ent : G.entity) =
+    List.exists
+      (function
+        | G.KeywordAttr (G.RecordClass, _) -> true
+        | _ -> false)
+      ent.attrs
+  in
+  let states_kind (ent : G.entity) =
+    List.exists
+      (function
+        | G.OtherAttribute ((("class" | "struct"), _), []) -> true
+        | _ -> false)
+      ent.attrs
+  in
+  is_record a && (not (states_kind a)) && states_kind b
 
 and m_entity a b =
   match (a, b) with
@@ -3347,8 +3371,9 @@ and m_function_kind a b =
 and m_function_definition a b =
   Trace_matching.(if on then print_function_definition_pair a b);
   match (a, b) with
-  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4 },
-      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4 } ) ->
+  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4; fcaptures = _ },
+      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4; fcaptures = _ } )
+    ->
       m_parameters a1 b1 >>= fun () ->
       (m_option_none_can_match_some m_type_) a2 b2 >>= fun () ->
       m_function_body a3 b3 >>= fun () -> m_wrap m_function_kind a4 b4

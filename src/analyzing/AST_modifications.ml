@@ -50,6 +50,7 @@ let convert_elixir_short_lambda (e : G.expr) : G.expr =
           G.fparams = Tok.unsafe_fake_bracket params;
           frettype = None;
           fkind = (G.LambdaKind, tok);
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body;
         }
       in

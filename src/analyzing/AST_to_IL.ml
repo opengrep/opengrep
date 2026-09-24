@@ -2299,6 +2299,24 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       comprehension env er clauses
   | G.Lambda fdef ->
       let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+      (* An initialised capture is set where the closure is created. *)
+      let ss_captures =
+        fdef.fcaptures.clist
+        |> List.concat_map (fun (c : G.capture) ->
+               match c.cinit with
+               | None -> []
+               | Some init_gen ->
+                   let ss, init = expr env init_gen in
+                   let id, id_info = c.cname in
+                   ss
+                   @ [
+                       mk_s
+                         (Instr
+                            (mk_i
+                               (Assign (lval_of_id_info id id_info, init))
+                               (related_exp init_gen)));
+                     ])
+      in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -2310,7 +2328,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           fdef
       in
       let instr = mk_s (Instr (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig)) in
-      ([instr], mk_e (Fetch lval) eorig)
+      (ss_captures @ [ instr ], mk_e (Fetch lval) eorig)
   | G.AnonClass def ->
       (* TODO: should use def.ckind *)
       let tok = Common2.fst3 def.G.cbody in
@@ -4726,7 +4744,17 @@ and function_definition env fdef : function_definition =
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
   let fbody = rec_point_label_stmts @ fbody in
-  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
+  let fcaptures =
+    {
+      cdefault = fdef.fcaptures.cdefault;
+      clist =
+        fdef.fcaptures.clist
+        |> List_.map (fun (c : G.capture) ->
+               let id, id_info = c.cname in
+               (var_of_id_info id id_info, c.cmode));
+    }
+  in
+  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fcaptures; fbody }
 
 (****************************************************************************)
 (* Entry points *)

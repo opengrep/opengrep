@@ -51,7 +51,7 @@ type call_effect =
     }
   | ToSinkInCall of {
       callee : IL.exp;
-      arg : Taint.arg;
+      arg : Taint.formal;
       arg_offset : Taint.offset list;
       args_taints : Effect.args_taints;
       guards : Effect_guard.t;
@@ -71,7 +71,7 @@ let show_call_effect = function
         (Effect_guard.show_in_brackets guards) (T.show_offset_list offset)
   | ToSinkInCall { callee; arg; _ } ->
       Printf.sprintf "ToSinkInCall(%s, %s)" (Display_IL.string_of_exp callee)
-        (T.show_arg arg)
+        (T.show_formal arg)
 
 let show_call_effects call_effects =
   call_effects |> List_.map show_call_effect |> String.concat "; "
@@ -100,6 +100,7 @@ let callee_on_enclosing_this (callee : IL.exp) : bool =
    instantiation stays observationally pure. *)
 type sig_inst_cache_entry = {
   cached_sig : Signature.t;
+  cached_env : env;
   cached_callee : IL.exp;
   cached_actual_args : IL.exp IL.argument list option;
   cached_args_taints : Effect.args_taints;
@@ -145,7 +146,7 @@ let equal_actual_args (a1 : IL.exp IL.argument list option)
     a1 a2
 
 let sig_cache_lookup (cache : sig_inst_cache) (callback_sig : Signature.t)
-    (callee : IL.exp) (actual_args : IL.exp IL.argument list option)
+    (callback_env : env) (callee : IL.exp) (actual_args : IL.exp IL.argument list option)
     (args_taints : Effect.args_taints) (depth : int) :
     call_effects option option =
   match Hashtbl.find_opt cache (IL_helpers.hash_exp callee) with
@@ -155,6 +156,7 @@ let sig_cache_lookup (cache : sig_inst_cache) (callback_sig : Signature.t)
         (fun (entry : sig_inst_cache_entry) ->
           if
             phys_equal callback_sig entry.cached_sig
+            && Shape_and_sig.Shape.equal_env callback_env entry.cached_env
             && Int.equal depth entry.cached_depth
             && IL_helpers.equal_exp callee entry.cached_callee
             && Int.equal (IL.compare_orig callee.eorig entry.cached_callee.eorig) 0
@@ -187,7 +189,7 @@ type inst_var = {
     T.lval -> (IL.name * T.offset list * T.tainted_token) option;
       (** Resolve a callee-side [T.lval] to the caller-side
           [(IL.name, offset, tok)] triple. Wraps the args=Some path of
-          [instantiate_lval_using_actual_exps] and the BGlob-only
+          [instantiate_lval_using_actual_exps] and the BGlob/BEnv
           fallback for the args=None (recursive HOF) path. Used by the
           [substitute_in_sig] walker when refining a nested [Fun]
           shape's effects: ToLval payloads whose base is a free
@@ -1030,6 +1032,26 @@ let guard_valid_under ~(lang : Lang.t) (finding_guard : Effect_guard.t)
          |> List.exists (fun (finding_clause : (IL.exp * bool) list) ->
                 Effect_guard.literals_consistent (side_clause @ finding_clause)))
 
+(* A closure's environment is in the terms of the function that created
+ * it: a reference to that function's parameter becomes the caller's
+ * variable passed for it, or its value when the caller passed no
+ * variable. *)
+let instantiate_env (inst_var : inst_var) ~(inst_cell : cell -> cell)
+    (env : env) : env =
+  env
+  |> List_.map (fun ((x, entry) as binding) ->
+         match entry with
+         | Val cell -> (x, Val (inst_cell cell))
+         | Ref lval -> (
+             match inst_var.inst_lval_to_name lval with
+             | Some (var, offset, _tok) ->
+                 (x, Ref { T.base = T.BGlob var; offset })
+             | None -> (
+                 match inst_var.inst_lval lval with
+                 | Some (taints, shape) ->
+                     (x, Val (Cell (Xtaint.of_taints taints, shape)))
+                 | None -> binding)))
+
 let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     (sig_ : Signature.t) : Signature.t =
   let inst_trace =
@@ -1047,6 +1069,16 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
       ->
         String.equal n arg.name
     | Some Signature_params.Other -> String.equal arg.name ""
+  in
+  let captured_in_sig (x : IL.name) : bool =
+    List.exists
+      (fun (y, _) -> Int.equal (IL.compare_name x y) 0)
+      sig_.captured
+  in
+  let bound_formal_in_sig (formal : T.formal) : bool =
+    match formal with
+    | Param arg -> bound_in_sig arg
+    | Captured x -> captured_in_sig x
   in
   let f_param_names =
     List.filter_map IL_helpers.pname_of_param inst_var.f_params_il
@@ -1093,12 +1125,14 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     | T.Shape_var lval -> (
         match lval.base with
         | T.BArg arg when bound_in_sig arg -> keep ()
+        | T.BEnv x when captured_in_sig x -> keep ()
         | T.BArg _ -> (
             match inst_var.inst_lval lval with
             | Some _ -> delegate ()
             | None -> keep ())
         | T.BGlob _
-        | T.BThis ->
+        | T.BThis
+        | T.BEnv _ ->
             delegate ())
     | T.Src _
     | T.Control ->
@@ -1133,10 +1167,10 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
                  Shape.update_offset_in_cell ~f:walk_xtaint [] cell)
         in
         if Fields.is_empty obj then Bot else Obj obj
-    | Arg (arg, offsets) when bound_in_sig arg -> Arg (arg, offsets)
+    | Arg (arg, offsets) when bound_formal_in_sig arg -> Arg (arg, offsets)
     | Arg (arg, offsets) ->
         let resolve_offset off =
-          let lval = { T.base = T.BArg arg; offset = off } in
+          let lval = { T.base = T.base_of_formal arg; offset = off } in
           match inst_var.inst_lval lval with
           | Some (_taints, shape) -> shape
           | None -> Arg (arg, [ off ])
@@ -1148,8 +1182,13 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
               (fun acc off ->
                 Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
-    | Fun inner_sig ->
-        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
+    | Fun (inner_sig, inner_env) ->
+        Fun
+          ( substitute_in_sig ~lang inst_var inst_trace inner_sig,
+            instantiate_env inst_var ~inst_cell:walk_cell inner_env )
+  and walk_cell (Cell (xtaint, shape)) =
+    let xtaint, shape = walk_xtaint xtaint shape in
+    Cell (xtaint, shape)
   and walk_xtaint xtaint shape =
     let xtaint =
       match xtaint with
@@ -1170,6 +1209,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
   let walk_lval (lval : T.lval) : T.lval option =
     match lval.base with
     | T.BArg arg when bound_in_sig arg -> Some lval
+    | T.BEnv x when captured_in_sig x -> Some lval
     | _ -> (
         match inst_var.inst_lval_to_name lval with
         | Some (var, offset, _tok) -> Some { T.base = T.BGlob var; offset }
@@ -1280,7 +1320,7 @@ let instantiate_shape ~lang inst_var inst_trace shape =
          * shape; unify the results so the dispatcher sees every
          * possible callback. *)
         let resolve_offset off =
-          let lval = { T.base = T.BArg arg; offset = off } in
+          let lval = { T.base = T.base_of_formal arg; offset = off } in
           match inst_var.inst_lval lval with
           | Some (_taints, shape) -> shape
           | None ->
@@ -1293,14 +1333,14 @@ let instantiate_shape ~lang inst_var inst_trace shape =
         | [] ->
             Log.warn (fun m ->
                 m "Could not instantiate arg shape: %s (no offsets recorded)"
-                  (T.show_arg arg));
+                  (T.show_formal arg));
             Bot
         | first :: rest ->
             List.fold_left
               (fun acc off ->
                 Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
-    | Fun inner_sig ->
+    | Fun (inner_sig, inner_env) ->
         (* A [Fun] shape's signature may reference parameters of the
          * outer function being applied (lambdas can close over their
          * enclosing function's parameters). Refine the inner sig by
@@ -1308,7 +1348,13 @@ let instantiate_shape ~lang inst_var inst_trace shape =
          * actuals via [substitute_in_sig]; bound references to the
          * inner sig's own parameters stay intact for resolution when
          * the inner sig is itself applied later. *)
-        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
+        Fun
+          ( substitute_in_sig ~lang inst_var inst_trace inner_sig,
+            instantiate_env inst_var
+              ~inst_cell:(fun (Cell (xtaint, shape)) ->
+                let xtaint, shape = inst_xtaint xtaint shape in
+                Cell (xtaint, shape))
+              inner_env )
   and inst_xtaint xtaint shape =
     (* This may break INVARIANT(cell) but 'update_offset_in_cell' will restore it. *)
     let xtaint =
@@ -1402,6 +1448,19 @@ let classify_guards ~(lang : Lang.t) ~(atoms : Effect_guard.atoms)
     TODO(shapes): This is needed for stuff that is not yet fully adapted to shapes,
              in theory we should only need 'instantiate_lval_using_shape'.
 *)
+(* The environment of a closure whose value is not at hand, e.g. a
+ * signature found by name: a nested function's or lambda's name is only
+ * visible where the variables it captures are, so those are the
+ * variables in scope at the call. *)
+let identity_env (sig_ : Signature.t) : env =
+  sig_.captured
+  |> List_.map (fun (x, _) -> (x, Ref { T.base = T.BGlob x; offset = [] }))
+
+let find_in_env (env : env) (x : IL.name) : env_entry =
+  match List.find_opt (fun (y, _) -> Int.equal (IL.compare_name x y) 0) env with
+  | Some (_, entry) -> entry
+  | None -> Ref { T.base = T.BGlob x; offset = [] }
+
 (* Composed offsets are capped like [fix_poly_taint_with_offset]'s: on
    cyclic field types (a struct whose field chain returns to itself) the
    extraction/instantiation rounds of the topo fixpoint otherwise extend
@@ -1413,7 +1472,7 @@ let cap_offset ~(max : int) (offset : T.offset list) : T.offset list =
 
 (* [max_offset] bounds the composed offsets, see [Shape.compose_offset]. *)
 let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
-    (fun_exp : IL.exp) fparams args_exps
+    ~(env : env) (fun_exp : IL.exp) fparams args_exps
     (tlval : T.lval) : (IL.name * T.offset list * T.tainted_token) option =
   (* Error handling  *)
   let log_error () =
@@ -1434,6 +1493,16 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
   in
   match tlval.base with
   | BGlob gvar -> Some (gvar, tlval.offset, snd gvar.ident)
+  | BEnv x -> (
+      match find_in_env env x with
+      | Ref { base = BGlob var; offset } ->
+          Some
+            ( var,
+              Shape.compose_offset ~max:max_offset ~lang offset tlval.offset,
+              snd var.ident )
+      | Ref _
+      | Val _ ->
+          None)
   | BArg pos -> (
       (*
           An actual argument from 'args_exps', e.g.
@@ -1565,7 +1634,9 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
     | __else__ -> false
   in
   match lval.base with
-  | BArg _ -> lval_taints
+  | BArg _
+  | BEnv _ ->
+      lval_taints
   | BThis when not is_method_in_this_class -> lval_taints
   | BGlob _
   | BThis
@@ -1590,13 +1661,19 @@ let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
   (taints, shape) 
 
 let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
-    lval_env fparams
+    ~(env : env) lval_env fparams
     (fun_exp : IL.exp) args_taints
     lval : (Taints.t * shape) option =
   let { T.base; offset } = lval in
   let* base, offset =
     match base with
     | T.BArg pos -> Some (`Arg pos, offset)
+    | BEnv x -> (
+        match find_in_env env x with
+        | Ref { base = BGlob var; offset = ref_offset } ->
+            Some (`Var var, ref_offset @ offset)
+        | Ref ref_lval -> Some (`Symbolic ref_lval, offset)
+        | Val cell -> Some (`Cell cell, offset))
     | BThis -> (
         (* TODO: Should we refactor this with 'instantiate_lval_using_actual_exps' ? *)
         match fun_exp with
@@ -1628,6 +1705,17 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
     | `Var var ->
         let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
         Some (Xtaint.to_taints xtaints, shape)
+    | `Cell (Cell (xtaints, shape)) -> Some (Xtaint.to_taints xtaints, shape)
+    | `Symbolic (ref_lval : T.lval) ->
+        let shape =
+          match ref_lval.base with
+          | BArg arg -> Arg (T.Param arg, [ ref_lval.offset ])
+          | BEnv y -> Arg (T.Captured y, [ ref_lval.offset ])
+          | BGlob _
+          | BThis ->
+              Bot
+        in
+        Some (Taints.singleton (T.taint_of_orig (T.Var ref_lval)), shape)
   in
   Log.debug (fun m ->
       m "INST_LVAL_SHAPE: base_taints=%d base_shape=%s offset=%s"
@@ -1637,7 +1725,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
     base_shape
 
 (* What is the taint denoted by 'sig_lval' ? *)
-let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
+let instantiate_lval ~(lang : Lang.t) ~(max_offset : int) ~(env : env)
     lval_env fparams fun_exp
     args_exps
     (args_taints : (Taints.t * shape) IL.argument list) (sig_lval : T.lval) =
@@ -1646,7 +1734,7 @@ let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
         (T.show_lval sig_lval) (List.length args_taints)
         (fparams |> List.map Signature_params.show_param |> String.concat ","));
   match
-    instantiate_lval_using_shape ~lang ~max_offset lval_env fparams fun_exp
+    instantiate_lval_using_shape ~lang ~max_offset ~env lval_env fparams fun_exp
       args_taints sig_lval
   with
   | Some (taints, shape) -> Some (taints, shape)
@@ -1665,7 +1753,7 @@ let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
            *   see 'lval_of_sig_lval'.
            *)
           let* var, offset, _obj =
-            instantiate_lval_using_actual_exps ~lang ~max_offset fun_exp
+            instantiate_lval_using_actual_exps ~lang ~max_offset ~env fun_exp
               fparams args_exps sig_lval
           in
           let lval_taints, shape =
@@ -1729,7 +1817,7 @@ let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
 let rec instantiate_function_signature ~(lang : Lang.t)
     ~(atoms : Effect_guard.atoms)
     ?(max_offset : int = Shape.max_poly_offset lang)
-    ?(outer_params : IL.param list option) lval_env
+    ?(outer_params : IL.param list option) ?(env : env option) lval_env
     (taint_sig : Signature.t) ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
     ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
@@ -1741,6 +1829,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     match recursive_cache with
     | Some c -> c
     | None -> mk_sig_inst_cache ~size:32 ()
+  in
+  let env =
+    match env with
+    | Some env -> env
+    | None -> identity_env taint_sig
   in
   Log.debug (fun m ->
       m "INST_SIG: depth=%d, callee=%s, num_args_taints=%d, sig_params=%s"
@@ -1769,7 +1862,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
        So we will isolate this as a specific step to be applied as necessary.
     *)
     let opt_taints_shape =
-      instantiate_lval ~lang ~max_offset lval_env taint_sig.params callee
+      instantiate_lval ~lang ~max_offset ~env lval_env taint_sig.params callee
         args args_taints lval
     in
     Log.debug (fun m ->
@@ -1800,17 +1893,15 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   (* Lval-side resolver: maps a [T.lval] anchored in [taint_sig] to the
    * triple [(IL.name, offset, tok)] in the caller. Args=Some path goes
    * through [instantiate_lval_using_actual_exps]; args=None (recursive
-   * HOF, depth >= 1) only resolves [BGlob] verbatim since [BArg]/[BThis]
-   * need actuals. *)
+   * HOF, depth >= 1) only resolves [BGlob] verbatim and [BEnv] through the
+   * closure's environment, since [BArg]/[BThis] need actuals. *)
   let inst_lval_to_name (lval : T.lval) =
-    match args with
-    | None -> (
-        match lval.base with
-        | T.BGlob gvar -> Some (gvar, lval.offset, snd gvar.ident)
-        | T.BArg _ | T.BThis -> None)
-    | Some args ->
-        instantiate_lval_using_actual_exps ~lang ~max_offset callee
-          taint_sig.params args lval
+    match (lval.base, args) with
+    | (T.BGlob _ | T.BEnv _), _
+    | (T.BArg _ | T.BThis), Some _ ->
+        instantiate_lval_using_actual_exps ~lang ~max_offset ~env callee
+          taint_sig.params (Option.value args ~default:[]) lval
+    | (T.BArg _ | T.BThis), None -> None
   in
   (* Freezing is allowed only with concrete actuals: the recursive-HOF
    * path ([args = None]) re-classifies in the right frame later. *)
@@ -2037,22 +2128,16 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                 { taints; offset = dst_sig_lval.offset; guards = out_guards } ]
         else
           let+ dst_var, dst_offset, tainted_tok =
-            match args with
-            | None -> (
-                (* depth>=1 HOF dispatch has no IL.exp args; only [BGlob] resolves, [BArg]/[BThis] drop. *)
-                match dst_sig_lval.base with
-                | T.BGlob gvar ->
-                    Some (gvar, dst_sig_lval.offset, snd gvar.ident)
-                | T.BArg _ | T.BThis ->
-                    Log.warn (fun m ->
-                        m
-                          "Cannot instantiate '%s' because we lack the actual \
-                           arguments"
-                          (T.show_lval dst_sig_lval));
-                    None)
-            | Some args ->
-                instantiate_lval_using_actual_exps ~lang ~max_offset callee
-                  taint_sig.params args dst_sig_lval
+            match (dst_sig_lval.base, args) with
+            (* depth>=1 HOF dispatch has no IL.exp args; only [BGlob] and [BEnv] resolve, [BArg]/[BThis] drop. *)
+            | (T.BArg _ | T.BThis), None ->
+                Log.warn (fun m ->
+                    m
+                      "Cannot instantiate '%s' because we lack the actual \
+                       arguments"
+                      (T.show_lval dst_sig_lval));
+                None
+            | _ -> inst_lval_to_name dst_sig_lval
           in
           let taints = inst_taints tainted_tok in
           if Taints.is_empty taints then []
@@ -2063,7 +2148,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | Effect.ToSinkInCall
         {
           callee = fun_exp;
-          arg = fun_arg;
+          arg = fun_formal;
           arg_offset = fun_arg_offset;
           args_taints = fun_args_taints;
           guards = _;
@@ -2073,7 +2158,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               (Display_IL.string_of_exp callee)
               (Display_IL.string_of_exp fun_exp));
         let fun_lval =
-          { T.base = T.BArg fun_arg; offset = fun_arg_offset }
+          { T.base = T.base_of_formal fun_formal; offset = fun_arg_offset }
         in
         (* If the callback lives at [fun_lval] but behind an outer parameter
          * (reached via an [Arg] shape in the enclosing function), record that
@@ -2090,7 +2175,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                     |> String.concat " | "
                   in
                   m "REBIND: fun_lval=%s resolves to Arg(%s, %s)"
-                    (T.show_lval fun_lval) (T.show_arg outer_arg) pp_offsets);
+                    (T.show_lval fun_lval) (T.show_formal outer_arg) pp_offsets);
               Some (outer_arg, outer_offsets)
           | _ -> None
         in
@@ -2107,7 +2192,20 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               | None -> None)
           | _ -> None
         in
-        let fun_sig_opt =
+        let param_actual =
+          match (fun_formal, args) with
+          | Param fun_arg, Some actual_args
+            when fun_arg.index < List.length actual_args ->
+              Some (List.nth actual_args fun_arg.index)
+          | _ -> None
+        in
+        let fun_closure_opt =
+          match fun_formal with
+          | Captured _ -> (
+              match lval_to_taints fun_lval with
+              | Some (_, Fun (fun_sig, fun_env)) -> Some (fun_sig, fun_env)
+              | _ -> None)
+          | Param fun_arg ->
           (* Get the actual function expression from args if available. When
            * [fun_arg_offset] is non-empty (the callback was bound from
            * [arg[i]] in the callee), take the [i]-th element of the caller's
@@ -2153,9 +2251,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                       (IL.str_of_name var_name)
                       (T.show_offset_list leftover_offset));
                 (match lval_to_taints taint_lval with
-                | Some (_taints, Fun sig_) ->
+                | Some (_taints, Fun (sig_, fun_env)) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found signature in lval_env");
-                    Some sig_
+                    Some (sig_, fun_env)
                 | Some (_taints, _other_shape) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found non-Fun shape in lval_env");
                     None
@@ -2174,13 +2272,13 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                     m "TOSINKINCALL: Falling back to fun_lval lookup: %s"
                       (T.show_lval fun_lval));
                 (match lval_to_taints fun_lval with
-                | Some (_fun_taints, Fun fun_sig) ->
+                | Some (_fun_taints, Fun (fun_sig, fun_env)) ->
                     Log.debug (fun m ->
                         m "TOSINKINCALL: fun_lval resolved to Fun signature");
                     (* The '_fun_taints' are the taints (not its signature) of the actual
                      * function argument, and they are not used for instantiation, they are
                      * tracked by the caller like any other intra-procedural taint. *)
-                    Some fun_sig
+                    Some (fun_sig, fun_env)
                 | Some (_fun_taints, other_shape) ->
                     Log.debug (fun m ->
                         m "TOSINKINCALL: fun_lval resolved to non-Fun: %s"
@@ -2257,7 +2355,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                       Log.debug (fun m ->
                           m "TOSINKINCALL: Found signature for '%s'"
                             (Display_IL.string_of_exp exp_to_lookup));
-                      Some sig_
+                      Some (sig_, identity_env sig_)
                   | None ->
                       (* For anonymous classes, try looking up just the method name without the object *)
                       Log.debug (fun m ->
@@ -2278,7 +2376,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                               Log.debug (fun m ->
                                   m "TOSINKINCALL: Found signature for method name '%s'"
                                     (Display_IL.string_of_exp method_only_exp));
-                              Some sig_
+                              Some (sig_, identity_env sig_)
                           | None ->
                               Log.err (fun m ->
                                   m "%s: Could not find the shape of function argument '%s', and no signature found"
@@ -2345,22 +2443,24 @@ let rec instantiate_function_signature ~(lang : Lang.t)
            identity ([fun_exp], [fun_arg_offset]) and [args_taints], so two
            syntactically identical but distinct callbacks (different sids) do
            not share a cache entry within one instantiation tree. *)
-        let instantiate_callback (fun_sig : Signature.t) : call_effects option =
+        let instantiate_callback ((fun_sig, fun_env) : Signature.t * env) :
+            call_effects option =
           match
-            sig_cache_lookup recursive_cache fun_sig fun_exp
+            sig_cache_lookup recursive_cache fun_sig fun_env fun_exp
               callback_actual_args args_taints (depth + 1)
           with
           | Some cached -> cached
           | None ->
               let result =
                 instantiate_function_signature ~lang ~atoms ~max_offset
-                  ?outer_params lval_env fun_sig ~callee:fun_exp
+                  ?outer_params ~env:fun_env lval_env fun_sig ~callee:fun_exp
                   ~args:callback_actual_args args_taints ?lookup_sig
                   ~depth:(depth + 1) ~recursive_cache ()
               in
               sig_cache_store recursive_cache
                 {
                   cached_sig = fun_sig;
+                  cached_env = fun_env;
                   cached_callee = fun_exp;
                   cached_actual_args = callback_actual_args;
                   cached_args_taints = args_taints;
@@ -2370,8 +2470,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               result
         in
         under_out_guards
-        (match fun_sig_opt with
-        | Some fun_sig ->
+        (match fun_closure_opt with
+        | Some fun_closure ->
             Log.debug (fun m ->
                 m ~tags:sigs_tag
                   "** %s: Instantiated function call '%s' arguments: %s -> %s"
@@ -2387,7 +2487,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                     "TOSINKINCALL: Recursively instantiating sig with \
                      args_taints=%s"
                     (Effect.show_args_taints args_taints));
-              (match instantiate_callback fun_sig with
+              (match instantiate_callback fun_closure with
               | Some call_effects ->
                   Log.debug (fun m ->
                       m
@@ -2399,10 +2499,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                  (* Preserve the ToSinkInCall only if the actual callback maps to
                   * an enclosing param (BArg); else DROP — the inner [fun_arg]
                   * index would alias a wrong param and explode effects. *)
-                 (match args with
-                  | Some actual_args
-                    when fun_arg.index < List.length actual_args -> (
-                      match List.nth actual_args fun_arg.index with
+                 (match param_actual with
+                  | Some actual -> (
+                      match actual with
                       | IL.Unnamed exp | IL.Named (_, exp) ->
                           (match enclosing_param_of_exp exp with
                            | Some updated_arg ->
@@ -2414,7 +2513,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                      updated_arg.index);
                                [ ToSinkInCall
                                    { callee = exp;
-                                     arg = updated_arg;
+                                     arg = Param updated_arg;
                                      arg_offset = fun_arg_offset;
                                      args_taints;
                                      guards = Effect_guard.top; } ]
@@ -2425,10 +2524,10 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                      (Display_IL.string_of_exp fun_exp)
                                      (Display_IL.string_of_exp exp));
                                []))
-                  | _ ->
+                  | None ->
                       [ ToSinkInCall
                           { callee = fun_exp;
-                            arg = fun_arg;
+                            arg = fun_formal;
                             arg_offset = fun_arg_offset;
                             args_taints;
                             guards = Effect_guard.top; } ]))
@@ -2438,10 +2537,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
              * extraction). Preserve the ToSinkInCall effect, but update arg
              * to refer to the enclosing function's parameter. When
              * [rebind_arg_to_outer] set: one effect per outer offset, else [enclosing_param_of_exp], DROP on [None]. *)
-            (match args with
-             | Some actual_args
-               when fun_arg.index < List.length actual_args -> (
-                 match List.nth actual_args fun_arg.index with
+            (match param_actual with
+             | Some actual -> (
+                 match actual with
                  | IL.Unnamed exp | IL.Named (_, exp) -> (
                      match rebind_arg_to_outer with
                      | Some (outer_arg, outer_offsets) ->
@@ -2455,7 +2553,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                (Display_IL.string_of_exp callee)
                                (Display_IL.string_of_exp fun_exp)
                                (Display_IL.string_of_exp exp)
-                               (T.show_arg outer_arg) pp_offsets);
+                               (T.show_formal outer_arg) pp_offsets);
                          outer_offsets
                          |> List.map (fun arg_offset ->
                                 ToSinkInCall
@@ -2475,7 +2573,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     updated_arg.index);
                               [ ToSinkInCall
                                   { callee = exp;
-                                    arg = updated_arg;
+                                    arg = Param updated_arg;
                                     arg_offset = fun_arg_offset;
                                     args_taints;
                                     guards = Effect_guard.top; } ]
@@ -2486,13 +2584,25 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     (Display_IL.string_of_exp fun_exp)
                                     (Display_IL.string_of_exp exp));
                               [])))
-             | _ ->
-                 [ ToSinkInCall
-                     { callee = fun_exp;
-                       arg = fun_arg;
-                       arg_offset = fun_arg_offset;
-                       args_taints;
-                       guards = Effect_guard.top; } ])))
+             | None -> (
+                 match (fun_formal, rebind_arg_to_outer) with
+                 | Captured _, Some (outer_arg, outer_offsets) ->
+                     outer_offsets
+                     |> List.map (fun arg_offset ->
+                            ToSinkInCall
+                              { callee = fun_exp;
+                                arg = outer_arg;
+                                arg_offset;
+                                args_taints;
+                                guards = Effect_guard.top; })
+                 | Captured _, None -> []
+                 | Param _, _ ->
+                     [ ToSinkInCall
+                         { callee = fun_exp;
+                           arg = fun_formal;
+                           arg_offset = fun_arg_offset;
+                           args_taints;
+                           guards = Effect_guard.top; } ]))))
   in
   let effects_list = taint_sig.effects |> Effects.elements in
   let call_effects = effects_list |> List.concat_map inst_effect in
@@ -2548,9 +2658,19 @@ let rec shape_any_orig (pred : T.orig -> bool) (shape : shape) : bool =
          | `None | `Clean -> false)
         || shape_any_orig pred nested
       ) fields
-  | Fun sig_ ->
+  | Fun (sig_, env) ->
       Effects.exists (fun (eff : Effect.t) -> effect_any_orig pred eff)
         sig_.Signature.effects
+      || List.exists
+           (fun (_, entry) ->
+             match entry with
+             | Ref lval -> pred (T.Var lval)
+             | Val (Cell (xtaint, nested)) ->
+                 (match xtaint with
+                  | `Tainted taints -> taints_any_orig pred taints
+                  | `None | `Clean -> false)
+                 || shape_any_orig pred nested)
+           env
 
 and effect_any_orig (pred : T.orig -> bool) (eff : Effect.t) : bool =
   match eff with
@@ -2571,24 +2691,30 @@ and effect_any_orig (pred : T.orig -> bool) (eff : Effect.t) : bool =
         taints_any_orig pred taints || shape_any_orig pred shp
       ) args_taints
 
-(* BGlob-dependent effect: merge_dispatch_signatures drops these (impl globals resolve wrong at the interface call site). *)
+(* BGlob- or BEnv-dependent effect: merge_dispatch_signatures drops these (impl globals and captured variables resolve wrong at the interface call site). *)
 let effect_has_bglob_dependency (eff : Effect.t) : bool =
   let orig_is_bglob (orig : T.orig) : bool =
     match orig with
-    | T.Var { base = T.BGlob _; _ }
-    | T.Shape_var { base = T.BGlob _; _ } -> true
+    | T.Var { base = T.BGlob _ | T.BEnv _; _ }
+    | T.Shape_var { base = T.BGlob _ | T.BEnv _; _ } -> true
     | _ -> false
   in
   effect_any_orig orig_is_bglob eff
   || (match eff with
       | Effect.ToLval { lval; _ } ->
-          (match lval.T.base with T.BGlob _ -> true | _ -> false)
+          (match lval.T.base with T.BGlob _ | T.BEnv _ -> true | _ -> false)
       | _ -> false)
 
 let remap_lval_barg (remap_fn : T.arg -> T.arg) (lval : T.lval) : T.lval =
   match lval.base with
   | T.BArg arg -> { lval with base = T.BArg (remap_fn arg) }
-  | T.BGlob _ | T.BThis -> lval
+  | T.BGlob _ | T.BThis | T.BEnv _ -> lval
+
+let remap_formal_barg (remap_fn : T.arg -> T.arg) (formal : T.formal) :
+    T.formal =
+  match formal with
+  | Param arg -> Param (remap_fn arg)
+  | Captured _ -> formal
 
 let rec remap_taint_barg (remap_fn : T.arg -> T.arg) (taint : T.taint)
     : T.taint =
@@ -2618,13 +2744,20 @@ let rec remap_shape_barg (remap_fn : T.arg -> T.arg) (shape : shape) : shape =
   match shape with
   | Bot -> Bot
   | Obj obj -> Obj (Fields.map (remap_cell_barg remap_fn) obj)
-  | Arg (arg, offsets) -> Arg (remap_fn arg, offsets)
-  | Fun sig_ ->
+  | Arg (arg, offsets) -> Arg (remap_formal_barg remap_fn arg, offsets)
+  | Fun (sig_, env) ->
       Fun
-        {
-          sig_ with
-          Signature.effects = remap_effects_barg remap_fn sig_.Signature.effects;
-        }
+        ( {
+            sig_ with
+            Signature.effects =
+              remap_effects_barg remap_fn sig_.Signature.effects;
+          },
+          List_.map
+            (fun (x, entry) ->
+              match entry with
+              | Ref lval -> (x, Ref (remap_lval_barg remap_fn lval))
+              | Val cell -> (x, Val (remap_cell_barg remap_fn cell)))
+            env )
 
 and remap_cell_barg (remap_fn : T.arg -> T.arg) (cell : cell) : cell =
   let (Cell (xtaint, shape)) = cell in
@@ -2668,7 +2801,7 @@ and remap_effect_barg (remap_fn : T.arg -> T.arg) (eff : Effect.t)
           lval = remap_lval_barg remap_fn lval;
           guards }
   | Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ->
-      let arg = remap_fn arg in
+      let arg = remap_formal_barg remap_fn arg in
       let args_taints =
         List.map
           (function
@@ -2788,7 +2921,7 @@ let strip_receiver ~(interface_param_count : int) (params : Signature_params.par
 (** Merges the dispatch implementation signatures. BArg is normalised to the
     representative's params, else to the first impl's; receivers are
     stripped; the effects are unioned, except the members' effects that
-    depend on a global variable (a BGlob base). The second argument is the
+    depend on a global or captured variable (a BGlob or BEnv base). The second argument is the
     interface signature, returned unchanged when there are no impls. On
     incompatible params the first signature is returned. *)
 let merge_dispatch_signatures ?(representative_sig : Signature.t option)
@@ -2831,6 +2964,7 @@ let merge_dispatch_signatures ?(representative_sig : Signature.t option)
       let members = filter_bglob (union_onto ~canonical Effects.empty sigs) in
       { Signature.params = canonical;
         params_il = [];
+        captured = [];
         effects = Effects.union representative.Signature.effects members }
   | None, [] -> interface_sig
   | None, [ single ] ->
@@ -2841,7 +2975,7 @@ let merge_dispatch_signatures ?(representative_sig : Signature.t option)
       let filtered = filter_bglob merged_effects in
       (* [params_il = []]: merged sig fuses impls, so param-anchored guards can't
          re-anchor and stay undecided → may over-report, never under-report. *)
-      { Signature.params = canonical; params_il = []; effects = filtered }
+      { Signature.params = canonical; params_il = []; captured = []; effects = filtered }
 
 let%test "strip_receiver: no Other prefix" =
   let params = Signature_params.[ P "ctx"; P "item" ] in
@@ -3024,10 +3158,10 @@ let%test "build_barg_remap: keyword slot in another position" =
       && String.equal rx.T.name "a" && rx.T.index =|= 0
 
 let empty_sig : Signature.t =
-  { Signature.params = []; params_il = []; effects = Effects.empty }
+  { Signature.params = []; params_il = []; captured = []; effects = Effects.empty }
 
 let%test "merge_dispatch: empty list" =
-  let iface = { Signature.params = [ P "x" ]; params_il = []; effects = Effects.empty } in
+  let iface = { Signature.params = [ P "x" ]; params_il = []; captured = []; effects = Effects.empty } in
   let merged = merge_dispatch_signatures [] iface in
   List.equal Signature_params.equal_param
     merged.Signature.params Signature_params.[ P "x" ]
@@ -3037,7 +3171,7 @@ let%test "merge_dispatch: single sig, receiver stripped" =
   let eff = mk_return_effect "ctx" 0 in
   let sig_ =
     { Signature.params = [ Other; P "ctx"; P "item" ];
-      params_il = []; effects = Effects.singleton eff }
+      params_il = []; captured = []; effects = Effects.singleton eff }
   in
   let merged = merge_dispatch_signatures [ sig_ ] empty_sig in
   List.equal Signature_params.equal_param
@@ -3046,11 +3180,11 @@ let%test "merge_dispatch: single sig, receiver stripped" =
 
 let%test "merge_dispatch: two impls same names" =
   let sig1 =
-    { Signature.params = [ Other; P "ctx" ]; params_il = [];
+    { Signature.params = [ Other; P "ctx" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_return_effect "ctx" 0) }
   in
   let sig2 =
-    { Signature.params = [ Other; P "ctx" ]; params_il = [];
+    { Signature.params = [ Other; P "ctx" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_tolval_effect "ctx" 0 "ctx" 0) }
   in
   let merged = merge_dispatch_signatures [ sig1; sig2 ] empty_sig in
@@ -3060,11 +3194,11 @@ let%test "merge_dispatch: two impls same names" =
 
 let%test "merge_dispatch: different names, remap to canonical" =
   let sig1 =
-    { Signature.params = [ Other; P "feature" ]; params_il = [];
+    { Signature.params = [ Other; P "feature" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_return_effect "feature" 0) }
   in
   let sig2 =
-    { Signature.params = [ Other; P "flag" ]; params_il = [];
+    { Signature.params = [ Other; P "flag" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_return_effect "flag" 0) }
   in
   let merged = merge_dispatch_signatures [ sig1; sig2 ] empty_sig in
@@ -3079,11 +3213,11 @@ let%test "merge_dispatch: different names, remap to canonical" =
 
 let%test "merge_dispatch: two params, different names, full remap" =
   let sig1 =
-    { Signature.params = [ Other; P "a"; P "b" ]; params_il = [];
+    { Signature.params = [ Other; P "a"; P "b" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_tolval_effect "b" 1 "a" 0) }
   in
   let sig2 =
-    { Signature.params = [ Other; P "x"; P "y" ]; params_il = [];
+    { Signature.params = [ Other; P "x"; P "y" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_tolval_effect "y" 1 "x" 0) }
   in
   let merged = merge_dispatch_signatures [ sig1; sig2 ] empty_sig in
@@ -3101,11 +3235,11 @@ let%test "merge_dispatch: two params, different names, full remap" =
 
 let%test "merge_dispatch: no receiver" =
   let sig1 =
-    { Signature.params = [ P "x" ]; params_il = [];
+    { Signature.params = [ P "x" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_return_effect "x" 0) }
   in
   let sig2 =
-    { Signature.params = [ P "y" ]; params_il = [];
+    { Signature.params = [ P "y" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_return_effect "y" 0) }
   in
   let merged = merge_dispatch_signatures [ sig1; sig2 ] empty_sig in
@@ -3115,7 +3249,7 @@ let%test "merge_dispatch: no receiver" =
 
 let%test "merge_dispatch: three impls" =
   let mk (_recv : string) (param : string) : Signature.t =
-    { Signature.params = [ Other; P param ]; params_il = [];
+    { Signature.params = [ Other; P param ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_return_effect param 0) }
   in
   let merged =
@@ -3147,11 +3281,11 @@ let mk_glob_return_effect (glob : string) : Effect.t =
 
 let%test "merge_dispatch: representative's global effect survives, the member's does not" =
   let representative =
-    { Signature.params = [ P "x" ]; params_il = [];
+    { Signature.params = [ P "x" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_glob_return_effect "rep_glob") }
   in
   let member =
-    { Signature.params = [ P "x" ]; params_il = [];
+    { Signature.params = [ P "x" ]; params_il = []; captured = [];
       effects = Effects.singleton (mk_glob_return_effect "member_glob") }
   in
   let merged =

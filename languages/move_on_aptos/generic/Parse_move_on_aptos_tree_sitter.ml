@@ -1356,7 +1356,7 @@ let map_spec_block_target (env : env) (x : CST.spec_block_target) : G.any =
               G.fkind = (G.Function, sc);
               G.fparams = params;
               G.frettype = ret_type;
-              G.fbody = G.FBNothing;
+              G.fcaptures = G.no_captures; fbody = G.FBNothing;
             }
           in
           G.Anys [ G.Def (entity, G.FuncDef def_) ]
@@ -1454,6 +1454,7 @@ let map_function_signature (env : env) attrs
       fkind = (G.Function, fun_);
       fparams = params;
       frettype = Some ret_type;
+      fcaptures = G.no_captures;
       fbody = G.FBNothing;
     }
   in
@@ -1781,6 +1782,7 @@ and map_expr (env : env) (x : CST.expr) =
           fkind = (G.LambdaKind, lp);
           fparams = params;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBExpr body;
         }
       in
@@ -2113,6 +2115,7 @@ and map_spec_func (env : env) (x : CST.spec_func) =
           fkind = (G.Function, v1);
           fparams = params;
           frettype = Some ret_type;
+          fcaptures = G.no_captures;
           fbody =
             (match body with
             | None -> G.FBNothing
@@ -2130,6 +2133,7 @@ and map_spec_func (env : env) (x : CST.spec_func) =
           fkind = (G.Function, fun_);
           fparams = params;
           frettype = Some ret_type;
+          fcaptures = G.no_captures;
           fbody = G.FBNothing;
         }
       in

@@ -46,3 +46,11 @@ val drop_taints_if_bool_or_number :
 
 val drop_writes_to_own_vars :
   IL.fun_cfg -> Shape_and_sig.Effects.t -> Shape_and_sig.Effects.t
+
+val captured_of_fun_cfg : IL.fun_cfg -> (IL.name * AST_generic.capture_mode) list
+
+val seed_captured_vars :
+  Lang.t ->
+  (IL.name * AST_generic.capture_mode) list ->
+  Taint_lval_env.t ->
+  Taint_lval_env.t

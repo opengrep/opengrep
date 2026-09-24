@@ -32,7 +32,7 @@ type call_effect =
     }
   | ToSinkInCall of {
       callee : IL.exp;
-      arg : Taint.arg;
+      arg : Taint.formal;
       arg_offset : Taint.offset list;
       args_taints : Shape_and_sig.Effect.args_taints;
       guards : Effect_guard.t;
@@ -53,9 +53,9 @@ val merge_dispatch_signatures :
 (** Merges the dispatch implementation signatures. BArg is normalised to the
  * representative's params, else to the first impl's; receivers are stripped;
  * the effects are unioned, except the members' effects that depend on a
- * global variable (a BGlob base). The second argument is the interface
- * signature, returned unchanged when there are no impls. On incompatible
- * params the first signature is returned. *)
+ * global or captured variable (a BGlob or BEnv base). The second argument
+ * is the interface signature, returned unchanged when there are no impls.
+ * On incompatible params the first signature is returned. *)
 
 val guard_valid_under :
   lang:Lang.t -> Effect_guard.t -> Taint.call_site list -> Effect_guard.t -> bool
@@ -65,6 +65,7 @@ val instantiate_function_signature :
   atoms:Effect_guard.atoms ->
   ?max_offset:int ->
   ?outer_params:IL.param list ->
+  ?env:Shape_and_sig.Shape.env ->
   Taint_lval_env.t ->
   Shape_and_sig.Signature.t ->
   callee:IL.exp ->

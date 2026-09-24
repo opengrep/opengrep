@@ -67,6 +67,7 @@ let mk_var_or_func tlet params tret body =
           frettype = tret;
           fkind = (G.Function, tlet);
           (* TODO? maybe generate FBExpr when we can? *)
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body;
         }
 
@@ -379,6 +380,7 @@ and expr e =
           G.fparams = fb v1;
           frettype = None;
           fkind = (G.Function, t);
+          fcaptures = G.no_captures;
           fbody = G.FBExpr v2;
         }
       in
@@ -397,6 +399,7 @@ and expr e =
           G.fparams = fb params;
           frettype = None;
           fkind = (G.Function, t);
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body_stmt;
         }
       |> G.e
@@ -579,7 +582,7 @@ and class_field (fld : class_field) : G.field =
             let e = expr e in
             G.FBExpr e
       in
-      let fdef = G.{ fkind = (Method, m_tok); fparams; frettype; fbody } in
+      let fdef = G.{ fkind = (Method, m_tok); fparams; frettype; fcaptures = G.no_captures; fbody } in
       G.fld (ent, G.FuncDef fdef)
   | InstanceVar { inst_tok = _; inst_name; inst_type; inst_expr } ->
       let id = ident inst_name in

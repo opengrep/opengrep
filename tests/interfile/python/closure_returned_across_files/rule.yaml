@@ -1,0 +1,14 @@
+rules:
+  - id: closure-returned-across-files
+    languages: [python]
+    severity: ERROR
+    message: >
+      A closure returned from another file reads the variables it captured
+      there when it is called.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

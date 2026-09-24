@@ -470,6 +470,7 @@ and map_function_body (env : env) ((v1, v2, v3, v4) : CST.function_body)
     G.fparams = v1;
     frettype = None;
     fkind = (G.Function, token env name);
+    fcaptures = G.no_captures;
     fbody = G.FBStmt body;
   }
 

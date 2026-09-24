@@ -419,9 +419,12 @@ and unify_shape ~lang shape1 shape2 =
       (* 'Bot' acts like a do-not-care. *)
       shape
   | Obj obj1, Obj obj2 -> Obj (unify_obj ~lang obj1 obj2)
-  | ( Fun { params = params1; params_il = params_il1; effects = effects1 },
-      Fun { params = params2; params_il = params_il2; effects = effects2 } )
-    ->
+  | ( Fun
+        ( ({ params = params1; params_il = params_il1; effects = effects1; _ } as
+           sig1),
+          env1 ),
+      Fun ({ params = params2; params_il = params_il2; effects = effects2; _ }, env2)
+    ) ->
       let equal_il_param p1 p2 =
         match
           (IL_helpers.pname_of_param p1, IL_helpers.pname_of_param p2)
@@ -433,11 +436,9 @@ and unify_shape ~lang shape1 shape2 =
       if Signature_params.equal_params params1 params2
          && List.equal equal_il_param params_il1 params_il2
       then
-        Fun {
-          params = params1;
-          params_il = params_il1;
-          effects = Effects.union effects1 effects2;
-        }
+        Fun
+          ( { sig1 with effects = Effects.union effects1 effects2 },
+            unify_env ~lang env1 env2 )
       else (
         (* Two Fun shapes from different lambdas. Their effects'
          * guards anchor in distinct IL.names (sids differ), so we
@@ -451,7 +452,7 @@ and unify_shape ~lang shape1 shape2 =
               (Signature_params.show_params params1)
               (Signature_params.show_params params2));
         shape1)
-  | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_arg arg1 arg2 ->
+  | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_formal arg1 arg2 ->
       (* Same parameter — set-union the alternative offsets so a value
        * bound to different offsets across branches retains every
        * alternative. [sort_uniq] gives a canonical order and dedups. *)
@@ -472,7 +473,7 @@ and unify_shape ~lang shape1 shape2 =
        * TODO: record and solve constraints. *)
       Log.warn (fun m ->
           m "Trying to unify two different arg shapes: %s ~ %s"
-            (T.show_arg arg1) (T.show_arg arg2));
+            (T.show_formal arg1) (T.show_formal arg2));
       shape1
   (* 'Arg' acts like a shape variable. *)
   | Arg _, (Obj _ as obj)
@@ -495,6 +496,18 @@ and unify_shape ~lang shape1 shape2 =
 and unify_obj ~lang obj1 obj2 =
   (* THINK: Apply taint_MAX_OBJ_FIELDS limit ? *)
   Fields.union (fun _ x y -> Some (unify_cell ~lang x y)) obj1 obj2
+
+(* Both environments belong to the same code, so they bind the same
+ * variables in the same order. *)
+and unify_env ~lang (env1 : env) (env2 : env) : env =
+  List.map2
+    (fun ((x, entry1) as binding1) (_, entry2) ->
+      match (entry1, entry2) with
+      | Val cell1, Val cell2 -> (x, Val (unify_cell ~lang cell1 cell2))
+      | Ref _, _
+      | Val _, Ref _ ->
+          binding1)
+    env1 env2
 
 (*********************************************************)
 (* Object shapes *)
@@ -590,7 +603,7 @@ and gather_all_taints_in_shape_acc acc = function
       (* One [Shape_var] per alternative offset. *)
       List.fold_left
         (fun acc off ->
-          let lval = { T.base = T.BArg arg; offset = off } in
+          let lval = { T.base = T.base_of_formal arg; offset = off } in
           let taint = T.taint_of_orig (T.Shape_var lval) in
           Taints.add_taint taint acc)
         acc offsets
@@ -749,7 +762,7 @@ and bound_fun_shape ~levels (shape : shape) : shape =
   | Bot
   | Arg _ ->
       shape
-  | Fun sig_ ->
+  | Fun (sig_, env) ->
       if levels <= 0 then Bot
       else
         let effects =
@@ -757,8 +770,22 @@ and bound_fun_shape ~levels (shape : shape) : shape =
             (map_effect_shapes ~widen:(bound_fun_shape ~levels:(levels - 1)))
             sig_.Signature.effects
         in
-        if phys_equal effects sig_.Signature.effects then shape
-        else Fun { sig_ with Signature.effects }
+        let env' =
+          List_.map
+            (fun ((x, entry) as binding) ->
+              match entry with
+              | Ref _ -> binding
+              | Val (Cell (xtaint, inner)) ->
+                  let inner' = bound_fun_shape ~levels:(levels - 1) inner in
+                  if phys_equal inner' inner then binding
+                  else (x, Val (Cell (xtaint, inner'))))
+            env
+        in
+        if
+          phys_equal effects sig_.Signature.effects
+          && List.for_all2 phys_equal env' env
+        then shape
+        else Fun ({ sig_ with Signature.effects }, env')
   | Obj obj ->
       let changed = ref false in
       let obj' =

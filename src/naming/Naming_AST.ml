@@ -276,13 +276,6 @@ let lookup_nonlocal_scope id scopes =
       let _ = error tok "no outerscope" in
       None
 
-(* for a PHP closure [use]: the variable of the scope enclosing the closure,
- * the file's variables when the closure is at the top level *)
-let lookup_enclosing_scope (s, _) scopes =
-  match !(scopes.blocks) with
-  | _ :: xxs -> lookup s (xxs @ [ !(scopes.global) ])
-  | [] -> None
-
 let has_block_scope (lang : Lang.t) =
   match lang with
   (* These languages don't have block scope *)
@@ -867,9 +860,33 @@ class ['self] resolve_visitor env lang =
         | _ ->
             !(env.hidden_blocks)
       in
+      (* A capture refers to a variable where the closure is created; an
+         initialised capture is a variable of the closure, whose initial
+         value is computed there. *)
+      let captures =
+        x.fcaptures.clist
+        |> List_.map (fun (c : capture) ->
+               match c.cinit with
+               | None -> (c, lookup_scope_opt (fst c.cname) env)
+               | Some init ->
+                   self#visit_expr venv init;
+                   (c, None))
+      in
+      let x = { x with fcaptures = no_captures } in
       Common.save_excursion_unsafe env.hidden_blocks hidden_blocks (fun () ->
       with_new_context InFunction env (fun () ->
           with_new_function_scope new_params env.names (fun () ->
+              captures
+              |> List.iter (fun ((c : capture), resolved) ->
+                     let id, id_info = c.cname in
+                     match (c.cinit, resolved) with
+                     | None, Some resolved ->
+                         set_resolved env id_info resolved;
+                         add_ident_current_scope id resolved env.names
+                     | None, None -> ()
+                     | Some _, _ ->
+                         declare_var env lang id id_info ~explicit:true None
+                           None);
               (* Each [ParamPattern]'s synthetic implicit binder was just
                * registered as a Parameter in [new_params]. The inner
                * pattern's leaves still need to be declared in the
@@ -1097,8 +1114,6 @@ class ['self] resolve_visitor env lang =
             match s with
             | "global" -> lookup_global_scope
             | "nonlocal" -> lookup_nonlocal_scope
-            (* a PHP closure [use ($x)] *)
-            | "use" -> lookup_enclosing_scope
             | _ ->
                 error tok (spf "unrecognized UseOuterDecl directive: %s" s);
                 lookup_global_scope

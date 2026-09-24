@@ -90,8 +90,9 @@ module rec Shape : sig
             Tuples or lists are also represented by 'Obj' shapes! We just treat
             constant indexes as if they were fields, and use 'Oany' to capture
             the non-constant indexes. *)
-    | Arg of Taint.arg * Taint.offset list list
-        (** Represents the yet-unknown shape of a function/method parameter,
+    | Arg of Taint.formal * Taint.offset list list
+        (** Represents the yet-unknown shape of a function/method parameter
+            or of a variable captured by a closure,
             optionally extended with one or more offset paths into the
             parameter. Each inner [Taint.offset list] is a single path; the
             outer list is a disjunction of paths — a [cb] bound across two
@@ -100,8 +101,15 @@ module rec Shape : sig
             [Arg (arg, [[]])]: one path, empty. At HOF dispatch the engine
             enumerates each path; at call-site instantiation each path is
             resolved against the caller's actual argument. *)
-    | Fun of Signature.t
-        (** Function shapes. These enable Semgrep to handle HOFs. *)
+    | Fun of Signature.t * env
+        (** A closure: its code and the environment binding the variables
+            the code captures. These enable Semgrep to handle HOFs. *)
+
+  and env = (IL.name * env_entry) list
+
+  and env_entry =
+    | Ref of Taint.lval  (** Captured by reference: the variable itself. *)
+    | Val of cell  (** Captured by value: the value at creation. *)
 
   and cell =
     | Cell of Xtaint.t * shape
@@ -178,6 +186,7 @@ module rec Shape : sig
       test; identity and fusion keying keep using [equal_cell]. *)
 
   val equal_shape : shape -> shape -> bool
+  val equal_env : env -> env -> bool
   val compare_shape : shape -> shape -> int
   val show_cell : cell -> string
   val show_shape : shape -> string
@@ -186,8 +195,15 @@ end = struct
   type shape =
     | Bot
     | Obj of obj
-    | Arg of T.arg * T.offset list list
-    | Fun of Signature.t
+    | Arg of T.formal * T.offset list list
+    | Fun of Signature.t * env
+  and env =
+    ((IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
+    * env_entry)
+    list
+  and env_entry =
+    | Ref of (T.lval[@equal fun l1 l2 -> Int.equal (T.compare_lval l1 l2) 0])
+    | Val of cell
   and cell = Cell of Xtaint.t * shape
   and obj = cell Fields.t
   [@@deriving eq]
@@ -196,6 +212,20 @@ end = struct
   (* Equality *)
   (*************************************)
   (* TODO: Should we just define these in terms of `compare_*` ? *)
+
+  let equal_env_by (equal_cell : cell -> cell -> bool) (env1 : env)
+      (env2 : env) : bool =
+    List.equal
+      (fun (x1, e1) (x2, e2) ->
+        Int.equal (IL.compare_name x1 x2) 0
+        &&
+        match (e1, e2) with
+        | Ref l1, Ref l2 -> Int.equal (T.compare_lval l1 l2) 0
+        | Val c1, Val c2 -> equal_cell c1 c2
+        | Ref _, Val _
+        | Val _, Ref _ ->
+            false)
+      env1 env2
 
   (* Depth-limited equality to prevent infinite recursion and force convergence
    * for pathological patterns like obj[key] = [obj[key], item] that create
@@ -214,13 +244,15 @@ end = struct
       match (shape1, shape2) with
       | Bot, Bot -> true
       | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
-      | Arg (arg1, offsets1), Arg (arg2, offsets2) ->
-          T.equal_arg arg1 arg2
+      | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
+          T.equal_formal formal1 formal2
           && Int.equal
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
+      | Fun (sig1, env1), Fun (sig2, env2) ->
+          Signature.equal sig1 sig2
+          && equal_env_by (equal_cell_depth (depth + 1)) env1 env2
       | Bot, _
       | Obj _, _
       | Arg _, _
@@ -250,13 +282,15 @@ end = struct
       match (shape1, shape2) with
       | Bot, Bot -> true
       | Obj obj1, Obj obj2 -> equal_obj_with_guards_depth (depth + 1) obj1 obj2
-      | Arg (arg1, offsets1), Arg (arg2, offsets2) ->
-          T.equal_arg arg1 arg2
+      | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
+          T.equal_formal formal1 formal2
           && Int.equal
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun sig1, Fun sig2 -> Signature.equal_with_guards sig1 sig2
+      | Fun (sig1, env1), Fun (sig2, env2) ->
+          Signature.equal_with_guards sig1 sig2
+          && equal_env_by (equal_cell_with_guards_depth (depth + 1)) env1 env2
       | Bot, _
       | Obj _, _
       | Arg _, _
@@ -268,6 +302,8 @@ end = struct
 
   let equal_cell_with_guards cell1 cell2 =
     equal_cell_with_guards_depth 0 cell1 cell2
+
+  let equal_env env1 env2 = equal_env_by equal_cell env1 env2
 
   (*************************************)
   (* Comparison *)
@@ -284,11 +320,14 @@ end = struct
     match (shape1, shape2) with
     | Bot, Bot -> 0
     | Obj obj1, Obj obj2 -> compare_obj obj1 obj2
-    | Arg (arg1, offsets1), Arg (arg2, offsets2) -> (
-        match T.compare_arg arg1 arg2 with
+    | Arg (formal1, offsets1), Arg (formal2, offsets2) -> (
+        match T.compare_formal formal1 formal2 with
         | 0 -> List.compare (List.compare T.compare_offset) offsets1 offsets2
         | other -> other)
-    | Fun sig1, Fun sig2 -> Signature.compare sig1 sig2
+    | Fun (sig1, env1), Fun (sig2, env2) -> (
+        match Signature.compare sig1 sig2 with
+        | 0 -> compare_env env1 env2
+        | other -> other)
     | Bot, (Obj _ | Arg _ | Fun _)
     | Obj _, (Arg _ | Fun _)
     | Arg _, Fun _ ->
@@ -299,6 +338,19 @@ end = struct
         1
 
   and compare_obj obj1 obj2 = Fields.compare compare_cell obj1 obj2
+
+  and compare_env env1 env2 =
+    List.compare
+      (fun (x1, e1) (x2, e2) ->
+        match IL.compare_name x1 x2 with
+        | 0 -> (
+            match (e1, e2) with
+            | Ref l1, Ref l2 -> T.compare_lval l1 l2
+            | Val c1, Val c2 -> compare_cell c1 c2
+            | Ref _, Val _ -> -1
+            | Val _, Ref _ -> 1)
+        | other -> other)
+      env1 env2
 
   (*************************************)
   (* Pretty-printing *)
@@ -314,13 +366,13 @@ end = struct
     | Arg (arg, []) ->
         (* No offsets recorded — should not arise from normal
            construction. *)
-        "'{" ^ T.show_arg arg ^ "}"
+        "'{" ^ T.show_formal arg ^ "}"
     | Arg (arg, [ [] ]) ->
         (* Single empty offset — bare-parameter shape. *)
-        "'{" ^ T.show_arg arg ^ "}"
+        "'{" ^ T.show_formal arg ^ "}"
     | Arg (arg, [ off ]) ->
         (* Single non-empty offset. *)
-        "'{" ^ T.show_arg arg
+        "'{" ^ T.show_formal arg
         ^ (off |> List.map T.show_offset |> String.concat "")
         ^ "}"
     | Arg (arg, offsets) ->
@@ -332,8 +384,17 @@ end = struct
         let offsets_str =
           offsets |> List.map show_offset_path |> String.concat " | "
         in
-        "'{" ^ T.show_arg arg ^ offsets_str ^ "}"
-    | Fun fsig -> Signature.show fsig
+        "'{" ^ T.show_formal arg ^ offsets_str ^ "}"
+    | Fun (fsig, []) -> Signature.show fsig
+    | Fun (fsig, env) -> spf "%s with [%s]" (Signature.show fsig) (show_env env)
+
+  and show_env env =
+    env
+    |> List.map (fun ((x : IL.name), entry) ->
+           match entry with
+           | Ref lval -> spf "%s -> &%s" (fst x.ident) (T.show_lval lval)
+           | Val cell -> spf "%s -> %s" (fst x.ident) (show_cell cell))
+    |> String.concat "; "
 
   and show_obj obj =
     obj |> Fields.to_seq
@@ -442,9 +503,10 @@ and Effect : sig
         callee : IL.exp;
             (** The function expression being called, it is used for recording a
                 taint trace. *)
-        arg : Taint.arg;
-            (** The formal parameter corresponding to the function shape, this
-                is what we instantiate at a specific call site. *)
+        arg : Taint.formal;
+            (** The formal (a parameter, or a variable captured by the
+                closure) holding the function, this is what we instantiate
+                at a specific call site. *)
         arg_offset : Taint.offset list;
             (** When the callback was obtained via indexing/field access into
                 [arg] (e.g. [callback = impl[0]] after destructuring a packed
@@ -542,7 +604,7 @@ end = struct
     | ToLval of taints_to_lval
     | ToSinkInCall of {
         callee : IL.exp;
-        arg : Taint.arg;
+        arg : Taint.formal;
         arg_offset : Taint.offset list;
         args_taints : args_taints;
         guards : Effect_guard.t;
@@ -655,7 +717,7 @@ end = struct
             guards = _;
           } ) -> (
         (* Comparing "fvar"s is cheap so better to do it first. *)
-        match T.compare_arg fvar1 fvar2 with
+        match T.compare_formal fvar1 fvar2 with
         | 0 -> (
             match List.compare T.compare_offset foff1 foff2 with
             | 0 -> (
@@ -734,7 +796,7 @@ end = struct
         Printf.sprintf "%s%s ----> %s" (T.show_taints ~truncate_guards taints)
           (Effect_guard.show_in_brackets ~truncate_guards guards) (T.show_lval lval)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
-        Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
+        Printf.sprintf "'call<%s>%s%s" (T.show_formal arg)
           (show_args_taints ~truncate_guards args_taints)
           (Effect_guard.show_in_brackets ~truncate_guards guards)
 
@@ -982,6 +1044,9 @@ and Signature : sig
             was added and is kept for now to avoid churning the
             consumers that read it. Consider deriving [params] lazily
             from [params_il] and dropping the field. *)
+    captured : (IL.name * AST_generic.capture_mode) list;
+        (** The variables of enclosing functions the code reads or writes;
+            a closure's environment binds them (see [Shape.Fun]). *)
     effects : Effects.t;
   }
   (** * The 'params' act like an universal quantifier, we need them to later *
@@ -1004,29 +1069,58 @@ end = struct
   type t = {
     params : Signature_params.params;
     params_il : IL.param list;
+    captured : (IL.name * AST_generic.capture_mode) list;
     effects : Effects.t;
   }
 
+  let compare_captured captured1 captured2 =
+    List.compare
+      (fun (x1, mode1) (x2, mode2) ->
+        match IL.compare_name x1 x2 with
+        | 0 -> AST_generic.compare_capture_mode mode1 mode2
+        | other -> other)
+      captured1 captured2
+
   (* [params_il] is instantiation metadata; identity is determined by
-     [params] and [effects] alone. *)
-  let equal { params = params1; params_il = _; effects = effects1 }
-      { params = params2; params_il = _; effects = effects2 } =
+     [params], [captured] and [effects] alone. *)
+  let equal
+      { params = params1; params_il = _; captured = captured1; effects = effects1 }
+      { params = params2; params_il = _; captured = captured2; effects = effects2 } =
     Signature_params.equal_params params1 params2
+    && Int.equal (compare_captured captured1 captured2) 0
     && Effects.equal effects1 effects2
 
-  let equal_with_guards { params = params1; params_il = _; effects = effects1 }
-      { params = params2; params_il = _; effects = effects2 } =
+  let equal_with_guards
+      { params = params1; params_il = _; captured = captured1; effects = effects1 }
+      { params = params2; params_il = _; captured = captured2; effects = effects2 } =
     Signature_params.equal_params params1 params2
+    && Int.equal (compare_captured captured1 captured2) 0
     && Effects.equal_with_guards effects1 effects2
 
-  let compare { params = params1; params_il = _; effects = effects1 }
-      { params = params2; params_il = _; effects = effects2 } =
+  let compare
+      { params = params1; params_il = _; captured = captured1; effects = effects1 }
+      { params = params2; params_il = _; captured = captured2; effects = effects2 } =
     match Signature_params.compare_params params1 params2 with
-    | 0 -> Effects.compare effects1 effects2
+    | 0 -> (
+        match compare_captured captured1 captured2 with
+        | 0 -> Effects.compare effects1 effects2
+        | other -> other)
     | other -> other
 
-  let show ?(truncate_guards = true) { params; params_il = _; effects } =
-    spf "%s => {%s}" (Signature_params.show_params params)
+  let show ?(truncate_guards = true) { params; params_il = _; captured; effects } =
+    let captured =
+      match captured with
+      | [] -> ""
+      | _ ->
+          spf " captures %s"
+            (captured
+            |> List.map (fun ((x : IL.name), mode) ->
+                   match (mode : AST_generic.capture_mode) with
+                   | Capture_by_reference -> "&" ^ fst x.ident
+                   | Capture_by_value -> fst x.ident)
+            |> String.concat ", ")
+    in
+    spf "%s%s => {%s}" (Signature_params.show_params params) captured
       (Effects.show ~truncate_guards effects)
 end
 

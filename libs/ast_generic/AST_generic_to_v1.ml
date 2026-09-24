@@ -1131,7 +1131,13 @@ and map_function_kind = function
   | BlockCases -> `BlockCases
 
 and map_function_definition
-    { G.fkind; fparams = v_fparams; frettype = v_frettype; fbody = v_fbody } =
+    {
+      G.fkind;
+      fparams = v_fparams;
+      frettype = v_frettype;
+      fcaptures = _;
+      fbody = v_fbody;
+    } =
   let fkind = map_wrap map_function_kind fkind in
   let v_fbody = map_function_body v_fbody in
   let v_frettype = map_of_option map_type_ v_frettype in

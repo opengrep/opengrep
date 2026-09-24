@@ -35,7 +35,8 @@ module H2 = AST_generic_helpers
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
-type env = unit H.env
+type mode = Pattern | Target
+type env = mode H.env
 
 let token = H.token
 let str = H.str
@@ -133,6 +134,7 @@ let create_lambda lambda_params expr =
       fkind = (Arrow, fake "=>");
       fparams;
       frettype = None;
+      fcaptures = G.no_captures;
       fbody = FBExpr expr;
     }
   |> G.e
@@ -152,6 +154,7 @@ let create_join_result_lambda lambda_params ident =
       fkind = (Arrow, fake "=>");
       fparams;
       frettype = None;
+      fcaptures = G.no_captures;
       fbody = FBExpr expr;
     }
   |> G.e
@@ -1404,6 +1407,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
           fkind = (LambdaKind, tdelegate);
           fparams;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v4;
         }
       |> G.e
@@ -1545,7 +1549,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
         | `Blk x -> G.FBStmt (block env x)
         | `Exp x -> G.FBExpr (expression env x)
       in
-      Lambda { fkind = (Arrow, v5); fparams = v4; frettype = v3; fbody = v6 }
+      Lambda { fkind = (Arrow, v5); fparams = v4; frettype = v3; fcaptures = G.no_captures; fbody = v6 }
       |> G.e
   | `Make_ref_exp (v1, v2, v3, v4) ->
       let v1 = token env v1 (* "__makeref" *) in
@@ -1982,6 +1986,7 @@ and statement (env : env) (x : CST.statement) =
             fkind = (G.Method, tok);
             fparams = v6;
             frettype = Some v3;
+            fcaptures = G.no_captures;
             fbody = v8;
           }
       in
@@ -3336,16 +3341,23 @@ and build_record_def env ~class_kind ~attrs_extra
         } )
   |> G.s
 
+(* The kind of a record is an attribute: a bare [record] is a record class,
+ * but a pattern that leaves the kind out matches both kinds. *)
 and record_declaration env
-    (v1, v2, v3, _v4_class, v5, v6, v7, v8, v9, v10, _v11) =
-  (* v4 is the optional "class" keyword; the record is already a class. *)
-  build_record_def env ~class_kind:Class ~attrs_extra:[]
+    (v1, v2, v3, v4_class, v5, v6, v7, v8, v9, v10, _v11) =
+  let attrs_extra =
+    match (v4_class, env.extra) with
+    | Some tok, _ -> [ OtherAttribute (("class", token env tok), []) ]
+    | None, Target -> [ OtherAttribute (("class", token env v3), []) ]
+    | None, Pattern -> []
+  in
+  build_record_def env ~class_kind:Class ~attrs_extra
     (v1, v2, v3, v5, v6, v7, v8, v9, v10)
 
 and record_struct_declaration env
     (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, _v11) =
-  let _v4 = token env v4 (* "struct" *) in
-  build_record_def env ~class_kind:Struct ~attrs_extra:[]
+  let attrs_extra = [ OtherAttribute (("struct", token env v4), []) ] in
+  build_record_def env ~class_kind:Struct ~attrs_extra
     (v1, v2, v3, v5, v6, v7, v8, v9, v10)
 
 and add_this_param ~(this_param : (G.tok -> G.parameter) option) ~(anchor : G.tok) (s : stmt) : stmt =
@@ -3423,7 +3435,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) :
                            fkind = (Method, itok);
                            fparams = fb [ valparam ];
                            frettype = None;
-                           fbody;
+                           fcaptures = G.no_captures; fbody;
                          }
                      in
                      DefStmt (ent, funcdef) |> G.s)
@@ -3555,7 +3567,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) :
                         (* Synthetic `void` return — hidden to keep it out of the prefilter. *)
                         frettype = (if has_return then Some v3 else Some (G.TyN (Id (("void", itok), G.empty_id_info ~hidden:true ())) |> G.t));
                         (* TODO Should this be "void"? *)
-                        fbody;
+                        fcaptures = G.no_captures; fbody;
                       }
                   in
                   let fixed_range =
@@ -3587,6 +3599,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) :
                   fkind = (Method, arrow);
                   fparams = fb [fieldParam (snd v5)] (* (Option.to_list (Option.map (fun f -> f ()) this_param)) *) ;
                   frettype = Some v3;
+                  fcaptures = G.no_captures;
                   fbody = G.FBStmt (G.Block (fb [ExprStmt (expr, v2) |> G.s]) |> G.s);
                 }
             in
@@ -3633,7 +3646,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
       in
       let def =
         G.FuncDef
-          { fkind = (G.Method, tok); fparams = v4; frettype = None; fbody }
+          { fkind = (G.Method, tok); fparams = v4; frettype = None; fcaptures = G.no_captures; fbody }
       in
       let ctor = KeywordAttr (Ctor, tok) in
       let attrs = (ctor :: v1) @ v2 in
@@ -3673,6 +3686,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
             fkind = (G.Method, v5);
             fparams = v8;
             frettype = Some v7;
+            fcaptures = G.no_captures;
             fbody = v9;
           }
       in
@@ -3691,7 +3705,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
       let name = ("Finalize", v3) in
       let def =
         G.FuncDef
-          { fkind = (G.Method, v3); fparams = v5; frettype = None; fbody = v6 }
+          { fkind = (G.Method, v3); fparams = v5; frettype = None; fcaptures = G.no_captures; fbody = v6 }
       in
       let dtor = KeywordAttr (Dtor, v3) in
       let ent = basic_entity name ~attrs:((dtor :: v1) @ v2) in
@@ -3720,7 +3734,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
                              fkind = (Method, itok);
                              fparams = (lbra, params, rbra);
                              frettype = Some v3;
-                             fbody;
+                             fcaptures = G.no_captures; fbody;
                            }
                        in
                        DefStmt (ent, funcdef) |> G.s
@@ -3742,7 +3756,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
                              fkind = (Method, itok);
                              fparams = (lbra, params @ [ valparam ], rbra);
                              frettype = None;
-                             fbody;
+                             fcaptures = G.no_captures; fbody;
                            }
                        in
                        DefStmt (ent, funcdef) |> G.s
@@ -3761,7 +3775,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
                 fkind = (Arrow, arrow);
                 fparams = (lbra, params, rbra);
                 frettype = Some v3;
-                fbody;
+                fcaptures = G.no_captures; fbody;
               }
           in
           DefStmt (ent, funcdef) |> G.s)
@@ -3788,6 +3802,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
             fkind = (G.Method, tok);
             fparams = (l, v7, r);
             frettype = Some v3;
+            fcaptures = G.no_captures;
             fbody = v9;
           }
       in
@@ -3824,6 +3839,7 @@ and member_declaration ?(this_param=None) (env : env) (x : CST.declaration)
             fkind = (G.Method, v5);
             fparams = v8;
             frettype = Some v3;
+            fcaptures = G.no_captures;
             fbody = v9;
           }
       in
@@ -3862,7 +3878,7 @@ let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_c_sharp.Parse.file !!file)
     (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+      let env = { H.file; conv = H.line_col_to_pos file; extra = Target } in
       match compilation_unit env cst with
       | G.Pr xs -> xs
       | _ -> failwith "not a program")
@@ -3885,5 +3901,7 @@ let parse_pattern str =
     (fun () -> parse_pattern_aux str)
     (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
-      let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
+      let env =
+        { H.file; conv = H.line_col_to_pos_pattern str; extra = Pattern }
+      in
       compilation_unit env cst)

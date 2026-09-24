@@ -118,6 +118,7 @@ and predicate_definition (v1, v2, v3, v4) =
           fkind = (Function, unsafe_fake "");
           fparams;
           frettype = v1;
+          fcaptures = G.no_captures;
           fbody = body;
         } )
   |> G.s
