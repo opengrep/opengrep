@@ -100,6 +100,90 @@ let str env (tok : Tree_sitter_run.Token.t) =
   let _, s = tok in
   (s, token env tok)
 
+(* Tree_sitter_run.Loc has no comparison of its own. *)
+let compare_pos (a : Tree_sitter_run.Loc.pos) (b : Tree_sitter_run.Loc.pos) =
+  match Int.compare a.row b.row with
+  | 0 -> Int.compare a.column b.column
+  | c -> c
+
+let equal_loc (a : Tree_sitter_run.Loc.t) (b : Tree_sitter_run.Loc.t) =
+  Int.equal (compare_pos a.start b.start) 0
+  && Int.equal (compare_pos a.end_ b.end_) 0
+
+(*****************************************************************************)
+(* Heredocs *)
+(*****************************************************************************)
+(* The contracts are in the .mli. *)
+
+let rec heredoc_markers ~(constructor : string)
+    (tree : _ Tree_sitter_run.Raw_tree.t) : Tree_sitter_run.Token.t list =
+  match tree with
+  | Case (c, Token marker) when String.equal c constructor -> [ marker ]
+  | Case (_, x)
+  | Option (Some x) ->
+      heredoc_markers ~constructor x
+  | List xs
+  | Tuple xs ->
+      List.concat_map (heredoc_markers ~constructor) xs
+  | Option None
+  | Token _
+  | Any _ ->
+      []
+
+let pair_heredocs ~(delimiter : string -> string)
+    ~(terminator : 'body -> string) (markers : Tree_sitter_run.Token.t list)
+    (bodies : (Tree_sitter_run.Loc.t * 'body) list) :
+    (Tree_sitter_run.Loc.t * 'body) list =
+  let is_body_of ((marker_loc : Tree_sitter_run.Loc.t), marker)
+      ((loc : Tree_sitter_run.Loc.t), body) =
+    let terminator = String.trim (terminator body) in
+    compare_pos loc.start marker_loc.end_ >= 0
+    && (String_.empty terminator || String.equal terminator (delimiter marker))
+  in
+  markers
+  |> List.sort (fun ((a : Tree_sitter_run.Loc.t), _) ((b : Tree_sitter_run.Loc.t), _) ->
+         compare_pos a.start b.start)
+  |> List.fold_left
+       (fun (heredocs, bodies) ((marker_loc, _) as marker) ->
+         match List.find_opt (is_body_of marker) bodies with
+         | Some ((_, body) as claimed) ->
+             ( (marker_loc, body) :: heredocs,
+               List.filter (fun x -> not (phys_equal x claimed)) bodies )
+         | None -> (heredocs, bodies))
+       ([], bodies)
+  |> fst
+
+let heredoc_body (marker_loc : Tree_sitter_run.Loc.t)
+    (heredocs : (Tree_sitter_run.Loc.t * 'body) list) : 'body option =
+  List.find_map
+    (fun (loc, body) -> if equal_loc loc marker_loc then Some body else None)
+    heredocs
+
+let dedent (indentation : int) (text : string) : string =
+  let rex = Pcre2_.regexp (spf "\n[ \t]{0,%d}" indentation) in
+  Pcre2_.replace ~rex ~template:"\n" text
+
+let drop_marker_newline
+    ~(text_part : 'part -> (Tree_sitter_run.Token.t * string) option)
+    ~(make_text_part : Tree_sitter_run.Token.t -> string -> 'part)
+    (contents : 'part list) : 'part list =
+  let after_newline s = String.sub s 1 (String.length s - 1) in
+  match contents with
+  | [] -> contents
+  | first :: rest -> (
+      match text_part first with
+      | Some (((loc : Tree_sitter_run.Loc.t), text), value)
+        when String.starts_with ~prefix:"\n" value -> (
+          let start =
+            { Tree_sitter_run.Loc.row = loc.start.row + 1; column = 0 }
+          in
+          match after_newline value with
+          | "" -> rest
+          | value ->
+              make_text_part ({ loc with start }, after_newline text) value
+              :: rest)
+      | _ -> contents)
+
 let debug_sexp_cst_after_error sexp_cst =
   let s = Printexc.get_backtrace () in
   Log.warn (fun m -> m "Some constructs are not handled yet. CST was: ");

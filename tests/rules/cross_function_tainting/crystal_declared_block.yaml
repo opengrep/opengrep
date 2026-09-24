@@ -1,0 +1,13 @@
+rules:
+  - id: crystal_declared_block
+    message: taint into the block of a method that declares it
+    languages:
+      - crystal
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

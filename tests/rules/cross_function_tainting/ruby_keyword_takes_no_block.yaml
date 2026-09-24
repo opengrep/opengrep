@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_keyword_takes_no_block
+    message: taint a keyword parameter takes no positional argument, so it does not take the block
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

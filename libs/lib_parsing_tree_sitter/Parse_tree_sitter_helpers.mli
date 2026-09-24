@@ -24,6 +24,53 @@ val line_col_to_pos_pattern : string (* contents *) -> int * int -> int
 (* Tree_sitter_run tokens to Tok.t converters *)
 val token : 'a env -> Tree_sitter_run.Token.t -> Tok.t
 val str : 'a env -> Tree_sitter_run.Token.t -> string * Tok.t
+
+(* Row first, then column. *)
+val compare_pos : Tree_sitter_run.Loc.pos -> Tree_sitter_run.Loc.pos -> int
+val equal_loc : Tree_sitter_run.Loc.t -> Tree_sitter_run.Loc.t -> bool
+
+(* Heredocs, shared by Ruby and Crystal. A heredoc is a marker such as
+   "<<-SQL" where the string goes, and a body among the extras of the parse,
+   from the end of the marker line to a terminator line. *)
+
+(* The heredoc markers of a raw tree. [constructor] names the token case that
+   holds one: "Here_begin" in Ruby, "Here_start" in Crystal. *)
+val heredoc_markers :
+  constructor:string -> _ Tree_sitter_run.Raw_tree.t -> Tree_sitter_run.Token.t list
+
+(* Each marker with its body. The markers are taken in source order, and each
+   takes the first body left after it that its delimiter closes: the bodies of
+   the markers of a line follow that line, in the same order. [delimiter] reads
+   the delimiter off a marker, "SQL" off "<<-'SQL'"; [terminator] reads the
+   terminator text off a body. An empty terminator ends a file that has no
+   last newline, where the scanner does not close the heredoc, and closes the
+   marker at hand. A marker whose body is not found is left out. *)
+val pair_heredocs :
+  delimiter:(string -> string) ->
+  terminator:('body -> string) ->
+  Tree_sitter_run.Token.t list ->
+  (Tree_sitter_run.Loc.t * 'body) list ->
+  (Tree_sitter_run.Loc.t * 'body) list
+
+(* The body paired with the marker at this location. *)
+val heredoc_body :
+  Tree_sitter_run.Loc.t -> (Tree_sitter_run.Loc.t * 'body) list -> 'body option
+
+(* [dedent n text] removes up to [n] blanks and tabs after each newline. *)
+val dedent : int -> string -> string
+
+(* tree-sitter starts a body at the end of the marker line, but the newline
+   ending that line is not part of the string: the leading newline of a first
+   text part is dropped, and the part with it when nothing else is left. The
+   location of the part moves to the next line. [text_part] reads a text part
+   as its token and the string it stands for, [make_text_part] builds one
+   back; a first part that is not a text is left alone. *)
+val drop_marker_newline :
+  text_part:('part -> (Tree_sitter_run.Token.t * string) option) ->
+  make_text_part:(Tree_sitter_run.Token.t -> string -> 'part) ->
+  'part list ->
+  'part list
+
 val debug_sexp_cst_after_error : Sexplib.Sexp.t -> unit
 
 (*

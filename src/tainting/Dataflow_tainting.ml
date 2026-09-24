@@ -3383,6 +3383,7 @@ let mk_lambda_in_env env lcfg =
                (i + 1, lval_env)
            | IL.Param _
            | IL.ParamRest _
+           | IL.ParamKwd _
            | IL.ParamFixme ->
                (i + 1, lval_env)
            (* Receivers aren't call-site args: no env update, no arg slot. *)
@@ -4047,6 +4048,7 @@ and (fixpoint :
                               match param with
                               | IL.Param { pname; _ }
                               | IL.ParamRest { pname; _ }
+                              | IL.ParamKwd { pname; _ }
                               | IL.ParamPattern ({ pname; _ }, _) ->
                                   let var = pname in
                                   let il_lval : IL.lval =
@@ -4213,8 +4215,13 @@ and (fixpoint :
          if Object_initialization.is_constructor taint_inst.lang func_name class_name then
            match class_name with
            | Some cls ->
+               (* Not the constructor's temporaries: they are numbered per
+                  function, so they would alias the temporaries of the
+                  methods this is unioned into. They have fake tokens. *)
                let final_env =
                  mapping.(fun_cfg.cfg.exit).Dataflow_core.out_env
+                 |> Lval_env.filter_tainted (fun var ->
+                        not (Tok.is_fake (snd var.IL.ident)))
                in
                let storage_key =
                  Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls

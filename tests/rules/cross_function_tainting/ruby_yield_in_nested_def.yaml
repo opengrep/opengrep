@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_yield_in_nested_def
+    message: taint a yield in a nested def does not take the outer method's block
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

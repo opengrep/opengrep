@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_ctor_no_leak
+    message: taint from the constructor
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -798,6 +798,7 @@ and vof_keyword_attribute = function
   | DefaultImpl -> OCaml.VSum ("DefaultImpl", [])
   | Throws -> OCaml.VSum ("Throws", [])
   | Rethrows -> OCaml.VSum ("Rethrows", [])
+  | KeywordOnly -> OCaml.VSum ("KeywordOnly", [])
   | Callable -> OCaml.VSum ("Callable", [])
   | TypeOnly -> OCaml.VSum ("TypeOnly", [])
   | Reexport -> OCaml.VSum ("Reexport", [])

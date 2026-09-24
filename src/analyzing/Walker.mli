@@ -66,7 +66,10 @@ val fold_exprs_in_program :
    parameter defaults, return-type annotation, and body.
 
    [~skip_nested_fdefs:true] skips inner function bodies; the outer
-   fdef's own exprs are always emitted. *)
+   fdef's own exprs are always emitted. [~skip_nested_fdef:p] skips the
+   inner definitions [p] accepts, for a fold that must stop at a nested
+   'def' but descend into a block or a lambda. *)
 val fold_exprs_in_fdef :
   ?skip_nested_fdefs:bool ->
+  ?skip_nested_fdef:(G.function_definition -> bool) ->
   ('acc -> G.expr -> 'acc) -> 'acc -> G.function_definition -> 'acc

@@ -1,0 +1,7 @@
+rules:
+  - id: crystal_heredoc_dots_in_target
+    message: three dots in the text of a target heredoc are text, not the ellipsis
+    languages:
+      - crystal
+    severity: WARNING
+    pattern: foo("=~/^ *[.]{3}[[:space:]]+$/")

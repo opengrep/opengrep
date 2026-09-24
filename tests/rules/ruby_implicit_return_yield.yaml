@@ -1,0 +1,7 @@
+rules:
+  - id: ruby_implicit_return_yield
+    message: a yield that is the last expression is the returned value
+    languages:
+      - ruby
+    severity: WARNING
+    pattern: return yield $X
