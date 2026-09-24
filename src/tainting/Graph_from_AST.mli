@@ -42,31 +42,28 @@ type fdef_edges = {
 val extract_calls :
   lang : Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
-  identify_callback : Callback_extraction.callback_site_resolver ->
+  resolve_callback : Callback_extraction.callback_resolver ->
   resolve_construction : Callee_resolution.construction_resolver ->
   resolve_invocation : Callee_resolution.invocation_resolver ->
-  func_lookup : Func_lookup.t ->
   ?caller_parent_path : fn_id ->
   AST_generic.function_definition ->
   fdef_edges
 
 val extract_decorator_calls :
   identify_callee : Callee_resolution.call_site_resolver ->
-  func_lookup : Func_lookup.t ->
   ?caller_parent_path : fn_id ->
   AST_generic.attribute list ->
   (fn_id * Tok.t) list
 
 val extract_toplevel_calls :
+  lang : Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
-  func_lookup : Func_lookup.t ->
   AST_generic.program ->
   (fn_id * Tok.t) list
 
 val extract_toplevel_hof_callbacks :
   lang : Lang.t ->
-  identify_callback : Callback_extraction.callback_site_resolver ->
-  func_lookup : Func_lookup.t ->
+  resolve_callback : Callback_extraction.callback_resolver ->
   AST_generic.program ->
   (fn_id * Tok.t) list
 

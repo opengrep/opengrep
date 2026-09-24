@@ -1,5 +1,5 @@
 # A method value of a receiver with no declared type is passed as a callback,
-# and it resolves to the class's method by its bare name.
+# and it resolves to nothing: the receiver's class is unknown.
 
 
 def source():
@@ -12,7 +12,7 @@ def sink(_x):
 
 class Handler:
     def run(self, v):
-        # ruleid: test-hof-method-value-python
+        # ok: test-hof-method-value-python
         sink(v)
 
 

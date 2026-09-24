@@ -6,6 +6,6 @@ void handler(const char *x) {
 }
 
 void second(const char *x) {
-    // ok: function-pointer-variable
+    // ruleid: function-pointer-variable
     sink(x);
 }

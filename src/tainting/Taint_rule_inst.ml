@@ -106,7 +106,7 @@ type t = {
           offset grows at every call, and the longer offsets multiply the
           polymorphic taints and add no finding. See
           [Taint_shape.max_poly_offset]. *)
-  is_value_type : string -> bool;
+  is_value_type : AST_generic.type_ -> bool;
       (** Whether a type name denotes a value type (a struct): a parameter
           of that type is a copy, so the callee's writes to it do not reach
           the caller. *)

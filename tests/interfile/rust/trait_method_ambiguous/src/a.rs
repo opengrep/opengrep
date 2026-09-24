@@ -12,14 +12,14 @@ pub trait Right {
 
 impl Left for Store {
     fn emit(&self) {
-        // ok: trait-method-ambiguous
+        // ruleid: trait-method-ambiguous
         sink(&self.data);
     }
 }
 
 impl Right for Store {
     fn emit(&self) {
-        // ok: trait-method-ambiguous
+        // ruleid: trait-method-ambiguous
         sink(&self.data);
     }
 }

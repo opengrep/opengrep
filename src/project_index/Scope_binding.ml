@@ -86,53 +86,44 @@ let bindings_of_positioned (bindings : positioned_binding list)
 let enclosing_scope_of_class
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
-    (ci : class_info) : IL.name option list option =
+    (ci : entry) : IL.name option list option =
   let encloses_itself (parent_path : IL.name option list) : bool =
     match List.rev parent_path with
     | Some (innermost : IL.name) :: _ ->
-      Function_id.equal_name ci.ci_id innermost
+      Function_id.equal_name ci.id innermost
     | None :: _
     | [] -> false
   in
   Option.bind
     (Option.bind
-       (Common.SMap.find_opt (Function_id.show ci.ci_id) class_parent_paths)
+       (Common.SMap.find_opt (Function_id.show ci.id) class_parent_paths)
        (List.find_opt
           (fun (((defining : Function_id.t), _) :
                   Function_id.t * IL.name option list) ->
-            Function_id.equal defining ci.ci_id)))
+            Function_id.equal defining ci.id)))
     (fun (((_ : Function_id.t), (parent_path : IL.name option list))) ->
       if encloses_itself parent_path then None else Some parent_path)
 
-let class_il_name_of (ci : class_info) : IL.name =
-  IL.{ ident = (Function_id.show ci.ci_id, Function_id.tok ci.ci_id);
+let class_qn_of_entry (ci : entry) : Names.Class_qn.t =
+  Names.Class_qn.of_string (Names.Def_qn.to_string ci.qn)
+
+let class_il_name_of (ci : entry) : IL.name =
+  IL.{ ident = (Function_id.show ci.id, Function_id.tok ci.id);
        sid = AST_generic.SId.unsafe_default;
        id_info = AST_generic.empty_id_info () }
 
-let classes_by_qn (classes : class_info list) : class_info Common.SMap.t =
+let classes_by_qn (classes : entry list) : entry Common.SMap.t =
   List.fold_left
-    (fun (by_qn : class_info Common.SMap.t) (ci : class_info) ->
-      Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) ci by_qn)
+    (fun (by_qn : entry Common.SMap.t) (ci : entry) ->
+      Common.SMap.add (Names.Class_qn.to_string (class_qn_of_entry ci)) ci by_qn)
     Common.SMap.empty classes
 
-let bindings_in_class (ci : class_info)
+let bindings_in_class (ci : entry)
     (bindings :
        pos:Pos.t option -> parent_path:IL.name option list ->
        positioned_binding list) : positioned_binding list =
-  bindings ~pos:(position_of_tok (Function_id.tok ci.ci_id))
+  bindings ~pos:(position_of_tok (Function_id.tok ci.id))
     ~parent_path:[ Some (class_il_name_of ci) ]
-
-let class_member_bindings
-    ~(members_of : Names.Class_qn.t -> (string * Func_info.t list) list)
-    (classes : class_info list) : positioned_binding list =
-  List.concat_map
-    (fun (ci : class_info) ->
-      bindings_in_class ci (fun ~pos ~parent_path ->
-        List.concat_map
-          (fun ((name : string), (funcs : Func_info.t list)) ->
-            function_binding_of ~pos ~parent_path name funcs)
-          (members_of ci.ci_qn)))
-    classes
 
 let companion_binding_of ~(pos : Pos.t option)
     ~(parent_path : IL.name option list) (name : string)
@@ -141,25 +132,25 @@ let companion_binding_of ~(pos : Pos.t option)
     pb_parent_path = parent_path;
     pb_kinds = [ Func_lookup.Scope_companion class_qn ] }
 
-let no_companion (_ : class_info) : bool = false
+let no_companion (_ : entry) : bool = false
 
 let own_class_bindings
-    ~(companion : class_info -> bool)
+    ~(companion : entry -> bool)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(binds_at_file_scope : Names.Class_qn.t -> bool)
     ~(scope_of_owner : Names.Class_qn.t -> IL.name option list option)
-    (classes : class_info list) : positioned_binding list =
+    (classes : entry list) : positioned_binding list =
   classes
-  |> List.filter_map (fun (ci : class_info) ->
-       match Names.Class_qn.split_last ci.ci_qn with
+  |> List.filter_map (fun (ci : entry) ->
+       match Names.Class_qn.split_last (class_qn_of_entry ci) with
        | None -> None
        | Some ((parent : Names.Class_qn.t), _) ->
          let bind (parent_path : IL.name option list) : positioned_binding =
-           let pos = position_of_tok (Function_id.tok ci.ci_id) in
+           let pos = position_of_tok (Function_id.tok ci.id) in
            if companion ci then
-             companion_binding_of ~pos ~parent_path ci.ci_name ci.ci_qn
-           else class_binding_of ~pos ~parent_path ci.ci_name ci.ci_qn
+             companion_binding_of ~pos ~parent_path ci.name (class_qn_of_entry ci)
+           else class_binding_of ~pos ~parent_path ci.name (class_qn_of_entry ci)
          in
          if binds_at_file_scope parent then Some (bind [])
          else

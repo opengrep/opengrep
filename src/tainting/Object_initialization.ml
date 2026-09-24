@@ -459,7 +459,10 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
   let detacher =
     object
       inherit [_] G.map
-      method! visit_id_info _env _ii = G.empty_id_info ()
+      (* The binding is data, not a ref into the AST: kept, so the stamped
+         class name still identifies the class it was resolved to. *)
+      method! visit_id_info _env (ii : G.id_info) =
+        { (G.empty_id_info ()) with G.id_resolved = ref !(ii.G.id_resolved) }
     end
   in
   let stamper =

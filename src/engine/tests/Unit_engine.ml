@@ -831,6 +831,17 @@ let semgrep_rules_repo_tests () : Testo.t list =
                 url.Parse(...) ...]; without it the region runs to the end of
                 the file, as it already did for a single-name declaration. *)
              | s when s =~ ".*/semgrep-rules/go/lang/security/shared-url-struct-mutation.yaml" -> None
+             (* These expect a name to keep a binding the language gives it
+                elsewhere: a Python name assigned in a function is local to
+                the whole function, a module-level assignment rebinds an
+                imported name, and a Ruby method body does not see the
+                file's local variables. tests/rules/pdb_local_shadows_import,
+                paramiko_module_rebinds_import and
+                ruby_def_does_not_see_file_locals hold the same rules and
+                targets with those lines marked ok. *)
+             | s when s =~ ".*/semgrep-rules/python/lang/correctness/pdb.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/python/lang/security/audit/paramiko/paramiko-exec-command.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/ruby/jwt/security/jwt-hardcode.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming

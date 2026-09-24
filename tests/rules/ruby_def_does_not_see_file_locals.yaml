@@ -1,0 +1,52 @@
+rules:
+- id: ruby-jwt-hardcoded-secret
+  message: >-
+    Hardcoded JWT secret or private key is used.
+    This is a Insufficiently Protected Credentials weakness: https://cwe.mitre.org/data/definitions/522.html
+    Consider using an appropriate security mechanism to protect the credentials (e.g. keeping secrets
+    in environment variables)
+  metadata:
+    cwe:
+    - 'CWE-522: Insufficiently Protected Credentials'
+    owasp:
+    - A02:2017 - Broken Authentication
+    - A04:2021 - Insecure Design
+    source-rule-url: https://semgrep.dev/blog/2020/hardcoded-secrets-unverified-tokens-and-other-common-jwt-mistakes/
+    category: security
+    technology:
+    - jwt
+    references:
+    - https://owasp.org/Top10/A04_2021-Insecure_Design
+    cwe2021-top25: true
+    subcategory:
+    - audit
+    likelihood: LOW
+    impact: LOW
+    confidence: LOW
+  patterns:
+  - pattern-inside: |
+      require 'jwt'
+      ...
+  - pattern-either:
+    - pattern: |
+        JWT.encode($PAYLOAD,"...",...)
+    - pattern: |
+        JWT.decode($PAYLOAD,"...",...)
+    - pattern: |
+        JWT.encode($PAYLOAD,nil,...)
+    - pattern: |
+        JWT.decode($PAYLOAD,nil,...)
+    - pattern: |
+        $SECRET = "..."
+        ...
+        JWT.encode($PAYLOAD,$SECRET,...)
+    - pattern: |
+        $SECRET = "..."
+        ...
+        JWT.decode($PAYLOAD,$SECRET,...)
+  - pattern-not: |
+      JWT.encode($PAYLOAD, nil, ... , jwks: ..., ...)
+  - pattern-not: |
+      JWT.decode($PAYLOAD, nil, ..., jwks: ..., ...)
+  languages: [ruby]
+  severity: ERROR

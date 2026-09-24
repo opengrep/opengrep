@@ -446,17 +446,22 @@ let mk_taint_spec_match_preds rule matches =
 
 let default_effect_handler _fun_name new_effects = new_effects
 
-let value_type_predicate (lang : Lang.t) (ast : G.program) : string -> bool =
+let value_type_predicate (lang : Lang.t) (ast : G.program) : G.type_ -> bool =
   match Object_initialization.value_type_names lang ast with
   | [] -> fun _ -> false
-  | names ->
+  | names -> (
       let set = Hashtbl.create (List.length names) in
       List.iter (fun name -> Hashtbl.replace set name ()) names;
-      Hashtbl.mem set
+      fun (ty : G.type_) ->
+        match ty.G.t with
+        | G.TyN (G.Id ((name, _), _))
+        | G.TyN (G.IdQualified { name_last = (name, _), _; _ }) ->
+            Hashtbl.mem set name
+        | _ -> false)
 
 let taint_config_of_spec_matches
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
-    ?(is_value_type = fun (_ : string) -> false)
+    ?(is_value_type = fun (_ : G.type_) -> false)
     xconf lang file ({ mode = `Taint spec; _ } as rule : R.taint_rule)
     (spec_matches : spec_matches) : Taint_rule_inst.t option =
   match spec_matches with

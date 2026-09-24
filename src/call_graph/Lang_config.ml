@@ -38,20 +38,50 @@ type method_sets =
   | Shared_by_class_and_instance
   | Separate_for_class_and_instance
 
+type method_dispatch =
+  | Dynamic
+  | Static
+  | Dynamic_when_overridable
+
+type receiver_parameter =
+  | Declares_method
+  | Declares_extension
+
+type reflection = {
+  callable_literals : bool;
+  send_methods : string list;
+  method_object : string option;
+  attribute_lookup : string option;
+  apply_function : string list;
+  symbol_lookup : string list;
+}
+
 type t = {
   hof_configs : hof_kind list;
   collection_configs : collection_model_kind list;
   constructor_names : string list;
   construction : construction_form;
   method_sets : method_sets;
-  callables_written_as_literals : bool;
+  method_dispatch : method_dispatch;
+  receiver_parameter : receiver_parameter;
+  class_is_callable_value : bool;
+  constructor_reference_names : string list;
+  reflection : reflection;
   block_pass_operator : bool;
   (* Methods invoking `self` as a function (Runnable.run, Proc#call): a Fun-shaped receiver call becomes a direct lambda invocation. *)
   invoke_methods : string list;
-  dynamic_send_methods : string list;
   class_accessor_methods : string list;
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
+}
+
+let no_reflection = {
+  callable_literals = false;
+  send_methods = [];
+  method_object = None;
+  attribute_lookup = None;
+  apply_function = [];
+  symbol_lookup = [];
 }
 
 let empty = {
@@ -60,10 +90,13 @@ let empty = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Static;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -84,10 +117,13 @@ let python = {
   constructor_names = ["__init__"];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = true;
+  constructor_reference_names = [];
+  reflection = { no_reflection with attribute_lookup = Some "getattr" };
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -115,16 +151,23 @@ let ruby = {
   constructor_names = ["initialize"];
   construction = New_method "new";
   method_sets = Separate_for_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = {
+    no_reflection with
+    send_methods = ["send"; "public_send"; "__send__"];
+    method_object = Some "method";
+  };
   block_pass_operator = true;
   invoke_methods = ["call"];
-  dynamic_send_methods = ["send"; "public_send"];
   class_accessor_methods = ["class"];
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
 }
 
-let crystal = ruby
+let crystal = { ruby with reflection = no_reflection }
 
 let javascript = {
   hof_configs = [
@@ -148,10 +191,13 @@ let javascript = {
   constructor_names = ["constructor"];
   construction = New_keyword;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -178,10 +224,13 @@ let java = {
   constructor_names = ["<init>"];
   construction = New_keyword;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = ["new"];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -211,10 +260,13 @@ let kotlin = {
   constructor_names = ["<init>"; "init"; "constructor"];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_extension;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = ["invoke"];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -237,10 +289,13 @@ let scala = {
   constructor_names = ["<init>"];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = ["apply"];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -264,10 +319,13 @@ let csharp = {
   constructor_names = [".ctor"];
   construction = New_keyword;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_extension;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = ["Invoke"];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -283,10 +341,13 @@ let go = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Static;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -306,13 +367,16 @@ let rust = {
     ThisTaintsReturn { methods = ["get"; "get_mut"; "remove"]; arity = 1 };
     ThisTaintsReturn { methods = ["into_iter"; "iter"; "iter_mut"]; arity = 0 };
   ];
-  constructor_names = ["new"];
+  constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Static;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -335,10 +399,13 @@ let swift = {
   constructor_names = ["init"];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = ["init"];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -352,10 +419,13 @@ let php = {
   constructor_names = ["__construct"];
   construction = New_keyword;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = true;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = { no_reflection with callable_literals = true };
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -369,10 +439,13 @@ let cpp = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -380,6 +453,7 @@ let cpp = {
 let c = {
   cpp with
   hof_configs = cpp.hof_configs;
+  method_dispatch = Static;
 }
 
 let ocaml_lang = {
@@ -388,10 +462,13 @@ let ocaml_lang = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -402,10 +479,13 @@ let lua = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -438,11 +518,14 @@ let dart = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = ["new"];
+  reflection = no_reflection;
   block_pass_operator = false;
   (* Function objects: f.call(args) invokes the closure f *)
   invoke_methods = ["call"];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -461,10 +544,13 @@ let elixir = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Static;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = { no_reflection with apply_function = ["apply"; "Kernel.apply"; ":erlang.apply"] };
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -477,10 +563,13 @@ let julia = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Static;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = true;
+  constructor_reference_names = [];
+  reflection = { no_reflection with symbol_lookup = ["getfield"] };
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -505,10 +594,13 @@ let clojure = {
   constructor_names = [];
   construction = Bare_call;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Static;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = { no_reflection with symbol_lookup = ["resolve"; "ns-resolve"] };
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -519,10 +611,13 @@ let apex = {
   constructor_names = ["<init>"];
   construction = New_keyword;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
 }
@@ -533,12 +628,20 @@ let vb = {
   constructor_names = ["New"];
   construction = New_keyword;
   method_sets = Shared_by_class_and_instance;
-  callables_written_as_literals = false;
+  method_dispatch = Dynamic_when_overridable;
+  receiver_parameter = Declares_method;
+  class_is_callable_value = false;
+  constructor_reference_names = [];
+  reflection = no_reflection;
   block_pass_operator = false;
   invoke_methods = [];
-  dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+}
+
+let r = {
+  empty with
+  reflection = { no_reflection with symbol_lookup = ["get"; "do.call"; "match.fun"] };
 }
 
 let get (lang : Lang.t) : t =
@@ -555,7 +658,9 @@ let get (lang : Lang.t) : t =
   | Lang.Go -> go
   | Lang.Rust -> rust
   | Lang.Swift -> swift
-  | Lang.Php -> php
+  | Lang.Php
+  | Lang.Hack ->
+      php
   | Lang.Cpp -> cpp
   | Lang.C -> c
   | Lang.Ocaml -> ocaml_lang
@@ -566,6 +671,7 @@ let get (lang : Lang.t) : t =
   | Lang.Clojure -> clojure
   | Lang.Apex -> apex
   | Lang.Vb -> vb
+  | Lang.R -> r
   | _ -> empty
 
 let uses_new_keyword (lang : Lang.t) : bool =
@@ -601,6 +707,80 @@ let overloads_by_type (lang : Lang.t) : bool =
   | Lang.Apex ->
       true
   | _ -> false
+
+let interfaces_are_structural (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Go -> true
+  | _ -> false
+
+let companion_object_has_own_name (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Scala -> true
+  | _ -> false
+
+let super_is_builtin_call (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3 ->
+      true
+  | _ -> false
+
+let method_overridable (lang : Lang.t) (attrs : AST_generic.attribute list) :
+    bool option =
+  let keyword (wanted : AST_generic.keyword_attribute) : bool =
+    List.exists
+      (fun (attr : AST_generic.attribute) ->
+        match attr with
+        | AST_generic.KeywordAttr (found, _) ->
+            AST_generic.equal_keyword_attribute found wanted
+        | _ -> false)
+      attrs
+  in
+  let named (wanted : string list) : bool =
+    List.exists
+      (fun (attr : AST_generic.attribute) ->
+        match attr with
+        | AST_generic.NamedAttr (_, AST_generic.Id ((found, _), _), _) ->
+            List.exists (String.equal found) wanted
+        | _ -> false)
+      attrs
+  in
+  let other (wanted : string list) : bool =
+    List.exists
+      (fun (attr : AST_generic.attribute) ->
+        match attr with
+        | AST_generic.OtherAttribute ((found, _), _) ->
+            List.exists (String.equal found) wanted
+        | _ -> false)
+      attrs
+  in
+  match lang with
+  | Lang.Java
+  | Lang.Swift ->
+      Some
+        (not
+           (keyword AST_generic.Private || keyword AST_generic.Static
+          || keyword AST_generic.Final))
+  | Lang.Csharp ->
+      Some
+        ((not (keyword AST_generic.Final))
+        && (keyword AST_generic.Abstract || named [ "virtual"; "override" ]))
+  | Lang.Kotlin ->
+      Some
+        ((not (keyword AST_generic.Final))
+        && (keyword AST_generic.Abstract || keyword AST_generic.Override
+          || named [ "open" ]))
+  | Lang.Apex ->
+      Some
+        (keyword AST_generic.Abstract || keyword AST_generic.Override
+        || other [ "virtual" ])
+  | Lang.Vb ->
+      Some
+        ((not (keyword AST_generic.Final))
+        && other [ "OVERRIDABLE"; "OVERRIDES"; "MUSTOVERRIDE" ])
+  | Lang.Cpp -> if keyword AST_generic.Abstract then Some true else None
+  | _ -> Some false
 
 let hof_method_names (lang : Lang.t) : string list =
   (get lang).hof_configs |> List.concat_map (function

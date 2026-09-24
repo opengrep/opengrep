@@ -14,7 +14,7 @@ val build :
   cfg:Index_lang_rules.t ->
   package_index:package_index ->
   attributes_by_module:Func_lookup.module_attributes ->
-  classes_by_file:Types.class_info list Common.SMap.t ->
+  classes_by_file:Types.entry list Common.SMap.t ->
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->

@@ -18,6 +18,8 @@ val dotted_class_name_of_ty : G.type_ -> G.name option
 
 val class_name_of_ty : G.type_ -> G.name option
 
+val inner_named_type : ?through_funty:bool -> G.type_ -> G.type_
+
 (* Like [class_name_of_ty] but also unwraps generics/pointer-ref;
    [~through_funty:true] walks function types to their return. *)
 val inner_class_name_of_ty :

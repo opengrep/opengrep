@@ -4,7 +4,7 @@ E(
       Id(("foo", ()),
         {id_flags=Ref(0); id_resolved_alternative=Ref([]); 
          id_resolved=Ref(None); id_type=Ref(None); 
-         id_instance_type=Ref(None); id_callee_definition=Ref(None); 
+         id_instance_type=Ref(None); id_callee_definition=Ref([]); 
          id_svalue=Ref(None); })),
     [Arg(Ellipsis(()));
      Arg(
@@ -15,11 +15,11 @@ E(
                 {id_flags=Ref(0); id_resolved_alternative=Ref([]); 
                  id_resolved=Ref(None); id_type=Ref(None); 
                  id_instance_type=Ref(None); id_callee_definition=Ref(
-                 None); id_svalue=Ref(None); })));
+                 []); id_svalue=Ref(None); })));
           Arg(
             N(
               Id(("$X", ()),
                 {id_flags=Ref(0); id_resolved_alternative=Ref([]); 
                  id_resolved=Ref(None); id_type=Ref(None); 
                  id_instance_type=Ref(None); id_callee_definition=Ref(
-                 None); id_svalue=Ref(None); })))]))]))
+                 []); id_svalue=Ref(None); })))]))]))

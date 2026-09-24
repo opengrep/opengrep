@@ -391,7 +391,7 @@ let class_aliases_of (scope : project_scope)
 
 let exports_of (scope : project_scope) : exports = scope.pj_exports
 
-let own_bindings ~(classes_by_file : class_info list Common.SMap.t)
+let own_bindings ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -428,7 +428,7 @@ let class_field_aliases ~(definitions_by_qn : definition Common.SMap.t)
     ~(value_alias_index : (string * string, G.expr) Hashtbl.t)
     ~(objects : Func_info.t list Common.SMap.t Common.SMap.t Common.SMap.t)
     ~(exports : exports)
-    ~(classes_by_file : class_info list Common.SMap.t) (fi : file_info)
+    ~(classes_by_file : entry list Common.SMap.t) (fi : file_info)
     : (Names.Class_qn.t * string * Func_info.t list) list =
   let own_classes =
     Option.value
@@ -444,11 +444,11 @@ let class_field_aliases ~(definitions_by_qn : definition Common.SMap.t)
           let class_id = Function_id.of_il_name (AST_to_IL.var_of_name gname) in
           match
             List.find_opt
-              (fun (ci : class_info) -> Function_id.equal ci.ci_id class_id)
+              (fun (ci : entry) -> Function_id.equal ci.id class_id)
               own_classes
           with
           | None -> []
-          | Some (ci : class_info) ->
+          | Some (ci : entry) ->
             let _, fields, _ = cdef.G.cbody in
             List.filter_map
               (fun (field : G.field) ->
@@ -461,7 +461,7 @@ let class_field_aliases ~(definitions_by_qn : definition Common.SMap.t)
                   with
                   | Some (Exports_definition
                             (Function_definitions (funcs : Func_info.t list))) ->
-                    Some (ci.ci_qn, alias, funcs)
+                    Some ((Scope_binding.class_qn_of_entry ci), alias, funcs)
                   | Some (Exports_definition (Class_definition _))
                   | Some (Exports_object _)
                   | Some (Exports_module _)
@@ -475,7 +475,7 @@ let class_field_aliases ~(definitions_by_qn : definition Common.SMap.t)
 
 let build_project_scope ~(definitions_by_qn : definition Common.SMap.t)
     ~(value_alias_index : (string * string, G.expr) Hashtbl.t)
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -511,7 +511,6 @@ let build_project_scope ~(definitions_by_qn : definition Common.SMap.t)
 
 type file_bindings = {
   fb_scope : Func_lookup.scope_entry list Common.SMap.t;
-  fb_class_files : (Names.Class_name.t * Fpath.t) list;
   fb_module_aliases : (string, Names.Module_qn.t) Hashtbl.t;
   fb_own_modules : Names.Module_qn.t list;
 }
@@ -526,20 +525,16 @@ let object_binding_of ~(pos : Pos.t option)
 let binding_of_export ~(pos : Pos.t option) (local : string)
     (target : export_target)
     : Scope_binding.positioned_binding list
-      * (Names.Class_name.t * Fpath.t) list
       * (string * Names.Module_qn.t) list =
   match target with
   | Exports_module (module_qn : Names.Module_qn.t) ->
-    ([], [], [ (local, module_qn) ])
+    ([], [ (local, module_qn) ])
   | Exports_object (members : Func_info.t list Common.SMap.t) ->
-    ([ object_binding_of ~pos ~parent_path:[] local members ], [], [])
+    ([ object_binding_of ~pos ~parent_path:[] local members ], [])
   | Exports_definition (Function_definitions (funcs : Func_info.t list)) ->
-    (Scope_binding.function_binding_of ~pos ~parent_path:[] local funcs, [], [])
-  | Exports_definition (Class_definition { class_file; class_qn; _ }) ->
-    ( [ Scope_binding.class_binding_of ~pos ~parent_path:[] local class_qn ],
-      [ (Names.Class_name.of_string (Names.Class_qn.bare_name class_qn),
-         class_file) ],
-      [] )
+    (Scope_binding.function_binding_of ~pos ~parent_path:[] local funcs, [])
+  | Exports_definition (Class_definition { class_qn; _ }) ->
+    ([ Scope_binding.class_binding_of ~pos ~parent_path:[] local class_qn ], [])
 
 let alias_rows (fi : file_info) : (string * string * Pos.t option) list =
   List.filter_map
@@ -562,7 +557,7 @@ let alias_rows (fi : file_info) : (string * string * Pos.t option) list =
     fi.fi_ast
 
 let build ~(scope : project_scope)
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -587,39 +582,36 @@ let build ~(scope : project_scope)
             [])
         own_modules
   in
-  let imported, class_files, aliases =
+  let imported, aliases =
     List.fold_left
       (fun ((imported : Scope_binding.positioned_binding list),
-            (class_files : (Names.Class_name.t * Fpath.t) list),
             (aliases : (string * Names.Module_qn.t) list))
            (imp : import) ->
         match imp.im_role with
-        | Role_reexports -> (imported, class_files, aliases)
+        | Role_reexports -> (imported, aliases)
         | Role_binds -> (
           let pos = Scope_binding.position_of_tok imp.im_tok in
           match (Imports.binding_of imp, imp.im_binds) with
           | Imports.Wildcard_from _, _
-          | _, Binds_type -> (imported, class_files, aliases)
+          | _, Binds_type -> (imported, aliases)
           | Imports.Named_binding { local; target }, Binds_module ->
-            let bindings, files, _ =
+            let bindings, _ =
               match bound_in exports target "default" with
               | Some (found : export_target) ->
                 binding_of_export ~pos local found
-              | None -> ([], [], [])
+              | None -> ([], [])
             in
-            (bindings @ imported, files @ class_files,
-             (local, target) :: aliases)
+            (bindings @ imported, (local, target) :: aliases)
           | Imports.Named_binding { local; target },
             (Binds_any | Binds_function | Binds_constant) -> (
             match export_of_target exports target with
-            | None -> (imported, class_files, aliases)
+            | None -> (imported, aliases)
             | Some (found : export_target) ->
-              let bindings, files, module_aliases =
+              let bindings, module_aliases =
                 binding_of_export ~pos local found
               in
-              (bindings @ imported, files @ class_files,
-               module_aliases @ aliases))))
-      ([], [], []) fi.fi_imports
+              (bindings @ imported, module_aliases @ aliases))))
+      ([], []) fi.fi_imports
   in
   (* Filled in source order, so the head of a dotted target ([Svc] of
      [import S = Svc.Inner]) is read from the aliases that the imports
@@ -671,6 +663,5 @@ let build ~(scope : project_scope)
            (fun _ (own : Func_lookup.scope_entry list) _ -> Some own)
            bound scope.pj_scripts
        else bound);
-    fb_class_files = class_files;
     fb_module_aliases = module_aliases;
     fb_own_modules = own_modules }

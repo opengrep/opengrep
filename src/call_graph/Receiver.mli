@@ -27,9 +27,3 @@ val arity :
   AST_generic.parameter list ->
   int
 (** The parameters a call fills: all of them but the implicit receiver. *)
-
-val self_names : Lang.t -> string list
-(** The names a body calls its receiver by; none for Go, whose receiver
-    is named by each method. *)
-
-val is_self_name : Lang.t -> string -> bool

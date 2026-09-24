@@ -34,17 +34,3 @@ let arity (lang : Lang.t) ~(is_method : bool) ~(is_static : bool)
   |> List.filteri (fun i param ->
          not (implicit_param lang ~is_method ~is_static ~is_first:(i = 0) param))
   |> List.length
-
-let self_names (lang : Lang.t) : string list =
-  match lang with
-  | Lang.Python | Lang.Python2 | Lang.Python3 -> [ "self"; "cls" ]
-  | Lang.Php | Lang.Hack -> [ "$this" ]
-  | Lang.Ruby | Lang.Crystal | Lang.Rust -> [ "self" ]
-  | Lang.Js | Lang.Ts | Lang.Vue | Lang.Java | Lang.Kotlin | Lang.Scala
-  | Lang.Csharp | Lang.Dart | Lang.Swift | Lang.Apex | Lang.Cpp | Lang.Solidity ->
-      [ "this" ]
-  | Lang.Vb -> [ "Me" ]
-  | _ -> []
-
-let is_self_name (lang : Lang.t) (name : string) : bool =
-  List.exists (String.equal name) (self_names lang)

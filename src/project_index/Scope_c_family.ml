@@ -167,11 +167,9 @@ let build
     ~(precedence : Index_lang_rules.binding_kind -> int)
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
-    ~(resolution_orders : Func_lookup.resolution_orders)
-    ~(methods_by_class : Func_lookup.methods_by_class)
     ~(namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t)
     ~(include_bindings : Scope_binding.positioned_binding list)
     ~(included_files : string list)
@@ -221,16 +219,10 @@ let build
         Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scopes)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
-          (fun (ci : class_info) ->
+          (fun (ci : entry) ->
             [ Some (Scope_binding.class_il_name_of ci) ])
           (Common.SMap.find_opt (Names.Class_qn.to_string owner)
              own_class_by_qn))
-      own_classes
-  in
-  let member_bindings =
-    Scope_binding.class_member_bindings
-      ~members_of:
-        (Scope_package.members_along_order ~resolution_orders ~methods_by_class)
       own_classes
   in
   let own_namespace_bindings =
@@ -256,12 +248,12 @@ let build
   in
   let included_type_bindings =
     List.filter_map
-      (fun (ci : class_info) ->
+      (fun (ci : entry) ->
         Option.map
           (fun (((_ : Names.Class_qn.t), (name : string))) ->
             Scope_binding.class_binding_of ~pos:None ~parent_path:[] name
-              ci.ci_qn)
-          (Names.Class_qn.split_last ci.ci_qn))
+              (Scope_binding.class_qn_of_entry ci))
+          (Names.Class_qn.split_last (Scope_binding.class_qn_of_entry ci)))
       included_classes
   in
   let on_demand =
@@ -278,7 +270,7 @@ let build
     Scope_package.of_kind Index_lang_rules.Wildcard_import on_demand
     @ Scope_package.of_kind Index_lang_rules.Own_definition
         (own_namespace_bindings @ function_bindings @ alias_bindings
-         @ type_bindings @ member_bindings)
+         @ type_bindings)
     @ Scope_package.of_kind Index_lang_rules.Single_import imported
   in
   List.fold_left bind_alias

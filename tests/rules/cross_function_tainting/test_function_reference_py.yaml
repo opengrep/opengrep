@@ -1,0 +1,13 @@
+rules:
+  - id: test-function-reference-py
+    message: a function referred to by name is called through the value
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

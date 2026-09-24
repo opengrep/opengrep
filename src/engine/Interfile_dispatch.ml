@@ -402,8 +402,8 @@ let init_file
         ti with
         Taint_rule_inst.project_root = path_root;
         is_value_type =
-          (fun name ->
-            file_value_type name || Type_state.is_value_type type_state name);
+          (fun (ty : AST_generic.type_) ->
+            file_value_type ty || Type_state.is_value_type type_state ty);
       }
     | None ->
       let empty_preds : Taint_rule_inst.spec_predicates = {
@@ -424,8 +424,8 @@ let init_file
         recursive = false;
         is_value_type =
           (let file_value_type = Match_taint_spec.value_type_predicate lang ast in
-           fun name ->
-             file_value_type name || Type_state.is_value_type type_state name);
+           fun (ty : AST_generic.type_) ->
+             file_value_type ty || Type_state.is_value_type type_state ty);
         java_props_cache = Hashtbl.create 0;
       }
   in
@@ -597,12 +597,7 @@ let compute_rule_subgraph
           (Call_graph.G.nb_vertex relevant_graph)
           (Call_graph.G.nb_edges relevant_graph));
     let _n_pruned = prune_impl_interface_cycles relevant_graph in
-    let topo_order =
-      Call_graph.Topo.fold
-        (fun (fn : Function_id.t) (acc : Function_id.t list) -> fn :: acc)
-        relevant_graph []
-      |> List.rev
-    in
+    let topo_order = Call_graph.topological_order relevant_graph in
     let subgraph_files = Interfile_graph.files_of_graph relevant_graph in
     let graph_fid_set = fid_set_of_graph relevant_graph in
     (* Include target files with source/sink matches but no subgraph

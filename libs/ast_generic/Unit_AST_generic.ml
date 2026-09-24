@@ -11,7 +11,7 @@ let id_info_with_payloads ~(type_name : string) ~(callee : int)
   let ty = G.ty_builtin (type_name, Tok.unsafe_fake_tok type_name) in
   info.G.id_type := Some ty;
   info.G.id_instance_type := Some ty;
-  info.G.id_callee_definition := Some (sid callee);
+  info.G.id_callee_definition := [ sid callee ];
   info.G.id_svalue := Some (G.Cst const);
   info.G.id_flags :=
     IdFlags.make ~hidden ~case_insensitive:false ~final:false ~static:false;

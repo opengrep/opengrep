@@ -34,10 +34,10 @@ end
 
 module Engine = Graph_fixpoint.Make (Call_graph.G) (Sig_lattice) (Sig_store)
 
-(* [SCC.scc_list] lists the components callers first for the graph's
-   callee->caller edges. *)
+(* The strongly connected components, callees first, in the deterministic
+   order [Call_graph.components_callees_first] fixes. *)
 let sccs_callees_first (graph : Call_graph.G.t) : Function_id.t list list =
-  List.rev (Call_graph.SCC.scc_list graph)
+  Call_graph.components_callees_first graph
 
 let recursive_members (graph : Call_graph.G.t)
     (sccs : Function_id.t list list) : Function_id.t list =

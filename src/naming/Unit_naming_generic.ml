@@ -21,7 +21,11 @@ let resolutions_of_name ast name =
 
       method! visit_expr venv e =
         (match e.AST_generic.e with
-        | AST_generic.N (AST_generic.Id ((s, _), id_info)) when s = name ->
+        | AST_generic.N (AST_generic.Id ((s, _), id_info))
+        | AST_generic.N
+            (AST_generic.IdQualified
+              { name_last = (s, _), _; name_info = id_info; _ })
+          when s = name ->
             acc := !(id_info.AST_generic.id_resolved) :: !acc
         | _ -> ());
         super#visit_expr venv e
@@ -258,10 +262,7 @@ let tests parse_program =
              module-level variable. Occurrences: module-level `counter = 0`,
              the function-scope assignment, the use. *)
           check_resolutions ast "counter" [ "Global"; "Global"; "Global" ];
-          (* Imports stay flow-insensitive (pdb.yaml ecosystem constraint):
-             `jsonlib = make()` does not shadow `import json as jsonlib`. *)
-          check_resolutions ast "jsonlib"
-            [ "ImportedModule"; "ImportedModule" ]);
+          check_resolutions ast "jsonlib" [ "LocalVar"; "LocalVar" ]);
       t "python destructuring assignment shadows module function" (fun () ->
           let file =
             Fpath.v
@@ -547,4 +548,108 @@ let tests parse_program =
           check_resolutions ast "b" [ "LocalVar" ];
           (* a binding inside if does not leak *)
           check_resolutions ast "c" [ "Unresolved" ]);
+      t "cpp call with type arguments binds the function" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/cpp/template_call.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          check_uses_bind_nth_def ast "f" 0);
+      t "cpp rooted and qualified calls with type arguments" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/cpp/qualified_calls.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          check_resolutions ast "f" [ "Global"; "LocalVar" ];
+          check_binding_groups ast "f" [ 0; 1 ];
+          check_uses_bind_nth_def ast "g" 0);
+      t "kotlin callable references bind the function and the class" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/kotlin/callable_reference.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          check_uses_bind_nth_def ast "f" 0;
+          check_uses_bind_nth_def ast "Foo" 0);
+      t "lua assignment to an undeclared name binds a global" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/lua/global_assign.lua")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Lua ast;
+          check_resolutions ast "f" [ "Global"; "Global" ];
+          check_single_binding ast "f";
+          check_resolutions ast "M" [ "Global"; "Global"; "Global" ];
+          check_single_binding ast "M";
+          check_resolutions ast "count" [ "Global"; "Global" ];
+          check_single_binding ast "count";
+          check_resolutions ast "n" [ "LocalVar"; "LocalVar" ];
+          check_single_binding ast "n";
+          check_resolutions ast "later" [ "Global"; "Global" ];
+          check_single_binding ast "later";
+          check_resolutions ast "print" [ "Unresolved" ]);
+      t "julia dotted definition resolves its module" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/julia/dotted_definition.jl")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Julia ast;
+          check_resolutions ast "Foo" [ "Global"; "Global" ];
+          check_uses_bind_nth_def ast "Foo" 0);
+      t "r assignment binds in the current function" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/r/assign_scopes.R")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.R ast;
+          check_resolutions ast "x" [ "Global"; "LocalVar"; "LocalVar"; "Global" ];
+          check_binding_groups ast "x" [ 0; 1; 1; 0 ];
+          check_resolutions ast "f" [ "Global"; "Global" ];
+          check_single_binding ast "f");
+      t "hack assignment binds a function local" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/hack/function_locals.hack")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Hack ast;
+          check_resolutions ast "$x" [ "LocalVar"; "LocalVar"; "LocalVar"; "LocalVar" ];
+          check_single_binding ast "$x");
+      t "php namespaces hold their definitions" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/php/namespaces.php")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Php ast;
+          check_uses_bind_nth_def ast "LIMIT" 0;
+          match def_sids_of_name ast "helper" with
+          | [ in_app; in_global ] ->
+              Alcotest.(check bool) "two bindings" false
+                (AST_generic.SId.equal in_app in_global);
+              Alcotest.(check (list int)) "each use to its namespace's definition"
+                [ AST_generic.SId.to_int in_app; AST_generic.SId.to_int in_global ]
+                (resolutions_of_name ast "helper"
+                |> List.filter_map
+                     (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid)))
+          | sids ->
+              Alcotest.failf "expected two definitions of helper, found %d"
+                (List.length sids));
+      t "hack namespaces hold their definitions" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/hack/namespace.hack")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Hack ast;
+          check_binding_groups ast "helper" [ 0; 1 ]);
+      t "python class rebinds a function of the same name" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/python/function_then_class.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          check_resolutions ast "make" [ "Global"; "Other" ];
+          check_single_binding ast "make");
     ]

@@ -10,7 +10,7 @@ class Util:
 
 class Smoke:
     def smoke(self, payload):
-        # ok: receiver-static-self-named
+        # ruleid: receiver-static-self-named
         sink(payload)
 
 class Untyped:

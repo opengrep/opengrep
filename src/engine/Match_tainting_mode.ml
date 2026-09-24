@@ -769,12 +769,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               ~sources:source_functions ~sinks:sink_functions
           in
 
-          let analysis_order =
-            Call_graph.Topo.fold
-              (fun fn acc -> fn :: acc)
-              relevant_graph []
-            |> List.rev
-          in
+          let analysis_order = Call_graph.topological_order relevant_graph in
           let sccs = Sig_fixpoint.sccs_callees_first relevant_graph in
           (* A member of a recursive component composes its offsets under
              the flat bound, as the interfile path does. *)

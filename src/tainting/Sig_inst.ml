@@ -1483,6 +1483,20 @@ let identity_env (sig_ : Signature.t) : env =
   sig_.captured
   |> List_.map (fun (x, _) -> (x, Ref { T.base = T.BGlob x; offset = [] }))
 
+let closure_set_of_definitions (found : (Function_id.t * Signature.t) list) :
+    (closure * closure list) option =
+  match
+    found
+    |> List.sort_uniq
+         (fun ((left, _) : Function_id.t * Signature.t)
+              ((right, _) : Function_id.t * Signature.t) ->
+           Function_id.compare left right)
+    |> List_.map (fun ((def, sig_) : Function_id.t * Signature.t) ->
+           { def; sig_; env = identity_env sig_ })
+  with
+  | [] -> None
+  | c :: cs -> Some (c, cs)
+
 let find_in_env (env : env) (x : IL.name) : env_entry =
   match List.find_opt (fun (y, _) -> Int.equal (IL.compare_name x y) 0) env with
   | Some (_, entry) -> entry
@@ -1852,7 +1866,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     (taint_sig : Signature.t) ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
     ?(lookup_sig :
-       (IL.exp -> int -> (Function_id.t * Signature.t) option) option)
+       (IL.exp -> int -> (Function_id.t * Signature.t) list) option)
     ?(depth : int = 0)
     ?(recursive_cache : sig_inst_cache option)
     () : call_effects =
@@ -2402,12 +2416,15 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                   Log.debug (fun m ->
                       m "TOSINKINCALL: Looking up signature for '%s' with arity %d"
                         (Display_IL.string_of_exp exp_to_lookup) lookup_arity);
-                  (match lookup_fn exp_to_lookup lookup_arity with
-                  | Some (def, sig_) ->
+                  (match
+                     closure_set_of_definitions
+                       (lookup_fn exp_to_lookup lookup_arity)
+                   with
+                  | Some _ as closures ->
                       Log.debug (fun m ->
                           m "TOSINKINCALL: Found signature for '%s'"
                             (Display_IL.string_of_exp exp_to_lookup));
-                      Some ({ def; sig_; env = identity_env sig_ }, [])
+                      closures
                   | None ->
                       (* For anonymous classes, try looking up just the method name without the object *)
                       Log.debug (fun m ->
@@ -2423,12 +2440,16 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                           Log.debug (fun m ->
                               m "TOSINKINCALL: Looking up method name only: '%s' with arity %d"
                                 (Display_IL.string_of_exp method_only_exp) (List.length fun_args_taints));
-                          (match lookup_fn method_only_exp (List.length fun_args_taints) with
-                          | Some (def, sig_) ->
+                          (match
+                             closure_set_of_definitions
+                               (lookup_fn method_only_exp
+                                  (List.length fun_args_taints))
+                           with
+                          | Some _ as closures ->
                               Log.debug (fun m ->
                                   m "TOSINKINCALL: Found signature for method name '%s'"
                                     (Display_IL.string_of_exp method_only_exp));
-                              Some ({ def; sig_; env = identity_env sig_ }, [])
+                              closures
                           | None ->
                               Log.err (fun m ->
                                   m "%s: Could not find the shape of function argument '%s', and no signature found"

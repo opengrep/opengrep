@@ -29,7 +29,7 @@ rule.yml
                                                      id_instance_type =
                                                      ref (None);
                                                      id_callee_definition =
-                                                     ref (None);
+                                                     ref ([]);
                                                      id_svalue = ref (None);
                                                      id_flags = ref (0) }
                                                    )));
@@ -48,7 +48,7 @@ rule.yml
                                                       id_instance_type =
                                                       ref (None);
                                                       id_callee_definition =
-                                                      ref (None);
+                                                      ref ([]);
                                                       id_svalue = ref (None);
                                                       id_flags = ref (0) }
                                                     )));

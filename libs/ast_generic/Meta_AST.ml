@@ -214,7 +214,7 @@ and vof_id_info
   let arg = OCaml.vof_ref (OCaml.vof_option vof_svalue) v3 in
   let bnd = ("id_svalue", arg) in
   let bnds = bnd :: bnds in
-  let arg = OCaml.vof_ref (OCaml.vof_option vof_sid) v_id_callee_definition in
+  let arg = OCaml.vof_ref (OCaml.vof_list vof_sid) v_id_callee_definition in
   let bnd = ("id_callee_definition", arg) in
   let bnds = bnd :: bnds in
   let arg = OCaml.vof_ref (OCaml.vof_option vof_type_) v_id_instance_type in

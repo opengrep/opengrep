@@ -95,6 +95,68 @@ module Dot = Graph.Graphviz.Dot (Display)
 module Topo = Graph.Topological.Make (G)
 module SCC = Graph.Components.Make (G)
 
+module Component_set = Set.Make (struct
+  type t = Function_id.t * int
+
+  let compare ((left_first : Function_id.t), (left : int))
+      ((right_first : Function_id.t), (right : int)) : int =
+    match Function_id.compare left_first right_first with
+    | 0 -> Int.compare left right
+    | order -> order
+end)
+
+let components_callees_first (graph : G.t) : Function_id.t list list =
+  let count, component_of = SCC.scc graph in
+  let members = Array.make count [] in
+  G.iter_vertex
+    (fun (vertex : Function_id.t) ->
+      let component = component_of vertex in
+      members.(component) <- vertex :: members.(component))
+    graph;
+  let members = Array.map (List.sort Function_id.compare) members in
+  let incoming = Array.make count 0 in
+  let successors = Array.make count [] in
+  G.iter_edges
+    (fun (src : Function_id.t) (dst : Function_id.t) ->
+      let from = component_of src and into = component_of dst in
+      if not (Int.equal from into) then begin
+        successors.(from) <- into :: successors.(from);
+        incoming.(into) <- incoming.(into) + 1
+      end)
+    graph;
+  let key (component : int) : Function_id.t * int =
+    (List.hd members.(component), component)
+  in
+  let rec emit (ready : Component_set.t) (ordered : Function_id.t list list) :
+      Function_id.t list list =
+    match Component_set.min_elt_opt ready with
+    | None -> List.rev ordered
+    | Some ((_, component) as next) ->
+        let ready =
+          List.fold_left
+            (fun (ready : Component_set.t) (into : int) ->
+              incoming.(into) <- incoming.(into) - 1;
+              if Int.equal incoming.(into) 0 then
+                Component_set.add (key into) ready
+              else ready)
+            (Component_set.remove next ready)
+            successors.(component)
+        in
+        emit ready (members.(component) :: ordered)
+  in
+  emit
+    (Seq.fold_left
+       (fun (ready : Component_set.t) (component : int) ->
+         if Int.equal incoming.(component) 0 then
+           Component_set.add (key component) ready
+         else ready)
+       Component_set.empty
+       (Seq.init count Fun.id))
+    []
+
+let topological_order (graph : G.t) : Function_id.t list =
+  List.concat (components_callees_first graph)
+
 (** Helpers **)
 
 let pos_of_tok (tok : Tok.t) : Pos.t =

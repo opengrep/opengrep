@@ -897,8 +897,8 @@ let result_of_call_func_arg ~(lang : Lang.t) fun_exp fun_shape :
            (Taints.empty, S.Bot)
   | __else__ -> (Taints.empty, S.Bot)
 
-(* Fast path via [id_callee_definition] sid (= sig DB key), skipping the edge
-   scan.
+(* Fast path via the [id_callee_definition] sids (= sig DB keys), skipping
+   the edge scan: the signatures of every stamped definition found.
    The stamp is trusted whatever name it resolves to, gated only by the
    lookup itself: a bare-name mismatch is as likely to be a deliberate
    alias (a class-body field alias exposes name X for a target named Y,
@@ -908,18 +908,19 @@ let result_of_call_func_arg ~(lang : Lang.t) fun_exp fun_shape :
    arity is evidence enough. *)
 let signature_via_callee_definition ~project_root db (id_info : G.id_info)
     arity =
-  match !(id_info.G.id_callee_definition) with
-  | Some sid when not (G.SId.is_unsafe_default sid) ->
-    (* A project scan keys the sig DB by absolutified fids, while sids
-       carry the as-parsed (possibly relative) file. *)
-    let fid =
-      let fid = Function_id.of_sid sid in
-      match project_root with
-      | Some root -> Function_id.make_absolute root fid
-      | None -> fid
-    in
-    Shape_and_sig.lookup_definition db fid arity
-  | _ -> None
+  !(id_info.G.id_callee_definition)
+  |> List.filter_map (fun (sid : G.SId.t) ->
+         if G.SId.is_unsafe_default sid then None
+         else
+           (* A project scan keys the sig DB by absolutified fids, while sids
+              carry the as-parsed (possibly relative) file. *)
+           let fid =
+             let fid = Function_id.of_sid sid in
+             match project_root with
+             | Some root -> Function_id.make_absolute root fid
+             | None -> fid
+           in
+           Shape_and_sig.lookup_definition db fid arity)
 
 let get_signature_for_object ?(callee_id_info : G.id_info option)
     ~project_root graph caller_node db method_name arity =
@@ -927,20 +928,20 @@ let get_signature_for_object ?(callee_id_info : G.id_info option)
      stamped on the callee bare name, then the local call-graph edge, then the
      method-name fid. *)
   let fast =
-    Option.bind callee_id_info (fun ii ->
-        signature_via_callee_definition
-          ~project_root
-          db ii arity)
+    match callee_id_info with
+    | Some ii -> signature_via_callee_definition ~project_root db ii arity
+    | None -> []
   in
   match fast with
-  | Some _ as r -> r
-  | None ->
+  | _ :: _ -> fast
+  | [] ->
     let caller = Option.map Function_id.of_il_name caller_node in
     let call_tok = Tok.abs_tok project_root (Function_id.tok method_name) in
-    (match Call_graph.lookup_callee_from_graph graph caller call_tok with
-     | Some callee_node ->
-       Shape_and_sig.lookup_definition db callee_node arity
-     | None -> Shape_and_sig.lookup_definition db method_name arity)
+    Option.to_list
+      (match Call_graph.lookup_callee_from_graph graph caller call_tok with
+       | Some callee_node ->
+         Shape_and_sig.lookup_definition db callee_node arity
+       | None -> Shape_and_sig.lookup_definition db method_name arity)
 
 (* Helper to fallback to builtin signature database if regular lookup fails *)
 let try_builtin_fallback env func_name arity result =
@@ -967,8 +968,9 @@ let lookup_bare_function_name env db (name : IL.name) arity =
     signature_via_callee_definition
       ~project_root:env.taint_inst.project_root db name.IL.id_info arity
   with
-  | Some _ as r -> r
-  | None ->
+  | _ :: _ as found -> found
+  | [] ->
+  Option.to_list @@
   (* Absolutize the call token to match the absolute paths on call-graph edges. *)
   let call_tok =
     snd name.ident |> Tok.abs_tok env.taint_inst.project_root
@@ -1023,7 +1025,7 @@ let lookup_signature_with_object_context env fun_exp arity =
   match env.signature_db with
   | None ->
       Log.debug (fun m -> m "TAINT_SIG: No signature database available");
-      None
+      []
   | Some db -> (
       match fun_exp.e with
       | Fetch { base = Var name; rev_offset = [] }
@@ -1056,8 +1058,9 @@ let lookup_signature_with_object_context env fun_exp arity =
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
-          | Some _ as r -> r
-          | None ->
+          | _ :: _ as found -> found
+          | [] ->
+          Option.to_list @@
           let call_tok =
             Tok.abs_tok env.taint_inst.project_root (snd method_name.ident)
           in
@@ -1081,8 +1084,9 @@ let lookup_signature_with_object_context env fun_exp arity =
               (Function_id.of_il_name method_name)
               arity
           with
-          | Some _ as result -> result
-          | None ->
+          | _ :: _ as found -> found
+          | [] ->
+              Option.to_list @@
               (* Fallback: try qualified function name (Module.function for Elixir, etc.) *)
               let qualified_name =
                 {
@@ -1106,8 +1110,9 @@ let lookup_signature_with_object_context env fun_exp arity =
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
-          | Some _ as r -> r
-          | None ->
+          | _ :: _ as found -> found
+          | [] ->
+          Option.to_list @@
           let call_tok = Tok.abs_tok env.taint_inst.project_root (snd method_name.ident) in
           match
             Call_graph.lookup_callee_from_graph env.call_graph
@@ -1140,8 +1145,8 @@ let lookup_signature_with_object_context env fun_exp arity =
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
-          | Some _ as r -> r
-          | None -> (
+          | _ :: _ as found -> found
+          | [] -> Option.to_list (
               let call_tok =
                 Tok.abs_tok env.taint_inst.project_root
                   (snd method_name.ident)
@@ -1171,8 +1176,8 @@ let lookup_signature_with_object_context env fun_exp arity =
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
-          | Some _ as r -> r
-          | None -> (
+          | _ :: _ as found -> found
+          | [] -> Option.to_list (
               let call_tok =
                 Tok.abs_tok env.taint_inst.project_root
                   (snd method_name.ident)
@@ -1185,10 +1190,10 @@ let lookup_signature_with_object_context env fun_exp arity =
               | Some callee_node ->
                   Shape_and_sig.lookup_definition db callee_node arity
               | None -> None))
-      | _ -> None)
+      | _ -> [])
 
-(* If [fun_exp]'s [id_callee_definition] def-site sid is the function currently
- * under analysis, return a synthesised signature built from the effects
+(* If one of [fun_exp]'s [id_callee_definition] def-site sids is the function
+ * currently under analysis, return a synthesised signature built from the effects
  * accumulated so far. The surrounding dataflow fixpoint iterates, so each
  * pass picks up effects recorded by the previous one — converging to a
  * least-fixed-point over direct self-recursion. Both sids derive from the
@@ -1196,12 +1201,12 @@ let lookup_signature_with_object_context env fun_exp arity =
 let is_self_call env (fun_exp : IL.exp) : bool =
   match (fun_exp.e, env.func.name) with
   | Fetch { base = Var callee; rev_offset = [] }, Some self_name -> (
-      match !(callee.id_info.G.id_callee_definition) with
-      | Some sid ->
+      List.exists
+        (fun (sid : G.SId.t) ->
           (not (G.SId.is_unsafe_default sid))
           && Function_id.equal (Function_id.of_sid sid)
-               (Function_id.of_il_name self_name)
-      | None -> false)
+               (Function_id.of_il_name self_name))
+        !(callee.id_info.G.id_callee_definition))
   | _ -> false
 
 (* The environment of a closure formed at the current node: a variable
@@ -1218,6 +1223,14 @@ let closure_env (env : env) (sig_ : Signature.t) : S.env =
                  (match Lval_env.find_var env.lval_env x with
                  | Some cell -> cell
                  | None -> S.Cell (`None, S.Bot)) ))
+
+let closure_set_of_definitions (env : env)
+    (found : (Function_id.t * Signature.t) list) : S.shape =
+  List.fold_left
+    (fun (shape : S.shape) (((_, sig_) as definition) : Function_id.t * Signature.t) ->
+      Shape.unify_shape ~lang:env.taint_inst.lang shape
+        (Shape_and_sig.closure_of_definition definition (closure_env env sig_)))
+    S.Bot found
 
 let self_sig_if_recursive env fun_exp =
   match env.func.name with
@@ -1248,13 +1261,50 @@ let lookup_signature env fun_exp arity =
   Log.debug (fun m ->
       m "LOOKUP_SIG_ENTRY: Looking up %s with arity %d"
         (Display_IL.string_of_exp fun_exp) arity);
-  match lookup_signature_with_object_context env fun_exp arity with
-  | Some _ as r -> r
-  | None -> self_sig_if_recursive env fun_exp
+  let found = lookup_signature_with_object_context env fun_exp arity in
+  let is_current (def : Function_id.t) : bool =
+    match env.func.name with
+    | Some self_name -> (
+        let self_def = Function_id.of_il_name self_name in
+        Function_id.equal def self_def
+        ||
+        match env.taint_inst.project_root with
+        | Some root ->
+            Function_id.equal def (Function_id.make_absolute root self_def)
+        | None -> false)
+    | None -> false
+  in
+  if
+    List.exists
+      (fun ((def, _) : Function_id.t * Signature.t) -> is_current def)
+      found
+  then found
+  else found @ Option.to_list (self_sig_if_recursive env fun_exp)
 
 (*****************************************************************************)
 (* Lambdas *)
 (*****************************************************************************)
+
+let callee_use (callee : IL.exp) : Callee_resolution.callee_use option =
+  match callee.e with
+  | Fetch { base = Var name; rev_offset = [] } ->
+      Callee_resolution.callee_use_of_name name.id_info
+  | Fetch { base = Var receiver; rev_offset = [ { o = Dot member; _ } ] } ->
+      Callee_resolution.callee_use_of_member ~receiver:receiver.id_info
+        (fst member.ident)
+  | _ -> None
+
+let argument_types (lang : Lang.t) (args : IL.exp IL.argument list) :
+    Callee_resolution.static_type option list =
+  List_.map
+    (fun (arg : IL.exp IL.argument) ->
+      match arg with
+      | Unnamed { eorig = SameAs (e : G.expr); _ } ->
+          Callee_resolution.static_type_of_argument ~lang e
+      | Unnamed _
+      | Named _ ->
+          None)
+    args
 
 let lambdas_used_in_node lambdas node =
   LV.rlvals_of_node node.IL.n |> List_.filter_map (LV.lval_is_lambda lambdas)
@@ -2001,10 +2051,8 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                   if is_temp_var then shape
                   else
                     (match lookup_signature env exp arity with
-                    | Some ((_, fun_sig) as found) ->
-                        Shape_and_sig.closure_of_definition found
-                          (closure_env env fun_sig)
-                    | None -> shape)
+                    | [] -> shape
+                    | found -> closure_set_of_definitions env found)
             in
             (taints, shape, lval_env)
         | __else__ ->
@@ -2087,21 +2135,25 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
       | Some callee_name ->
           let arity = List.length args_taints in
           (match lookup_signature env callee arity with
-          | Some (_, callee_sig) ->
+          | _ :: _ as found ->
               Log.debug (fun m ->
                   m "Resolving ToSinkInCall for '%s' at use site"
                     (IL.str_of_name callee_name));
               Some
-                (Sig_inst.instantiate_function_signature
-                   ~lang:env.taint_inst.lang ~atoms:env.shared_tables.guard_atoms
-                   ~max_offset:(poly_offset_bound env callee)
-                   ~outer_params:env.func.il_params
-                   env.lval_env callee_sig ~callee ~args:None args_taints
-                   ~lookup_sig:(fun exp _depth ->
-                     let arity = List.length args_taints in
-                     lookup_signature env exp arity)
-                   ())
-          | None ->
+                (List.concat_map
+                   (fun ((_, callee_sig) : Function_id.t * Signature.t) ->
+                     Sig_inst.instantiate_function_signature
+                       ~lang:env.taint_inst.lang
+                       ~atoms:env.shared_tables.guard_atoms
+                       ~max_offset:(poly_offset_bound env callee)
+                       ~outer_params:env.func.il_params
+                       env.lval_env callee_sig ~callee ~args:None args_taints
+                       ~lookup_sig:(fun exp _depth ->
+                         let arity = List.length args_taints in
+                         lookup_signature env exp arity)
+                       ())
+                   found)
+          | [] ->
               Log.debug (fun m ->
                   m "ToSinkInCall: No signature found for '%s'"
                     (IL.str_of_name callee_name));
@@ -2295,8 +2347,13 @@ let check_function_call env fun_exp args
       | Some _ -> from_shape
       | None -> (
           match lookup_signature env fun_exp arity with
-          | Some (_, fun_sig) -> Some [ (fun_sig, None) ]
-          | None -> (
+          | _ :: _ as found ->
+              Some
+                (List_.map
+                   (fun ((_, fun_sig) : Function_id.t * Signature.t) ->
+                     (fun_sig, None))
+                   found)
+          | [] -> (
               (* Sym-prop fallback: if the variable's [id_svalue] resolves
                * to a bare function reference (e.g. [cb = handler]), look
                * up the referenced function's signature in the DB. *)
@@ -2328,8 +2385,14 @@ let check_function_call env fun_exp args
                             "SIG_FROM_SVALUE: var=%s resolves to %s"
                             (IL.str_of_name x)
                             (IL.str_of_name il_name));
-                      lookup_signature env aliased_exp arity
-                      |> Option.map (fun (_, fun_sig) -> [ (fun_sig, None) ])
+                      (match lookup_signature env aliased_exp arity with
+                      | [] -> None
+                      | found ->
+                          Some
+                            (List_.map
+                               (fun ((_, fun_sig) : Function_id.t * Signature.t) ->
+                                 (fun_sig, None))
+                               found))
                   | _ -> None)
               | _ -> None))
     else None
@@ -2532,9 +2595,10 @@ let call_with_intrafile lval_opt e env args instr =
     ~filter_sinks:(fun m -> not (m.spec.sink_exact && m.spec.sink_has_focus));
   let call_taints, shape, lval_env =
     (* Constructor call handling for ClassName() and ClassName.new():
-       the callee bare name's [id_callee_definition] sid points at the resolved def
-       (stamped by extraction), and a construction resolves to the ctor
-       def (e.g. [__init__]/[initialize]), so the sid's bare name decides.
+       the callee bare name's [id_callee_definition] sids point at the resolved
+       defs (stamped by extraction), and a construction resolves to the ctor
+       def (e.g. [__init__]/[initialize]), so a sid whose bare name is a
+       constructor's decides.
        A construction must not be mistaken for an implicit block/HOF call,
        and its callee is remapped below so Sig_inst maps BThis onto the
        assignment target. *)
@@ -2551,19 +2615,20 @@ let call_with_intrafile lval_opt e env args instr =
              || not Lang.(env.taint_inst.lang =*= Ruby || env.taint_inst.lang =*= Crystal) -> false
       | _ -> true) &&
       Option.is_some env.signature_db &&
-      let callee_definition_sid = match e.e with
+      let callee_definition_sids = match e.e with
         | Fetch { base = Var name; rev_offset = [] } ->
             !(name.id_info.G.id_callee_definition)
         | Fetch { base = Var _; rev_offset = [ { o = Dot m; _ } ] } ->
             !(m.id_info.G.id_callee_definition)
-        | _ -> None
+        | _ -> []
       in
-      (match callee_definition_sid with
-       | Some sid when not (G.SId.is_unsafe_default sid) ->
-           let (rname, _, _, _) = G.SId.to_loc sid in
-           Object_initialization.is_constructor env.taint_inst.lang
-             rname None
-       | _ -> false)
+      List.exists
+        (fun (sid : G.SId.t) ->
+          (not (G.SId.is_unsafe_default sid))
+          &&
+          let (rname, _, _, _) = G.SId.to_loc sid in
+          Object_initialization.is_constructor env.taint_inst.lang rname None)
+        callee_definition_sids
     in
     (* Detect Ruby/Scala/Kotlin implicit block pattern:
      * When a call has a single lambda argument (as a Fetch of a lambda lval),
@@ -3142,11 +3207,9 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           match (op, args) with
           | IL.Ref, [ IL.Unnamed exp ] -> (
               match (lookup_signature env exp 0, args_taints) with
-              | Some ((_, fun_sig) as found), _ ->
-                  Shape_and_sig.closure_of_definition found
-                    (closure_env env fun_sig)
-              | None, [ IL.Unnamed (_, arg_shape) ] -> arg_shape
-              | None, _ -> Bot)
+              | (_ :: _ as found), _ -> closure_set_of_definitions env found
+              | [], [ IL.Unnamed (_, arg_shape) ] -> arg_shape
+              | [], _ -> Bot)
           | _ -> Bot
         in
         (all_args_taints, shape, lval_env)
@@ -3398,16 +3461,9 @@ let rebound_vars (cfg : IL.cfg) : IL.NameSet.t =
       | _ -> acc)
     cfg.reachable IL.NameSet.empty
 
-let type_name (t : G.type_) : string option =
-  match t.t with
-  | G.TyN (G.Id ((s, _), _))
-  | G.TyN (G.IdQualified { name_last = (s, _), _; _ }) ->
-      Some s
-  | _ -> None
-
 (* The parameter holds a copy of the caller's value (a struct passed by
  * value), so nothing the callee does to it reaches the caller. *)
-let param_is_copy ~(is_value_type : string -> bool) (p : IL.name_param) :
+let param_is_copy ~(is_value_type : G.type_ -> bool) (p : IL.name_param) :
     bool =
   (not p.by_reference)
   &&
@@ -3415,12 +3471,9 @@ let param_is_copy ~(is_value_type : string -> bool) (p : IL.name_param) :
   | None -> false
   | Some { t = G.OtherType ((("struct" | "union" | "class"), _), _); _ } ->
       true
-  | Some t -> (
-      match type_name t with
-      | Some name -> is_value_type name
-      | None -> false)
+  | Some t -> is_value_type t
 
-let copied_params ~(is_value_type : string -> bool)
+let copied_params ~(is_value_type : G.type_ -> bool)
     (params : IL.param list) : IL.NameSet.t =
   params
   |> List.fold_left
@@ -4607,17 +4660,29 @@ and (fixpoint :
           class_name;
         }
       in
-      let callee_has_sig_memo : (string * int, bool) Hashtbl.t =
-        Hashtbl.create 16
+      let callee_has_sig_memo : bool Callee_resolution.Callee_use_tbl.t =
+        Callee_resolution.Callee_use_tbl.create 16
       in
-      let callee_has_sig (callee : IL.exp) (arity : int) : bool =
-        let key = (Display_IL.string_of_exp callee, arity) in
-        match Hashtbl.find_opt callee_has_sig_memo key with
-        | Some b -> b
-        | None ->
-            let b = Option.is_some (lookup_signature probe_env callee arity) in
-            Hashtbl.replace callee_has_sig_memo key b;
-            b
+      let callee_has_sig (callee : IL.exp) (args : IL.exp IL.argument list) :
+          bool =
+        let lookup () : bool =
+          not
+            (List.is_empty
+               (lookup_signature probe_env callee (List.length args)))
+        in
+        match callee_use callee with
+        | None -> lookup ()
+        | Some use -> (
+            let key = (use, Some (argument_types taint_inst.Taint_rule_inst.lang args)) in
+            match
+              Callee_resolution.Callee_use_tbl.find_opt callee_has_sig_memo key
+            with
+            | Some b -> b
+            | None ->
+                let b = lookup () in
+                Callee_resolution.Callee_use_tbl.replace callee_has_sig_memo key
+                  b;
+                b)
       in
       let lambda_var_of_lval (lv : IL.lval) : IL.name option =
         match lv with
@@ -4651,8 +4716,7 @@ and (fixpoint :
                            | Unnamed e | Named (_, e) -> lambda_var_of_exp e)
                          args
                      in
-                     let arity = List.length args in
-                     let callee_needs = callee_has_sig callee arity in
+                     let callee_needs = callee_has_sig callee args in
                      List.fold_left
                        (fun needed v ->
                          (* needed unless its only uses here are as a bare

@@ -24,7 +24,5 @@ def uses_global():
 
 
 def shadows_import():
-    # Ecosystem exception: imports stay flow-insensitive (cf. the pdb.yaml
-    # rule in semgrep-rules), so `jsonlib` keeps resolving to the import.
     jsonlib = make()
     sink(jsonlib.dumps)

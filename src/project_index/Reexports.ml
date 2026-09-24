@@ -2,6 +2,25 @@ module G = AST_generic
 module FA = Graph_from_AST
 module Log = Log_projidx.Log
 
+(* Class and module qns share one dotted-string space; [known_class_qns] is
+   tested by re-interpreting the module qn. *)
+let chase_reexport
+    ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
+    ~(is_known : Names.Module_qn.t -> bool)
+    (qn : Names.Module_qn.t) : Names.Module_qn.t option =
+  let visited : (Names.Module_qn.t, unit) Hashtbl.t = Hashtbl.create 8 in
+  let rec walk current =
+    if is_known current then Some current
+    else if Hashtbl.mem visited current then None
+    else begin
+      Hashtbl.replace visited current ();
+      match Hashtbl.find_opt reexport_map current with
+      | None -> None
+      | Some next -> walk next
+    end
+  in
+  walk qn
+
 (* Re-export a free function under a different bound name (Python
    [from .m import f as g]): expose it as [alias] at the target's own
    position/sid, so name-based lookup finds [alias] while the graph node

@@ -734,7 +734,7 @@ and id_info = {
   id_instance_type : type_ option ref;
       [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* type checker (typing) *)
-  id_callee_definition : sid option ref;
+  id_callee_definition : sid list ref;
       [@hash.ignore] [@equal fun _a _b -> true] [@compare fun _a _b -> 0]
   (* sgrep: this is for sgrep constant propagation hack.
    * todo? associate only with Id?
@@ -2421,7 +2421,7 @@ let empty_id_info ?(hidden = false) ?(case_insensitive = false) () =
     id_resolved_alternatives = ref [];
     id_type = ref None;
     id_instance_type = ref None;
-    id_callee_definition = ref None;
+    id_callee_definition = ref [];
     id_svalue = ref None;
     id_flags =
       ref (IdFlags.make ~hidden ~case_insensitive ~final:false ~static:false);
