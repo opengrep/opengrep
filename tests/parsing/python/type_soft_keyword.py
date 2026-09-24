@@ -45,6 +45,20 @@ isinstance(x, type(y))
 type = 5
 type = int
 
+# type as dict key (expression, not statement boundary)
+d = {"type": int}
+d["type"] = str
+
+# type in comprehension
+types = [type for type in [int, str]]
+
+# type in lambda
+f = lambda type: type
+
+# type after 'else' in inline suite
+if False: pass
+else: type ElseAlias = int
+
 # Mix of soft keyword and identifier usage in same file
 type Alias = int
 type = 5

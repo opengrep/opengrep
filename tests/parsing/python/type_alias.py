@@ -40,3 +40,21 @@ class MyClass:
 
 # Type alias after colon (inline in suite)
 if True: type InlineAlias = int
+
+# Type alias after semicolon (multiple statements on one line)
+x = 1; type AfterSemicolon = int
+
+# Type alias in for/while body (inline suite)
+for _ in []: type LoopAlias = int
+while False: type WhileAlias = int
+
+# Type alias with string literal RHS (forward reference)
+type Forward = "MyClass"
+
+# Type alias with ternary expression RHS
+type Conditional = int if True else str
+
+# Type alias immediately after another type alias
+type First = int
+type Second = str
+type Third = First
