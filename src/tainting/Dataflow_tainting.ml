@@ -2112,7 +2112,8 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               in
               ( taints_acc,
                 shape_acc,
-                lval_env |> Lval_env.add env.taint_inst.lang var offset taints )
+                lval_env
+                |> Lval_env.add_written_through env.taint_inst.lang var offset taints )
           | ToLvalThis { taints; offset; guards } ->
               let guards = Effect_guard.compose_and rebound_guards guards in
               record_this_field_write env taints offset guards;
@@ -2370,7 +2371,8 @@ let check_function_call env fun_exp args
                    ( taints_acc,
                      shape_acc,
                      lval_env
-                     |> Lval_env.add env.taint_inst.lang var offset taints )
+                     |> Lval_env.add_written_through env.taint_inst.lang var offset
+                          taints )
                | ToLvalThis { taints; offset; guards } ->
                    record_this_field_write env taints offset guards;
                    (* Mirror the sibling [ToLval] arm's local write. *)
@@ -3613,6 +3615,20 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
          * it is dropped at stamp time: the IL is non-SSA, so a later read of
          * this name may observe a different value than a guard established
          * earlier on the path assumed. *)
+        let out_lval_env =
+          match (opt_lval, x.i) with
+          | ( Some { IL.base = IL.Var name; rev_offset = [] },
+              CallSpecial (_, (IL.Ref, _), [ IL.Unnamed { e = Fetch target; _ } ])
+            ) ->
+              Lval_env.set_pointee env.taint_inst.lang name target out_lval_env
+          | ( Some { IL.base = IL.Var name; rev_offset = [] },
+              Assign (_, { e = Fetch { base = Var src; rev_offset = [] }; _ }) )
+            ->
+              Lval_env.copy_pointees ~src ~dst:name out_lval_env
+          | Some { IL.base = IL.Var name; rev_offset = [] }, _ ->
+              Lval_env.forget_pointees name out_lval_env
+          | _ -> out_lval_env
+        in
         (match opt_lval with
         | Some { IL.base = IL.Var name; _ } ->
             Lval_env.mark_reassigned name out_lval_env
