@@ -44,6 +44,7 @@ let polyglot_pattern_path = tests_path_patterns / "POLYGLOT"
 let full_lang_info =
   [
     (Lang.Apex, "apex", ".cls");
+    (Lang.Apex, "apex", ".trigger");
     (Lang.Bash, "bash", ".bash");
     (Lang.C, "c", ".c");
     (Lang.Cairo, "cairo", ".cairo");
@@ -687,7 +688,7 @@ let lang_tainting_tests () =
       (Lang.Php, "php", ".php");
       (Lang.Python, "python", ".py");
       (Lang.Ruby, "ruby", ".rb");
-      (Lang.Ruby, "rust", ".rs");
+      (Lang.Rust, "rust", ".rs");
       (Lang.Scala, "scala", ".scala");
       (Lang.Ts, "ts", ".ts");
       (Lang.Vb, "vb", ".vb");
