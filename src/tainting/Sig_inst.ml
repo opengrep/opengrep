@@ -1224,12 +1224,20 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
   let walk_effect (e : Effect.t) : Effect.t option =
     match e with
     | Effect.ToReturn
-        { data_taints; data_shape; control_taints; return_tok; guards } ->
+        {
+          data_taints;
+          data_shape;
+          several_results;
+          control_taints;
+          return_tok;
+          guards;
+        } ->
         Some
           (Effect.ToReturn
              {
                data_taints = walk_taints data_taints;
                data_shape = walk_shape data_shape;
+               several_results;
                control_taints = walk_taints control_taints;
                return_tok;
                guards = walk_guard guards;
@@ -1985,7 +1993,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | Drop_effect -> []
     | Keep_guards out_guards ->
       match eff with
-    | Effect.ToReturn { data_taints; data_shape; control_taints; return_tok; _ } ->
+    | Effect.ToReturn
+        { data_taints; data_shape; several_results; control_taints; return_tok; _ }
+      ->
         Log.debug (fun m ->
             m "INST_EFFECT: ToReturn BEFORE inst_taints: %d taints"
               (Taints.cardinal data_taints));
@@ -2011,6 +2021,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               {
                 data_taints;
                 data_shape;
+                several_results;
                 control_taints;
                 return_tok;
                 guards = out_guards;
@@ -2852,11 +2863,14 @@ and remap_effect_barg (remap_fn : T.arg -> T.arg) (eff : Effect.t)
       in
       Effect.ToSink
         { taints_with_precondition = (items, pre); sink; merged_env; guards }
-  | Effect.ToReturn { data_taints; data_shape; control_taints; return_tok; guards } ->
+  | Effect.ToReturn
+      { data_taints; data_shape; several_results; control_taints; return_tok; guards }
+    ->
       Effect.ToReturn
         {
           data_taints = remap_taints_barg remap_fn data_taints;
           data_shape = remap_shape_barg remap_fn data_shape;
+          several_results;
           control_taints = remap_taints_barg remap_fn control_taints;
           return_tok;
           guards;
@@ -3093,6 +3107,7 @@ let mk_return_effect (name : string) (index : int) : Effect.t =
   Effect.ToReturn
     { data_taints = mk_barg_taints name index;
       data_shape = Bot;
+      several_results = false;
       control_taints = Taints.empty;
       return_tok = Tok.unsafe_fake_tok "test";
       guards = Effect_guard.top }
@@ -3346,6 +3361,7 @@ let mk_glob_return_effect (glob : string) : Effect.t =
         Taints.singleton
           (T.taint_of_orig (T.Var { T.base = T.BGlob name; offset = [] }));
       data_shape = Bot;
+      several_results = false;
       control_taints = Taints.empty;
       return_tok = Tok.unsafe_fake_tok "test";
       guards = Effect_guard.top }

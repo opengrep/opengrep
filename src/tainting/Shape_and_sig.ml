@@ -446,6 +446,9 @@ and Effect : sig
         (** The taints of the data being returned (typical data propagated via
             data flow). *)
     data_shape : Shape.shape;  (** The shape of the data being returned. *)
+    several_results : bool;
+        (** The positions of [data_shape] are the function's results, as in
+            Go's [return v, err], not a level of one value. *)
     control_taints : Taint.taints;
         (** The taints propagated via the control flow (cf., `control: true`
             sources) * used for reachability queries. *)
@@ -584,6 +587,7 @@ end = struct
   type taints_to_return = {
     data_taints : Taint.taints;
     data_shape : Shape.shape;
+    several_results : bool;
     control_taints : Taint.taints;
     return_tok : AST_generic.tok;
     guards : Effect_guard.t;
@@ -654,6 +658,7 @@ end = struct
       {
         data_taints = data_taints1;
         data_shape = data_shape1;
+        several_results = several_results1;
         control_taints = control_taints1;
         return_tok = _;
         guards = _;
@@ -661,6 +666,7 @@ end = struct
       {
         data_taints = data_taints2;
         data_shape = data_shape2;
+        several_results = several_results2;
         control_taints = control_taints2;
         return_tok = _;
         guards = _;
@@ -668,7 +674,10 @@ end = struct
     match Taints.compare data_taints1 data_taints2 with
     | 0 -> (
         match Shape.compare_shape data_shape1 data_shape2 with
-        | 0 -> Taints.compare control_taints1 control_taints2
+        | 0 -> (
+            match Bool.compare several_results1 several_results2 with
+            | 0 -> Taints.compare control_taints1 control_taints2
+            | other -> other)
         | other -> other)
     | other -> other
 

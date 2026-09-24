@@ -75,6 +75,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
       {
         data_taints = this_taint_set;
         data_shape = Shape.Fun (returned_fun_sig, []);
+        several_results = false;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
         guards = Effect_guard.top;
@@ -147,6 +148,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
       {
         data_taints = data_taint_set;
         data_shape = Shape.Bot;
+        several_results = false;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
         guards = Effect_guard.top;
@@ -222,6 +224,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
       {
         data_taints = this_taint_set;
         data_shape = Shape.Bot;
+        several_results = false;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
         guards = Effect_guard.top;
@@ -340,6 +343,7 @@ let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~c
       {
         data_taints = data_taint_set;
         data_shape = Shape.Bot;
+        several_results = false;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
         guards;
@@ -445,6 +449,7 @@ let return_effect taint_set =
     {
       data_taints = taint_set;
       data_shape = Shape.Bot;
+      several_results = false;
       control_taints = Taint.Taint_set.empty;
       return_tok = Tok.unsafe_fake_tok "builtin";
       guards = Effect_guard.top;

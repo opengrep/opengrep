@@ -808,6 +808,15 @@ and bound_fun_shape ~levels (shape : shape) : shape =
 
 let truncate_effect ~max_depth (eff : Shape_and_sig.Effect.t) :
     Shape_and_sig.Effect.t =
+  (* The positions holding several results are not a level of a value:
+   * each result keeps [max_depth] levels. *)
+  let max_depth =
+    match eff with
+    | Shape_and_sig.Effect.ToReturn { several_results = true; _ }
+      when max_depth >= 1 ->
+        max_depth + 1
+    | _ -> max_depth
+  in
   let widen shape =
     truncate_shape ~max_depth shape
     |> bound_fun_shape ~levels:Limits_semgrep.taint_MAX_SIG_FUN_DEPTH

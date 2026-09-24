@@ -456,7 +456,15 @@ and cfg_of_stmts ?tok (xs : stmt list) : IL.cfg * IL.lambdas_cfgs =
 and cfg_of_fdef ?source_range fdef =
   let cfg, lambdas = cfg_of_stmts ~tok:(snd fdef.fkind) fdef.fbody in
   mark_at_exit_nodes cfg;
-  IL.{ params = fdef.fparams; captures = fdef.fcaptures; cfg; lambdas; source_range }
+  IL.
+    {
+      params = fdef.fparams;
+      frettype = fdef.frettype;
+      captures = fdef.fcaptures;
+      cfg;
+      lambdas;
+      source_range;
+    }
 
 let source_range_of_gfdef (fdef : G.function_definition) :
     IL.source_range option =

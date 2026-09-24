@@ -1,0 +1,13 @@
+rules:
+  - id: test-multiple-results-go
+    message: each of a function's results keeps its fields
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

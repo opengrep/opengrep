@@ -523,6 +523,7 @@ type cfg = (node, edge) CFG.t
 
 type fun_cfg = {
   params : param list;
+  frettype : G.type_ option;
   captures : captures;
   cfg : cfg;
   lambdas : lambdas_cfgs;

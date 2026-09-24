@@ -762,7 +762,25 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
            in
            effects_of_tainted_sink env taints_with_traces sink)
 
-let effects_of_tainted_return env taints shape return_tok : Effect.t list =
+(* Go and Lua have no tuple values: a function returning several results
+ * returns them as a tuple. In Go the function declares them, so every
+ * [return] of it gives several results, [return f()] included; in Lua,
+ * which declares no result types, a returned tuple is several results. *)
+let returns_several_results (lang : Lang.t) (fun_cfg : IL.fun_cfg)
+    (e : IL.exp) : bool =
+  match lang with
+  | Lang.Go -> (
+      match fun_cfg.frettype with
+      | Some { t = G.TyTuple _; _ } -> true
+      | _ -> false)
+  | Lang.Lua -> (
+      match e.e with
+      | Composite (CTuple, _) -> true
+      | _ -> false)
+  | _ -> false
+
+let effects_of_tainted_return env ~(several_results : bool) taints shape
+    return_tok : Effect.t list =
   let control_taints = get_control_taints_to_return env in
   let relevant_data = Shape.taints_and_shape_are_relevant taints shape in
   let has_ctrl = not (Taints.is_empty control_taints) in
@@ -783,6 +801,7 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
             {
               data_taints = Taints.empty;
               data_shape = shape;
+              several_results;
               control_taints = Taints.empty;
               return_tok;
               guards = Effect_guard.top;
@@ -805,6 +824,7 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
                  {
                    data_taints = group;
                    data_shape = shape;
+                   several_results;
                    control_taints = Taints.empty;
                    return_tok;
                    guards = guard;
@@ -817,6 +837,7 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
             {
               data_taints = Taints.empty;
               data_shape = Bot;
+              several_results = false;
               control_taints;
               return_tok;
               guards = Effect_guard.top;
@@ -3698,7 +3719,8 @@ let check_tainted_control_at_exit node env =
           | Some name -> G.fake (IL.str_of_name name ^ "/return")
         in
         let effects =
-          effects_of_tainted_return env Taints.empty Bot return_tok
+          effects_of_tainted_return env ~several_results:false Taints.empty Bot
+            return_tok
         in
         record_effects env effects
 
@@ -4128,7 +4150,12 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
     | NReturn (tok, e) ->
         (* TODO: Move most of this to check_tainted_return. *)
         let taints, shape, lval_env' = check_tainted_return env tok e in
-        let effects = effects_of_tainted_return env taints shape tok in
+        let effects =
+          effects_of_tainted_return env
+            ~several_results:
+              (returns_several_results env.taint_inst.lang fun_cfg e)
+            taints shape tok
+        in
         record_effects env effects;
         lval_env'
     | TrueNode cond ->
