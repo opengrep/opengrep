@@ -447,6 +447,18 @@ jobs:
         shell: bash
         run: opengrep/opengrep.exe scan --sarif -f tests/windows/rules.yml tests/windows/test.py
 
+      - name: test subcommand
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
+        shell: bash
+        run: |
+          OUTPUT=$(opengrep/opengrep.exe --test --json --config 'tests\windows\rule-test\rules' 'tests\windows\rule-test\targets')
+          echo "$OUTPUT"
+          if ! echo "$OUTPUT" | grep -q '"basic-test":{"passed":true'; then
+            echo "Test failed or no tests found"
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
           name: opengrep-windows-x86
