@@ -1,20 +1,20 @@
-# `except A, B:` with two bare Names is the Python 2 bind form.
-# The parser treats this as: type=A, name=B (not as a tuple).
-# So `except $T as $N:` SHOULD match it (it's a bind).
+# The `as` form is the only way to bind an exception name.
+# The comma form is always parsed as a PEP 758 tuple.
 
-# ERROR:
-try:
-  pass
-except ValueError, e:
-  pass
-
+# `as` bind -> match
 # ERROR:
 try:
   pass
 except ValueError as e:
   pass
 
-# Three bare Names: PEP 758 tuple, no bind -> no match
+# Comma form: PEP 758 tuple, not a bind -> no match
+try:
+  pass
+except ValueError, e:
+  pass
+
+# Three bare Names: PEP 758 tuple, not a bind -> no match
 try:
   pass
 except ValueError, TypeError, RuntimeError:
