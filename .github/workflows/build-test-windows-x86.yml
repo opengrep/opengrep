@@ -449,6 +449,12 @@ jobs:
         shell: bash
         run: opengrep/opengrep.exe scan --sarif -f tests/windows/rules.yml tests/windows/test.py
 
+      - name: test subcommand
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
+        shell: bash
+        run: opengrep/opengrep.exe --test tests/windows/rule-test
+
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
           name: opengrep-windows-x86
