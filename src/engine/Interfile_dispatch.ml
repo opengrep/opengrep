@@ -358,6 +358,7 @@ let init_file
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
+    ~(value_types : (Fpath.t, G.type_ -> bool) Hashtbl.t)
     ~(spec_matches : (Fpath.t, Match_taint_spec.spec_matches) Hashtbl.t)
     ~(type_state : Type_state.t)
     ~(file_path : Fpath.t)
@@ -379,32 +380,33 @@ let init_file
   let xconf' =
     Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
   in
+  let file_value_type =
+    match Hashtbl.find_opt value_types abs_file with
+    | Some (is_value_type : G.type_ -> bool) -> is_value_type
+    | None -> Match_taint_spec.value_type_predicate lang ast
+  in
+  let is_value_type (ty : G.type_) : bool =
+    file_value_type ty || Type_state.is_value_type type_state ty
+  in
   (* Extraction already matched the rule on this file: reuse its matches.
      A file without them (a companion, or one the extraction prefilter
      skipped) is matched here, as before. *)
   let inst_opt =
-    match Hashtbl.find_opt spec_matches abs_file with
-    | Some matches ->
-      Match_taint_spec.taint_config_of_spec_matches ~allow_partial:true
-        xconf' lang file_path rule matches
-    | None ->
-      Match_taint_spec.taint_config_of_rule
-        ~per_file_formula_cache:formula_cache
-        ~allow_partial:true
-        xconf' lang file_path (ast, []) rule
-      |> Option.map (fun (ti, _spec_matches, _expls) -> ti)
+    let matches =
+      match Hashtbl.find_opt spec_matches abs_file with
+      | Some matches -> matches
+      | None ->
+        fst
+          (Match_taint_spec.spec_matches_of_taint_rule
+             ~per_file_formula_cache:formula_cache xconf'
+             (Fpath.to_string file_path) (ast, []) rule)
+    in
+    Match_taint_spec.taint_config_of_spec_matches ~allow_partial:true
+      ~is_value_type xconf' lang file_path rule matches
   in
   let taint_inst =
     match inst_opt with
-    | Some ti ->
-      let file_value_type = Match_taint_spec.value_type_predicate lang ast in
-      {
-        ti with
-        Taint_rule_inst.project_root = path_root;
-        is_value_type =
-          (fun (ty : AST_generic.type_) ->
-            file_value_type ty || Type_state.is_value_type type_state ty);
-      }
+    | Some ti -> { ti with Taint_rule_inst.project_root = path_root }
     | None ->
       let empty_preds : Taint_rule_inst.spec_predicates = {
         is_source = (fun _any -> []);
@@ -422,10 +424,7 @@ let init_file
         preds = empty_preds;
         handle_effects = (fun _fn_name effects -> effects);
         recursive = false;
-        is_value_type =
-          (let file_value_type = Match_taint_spec.value_type_predicate lang ast in
-           fun (ty : AST_generic.type_) ->
-             file_value_type ty || Type_state.is_value_type type_state ty);
+        is_value_type;
         java_props_cache = Hashtbl.create 0;
       }
   in
@@ -653,6 +652,7 @@ let init_rule_state
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
+    ~(value_types : (Fpath.t, G.type_ -> bool) Hashtbl.t)
     ~(target_root_map : path_with_root FpathMap.t)
     ~(scanning_roots : Scanning_root.directory list)
     (rsg : rule_subgraph)
@@ -669,7 +669,7 @@ let init_rule_state
            init_file ~lang ~shared_tables ~rule ~xconf:rsg.rsg_xconf ~path_root
              ~type_state:rsg.rsg_lang_context.lc_type_state
              ~fid_set:rsg.rsg_fid_set
-             ~ast_table ~function_maps
+             ~ast_table ~function_maps ~value_types
              ~spec_matches:rsg.rsg_specs.rs_spec_matches ~file_path acc
          with
          | exn ->
@@ -1904,8 +1904,9 @@ let build_rule_states
      Every rule's state then filters its own functions out of the table
      instead of lowering the file again; the CFGs are not written after
      construction, so the rules share them. *)
-  let function_maps :
-      (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t =
+  let (function_maps :
+         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t),
+      (value_types : (Fpath.t, G.type_ -> bool) Hashtbl.t) =
     timed "IL/CFG lowering" @@ fun () ->
     let rsgs_by_file : (Fpath.t, rule_subgraph list) Hashtbl.t =
       Hashtbl.create 256
@@ -1937,7 +1938,10 @@ let build_rule_states
             Hashtbl.find_opt (ast_table_for_lang full_ast_lookup lang) file
           with
           | Some ast ->
-              Some (file, Match_tainting_mode.build_info_map ~lang ~fid_filter ast)
+              Some
+                ( file,
+                  Match_tainting_mode.build_info_map ~lang ~fid_filter ast,
+                  Match_taint_spec.value_type_predicate lang ast )
           | None -> None)
     in
     let lowered_batches, (_failed_batches : (Fpath.t * rule_subgraph list) list list) =
@@ -1955,10 +1959,13 @@ let build_rule_states
               rsgs_by_file []))
     in
     let tbl = Hashtbl.create (Hashtbl.length rsgs_by_file) in
+    let value_types = Hashtbl.create (Hashtbl.length rsgs_by_file) in
     List.iter
-      (List.iter (fun (file, info_map) -> Hashtbl.replace tbl file info_map))
+      (List.iter (fun (file, info_map, is_value_type) ->
+           Hashtbl.replace tbl file info_map;
+           Hashtbl.replace value_types file is_value_type))
       lowered_batches;
-    tbl
+    (tbl, value_types)
   in
   (* A rule whose init failed does not run; a file whose init failed is
      missing from its rule's state. *)
@@ -1987,7 +1994,7 @@ let build_rule_states
         init_rule_state
           ~ast_table:(ast_table_for_lang full_ast_lookup
                         rsg.rsg_lang_context.lc_lang)
-          ~function_maps ~target_root_map ~scanning_roots rsg)
+          ~function_maps ~value_types ~target_root_map ~scanning_roots rsg)
       rule_subgraphs
   in
   let rule_states = List_.map fst inits in

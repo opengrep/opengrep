@@ -87,7 +87,7 @@ let extract_method_properties (fdef : G.function_definition) :
   visitor#visit_stmt () body_stmt;
   (* Sort and remove duplicates *)
   !found_properties
-  |> List.sort_uniq (fun e1 e2 -> String.compare (G.show_expr e1) (G.show_expr e2))
+  |> List.sort_uniq G.compare_expr
 
 (* Convert AST method properties to taint assumptions using AST_to_IL *)
 let mk_method_property_assumptions (properties : G.expr list)
