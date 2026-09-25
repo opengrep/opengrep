@@ -281,7 +281,7 @@ let call_loc_of_exp (callee : IL.exp) : call_loc =
 
 type 'a call_trace =
   | PM of PM.t * 'a
-  | Call of G.expr * call_site * tokens * nodes * 'a call_trace
+  | Call of G.expr * call_site * tokens * int * nodes * 'a call_trace
 
 and source = {
   call_trace : R.taint_source call_trace;
@@ -300,7 +300,13 @@ and orig = Src of source | Var of lval | Shape_var of lval | Control
  * 'Var' with a "kind" parameter. But we need to be careful about perf when
  * adding an extra level of indirection here (due to memory allocations). *)
 
-and taint = { orig : orig; tokens : tokens; nodes : nodes }
+and taint = {
+  orig : orig;
+  tokens : tokens;
+  nodes : nodes;
+  token_count : int;
+  trace_length : int;
+}
 and tokens = tainted_tokens
 and nodes = trace_node list
 
@@ -311,9 +317,15 @@ and trace_node =
       site : call_site;
       join_tok : tainted_token option;
       inner_tokens : tokens;
+      inner_token_count : int;
       inner_nodes : nodes;
     }
-  | Reversed of { at : int; inner_tokens : tokens; inner_nodes : nodes }
+  | Reversed of {
+      at : int;
+      inner_tokens : tokens;
+      inner_token_count : int;
+      inner_nodes : nodes;
+    }
 
 and side = {
   side_guard : EG.t;
@@ -333,13 +345,13 @@ and call_site = {
 let length_of_call_trace ct =
   let rec loop acc = function
     | PM _ -> acc
-    | Call (_, _, _, _, ct') -> loop (acc + 1) ct'
+    | Call (_, _, _, _, _, ct') -> loop (acc + 1) ct'
   in
   loop 0 ct
 
 let rec pm_of_trace = function
   | PM (pm, x) -> (pm, x)
-  | Call (_, _, _, _, trace) -> pm_of_trace trace
+  | Call (_, _, _, _, _, trace) -> pm_of_trace trace
 
 let trace_of_pm (pm, x) = PM (pm, x)
 
@@ -355,59 +367,72 @@ let rec show_call_trace show_thing = function
         loc1.Tok.pos.line
       in
       Printf.sprintf "%s at l.%d [%s]" matched_str matched_line (show_thing x)
-  | Call (_e, _, _, _, trace) ->
+  | Call (_e, _, _, _, _, trace) ->
       Printf.sprintf "call to %s -> ... %s"
         (Pretty_print_AST.expr_to_string Lang.Java _e)
         (show_call_trace show_thing trace)
 
-let taint_of_orig (orig : orig) : taint = { orig; tokens = []; nodes = [] }
+let taint_of_orig (orig : orig) : taint =
+  { orig; tokens = []; nodes = []; token_count = 0; trace_length = 0 }
 
 let push_token (tok : tainted_token) (t : taint) : taint =
-  { t with tokens = tok :: t.tokens }
+  {
+    t with
+    tokens = tok :: t.tokens;
+    token_count = t.token_count + 1;
+    trace_length = t.trace_length + 1;
+  }
 
 let reverse_trace (t : taint) : taint =
-  match t.nodes with
-  | [] -> { t with tokens = List.rev t.tokens }
-  | nodes ->
-      {
-        t with
-        tokens = [];
-        nodes = [ Reversed { at = 0; inner_tokens = t.tokens; inner_nodes = nodes } ];
-      }
+  if Int.equal t.trace_length 0 then t
+  else
+    {
+      t with
+      tokens = [];
+      token_count = 0;
+      nodes =
+        [
+          Reversed
+            {
+              at = 0;
+              inner_tokens = t.tokens;
+              inner_token_count = t.token_count;
+              inner_nodes = t.nodes;
+            };
+        ];
+    }
 
 let call_of_taint (callee : G.expr) (site : call_site) (t : taint)
     (inner : 'a call_trace) : 'a call_trace =
-  Call (callee, site, t.tokens, t.nodes, inner)
+  Call (callee, site, t.tokens, t.token_count, t.nodes, inner)
 
 let through (site : call_site) ~(join_tok : tainted_token option)
     ~(inner : taint) (outer : taint) : taint =
-  match inner.nodes with
-  | [] ->
-      {
-        outer with
-        tokens =
-          inner.tokens @ Option.to_list join_tok @ outer.tokens;
-      }
-  | inner_nodes ->
-      {
-        outer with
-        nodes =
-          Through
-            {
-              at = List.length outer.tokens;
-              site;
-              join_tok;
-              inner_tokens = inner.tokens;
-              inner_nodes;
-            }
-          :: outer.nodes;
-      }
+  if Int.equal inner.trace_length 0 && Option.is_none join_tok then outer
+  else
+    {
+      outer with
+      nodes =
+        Through
+          {
+            at = outer.token_count;
+            site;
+            join_tok;
+            inner_tokens = inner.tokens;
+            inner_token_count = inner.token_count;
+            inner_nodes = inner.nodes;
+          }
+        :: outer.nodes;
+      trace_length =
+        outer.trace_length + inner.trace_length
+        + List.length (Option.to_list join_tok);
+    }
 
 let record_merge ~(kept : side) ~(other : side) : taint =
   let t = kept.side_taint in
   {
     t with
-    nodes = [ Merge { at = List.length t.tokens; kept; other } ];
+    nodes = [ Merge { at = t.token_count; kept; other } ];
   }
 
 let merge_items ~(kept : EG.t * taint * unit call_trace)
@@ -434,31 +459,10 @@ let at_of_node (node : trace_node) : int =
   | Reversed { at; _ } ->
       at
 
-let rec flat_length (tokens : tokens) (nodes : nodes) : int =
-  match nodes with
-  | [] -> List.length tokens
-  | node :: rest -> (
-      let newer = List.length tokens - at_of_node node in
-      match node with
-      | Merge { kept; _ } ->
-          newer + flat_length kept.side_taint.tokens kept.side_taint.nodes
-      | Through { join_tok; inner_tokens; inner_nodes; _ } ->
-          newer
-          + flat_length inner_tokens inner_nodes
-          + List.length (Option.to_list join_tok)
-          + flat_length (List_.drop newer tokens) rest
-      | Reversed { inner_tokens; inner_nodes; _ } ->
-          newer
-          + flat_length inner_tokens inner_nodes
-          + flat_length (List_.drop newer tokens) rest)
+let flat_length (t : taint) : int = t.trace_length
 
 let compare_trace_lengths (t1 : taint) (t2 : taint) : int =
-  match (t1.nodes, t2.nodes) with
-  | [], [] -> List.compare_lengths t1.tokens t2.tokens
-  | _ ->
-      Int.compare
-        (flat_length t1.tokens t1.nodes)
-        (flat_length t2.tokens t2.nodes)
+  Int.compare (flat_length t1) (flat_length t2)
 
 type 'a flat_call_trace =
   | Flat_PM of PM.t * 'a
@@ -482,12 +486,13 @@ let first_some (a : 'a option) (b : 'a option) : 'a option =
   | None -> b
 
 let rec resolve_segment ~valid (ctx : call_site list) (tokens : tokens)
-    (nodes : nodes) : resolved =
+    (token_count : int) (nodes : nodes) : resolved =
   match nodes with
   | [] ->
       { resolved_orig = None; resolved_tokens = tokens; resolved_sink_trace = None }
   | node :: rest -> (
-      let newer_count = List.length tokens - at_of_node node in
+      let at = at_of_node node in
+      let newer_count = token_count - at in
       let newer = List_.take newer_count tokens in
       let older = List_.drop newer_count tokens in
       match node with
@@ -495,7 +500,7 @@ let rec resolve_segment ~valid (ctx : call_site list) (tokens : tokens)
           let side = choose_side ~valid ctx kept other in
           let r =
             resolve_segment ~valid ctx side.side_taint.tokens
-              side.side_taint.nodes
+              side.side_taint.token_count side.side_taint.nodes
           in
           {
             resolved_orig =
@@ -504,20 +509,23 @@ let rec resolve_segment ~valid (ctx : call_site list) (tokens : tokens)
             resolved_sink_trace =
               first_some r.resolved_sink_trace side.side_sink_trace;
           }
-      | Through { site; join_tok; inner_tokens; inner_nodes; _ } ->
+      | Through { site; join_tok; inner_tokens; inner_token_count; inner_nodes; _ } ->
           let inner =
-            resolve_segment ~valid (site :: ctx) inner_tokens inner_nodes
+            resolve_segment ~valid (site :: ctx) inner_tokens inner_token_count
+              inner_nodes
           in
-          let r = resolve_segment ~valid ctx older rest in
+          let r = resolve_segment ~valid ctx older at rest in
           {
             r with
             resolved_tokens =
               newer @ inner.resolved_tokens @ Option.to_list join_tok
               @ r.resolved_tokens;
           }
-      | Reversed { inner_tokens; inner_nodes; _ } ->
-          let inner = resolve_segment ~valid ctx inner_tokens inner_nodes in
-          let r = resolve_segment ~valid ctx older rest in
+      | Reversed { inner_tokens; inner_token_count; inner_nodes; _ } ->
+          let inner =
+            resolve_segment ~valid ctx inner_tokens inner_token_count inner_nodes
+          in
+          let r = resolve_segment ~valid ctx older at rest in
           {
             resolved_orig = first_some inner.resolved_orig r.resolved_orig;
             resolved_tokens =
@@ -527,15 +535,15 @@ let rec resolve_segment ~valid (ctx : call_site list) (tokens : tokens)
           })
 
 let resolve_taint ~valid (t : taint) : resolved =
-  resolve_segment ~valid [] t.tokens t.nodes
+  resolve_segment ~valid [] t.tokens t.token_count t.nodes
 
 let rec resolve_source_trace ~valid (ctx : call_site list)
     (ct : R.taint_source call_trace) : R.taint_source flat_call_trace =
   match ct with
   | PM (pm, x) -> Flat_PM (pm, x)
-  | Call (callee, site, tokens, nodes, inner) ->
+  | Call (callee, site, tokens, token_count, nodes, inner) ->
       let ctx = site :: ctx in
-      let r = resolve_segment ~valid ctx tokens nodes in
+      let r = resolve_segment ~valid ctx tokens token_count nodes in
       let inner =
         match r.resolved_orig with
         | Some (Src src) -> src.call_trace
@@ -549,9 +557,9 @@ let rec resolve_sink_trace ~valid (ctx : call_site list)
     (ct : unit call_trace) : unit flat_call_trace =
   match ct with
   | PM (pm, x) -> Flat_PM (pm, x)
-  | Call (callee, site, tokens, nodes, inner) ->
+  | Call (callee, site, tokens, token_count, nodes, inner) ->
       let ctx = site :: ctx in
-      let r = resolve_segment ~valid ctx tokens nodes in
+      let r = resolve_segment ~valid ctx tokens token_count nodes in
       let inner = Option.value r.resolved_sink_trace ~default:inner in
       Flat_call (callee, r.resolved_tokens, resolve_sink_trace ~valid ctx inner)
 

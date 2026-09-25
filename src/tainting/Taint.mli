@@ -38,7 +38,8 @@ type 'spec call_trace =
   | PM of Core_match.t * 'spec
       (** A direct match. The `'spec` would typically contain the pattern that
         * was used to produce the match, e.g. one of the `pattern-sources`.  *)
-  | Call of AST_generic.expr * call_site * tokens * nodes * 'spec call_trace
+  | Call of
+      AST_generic.expr * call_site * tokens * int * nodes * 'spec call_trace
       (** An indirect match through a function call. *)
 
 val show_call_trace : ('spec -> string) -> 'spec call_trace -> string
@@ -202,9 +203,20 @@ and orig =
         * shape of the 'lval', see 'Taint_sig.gather_all_taints_in_shape'. *)
   | Control  (** Polymorphic taint variable, but for the "control-flow". *)
 
-and taint = { orig : orig; tokens : tokens; nodes : nodes }
+and taint = {
+  orig : orig;
+  tokens : tokens;
+  nodes : nodes;
+  token_count : int;
+  trace_length : int;
+}
 (** At a given program location, taint is given by its origin (i.e. 'orig') and
  * the path it took from that origin to the current location (i.e. 'tokens'). *)
+(* The trace is a tree: each node in [nodes] points at the trace of a callee
+ * or of a merged taint, and those traces are shared between taints, never
+ * copied. [token_count] is the length of [tokens]; [trace_length] is the
+ * number of tokens in the flattened trace, following the kept side of every
+ * merge, so that comparing traces by length does not walk them. *)
 
 val taint_of_orig : orig -> taint
 val push_token : tainted_token -> taint -> taint
