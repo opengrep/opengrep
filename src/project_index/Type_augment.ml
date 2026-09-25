@@ -630,18 +630,24 @@ let stamp_var_types_from_bodies
       | _ -> acc
     in
     let returned_tuple (callee : G.expr) : Class_table.cls option list option =
+      let member_call = Symbol_table.class_of_member_call table ~caller callee in
       let declared =
-        match callee.G.e with
-        | G.DotAccess (receiver, _, G.FN (G.Id ((mname, _), _))) ->
-          Option.bind (class_of receiver) (fun (cls : Class_table.cls) ->
+        match (callee.G.e, member_call) with
+        | G.DotAccess (_, _, G.FN (G.Id ((mname, _), _))),
+          Some (Some (cls : Class_table.cls), _) ->
             along table cls (fun (owner : Class_table.cls) ->
-              Type_state.method_return_tuple type_state owner mname))
+              Type_state.method_return_tuple type_state owner mname)
         | _ -> None
       in
       match declared with
       | Some _ -> declared
       | None -> (
-        match Symbol_table.resolve_call table ~caller callee with
+        match
+          match member_call with
+          | Some (_, (resolved : Symbol_table.resolution Lazy.t)) ->
+            Lazy.force resolved
+          | None -> Symbol_table.resolve_call table ~caller callee
+        with
         | Symbol_table.Defined (funcs : Func_info.t list) -> (
           match
             List_.uniq_by (List.equal (Option.equal Class_table.same))

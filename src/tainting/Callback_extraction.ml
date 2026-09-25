@@ -13,6 +13,7 @@ type candidate = {
   reference : reference;
   tok : Tok.t;
   tmp : IL.name option;
+  callable : G.expr list;
 }
 
 let expr_of_receiver_any (any : G.any) : G.expr option =
@@ -31,6 +32,11 @@ let dotted_reference ~(tok : Tok.t) (receiver : G.expr) (id : G.ident)
 
 let dotted_reference_of_method_reference (e : G.expr) : G.expr option =
   match e.G.e with
+  | G.OtherExpr
+      ( ("MethodRef", _),
+        G.E ({ G.e = G.DotAccess (_, _, G.FN (G.Id _)); _ } as reference) :: _ )
+    ->
+      Some reference
   | G.OtherExpr (("MethodRef", tok), receiver_any :: (_ :: _ as rest)) -> (
     match (expr_of_receiver_any receiver_any, List_.last_opt rest) with
     | Some (receiver : G.expr), Some (G.I (id : G.ident)) ->
@@ -106,12 +112,19 @@ let is_closure_from_callable (callee : G.expr) : bool =
     true
   | _ -> false
 
+let denoted_reference (e : G.expr) (build : unit -> G.expr option) :
+    G.expr option =
+  match G.callable_reference_of e with
+  | Some (reference : G.expr) -> Some reference
+  | None -> build ()
+
 let reference_of_callable_literal ~(lang : Lang.t) (e : G.expr)
     : G.expr option =
   if not (Lang_config.get lang).Lang_config.reflection.Lang_config.callable_literals
   then
     None
   else
+    denoted_reference e @@ fun () ->
     match e.G.e with
     | G.L (G.String (_, ((written : string), (tok : Tok.t)), _)) ->
       reference_of_written_callable ~tok written
@@ -139,11 +152,28 @@ let expr_of_reference (reference : reference) : G.expr =
   | Written e ->
       e
 
-let candidate ?(tmp : IL.name option) (reference : reference) : candidate list
-    =
+let candidate ?(tmp : IL.name option) ?(callable : G.expr list = [])
+    (reference : reference) : candidate list =
   match id_of_reference (expr_of_reference reference) with
-  | Some ((_, tok), _) -> [ { reference; tok; tmp } ]
+  | Some ((_, tok), _) -> [ { reference; tok; tmp; callable } ]
   | None -> []
+
+let method_object_member ~(lang : Lang.t) (e : G.expr) :
+    (G.expr * G.ident) option =
+  match e.G.e with
+  | G.Call
+      ( ({ e =
+             ( G.N (G.Id ((name, _), _))
+             | G.DotAccess (_, _, G.FN (G.Id ((name, _), _))) );
+           _ } as callee),
+        (_, [ G.Arg { e = G.L (G.Atom (atom_tok, member)); _ } ], _) )
+    when Option.equal String.equal
+           (Lang_config.get lang).Lang_config.reflection.Lang_config.method_object
+           (Some name) -> (
+      match callee.G.e with
+      | G.DotAccess (receiver, _, _) -> Some (receiver, member)
+      | _ -> Some (G.IdSpecial (G.Self, atom_tok) |> G.e, member))
+  | _ -> None
 
 let is_reference (e : G.expr) : bool =
   match e.G.e with
@@ -155,7 +185,8 @@ let is_reference (e : G.expr) : bool =
 (* The functions an argument refers to:
      - foo, &foo, Module.foo, obj.method, this.method, method references
      - Elixir &func/n (ShortLambda wrapping Call)
-     - Ruby method(:name), a method of self
+     - Ruby method(:name) and recv.method(:name), a method of self or of
+       recv
      - PHP callables written as strings
      - Record { cb: handler, ... } and Dict { "cb": handler, ... }: each
        entry's value
@@ -198,12 +229,15 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
       | None -> [])
   | G.L (G.String _) -> (
       match reference_of_callable_literal ~lang arg_expr with
-      | Some reference -> candidate (Written reference)
+      | Some reference -> candidate ~callable:[ arg_expr ] (Written reference)
       | None -> [])
   | G.Call (callee, (_, [ G.Arg (inner : G.expr) ], _))
     when (Lang_config.get lang).Lang_config.reflection.Lang_config.callable_literals
          && is_closure_from_callable callee ->
-      extract_callbacks_from_arg ~lang inner
+      List.map
+        (fun (found : candidate) ->
+          { found with callable = arg_expr :: found.callable })
+        (extract_callbacks_from_arg ~lang inner)
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
@@ -249,7 +283,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
   | G.Container
       ((G.List | G.Array), (_, [ _; { G.e = G.L (G.String _); _ } ], _)) -> (
       match reference_of_callable_literal ~lang arg_expr with
-      | Some reference -> candidate (Written reference)
+      | Some reference -> candidate ~callable:[ arg_expr ] (Written reference)
       | None ->
           List.concat_map (extract_callbacks_from_arg ~lang)
             (match arg_expr.G.e with
@@ -258,21 +292,22 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
   (* List/Tuple/Array/Set literal: recurse into each element *)
   | G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)) ->
       List.concat_map (extract_callbacks_from_arg ~lang) xs
-  (* Ruby [method(:name)]: the method [name] of self. Sym-prop carries the
+  (* Ruby [method(:name)] and [recv.method(:name)]: the method [name] of self
+     or of [recv]. Sym-prop carries the
      [Call(method, [Atom :name])] expression on the callback variable's
      [id_svalue], so the recursion above reaches us for an aliased binding
      [cb = method(:name); apply_cb(cb, ...)]. *)
-  | G.Call
-      ( { e = G.N (G.Id ((name, _), _)); _ },
-        (_, [ G.Arg { e = G.L (G.Atom (atom_tok, atom_ident)); _ } ], _) )
-    when Option.equal String.equal
-           (Lang_config.get lang).Lang_config.reflection.Lang_config.method_object
-           (Some name) ->
-      candidate
-        (Bound
-           (dotted_reference ~tok:atom_tok
-              (G.IdSpecial (G.Self, atom_tok) |> G.e)
-              atom_ident (G.empty_id_info ())))
+  | G.Call _ -> (
+      match
+        denoted_reference arg_expr (fun () ->
+            Option.map
+              (fun ((receiver : G.expr), ((_, member_tok) as member : G.ident)) ->
+                dotted_reference ~tok:member_tok receiver member
+                  (G.empty_id_info ()))
+              (method_object_member ~lang arg_expr))
+      with
+      | Some reference -> candidate ~callable:[ arg_expr ] (Bound reference)
+      | None -> [])
   | _ -> []
 
 type callback_resolver =
@@ -352,10 +387,18 @@ let try_identify_callback_args ~(lang : Lang.t)
                  List_.map (fun (func : func_info) -> func.fn_id) funcs
              | Symbol_table.External -> []
            in
+           let reference = expr_of_reference candidate.reference in
            Option.iter
              (fun ((_, ii) : G.ident * G.id_info) ->
                set_callee_definition ~allow_located_fake:true ii fn_ids)
-             (id_of_reference (expr_of_reference candidate.reference));
+             (id_of_reference reference);
+           if not (List_.null fn_ids) then
+             List.iter
+               (fun (callable : G.expr) ->
+                 if Option.is_none (G.callable_reference_of callable) then
+                   callable.G.facts <-
+                     G.Callable_reference reference :: callable.G.facts)
+               candidate.callable;
            List_.map
              (fun (fn_id : fn_id) -> (fn_id, candidate.tok, candidate.tmp))
              fn_ids)

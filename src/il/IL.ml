@@ -111,11 +111,14 @@ type ident = G.ident [@@deriving show, eq, ord]
 type name = { ident : ident; sid : G.sid; id_info : G.id_info }
 [@@deriving show,eq]
 
-(* [SId.to_string], not the derived [show]: this string keys the constant
-   propagation environment on every variable access, and the derived
-   printer goes through [Format]. *)
+(* This string keys the constant propagation environment on every variable
+   access, so it is the binding's identity (file and number), which
+   [SId.equal] compares, and never the site: a rebinding of one name in one
+   scope is the same variable at another site. Not the derived [show], which
+   goes through [Format]. *)
 let str_of_name name =
-  Common.spf "%s:%s" (fst name.ident) (G.SId.to_string name.sid)
+  let _, file, _, _ = G.SId.to_loc name.sid in
+  Common.spf "%s:%s#%d" (fst name.ident) file (G.SId.to_int name.sid)
 
 let compare_name name1 name2 =
   let { ident = str1, _tok1; sid = sid1; id_info = _ } = name1 in

@@ -1,0 +1,13 @@
+rules:
+  - id: extension_function_kotlin
+    message: a call on an instance reaches an extension function unless the class has a member of that name
+    languages:
+      - kotlin
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

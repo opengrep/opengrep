@@ -3,7 +3,7 @@ namespace App;
 
 class Store {
     public function handle($x) {
-        // todoruleid: first-class-callable-callback
+        // ruleid: first-class-callable-callback
         sink($x);
     }
 }

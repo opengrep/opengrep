@@ -1,0 +1,12 @@
+rules:
+  - id: hack_this_resolves
+    message: "A Hack call on $this reaches the method of the enclosing class"
+    languages:
+      - hack
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

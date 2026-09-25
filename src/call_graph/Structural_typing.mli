@@ -11,10 +11,3 @@ val method_arity : lang:Lang.t -> method_ -> int
 
 val method_satisfies :
   lang:Lang.t -> equal_type:equal_type -> required:method_ -> method_ -> bool
-
-val satisfies :
-  lang:Lang.t ->
-  equal_type:equal_type ->
-  interface:method_ list ->
-  candidate:method_ list ->
-  bool

@@ -318,7 +318,18 @@ and expr e =
       in
       let v4 = ident v4 in
       (* TODO? use G.GetRef? *)
-      G.OtherExpr (("MethodRef", v2), (v1 :: v3) @ [ G.I v4 ])
+      let member_of (receiver : G.expr) : G.any =
+        G.E
+          (G.DotAccess (receiver, v2, G.FN (G.Id (v4, G.empty_id_info ())))
+          |> G.e)
+      in
+      let parts =
+        match v1 with
+        | G.E receiver -> member_of receiver :: v3
+        | G.T { G.t = G.TyN name; _ } -> member_of (G.N name |> G.e) :: v3
+        | _ -> (v1 :: v3) @ [ G.I v4 ]
+      in
+      G.OtherExpr (("MethodRef", v2), parts)
   | Call (v1, v2) ->
       let v1 = expr v1 and v2 = arguments v2 in
       G.Call (v1, v2)

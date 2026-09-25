@@ -326,10 +326,18 @@ and import_kind =
 (* Toplevel *)
 (*****************************************************************************)
 
+type build_constraint =
+  | BuildTag of ident
+  | BuildNot of build_constraint
+  | BuildAnd of build_constraint * build_constraint
+  | BuildOr of build_constraint * build_constraint
+[@@deriving show { with_path = false }]
+
 (* only at the toplevel *)
 type top_decl =
   (* old: used to be in a record in program *)
   | Package of tok * ident
+  | BuildConstraint of tok * build_constraint
   | Import of import
   (* the 'func' keyword is accessible in function_ in ftok *)
   | DFunc of ident * type_parameters option (* generics *) * function_

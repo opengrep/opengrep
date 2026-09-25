@@ -13,6 +13,7 @@ val build :
   lang:Lang.t ->
   cfg:Index_lang_rules.t ->
   package_index:package_index ->
+  build_constraints:Go_build_constraints.t ->
   attributes_by_module:Func_lookup.module_attributes ->
   classes_by_file:Types.entry list Common.SMap.t ->
   class_parent_paths:

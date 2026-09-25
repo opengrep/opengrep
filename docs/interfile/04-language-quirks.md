@@ -413,9 +413,9 @@ methods like any other subclass.
 
 ### Abstract methods have no body
 
-An abstract or interface method lowers to `FBNothing`: dispatch merges
-its implementations' signatures into the declaration for taint, which
-gives it a signature, not a body.  So a pattern with a body,
+An abstract or interface method lowers to `FBNothing`: a call to it
+reaches its implementations through the call's stamp, and the
+declaration itself has no body.  So a pattern with a body,
 `void $F(...) { ... }`, matches the concrete methods only, and a
 declaration pattern, `void $F(...);`, matches the abstract and the
 interface ones.  The base matched the body pattern on an abstract method

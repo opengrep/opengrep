@@ -1,0 +1,15 @@
+rules:
+  - id: build-constraint-alternative-files
+    languages: [go]
+    severity: ERROR
+    message: >
+      A file without a build constraint reaches the method of every file that
+      some build compiles with it, and a method in a file for one operating
+      system reaches only the methods of files compiled for that system.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

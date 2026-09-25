@@ -131,16 +131,6 @@ type env = {
       (** Signature database for inter-procedural taint analysis *)
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
       (** Builtin signature database for standard library functions *)
-  call_graph : Call_graph.G.t option;
-      (** Local (intrafile) call graph for edge-based signature lookup.
-          Interfile resolution keys the signature DB by [id_callee_definition]
-          def-site sid first; this graph is the fallback for callees
-          without a stamp (the intrafile path's main channel). *)
-  call_graph_caller : IL.name option;
-      (** Caller for call-graph lookups; enclosing function's name inside a lambda (lambdas aren't call-graph nodes). *)
-  class_name : string option;
-      (** Class name if we're analyzing a method, None for standalone functions
-      *)
 }
 
 (*****************************************************************************)
@@ -897,8 +887,8 @@ let result_of_call_func_arg ~(lang : Lang.t) fun_exp fun_shape :
            (Taints.empty, S.Bot)
   | __else__ -> (Taints.empty, S.Bot)
 
-(* Fast path via the [id_callee_definition] sids (= sig DB keys), skipping
-   the edge scan: the signatures of every stamped definition found.
+(* The signatures of every definition the [id_callee_definition] stamp
+   holds; each sid is the definition's site, which keys the signature DB.
    The stamp is trusted whatever name it resolves to, gated only by the
    lookup itself: a bare-name mismatch is as likely to be a deliberate
    alias (a class-body field alias exposes name X for a target named Y,
@@ -922,27 +912,6 @@ let signature_via_callee_definition ~project_root db (id_info : G.id_info)
            in
            Shape_and_sig.lookup_definition db fid arity)
 
-let get_signature_for_object ?(callee_id_info : G.id_info option)
-    ~project_root graph caller_node db method_name arity =
-  (* For an [obj.method()] call the lookup uses the [id_callee_definition] sid
-     stamped on the callee bare name, then the local call-graph edge, then the
-     method-name fid. *)
-  let fast =
-    match callee_id_info with
-    | Some ii -> signature_via_callee_definition ~project_root db ii arity
-    | None -> []
-  in
-  match fast with
-  | _ :: _ -> fast
-  | [] ->
-    let caller = Option.map Function_id.of_il_name caller_node in
-    let call_tok = Tok.abs_tok project_root (Function_id.tok method_name) in
-    Option.to_list
-      (match Call_graph.lookup_callee_from_graph graph caller call_tok with
-       | Some callee_node ->
-         Shape_and_sig.lookup_definition db callee_node arity
-       | None -> Shape_and_sig.lookup_definition db method_name arity)
-
 (* Helper to fallback to builtin signature database if regular lookup fails *)
 let try_builtin_fallback env func_name arity result =
   match result with
@@ -958,65 +927,30 @@ let try_builtin_fallback env func_name arity result =
           builtin_result
       | None -> None)
 
-(* Resolve a bare function name against the signature DB. Tries the
- * call graph first (keyed on the current function), then falls back
- * to a direct DB lookup; in the no-class-context case, also runs the
- * builtin fallback on the bare name. Shared between the bare-name
- * call branch and the Ruby [method(:name)] recogniser. *)
+(* A built-in model stands for a function the file does not define: the name
+   is bound to an import or naming left it unresolved. A [_tmp] the lowering
+   creates for a call result carries no binding and may take one. The member
+   that Ruby's [method(:f)] denotes has no binding either and takes none: the
+   graph resolves it on the receiver's class. *)
+let may_take_builtin_model (id_info : G.id_info) : bool =
+  match !(id_info.G.id_resolved) with
+  | None
+  | Some ((G.ImportedEntity _ | G.ImportedModule _), _) ->
+      true
+  | Some _ -> false
+
+(* The signatures of the definitions a bare name's stamp holds; with no
+ * stamp, the built-in model of the name when [may_take_builtin_model]
+ * allows one. *)
 let lookup_bare_function_name env db (name : IL.name) arity =
   match
     signature_via_callee_definition
       ~project_root:env.taint_inst.project_root db name.IL.id_info arity
   with
   | _ :: _ as found -> found
-  | [] ->
-  Option.to_list @@
-  (* Absolutize the call token to match the absolute paths on call-graph edges. *)
-  let call_tok =
-    snd name.ident |> Tok.abs_tok env.taint_inst.project_root
-  in
-  (* If [name]'s svalue is a [Sym (N other)] (e.g. [cb = handler; cb(...)]),
-   * redirect the callee key to [other]. *)
-  let name =
-    match !(name.id_info.id_svalue) with
-    | Some (G.Sym { e = G.N (G.Id (id, id_info)); _ }) ->
-        AST_to_IL.var_of_id_info id id_info
-    | _ -> name
-  in
-  match
-    Call_graph.lookup_callee_from_graph
-      env.call_graph
-      (Option.map Function_id.of_il_name env.call_graph_caller)
-      call_tok
-  with
-  | Some callee_node ->
-      Shape_and_sig.(lookup_definition db callee_node arity)
-  | None -> (
-      match env.class_name with
-      | Some _ ->
-          Shape_and_sig.lookup_definition db (Function_id.of_il_name name) arity
-      | None ->
-          let func_name = fst name.ident in
-          let result =
-            Shape_and_sig.lookup_definition db (Function_id.of_il_name name) arity
-          in
-          try_builtin_fallback env func_name arity result)
-
-(* Extract the [(str, tok)] of a bare atom argument from
- * [Sym (Call ({e=N(Id ("method", _)); _}, [Arg (L (Atom (_, (str, tok))))]))].
- * Used to recognise Ruby's [method(:name)] callback idiom: the assignment
- * sym-props the call expression onto the lval's [id_svalue], and we read
- * the atom back here to drive a normal bare-name signature lookup. *)
-let ruby_method_ref_atom (svalue : G.svalue option) =
-  match svalue with
-  | Some (G.Sym
-            { e = G.Call
-                ( { e = G.N (G.Id (("method", _), _)); _ },
-                  (_, [ G.Arg
-                          { e = G.L (G.Atom (_, atom_ident)); _ } ], _) );
-              _ }) ->
-      Some atom_ident
-  | _ -> None
+  | [] when may_take_builtin_model name.IL.id_info ->
+      Option.to_list (try_builtin_fallback env (fst name.ident) arity None)
+  | [] -> []
 
 let lookup_signature_with_object_context env fun_exp arity =
   Log.debug (fun m ->
@@ -1028,31 +962,9 @@ let lookup_signature_with_object_context env fun_exp arity =
       []
   | Some db -> (
       match fun_exp.e with
-      | Fetch { base = Var name; rev_offset = [] }
-        when env.taint_inst.lang =*= Lang.Ruby
-             && Option.is_some
-                  (ruby_method_ref_atom !(name.id_info.id_svalue)) ->
-          (* Ruby [cb = method(:f); cb.call(x)]: [cb]'s [id_svalue]
-           * carries the [Call] expression as a [Sym]. Resolve [:f]
-           * against the same path the bare-name branch uses, so the
-           * class context in [env.class_name] scopes it correctly. *)
-          let atom_ident =
-            Option.get (ruby_method_ref_atom !(name.id_info.id_svalue))
-          in
-          let synthetic_name : IL.name =
-            { ident = atom_ident;
-              sid = G.SId.unsafe_default;
-              id_info = G.empty_id_info () }
-          in
-          lookup_bare_function_name env db synthetic_name arity
       | Fetch { base = Var name; rev_offset = [] } ->
           lookup_bare_function_name env db name arity
-      | Fetch
-          {
-            base = VarSpecial ((Self | This | Parent | Super), _);
-            rev_offset = [ { o = Dot method_name; _ } ];
-          }
-        when Option.is_some env.class_name -> (
+      | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } -> (
           match
             signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
@@ -1060,44 +972,18 @@ let lookup_signature_with_object_context env fun_exp arity =
           with
           | _ :: _ as found -> found
           | [] ->
-          Option.to_list @@
-          let call_tok =
-            Tok.abs_tok env.taint_inst.project_root (snd method_name.ident)
-          in
-          match
-            Call_graph.lookup_callee_from_graph env.call_graph
-              (Option.map Function_id.of_il_name env.call_graph_caller)
-              call_tok
-          with
-          | Some callee_node ->
-              Shape_and_sig.lookup_definition db callee_node arity
-          | None ->
-              Shape_and_sig.lookup_definition db (Function_id.of_il_name method_name) arity)
-      | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } -> (
-          match
-            get_signature_for_object
-              ~callee_id_info:method_name.id_info
-              ~project_root:env.taint_inst.project_root
-              env.call_graph
-              env.call_graph_caller
-              db
-              (Function_id.of_il_name method_name)
-              arity
-          with
-          | _ :: _ as found -> found
-          | [] ->
               Option.to_list @@
-              (* Fallback: try qualified function name (Module.function for Elixir, etc.) *)
-              let qualified_name =
-                {
-                  ident = (fst obj.ident ^ "." ^ fst method_name.ident, snd method_name.ident);
-                  sid = method_name.sid;
-                  id_info = method_name.id_info;
-                }
+              (* With no stamp: the built-in model of [Mod.f] when the
+                 receiver may take one (an Elixir module such as [Enum]), else
+                 the built-in model of the method, which belongs to the
+                 library type whatever variable holds the value. *)
+              let result =
+                if may_take_builtin_model obj.id_info then
+                  try_builtin_fallback env
+                    (fst obj.ident ^ "." ^ fst method_name.ident)
+                    arity None
+                else None
               in
-              let result = Shape_and_sig.lookup_definition db (Function_id.of_il_name qualified_name) arity in
-              (* Try builtin fallback - first with qualified name, then with just method name *)
-              let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
       | Fetch { base = Var _ | Mem _;
                 rev_offset = { o = Dot method_name; _ } :: _ } -> (
@@ -1112,21 +998,8 @@ let lookup_signature_with_object_context env fun_exp arity =
           with
           | _ :: _ as found -> found
           | [] ->
-          Option.to_list @@
-          let call_tok = Tok.abs_tok env.taint_inst.project_root (snd method_name.ident) in
-          match
-            Call_graph.lookup_callee_from_graph env.call_graph
-              (Option.map Function_id.of_il_name env.call_graph_caller)
-              call_tok
-          with
-          | Some callee_node ->
-              Shape_and_sig.lookup_definition db callee_node arity
-          | None ->
-              let result =
-                Shape_and_sig.lookup_definition db
-                  (Function_id.of_il_name method_name) arity
-              in
-              try_builtin_fallback env (fst method_name.ident) arity result)
+              Option.to_list
+                (try_builtin_fallback env (fst method_name.ident) arity None))
       | Fetch
           {
             base = VarSpecial ((Self | This | Parent | Super), _);
@@ -1136,29 +1009,12 @@ let lookup_signature_with_object_context env fun_exp arity =
              parent class's method on the current object, and one written
              [this.handle(x)] or [self::handle($x)] calls a method of the
              enclosing class on it. The lookup uses the stamp on the bare method
-             name, then the graph edge anchored at the method token, as the
-             self-field branch below does; there is no name-keyed database
-             fallback, because a bare method-name lookup would match a method of
-             that name on any class. *)
-          match
-            signature_via_callee_definition
-              ~project_root:env.taint_inst.project_root db
-              method_name.id_info arity
-          with
-          | _ :: _ as found -> found
-          | [] -> Option.to_list (
-              let call_tok =
-                Tok.abs_tok env.taint_inst.project_root
-                  (snd method_name.ident)
-              in
-              match
-                Call_graph.lookup_callee_from_graph env.call_graph
-                  (Option.map Function_id.of_il_name env.call_graph_caller)
-                  call_tok
-              with
-              | Some callee_node ->
-                  Shape_and_sig.lookup_definition db callee_node arity
-              | None -> None))
+             name, as the self-field branch below does; there is no name-keyed
+             database fallback, because a bare method-name lookup would match a
+             method of that name on any class. *)
+          signature_via_callee_definition
+            ~project_root:env.taint_inst.project_root db method_name.id_info
+            arity)
       | Fetch
           {
             base = VarSpecial ((Self | This | Parent | Super), _);
@@ -1166,30 +1022,13 @@ let lookup_signature_with_object_context env fun_exp arity =
           } -> (
           (* For a call through a self field such as [self.worker.work(x)],
              where the field takes its type from its initialiser or from its
-             callers, the lookup uses the stamp on the bare method name, then
-             the graph edge anchored at the method token, as the
+             callers, the lookup uses the stamp on the bare method name, as the
              chained-variable branch above does. There is no name-keyed
              database fallback, because a bare method-name lookup would match
              a method of that name on any class. *)
-          match
-            signature_via_callee_definition
-              ~project_root:env.taint_inst.project_root db
-              method_name.id_info arity
-          with
-          | _ :: _ as found -> found
-          | [] -> Option.to_list (
-              let call_tok =
-                Tok.abs_tok env.taint_inst.project_root
-                  (snd method_name.ident)
-              in
-              match
-                Call_graph.lookup_callee_from_graph env.call_graph
-                  (Option.map Function_id.of_il_name env.call_graph_caller)
-                  call_tok
-              with
-              | Some callee_node ->
-                  Shape_and_sig.lookup_definition db callee_node arity
-              | None -> None))
+          signature_via_callee_definition
+            ~project_root:env.taint_inst.project_root db method_name.id_info
+            arity)
       | _ -> [])
 
 (* If one of [fun_exp]'s [id_callee_definition] def-site sids is the function
@@ -2627,7 +2466,8 @@ let call_with_intrafile lval_opt e env args instr =
           (not (G.SId.is_unsafe_default sid))
           &&
           let (rname, _, _, _) = G.SId.to_loc sid in
-          Object_initialization.is_constructor env.taint_inst.lang rname None)
+          Object_initialization.is_constructor env.taint_inst.lang rname None
+          || Visit_function_defs.is_class_initialiser_ident rname)
         callee_definition_sids
     in
     (* Detect Ruby/Scala/Kotlin implicit block pattern:
@@ -4305,9 +4145,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
            let lambda_in_env = mk_lambda_in_env env lambda_cfg in
            fixpoint_lambda env.taint_inst env.shared_tables env.func env.needed_vars lambda_name
              lambda_cfg lambda_in_env ?signature_db:env.signature_db
-             ?builtin_signature_db:env.builtin_signature_db
-             ?call_graph:env.call_graph
-             ~call_graph_caller:env.call_graph_caller ())
+             ?builtin_signature_db:env.builtin_signature_db ())
     |> List_.split
   in
   let effects = Effects.union_list effects_lambdas in
@@ -4359,8 +4197,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   (effects, out_env)
 
 and fixpoint_lambda taint_inst shared_tables func needed_vars lambda_name lambda_cfg in_env
-    ?signature_db ?builtin_signature_db ?call_graph
-    ~(call_graph_caller : IL.name option) () :
+    ?signature_db ?builtin_signature_db () :
     Effects.t * Lval_env.t =
   Log.debug (fun m ->
       m "Analyzing lambda %s (%s)"
@@ -4368,9 +4205,8 @@ and fixpoint_lambda taint_inst shared_tables func needed_vars lambda_name lambda
         (Lval_env.to_string in_env));
   let effects, mapping =
     fixpoint_aux taint_inst shared_tables func ~needed_vars ~enter_lval_env:in_env
-      ~in_lambda:(Some lambda_name) ~class_name:None ?signature_db
-      ?builtin_signature_db ?call_graph
-      ~call_graph_caller lambda_cfg
+      ~in_lambda:(Some lambda_name) ?signature_db
+      ?builtin_signature_db lambda_cfg
   in
   let effects =
     effects
@@ -4398,8 +4234,7 @@ and fixpoint_lambda taint_inst shared_tables func needed_vars lambda_name lambda
   (effects, out_env')
 
 and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
-    ~enter_lval_env ~in_lambda ?class_name ?signature_db ?builtin_signature_db ?call_graph
-    ~(call_graph_caller : IL.name option) fun_cfg =
+    ~enter_lval_env ~in_lambda ?signature_db ?builtin_signature_db fun_cfg =
   let flow = fun_cfg.cfg in
   let init_mapping = DataflowX.new_node_array flow Lval_env.empty_inout in
   let needed_vars =
@@ -4419,9 +4254,6 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
       did_self_recurse = ref false;
       signature_db;
       builtin_signature_db;
-      call_graph;
-      call_graph_caller;
-      class_name = class_name ||| None;
     }
   in
   (* THINK: Why I cannot just update mapping here ? if I do, the mapping gets overwritten later on! *)
@@ -4543,12 +4375,11 @@ and (fixpoint :
       ?name:IL.name ->
       ?class_name:string ->
       ?signature_db:Shape_and_sig.signature_database ->
-      ?call_graph:Call_graph.G.t ->
       ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
       F.fun_cfg ->
       Effects.t * mapping) =
  fun taint_inst shared_tables ?(in_env = Lval_env.empty) ?name ?class_name
-     ?signature_db ?call_graph
+     ?signature_db
      ?builtin_signature_db fun_cfg ->
   let taint_intrafile_ = taint_inst.options.taint_intrafile in
   (* Check if this is a constructor and get class-level instance variable taint *)
@@ -4655,9 +4486,6 @@ and (fixpoint :
           did_self_recurse = ref false;
           signature_db;
           builtin_signature_db;
-          call_graph;
-          call_graph_caller = name;
-          class_name;
         }
       in
       let callee_has_sig_memo : bool Callee_resolution.Callee_use_tbl.t =
@@ -4894,13 +4722,10 @@ and (fixpoint :
                      }
                    in
                    let lambda_effects, _lambda_mapping =
-                     (* Lambda body's call_graph_caller is the enclosing named function, not the lambda: projidx emits closure calls as edges to the enclosing method (skip_anon), so the lambda-as-caller misses every edge. *)
                      fixpoint_aux taint_inst shared_tables lambda_func
                        ~enter_lval_env:combined_env
-                       ~in_lambda:(Some lambda_name) ~class_name:None
-                       ~signature_db:acc_db ?builtin_signature_db
-                       ?call_graph
-                       ~call_graph_caller:name lambda_cfg
+                       ~in_lambda:(Some lambda_name)
+                       ~signature_db:acc_db ?builtin_signature_db lambda_cfg
                    in
                    let signature =
                      {
@@ -4931,8 +4756,7 @@ and (fixpoint :
   let effects, mapping =
     Taint_timing.accum "main dataflow pass" @@ fun () ->
     fixpoint_aux taint_inst shared_tables func ~enter_lval_env:enhanced_in_env ~in_lambda:None
-      ~class_name ?signature_db:signature_db_with_lambdas ?builtin_signature_db ?call_graph
-      ~call_graph_caller:name fun_cfg
+      ?signature_db:signature_db_with_lambdas ?builtin_signature_db fun_cfg
   in
   (* If this was a constructor, store the instance variable taint for other methods *)
   (if taint_intrafile_ then
@@ -4961,6 +4785,6 @@ and (fixpoint :
   (effects, mapping)
 [@@profiling]
 
-let fixpoint taint_inst shared_tables ?in_env ?name ?class_name ?signature_db ?builtin_signature_db ?call_graph fun_cfg =
-  fixpoint taint_inst shared_tables ?in_env ?name ?class_name ?signature_db ?builtin_signature_db ?call_graph fun_cfg
+let fixpoint taint_inst shared_tables ?in_env ?name ?class_name ?signature_db ?builtin_signature_db fun_cfg =
+  fixpoint taint_inst shared_tables ?in_env ?name ?class_name ?signature_db ?builtin_signature_db fun_cfg
 [@@profiling]

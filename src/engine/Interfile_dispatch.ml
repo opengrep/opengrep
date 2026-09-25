@@ -759,9 +759,8 @@ let extract_and_check_function
   | Some fn_taint_inst ->
     let glob_env = glob_env_of_fid rs fid in
     let updated_db, findings =
-      (* No [~call_graph]: interfile callee resolution is sid-only (the
-         [id_callee_definition] def-site sids stamped by projidx). The local
-         call-graph fallback is for the intrafile path. *)
+      (* No [~call_graph]: callees are found through the
+         [id_callee_definition] stamps the project graph writes. *)
       Match_tainting_mode.extract_and_check
         ?builtin_signature_db:rs.builtin_signature_db
         ~glob_env
@@ -789,77 +788,8 @@ let relevant_graph_of (rs : rule_state) : Call_graph.G.t =
 let topo_order_of (rs : rule_state) : Function_id.t list =
   rs.topo_order
 
-(* Prefer id_resolved_alternatives (AST mirror of Dispatch edges), fall
-   back to graph dispatch_predecessors; drop self-references. *)
-let dispatch_impls (rs : rule_state) (fid : Function_id.t) : Function_id.t list =
-  let from_alts =
-    match FunctionMap.find_opt fid rs.info_map with
-    | None -> []
-    | Some info ->
-      !(info.Match_tainting_mode.name.IL.id_info.G.id_resolved_alternatives)
-      |> List.filter_map (fun ((_, sid) : G.resolved_name) ->
-             if G.SId.is_unsafe_default sid then None
-             else Some (Function_id.of_sid sid))
-  in
-  let impls =
-    match from_alts with
-    | [] -> Call_graph.dispatch_predecessors rs.relevant_graph fid
-    | xs -> xs
-  in
-  List.filter (fun (pred : Function_id.t) ->
-      not (Function_id.equal pred fid)) impls
-
-let has_body (rs : rule_state) (fid : Function_id.t) : bool =
-  match FunctionMap.find_opt fid rs.info_map with
-  | None -> false
-  | Some (info : Match_tainting_mode.fun_info) ->
-      Func_info.has_body info.Match_tainting_mode.fdef
-
-let dispatch_merge_fbdecl (rs : rule_state)
-    (fid : Function_id.t) (fid_arity : int)
-    (db : Shape_and_sig.signature_database)
-    : Shape_and_sig.signature_database =
-  let dpreds = dispatch_impls rs fid in
-  let impl_sigs =
-    dpreds
-    |> List.filter_map (fun (pred : Function_id.t) ->
-           Shape_and_sig.lookup_signature db pred fid_arity)
-  in
-  let interface_sig_opt =
-    Shape_and_sig.lookup_signature db fid fid_arity
-  in
-  match interface_sig_opt, impl_sigs with
-  | _, [] -> db
-  | None, _ ->
-      Log.debug (fun m ->
-          m "merge_dispatch: interface sig not found for %s, \
-             skipping dispatch merge"
-            (Function_id.show_debug fid));
-      db
-  | Some interface_sig, _ ->
-      let representative_sig =
-        if has_body rs fid then Some interface_sig else None
-      in
-      let merged =
-        Sig_inst.merge_dispatch_signatures ?representative_sig impl_sigs
-          interface_sig
-      in
-      let ext_sig =
-        { Shape_and_sig.sig_ = merged;
-          arity =
-            Shape_and_sig.Arity_exact
-              (List.length merged.Shape_and_sig.Signature.params) }
-      in
-      Shape_and_sig.replace_signature db fid ext_sig
-
 let initial_sig_db (_rs : rule_state) : Shape_and_sig.signature_database =
   Builtin_models.init_signature_database None
-
-let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
-    : int =
-  Match_tainting_mode.get_arity
-    (Tok.unbracket info.Match_tainting_mode.fdef.AST_generic.fparams)
-    info rs.lang
 
 let topo_fold ~(detect_findings : bool) (rs : rule_state)
     : Shape_and_sig.signature_database * PM.t list =
@@ -903,28 +833,12 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
         match info.Match_tainting_mode.fdef.G.fbody with
         | G.FBDecl _
         | G.FBNothing ->
-          (* Interface/abstract: signature comes from merging concrete impls.
-             Don't store an empty sig when no impls exist — unsound (callers
-             would see "no effects" instead of conservative propagation).
-             [dispatch_merge_fbdecl] replaces the interface entry, so it does
-             not accumulate across iterations. *)
-          let fid_arity = fid_arity_of rs info in
-          let dpreds = dispatch_impls rs fid in
-          let has_impls =
-            dpreds
-            |> List.exists (fun (pred : Function_id.t) ->
-                   Option.is_some
-                     (Shape_and_sig.lookup_signature db pred fid_arity))
-          in
-          if not has_impls then db
-          else dispatch_merge_fbdecl rs fid fid_arity (extract_replace fid info db)
-        | _ ->
-          (* An overload group's representative carries the union of its
-             members' signatures on top of its own; nothing else has
-             dispatch predecessors. *)
-          let db = extract_replace fid info db in
-          if List_.null (dispatch_impls rs fid) then db
-          else dispatch_merge_fbdecl rs fid (fid_arity_of rs info) db)
+          (* Interface/abstract: no signature is stored, since a call reaches
+             the implementations its stamp lists, and an empty signature
+             would make callers see no effects instead of conservative
+             propagation. *)
+          db
+        | _ -> extract_replace fid info db)
   in
   (* Edge-less SOURCE seeds are outside the SCC list, so nothing else
      computes their signature — yet the epilogue and the
@@ -1167,7 +1081,8 @@ let run_rule (rs : rule_state) : PM.t list =
            let top_cfg, class_init_cfgs =
              accum epilogue_cfg_secs @@ fun () ->
              ( Match_tainting_mode.build_top_level_cfg rs.lang fe.ast,
-               Match_tainting_mode.build_class_init_cfgs rs.lang fe.ast )
+               Match_tainting_mode.build_class_init_cfgs
+                 ~initialisers_are_functions:true rs.lang fe.ast )
            in
            let class_init_effects =
              accum epilogue_class_init_secs @@ fun () ->

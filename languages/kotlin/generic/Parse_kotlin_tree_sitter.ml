@@ -182,7 +182,7 @@ let inheritance_modifier (env : env) (x : CST.inheritance_modifier) =
   match x with
   | `Abst tok -> KeywordAttr (Abstract, token env tok) (* "abstract" *)
   | `Final tok -> KeywordAttr (Final, token env tok) (* "final" *)
-  | `Open tok -> G.unhandled_keywordattr (str env tok)
+  | `Open tok -> KeywordAttr (Virtual, token env tok)
 (* "open" *)
 
 let postfix_unary_operator (env : env) (x : CST.postfix_unary_operator) =

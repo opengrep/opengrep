@@ -1,0 +1,13 @@
+rules:
+  - id: object_field_holds_function_javascript
+    message: a call through an object's field reaches the functions stored in that field of that object
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

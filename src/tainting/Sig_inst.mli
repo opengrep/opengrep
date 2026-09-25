@@ -45,18 +45,6 @@ type call_effects = call_effect list
 
 type sig_inst_cache
 
-val merge_dispatch_signatures :
-  ?representative_sig:Shape_and_sig.Signature.t ->
-  Shape_and_sig.Signature.t list ->
-  Shape_and_sig.Signature.t ->
-  Shape_and_sig.Signature.t
-(** Merges the dispatch implementation signatures. BArg is normalised to the
- * representative's params, else to the first impl's; receivers are stripped;
- * the effects are unioned, except the members' effects that depend on a
- * global or captured variable (a BGlob or BEnv base). The second argument
- * is the interface signature, returned unchanged when there are no impls.
- * On incompatible params the first signature is returned. *)
-
 val guard_valid_under :
   lang:Lang.t -> Effect_guard.t -> Taint.call_site list -> Effect_guard.t -> bool
 

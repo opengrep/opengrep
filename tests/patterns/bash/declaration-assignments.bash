@@ -4,24 +4,21 @@ declare -r a=b
 # MATCH:
 readonly a=b
 
-# MATCH:
 declare a=b c=d
 
 ################################################################
-# All the matching cases below aren't necessarily desirable.
-# It's that the current implementation throws everything away
-# except the assignments.
+# A declaration that declares in the current scope becomes a
+# variable definition that carries the declare options given to
+# it; 'readonly' carries the same option as 'declare -r'. The
+# pattern matches only the definitions that carry that option.
 ################################################################
 
-# MATCH:
 declare a=b
 
 f() {
-# MATCH:
   local a=b
 }
 
-# MATCH:
 a=b
 
 # Maybe this should match even though the definition is local to the command.

@@ -445,7 +445,7 @@ let modifier (env : env) (x : CST.modifier) =
   | `Fixed tok -> unhandled_keywordattr (str env tok)
   | `Inte tok -> unhandled_keywordattr (str env tok)
   | `New tok -> unhandled_keywordattr (str env tok)
-  | `Over tok -> unhandled_keywordattr (str env tok)
+  | `Over tok -> KeywordAttr (Override, token env tok)
   | `Part tok -> unhandled_keywordattr (str env tok)
   | `Priv tok -> KeywordAttr (Private, token env tok) (* "private" *)
   | `Prot tok -> KeywordAttr (Protected, token env tok) (* "protected" *)
@@ -459,7 +459,7 @@ let modifier (env : env) (x : CST.modifier) =
       (* "sealed" *)
   | `Static tok -> KeywordAttr (Static, token env tok) (* "static" *)
   | `Unsafe tok -> unhandled_keywordattr (str env tok)
-  | `Virt tok -> unhandled_keywordattr (str env tok)
+  | `Virt tok -> KeywordAttr (Virtual, token env tok)
   | `Vola tok -> KeywordAttr (Volatile, token env tok)
 
 (* "volatile" *)

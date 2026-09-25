@@ -1,0 +1,14 @@
+rules:
+  - id: bare-call-reaches-override-csharp
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      Tainted data passed to an abstract method called without a receiver
+      reaches the override in another file.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source(...)
+    pattern-sinks:
+      - pattern: Sink(...)

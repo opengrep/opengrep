@@ -1,0 +1,16 @@
+rules:
+  - id: build-constraint-imported-type
+    languages: [go]
+    severity: ERROR
+    message: >
+      A type declared in two files that no build compiles together is one type
+      whose methods differ by build: a file without a build constraint reaches
+      the methods of both declarations, and a file built for one operating
+      system reaches only the methods compiled for that system.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

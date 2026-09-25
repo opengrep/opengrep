@@ -307,15 +307,6 @@ let rec pattern_to_expr p =
   | _ -> raise NotAnExpr)
   |> G.e
 
-(* Primarily for usage in converting an Assign into a DefStmt. We fail to
- * produce an entity name if we don't definitely have something which is
- * a name.
- *)
-let expr_to_entity_name_opt (e : G.expr) : G.entity_name option =
-  match e.G.e with
-  | N name -> Some (EN name)
-  | _ -> None
-
 let entity_of_pattern ?(attrs = []) (pat : G.pattern) : G.entity =
   (* TODO Desugar single-element tuples? *)
   let entity_name =
@@ -415,22 +406,6 @@ let vardef_to_assign (ent, def) =
     | None -> L (Null (Tok.unsafe_fake_tok "null")) |> G.e
   in
   Assign (name_or_expr, Tok.unsafe_fake_tok "=", v) |> G.e
-
-(* TODO: pass also semicolon tok? not just the equal tok *)
-let assign_to_vardef_opt ((e1, _teq, e2) : G.expr * G.tok * G.expr) =
-  match e1.G.e with
-  | Cast (ty, _, e) ->
-      let* name = expr_to_entity_name_opt e in
-      let ent = { name; attrs = []; tparams = None } in
-      Some
-        (DefStmt (ent, VarDef { vinit = Some e2; vtype = Some ty; vtok = no_sc })
-        |> G.s)
-  | _ ->
-      let* name = expr_to_entity_name_opt e1 in
-      let ent = { name; attrs = []; tparams = None } in
-      Some
-        (DefStmt (ent, VarDef { vinit = Some e2; vtype = None; vtok = no_sc })
-        |> G.s)
 
 (* used in controlflow_build *)
 let funcdef_to_lambda (ent, def) resolved =

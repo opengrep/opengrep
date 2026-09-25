@@ -2,6 +2,6 @@
 namespace App;
 
 function handle($x) {
-    // todoruleid: callable-string-callback
+    // ruleid: callable-string-callback
     sink($x);
 }

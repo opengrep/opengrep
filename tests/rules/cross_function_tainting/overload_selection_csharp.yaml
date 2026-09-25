@@ -1,0 +1,13 @@
+rules:
+  - id: overload_selection_csharp
+    message: a call reaches the overload its arguments select
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink(...)

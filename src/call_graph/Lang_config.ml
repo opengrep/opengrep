@@ -47,7 +47,7 @@ type receiver_parameter =
   | Declares_method
   | Declares_extension
 
-type reflection = {
+type reflection = Lang_reflection.t = {
   callable_literals : bool;
   send_methods : string list;
   method_object : string option;
@@ -75,15 +75,6 @@ type t = {
   skip_nested_in_extract_calls : bool;
 }
 
-let no_reflection = {
-  callable_literals = false;
-  send_methods = [];
-  method_object = None;
-  attribute_lookup = None;
-  apply_function = [];
-  symbol_lookup = [];
-}
-
 let empty = {
   hof_configs = [];
   collection_configs = [];
@@ -94,7 +85,7 @@ let empty = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.none;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -121,7 +112,7 @@ let python = {
   receiver_parameter = Declares_method;
   class_is_callable_value = true;
   constructor_reference_names = [];
-  reflection = { no_reflection with attribute_lookup = Some "getattr" };
+  reflection = Lang_reflection.of_lang Lang.Python;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -155,11 +146,7 @@ let ruby = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = {
-    no_reflection with
-    send_methods = ["send"; "public_send"; "__send__"];
-    method_object = Some "method";
-  };
+  reflection = Lang_reflection.of_lang Lang.Ruby;
   block_pass_operator = true;
   invoke_methods = ["call"];
   class_accessor_methods = ["class"];
@@ -167,7 +154,7 @@ let ruby = {
   skip_nested_in_extract_calls = true;
 }
 
-let crystal = { ruby with reflection = no_reflection }
+let crystal = { ruby with reflection = Lang_reflection.of_lang Lang.Crystal }
 
 let javascript = {
   hof_configs = [
@@ -195,7 +182,7 @@ let javascript = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Js;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -228,7 +215,7 @@ let java = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = ["new"];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Java;
   block_pass_operator = false;
   invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
   class_accessor_methods = [];
@@ -264,7 +251,7 @@ let kotlin = {
   receiver_parameter = Declares_extension;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Kotlin;
   block_pass_operator = false;
   invoke_methods = ["invoke"];
   class_accessor_methods = [];
@@ -293,7 +280,7 @@ let scala = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = ["apply"];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Scala;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -323,7 +310,7 @@ let csharp = {
   receiver_parameter = Declares_extension;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Csharp;
   block_pass_operator = false;
   invoke_methods = ["Invoke"];
   class_accessor_methods = [];
@@ -345,7 +332,7 @@ let go = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Go;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -374,7 +361,7 @@ let rust = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Rust;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -403,7 +390,7 @@ let swift = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = ["init"];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Swift;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -423,7 +410,7 @@ let php = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = { no_reflection with callable_literals = true };
+  reflection = Lang_reflection.of_lang Lang.Php;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -443,7 +430,7 @@ let cpp = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Cpp;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -466,7 +453,7 @@ let ocaml_lang = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Ocaml;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -483,7 +470,7 @@ let lua = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Lua;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -522,7 +509,7 @@ let dart = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = ["new"];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Dart;
   block_pass_operator = false;
   (* Function objects: f.call(args) invokes the closure f *)
   invoke_methods = ["call"];
@@ -548,7 +535,7 @@ let elixir = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = { no_reflection with apply_function = ["apply"; "Kernel.apply"; ":erlang.apply"] };
+  reflection = Lang_reflection.of_lang Lang.Elixir;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -567,7 +554,7 @@ let julia = {
   receiver_parameter = Declares_method;
   class_is_callable_value = true;
   constructor_reference_names = [];
-  reflection = { no_reflection with symbol_lookup = ["getfield"] };
+  reflection = Lang_reflection.of_lang Lang.Julia;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -598,7 +585,7 @@ let clojure = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = { no_reflection with symbol_lookup = ["resolve"; "ns-resolve"] };
+  reflection = Lang_reflection.of_lang Lang.Clojure;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -615,7 +602,7 @@ let apex = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Apex;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -632,7 +619,7 @@ let vb = {
   receiver_parameter = Declares_method;
   class_is_callable_value = false;
   constructor_reference_names = [];
-  reflection = no_reflection;
+  reflection = Lang_reflection.of_lang Lang.Vb;
   block_pass_operator = false;
   invoke_methods = [];
   class_accessor_methods = [];
@@ -641,7 +628,7 @@ let vb = {
 
 let r = {
   empty with
-  reflection = { no_reflection with symbol_lookup = ["get"; "do.call"; "match.fun"] };
+  reflection = Lang_reflection.of_lang Lang.R;
 }
 
 let get (lang : Lang.t) : t =
@@ -703,7 +690,6 @@ let overloads_by_type (lang : Lang.t) : bool =
   | Lang.Csharp
   | Lang.Swift
   | Lang.Cpp
-  | Lang.Dart
   | Lang.Apex ->
       true
   | _ -> false
@@ -726,6 +712,47 @@ let super_is_builtin_call (lang : Lang.t) : bool =
       true
   | _ -> false
 
+let self_is_defining_class (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Php
+  | Lang.Hack ->
+      true
+  | _ -> false
+
+let is_callable_reference (lang : Lang.t) (name : AST_generic.name) : bool =
+  match (lang, name) with
+  | ( Lang.Kotlin,
+      AST_generic.IdQualified
+        {
+          AST_generic.name_middle = None;
+          name_top = None;
+          name_last = _, None;
+          _;
+        } ) ->
+      true
+  | _ -> false
+
+let type_name_value_is_instance (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Rust -> true
+  | _ -> false
+
+let method_receiver_is_first_parameter (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Lua -> true
+  | _ -> false
+
+let class_header_is_constructor : Lang.t -> bool =
+  Visit_function_defs.class_header_is_constructor
+
+let bracket_member_access (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Js
+  | Lang.Ts
+  | Lang.Lua ->
+      true
+  | _ -> false
+
 let method_overridable (lang : Lang.t) (attrs : AST_generic.attribute list) :
     bool option =
   let keyword (wanted : AST_generic.keyword_attribute) : bool =
@@ -737,23 +764,9 @@ let method_overridable (lang : Lang.t) (attrs : AST_generic.attribute list) :
         | _ -> false)
       attrs
   in
-  let named (wanted : string list) : bool =
-    List.exists
-      (fun (attr : AST_generic.attribute) ->
-        match attr with
-        | AST_generic.NamedAttr (_, AST_generic.Id ((found, _), _), _) ->
-            List.exists (String.equal found) wanted
-        | _ -> false)
-      attrs
-  in
-  let other (wanted : string list) : bool =
-    List.exists
-      (fun (attr : AST_generic.attribute) ->
-        match attr with
-        | AST_generic.OtherAttribute ((found, _), _) ->
-            List.exists (String.equal found) wanted
-        | _ -> false)
-      attrs
+  let declared_overridable () : bool =
+    keyword AST_generic.Abstract || keyword AST_generic.Virtual
+    || keyword AST_generic.Override
   in
   match lang with
   | Lang.Java
@@ -762,24 +775,15 @@ let method_overridable (lang : Lang.t) (attrs : AST_generic.attribute list) :
         (not
            (keyword AST_generic.Private || keyword AST_generic.Static
           || keyword AST_generic.Final))
-  | Lang.Csharp ->
-      Some
-        ((not (keyword AST_generic.Final))
-        && (keyword AST_generic.Abstract || named [ "virtual"; "override" ]))
-  | Lang.Kotlin ->
-      Some
-        ((not (keyword AST_generic.Final))
-        && (keyword AST_generic.Abstract || keyword AST_generic.Override
-          || named [ "open" ]))
-  | Lang.Apex ->
-      Some
-        (keyword AST_generic.Abstract || keyword AST_generic.Override
-        || other [ "virtual" ])
+  | Lang.Csharp
+  | Lang.Kotlin
   | Lang.Vb ->
-      Some
-        ((not (keyword AST_generic.Final))
-        && other [ "OVERRIDABLE"; "OVERRIDES"; "MUSTOVERRIDE" ])
-  | Lang.Cpp -> if keyword AST_generic.Abstract then Some true else None
+      Some ((not (keyword AST_generic.Final)) && declared_overridable ())
+  | Lang.Apex -> Some (declared_overridable ())
+  | Lang.Cpp ->
+      if keyword AST_generic.Final then Some false
+      else if declared_overridable () then Some true
+      else None
   | _ -> Some false
 
 let hof_method_names (lang : Lang.t) : string list =

@@ -165,6 +165,52 @@ let check_binding_groups ast name expected =
     (spf "bindings of '%s'" name)
     expected (binding_groups ast name)
 
+let check_sites_follow_textual_order ast name ~(last_use_sees_def : bool) =
+  check_single_binding ast name;
+  match (def_sid_of_name ast name, resolutions_of_name ast name) with
+  | Some def_sid, [ Some (_, assigned); Some (_, last) ] ->
+      let def_site = AST_generic.SId.to_loc def_sid in
+      Alcotest.(check bool)
+        (spf "the assignment to '%s' is at its own site" name)
+        false
+        (Stdlib.( = ) (AST_generic.SId.to_loc assigned) def_site);
+      Alcotest.(check bool)
+        (spf "the last use of '%s' sees the definition" name)
+        last_use_sees_def
+        (Stdlib.( = ) (AST_generic.SId.to_loc last) def_site)
+  | _ -> Alcotest.failf "expected a definition and two resolved uses of '%s'" name
+
+let name_resolutions_of_name ast name =
+  let acc = ref [] in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_name venv n =
+        (match n with
+        | AST_generic.Id ((s, _), id_info) when s = name ->
+            acc := !(id_info.AST_generic.id_resolved) :: !acc
+        | _ -> ());
+        super#visit_name venv n
+    end
+  in
+  visitor#visit_program () ast;
+  List.rev !acc
+
+let check_single_site ast name =
+  check_single_binding ast name;
+  match
+    resolutions_of_name ast name
+    |> List.filter_map (Option.map (fun (_, sid) -> AST_generic.SId.to_loc sid))
+  with
+  | [] -> Alcotest.failf "no resolved uses of '%s'" name
+  | first :: rest ->
+      rest
+      |> List.iter (fun site ->
+             Alcotest.(check bool)
+               (spf "all uses of '%s' carry one site" name)
+               true (Stdlib.( = ) first site))
+
 let tests parse_program =
   Testo.categorize "naming generic"
     [
@@ -652,4 +698,107 @@ let tests parse_program =
           Naming_AST.resolve Lang.Python ast;
           check_resolutions ast "make" [ "Global"; "Other" ];
           check_single_binding ast "make");
+      t "python binding statements rebind in textual order" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/python/call_before_definition.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          check_sites_follow_textual_order ast "checker" ~last_use_sees_def:true;
+          check_sites_follow_textual_order ast "handler" ~last_use_sees_def:false;
+          check_resolutions ast "counter" [ "Global"; "Global"; "Global"; "Global" ];
+          check_single_site ast "counter");
+      t "bash assignment is global unless a local declaration is in force"
+        (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/bash/assign_scopes.bash")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Bash ast;
+          check_resolutions ast "y" [ "LocalVar"; "LocalVar" ];
+          check_single_binding ast "y";
+          check_resolutions ast "z" [ "Global"; "Global"; "Global" ];
+          check_single_binding ast "z";
+          check_resolutions ast "x" [ "Global"; "Global"; "Global" ];
+          check_single_binding ast "x");
+      t "julia assignment in a function declares a local unless global"
+        (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/julia/assign_scopes.jl")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Julia ast;
+          check_resolutions ast "x" [ "Global"; "LocalVar"; "LocalVar"; "Global" ];
+          check_binding_groups ast "x" [ 0; 1; 1; 0 ]);
+      t "rust Self in an impl block is the implemented type" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/rust/self_type.rs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Rust ast;
+          match def_sid_of_name ast "Foo" with
+          | None -> Alcotest.failf "no definition of Foo"
+          | Some foo ->
+              let foo = Some (AST_generic.SId.to_int foo) in
+              Alcotest.(check (list (option int)))
+                "Self is Foo in the impl blocks and unbound in the trait"
+                [ foo; foo; None; foo; foo ]
+                (name_resolutions_of_name ast "Self"
+                |> List.map
+                     (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid))));
+      t "elixir module body is a scope" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/elixir/modules.ex")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Elixir ast;
+          (match def_sids_of_name ast "f" with
+          | [ in_handler; in_other ] ->
+              Alcotest.(check bool) "two bindings" false
+                (AST_generic.SId.equal in_handler in_other)
+          | sids ->
+              Alcotest.failf "expected two definitions of f, found %d"
+                (List.length sids));
+          check_uses_bind_nth_def ast "f" 0);
+      t "ruby module body is a scope" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/ruby/modules.rb")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ruby ast;
+          (match def_sids_of_name ast "from_a" with
+          | [ in_from_a; in_not_included ] ->
+              Alcotest.(check bool) "two bindings" false
+                (AST_generic.SId.equal in_from_a in_not_included)
+          | sids ->
+              Alcotest.failf "expected two definitions of from_a, found %d"
+                (List.length sids));
+          check_resolutions ast "LIMIT" [ "Global"; "Global" ];
+          check_single_binding ast "LIMIT");
+      t "java overloads share one binding, each at its own site" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/java/overloads.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (match def_sids_of_name ast "g" with
+          | [ first; second ] ->
+              Alcotest.(check bool) "one binding" true
+                (AST_generic.SId.equal first second);
+              Alcotest.(check bool) "two sites" false
+                (AST_generic.SId.same_site first second)
+          | sids ->
+              Alcotest.failf "expected two definitions of g, found %d"
+                (List.length sids));
+          check_uses_bind_nth_def ast "g" 0);
+      t "lua binding statements rebind in textual order" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/lua/call_before_definition.lua")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Lua ast;
+          check_sites_follow_textual_order ast "checker" ~last_use_sees_def:true;
+          check_sites_follow_textual_order ast "handler" ~last_use_sees_def:false);
     ]

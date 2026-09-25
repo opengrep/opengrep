@@ -19,11 +19,6 @@ val fn_id_to_node : fn_id -> node option
 
 val prefer_concrete : func_info list -> func_info list
 
-val narrow_by_call :
-  lang:Lang.t ->
-  AST_generic.argument list option ->
-  func_info list ->
-  func_info list
 
 val uses_new_keyword : Lang.t -> bool
 
@@ -42,7 +37,28 @@ type static_type =
   | Builtin_type of Type.builtin_type
 
 val argument_types :
-  lang:Lang.t -> AST_generic.argument list -> static_type option list
+  lang:Lang.t ->
+  type_of_call:(AST_generic.expr -> static_type option) ->
+  AST_generic.argument list ->
+  static_type option list
+
+type static_typing = {
+  type_of_call : AST_generic.expr -> static_type option;
+  is_class : AST_generic.SId.t -> bool;
+}
+
+val narrow_by_call :
+  lang:Lang.t ->
+  typing:static_typing ->
+  AST_generic.argument list option ->
+  func_info list ->
+  func_info list
+
+val typing :
+  lang:Lang.t ->
+  resolve:(AST_generic.expr -> func_info list) ->
+  is_class:(AST_generic.SId.t -> bool) ->
+  static_typing
 
 val static_type_of_argument :
   lang:Lang.t -> AST_generic.expr -> static_type option
@@ -68,6 +84,11 @@ type construction_resolver =
 
 type invocation_resolver =
   caller_parent_path:IL.name option list -> AST_generic.expr -> fn_id list
+
+type argument_typer =
+  caller_parent_path:IL.name option list ->
+  AST_generic.argument list ->
+  static_type option list
 
 val resolve_outside_file :
   lang:Lang.t ->

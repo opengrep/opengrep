@@ -1,0 +1,13 @@
+rules:
+  - id: interface_default_along_order
+    message: a method inherited from an implemented interface is found along the resolution order
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

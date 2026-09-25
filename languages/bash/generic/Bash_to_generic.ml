@@ -146,6 +146,58 @@ let mk_var_expr (var : variable_name) : G.expr =
   let name = get_var_name var in
   G.N (mk_name name) |> G.e
 
+let declare_option (attr : declaration_attribute) : string =
+  match attr with
+  | Array -> "-a"
+  | Associative_array -> "-A"
+  | Function -> "-f"
+  | Function_short -> "-F"
+  | Global -> "-g"
+  | Integer -> "-i"
+  | Local -> "local"
+  | Lowercase -> "-l"
+  | Nameref -> "-n"
+  | Print -> "-p"
+  | Readonly -> "-r"
+  | Trace -> "-t"
+  | Uppercase -> "-u"
+  | Export -> "-x"
+  | Unset -> "unset"
+  | Unsetenv -> "unsetenv"
+
+let declares_in_current_scope (decl : declaration) : bool =
+  not
+    (List.exists
+       (fun ((attr : declaration_attribute), (tok : tok)) ->
+         match attr with
+         | Unset
+         | Unsetenv
+         | Global ->
+             true
+         | Export -> Int.equal (Tok.compare_pos tok (fst decl.loc)) 0
+         | Readonly
+         | Array
+         | Associative_array
+         | Function
+         | Function_short
+         | Integer
+         | Local
+         | Lowercase
+         | Nameref
+         | Print
+         | Trace
+         | Uppercase ->
+             false)
+       decl.attributes)
+
+let declared_variable ~(attrs : G.attribute list) (loc : loc)
+    (name : string wrap) (value : G.expr option) : stmt_or_expr =
+  let ent = G.basic_entity name ~attrs in
+  Stmt
+    ( loc,
+      G.DefStmt (ent, G.VarDef { G.vinit = value; vtype = None; vtok = G.no_sc })
+      |> G.s )
+
 module C = struct
   let mk (loc : loc) (name : string) =
     let id = "!sh_" ^ name ^ "!" in
@@ -413,11 +465,37 @@ and command (env : env) (cmd : command) : stmt_or_expr =
       Stmt (loc, G.While (until, G.Cond neg_cond, body) |> G.s)
   | Coprocess (_loc, _opt_name, cmd) -> (* TODO: coproc *) command env cmd
   | Assignment ass -> assignment env ass
-  | Declaration x ->
+  | Declaration x when not (declares_in_current_scope x) ->
       let assignments = List_.map (assignment env) x.assignments in
       (* TODO: don't ignore the "unknown" arguments that contain variables
          and such. *)
       assignments |> block
+  | Declaration x ->
+      let attrs =
+        List_.map
+          (fun ((attr : declaration_attribute), (tok : tok)) ->
+            G.OtherAttribute ((declare_option attr, tok), []))
+          x.attributes
+      in
+      let declared =
+        List_.map
+          (fun (var : variable_name) ->
+            declared_variable ~attrs
+              (AST_bash_loc.variable_name_loc var)
+              (get_var_name var) None)
+          x.declarations
+      in
+      let assigned =
+        List_.map
+          (fun (ass : assignment) ->
+            match ass.assign_op with
+            | Set, _ ->
+                declared_variable ~attrs ass.loc ass.lhs
+                  (Some (expression env ass.rhs))
+            | Add, _ -> assignment env ass)
+          x.assignments
+      in
+      declared @ assigned |> block
   | Negated_command (loc, excl_tok, cmd) ->
       let cmd_loc = AST_bash_loc.command_loc cmd in
       let cmd = command env cmd |> as_expr in

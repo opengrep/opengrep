@@ -2254,7 +2254,7 @@ let visi_and_co env x : attribute =
   | `State_muta x -> map_state_mutability env x
   | `Virt tok ->
       let x = (* "virtual" *) token env tok in
-      G.attr Abstract x
+      G.attr Virtual x
   | `Over_spec x -> map_override_specifier env x
 
 let map_fallback_receive_definition (env : env)
@@ -2316,7 +2316,7 @@ let map_modifier_definition (env : env)
         match x with
         | `Virt tok ->
             let t = (* "virtual" *) token env tok in
-            G.attr Abstract t
+            G.attr Virtual t
         | `Over_spec x -> map_override_specifier env x)
       v4
   in

@@ -1,0 +1,13 @@
+rules:
+  - id: self_call_reaches_override_in_other_file
+    message: a call on self reaches the overrides in subclasses
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

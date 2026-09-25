@@ -1438,7 +1438,12 @@ let source_file (env : env) (xs : CST.source_file) : program =
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_go.Parse.file !!file)
-    (fun cst _extras ->
+    (fun cst (extras : CST.extras) ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       let x = source_file env cst in
-      x)
+      Build_constraint_go.with_header_constraints
+        (List_.map
+           (fun (`Comment ((_ : Tree_sitter_run.Loc.t), (comment : CST.comment)))
+              -> H.str env comment)
+           extras)
+        x)

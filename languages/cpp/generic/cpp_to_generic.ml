@@ -2040,7 +2040,7 @@ and map_modifier env = function
       G.attr G.Inline v1
   | Virtual v1 ->
       let v1 = map_tok env v1 in
-      G.attr G.Abstract v1
+      G.attr G.Virtual v1
   | Final v1 ->
       let v1 = map_tok env v1 in
       G.attr G.Final v1

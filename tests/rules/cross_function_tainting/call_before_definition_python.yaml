@@ -1,0 +1,13 @@
+rules:
+  - id: call_before_definition_python
+    message: a module level call reaches the value the name holds at that point
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

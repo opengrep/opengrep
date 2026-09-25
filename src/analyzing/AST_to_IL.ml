@@ -1654,15 +1654,16 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       ( { e = G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _))); _ } as
           callee,
         args )
-    when env.lang =*= Lang.Ruby
-         && (match method_name with
-            | "fetch"
-            | "send"
-            | "public_send"
-            | "dig" ->
-                true
-            | _ -> false) -> (
-      match (callee.G.e, ruby_field_access_decode method_name args) with
+    when (env.lang =*= Lang.Ruby
+          && (match method_name with
+             | "fetch"
+             | "dig" ->
+                 true
+             | _ -> false))
+         || Lang_reflection.is_send_method env.lang method_name -> (
+      match
+        (callee.G.e, ruby_field_access_decode env.lang method_name args)
+      with
       | ( G.DotAccess (receiver, _, _),
           Some (first_id :: rest_ids, [], default_opt) ) ->
           let ss_recv, head_lval = build_field_lval env ~callee receiver first_id in
@@ -1729,10 +1730,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args
       | G.DotAccess (receiver, dot, G.FN (G.Id (_, send_info))), None
-        when (match method_name with
-              | "send"
-              | "public_send" -> true
-              | _ -> false) -> (
+        when Lang_reflection.is_send_method env.lang method_name -> (
           match Tok.unbracket args with
           | G.Arg key_expr :: (_ :: _ as sent_args) -> (
               match literal_field_ident key_expr with
@@ -2722,6 +2720,11 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
     | CLJ_ME1.Macroexpansion_error (_msg, any_expr) ->
       ([], fixme_exp ToDo any_expr (related_tok tok))
     | exn -> raise exn)
+  | G.OtherExpr
+      ( ("MethodRef", _),
+        G.E ({ G.e = G.DotAccess (_, _, G.FN (G.Id _)); _ } as reference) :: _ )
+    ->
+      expr env reference
   (* Default. *)
   | G.OtherExpr ((str, tok), xs) ->
       let results =
@@ -2742,6 +2745,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.RawExpr _ -> todo (G.E g_expr)
 
 and expr env ?void e_gen : stmts * exp =
+  let e_gen = Option.value (G.callable_reference_of e_gen) ~default:e_gen in
   try expr_aux env ?void e_gen with
   | Fixme (kind, any_generic) ->
       ([], fixme_exp kind any_generic (related_exp e_gen))
@@ -2860,7 +2864,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+                  let lval = fresh_lval env ~str:"_tmp_lambda" (snd id) in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
@@ -3107,11 +3111,14 @@ and longest_literal_key_prefix (args : G.argument list) :
  * The [tail_args] list is empty when every [dig] key is literal;
  * when non-empty, the literal prefix is precise and the tail is
  * handed to the generic call as [prefix_lval.dig(tail_args)]. *)
-and ruby_field_access_decode (method_name : string) (args : G.arguments) :
+and ruby_field_access_decode (lang : Lang.t) (method_name : string)
+    (args : G.arguments) :
     (G.ident list * G.argument list * G.expr option) option =
   let arg_list = Tok.unbracket args in
   match (method_name, arg_list) with
-  | ("fetch" | "send" | "public_send"), [ G.Arg key_expr ] -> (
+  | _, [ G.Arg key_expr ]
+    when String.equal method_name "fetch"
+         || Lang_reflection.is_send_method lang method_name -> (
       match literal_field_ident key_expr with
       | Some id -> Some ([ id ], [], None)
       | None -> None)
@@ -4382,6 +4389,7 @@ and stmt_aux env st : stmts =
       let new_stmts = stmt env stmt1 in
       ss @ new_stmts
   (* Rust: unsafe block *)
+  | G.OtherStmtWithStmt (G.OSWS_Block ("Init", _), [], stmt1) -> stmt env stmt1
   | G.OtherStmtWithStmt (G.OSWS_Block ("Unsafe", tok), [], stmt1) ->
       let todo_stmt = fixme_stmt ToDo (G.TodoK ("unsafe_block", tok)) in
       let new_stmts = stmt env stmt1 in

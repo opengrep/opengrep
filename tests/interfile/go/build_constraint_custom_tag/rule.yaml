@@ -1,0 +1,15 @@
+rules:
+  - id: build-constraint-custom-tag
+    languages: [go]
+    severity: ERROR
+    message: >
+      A file built only with the tag integration reaches the function of the
+      file built with that tag, and not the function of the file built
+      without it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

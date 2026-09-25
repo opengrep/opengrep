@@ -213,6 +213,13 @@ let top_func () =
   and tag v =
     let attr = G.(E (e (L (String (fb v))))) in
     [ G.OtherAttribute (("GoTag", snd v), [ attr ]) ]
+  and build_constraint (condition : Ast_go.build_constraint) :
+      G.build_constraint =
+    match condition with
+    | BuildTag v1 -> G.BuildTag (ident v1)
+    | BuildNot v1 -> G.BuildNot (build_constraint v1)
+    | BuildAnd (v1, v2) -> G.BuildAnd (build_constraint v1, build_constraint v2)
+    | BuildOr (v1, v2) -> G.BuildOr (build_constraint v1, build_constraint v2)
   and interface_field = function
     | Method (v1, v2) ->
         let v1 = ident v1 in
@@ -697,6 +704,10 @@ let top_func () =
     | Package (t1, id) ->
         let id = ident id in
         G.DirectiveStmt (G.Package (t1, [ id ]) |> G.d) |> G.s
+    | BuildConstraint (t1, condition) ->
+        G.DirectiveStmt
+          (G.BuildConstraint (t1, build_constraint condition) |> G.d)
+        |> G.s
     | Import x ->
         let x = import x in
         G.DirectiveStmt (x |> G.d) |> G.s

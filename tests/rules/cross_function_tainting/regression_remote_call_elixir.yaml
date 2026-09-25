@@ -1,0 +1,13 @@
+rules:
+  - id: regression_remote_call_elixir
+    message: apply with a module and a function atom calls that function of that module
+    languages:
+      - elixir
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

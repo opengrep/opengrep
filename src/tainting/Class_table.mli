@@ -59,6 +59,7 @@ type position =
 val build :
   lang:Lang.t ->
   classes:class_scope list list ->
+  compiled_together:(Func_info.t list -> bool) ->
   defined:(class_scope -> bool) ->
   link:(class_scope -> parent -> scope_id option) ->
   outside:

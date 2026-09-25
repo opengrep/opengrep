@@ -40,7 +40,6 @@ val get_arity :
 
 val extract_signatures :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   lang:Lang.t ->
   db:Shape_and_sig.signature_database ->
   taint_inst:Taint_rule_inst.t ->
@@ -54,7 +53,6 @@ val extract_signatures :
 
 val extract_and_check :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   ?glob_env:Taint_lval_env.t ->
   lang:Lang.t ->
   db:Shape_and_sig.signature_database ->
@@ -67,6 +65,7 @@ val extract_and_check :
 (** Shared signature-extraction + finding-detection logic. *)
 
 val build_class_init_cfgs :
+  initialisers_are_functions:bool ->
   Lang.t ->
   AST_generic.program ->
   (IL.name option * IL.fun_cfg) list
@@ -77,7 +76,6 @@ val check_class_inits_prebuilt :
   (IL.name option * IL.fun_cfg) list ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   unit ->
   Shape_and_sig.Effects.t
 
@@ -92,7 +90,6 @@ val check_top_level_prebuilt :
   IL.name * IL.fun_cfg ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   unit ->
   Shape_and_sig.Effects.t
 
@@ -104,7 +101,6 @@ val check_fundef :
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   AST_generic.function_definition ->
   IL.fun_cfg * Shape_and_sig.Effects.t * Dataflow_tainting.mapping
 (** Check a function definition using a [Dataflow_tainting.config] (which can

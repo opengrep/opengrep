@@ -1,0 +1,13 @@
+rules:
+  - id: unit_struct_value_rust
+    message: a unit struct name used as a value is an instance of the struct
+    languages:
+      - rust
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

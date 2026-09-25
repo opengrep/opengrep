@@ -873,7 +873,50 @@ and map_argument_with_property env = function
 and map_block_argument env (_amp, value) =
   match value with
   | `Exp e -> G.Arg (map_expression env e)
-  | `Impl_obj_call _ -> G.OtherArg (("ImplicitObjectCall", fake "block"), [])
+  | `Impl_obj_call call ->
+      let member =
+        match implicit_object_member env call with
+        | Some id -> [ G.I id ]
+        | None -> []
+      in
+      G.OtherArg (("ImplicitObjectCall", fake "block"), member)
+
+and implicit_object_member env (call : CST.implicit_object_call) : G.ident option =
+  let selected = function
+    | `Impl_obj_meth_id tok
+    | `Impl_obj_meth_op tok ->
+        let _dot, name = Tok.split_tok_at_bytepos 1 (token env tok) in
+        Some (Tok.content_of_tok name, name)
+  in
+  let rec innermost (inner : CST.implicit_object_call_chainable option) outer =
+    match inner with
+    | Some (`Rectype (inner, sel)) -> innermost inner (Some sel)
+    | None -> (
+        match outer with
+        | Some
+            ( `Choice_impl_obj_meth_id_opt_arg_list_with_parens (meth, _)
+            | `Choice_impl_obj_meth_id_start_of_index_op_brac_arg_list_choice_RBRACK
+                (meth, _, _, _)
+            | `Choice_impl_obj_meth_id_EQ_arg_list_with_parens (meth, _, _)
+            | `Choice_impl_obj_meth_id_opt_choice_arg_list_with_parens_brace_blk
+                (meth, _, _)
+            | `Choice_impl_obj_meth_id_opt_choice_arg_list_with_parens_do_end_blk
+                (meth, _, _)
+            | `Choice_impl_obj_meth_id_arg_list_with_parens_and_blk (meth, _) ) ->
+            selected meth
+        | Some (`Impl_obj_ivar _ | `Impl_obj_index_op _)
+        | None ->
+            None)
+  in
+  match call with
+  | `Impl_obj_call_chai (`Rectype (inner, sel)) -> innermost inner (Some sel)
+  | `Impl_obj_call_unch (Some chain, _) -> innermost (Some chain) None
+  | `Impl_obj_call_unch
+      ( None,
+        ( `Choice_impl_obj_meth_id_arg_list_no_parens (meth, _)
+        | `Choice_impl_obj_meth_id_arg_list_no_parens_with_blk (meth, _)
+        | `Choice_impl_obj_meth_id_EQ_arg_list_no_parens (meth, _, _) ) ) ->
+      selected meth
 
 and map_block_arg env = function
   | `Brace (l, params, body, r) ->

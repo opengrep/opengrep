@@ -42,6 +42,7 @@ type fdef_edges = {
 val extract_calls :
   lang : Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
+  argument_types : Callee_resolution.argument_typer ->
   resolve_callback : Callback_extraction.callback_resolver ->
   resolve_construction : Callee_resolution.construction_resolver ->
   resolve_invocation : Callee_resolution.invocation_resolver ->
@@ -58,6 +59,7 @@ val extract_decorator_calls :
 val extract_toplevel_calls :
   lang : Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
+  argument_types : Callee_resolution.argument_typer ->
   AST_generic.program ->
   (fn_id * Tok.t) list
 

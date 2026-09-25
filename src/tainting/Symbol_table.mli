@@ -78,11 +78,13 @@ type use =
   | Referenced
 
 val class_table : t -> Class_table.t
+val is_class_binding : t -> AST_generic.SId.t -> bool
 
 val with_project :
   t ->
   Class_table.t ->
   extension_visible:(string -> Func_info.t -> bool) ->
+  compiled_with_file:(Func_info.t -> bool) ->
   outside:(t -> caller:Function_id.t option -> AST_generic.expr -> resolution) ->
   t
 
@@ -124,6 +126,12 @@ val resolve_qualified : t -> AST_generic.name -> resolution
 
 val resolve_call :
   t -> caller:Function_id.t option -> AST_generic.expr -> resolution
+
+val class_of_member_call :
+  t ->
+  caller:Function_id.t option ->
+  AST_generic.expr ->
+  (Class_table.cls option * resolution Lazy.t) option
 
 val values_in_force :
   t -> caller:Function_id.t option -> AST_generic.SId.t -> AST_generic.expr list

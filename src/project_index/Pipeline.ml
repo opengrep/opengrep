@@ -57,6 +57,7 @@ type ctx = {
   include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
+  build_constraints : Go_build_constraints.t;
   top_level_scope : Func_lookup.scope_table;
   module_object_by_module : Names.Class_qn.t Common.SMap.t;
   classes_by_file : entry list Common.SMap.t;
@@ -265,6 +266,7 @@ let build_scope_table
     ~(include_map : Include_map.t)
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
+    ~(build_constraints : Go_build_constraints.t)
     ~(top_level_scope : Func_lookup.scope_table)
     ~(module_object_by_module : Names.Class_qn.t Common.SMap.t)
     (fi : file_info) : file_scope option =
@@ -290,7 +292,7 @@ let build_scope_table
              member_classes }
     | `Per_go_package ->
       let bindings, module_aliases =
-        Scope_go.build ~lang ~cfg ~package_index:go_packages
+        Scope_go.build ~lang ~cfg ~package_index:go_packages ~build_constraints
           ~attributes_by_module ~classes_by_file ~class_parent_paths
           ~file_funcs_index fi
       in
@@ -457,6 +459,7 @@ let file_scope_of (ctx : ctx) (fi : file_info) : file_scope option =
     ~namespace_scope_bindings:ctx.namespace_scope_bindings
     ~php_global_bindings:ctx.php_global_bindings ~include_map:ctx.include_map
     ~module_scope:ctx.module_scope ~go_packages:ctx.go_packages
+    ~build_constraints:ctx.build_constraints
     ~top_level_scope:ctx.top_level_scope
     ~module_object_by_module:ctx.module_object_by_module fi
 
@@ -562,13 +565,33 @@ let resolve_in_project ~(lang : Lang.t) ~(table : Symbol_table.t)
     Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup ~caller
       ~caller_parent_path ~use e)
 
+let typing ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(caller_parent_path : IL.name option list)
+    : Callee_resolution.static_typing =
+  Callee_resolution.typing ~lang
+    ~resolve:(fun (callee : G.expr) ->
+      resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
+        ~use:Symbol_table.Called callee
+      |> defined_funcs)
+    ~is_class:(Symbol_table.is_class_binding table)
+
+let argument_types ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) : Callee_resolution.argument_typer =
+ fun ~caller_parent_path (args : G.argument list) ->
+  Callee_resolution.argument_types ~lang
+    ~type_of_call:(typing ~lang ~table ~func_lookup ~caller_parent_path)
+                    .Callee_resolution.type_of_call
+    args
+
 let call_site_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) : Callee_resolution.call_site_resolver =
  fun ~caller_parent_path ~call_args (callee : G.expr) ->
   resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
     ~use:Symbol_table.Called callee
   |> defined_funcs
-  |> Callee_resolution.narrow_by_call ~lang call_args
+  |> Callee_resolution.narrow_by_call ~lang
+       ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
+       call_args
   |> fn_ids_of
 
 let callback_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
@@ -596,7 +619,9 @@ let construction_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     Callee_resolution.resolve_construction_outside_file ~table ~func_lookup
       ~caller_parent_path ty)
   |> defined_funcs
-  |> Callee_resolution.narrow_by_call ~lang (Some call_args)
+  |> Callee_resolution.narrow_by_call ~lang
+       ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
+       (Some call_args)
   |> fn_ids_of
 
 let invocation_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
@@ -625,6 +650,8 @@ let project_table (ctx : ctx) ~(classes : project_classes)
   in
   ( Symbol_table.with_project file_table classes.class_table
       ~extension_visible:(Callee_resolution.extension_visible ~func_lookup)
+      ~compiled_with_file:
+        (Go_build_constraints.visible_from ctx.build_constraints fi.fi_file)
       ~outside,
     func_lookup )
 
@@ -741,6 +768,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
           let { FA.calls = callee_calls; callbacks = callback_calls; _ } =
             FA.extract_calls ~lang
               ~identify_callee:(call_site_resolver ~lang ~table ~func_lookup)
+              ~argument_types:(argument_types ~lang ~table ~func_lookup)
               ~resolve_callback:
                 (callback_resolver ~lang ~table ~func_lookup
                    ~caller_parent_path:fn_id)
@@ -781,6 +809,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
     let toplevel_calls =
       FA.extract_toplevel_calls ~lang
         ~identify_callee:(call_site_resolver ~lang ~table ~func_lookup)
+        ~argument_types:(argument_types ~lang ~table ~func_lookup)
         fi.fi_ast
     in
     let toplevel_call_edges =

@@ -1,0 +1,13 @@
+rules:
+  - id: class_as_callable_value_python
+    message: a class passed as a value and called constructs an instance
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

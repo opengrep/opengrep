@@ -1,0 +1,12 @@
+rules:
+  - id: taint_lua_colon_definition_receiver
+    message: Lua taint through a colon call on self in a method defined with a colon
+    languages:
+      - lua
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

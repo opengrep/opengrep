@@ -96,7 +96,7 @@ let scope_identifier (env : env) (x : CST.scope_identifier) =
   | `Self tok -> (* "self" *) G.IdSpecial (Self, token env tok)
   | `Parent tok -> (* "parent" *) G.IdSpecial (Parent, token env tok)
   (* Q: Add IdSpecial? *)
-  | `Static tok -> (* "static" *) G.N (G.Id (str env tok, G.empty_id_info ())))
+  | `Static tok -> (* "static" *) G.IdSpecial (LateStatic, token env tok))
   |> G.e
 
 let null (env : env) (x : CST.null) =
@@ -219,6 +219,17 @@ let qualified_identifier (env : env) (x : CST.qualified_identifier) :
           let ident = str env tok in
           [ ident ])
   | `Semg_id tok -> (* pattern \$[A-Z_][A-Z_0-9]* *) [ str env tok ]
+
+let qualified_name (env : env) (x : CST.qualified_identifier) : G.name =
+  let ids = qualified_identifier env x in
+  match x with
+  | `Choice_opt_id_rep1_back_id
+      (`Opt_id_rep1_back_id (None, (root, _) :: _)) ->
+      H2.name_of_ids ~name_top:(token env root) ids
+  | `Choice_opt_id_rep1_back_id
+      (`Opt_id_rep1_back_id ((Some _, _) | (None, [])) | `Id _)
+  | `Semg_id _ ->
+      H2.name_of_ids ids
 
 let empty_statement (env : env) (x : CST.empty_statement) =
   match x with
@@ -459,6 +470,25 @@ let scoped_identifier (env : env) ((v1, v2, v3) : CST.scoped_identifier) :
   in
   v1 @ [ v3 ]
 
+let scoped_expression (env : env) ((v1, v2, v3) as x : CST.scoped_identifier) :
+    G.expr =
+  match v1 with
+  | `Scope_id scope ->
+      let member =
+        match v3 with
+        | `Id tok
+        | `Var tok ->
+            str env tok
+      in
+      G.DotAccess
+        (scope_identifier env scope, token env v2, G.FN (H2.name_of_id member))
+      |> G.e
+  | `Qual_id _
+  | `Var _
+  | `Choice_xhp_id _
+  | `Pipe_var _ ->
+      G.N (scoped_identifier env x |> H2.name_of_ids) |> G.e
+
 let anonymous_function_use_clause (env : env)
     ((_v1, _v2, v3, v4, _v5, _v6) : CST.anonymous_function_use_clause) :
     G.capture list =
@@ -639,25 +669,23 @@ and attribute_modifier (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.attribute_modifier) : G.attribute list =
   (* Attributes are actually constructors *)
   let v1 = (* "<<" *) token env v1 in
-  let v2 = qualified_identifier env v2 in
+  let n = qualified_name env v2 in
   let v3 =
     match v3 with
     | Some x -> arguments env x
     | None -> Tok.unsafe_fake_bracket []
   in
-  let n = H2.name_of_ids v2 in
   let attr1 = G.NamedAttr (v1, n, v3) in
   let v4 =
     List_.map
       (fun (v1, v2, v3) ->
         let v1 = (* "," *) token env v1 in
-        let v2 = qualified_identifier env v2 in
+        let n = qualified_name env v2 in
         let v3 =
           match v3 with
           | Some x -> arguments env x
           | None -> Tok.unsafe_fake_bracket []
         in
-        let n = H2.name_of_ids v2 in
         G.NamedAttr (v1, n, v3))
       v4
   in
@@ -1238,27 +1266,14 @@ and declaration (env : env) (x : CST.declaration) =
       G.DefStmt (G.basic_entity v3 ~attrs:v1, TypeDef { tbody = G.OrType v8 })
   | `Name_decl (v1, v2) -> (
       let v1 = (* "namespace" *) token env v1 in
-      let v2 =
-        match v2 with
-        | Some x -> (
-            match x with
-            | `Qual_id_SEMI (v1, v2) ->
-                let v1 = qualified_identifier env v1 in
-                let _v2 = (* ";" *) token env v2 in
-                Some v1
-            | `Opt_qual_id_comp_stmt (v1, v2) ->
-                let v1 =
-                  match v1 with
-                  | Some x -> Some (qualified_identifier env x)
-                  | None -> None
-                in
-                (* TODO: Handle namespace with block inside *)
-                let _v2TODO = compound_statement env v2 in
-                v1)
-        | None -> None
-      in
       match v2 with
-      | Some v2 -> G.DirectiveStmt (G.Package (v1, v2) |> G.d)
+      | Some (`Qual_id_SEMI (name, v2)) ->
+          let name = qualified_identifier env name in
+          let _v2 = (* ";" *) token env v2 in
+          G.DirectiveStmt (G.Package (v1, name) |> G.d)
+      | Some (`Opt_qual_id_comp_stmt (name, body)) ->
+          (* TODO: Handle namespace with block inside *)
+          G.Block (Tok.unsafe_fake_bracket (namespace_block env v1 name body))
       (* TODO: I think this is wrong and PackageEnd should instead be used to handle namespaces with block inside? But how? *)
       | None -> G.DirectiveStmt (G.PackageEnd v1 |> G.d))
   | `Const_decl (v1, v2, v3, v4, v5) ->
@@ -1280,6 +1295,20 @@ and declaration (env : env) (x : CST.declaration) =
       let _v5 = (* ";" *) token env v5 in
       (* TODO: Refactor parent to allow flattening *)
       G.Block (Tok.unsafe_fake_bracket (v3 :: v4))
+
+and namespace_block (env : env) (namespace_tok : G.tok)
+    (name : CST.qualified_identifier option)
+    ((v1, v2, v3) : CST.compound_statement) : G.stmt list =
+  let name =
+    match name with
+    | Some x -> qualified_identifier env x
+    | None -> []
+  in
+  let _v1 = (* "{" *) token env v1 in
+  let body = List_.map (statement env) v2 in
+  let v3 = (* "}" *) token env v3 in
+  (G.DirectiveStmt (G.Package (namespace_tok, name) |> G.d) |> G.s)
+  :: (body @ [ G.DirectiveStmt (G.PackageEnd v3 |> G.d) |> G.s ])
 
 and embedded_brace_expression (env : env)
     ((v1, v2) : CST.embedded_brace_expression) =
@@ -1783,7 +1812,13 @@ and method_declaration (env : env) ((v1, v2, v3, v4) : CST.method_declaration) =
   let v2 = List_.map (member_modifier env) v2 in
   let func_def, identifier, type_args = function_declaration_header env v3 in
   let v4 = inline_compound_statement env v4 in
-  let def = { func_def with fbody = G.FBStmt v4 } in
+  let def =
+    {
+      func_def with
+      fbody = G.FBStmt v4;
+      fkind = (G.Method, snd func_def.fkind);
+    }
+  in
   let ctor =
     if String.equal (String.lowercase_ascii (fst identifier)) "__construct"
     then [ G.KeywordAttr (G.Ctor, snd identifier) ]
@@ -2041,15 +2076,28 @@ and selection_expression (env : env) ((v1, v2, v3) : CST.selection_expression) =
     | `As_exp x -> as_expression env x
   in
   let v2 = selection_expression_selector env v2 in
-  let v3 =
+  let v3, written_name =
     match v3 with
-    | `Choice_var x -> variablish env x
-    | `Braced_exp x -> Tok.unbracket (braced_expression env x)
-    | `Choice_type x -> G.N (G.Id (keyword env x, G.empty_id_info ())) |> G.e
+    | `Choice_var x ->
+        let e = variablish env x in
+        let written_name =
+          match e.e with
+          | G.N (G.Id (((name, _) as id), _))
+            when (not (String.starts_with ~prefix:"$" name))
+                 || AST_generic.is_metavar_name name ->
+              Some id
+          | _ -> None
+        in
+        (e, written_name)
+    | `Braced_exp x -> (Tok.unbracket (braced_expression env x), None)
+    | `Choice_type x ->
+        let id = keyword env x in
+        (G.N (G.Id (id, G.empty_id_info ())) |> G.e, Some id)
   in
-  match v3.e with
-  | G.Ellipsis dots -> G.DotAccessEllipsis (v1, dots) |> G.e
-  | _ -> G.DotAccess (v1, v2, G.FDynamic v3) |> G.e
+  match (v3.e, written_name) with
+  | G.Ellipsis dots, _ -> G.DotAccessEllipsis (v1, dots) |> G.e
+  | _, Some id -> G.DotAccess (v1, v2, G.FN (G.Id (id, G.empty_id_info ()))) |> G.e
+  | _, None -> G.DotAccess (v1, v2, G.FDynamic v3) |> G.e
 
 and statement (env : env) (x : CST.statement) =
   match x with
@@ -2441,8 +2489,7 @@ and type_ (env : env) (x : CST.type_) : G.type_ =
         match v2 with
         | `Choice_bool x -> G.ty_builtin (primitive_type env x)
         | `Qual_id x ->
-            let xs = qualified_identifier env x in
-            let n = H2.name_of_ids xs in
+            let n = qualified_name env x in
             G.TyN (H2.add_type_args_opt_to_name n v3) |> G.t
         | `Choice_array x -> G.ty_builtin (collection_type env x)
         | `Choice_xhp_id x ->
@@ -2689,7 +2736,11 @@ and type_parameters (env : env) ((v1, v2, v3, v4, v5) : CST.type_parameters) :
 
 and variablish (env : env) (x : CST.variablish) : G.expr =
   match x with
-  | `Var tok -> (* variable *) G.N (Id (str env tok, G.empty_id_info ())) |> G.e
+  | `Var tok -> (
+      (* variable *)
+      match str env tok with
+      | "$this", tok -> G.IdSpecial (This, tok) |> G.e
+      | id -> G.N (Id (id, G.empty_id_info ())) |> G.e)
   (* Q: Not anything special for pipe? *)
   | `Pipe_var tok ->
       (* "$$" *) G.N (Id (str env tok, G.empty_id_info ())) |> G.e
@@ -2731,10 +2782,10 @@ and variablish (env : env) (x : CST.variablish) : G.expr =
         | None -> G.OtherExpr (("ArrayAppend", v2), [])
       in
       v3 |> G.e
-  | `Qual_id x -> G.N (qualified_identifier env x |> H2.name_of_ids) |> G.e
+  | `Qual_id x -> G.N (qualified_name env x) |> G.e
   | `Paren_exp x -> parenthesized_expression env x
   | `Call_exp x -> call_expression env x
-  | `Scoped_id x -> G.N (scoped_identifier env x |> H2.name_of_ids) |> G.e
+  | `Scoped_id x -> scoped_expression env x
   | `Scope_id x -> scope_identifier env x
   | `Sele_exp x -> selection_expression env x
   | `Choice_xhp_id x ->
@@ -2922,13 +2973,20 @@ and xhp_spread_expression (env : env)
   let v4 = (* "}" *) token env v4 in
   (v1, v3, v4)
 
+let top_level_statement (env : env) (x : CST.statement) : G.stmt list =
+  match x with
+  | `Choice_func_decl
+      (`Name_decl (v1, Some (`Opt_qual_id_comp_stmt (name, body)))) ->
+      namespace_block env (token env v1) name body
+  | _ -> [ statement env x ]
+
 let script (env : env) ((v1, v2) : CST.script) : G.program =
   let _v1 =
     match v1 with
     | Some tok -> (* pattern <\?[hH][hH] *) token env tok |> ignore
     | None -> ()
   in
-  List_.map (statement env) v2
+  List.concat_map (top_level_statement env) v2
 
 (*****************************************************************************)
 (* Entry point *)

@@ -280,7 +280,6 @@ let extract_signature (taint_inst : TRI.t)
     (shared_tables : Taint_shared_tables.t) ?(in_env : Taint_lval_env.t option)
     ?(name : IL.name option) ?(signature_db : signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option = None)
     (func_cfg : IL.fun_cfg) : extraction_result =
   let params = Signature_params.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
@@ -296,7 +295,7 @@ let extract_signature (taint_inst : TRI.t)
   in
   let fixpoint_effects, mapping =
     Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env:combined_env ?name
-      ?signature_db ?builtin_signature_db ?call_graph
+      ?signature_db ?builtin_signature_db
       func_cfg
   in
   Log.debug (fun m ->
@@ -434,7 +433,6 @@ let extract_signature_with_file_context
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ~(name : IL.name)
     ?(method_properties : AST_generic.expr list = [])
-    ?(call_graph : Call_graph.G.t option = None)
     (taint_inst : Taint_rule_inst.t)
     (shared_tables : Taint_shared_tables.t)
     func_cfg : signature_database * Signature.t =
@@ -446,7 +444,7 @@ let extract_signature_with_file_context
   in
   let { signature; _ } =
     extract_signature taint_inst shared_tables ~in_env ~name
-      ~signature_db:db ?builtin_signature_db ~call_graph func_cfg
+      ~signature_db:db ?builtin_signature_db func_cfg
   in
   let updated_db = Shape_and_sig.add_signature db (Function_id.of_il_name name) {sig_ = signature; arity} in
   (updated_db, signature)

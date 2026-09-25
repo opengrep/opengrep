@@ -700,17 +700,6 @@ and qualifier =
 (*****************************************************************************)
 and id_info = {
   id_resolved : resolved_name option ref;
-  (* List of alternative names, populated when there are multiple
-     candidates available (not including `id_resolved` itself) for the
-     identifier (e.g., resolving virtual fields of the interface in
-     Java); otherwise, it remains empty.
-
-     TODO We could merge `id_resolved` and `id_resolved_alternatives`.
-     Keeping them separate might help distinguish a preferred name
-     from other possible candidates. However, since we currently don’t
-     have any features that prioritize findings based on probability,
-     this distinction isn’t particularly useful at the moment. *)
-  id_resolved_alternatives : resolved_name list ref;
   (* variable tagger (naming) *)
   (* sgrep: in OCaml we also use that to store the type of
    * a typed entity, which can be interpreted as a TypedMetavar in semgrep.
@@ -789,7 +778,14 @@ and expr = {
   mutable facts : facts; [@equal fun _a _b -> true] [@hash.ignore] [@opaque]
 }
 
-and fact = Equal of name * expr | NotEqual of name * expr
+and fact =
+  | Equal of name * expr
+  | NotEqual of name * expr
+  (* The function a PHP callable string or array, or a Ruby [method(:f)] call,
+     denotes, as the name or member access whose id_info the call graph
+     stamps; the [when] facts ignore it. *)
+  | Callable_reference of expr
+
 and facts = fact list
 
 and expr_kind =
@@ -1711,10 +1707,11 @@ and keyword_attribute =
   | Public
   | Private
   | Protected
-  | Abstract (* a.k.a virtual in C++/Solidity *)
+  | Abstract (* a C++ pure virtual '= 0' declaration *)
   (* for fields/methods in classes and also for classes themselves *)
   | Final
   | Override
+  | Virtual
   | Mutable (* 'var' in Scala *)
   | Const (* 'readonly' in Typescript, 'val' in Scala *)
   (* for classes (mostly for JVM languages) *)
@@ -2227,11 +2224,18 @@ and directive_kind =
    *)
   | PackageEnd of tok
   | Pragma of ident * any list
+  | BuildConstraint of tok * build_constraint
   (* e.g., Dynamic include in C, Extern "C" in C++/Rust, Undef in C++/Ruby,
    * Export/Reexport in Javascript, Using in Solidity
    * TODO: Declare, move OE_UseStrict here for JS?
    *)
   | OtherDirective of todo_kind * any list
+
+and build_constraint =
+  | BuildTag of ident
+  | BuildNot of build_constraint
+  | BuildAnd of build_constraint * build_constraint
+  | BuildOr of build_constraint * build_constraint
 
 (* xxx as name *)
 and alias = ident * id_info
@@ -2396,6 +2400,16 @@ let e ekind =
     facts = [];
   }
 
+let callable_reference_of (e : expr) : expr option =
+  List.find_map
+    (fun (f : fact) ->
+      match f with
+      | Callable_reference (reference : expr) -> Some reference
+      | Equal _
+      | NotEqual _ ->
+          None)
+    e.facts
+
 (* directives *)
 let d dkind = { d = dkind; d_attrs = [] }
 
@@ -2418,7 +2432,6 @@ let no_captures = { cdefault = None; clist = [] }
 let empty_id_info ?(hidden = false) ?(case_insensitive = false) () =
   {
     id_resolved = ref None;
-    id_resolved_alternatives = ref [];
     id_type = ref None;
     id_instance_type = ref None;
     id_callee_definition = ref [];

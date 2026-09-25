@@ -57,58 +57,22 @@ intrafile usually has resolvable callbacks (everything is in one
 function and `BArg`s match), interfile routinely hits unresolvable
 callbacks at the seams between files.
 
-### A2. Pre-merge dispatch, not on-the-fly
+### A2. Bodiless declarations get no signature
 
-**Where:** `src/engine/Interfile_dispatch.ml`,
-`dispatch_merge_fbdecl`.
+**Where:** `src/engine/Interfile_dispatch.ml`, `topo_fold`.
 
 When the signature fixpoint reaches a bodiless interface method
-(`FBDecl`), it does **not** extract a signature from the empty
-body.  An empty signature stored in `db` makes the function look
-like a no-op effects-wise; callers would see "no taint propagation"
-instead of falling back to conservative propagation.  That is
-unsound.
+(`FBDecl`), it stores nothing.  An empty signature stored in `db`
+would make the function look like a no-op effects-wise; callers would
+see "no taint propagation" instead of falling back to conservative
+propagation (A1).
 
-Instead, Phase 1:
-
-1. Looks up the function's implementations — first from the AST
-   mirror `id_info.id_resolved_alternatives`, falling back to the
-   `Dispatch` predecessors in `rs.relevant_graph` when the mirror is
-   empty.  Filters out self-edges — the interface
-   declaration carries a Dispatch edge to itself; including its own
-   empty body as an implementation would pollute the merge.
-2. If none of the implementations have signatures in `db` yet, this
-   vertex is skipped for now.  `db` stays unchanged.  Callers fall
-   back to conservative propagation (A1) when they hit a call to this
-   vertex — and if the interface and its impls sit in the same cyclic
-   SCC, a later fixpoint lap revisits it once the impls are ready.
-3. If some implementations are available, `Sig_inst.merge_dispatch_signatures`
-   merges them into a single signature, keyed at the interface's
-   `Function_id.t`, and the result replaces the empty skeleton.
-
-The merge itself:
-
-- Strips leading "receiver" params from each implementation when
-  its param count exceeds the interface's (Go method values carry
-  the receiver as an extra leading param).
-- Filters effects depending on `BGlob`: implementations reference
-  their own globals; those would resolve incorrectly at the
-  interface call site.
-- Remaps each implementation's `BArg` indices to canonical
-  parameter positions — the first implementation's params are the
-  canonical set (the interface signature supplies only the param
-  count used for receiver stripping, and is the fallback when the
-  impl list is empty); an implementation with an incompatible param
-  count is skipped with a warning.
-- Unions all the effect sets.
-
-The reason for **pre-merge** (vs an on-the-fly lookup at every call
-site) is that the signature fixpoint makes the implementations'
-signatures available in `db` before callers of the interface are
-summarised (for an acyclic dispatch, on the callees-first pass; for a
-cyclic one, once the SCC converges).  One merge per interface beats
-one merge per call site, and composes cleanly with the
-conservative-propagation fallback.
+A call to the declaration reaches the implementations through its
+`id_callee_definition` stamp, which lists every override and
+implementation the project graph selects for the receiver; the engine
+instantiates each of them.  The `Dispatch` edges keep the
+implementations in the relevant subgraph and order them before the
+declaration in the fixpoint.
 
 ### A3. Recursive instantiation cache
 
@@ -461,7 +425,7 @@ If you got here looking for a specific subtlety and need broader
 context first, the bullets above reference these concepts; they're
 defined in:
 
-- `FBDecl`, dispatch merge, signature fixpoint → [§ 3](03-dispatch.md).
+- `FBDecl`, signature fixpoint → [§ 3](03-dispatch.md).
 - `Type_state.t`, `Func_lookup.t`, projidx phases → [§ 2](02-call-graph.md).
 - Per-language reshapes (Go interfaces, Ruby `attr_reader`, Rust
   `impl`) → [§ 4](04-language-quirks.md).

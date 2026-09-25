@@ -216,46 +216,16 @@ Within Phase 1, each function is summarised by its body shape:
 ### Case 1: bodiless declarations (`FBDecl` / `FBNothing`)
 
 A bodiless interface or abstract method (Java abstract methods lower
-to `FBNothing`).  We do **not** extract a signature from the empty
-body — that would store an empty sig that
-makes the function look like a no-op effects-wise, which is unsound
-(callers would see "no taint propagation" instead of falling back to
-conservative propagation).
+to `FBNothing`) gets no signature.  A call to it carries an
+`id_callee_definition` stamp that lists the implementations the
+project graph selects for the receiver, the declaration's overrides
+and implementors, and the engine instantiates each of them.  An empty
+signature stored for the declaration would make its callers see no
+effects instead of conservative propagation, so none is stored.
 
-Instead:
-
-1. Look up the function's implementations: `dispatch_impls` first
-   reads the AST mirror `id_info.id_resolved_alternatives`, falling
-   back to the graph's `Dispatch` predecessors in
-   `rs.relevant_graph` when the mirror is empty.  Skip self-edges —
-   the interface declaration carries a Dispatch edge to itself;
-   including its own empty body as an implementation pollutes the
-   merge.
-2. Filter to implementations whose signature is already in `db`
-   (which it should be — they're earlier in topo order).
-3. If none, skip this vertex entirely: `db` stays unchanged.  No
-   empty signature gets stored.  Callers will fall back to
-   conservative propagation when they hit a call to this vertex.
-4. If some, extract a skeleton signature from the declaration via
-   `extract_replace`, then call `dispatch_merge_fbdecl` to merge the
-   implementation signatures into a single rich signature and
-   `replace` the skeleton in `db`.
-
-`Sig_inst.merge_dispatch_signatures` does the merge:
-
-- Strip leading "receiver" params from each implementation when its
-  param count exceeds the interface's (Go method values carry the
-  receiver as an extra leading param).
-- Filter `BGlob`-dependent effects: implementations reference their
-  own globals; those would resolve incorrectly at the interface
-  call site.
-- Remap each implementation's `BArg` indices to canonical parameter
-  positions — the canonical params are the *first implementation's*
-  (the interface signature only supplies the param count used for
-  receiver stripping, and is the fallback when the impl list is
-  empty).  An implementation with an incompatible param count is
-  skipped with a warning, not remapped.
-- Union all the effect sets.
+The `Dispatch` edge from each implementation to the declaration keeps
+the implementations in the relevant subgraph and orders them before
+the declaration in the fixpoint.
 
 ### Case 2: normal function body
 

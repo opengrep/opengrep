@@ -25,7 +25,6 @@ val extract_signature :
   ?name:IL.name ->
   ?signature_db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t option ->
   IL.fun_cfg ->
   extraction_result
 (** Extract both signature and taint mapping from a function *)
@@ -36,7 +35,6 @@ val extract_signature_with_file_context :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   name:IL.name ->
   ?method_properties:AST_generic.expr list ->
-  ?call_graph:Call_graph.G.t option ->
   Taint_rule_inst.t ->
   Taint_shared_tables.t ->
   IL.fun_cfg ->

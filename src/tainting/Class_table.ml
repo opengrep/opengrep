@@ -372,20 +372,51 @@ let same_type_by_class (class_of : G.name -> cls option)
   | _ -> None
 
 let structural_methods (members : Func_info.t list SMap.t) :
-    Structural_typing.method_ list =
+    (Func_info.t * Structural_typing.method_) list =
   SMap.fold
     (fun (name : string) (funcs : Func_info.t list)
-         (methods : Structural_typing.method_ list) ->
+         (methods : (Func_info.t * Structural_typing.method_) list) ->
       List.map
         (fun (func : Func_info.t) ->
-          {
-            Structural_typing.name;
-            entity = func.Func_info.entity;
-            fdef = func.Func_info.fdef;
-          })
+          ( func,
+            {
+              Structural_typing.name;
+              entity = func.Func_info.entity;
+              fdef = func.Func_info.fdef;
+            } ))
         funcs
       @ methods)
     members []
+
+let satisfied_in_one_build ~(lang : Lang.t)
+    ~(equal_type : Structural_typing.equal_type)
+    ~(compiled_together : Func_info.t list -> bool)
+    ~(interface : (Func_info.t * Structural_typing.method_) list)
+    ~(candidate : (Func_info.t * Structural_typing.method_) list) : bool =
+  let options =
+    List.map
+      (fun ((_ : Func_info.t), (required : Structural_typing.method_)) ->
+        List.filter_map
+          (fun ((func : Func_info.t), (offered : Structural_typing.method_)) ->
+            if
+              Structural_typing.method_satisfies ~lang ~equal_type ~required
+                offered
+            then Some func
+            else None)
+          candidate)
+      interface
+  in
+  let rec choose (chosen : Func_info.t list) (remaining : Func_info.t list list)
+      : bool =
+    match remaining with
+    | [] -> true
+    | alternatives :: rest ->
+        List.exists
+          (fun (func : Func_info.t) ->
+            compiled_together (func :: chosen) && choose (func :: chosen) rest)
+          alternatives
+  in
+  (not (List_.null interface)) && choose (List.map fst interface) options
 
 let members_along (classes : cls list) : Func_info.t list SMap.t =
   List.fold_left
@@ -397,6 +428,7 @@ let members_along (classes : cls list) : Func_info.t list SMap.t =
     SMap.empty classes
 
 let build ~(lang : Lang.t) ~(classes : class_scope list list)
+    ~(compiled_together : Func_info.t list -> bool)
     ~(defined : class_scope -> bool)
     ~(link : class_scope -> parent -> scope_id option)
     ~(outside :
@@ -515,7 +547,9 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
          let fewest =
            SMap.fold
              (fun (name : string) (_ : Func_info.t list)
-                  (fewest : (cls * Structural_typing.method_ list) list option) ->
+                  (fewest :
+                    (cls * (Func_info.t * Structural_typing.method_) list) list
+                    option) ->
                let having =
                  Option.value (Hashtbl.find_opt by_member_name name) ~default:[]
                in
@@ -528,14 +562,15 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
              members None
          in
          List.iter
-           (fun ((cls, methods) : cls * Structural_typing.method_ list) ->
+           (fun ((cls, methods) :
+                  cls * (Func_info.t * Structural_typing.method_) list) ->
              if
                may_implement ~interface cls
-               && Structural_typing.satisfies ~lang
+               && satisfied_in_one_build ~lang
                     ~equal_type:
                       (same_type_by_class
                          (class_of_name_in by_scope definitions outside))
-                    ~interface:required ~candidate:methods
+                    ~compiled_together ~interface:required ~candidate:methods
              then
                direct_subclasses.(interface.id) <-
                  cls :: direct_subclasses.(interface.id))

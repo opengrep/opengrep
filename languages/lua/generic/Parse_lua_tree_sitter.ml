@@ -729,7 +729,11 @@ and map_statement (env : env) (x : CST.statement) : G.stmt list =
         | Some ((colon, _) as field) ->
             let lp, params, rp = fdef.G.fparams in
             let self = G.Param (G.param_of_id ("self", colon)) in
-            ( { fdef with G.fparams = (lp, self :: params, rp) },
+            ( {
+                fdef with
+                G.fparams = (lp, self :: params, rp);
+                fkind = (G.Method, snd fdef.G.fkind);
+              },
               fields @ [ field ] )
       in
       let ent =

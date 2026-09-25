@@ -1,0 +1,13 @@
+rules:
+  - id: scala_primary_constructor_init
+    message: a construction reaches the statements of the class body, which form the primary constructor
+    languages:
+      - scala
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

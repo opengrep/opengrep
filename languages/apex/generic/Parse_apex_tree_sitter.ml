@@ -278,7 +278,7 @@ let modifier (env : env) (x : CST.modifier) : G.attribute =
   | `Pat_priv x ->
       G.KeywordAttr (G.Private, token env x)
   | `Pat_virt x ->
-      G.OtherAttribute (("virtual", token env x), [])
+      G.KeywordAttr (G.Virtual, token env x)
   | `Pat_abst x ->
       G.KeywordAttr (G.Abstract, token env x)
   | `Pat_static x ->

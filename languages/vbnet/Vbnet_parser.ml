@@ -5708,7 +5708,7 @@ and modifier : G.attribute parser = fun __n -> (
     begin
       (* modifier -> 'MustOverride' *)
       let* t = token "MUSTOVERRIDE" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Abstract, t.tok))
     end;
     begin
       (* modifier -> 'Narrowing' *)
@@ -5738,12 +5738,12 @@ and modifier : G.attribute parser = fun __n -> (
     begin
       (* modifier -> 'Overridable' *)
       let* t = token "OVERRIDABLE" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Virtual, t.tok))
     end;
     begin
       (* modifier -> 'Overrides' *)
       let* t = token "OVERRIDES" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Override, t.tok))
     end;
     begin
       (* modifier -> 'Partial' *)

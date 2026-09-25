@@ -185,10 +185,6 @@ let top_level_name_of_ast (ast : G.program) : IL.name =
   IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default;
        id_info = G.empty_id_info () }
 
-let class_init_il_name (class_str : string) : IL.name =
-  IL.{ ident = ("Class:" ^ class_str, Tok.unsafe_fake_tok ("Class:" ^ class_str));
-       sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
-
 type fdef_edges = {
   calls : (fn_id * Tok.t) list;
   callbacks : (fn_id * Tok.t * IL.name option) list;
@@ -211,6 +207,21 @@ let callee_bare_name_id_info (callee : G.expr) : G.id_info option =
       Some ii
   | _ -> None
 
+let member_reference ~(lang : Lang.t) (callee : G.expr) : G.expr =
+  match (callee.G.e, G.callable_reference_of callee) with
+  | _, Some (reference : G.expr) -> reference
+  | ( G.ArrayAccess
+        (receiver, (_, { G.e = G.L (G.String (_, (member, tok), _)); _ }, _)),
+      None )
+    when Lang_config.bracket_member_access lang ->
+      let reference =
+        G.DotAccess (receiver, tok, G.FN (G.Id ((member, tok), G.empty_id_info ())))
+        |> G.e
+      in
+      callee.G.facts <- G.Callable_reference reference :: callee.G.facts;
+      reference
+  | _ -> callee
+
 let write_back_callee_definition (callee : G.expr) (fn_ids : fn_id list) :
     unit =
   match callee_bare_name_id_info callee with
@@ -218,14 +229,15 @@ let write_back_callee_definition (callee : G.expr) (fn_ids : fn_id list) :
   | None -> ()
 
 (* Non-memoisable callee shapes bypass the cache; the stamp of every resolved call is written here. *)
-let memo_lookup_or_compute ~(lang : Lang.t) (memo_tbl : callee_memo)
+let memo_lookup_or_compute (memo_tbl : callee_memo)
+    ~(argument_types : G.argument list -> static_type option list)
     ~(call_args : G.argument list option) (callee : G.expr)
     (compute : unit -> fn_id list) : fn_id list =
   let result =
     match callee_use callee with
     | None -> compute ()
     | Some use ->
-      let key = (use, Option.map (argument_types ~lang) call_args) in
+      let key = (use, Option.map argument_types call_args) in
       (match Callee_use_tbl.find_opt memo_tbl key with
        | Some r -> r
        | None ->
@@ -238,6 +250,7 @@ let memo_lookup_or_compute ~(lang : Lang.t) (memo_tbl : callee_memo)
 
 let extract_calls ~(lang : Lang.t)
     ~(identify_callee : Callee_resolution.call_site_resolver)
+    ~(argument_types : Callee_resolution.argument_typer)
     ~(resolve_callback : Callback_extraction.callback_resolver)
     ~(resolve_construction : Callee_resolution.construction_resolver)
     ~(resolve_invocation : Callee_resolution.invocation_resolver)
@@ -267,8 +280,10 @@ let extract_calls ~(lang : Lang.t)
   let memo_tbl : callee_memo = Callee_use_tbl.create 64 in
   let identify_callee_cached ~(call_args : G.argument list option)
       (callee : G.expr) : fn_id list =
-    memo_lookup_or_compute ~lang memo_tbl ~call_args callee (fun () ->
-        identify_callee ~caller_parent_path ~call_args callee)
+    let callee = member_reference ~lang callee in
+    memo_lookup_or_compute memo_tbl
+      ~argument_types:(argument_types ~caller_parent_path) ~call_args callee
+      (fun () -> identify_callee ~caller_parent_path ~call_args callee)
   in
   (* Ruby, Crystal: [foo(bar)] with no local [bar] means [foo(bar())]; a name argument that is not a local variable is treated as a call. *)
   let bare_name_is_a_call = Symbol_table.top_level_defs_are_methods_of_object lang in
@@ -443,14 +458,17 @@ let extract_decorator_calls
 
 let extract_toplevel_calls ~(lang : Lang.t)
     ~(identify_callee : Callee_resolution.call_site_resolver)
+    ~(argument_types : Callee_resolution.argument_typer)
     (ast : G.program)
   : (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let memo_tbl : callee_memo = Callee_use_tbl.create 64 in
   let identify_callee_cached ~(call_args : G.argument list option)
       (callee : G.expr) : fn_id list =
-    memo_lookup_or_compute ~lang memo_tbl ~call_args callee (fun () ->
-        identify_callee ~caller_parent_path:[] ~call_args callee)
+    let callee = member_reference ~lang callee in
+    memo_lookup_or_compute memo_tbl
+      ~argument_types:(argument_types ~caller_parent_path:[]) ~call_args callee
+      (fun () -> identify_callee ~caller_parent_path:[] ~call_args callee)
   in
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
     match e.G.e with
@@ -532,12 +550,27 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
     | Symbol_table.Defined (funcs : func_info list) -> funcs
     | Symbol_table.External -> []
   in
+  let typing ~(caller_parent_path : IL.name option list) :
+      Callee_resolution.static_typing =
+    Callee_resolution.typing ~lang
+      ~resolve:(fun (callee : G.expr) ->
+        Symbol_table.resolve_callee table
+          ~caller:(fn_id_to_node caller_parent_path) callee
+        |> defined)
+      ~is_class:(Symbol_table.is_class_binding table)
+  in
+  let argument_types : Callee_resolution.argument_typer =
+   fun ~caller_parent_path (args : G.argument list) ->
+    Callee_resolution.argument_types ~lang
+      ~type_of_call:(typing ~caller_parent_path).type_of_call args
+  in
   let identify_callee : Callee_resolution.call_site_resolver =
    fun ~caller_parent_path ~call_args (callee : G.expr) ->
     Symbol_table.resolve_callee table
       ~caller:(fn_id_to_node caller_parent_path) callee
     |> defined
-    |> Callee_resolution.narrow_by_call ~lang call_args
+    |> Callee_resolution.narrow_by_call ~lang ~typing:(typing ~caller_parent_path)
+         call_args
     |> fn_ids_of
   in
   let resolve_callback : Callback_extraction.callback_resolver =
@@ -553,7 +586,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
    fun ~call_args (ty : G.type_) ->
     Symbol_table.resolve_construction table ty
     |> defined
-    |> Callee_resolution.narrow_by_call ~lang (Some call_args)
+    |> Callee_resolution.narrow_by_call ~lang ~typing:(typing ~caller_parent_path:[])
+         (Some call_args)
     |> fn_ids_of
   in
   let resolve_invocation : Callee_resolution.invocation_resolver =
@@ -574,7 +608,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
           in
 
           let { calls = callee_calls; callbacks = callback_calls; _ } =
-            extract_calls ~lang ~identify_callee ~resolve_callback
+            extract_calls ~lang ~identify_callee ~argument_types ~resolve_callback
               ~resolve_construction ~resolve_invocation
               ~caller_parent_path:fn_id fdef
           in
@@ -611,7 +645,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
   let toplevel_calls =
-    extract_toplevel_calls ~lang ~identify_callee ast
+    extract_toplevel_calls ~lang ~identify_callee ~argument_types ast
   in
   List.iter
     (fun (callee_fn_id, call_tok) ->
@@ -719,11 +753,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
      and ensures class field initializers can propagate taint to methods.
      Edge direction: Class:* -> method (class init runs first, then methods can be called) *)
   List.iter (fun ((class_g_name, cls) : G.name * Symbol_table.class_scope) ->
-    let class_il_name = AST_to_IL.var_of_name class_g_name in
-    let class_str = fst class_il_name.IL.ident in
     (* Create Class:* node *)
     let class_init_node : node =
-      Function_id.of_il_name (class_init_il_name class_str)
+      Function_id.of_il_name
+        (Visit_function_defs.class_initialiser_il_name class_g_name)
     in
     Call_graph.G.add_vertex graph class_init_node;
 
@@ -848,10 +881,11 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                   (* This class contains this range - add it to the list *)
                   match current_class' with
                   | Some class_g_name ->
-                      let class_il_name = AST_to_IL.var_of_name class_g_name in
-                      let class_str = fst class_il_name.IL.ident in
                       let class_fn_id =
-                        [None; Some (class_init_il_name class_str)]
+                        [ None;
+                          Some
+                            (Visit_function_defs.class_initialiser_il_name
+                               class_g_name) ]
                       in
                       add_to_range range class_fn_id class_size
                   | None -> ()

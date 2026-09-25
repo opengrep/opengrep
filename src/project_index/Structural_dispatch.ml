@@ -4,27 +4,6 @@ module FA = Graph_from_AST
 (* TODO: [emit_dispatch_edges] below is very large and hard to read; split it
    into named helpers (candidate selection, package-visibility gating, edge
    emission) so it can be reviewed and tested in pieces. *)
-let def_id_info (func : FA.func_info) : G.id_info option =
-  match func.FA.entity with
-  | Some { G.name = G.EN (G.Id (_, ii)); _ } -> Some ii
-  | _ -> None
-
-(* Mutates the shared AST: records [impl] on [i_m]'s
-   [id_resolved_alternatives] (which lives in the INTERFACE's file AST,
-   a different file than [impl]'s), deduped by sid. This is a non-atomic
-   ref read-modify-write, safe ONLY because [emit_dispatch_edges] runs
-   serially on the coordinator after the parallel per-file phase
-   (Project_index.build_project_call_graph). If this fold is ever
-   parallelised, this write, the shared [graph]'s [add_edge], and
-   [methods_in_file_cache] all race — collect per-interface results and
-   merge serially instead. *)
-let record_impl_alternative (i_m : FA.func_info) (impl : FA.func_info) : unit =
-  match def_id_info i_m, FA.resolved_name_of_fn_id impl.FA.fn_id with
-  | Some ii, Some ((_, sid) as rn) ->
-    let alts = ii.G.id_resolved_alternatives in
-    if not (List.exists (fun (_, other_sid) -> G.SId.same_site other_sid sid) !alts) then
-      alts := rn :: !alts
-  | _ -> ()
 
 (* The Dispatch edge's call_site is the impl's name token. *)
 let dispatch_call_tok (c_m : FA.func_info) : Tok.t =
@@ -35,11 +14,10 @@ let dispatch_call_tok (c_m : FA.func_info) : Tok.t =
 (* Overload dispatch: the concrete functions of one scope sharing a name
    and an arity, Java's [handle(String)] and [handle(int)], form a group.
    For a language whose top level scope is the project, the scope spans
-   files. A call resolves to the group's representative, the earliest by
-   position (see [Callee_resolution.pick_by_arity]), whose signature the
-   dispatch merge widens to the union over the group through the same
-   edges and alternatives as an interface's implementations. Runs serially
-   on the coordinator, like [emit_dispatch_edges]. *)
+   files. Each other member gets a Dispatch edge to the earliest by
+   position, which the reachability closure follows; a call stamps the
+   members its arguments select. Runs serially on the coordinator, like
+   [emit_dispatch_edges]. *)
 let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     ~(graph : Call_graph.G.t)
     ~(class_table : Class_table.t)
@@ -96,12 +74,11 @@ let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
             Function_id.compare a b)
           members
       with
-      | (rep_node, rep) :: (_ :: _ as others) ->
+      | (rep_node, _) :: (_ :: _ as others) ->
           List.fold_left
             (fun n ((node : Function_id.t), (other : FA.func_info)) ->
               Call_graph.add_edge ~kind:Call_graph.Dispatch graph ~src:node
                 ~dst:rep_node ~call_tok:(dispatch_call_tok other);
-              record_impl_alternative rep other;
               n + 1)
             n others
       | _ -> n)
@@ -139,7 +116,6 @@ let emit_dispatch_edges
          let call_tok = dispatch_call_tok c_m in
          Call_graph.add_edge ~kind:Call_graph.Dispatch
            graph ~src ~dst ~call_tok;
-         record_impl_alternative i_m c_m;
          n + 1
        | _ -> n)
   in

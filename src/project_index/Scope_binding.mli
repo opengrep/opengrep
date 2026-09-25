@@ -29,6 +29,9 @@ val companion_binding_of :
 val bindings_of_positioned :
   positioned_binding list -> Func_lookup.scope_entry list Common.SMap.t
 
+val bindings_of_package_block :
+  positioned_binding list -> Func_lookup.scope_entry list Common.SMap.t
+
 val class_qn_of_entry : Types.entry -> Names.Class_qn.t
 val class_il_name_of : Types.entry -> IL.name
 

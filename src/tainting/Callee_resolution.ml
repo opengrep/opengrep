@@ -65,9 +65,9 @@ let narrow_by_arity ~(lang : Lang.t) (call_arity : int option)
   let matches = prefer_concrete matches in
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
      with an empty param list) against a positional-arg call.  A body-less
-     decl WITH params is an interface/abstract declaration and must stay
-     resolvable — dispatch merges the concrete impls' signatures into the
-     decl's vertex, so dropping its edge severs impl dispatch. *)
+     decl WITH params is an interface/abstract declaration and stays
+     resolvable: the call's stamp holds the definitions its arguments
+     select, and dispatch adds the overriding definitions. *)
   let single_synth_with_args (f : func_info) : bool =
     match call_arity with
     | Some n ->
@@ -146,12 +146,17 @@ let static_type_of_argument ~(lang : Lang.t) (e : G.expr) : static_type option
           None)
   | _ -> None
 
-let argument_types ~(lang : Lang.t) (args : G.argument list) :
+let argument_types ~(lang : Lang.t)
+    ~(type_of_call : G.expr -> static_type option) (args : G.argument list) :
     static_type option list =
   List_.map
     (fun (arg : G.argument) ->
       match arg with
-      | G.Arg e -> static_type_of_argument ~lang e
+      | G.Arg e -> (
+          match (static_type_of_argument ~lang e, e.G.e) with
+          | (Some _ as known), _ -> known
+          | None, G.Call _ -> type_of_call e
+          | None, _ -> None)
       | G.ArgKwd _
       | G.ArgKwdOptional _
       | G.ArgType _
@@ -191,11 +196,27 @@ let call_parameters ~(lang : Lang.t) (f : func_info) : G.parameter list =
            (Receiver.implicit_param lang ~is_method ~is_static
               ~is_first:(Int.equal i 0) param))
 
-let narrow_by_argument_types ~(lang : Lang.t) (args : G.argument list)
-    (candidates : func_info list) : func_info list =
+type static_typing = {
+  type_of_call : G.expr -> static_type option;
+  is_class : G.SId.t -> bool;
+}
+
+let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
+    (args : G.argument list) (candidates : func_info list) : func_info list =
   if not (Lang_config.overloads_by_type lang) then candidates
   else
-    let arguments = argument_types ~lang args in
+    let decided (known : static_type) : static_type option =
+      match known with
+      | Declared_class sid when not (typing.is_class sid) -> None
+      | Declared_class _
+      | Builtin_type _ ->
+          Some known
+    in
+    let arguments =
+      List_.map
+        (fun (argument : static_type option) -> Option.bind argument decided)
+        (argument_types ~lang ~type_of_call:typing.type_of_call args)
+    in
     List.filter
       (fun (f : func_info) ->
         let parameters = call_parameters ~lang f in
@@ -205,21 +226,49 @@ let narrow_by_argument_types ~(lang : Lang.t) (args : G.argument list)
                 (fun (i : int) (argument : static_type option) ->
                   match (argument, List.nth_opt parameters i) with
                   | Some argument, Some (G.Param { G.ptype = Some ty; _ }) -> (
-                      match static_type_of_type ~lang ty with
+                      match Option.bind (static_type_of_type ~lang ty) decided with
                       | Some parameter -> types_disagree ~argument ~parameter
                       | None -> false)
                   | _ -> false)
                 arguments)))
       candidates
 
-let narrow_by_call ~(lang : Lang.t) (call_args : G.argument list option)
-    (candidates : func_info list) : func_info list =
+let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
+    (call_args : G.argument list option) (candidates : func_info list) :
+    func_info list =
   let by_arity =
     narrow_by_arity ~lang (Option.map List.length call_args) candidates
   in
   match call_args with
-  | Some args -> narrow_by_argument_types ~lang args by_arity
+  | Some args -> narrow_by_argument_types ~lang ~typing args by_arity
   | None -> by_arity
+
+let return_type ~(lang : Lang.t) (funcs : func_info list) : static_type option
+    =
+  match
+    List_.uniq_by
+      (Option.equal equal_static_type)
+      (List_.map
+         (fun (f : func_info) ->
+           Option.bind f.fdef.G.frettype (static_type_of_type ~lang))
+         funcs)
+  with
+  | [ (Some _ as common) ] -> common
+  | _ -> None
+
+let rec typing ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
+    ~(is_class : G.SId.t -> bool) : static_typing =
+  { type_of_call = type_of_call ~lang ~resolve ~is_class; is_class }
+
+and type_of_call ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
+    ~(is_class : G.SId.t -> bool) (e : G.expr) : static_type option =
+  match e.G.e with
+  | G.Call (callee, (_, args, _)) ->
+      resolve callee
+      |> narrow_by_call ~lang ~typing:(typing ~lang ~resolve ~is_class)
+           (Some args)
+      |> return_type ~lang
+  | _ -> None
 
 (* Graph node type - reuse from Call_graph for consistency *)
 type node = Call_graph.node
@@ -324,6 +373,11 @@ type construction_resolver =
 
 type invocation_resolver =
   caller_parent_path:IL.name option list -> G.expr -> fn_id list
+
+type argument_typer =
+  caller_parent_path:IL.name option list ->
+  G.argument list ->
+  static_type option list
 
 
 type binding_target =

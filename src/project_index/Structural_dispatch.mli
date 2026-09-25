@@ -1,6 +1,6 @@
 (* Emits Dispatch edges from the other members of an overload group (same
    scope, name and arity, concrete bodies) to its representative, the
-   earliest by position, and records them as its alternatives. The scope
+   earliest by position. The scope
    spans files for a language whose top level scope is the project. *)
 val emit_overload_edges :
   lang:Lang.t ->

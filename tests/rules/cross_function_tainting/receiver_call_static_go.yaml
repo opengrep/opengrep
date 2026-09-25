@@ -1,0 +1,13 @@
+rules:
+  - id: receiver_call_static_go
+    message: a call on a method's receiver reaches the method of the receiver's type
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

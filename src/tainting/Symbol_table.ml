@@ -196,6 +196,7 @@ type t = {
   values : assigned_value list SId_tbl.t;
   by_node : Func_info.t Node_tbl.t;
   extension_visible : string -> Func_info.t -> bool;
+  compiled_with_file : Func_info.t -> bool;
   outside : t -> caller:Function_id.t option -> G.expr -> resolution;
   types : Type_state.t;
   declared_types : (G.SId.t * G.SId.t option, receiver_class) Hashtbl.t;
@@ -268,30 +269,25 @@ let top_level_defs_are_methods_of_object (lang : Lang.t) : bool =
       true
   | _ -> false
 
-(* The definitions a use with the binding [sid] sees: the one whose own
-   binding carries the use's site when several definitions rebind the name in
-   one scope, else every definition under the binding (an overload set). *)
+(* The definitions a use with the binding [sid] sees: in a language with
+   overloads, every definition under the binding (an overload set); elsewhere
+   only the definition whose own binding carries the use's site, or none. *)
 let names_class (class_sites : G.SId.t list SId_tbl.t) (sid : G.SId.t) : bool =
   List.exists (G.SId.same_site sid)
     (Option.value (SId_tbl.find_opt class_sites sid) ~default:[])
 
-let definitions_seen ~(class_sites : G.SId.t list SId_tbl.t)
-    (functions : Func_info.t list SId_tbl.t) (sid : G.SId.t) :
-    Func_info.t list =
+let definitions_seen ~(lang : Lang.t) (functions : Func_info.t list SId_tbl.t)
+    (sid : G.SId.t) : Func_info.t list =
   match SId_tbl.find_opt functions sid with
   | None -> []
-  | Some defined -> (
-      let seen =
-        List.filter
-          (fun (func : Func_info.t) ->
-            match binding_of_function func with
-            | Some own -> G.SId.same_site own sid
-            | None -> false)
-          defined
-      in
-      match seen with
-      | [] -> if names_class class_sites sid then [] else defined
-      | _ :: _ -> seen)
+  | Some defined when Lang_config.overloads_by_type lang -> defined
+  | Some defined ->
+      List.filter
+        (fun (func : Func_info.t) ->
+          match binding_of_function func with
+          | Some own -> G.SId.same_site own sid
+          | None -> false)
+        defined
 
 let class_sites_of (ast : G.program) : G.SId.t list SId_tbl.t =
   let sites = SId_tbl.create 16 in
@@ -382,7 +378,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   in
   let held_by_name (name : G.name) : Func_info.t list =
     match binding_of_id_info (id_info_of_name name) with
-    | Some sid -> definitions_seen ~class_sites functions sid
+    | Some sid -> definitions_seen ~lang functions sid
     | None -> []
   in
   let kinds = Scope_tbl.create 16 in
@@ -403,6 +399,22 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let qualified_classes = Path_tbl.create 16 in
   let type_aliases = SId_tbl.create 16 in
   let class_definitions = ref [] in
+  let initialisers = Scope_tbl.create 16 in
+  let add_initialiser (scope : scope_id) (ent : G.entity)
+      (def : G.definition_kind) : unit =
+    match def with
+    | G.ClassDef (cdef : G.class_definition)
+      when Lang_config.class_header_is_constructor lang ->
+        Option.iter
+          (fun (initialiser : Func_info.t) ->
+            Scope_tbl.replace initialisers scope initialiser)
+          (Option.bind (Visit_function_defs.initialised_class_name ent cdef)
+             (fun (class_name : G.name) ->
+               Node_tbl.find_opt by_node
+                 (Function_id.of_il_name
+                    (Visit_function_defs.class_initialiser_il_name class_name))))
+    | _ -> ()
+  in
   let add_member (cls : scope_id) (func : Func_info.t) : unit =
     match member_name func with
     | Some name ->
@@ -446,6 +458,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       (ent : G.entity) (name : G.name) (def : G.definition_kind) : unit =
     Scope_tbl.replace kinds scope kind;
     class_definitions := (scope, def) :: !class_definitions;
+    add_initialiser scope ent def;
     if Class_parents.reopens lang ent def then
       Scope_tbl.replace reopening scope ();
     Option.iter (Scope_tbl.replace owners scope) context.class_body;
@@ -641,6 +654,8 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     in
     let self_type =
       match (receiver_type_of fdef, config.Lang_config.receiver_parameter) with
+      | _, Lang_config.Declares_method when Option.is_some context.class_body ->
+          by_definition_site ()
       | File_class cls, Lang_config.Declares_method ->
           List.iter (add_member (definition_scope cls)) defined;
           Some (Instance_of (definition_scope cls))
@@ -666,7 +681,8 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     | Some self_type, first :: _
       when Receiver.implicit_param lang ~is_method:(Receiver.is_method fdef)
              ~is_static:(Receiver.is_static (Some ent)) ~is_first:true first
-      -> (
+           || Lang_config.method_receiver_is_first_parameter lang
+              && Receiver.is_method fdef -> (
         match first with
         | G.ParamReceiver { G.pinfo; _ }
         | G.Param { G.pinfo; _ } ->
@@ -814,6 +830,9 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
             | G.EN name ->
                 assign context name value;
                 super#visit_definition context definition
+            | G.EPattern (G.PatId (id, info)) ->
+                assign context (G.Id (id, info)) value;
+                super#visit_definition context definition
             | G.EDynamic _
             | G.EPattern _
             | G.OtherEntity _ ->
@@ -935,6 +954,8 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
           bound_functions =
             (match id.scope_role with
             | Definition _ -> (
+                Option.to_list (Scope_tbl.find_opt initialisers id)
+                @
                 let held = held_by_binding functions [] in
                 match Scope_tbl.find_opt kinds id with
                 | None -> held
@@ -981,6 +1002,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     scopes;
   let classes =
     Class_table.build ~lang
+      ~compiled_together:(fun (_ : Func_info.t list) -> true)
       ~classes:
         (Scope_tbl.fold
            (fun (_ : scope_id) (scope : class_scope)
@@ -1024,13 +1046,14 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     values;
     by_node;
     extension_visible = (fun (_ : string) (_ : Func_info.t) -> true);
+    compiled_with_file = (fun (_ : Func_info.t) -> true);
     outside = (fun (_ : t) ~caller:_ (_ : G.expr) -> External);
     types = Type_state.empty;
     declared_types = Hashtbl.create 64;
   }
 
 let functions_of_binding (t : t) (sid : G.SId.t) : Func_info.t list =
-  definitions_seen ~class_sites:t.class_sites t.functions sid
+  definitions_seen ~lang:t.lang t.functions sid
 
 let class_of_binding (t : t) (sid : G.SId.t) : class_scope option =
   Option.bind (Class_table.class_of_binding t.classes sid)
@@ -1060,20 +1083,35 @@ let unbound_receivers (t : t) : (receiver_role * G.name * Func_info.t list) list
 
 let class_table (t : t) : Class_table.t = t.classes
 
+let is_class_binding (t : t) (sid : G.SId.t) : bool =
+  Option.is_some (Class_table.class_of_binding t.classes sid)
+
 let with_project (t : t) (classes : Class_table.t)
     ~(extension_visible : string -> Func_info.t -> bool)
+    ~(compiled_with_file : Func_info.t -> bool)
     ~(outside : t -> caller:Function_id.t option -> G.expr -> resolution) : t =
-  { t with classes; extension_visible; outside; declared_types = Hashtbl.create 64 }
+  {
+    t with
+    classes;
+    extension_visible;
+    compiled_with_file;
+    outside;
+    declared_types = Hashtbl.create 64;
+  }
 
 let order (t : t) (cls : Class_table.cls) :
     Class_table.cls Linearisation.linearisation =
   Class_table.order t.classes cls
 
-let first_defining (classes : Class_table.cls list) (name : string) :
+let own_members (t : t) (cls : Class_table.cls) (name : string) :
+    Func_info.t list =
+  List.filter t.compiled_with_file (Class_table.own_members cls name)
+
+let first_defining (t : t) (classes : Class_table.cls list) (name : string) :
     (Class_table.cls * Func_info.t list) option =
   List.find_map
     (fun (cls : Class_table.cls) ->
-      match Class_table.own_members cls name with
+      match own_members t cls name with
       | [] -> None
       | defined -> Some (cls, defined))
     classes
@@ -1090,17 +1128,48 @@ let on_side (t : t) (side : Class_parents.side) (cls : Class_table.cls)
 
 let own_members_on (t : t) (side : Class_parents.side) (cls : Class_table.cls)
     (name : string) : Func_info.t list =
-  List.filter (on_side t side cls name) (Class_table.own_members cls name)
+  List.filter (on_side t side cls name) (own_members t cls name)
 
-let first_defining_on (t : t) (side : Class_parents.side)
+let same_signature (t : t) (name : string) ~(nearer : Func_info.t)
+    ~(farther : Func_info.t) : bool =
+  let method_of (func : Func_info.t) : Structural_typing.method_ =
+    {
+      Structural_typing.name;
+      entity = func.Func_info.entity;
+      fdef = func.Func_info.fdef;
+    }
+  in
+  Structural_typing.method_satisfies ~lang:t.lang
+    ~equal_type:(Class_table.equal_type t.classes)
+    ~required:(method_of farther) (method_of nearer)
+
+let visible_overloads (t : t) (side : Class_parents.side)
+    ~(nearer : Func_info.t list) (farther : Class_table.cls list)
+    (name : string) : Func_info.t list =
+  List.fold_left
+    (fun (visible : Func_info.t list) (cls : Class_table.cls) ->
+      visible
+      @ List.filter
+          (fun (inherited : Func_info.t) ->
+            not
+              (List.exists
+                 (fun (seen : Func_info.t) ->
+                   same_signature t name ~nearer:seen ~farther:inherited)
+                 visible))
+          (own_members_on t side cls name))
+    nearer farther
+
+let rec first_defining_on (t : t) (side : Class_parents.side)
     (classes : Class_table.cls list) (name : string) :
     (Class_table.cls * Func_info.t list) option =
-  List.find_map
-    (fun (cls : Class_table.cls) ->
+  match classes with
+  | [] -> None
+  | cls :: farther -> (
       match own_members_on t side cls name with
-      | [] -> None
+      | [] -> first_defining_on t side farther name
+      | defined when Lang_config.overloads_by_type t.lang ->
+          Some (cls, visible_overloads t side ~nearer:defined farther name)
       | defined -> Some (cls, defined))
-    classes
 
 let after (cls : Class_table.cls) (classes : Class_table.cls list) :
     Class_table.cls list =
@@ -1130,7 +1199,7 @@ let rec overridable (t : t) ~(visited : Class_table.cls list)
          | Some answer -> answer
          | None -> (
              match
-               first_defining
+               first_defining t
                  (after cls (order t cls).Linearisation.order
                  |> List.filter (fun (ancestor : Class_table.cls) ->
                         not (List.exists (Class_table.same ancestor) visited)))
@@ -1148,13 +1217,6 @@ let dispatches (t : t) (cls : Class_table.cls) (defined : Func_info.t list)
   | Lang_config.Static -> Class_table.is_abstraction cls
   | Lang_config.Dynamic_when_overridable ->
       overridable t ~visited:[] cls defined name
-
-let overrides (t : t) (cls : Class_table.cls) (name : string) :
-    Func_info.t list =
-  List.concat_map
-    (fun (sub : Class_table.cls) ->
-      own_members_on t Class_parents.Instance_side sub name)
-    (descendants t cls)
 
 let root_members (t : t) (name : string) : Func_info.t list =
   if top_level_defs_are_methods_of_object t.lang then
@@ -1215,6 +1277,28 @@ let selected_on_instance (t : t) (cls : Class_table.cls)
     | [] -> defined
     | from_impls -> from_impls
 
+let overrides (t : t) (cls : Class_table.cls) (name : string) :
+    Func_info.t list =
+  List.concat_map
+    (fun (sub : Class_table.cls) ->
+      match
+        first_defining_on t Class_parents.Instance_side
+          (order t sub).Linearisation.order name
+      with
+      | Some (definer, defined) -> selected_on_instance t sub definer defined name
+      | None -> [])
+    (descendants t cls)
+  |> List_.uniq_by same_definition
+
+let found_in_descendants (t : t) (cls : Class_table.cls) : bool =
+  Class_table.is_abstraction cls
+  ||
+  match (Lang_config.get t.lang).Lang_config.method_dispatch with
+  | Lang_config.Dynamic -> true
+  | Lang_config.Static
+  | Lang_config.Dynamic_when_overridable ->
+      false
+
 (* The fields and root methods found are definitions of this file that
    shadow whatever an ancestor the file does not hold defines. *)
 let select_on_instance (t : t) (cls : Class_table.cls) ~(dispatch : bool)
@@ -1236,12 +1320,19 @@ let select_on_instance (t : t) (cls : Class_table.cls) ~(dispatch : bool)
       | [] -> External
       | _ :: _ -> Defined (List_.uniq_by same_definition fields))
   | None -> (
-      match fields @ root_members t name with
-      | _ :: _ as found -> Defined (List_.uniq_by same_definition found)
+      match
+        if dispatch && found_in_descendants t cls then overrides t cls name
+        else []
+      with
+      | _ :: _ as inherited ->
+          Defined (List_.uniq_by same_definition (fields @ inherited))
       | [] -> (
-          match root_resolution t name with
-          | Defined _ -> extension_along t classes name
-          | External -> External))
+          match fields @ root_members t name with
+          | _ :: _ as found -> Defined (List_.uniq_by same_definition found)
+          | [] -> (
+              match root_resolution t name with
+              | Defined _ -> extension_along t classes name
+              | External -> External)))
 
 (* Along the order, each class's own class-side members, then the instance
    members of the modules that class extends, the last extended first. *)
@@ -1478,6 +1569,31 @@ let ancestors_of_self (t : t) ~(caller : Function_id.t option) :
   | Unknown ->
       Unknown
 
+let method_class (t : t) (func : Func_info.t) : Class_table.cls option =
+  match
+    Option.map (of_self_type t) (Fdef_tbl.find_opt t.selves func.Func_info.fdef)
+  with
+  | Some (Class cls) -> Some cls
+  | Some
+      ( Exact _ | Class_object _ | Ancestors_of _ | Object_of _ | External_class
+      | Root | Unknown )
+  | None ->
+      None
+
+let with_overrides (t : t) (defined : Func_info.t list) : Func_info.t list =
+  List_.uniq_by same_definition
+    (defined
+    @ List.concat_map
+        (fun (func : Func_info.t) ->
+          match (method_class t func, member_name func) with
+          | Some cls, Some name
+            when List.exists (same_definition func)
+                   (Class_table.own_members cls name)
+                 && dispatches t cls [ func ] name ->
+              overrides t cls name
+          | _ -> [])
+        defined)
+
 let classes_at (t : t) (path : string list) : Class_table.cls list =
   Path_tbl.find_all t.qualified_classes path
   |> List.filter_map (Class_table.class_of_scope t.classes)
@@ -1492,14 +1608,37 @@ let external_or_outside (t : t) ~(context : scope_id option) (name : G.name) :
   | Some cls -> Class_object cls
   | None -> External_class
 
-let receiver_of_name (t : t) ~(caller : Function_id.t option) (name : G.name) :
-    receiver_class =
+(* Module level assignments run in order before any function of the module
+   runs (JavaScript, Python and Ruby modules, C and C++ static
+   initialisers), so a use inside a function sees the last of them unless a
+   function assigns the variable too. *)
+let values_in_force (t : t) ~(caller : Function_id.t option) (sid : G.SId.t) :
+    G.expr list =
+  let assigned = Option.value (SId_tbl.find_opt t.values sid) ~default:[] in
+  let in_functions, at_module_level =
+    List.partition (fun (assigned : assigned_value) -> assigned.in_function)
+      assigned
+  in
+  match (caller, in_functions, List.rev at_module_level) with
+  | _, _, [] -> []
+  | Some _, [], last :: _ -> [ last.value ]
+  | _ -> List.map (fun (assigned : assigned_value) -> assigned.value) assigned
+
+let rec receiver_of_name_from (t : t) ~(caller : Function_id.t option)
+    ~(visited : G.SId.t list) (name : G.name) : receiver_class =
   let context = self_scope t ~caller in
   let info = id_info_of_name name in
   match binding_of_id_info info with
   | Some sid -> (
       match Class_table.object_of_binding t.classes sid with
-      | Some cls -> Class_object cls
+      | Some cls -> (
+          match !(info.G.id_resolved) with
+          | Some (G.TypeName, _) when Lang_config.type_name_value_is_instance t.lang
+            ->
+              Exact cls
+          | Some _
+          | None ->
+              Class_object cls)
       | None -> (
           match SId_tbl.find_opt t.receivers sid with
           | Some self_type -> of_self_type t self_type
@@ -1517,10 +1656,18 @@ let receiver_of_name (t : t) ~(caller : Function_id.t option) (name : G.name) :
                     { holder = sid; path = []; held_class = Of_external_class }
               | Some
                   ( Unknown | Exact _ | Class_object _ | Ancestors_of _
-                  | Object_of _ | Root )
+                  | Object_of _ | Root ) ->
+                  Object_of
+                    { holder = sid; path = []; held_class = Of_unknown_class }
               | None ->
                   Object_of
-                    { holder = sid; path = []; held_class = Of_unknown_class })))
+                    {
+                      holder = sid;
+                      path = [];
+                      held_class =
+                        held_by_values t ~caller ~visited:(sid :: visited) sid
+                          info;
+                    })))
   | None -> (
       match name with
       | G.IdQualified { G.name_top = Some _; _ } -> (
@@ -1534,6 +1681,48 @@ let receiver_of_name (t : t) ~(caller : Function_id.t option) (name : G.name) :
             && not (String_.is_capitalized (fst (last_ident_of_name name)))
           then Unknown
           else external_or_outside t ~context name)
+
+and held_by_values (t : t) ~(caller : Function_id.t option)
+    ~(visited : G.SId.t list) (sid : G.SId.t) (info : G.id_info) : held_class =
+  let values =
+    match (values_in_force t ~caller sid, !(info.G.id_svalue)) with
+    | (_ :: _ as assigned), _ -> assigned
+    | [], Some (G.Sym value) -> [ value ]
+    | [], (Some _ | None) -> []
+  in
+  let class_of_value (value : G.expr) : Class_table.cls option =
+    let repeated (value_name : G.name) : bool =
+      match binding_of_id_info (id_info_of_name value_name) with
+      | Some bound -> List.exists (G.SId.equal bound) visited
+      | None -> false
+    in
+    match value.G.e with
+    | G.N value_name when not (repeated value_name) -> (
+        match receiver_of_name_from t ~caller ~visited value_name with
+        | Exact cls
+        | Class cls
+        | Object_of { path = []; held_class = Of_class cls; _ } ->
+            Some cls
+        | Class_object _
+        | Ancestors_of _
+        | Object_of _
+        | External_class
+        | Root
+        | Unknown ->
+            None)
+    | _ -> None
+  in
+  match List.map class_of_value values with
+  | Some cls :: others
+    when List.for_all
+           (Option.fold ~none:false ~some:(Class_table.same cls))
+           others ->
+      Of_class cls
+  | _ -> Of_unknown_class
+
+let receiver_of_name (t : t) ~(caller : Function_id.t option) (name : G.name) :
+    receiver_class =
+  receiver_of_name_from t ~caller ~visited:[] name
 
 let exact (receiver : receiver_class) : receiver_class =
   match receiver with
@@ -1573,13 +1762,23 @@ let constructs_by_member (t : t) (e : G.expr) : bool =
       constructs_by_method t (fst (last_ident_of_name name))
   | _ -> false
 
-let rec receiver_chain (t : t) (e : G.expr) : G.expr * string list =
+let member_access (t : t) (e : G.expr) : (G.expr * string) option =
   match e.G.e with
-  | G.DotAccess (inner, _, G.FN name)
+  | G.DotAccess (receiver, _, G.FN name) ->
+      Some (receiver, fst (last_ident_of_name name))
+  | G.ArrayAccess
+      (receiver, (_, { G.e = G.L (G.String (_, (member, _), _)); _ }, _))
+    when Lang_config.bracket_member_access t.lang ->
+      Some (receiver, member)
+  | _ -> None
+
+let rec receiver_chain (t : t) (e : G.expr) : G.expr * string list =
+  match (e.G.e, member_access t e) with
+  | _, Some (inner, member)
     when not (reads_own_class t e || constructs_by_member t e) ->
       let root, path = receiver_chain t inner in
-      (root, path @ [ fst (last_ident_of_name name) ])
-  | G.DeRef (_, inner) -> receiver_chain t inner
+      (root, path @ [ member ])
+  | G.DeRef (_, inner), _ -> receiver_chain t inner
   | _ -> (e, [])
 
 (* The constructors of the first class in the resolution order that has one:
@@ -1624,22 +1823,6 @@ let constructs (t : t) (use : use) : bool =
   | Called -> Lang_config.constructs_by_bare_call t.lang
   | Referenced -> (Lang_config.get t.lang).Lang_config.class_is_callable_value
 
-(* Module level assignments run in order before any function of the module
-   runs (JavaScript, Python and Ruby modules, C and C++ static
-   initialisers), so a use inside a function sees the last of them unless a
-   function assigns the variable too. *)
-let values_in_force (t : t) ~(caller : Function_id.t option) (sid : G.SId.t) :
-    G.expr list =
-  let assigned = Option.value (SId_tbl.find_opt t.values sid) ~default:[] in
-  let in_functions, at_module_level =
-    List.partition (fun (assigned : assigned_value) -> assigned.in_function)
-      assigned
-  in
-  match (caller, in_functions, List.rev at_module_level) with
-  | _, _, [] -> []
-  | Some _, [], last :: _ -> [ last.value ]
-  | _ -> List.map (fun (assigned : assigned_value) -> assigned.value) assigned
-
 let joined_resolutions (resolutions : resolution list) : resolution =
   List.fold_left
     (fun (joined : resolution) (resolution : resolution) ->
@@ -1657,7 +1840,10 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
   match !(info.G.id_resolved) with
   | Some (G.TypeName, sid) -> (
       match Class_table.class_of_binding t.classes sid with
-      | Some cls when constructs t use -> constructors_of_class t cls
+      | Some cls
+        when constructs t use || Lang_config.is_callable_reference t.lang name
+        ->
+          constructors_of_class t cls
       | Some _
       | None ->
           Defined [])
@@ -1671,7 +1857,7 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
   | Some ((G.Global | G.LocalVar | G.Parameter | G.EnclosedVar | G.Macro), sid)
     -> (
       match functions_of_binding t sid with
-      | _ :: _ as defined -> Defined defined
+      | _ :: _ as defined -> Defined (with_overrides t defined)
       | [] when List.exists (G.SId.equal sid) visited -> Defined []
       | [] -> (
           match (values_in_force t ~caller sid, !(info.G.id_svalue)) with
@@ -1694,12 +1880,16 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
 
 and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
     ~(visited : G.SId.t list) (e : G.expr) : resolution =
-  match e.G.e with
-  | G.N name
-  | G.Ref (_, { G.e = G.N name; _ }) ->
+  match (e.G.e, member_access t e) with
+  | (G.N name | G.Ref (_, { G.e = G.N name; _ })), _ ->
       resolve_name t ~caller ~use ~visited name
-  | G.ArrayAccess (indexed, _) -> resolve_expr t ~caller ~use ~visited indexed
-  | G.IdSpecial (G.Super, _) -> (
+  | _, Some (receiver, member) ->
+      let root, prefix = receiver_chain t receiver in
+      resolve_member_access t ~receiver ~member ~prefix
+        ~root_class:(lazy (receiver_class t ~caller root))
+  | G.ArrayAccess (indexed, _), None ->
+      resolve_expr t ~caller ~use ~visited indexed
+  | G.IdSpecial (G.Super, _), None -> (
       match self_receiver t ~caller with
       | Class cls ->
           let linearisation = order t cls in
@@ -1714,32 +1904,34 @@ and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
       | Root
       | Unknown ->
           Defined [])
-  | G.DotAccess (receiver, _, G.FN name) -> (
-      let member = fst (last_ident_of_name name) in
-      let root, prefix = receiver_chain t receiver in
-      match
-        Option.bind (unbound_chain_path receiver) (fun (path : string list) ->
-            Path_tbl.find_opt t.qualified_functions (path @ [ member ]))
-      with
-      | Some (_ :: _ as defined) -> Defined defined
-      | Some []
-      | None -> (
-          match (receiver_class t ~caller root, prefix) with
-          | Class_object cls, []
-            when is_constructor_reference t member
-                 && Option.is_none
-                      (first_defining_on t Class_parents.Class_side
-                         (order t cls).Linearisation.order member) ->
-              constructors_of_class t cls
-          | root_receiver, _ ->
-              resolve_path t root_receiver (prefix @ [ member ])))
   | _ -> Defined []
+
+and resolve_member_access (t : t) ~(receiver : G.expr) ~(member : string)
+    ~(prefix : string list) ~(root_class : receiver_class Lazy.t) : resolution
+    =
+  match
+    Option.bind (unbound_chain_path receiver) (fun (path : string list) ->
+        Path_tbl.find_opt t.qualified_functions (path @ [ member ]))
+  with
+  | Some (_ :: _ as defined) -> Defined defined
+  | Some []
+  | None -> (
+      match (Lazy.force root_class, prefix) with
+      | Class_object cls, []
+        when is_constructor_reference t member
+             && Option.is_none
+                  (first_defining_on t Class_parents.Class_side
+                     (order t cls).Linearisation.order member) ->
+          constructors_of_class t cls
+      | root_receiver, _ -> resolve_path t root_receiver (prefix @ [ member ]))
 
 (* The class an expression denotes as a receiver, when this file knows it. *)
 and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
     receiver_class =
   match e.G.e with
   | G.DeRef (_, inner) -> receiver_class t ~caller inner
+  | G.IdSpecial (G.Self, _) when Lang_config.self_is_defining_class t.lang ->
+      exact (self_receiver t ~caller)
   | G.IdSpecial ((G.This | G.Self | G.LateStatic), _) -> self_receiver t ~caller
   | G.IdSpecial ((G.Super | G.Parent), _)
   | G.Call ({ G.e = G.IdSpecial ((G.Super | G.Parent), _); _ }, _) ->
@@ -1784,40 +1976,54 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
       | Unknown ->
           Unknown)
   | G.Call (callee, _) -> returned_by t ~caller callee
-  | G.DotAccess (inner, _, G.FN name) -> (
-      let field = fst (last_ident_of_name name) in
-      let receiver = receiver_class t ~caller inner in
-      match (field_type t receiver field, receiver) with
-      | Some cls, _ -> Class cls
-      | None, Object_of held ->
-          Object_of
-            {
-              held with
-              path = held.path @ [ field ];
-              held_class = Of_unknown_class;
-            }
-      | None, External_class -> External_class
-      | ( None,
-          ( Class _ | Exact _ | Class_object _ | Ancestors_of _ | Root
-          | Unknown ) ) ->
-          Unknown)
+  | G.DotAccess _
+  | G.ArrayAccess _ -> (
+      match member_access t e with
+      | Some (inner, field) ->
+          member_receiver t (receiver_class t ~caller inner) field
+      | None -> Unknown)
   | _ -> Unknown
+
+and member_receiver (t : t) (receiver : receiver_class) (field : string) :
+    receiver_class =
+  match (field_type t receiver field, receiver) with
+  | Some cls, _ -> Class cls
+  | None, Object_of held ->
+      Object_of
+        { held with path = held.path @ [ field ]; held_class = Of_unknown_class }
+  | None, External_class -> External_class
+  | ( None,
+      (Class _ | Exact _ | Class_object _ | Ancestors_of _ | Root | Unknown) ) ->
+      Unknown
+
+and member_call (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
+    (receiver_class * string * resolution Lazy.t) option =
+  match (callee.G.e, member_access t callee) with
+  | G.DotAccess _, Some (receiver, member) ->
+      let root, prefix = receiver_chain t receiver in
+      let root_class = receiver_class t ~caller root in
+      Some
+        ( List.fold_left (member_receiver t) root_class prefix,
+          member,
+          lazy
+            (resolve_member_access t ~receiver ~member ~prefix
+               ~root_class:(Lazy.from_val root_class)) )
+  | _ -> None
 
 and returned_by (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
     receiver_class =
-  let declared =
-    match callee.G.e with
-    | G.DotAccess (receiver, _, G.FN name) ->
-        member_type t (receiver_class t ~caller receiver)
-          (fun (owner : Class_table.cls) ->
-            Type_state.method_return t.types owner
-              (fst (last_ident_of_name name)))
-    | _ -> None
+  let declared, resolved =
+    match member_call t ~caller callee with
+    | Some (receiver, member, resolved) ->
+        ( member_type t receiver (fun (owner : Class_table.cls) ->
+              Type_state.method_return t.types owner member),
+          resolved )
+    | None -> (None, lazy (resolve_expr t ~caller ~use:Called ~visited:[] callee))
   in
   match declared with
   | Some cls -> Class cls
   | None -> (
-      match resolve_expr t ~caller ~use:Called ~visited:[] callee with
+      match Lazy.force resolved with
       | Defined (funcs : Func_info.t list) -> returned_by_functions t funcs
       | External -> (
           match t.outside t ~caller callee with
@@ -1928,8 +2134,21 @@ let class_of_function (t : t) (func : Func_info.t) : Class_table.cls option =
   | None ->
       None
 
+let or_outside (t : t) ~(caller : Function_id.t option) (e : G.expr)
+    (resolved : resolution) : resolution =
+  match resolved with
+  | Defined _ -> resolved
+  | External -> t.outside t ~caller e
+
 let resolve_call (t : t) ~(caller : Function_id.t option) (e : G.expr) :
     resolution =
-  match resolve_callee t ~caller e with
-  | Defined _ as found -> found
-  | External -> t.outside t ~caller e
+  or_outside t ~caller e (resolve_callee t ~caller e)
+
+let class_of_member_call (t : t) ~(caller : Function_id.t option)
+    (callee : G.expr) : (Class_table.cls option * resolution Lazy.t) option =
+  Option.map
+    (fun ((receiver : receiver_class), (_ : string),
+          (resolved : resolution Lazy.t)) ->
+      ( class_of_receiver receiver,
+        lazy (or_outside t ~caller callee (Lazy.force resolved)) ))
+    (member_call t ~caller callee)

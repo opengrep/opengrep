@@ -832,7 +832,7 @@ and map_anon_choice_param_2c23cdc (env : env) _outer_attrTODO
           v3
       in
       let self = ident env v4 (* "self" *) in
-      let self_type = G.TyN (H2.name_of_id self) |> G.t in
+      let self_type = G.TyN (H2.name_of_id ("Self", snd self)) |> G.t in
       let type_ =
         match borrow with
         | Some tok -> G.TyRef (tok, self_type) |> G.t
@@ -2454,8 +2454,7 @@ and map_parameter (env : env) ((v1, v2, v3, v4) : CST.parameter) : G.parameter =
       let param =
         {
           G.pname = Some ident;
-          G.ptype = None;
-          (* TODO *)
+          G.ptype = Some ty;
           G.pdefault = None;
           G.pattrs = attrs;
           G.pinfo = G.empty_id_info ();

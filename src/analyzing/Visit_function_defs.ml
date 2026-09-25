@@ -273,6 +273,124 @@ let class_scope_of_definition (ent : G.entity) (def_kind : G.definition_kind)
      | _ -> None)
   | _ -> None
 
+(* Languages whose class header is the primary constructor: its parameters
+   are the header's, and its body runs the property initialisers and the
+   initialiser blocks of the class body in source order. *)
+let class_header_is_constructor (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Kotlin
+  | Lang.Scala ->
+      true
+  | _ -> false
+
+let class_initialiser_prefix = "Class:"
+
+let is_class_initialiser_ident (id : string) : bool =
+  String.starts_with ~prefix:class_initialiser_prefix id
+
+let class_initialiser_ident (class_name : G.name) : G.ident =
+  let (str, tok), _ = H.id_of_name class_name in
+  (class_initialiser_prefix ^ str, tok)
+
+let class_initialiser_name (class_name : G.name) : G.name =
+  G.Id (class_initialiser_ident class_name, G.empty_id_info ())
+
+let class_initialiser_il_name (class_name : G.name) : IL.name =
+  IL.{ ident = class_initialiser_ident class_name;
+       sid = G.SId.unsafe_default;
+       id_info = G.empty_id_info () }
+
+let has_keyword (wanted : G.keyword_attribute) (attrs : G.attribute list) :
+    bool =
+  List.exists
+    (fun (attr : G.attribute) ->
+      match attr with
+      | G.KeywordAttr (found, _) -> G.equal_keyword_attribute found wanted
+      | _ -> false)
+    attrs
+
+let declares_property ~(record_class : bool) (attrs : G.attribute list) : bool
+    =
+  record_class || has_keyword G.Const attrs || has_keyword G.Mutable attrs
+
+let property_initialisation ((id, tok) as ident : G.ident)
+    (pinfo : G.id_info) : G.stmt =
+  let this_tok = Tok.fake_tok tok "this" in
+  G.ExprStmt
+    ( G.Assign
+        ( G.DotAccess
+            ( G.IdSpecial (G.This, this_tok) |> G.e,
+              this_tok,
+              G.FN (G.Id ((id, tok), G.empty_id_info ())) )
+          |> G.e,
+          this_tok,
+          G.N (G.Id (ident, pinfo)) |> G.e )
+      |> G.e,
+      this_tok )
+  |> G.s
+
+let runs_in_initialiser (stmt : G.stmt) : bool =
+  match stmt.G.s with
+  | G.DefStmt (_, (G.VarDef _ | G.FieldDefColon _)) -> true
+  | G.DefStmt _
+  | G.DirectiveStmt _ ->
+      false
+  | _ -> true
+
+let initialised_class_name (ent : G.entity) (cdef : G.class_definition) :
+    G.name option =
+  match (ent.G.name, fst cdef.G.ckind) with
+  | G.EN (class_name : G.name), G.Class -> Some class_name
+  | _ -> None
+
+let class_initialiser (ent : G.entity) (cdef : G.class_definition) :
+    (G.entity * G.function_definition) option =
+  match initialised_class_name ent cdef with
+  | Some (class_name : G.name) ->
+      let record_class = has_keyword G.RecordClass ent.G.attrs in
+      let lparen, params, rparen = cdef.G.cparams in
+      let properties =
+        List.filter_map
+          (fun (param : G.parameter) ->
+            match param with
+            | G.Param { G.pname = Some ident; pattrs; pinfo; _ }
+              when declares_property ~record_class pattrs ->
+                Some (property_initialisation ident pinfo)
+            | _ -> None)
+          params
+      in
+      let _, fields, _ = cdef.G.cbody in
+      let body =
+        List.concat_map
+          (fun (field : G.field) ->
+            match field with
+            | G.F
+                ({ G.s =
+                     G.DefStmt
+                       ( { G.name = G.EN (G.Id (ident, info)); _ },
+                         (G.VarDef { G.vinit = Some _; _ }
+                         | G.FieldDefColon { G.vinit = Some _; _ }) );
+                   _ } as stmt) ->
+                [ stmt; property_initialisation ident info ]
+            | G.F stmt when runs_in_initialiser stmt -> [ stmt ]
+            | G.F _ -> [])
+          fields
+      in
+      let tok = snd (fst (H.id_of_name class_name)) in
+      Some
+        ( { G.name = G.EN (class_initialiser_name class_name);
+            attrs = [];
+            tparams = None },
+          { G.fkind = (G.Method, tok);
+            fparams = (lparen, params, rparen);
+            frettype = None;
+            fcaptures = G.no_captures;
+            fbody =
+              G.FBStmt
+                (G.Block (Tok.unsafe_fake_bracket (properties @ body)) |> G.s)
+          } )
+  | None -> None
+
 class ['self] visitor_with_parent_path ~(lang : Lang.t) =
   object (self : 'self)
     inherit [_] G.iter_no_id_info as super
@@ -299,7 +417,19 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
             | _ -> None
           in
           Common.save_excursion_unsafe current_class newv (fun () ->
-              super#visit_definition f def)
+              super#visit_definition f def;
+              match def_kind with
+              | G.ClassDef cdef when class_header_is_constructor lang -> (
+                  match class_initialiser ent cdef with
+                  | Some (ctor_ent, ctor_fdef) ->
+                      let class_il = Option.bind !current_class g_name_to_il_name in
+                      let visitor_parent_path, _ =
+                        append_to_parrent_path !parent_path class_il
+                          (entity_to_il_name ctor_ent)
+                      in
+                      f (Some ctor_ent) visitor_parent_path ctor_fdef
+                  | None -> ())
+              | _ -> ())
       (* Go [type T interface {...}] is a TypeDef, not a ClassDef; walk its
          fields as a class scope so method decls reach the class-methods index
          (else they get fn_id [None; Some m] and find_methods misses them). *)

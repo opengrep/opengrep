@@ -203,7 +203,6 @@ and vof_name_info
 and vof_id_info
     {
       id_resolved = v_id_resolved;
-      id_resolved_alternatives = v_id_resolved_alts;
       id_type = v_id_type;
       id_instance_type = v_id_instance_type;
       id_callee_definition = v_id_callee_definition;
@@ -225,13 +224,6 @@ and vof_id_info
   let bnds = bnd :: bnds in
   let arg = OCaml.vof_ref (OCaml.vof_option vof_resolved_name) v_id_resolved in
   let bnd = ("id_resolved", arg) in
-  let bnds = bnd :: bnds in
-  let arg =
-    OCaml.vof_ref
-      (fun alts -> OCaml.vof_list vof_resolved_name alts)
-      v_id_resolved_alts
-  in
-  let bnd = ("id_resolved_alternative", arg) in
   let bnds = bnd :: bnds in
   let arg =
     OCaml.vof_ref
@@ -779,6 +771,7 @@ and vof_keyword_attribute = function
   | Abstract -> OCaml.VSum ("Abstract", [])
   | Final -> OCaml.VSum ("Final", [])
   | Override -> OCaml.VSum ("Override", [])
+  | Virtual -> OCaml.VSum ("Virtual", [])
   | Var -> OCaml.VSum ("Var", [])
   | Let -> OCaml.VSum ("Let", [])
   | Const -> OCaml.VSum ("Const", [])
@@ -1533,9 +1526,27 @@ and vof_directive_kind = function
   | Pragma (v1, v2) ->
       let v1 = vof_ident v1 and v2 = OCaml.vof_list vof_any v2 in
       OCaml.VSum ("Pragma", [ v1; v2 ])
+  | BuildConstraint (t, v1) ->
+      let t = vof_tok t in
+      let v1 = vof_build_constraint v1 in
+      OCaml.VSum ("BuildConstraint", [ t; v1 ])
   | OtherDirective (v1, v2) ->
       let v1 = vof_todo_kind v1 and v2 = OCaml.vof_list vof_any v2 in
       OCaml.VSum ("OtherDirective", [ v1; v2 ])
+
+and vof_build_constraint = function
+  | BuildTag v1 ->
+      let v1 = vof_ident v1 in
+      OCaml.VSum ("BuildTag", [ v1 ])
+  | BuildNot v1 ->
+      let v1 = vof_build_constraint v1 in
+      OCaml.VSum ("BuildNot", [ v1 ])
+  | BuildAnd (v1, v2) ->
+      let v1 = vof_build_constraint v1 and v2 = vof_build_constraint v2 in
+      OCaml.VSum ("BuildAnd", [ v1; v2 ])
+  | BuildOr (v1, v2) ->
+      let v1 = vof_build_constraint v1 and v2 = vof_build_constraint v2 in
+      OCaml.VSum ("BuildOr", [ v1; v2 ])
 
 and vof_alias (v1, v2) =
   let v1 = vof_ident v1 and v2 = OCaml.vof_option vof_ident_and_id_info v2 in

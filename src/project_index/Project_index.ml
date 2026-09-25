@@ -273,6 +273,7 @@ let written_text ((head : G.name), (rest : string list)) : string =
   String.concat "." (Class_table.qualified_path head @ rest)
 
 let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
+    ~(build_constraints : Go_build_constraints.t)
     ~(definitions_by_qn : definition Common.SMap.t) ~(entries : entry list)
     ~(admitted_classes : unit Common.SMap.t)
     ~(class_aliases : (Names.Class_qn.t * string * Func_info.t list) list)
@@ -370,6 +371,35 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
           (fun (qn : string) -> Hashtbl.replace reopened_qns qn ())
           (Scope_tbl.find_opt qn_of_scope id))
     collected;
+  let file_of_scope (id : Class_table.scope_id) : Fpath.t =
+    let _, (file : string), _, _ = G.SId.to_loc id.Class_table.scope_binding in
+    Fpath.v file
+  in
+  Hashtbl.iter
+    (fun (qn : string) (ids : Class_table.scope_id list) ->
+      let files =
+        List_.uniq_by Fpath.equal
+          (List.map file_of_scope
+             (List.filter (fun (id : Class_table.scope_id) -> Scope_tbl.mem defined id)
+                ids))
+      in
+      let rec never_together (files : Fpath.t list) : bool =
+        match files with
+        | [] -> true
+        | file :: others ->
+          List.for_all
+            (fun (other : Fpath.t) ->
+              not
+                (Go_build_constraints.files_compiled_together build_constraints
+                   [ file; other ]))
+            others
+          && never_together others
+      in
+      match files with
+      | _ :: _ :: _ when never_together files ->
+        Hashtbl.replace reopened_qns qn ()
+      | _ -> ())
+    scopes_of_qn;
   let group_of : int Scope_tbl.t = Scope_tbl.create 1024 in
   let members_of_group : (int, Class_table.class_scope list) Hashtbl.t =
     Hashtbl.create 1024
@@ -432,11 +462,22 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       : Class_table.scope_id option =
     unique_group (Option.value (Hashtbl.find_opt nested (owner, name)) ~default:[])
   in
+  let scopes_of (qn : Names.Class_qn.t) : Class_table.scope_id list =
+    Option.value
+      (Hashtbl.find_opt scopes_of_qn (Names.Class_qn.to_string qn))
+      ~default:[]
+  in
   let of_qn (qn : Names.Class_qn.t) : Class_table.scope_id option =
+    unique_group (scopes_of qn)
+  in
+  let of_qn_seen_from (lf : linked_file) (qn : Names.Class_qn.t)
+      : Class_table.scope_id option =
     unique_group
-      (Option.value
-         (Hashtbl.find_opt scopes_of_qn (Names.Class_qn.to_string qn))
-         ~default:[])
+      (List.filter
+         (fun (id : Class_table.scope_id) ->
+           Go_build_constraints.file_visible_from build_constraints
+             lf.lf_info.fi_file (file_of_scope id))
+         (scopes_of qn))
   in
   let class_of_module_path (lf : linked_file) (qn : Names.Module_qn.t)
       : Class_table.scope_id option =
@@ -467,7 +508,8 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     in
     match named_class with
     | Some (qn : Names.Class_qn.t) ->
-      Option.map (fun (id : Class_table.scope_id) -> Start_class id) (of_qn qn)
+      Option.map (fun (id : Class_table.scope_id) -> Start_class id)
+        (of_qn_seen_from lf qn)
     | None ->
       Option.map
         (fun (module_qn : Names.Module_qn.t) -> Start_module module_qn)
@@ -501,7 +543,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
           (fun (id : Class_table.scope_id) -> (Start_class id, []))
           (List.find_map
              (fun (prefix : string list) ->
-               of_qn (Names.Class_qn.of_parts (prefix @ path)))
+               of_qn_seen_from lf (Names.Class_qn.of_parts (prefix @ path)))
              (List.map Names.Module_qn.parts
                 (Func_lookup.own_modules lf.lf_lookup)
               @ [ [] ]))
@@ -563,7 +605,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
         match Func_lookup.module_attribute lf.lf_lookup module_qn segment with
         | Some (Func_lookup.Attr_class (qn : Names.Class_qn.t))
         | Some (Func_lookup.Attr_class_with_companion (qn, _)) ->
-          Option.bind (of_qn qn) (fun (id : Class_table.scope_id) ->
+          Option.bind (of_qn_seen_from lf qn) (fun (id : Class_table.scope_id) ->
             follow lf (Start_class id) rest)
         | Some (Func_lookup.Attr_module (submodule : Names.Module_qn.t)) ->
           follow lf (Start_module submodule) rest
@@ -808,6 +850,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   in
   let class_table =
     Class_table.build ~lang ~classes
+      ~compiled_together:(Go_build_constraints.compiled_together build_constraints)
       ~defined:(fun (scope : Class_table.class_scope) ->
         Scope_tbl.mem defined (Class_table.scope_id_of scope))
       ~link ~outside ~may_implement
@@ -1206,6 +1249,13 @@ let build_project_call_graph (caps : < Cap.fork >)
           | `Per_package -> Include_map.empty);
       module_scope;
       go_packages;
+      build_constraints =
+        (if Lang.equal lang Lang.Go then
+           timed "call graph: build constraints" (fun () ->
+             Go_build_constraints.of_files
+               (List.map (fun (fi : file_info) -> (fi.fi_file, fi.fi_ast))
+                  file_infos))
+         else Go_build_constraints.empty);
       top_level_scope =
         timed "call graph: top level constants" (fun () ->
           match cfg.Index_lang_rules.unqualified_scope with
@@ -1312,7 +1362,9 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let classes =
     timed "call graph: class table" @@ fun () ->
-    build_class_table ~lang ~cfg ~definitions_by_qn ~entries:indexed_entries
+    build_class_table ~lang ~cfg
+      ~build_constraints:pipeline_ctx.Pipeline.build_constraints
+      ~definitions_by_qn ~entries:indexed_entries
       ~admitted_classes
       ~class_aliases:(Scope_module.class_aliases_of module_scope)
       (List.filter_map
@@ -1515,13 +1567,16 @@ let build_project_call_graph (caps : < Cap.fork >)
       n_dispatch);
   (* Nominal override dispatch: a subclass method shadowing a body-less
      ancestor decl (abstract method).  Same edge shape as interface
-     dispatch (impl -> decl), so [dispatch_merge_fbdecl] and the
-     reachability dispatch closure treat both alike. *)
+     dispatch (impl -> decl), so the reachability dispatch closure treats
+     both alike. *)
   let override_pairs : (FA.func_info * FA.func_info) list =
     let arity (func : FA.func_info) : int =
       Receiver.arity lang ~is_method:(Receiver.is_method func.FA.fdef)
         ~is_static:(Receiver.is_static func.FA.entity)
         (Tok.unbracket func.FA.fdef.G.fparams)
+    in
+    let compiled_together =
+      Go_build_constraints.compiled_together pipeline_ctx.Pipeline.build_constraints
     in
     let declared_only (func : FA.func_info) : bool =
       match func.FA.fdef.G.fbody with
@@ -1542,16 +1597,26 @@ let build_project_call_graph (caps : < Cap.fork >)
                (pairs : (FA.func_info * FA.func_info) list) ->
             List.concat_map
               (fun (ancestor : Class_table.cls) ->
-                List.filter_map
+                List.concat_map
                   (fun (declared : FA.func_info) ->
                     if declared_only declared then
-                      Option.map
+                      List.map
                         (fun (overriding : FA.func_info) -> (overriding, declared))
-                        (List.find_opt
-                           (fun (overriding : FA.func_info) ->
-                             Int.equal (arity overriding) (arity declared))
-                           own)
-                    else None)
+                        (List.fold_left
+                           (fun (kept : FA.func_info list)
+                                (overriding : FA.func_info) ->
+                             if
+                               Int.equal (arity overriding) (arity declared)
+                               && compiled_together [ overriding; declared ]
+                               && not
+                                    (List.exists
+                                       (fun (earlier : FA.func_info) ->
+                                         compiled_together [ earlier; overriding ])
+                                       kept)
+                             then kept @ [ overriding ]
+                             else kept)
+                           [] own)
+                    else [])
                   (Class_table.own_members ancestor name))
               ancestors
             @ pairs)

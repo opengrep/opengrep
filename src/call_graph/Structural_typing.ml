@@ -118,11 +118,3 @@ let method_satisfies ~(lang : Lang.t) ~(equal_type : equal_type)
   && Int.equal (method_arity ~lang required) (method_arity ~lang candidate)
   && returns_compatible ~equal_type required candidate
   && params_compatible ~equal_type required candidate
-
-let satisfies ~(lang : Lang.t) ~(equal_type : equal_type)
-    ~(interface : method_ list) ~(candidate : method_ list) : bool =
-  (not (List_.null interface))
-  && List.for_all
-       (fun (required : method_) ->
-         List.exists (method_satisfies ~lang ~equal_type ~required) candidate)
-       interface

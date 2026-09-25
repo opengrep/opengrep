@@ -132,7 +132,6 @@ and map_id_info x =
   match x with
   | {
    G.id_resolved = v_id_resolved;
-   id_resolved_alternatives = _not_available_in_v1_;
    id_type = v_id_type;
    id_instance_type = _not_available_in_v1__;
    id_callee_definition = _not_available_in_v1___;
@@ -700,6 +699,7 @@ and map_keyword_attribute = function
   | Abstract -> Left `Abstract
   | Final -> Left `Final
   | Override -> Left `Override
+  | Virtual -> Right "virtual"
   | Var -> Left `Var
   | Let -> Left `Let
   | Mutable -> Left `Mutable
@@ -1325,10 +1325,25 @@ and map_directive_kind = function
   | PackageEnd t ->
       let t = map_tok t in
       `PackageEnd t
+  | BuildConstraint (t, v1) ->
+      let v1 = map_build_constraint t v1 in
+      `OtherDirective (("BuildConstraint", map_tok t), [ v1 ])
   | OtherDirective (v1, v2) ->
       let v1 = map_todo_kind v1 in
       let v2 = map_of_list map_any v2 in
       `OtherDirective (v1, v2)
+
+and map_build_constraint (t : tok) (condition : build_constraint) : B.any =
+  let operator (name : string) (operands : build_constraint list) : B.any =
+    `Anys
+      (`TodoK (name, map_tok t)
+      :: map_of_list (map_build_constraint t) operands)
+  in
+  match condition with
+  | BuildTag v1 -> `I (map_ident v1)
+  | BuildNot v1 -> operator "BuildNot" [ v1 ]
+  | BuildAnd (v1, v2) -> operator "BuildAnd" [ v1; v2 ]
+  | BuildOr (v1, v2) -> operator "BuildOr" [ v1; v2 ]
 
 and map_ident_and_id_info (v1, v2) =
   let v1 = map_ident v1 in

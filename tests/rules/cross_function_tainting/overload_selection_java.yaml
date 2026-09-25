@@ -1,0 +1,13 @@
+rules:
+  - id: overload_selection_java
+    message: a call reaches the overload its arguments select
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

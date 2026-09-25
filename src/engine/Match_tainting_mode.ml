@@ -289,14 +289,14 @@ let pms_of_effects ~lang ~match_on (effects : Effects.t) : PM.t list =
 (* Analyse a function from a pre-built [IL.fun_cfg]. *)
 let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t)
     (shared_tables : Taint_shared_tables.t) (name : IL.name)
-    ?glob_env ?class_name ?signature_db ?builtin_signature_db ?call_graph
+    ?glob_env ?class_name ?signature_db ?builtin_signature_db
     (fcfg : IL.fun_cfg) =
   let in_env, env_effects =
     Taint_input_env.mk_fun_input_env taint_inst shared_tables ?glob_env fcfg.IL.params
   in
   let effects, mapping =
     Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env ~name ?class_name
-      ?signature_db ?builtin_signature_db ?call_graph fcfg
+      ?signature_db ?builtin_signature_db fcfg
   in
   let effects = Effects.union env_effects effects in
   (fcfg, effects, mapping)
@@ -304,9 +304,9 @@ let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t)
 (* [check_fundef_with_cfg] on a freshly-lowered [fdef]. *)
 let check_fundef (taint_inst : Taint_rule_inst.t)
     (shared_tables : Taint_shared_tables.t) (name : IL.name) ?glob_env
-    ?class_name ?signature_db ?builtin_signature_db ?call_graph fdef =
+    ?class_name ?signature_db ?builtin_signature_db fdef =
   check_fundef_with_cfg taint_inst shared_tables name ?glob_env ?class_name ?signature_db
-    ?builtin_signature_db ?call_graph (CFG_build.cfg_of_gfdef taint_inst.lang fdef)
+    ?builtin_signature_db (CFG_build.cfg_of_gfdef taint_inst.lang fdef)
 
 (* The implicit receiver is reached as [BThis] not [BArg], so stripping it
    keeps [BArg] indices aligned. *)
@@ -445,7 +445,6 @@ let build_info_map
    (returning [None]) so callers lose the signature entirely. *)
 let extract_signatures
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option)
     ~(lang : Lang.t)
     ~(db : Shape_and_sig.signature_database)
     ~(taint_inst : Taint_rule_inst.t)
@@ -468,7 +467,7 @@ let extract_signatures
     Taint_signature_extractor.extract_signature_with_file_context
       ~arity:arity_t ~db ?builtin_signature_db taint_inst shared_tables
       ~name:info.name
-      ~method_properties:info.method_properties ~call_graph:call_graph
+      ~method_properties:info.method_properties
       sig_cfg
   in
   let fresh = [ to_ext (sig_, arity_t) ] in
@@ -481,7 +480,7 @@ let extract_signatures
           Taint_signature_extractor.extract_signature_with_file_context
             ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst shared_tables
             ~name:info.name ~method_properties:info.method_properties
-            ~call_graph:call_graph sig_cfg
+            sig_cfg
         in
         (db'', fresh @ [ to_ext (sig_', arity_t') ])
     | _ -> (db', fresh)
@@ -489,7 +488,6 @@ let extract_signatures
 
 let extract_and_check
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option)
     ?(glob_env : Lval_env.t option)
     ~(lang : Lang.t)
     ~(db : Shape_and_sig.signature_database)
@@ -500,7 +498,7 @@ let extract_and_check
     (info : fun_info)
     : Shape_and_sig.signature_database * PM.t list =
   let updated_db, _fresh_sigs =
-    extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
+    extract_signatures ?builtin_signature_db ~lang ~db
       ~taint_inst ~shared_tables info
   in
   (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
@@ -538,7 +536,6 @@ let extract_and_check
       check_fundef_with_cfg taint_inst shared_tables info.name
         ?glob_env ?class_name:info.class_name_str
         ~signature_db:updated_db ?builtin_signature_db
-        ?call_graph
         info.cfg
     in
     let effects_to_record =
@@ -549,13 +546,25 @@ let extract_and_check
     let findings = pms_of_effects ~lang ~match_on effects_to_record in
     (updated_db, findings)
 
-(* Class-body initialisers/static blocks aren't call-graph functions.  CFG build is lang+AST only, so it's split out for multi-rule reuse. *)
-let build_class_init_cfgs (lang : Lang.t) (ast : G.program)
+(* Class-body initialisers/static blocks aren't call-graph functions, except the class initialiser of a language whose class header is the constructor, which the function passes analyse when [initialisers_are_functions].  CFG build is lang+AST only, so it's split out for multi-rule reuse. *)
+let build_class_init_cfgs ~(initialisers_are_functions : bool)
+    (lang : Lang.t) (ast : G.program)
     : (IL.name option * IL.fun_cfg) list =
   let acc = ref [] in
+  let analysed_as_function (opt_ent : G.entity option)
+      (cdef : G.class_definition) : bool =
+    initialisers_are_functions
+    && Lang_config.class_header_is_constructor lang
+    &&
+    match opt_ent with
+    | Some ent ->
+        Option.is_some (Visit_function_defs.initialised_class_name ent cdef)
+    | None -> false
+  in
   Visit_class_defs.visit
     (fun (opt_ent : G.entity option)
       (cdef : G.class_definition) ->
+      if not (analysed_as_function opt_ent cdef) then
       let opt_name =
         let* ent = opt_ent in
         AST_to_IL.name_of_entity ent
@@ -577,14 +586,12 @@ let check_class_inits_prebuilt
     (cfgs : (IL.name option * IL.fun_cfg) list)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
   List.fold_left
     (fun acc (opt_name, fun_cfg) ->
       let init_effects, _mapping =
         Dataflow_tainting.fixpoint taint_inst shared_tables ?name:opt_name
           ?signature_db ?builtin_signature_db
-          ?call_graph
           fun_cfg
       in
       Shape_and_sig.Effects.union init_effects acc)
@@ -596,11 +603,12 @@ let check_class_inits
     (ast : G.program)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
   check_class_inits_prebuilt taint_inst shared_tables
-    (build_class_init_cfgs taint_inst.lang ast)
-    ?signature_db ?builtin_signature_db ?call_graph ()
+    (build_class_init_cfgs
+       ~initialisers_are_functions:taint_inst.options.taint_intrafile
+       taint_inst.lang ast)
+    ?signature_db ?builtin_signature_db ()
 
 (* Check the top-level statements.
  * In scripting languages it is not unusual to write code outside
@@ -618,12 +626,10 @@ let check_top_level_prebuilt
     ((top_level_name, fun_cfg) : IL.name * IL.fun_cfg)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
   let top_effects, _mapping =
     Dataflow_tainting.fixpoint taint_inst shared_tables ~name:top_level_name
       ?signature_db ?builtin_signature_db
-      ?call_graph
       fun_cfg
   in
   top_effects
@@ -634,11 +640,10 @@ let check_top_level
     (ast : G.program)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option)
     () : Shape_and_sig.Effects.t =
   check_top_level_prebuilt taint_inst shared_tables
     (build_top_level_cfg taint_inst.lang ast)
-    ?signature_db ?builtin_signature_db ?call_graph ()
+    ?signature_db ?builtin_signature_db ()
 
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ~(shared_tables : Taint_shared_tables.t)
@@ -701,7 +706,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst shared_tables ast in
       let glob_matches = pms_of_effects ~lang ~match_on glob_effects in
 
-      let final_signature_db, relevant_graph, branch_matches =
+      let final_signature_db, branch_matches =
         if taint_inst.options.taint_intrafile then (
           let call_graph =
             match local_ast_call_graph with
@@ -794,7 +799,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             | Some info ->
               let db', fresh =
                 extract_signatures ?builtin_signature_db
-                  ~call_graph:relevant_graph ~lang ~db
+                  ~lang ~db
                   ~taint_inst:(taint_inst_of node) ~shared_tables info
               in
               Sig_fixpoint.store node fresh db'
@@ -819,7 +824,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                      [Interfile_dispatch.topo_fold]. *)
                   let _db, findings =
                     extract_and_check ?builtin_signature_db
-                      ~call_graph:relevant_graph ~glob_env ~lang
+                      ~glob_env ~lang
                       ~db:signature_db_after_order ~match_on
                       ~taint_inst:(taint_inst_of node) ~shared_tables
                       ~detect_findings:true info
@@ -833,7 +838,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   List.rev_append findings ms)
               [] analysis_order
           in
-          (Some signature_db_after_order, Some relevant_graph, topo_matches))
+          (Some signature_db_after_order, topo_matches))
         else (
           (* Cross-function taint analysis disabled: use main branch behavior *)
           let fdef_matches = ref [] in
@@ -872,13 +877,13 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                           (pms_of_effects ~lang ~match_on fdef_effects)
                           !fdef_matches)
             ast;
-          (None, None, !fdef_matches))
+          (None, !fdef_matches))
       in
 
       let class_init_effects =
         check_class_inits taint_inst shared_tables ast
           ?signature_db:final_signature_db ?builtin_signature_db
-          ?call_graph:relevant_graph ()
+          ()
       in
       let class_init_matches =
         pms_of_effects ~lang ~match_on class_init_effects
@@ -888,7 +893,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         let top_effects =
           check_top_level taint_inst shared_tables ast
             ?signature_db:final_signature_db ?builtin_signature_db
-            ?call_graph:relevant_graph ()
+            ()
         in
         pms_of_effects ~lang ~match_on top_effects
       in

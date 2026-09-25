@@ -64,6 +64,13 @@ let parse filename =
     let xs =
       Profiling.profile_code "Parser_go.file" (fun () ->
           Parser_go.file lexer lexbuf_fake)
+      |> Build_constraint_go.with_header_constraints
+           (List.filter_map
+              (fun (tok : Parser_go.token) ->
+                match tok with
+                | Parser_go.TComment ii -> Some (Tok.content_of_tok ii, ii)
+                | _ -> None)
+              toks_orig)
     in
     {
       Parsing_result.ast = xs;

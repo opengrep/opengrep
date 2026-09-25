@@ -42,7 +42,9 @@ type bound_in_scope = {
   bs_kinds : Func_lookup.scope_kind list;
 }
 
-let bindings_of_positioned (bindings : positioned_binding list)
+let bindings_joined_when
+    ~(joined : bound_in_scope -> positioned_binding -> bool)
+    (bindings : positioned_binding list)
     : Func_lookup.scope_entry list Common.SMap.t =
   let in_file_order =
     List.stable_sort
@@ -64,8 +66,7 @@ let bindings_of_positioned (bindings : positioned_binding list)
       in
       let bound_now =
         match same_scope with
-        | [ (earlier : bound_in_scope) ]
-          when Option.equal Pos.equal earlier.bs_pos binding.pb_pos ->
+        | [ (earlier : bound_in_scope) ] when joined earlier binding ->
           { earlier with bs_kinds = earlier.bs_kinds @ binding.pb_kinds }
         | _ ->
           { bs_pos = binding.pb_pos; bs_parent_path = binding.pb_parent_path;
@@ -82,6 +83,26 @@ let bindings_of_positioned (bindings : positioned_binding list)
                  { Func_lookup.kind; parent_path = entry.bs_parent_path })
                entry.bs_kinds)
            in_name)
+
+let same_position (earlier : bound_in_scope) (binding : positioned_binding) :
+    bool =
+  Option.equal Pos.equal earlier.bs_pos binding.pb_pos
+
+let bindings_of_positioned (bindings : positioned_binding list)
+    : Func_lookup.scope_entry list Common.SMap.t =
+  bindings_joined_when ~joined:same_position bindings
+
+let bindings_of_package_block (bindings : positioned_binding list)
+    : Func_lookup.scope_entry list Common.SMap.t =
+  bindings_joined_when
+    ~joined:(fun (earlier : bound_in_scope) (binding : positioned_binding) ->
+      same_position earlier binding
+      ||
+      match (earlier.bs_pos, binding.pb_pos) with
+      | Some (earlier_pos : Pos.t), Some (pos : Pos.t) ->
+        not (Fpath.equal earlier_pos.Pos.file pos.Pos.file)
+      | _ -> false)
+    bindings
 
 let enclosing_scope_of_class
     ~(class_parent_paths :

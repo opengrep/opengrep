@@ -1,0 +1,13 @@
+rules:
+  - id: this_call_virtual_csharp
+    message: a call on this reaches an override only when the method is virtual
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

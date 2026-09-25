@@ -23,8 +23,6 @@ rule.yml
                                              (N
                                                 (Id (("$X", ()),
                                                    { id_resolved = ref (None);
-                                                     id_resolved_alternatives =
-                                                     ref ([]);
                                                      id_type = ref (None);
                                                      id_instance_type =
                                                      ref (None);
@@ -42,8 +40,6 @@ rule.yml
                                                  (Id (("$X", ()),
                                                     { id_resolved =
                                                       ref (None);
-                                                      id_resolved_alternatives =
-                                                      ref ([]);
                                                       id_type = ref (None);
                                                       id_instance_type =
                                                       ref (None);

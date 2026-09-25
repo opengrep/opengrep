@@ -742,7 +742,6 @@ and m_id_info a b =
   match (a, b) with
   | ( {
         G.id_resolved = _a1;
-        id_resolved_alternatives = _a2;
         id_type = _a3;
         id_instance_type = _a_instance_type;
         id_callee_definition = _a_callee_definition;
@@ -751,7 +750,6 @@ and m_id_info a b =
       },
       {
         B.id_resolved = _b1;
-        id_resolved_alternatives = _b2;
         id_type = _b3;
         id_instance_type = _b_instance_type;
         id_callee_definition = _b_callee_definition;
@@ -3862,6 +3860,7 @@ and m_directive a b =
   | G.Package _
   | G.PackageEnd _
   | G.Pragma _
+  | G.BuildConstraint _
   | G.OtherDirective _ ->
       fail ()
 
@@ -4021,7 +4020,8 @@ and m_directive_basic a b =
   | G.Pragma _, _
   | G.ImportAll _, _
   | G.Package _, _
-  | G.PackageEnd _, _ ->
+  | G.PackageEnd _, _
+  | G.BuildConstraint _, _ ->
       fail ()
 
 and m_normalized_imports a b =
