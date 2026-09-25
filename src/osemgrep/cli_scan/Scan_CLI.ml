@@ -693,6 +693,26 @@ let o_taint_interfile : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
+let o_disable_intrafile : bool Term.t =
+  let info =
+    Arg.info [ "disable-intrafile" ]
+      ~doc:
+        ("Disable intra-file inter-procedural taint analysis, even for rules \
+          that enable it with the taint_intrafile option. Also disables \
+          cross-file taint analysis.")
+  in
+  Arg.value (Arg.flag info)
+
+let o_disable_interfile : bool Term.t =
+  let info =
+    Arg.info [ "disable-interfile" ]
+      ~doc:
+        ("Disable cross-file taint analysis, even for rules that enable it \
+          with the taint_interfile option. Rules that enable it keep \
+          intra-file inter-procedural taint analysis.")
+  in
+  Arg.value (Arg.flag info)
+
 let o_taint_interfile_depth : int Term.t =
   let info =
     Arg.info [ "taint-interfile-depth" ]
@@ -1286,7 +1306,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       max_target_bytes
       num_jobs nosem opengrep_ignore_pattern optimizations
       output output_enclosing_context pattern project_root taint_interfile
-      taint_interfile_depth taint_intrafile
+      taint_interfile_depth taint_intrafile disable_intrafile disable_interfile
       effect_guards replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
       skip_invalid_configs
@@ -1370,6 +1390,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           rule_source_conf ~config ~pattern ~lang ~replacement
             ~allow_empty_config ~maturity:common.maturity
     in
+    let taint_intrafile, taint_interfile =
+      Core_runner.effective_taint_modes ~disable_intrafile ~disable_interfile
+        ~intrafile:taint_intrafile ~interfile:taint_interfile
+    in
     let core_runner_conf : Core_runner.conf =
       {
         Core_runner.num_jobs;
@@ -1391,12 +1415,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         time_flag;
         inline_metavariables;
         matching_explanations;
-        (* taint_interfile implies taint_intrafile; enforced in
-           Core_scan.scan. *)
         taint_intrafile;
         effect_guards;
         taint_interfile;
         taint_interfile_depth;
+        disable_intrafile;
+        disable_interfile;
         interfile_dedup_by;
         engine_config;
       }
@@ -1531,6 +1555,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
     $ o_taint_interfile $ o_taint_interfile_depth $ o_taint_intrafile
+    $ o_disable_intrafile $ o_disable_interfile
     $ o_effect_guards
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions

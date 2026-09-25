@@ -503,6 +503,102 @@ let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
           in
           Exit_code.Check.ok exit_code))
 
+(* The mode each taint rule option ends up in under every combination of
+   --taint-intrafile/--taint-interfile and --disable-intrafile/
+   --disable-interfile. intra.py has a flow only intrafile finds, and
+   main.py -> sinks.py one only interfile finds. *)
+let test_disable_taint_modes (caps : Scan_subcommand.caps) () =
+  let rule (id : string) (options : string) =
+    spf {|  - id: %s
+    mode: taint
+%s    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: m
+    languages: [python]
+    severity: ERROR
+|} id options
+  in
+  let rules =
+    "rules:\n"
+    ^ rule "no-option" ""
+    ^ rule "intrafile-option" "    options:\n      taint_intrafile: true\n"
+    ^ rule "interfile-option" "    options:\n      taint_interfile: true\n"
+  in
+  let intra_py = {|
+def get():
+    return source()
+
+def use(x):
+    sink(x)
+
+def go():
+    use(get())
+|} in
+  let files_of_mode (mode : string) : string list =
+    match mode with
+    | "none" -> []
+    | "intrafile" -> [ "intra.py" ]
+    | "interfile" -> [ "intra.py"; "sinks.py" ]
+    | _ -> failwith mode
+  in
+  (* (flags, modes of no-option, intrafile-option, interfile-option) *)
+  let cases : (string list * (string * string * string)) list =
+    [
+      ([], ("none", "intrafile", "interfile"));
+      ([ "--disable-interfile" ], ("none", "intrafile", "intrafile"));
+      ([ "--disable-intrafile" ], ("none", "none", "none"));
+      ([ "--taint-intrafile" ], ("intrafile", "intrafile", "interfile"));
+      ([ "--taint-intrafile"; "--disable-interfile" ],
+       ("intrafile", "intrafile", "intrafile"));
+      ([ "--taint-intrafile"; "--disable-intrafile" ], ("none", "none", "none"));
+      ([ "--taint-interfile" ], ("interfile", "interfile", "interfile"));
+      ([ "--taint-interfile"; "--disable-interfile" ],
+       ("intrafile", "intrafile", "intrafile"));
+      ([ "--taint-interfile"; "--disable-intrafile" ], ("none", "none", "none"));
+    ]
+  in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", rules);
+          F.File ("intra.py", intra_py);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        (fun _cwd ->
+          cases
+          |> List.iter (fun ((flags : string list), (no_opt, intra, inter)) ->
+                 let (), stdout_output =
+                   Testo.with_capture stdout (fun () ->
+                       without_settings (fun () ->
+                           Scan_subcommand.main caps
+                             (Array.of_list
+                                ([ "opengrep-scan"; "--experimental";
+                                   "--config"; "rules.yml"; "--json" ]
+                                @ flags)))
+                       |> ignore)
+                 in
+                 let out =
+                   Semgrep_output_v1_j.cli_output_of_string stdout_output
+                 in
+                 let files_of_rule (id : string) : string list =
+                   out.results
+                   |> List.filter (fun (m : Semgrep_output_v1_t.cli_match) ->
+                          String.equal (Rule_ID.to_string m.check_id) id)
+                   |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                          Fpath.to_string m.path)
+                   |> List.sort String.compare
+                 in
+                 [ ("no-option", no_opt); ("intrafile-option", intra);
+                   ("interfile-option", inter) ]
+                 |> List.iter (fun ((id : string), (mode : string)) ->
+                        Alcotest.(check (list string))
+                          (spf "%s with [%s] runs %s" id
+                             (String.concat " " flags) mode)
+                          (files_of_mode mode) (files_of_rule id)))))
+
 (* A self-recursive builder stores its own result under six fields of a
    fresh object. Its stored return shape is a six-way tree, and every
    fixpoint round grows it one level: cut at the depth a lookup can reach,
@@ -2890,6 +2986,8 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile findings with --incremental-output"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_incremental_output caps);
+      t "--disable-intrafile and --disable-interfile against the taint flags \
+         and rule options" (test_disable_taint_modes caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);
