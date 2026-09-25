@@ -326,7 +326,7 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
     if Tok.is_fake tok && not allow_located_fake then None
     else (
       try
-        let file = Fpath.to_string (Tok.file_of_tok tok) in
+        let file = Fpath.to_string (Fpath.normalize (Tok.file_of_tok tok)) in
         let sid =
           (* The definition's own sid, when naming bound it, so that a
              stamp equals the definition's identity. An alias-synthetic

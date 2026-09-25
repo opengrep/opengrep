@@ -10,13 +10,7 @@ module SId_tbl = Class_table.SId_tbl
 module Scope_tbl = Class_table.Scope_tbl
 module Field_path_map = Class_table.Field_path_map
 
-(* a definition is itself, not an equal copy *)
-module Fdef_tbl = Hashtbl.Make (struct
-  type t = G.function_definition
-
-  let equal = ( == )
-  let hash (fdef : t) = Hashtbl.hash (snd fdef.G.fkind)
-end)
+module Fdef_tbl = Class_table.Fdef_tbl
 
 module Node_tbl = Hashtbl.Make (struct
   type t = Function_id.t
@@ -177,6 +171,43 @@ let holds_function_value (e : G.expr) : bool =
       true
   | _ -> false
 
+module Defining_key = struct
+  type t = {
+    side : Class_parents.side;
+    name : string;
+    classes : int list;
+  }
+
+  let equal_side (left : Class_parents.side) (right : Class_parents.side) :
+      bool =
+    match (left, right) with
+    | Class_parents.Instance_side, Class_parents.Instance_side
+    | Class_parents.Class_side, Class_parents.Class_side ->
+        true
+    | (Class_parents.Instance_side | Class_parents.Class_side), _ -> false
+
+  let equal (left : t) (right : t) : bool =
+    equal_side left.side right.side
+    && String.equal left.name right.name
+    && List.equal Int.equal left.classes right.classes
+
+  let hash (key : t) : int = Hashtbl.hash (key.side, key.name, key.classes)
+end
+
+module Defining_tbl = Hashtbl.Make (Defining_key)
+
+module Member_key = struct
+  type t = int * string
+
+  let equal (((left_class : int), (left_name : string)) : t)
+      (((right_class : int), (right_name : string)) : t) : bool =
+    Int.equal left_class right_class && String.equal left_name right_name
+
+  let hash (key : t) : int = Hashtbl.hash key
+end
+
+module Member_tbl = Hashtbl.Make (Member_key)
+
 type t = {
   lang : Lang.t;
   functions : Func_info.t list SId_tbl.t;
@@ -200,6 +231,8 @@ type t = {
   outside : t -> caller:Function_id.t option -> G.expr -> resolution;
   types : Type_state.t;
   declared_types : (G.SId.t * G.SId.t option, receiver_class) Hashtbl.t;
+  defining : (Class_table.cls * Func_info.t list) option Defining_tbl.t;
+  overriding : Func_info.t list Member_tbl.t;
 }
 
 let binding_of_id_info = Class_table.binding_of_id_info
@@ -248,6 +281,8 @@ let member_name (func : Func_info.t) : string option =
 
 let same_definition (left : Func_info.t) (right : Func_info.t) : bool =
   left.Func_info.fdef == right.Func_info.fdef
+
+let distinct_definitions = Class_table.distinct_definitions
 
 (* JavaScript: [C.prototype.m = ...] defines a method of the instances [C]
    constructs. *)
@@ -1050,6 +1085,8 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     outside = (fun (_ : t) ~caller:_ (_ : G.expr) -> External);
     types = Type_state.empty;
     declared_types = Hashtbl.create 64;
+    defining = Defining_tbl.create 64;
+    overriding = Member_tbl.create 64;
   }
 
 let functions_of_binding (t : t) (sid : G.SId.t) : Func_info.t list =
@@ -1083,9 +1120,6 @@ let unbound_receivers (t : t) : (receiver_role * G.name * Func_info.t list) list
 
 let class_table (t : t) : Class_table.t = t.classes
 
-let is_class_binding (t : t) (sid : G.SId.t) : bool =
-  Option.is_some (Class_table.class_of_binding t.classes sid)
-
 let with_project (t : t) (classes : Class_table.t)
     ~(extension_visible : string -> Func_info.t -> bool)
     ~(compiled_with_file : Func_info.t -> bool)
@@ -1097,11 +1131,21 @@ let with_project (t : t) (classes : Class_table.t)
     compiled_with_file;
     outside;
     declared_types = Hashtbl.create 64;
+    defining = Defining_tbl.create 64;
+    overriding = Member_tbl.create 64;
   }
 
 let order (t : t) (cls : Class_table.cls) :
     Class_table.cls Linearisation.linearisation =
   Class_table.order t.classes cls
+
+let is_subclass (t : t) (sub : Class_table.cls) (super : Class_table.cls) :
+    bool option =
+  let linearisation = order t sub in
+  if List.exists (Class_table.same super) linearisation.Linearisation.order then
+    Some true
+  else if linearisation.Linearisation.complete then Some false
+  else None
 
 let own_members (t : t) (cls : Class_table.cls) (name : string) :
     Func_info.t list =
@@ -1159,17 +1203,29 @@ let visible_overloads (t : t) (side : Class_parents.side)
           (own_members_on t side cls name))
     nearer farther
 
-let rec first_defining_on (t : t) (side : Class_parents.side)
+let first_defining_on (t : t) (side : Class_parents.side)
     (classes : Class_table.cls list) (name : string) :
     (Class_table.cls * Func_info.t list) option =
-  match classes with
-  | [] -> None
-  | cls :: farther -> (
-      match own_members_on t side cls name with
-      | [] -> first_defining_on t side farther name
-      | defined when Lang_config.overloads_by_type t.lang ->
-          Some (cls, visible_overloads t side ~nearer:defined farther name)
-      | defined -> Some (cls, defined))
+  let rec search (classes : Class_table.cls list) :
+      (Class_table.cls * Func_info.t list) option =
+    match classes with
+    | [] -> None
+    | cls :: farther -> (
+        match own_members_on t side cls name with
+        | [] -> search farther
+        | defined when Lang_config.overloads_by_type t.lang ->
+            Some (cls, visible_overloads t side ~nearer:defined farther name)
+        | defined -> Some (cls, defined))
+  in
+  let key =
+    { Defining_key.side; name; classes = List.map Class_table.index classes }
+  in
+  match Defining_tbl.find_opt t.defining key with
+  | Some (found : (Class_table.cls * Func_info.t list) option) -> found
+  | None ->
+      let found = search classes in
+      Defining_tbl.replace t.defining key found;
+      found
 
 let after (cls : Class_table.cls) (classes : Class_table.cls list) :
     Class_table.cls list =
@@ -1253,7 +1309,7 @@ let instance_fields_along (classes : Class_table.cls list) (path : string list)
   List.concat_map
     (fun (ancestor : Class_table.cls) -> Class_table.instance_fields ancestor path)
     classes
-  |> List_.uniq_by same_definition
+  |> distinct_definitions
 
 let trait_impl_members (t : t) (cls : Class_table.cls) (name : string) :
     Func_info.t list =
@@ -1266,7 +1322,7 @@ let trait_impl_members (t : t) (cls : Class_table.cls) (name : string) :
          with
          | Some (_, defined) -> defined
          | None -> [])
-  |> List_.uniq_by same_definition
+  |> distinct_definitions
 
 let selected_on_instance (t : t) (cls : Class_table.cls)
     (definer : Class_table.cls) (defined : Func_info.t list) (name : string) :
@@ -1279,16 +1335,25 @@ let selected_on_instance (t : t) (cls : Class_table.cls)
 
 let overrides (t : t) (cls : Class_table.cls) (name : string) :
     Func_info.t list =
-  List.concat_map
-    (fun (sub : Class_table.cls) ->
-      match
-        first_defining_on t Class_parents.Instance_side
-          (order t sub).Linearisation.order name
-      with
-      | Some (definer, defined) -> selected_on_instance t sub definer defined name
-      | None -> [])
-    (descendants t cls)
-  |> List_.uniq_by same_definition
+  let key = (Class_table.index cls, name) in
+  match Member_tbl.find_opt t.overriding key with
+  | Some (found : Func_info.t list) -> found
+  | None ->
+      let found =
+        List.concat_map
+          (fun (sub : Class_table.cls) ->
+            match
+              first_defining_on t Class_parents.Instance_side
+                (order t sub).Linearisation.order name
+            with
+            | Some (definer, defined) ->
+                selected_on_instance t sub definer defined name
+            | None -> [])
+          (descendants t cls)
+        |> distinct_definitions
+      in
+      Member_tbl.replace t.overriding key found;
+      found
 
 let found_in_descendants (t : t) (cls : Class_table.cls) : bool =
   Class_table.is_abstraction cls
@@ -1314,21 +1379,21 @@ let select_on_instance (t : t) (cls : Class_table.cls) ~(dispatch : bool)
           overrides t cls name
         else []
       in
-      Defined (List_.uniq_by same_definition (defined @ overriding @ fields))
+      Defined (distinct_definitions (defined @ overriding @ fields))
   | None when not linearisation.Linearisation.complete -> (
       match fields with
       | [] -> External
-      | _ :: _ -> Defined (List_.uniq_by same_definition fields))
+      | _ :: _ -> Defined (distinct_definitions fields))
   | None -> (
       match
         if dispatch && found_in_descendants t cls then overrides t cls name
         else []
       with
       | _ :: _ as inherited ->
-          Defined (List_.uniq_by same_definition (fields @ inherited))
+          Defined (distinct_definitions (fields @ inherited))
       | [] -> (
           match fields @ root_members t name with
-          | _ :: _ as found -> Defined (List_.uniq_by same_definition found)
+          | _ :: _ as found -> Defined (distinct_definitions found)
           | [] -> (
               match root_resolution t name with
               | Defined _ -> extension_along t classes name
@@ -1367,7 +1432,7 @@ let select_on_class_side (t : t) (cls : Class_table.cls) (name : string) :
   let object_fields = Class_table.object_fields cls [ name ] in
   match (along linearisation.Linearisation.order, object_fields) with
   | Defined defined, _ ->
-      Defined (List_.uniq_by same_definition (defined @ object_fields))
+      Defined (distinct_definitions (defined @ object_fields))
   | External, [] -> External
   | External, (_ :: _ as found) -> Defined found
 
@@ -1440,13 +1505,13 @@ let rec resolve_path (t : t) (receiver : receiver_class) (path : string list) :
       | [], [ name ], Of_class cls -> (
           match select_on_instance t cls ~dispatch:true name with
           | Defined defined ->
-              Defined (List_.uniq_by same_definition (fields @ defined))
+              Defined (distinct_definitions (fields @ defined))
           | External -> fields_else_external fields)
       | [], [ _ ], (Of_external_class | Of_unknown_class) ->
           fields_else_external fields
       | [], _, Of_class cls ->
           through_field
-            (List_.uniq_by same_definition
+            (distinct_definitions
                (fields
                @ instance_fields_along (order t cls).Linearisation.order path))
       | _, _, (Of_class _ | Of_external_class | Of_unknown_class) ->
@@ -1581,18 +1646,29 @@ let method_class (t : t) (func : Func_info.t) : Class_table.cls option =
       None
 
 let with_overrides (t : t) (defined : Func_info.t list) : Func_info.t list =
-  List_.uniq_by same_definition
+  let dispatched =
+    List.fold_left
+      (fun (groups : (Class_table.cls * string) list) (func : Func_info.t) ->
+        match (method_class t func, member_name func) with
+        | Some cls, Some name
+          when List.exists (same_definition func)
+                 (Class_table.own_members cls name)
+               && dispatches t cls [ func ] name ->
+            if
+              List.exists
+                (fun ((seen : Class_table.cls), (seen_name : string)) ->
+                  Class_table.same seen cls && String.equal seen_name name)
+                groups
+            then groups
+            else (cls, name) :: groups
+        | _ -> groups)
+      [] defined
+  in
+  distinct_definitions
     (defined
     @ List.concat_map
-        (fun (func : Func_info.t) ->
-          match (method_class t func, member_name func) with
-          | Some cls, Some name
-            when List.exists (same_definition func)
-                   (Class_table.own_members cls name)
-                 && dispatches t cls [ func ] name ->
-              overrides t cls name
-          | _ -> [])
-        defined)
+        (fun ((cls : Class_table.cls), (name : string)) -> overrides t cls name)
+        (List.rev dispatched))
 
 let classes_at (t : t) (path : string list) : Class_table.cls list =
   Path_tbl.find_all t.qualified_classes path
@@ -1831,7 +1907,7 @@ let joined_resolutions (resolutions : resolution list) : resolution =
       | _, External ->
           External
       | Defined left, Defined right ->
-          Defined (List_.uniq_by same_definition (left @ right)))
+          Defined (distinct_definitions (left @ right)))
     (Defined []) resolutions
 
 let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
@@ -2123,6 +2199,14 @@ let class_of_expr (t : t) ~(caller : Function_id.t option) (e : G.expr) :
 let class_of_declared_type (t : t) ~(context : scope_id option) (ty : G.type_)
     : Class_table.cls option =
   class_of_receiver (class_of_type t ~context ty)
+
+let class_of_type_written_in (t : t) ~(written_in : Function_id.t option)
+    (ty : G.type_) : Class_table.cls option =
+  class_of_declared_type t ~context:(self_scope t ~caller:written_in) ty
+
+let this_class (t : t) ~(caller : Function_id.t option) :
+    Class_table.cls option =
+  class_of_receiver (self_receiver t ~caller)
 
 let class_of_function (t : t) (func : Func_info.t) : Class_table.cls option =
   match

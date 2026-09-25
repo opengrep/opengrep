@@ -568,19 +568,18 @@ let resolve_in_project ~(lang : Lang.t) ~(table : Symbol_table.t)
 let typing ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller_parent_path : IL.name option list)
     : Callee_resolution.static_typing =
-  Callee_resolution.typing ~lang
+  Callee_resolution.table_typing ~lang ~table
+    ~caller:(FA.fn_id_to_node caller_parent_path)
     ~resolve:(fun (callee : G.expr) ->
       resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
         ~use:Symbol_table.Called callee
       |> defined_funcs)
-    ~is_class:(Symbol_table.is_class_binding table)
 
 let argument_types ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) : Callee_resolution.argument_typer =
  fun ~caller_parent_path (args : G.argument list) ->
   Callee_resolution.argument_types ~lang
-    ~type_of_call:(typing ~lang ~table ~func_lookup ~caller_parent_path)
-                    .Callee_resolution.type_of_call
+    ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
     args
 
 let call_site_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)

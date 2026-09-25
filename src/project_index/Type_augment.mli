@@ -37,6 +37,7 @@ val augment_return_types_from_bodies :
 
 (* (class, method, arg index) -> inferred argument type, from call sites. *)
 val build_caller_arg_types :
+  lang:Lang.t ->
   table_of_file:table_of_file ->
   type_state:Type_state.t ->
   funcs_by_file:(string, Graph_from_AST.func_info list) Hashtbl.t ->
@@ -69,6 +70,7 @@ val add_value_type_sites :
   Type_state.t
 
 val stamp_var_types_from_bodies :
+  lang:Lang.t ->
   table:Symbol_table.t ->
   type_state:Type_state.t ->
   caller:Function_id.t option ->

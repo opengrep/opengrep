@@ -1133,18 +1133,6 @@ let callee_use (callee : IL.exp) : Callee_resolution.callee_use option =
         (fst member.ident)
   | _ -> None
 
-let argument_types (lang : Lang.t) (args : IL.exp IL.argument list) :
-    Callee_resolution.static_type option list =
-  List_.map
-    (fun (arg : IL.exp IL.argument) ->
-      match arg with
-      | Unnamed { eorig = SameAs (e : G.expr); _ } ->
-          Callee_resolution.static_type_of_argument ~lang e
-      | Unnamed _
-      | Named _ ->
-          None)
-    args
-
 let lambdas_used_in_node lambdas node =
   LV.rlvals_of_node node.IL.n |> List_.filter_map (LV.lval_is_lambda lambdas)
 
@@ -4488,8 +4476,8 @@ and (fixpoint :
           builtin_signature_db;
         }
       in
-      let callee_has_sig_memo : bool Callee_resolution.Callee_use_tbl.t =
-        Callee_resolution.Callee_use_tbl.create 16
+      let callee_has_sig_memo : bool Callee_resolution.Callee_arity_tbl.t =
+        Callee_resolution.Callee_arity_tbl.create 16
       in
       let callee_has_sig (callee : IL.exp) (args : IL.exp IL.argument list) :
           bool =
@@ -4501,14 +4489,14 @@ and (fixpoint :
         match callee_use callee with
         | None -> lookup ()
         | Some use -> (
-            let key = (use, Some (argument_types taint_inst.Taint_rule_inst.lang args)) in
+            let key = (use, List.length args) in
             match
-              Callee_resolution.Callee_use_tbl.find_opt callee_has_sig_memo key
+              Callee_resolution.Callee_arity_tbl.find_opt callee_has_sig_memo key
             with
             | Some b -> b
             | None ->
                 let b = lookup () in
-                Callee_resolution.Callee_use_tbl.replace callee_has_sig_memo key
+                Callee_resolution.Callee_arity_tbl.replace callee_has_sig_memo key
                   b;
                 b)
       in

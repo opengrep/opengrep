@@ -1,0 +1,15 @@
+rules:
+  - id: overload-applicability-imported
+    languages: [java]
+    severity: ERROR
+    message: >
+      A call reaches the overrides of the overloads its arguments apply to,
+      when the argument and parameter classes are imported from another
+      package.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

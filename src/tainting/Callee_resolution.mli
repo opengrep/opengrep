@@ -33,19 +33,16 @@ type callee_use =
     }
 
 type static_type =
-  | Declared_class of AST_generic.SId.t
+  | Declared_class of Class_table.cls
   | Builtin_type of Type.builtin_type
+
+type static_typing
 
 val argument_types :
   lang:Lang.t ->
-  type_of_call:(AST_generic.expr -> static_type option) ->
+  typing:static_typing ->
   AST_generic.argument list ->
   static_type option list
-
-type static_typing = {
-  type_of_call : AST_generic.expr -> static_type option;
-  is_class : AST_generic.SId.t -> bool;
-}
 
 val narrow_by_call :
   lang:Lang.t ->
@@ -54,17 +51,17 @@ val narrow_by_call :
   func_info list ->
   func_info list
 
-val typing :
+val table_typing :
   lang:Lang.t ->
+  table:Symbol_table.t ->
+  caller:Function_id.t option ->
   resolve:(AST_generic.expr -> func_info list) ->
-  is_class:(AST_generic.SId.t -> bool) ->
   static_typing
-
-val static_type_of_argument :
-  lang:Lang.t -> AST_generic.expr -> static_type option
 
 module Callee_use_tbl :
   Hashtbl.S with type key = callee_use * static_type option list option
+
+module Callee_arity_tbl : Hashtbl.S with type key = callee_use * int
 
 val use_binding : AST_generic.id_info -> AST_generic.SId.t option
 

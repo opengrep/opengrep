@@ -1,0 +1,13 @@
+rules:
+  - id: dispatch_every_override_python
+    message: a method call reaches every override of the method name
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

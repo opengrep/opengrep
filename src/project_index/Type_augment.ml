@@ -255,6 +255,25 @@ let augment_return_types_from_bodies
           Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS);
   final
 
+let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)
+    ~(caller : Function_id.t option) (args : G.argument list)
+    (resolved : Symbol_table.resolution) : Symbol_table.resolution =
+  let defined (resolution : Symbol_table.resolution) : Func_info.t list =
+    match resolution with
+    | Symbol_table.Defined (funcs : Func_info.t list) -> funcs
+    | Symbol_table.External -> []
+  in
+  match resolved with
+  | Symbol_table.External -> resolved
+  | Symbol_table.Defined (funcs : Func_info.t list) ->
+    Symbol_table.Defined
+      (Callee_resolution.narrow_by_call ~lang
+         ~typing:
+           (Callee_resolution.table_typing ~lang ~table ~caller
+              ~resolve:(fun (callee : G.expr) ->
+                defined (Symbol_table.resolve_call table ~caller callee)))
+         (Some args) funcs)
+
 let fold_calls_of_file ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)
     ~(funcs_by_file : (string, FA.func_info list) Hashtbl.t)
@@ -295,7 +314,7 @@ let fold_calls_of_file ~(table_of_file : table_of_file)
 
 (* [(callee_class, callee_method, arg_idx) -> type] of caller-supplied arg types,
    so [self.X = param] can be typed from what callers pass. *)
-let build_caller_arg_types
+let build_caller_arg_types ~(lang : Lang.t)
     ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)
     ~(funcs_by_file : (string, FA.func_info list) Hashtbl.t)
@@ -334,7 +353,10 @@ let build_caller_arg_types
     match typed with
     | [] -> ()
     | _ :: _ -> (
-      match Symbol_table.resolve_call table ~caller callee with
+      match
+        applicable_callees ~lang table ~caller args
+          (Symbol_table.resolve_call table ~caller callee)
+      with
       | Symbol_table.External -> ()
       | Symbol_table.Defined (funcs : Func_info.t list) ->
         List.iter (fun ((i : int), (cls : Class_table.cls)) ->
@@ -592,7 +614,7 @@ let add_value_type_sites ~(lang : Lang.t) ~(table_of_file : table_of_file)
    onto [id_instance_type]; iterate so one pass's stamps unlock the next
    pass's inferences ([Type_infer] reads a receiver's class off
    [id_instance_type], else off [id_type]). *)
-let stamp_var_types_from_bodies
+let stamp_var_types_from_bodies ~(lang : Lang.t)
     ~(table : Symbol_table.t)
     ~(type_state : Type_state.t)
     ~(caller : Function_id.t option)
@@ -629,7 +651,8 @@ let stamp_var_types_from_bodies
       | _ :: lrest, None :: erest -> tuple_facts lrest erest acc
       | _ -> acc
     in
-    let returned_tuple (callee : G.expr) : Class_table.cls option list option =
+    let returned_tuple (callee : G.expr) (args : G.argument list) :
+        Class_table.cls option list option =
       let member_call = Symbol_table.class_of_member_call table ~caller callee in
       let declared =
         match (callee.G.e, member_call) with
@@ -643,10 +666,11 @@ let stamp_var_types_from_bodies
       | Some _ -> declared
       | None -> (
         match
-          match member_call with
-          | Some (_, (resolved : Symbol_table.resolution Lazy.t)) ->
-            Lazy.force resolved
-          | None -> Symbol_table.resolve_call table ~caller callee
+          applicable_callees ~lang table ~caller args
+            (match member_call with
+             | Some (_, (resolved : Symbol_table.resolution Lazy.t)) ->
+               Lazy.force resolved
+             | None -> Symbol_table.resolve_call table ~caller callee)
         with
         | Symbol_table.Defined (funcs : Func_info.t list) -> (
           match
@@ -663,8 +687,8 @@ let stamp_var_types_from_bodies
     in
     let call_tuple_facts (lhs_names : G.name list) (rhs : G.expr) acc =
       match rhs.G.e with
-      | G.Call (callee, _) -> (
-        match returned_tuple callee with
+      | G.Call (callee, (_, (args : G.argument list), _)) -> (
+        match returned_tuple callee args with
         | None -> acc
         | Some elem_types -> tuple_facts lhs_names elem_types acc)
       | _ -> acc

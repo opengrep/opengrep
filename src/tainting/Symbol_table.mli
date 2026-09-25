@@ -78,7 +78,7 @@ type use =
   | Referenced
 
 val class_table : t -> Class_table.t
-val is_class_binding : t -> AST_generic.SId.t -> bool
+val is_subclass : t -> Class_table.cls -> Class_table.cls -> bool option
 
 val with_project :
   t ->
@@ -104,6 +104,13 @@ val class_of_declared_type :
   AST_generic.type_ ->
   Class_table.cls option
 
+val class_of_type_written_in :
+  t ->
+  written_in:Function_id.t option ->
+  AST_generic.type_ ->
+  Class_table.cls option
+
+val this_class : t -> caller:Function_id.t option -> Class_table.cls option
 val class_of_function : t -> Func_info.t -> Class_table.cls option
 val constructors : t -> class_scope -> resolution
 val constructors_of_class : t -> Class_table.cls -> resolution

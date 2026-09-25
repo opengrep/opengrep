@@ -1,6 +1,14 @@
 module G = AST_generic
 module SMap = Common.SMap
 
+(* a definition is itself, not an equal copy *)
+module Fdef_tbl = Hashtbl.Make (struct
+  type t = G.function_definition
+
+  let equal = ( == )
+  let hash (fdef : t) = Hashtbl.hash (snd fdef.G.fkind)
+end)
+
 module SId_tbl = Hashtbl.Make (struct
   type t = G.SId.t
 
@@ -201,12 +209,20 @@ let hash (cls : cls) : int = Hashtbl.hash cls.id
 let index (cls : cls) : int = cls.id
 let scopes (cls : cls) : class_scope list = cls.scopes
 
-let same_definition (left : Func_info.t) (right : Func_info.t) : bool =
-  left.Func_info.fdef == right.Func_info.fdef
+let distinct_definitions (funcs : Func_info.t list) : Func_info.t list =
+  let seen : unit Fdef_tbl.t = Fdef_tbl.create (List.length funcs) in
+  List.rev
+    (List.fold_left
+       (fun (kept : Func_info.t list) (func : Func_info.t) ->
+         if Fdef_tbl.mem seen func.Func_info.fdef then kept
+         else (
+           Fdef_tbl.replace seen func.Func_info.fdef ();
+           func :: kept))
+       [] funcs)
 
 let concat_scopes (cls : cls) (of_scope : class_scope -> Func_info.t list) :
     Func_info.t list =
-  List.concat_map of_scope cls.scopes |> List_.uniq_by same_definition
+  List.concat_map of_scope cls.scopes |> distinct_definitions
 
 let own_members (cls : cls) (name : string) : Func_info.t list =
   concat_scopes cls (fun (scope : class_scope) ->
@@ -218,7 +234,7 @@ let member_table (cls : cls) : Func_info.t list SMap.t =
       SMap.union
         (fun (_ : string) (earlier : Func_info.t list) (later : Func_info.t list)
            ->
-          Some (List_.uniq_by same_definition (earlier @ later)))
+          Some (distinct_definitions (earlier @ later)))
         members scope.members)
     SMap.empty cls.scopes
 

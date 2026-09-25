@@ -1,0 +1,13 @@
+rules:
+  - id: overload_applicability_java
+    message: a call reaches the overrides of the overloads its arguments apply to
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

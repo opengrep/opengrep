@@ -110,11 +110,7 @@ let of_string_and_tok (name : string) (tok : Tok.t) : t =
 
 (* Key rebuilt from the sid so it compares equal to [of_il_name] of the same def. *)
 let of_sid (sid : AST_generic.sid) : t =
-  let (name, file, line, col) = AST_generic.SId.to_loc sid in
-  let key =
-    if String.equal file "" then (name, "", line, col)
-    else (name, normalize_file (Fpath.v file), line, col)
-  in
+  let ((name, _, _, _) as key) = AST_generic.SId.to_loc sid in
   { ident = (name, Tok.unsafe_fake_tok name); key }
 
 let key (v : t) = v.key

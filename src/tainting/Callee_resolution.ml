@@ -101,61 +101,76 @@ let use_binding (info : G.id_info) : G.SId.t option =
       None
 
 type static_type =
-  | Declared_class of G.SId.t
+  | Declared_class of Class_table.cls
   | Builtin_type of Type.builtin_type
 
 let equal_static_type (left : static_type) (right : static_type) : bool =
   match (left, right) with
-  | Declared_class left, Declared_class right -> G.SId.equal left right
+  | Declared_class left, Declared_class right -> Class_table.same left right
   | Builtin_type left, Builtin_type right -> Type.equal_builtin_type left right
   | Declared_class _, Builtin_type _
   | Builtin_type _, Declared_class _ ->
       false
 
-let static_type_of_type ~(lang : Lang.t) (ty : G.type_) : static_type option =
+type static_typing = {
+  class_of_type :
+    written_in:Function_id.t option -> G.type_ -> Class_table.cls option;
+  is_subclass : Class_table.cls -> Class_table.cls -> bool option;
+  caller : Function_id.t option;
+  type_of_call : G.expr -> static_type option;
+  this_type : static_type option Lazy.t;
+}
+
+let static_type_of_type ~(lang : Lang.t) ~(typing : static_typing)
+    ~(written_in : Function_id.t option) (ty : G.type_) : static_type option =
   match ty.G.t with
-  | G.TyN name
-  | G.TyExpr { G.e = G.N name; _ } -> (
-      match use_binding (snd (AST_generic_helpers.id_of_name name)) with
-      | Some sid -> Some (Declared_class sid)
+  | G.TyN _
+  | G.TyExpr { G.e = G.N _; _ } -> (
+      match typing.class_of_type ~written_in ty with
+      | Some (cls : Class_table.cls) -> Some (Declared_class cls)
       | None ->
           Option.map
             (fun (builtin : Type.builtin_type) -> Builtin_type builtin)
             (Type.builtin_type_of_type lang ty))
   | _ -> None
 
-let static_type_of_argument ~(lang : Lang.t) (e : G.expr) : static_type option
-    =
+let static_type_of_argument ~(lang : Lang.t) ~(typing : static_typing)
+    (e : G.expr) : static_type option =
+  let written_in = typing.caller in
   match e.G.e with
   | G.N name ->
       Option.bind
         (Ty_bare_name.instance_or_declared_type
            (snd (AST_generic_helpers.id_of_name name)))
-        (static_type_of_type ~lang)
+        (static_type_of_type ~lang ~typing ~written_in)
   | G.L _ -> (
       match fst (Typing.type_of_expr lang e) with
       | Type.Builtin (builtin : Type.builtin_type) -> Some (Builtin_type builtin)
       | _ -> None)
-  | G.New (_, ty, _, _) -> static_type_of_type ~lang ty
+  | G.New (_, ty, _, _)
+  | G.Cast (ty, _, _) ->
+      static_type_of_type ~lang ~typing ~written_in ty
   | G.Call ({ G.e = G.N name; _ }, _) when Lang_config.constructs_by_bare_call lang
     -> (
       match !((snd (AST_generic_helpers.id_of_name name)).G.id_resolved) with
-      | Some (G.TypeName, sid) -> Some (Declared_class sid)
+      | Some (G.TypeName, _) ->
+          static_type_of_type ~lang ~typing ~written_in (G.t (G.TyN name))
       | Some _
       | None ->
           None)
   | _ -> None
 
-let argument_types ~(lang : Lang.t)
-    ~(type_of_call : G.expr -> static_type option) (args : G.argument list) :
-    static_type option list =
+let argument_types ~(lang : Lang.t) ~(typing : static_typing)
+    (args : G.argument list) : static_type option list =
   List_.map
     (fun (arg : G.argument) ->
       match arg with
       | G.Arg e -> (
-          match (static_type_of_argument ~lang e, e.G.e) with
+          match (static_type_of_argument ~lang ~typing e, e.G.e) with
           | (Some _ as known), _ -> known
-          | None, G.Call _ -> type_of_call e
+          | None, G.Call _ -> typing.type_of_call e
+          | None, G.IdSpecial ((G.This | G.Self), _) ->
+              Lazy.force typing.this_type
           | None, _ -> None)
       | G.ArgKwd _
       | G.ArgKwdOptional _
@@ -175,10 +190,16 @@ let is_numeric (builtin : Type.builtin_type) : bool =
   | Type.OtherBuiltins _ ->
       false
 
-let types_disagree ~(argument : static_type) ~(parameter : static_type) : bool
-    =
+let types_disagree
+    ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
+    ~(argument : static_type) ~(parameter : static_type) : bool =
   match (argument, parameter) with
-  | Declared_class _, Declared_class _ -> false
+  | Declared_class argument, Declared_class parameter -> (
+      match is_subclass argument parameter with
+      | Some false -> true
+      | Some true
+      | None ->
+          false)
   | Builtin_type argument, Builtin_type parameter ->
       not
         (Type.equal_builtin_type argument parameter
@@ -196,38 +217,27 @@ let call_parameters ~(lang : Lang.t) (f : func_info) : G.parameter list =
            (Receiver.implicit_param lang ~is_method ~is_static
               ~is_first:(Int.equal i 0) param))
 
-type static_typing = {
-  type_of_call : G.expr -> static_type option;
-  is_class : G.SId.t -> bool;
-}
-
 let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
     (args : G.argument list) (candidates : func_info list) : func_info list =
   if not (Lang_config.overloads_by_type lang) then candidates
   else
-    let decided (known : static_type) : static_type option =
-      match known with
-      | Declared_class sid when not (typing.is_class sid) -> None
-      | Declared_class _
-      | Builtin_type _ ->
-          Some known
-    in
-    let arguments =
-      List_.map
-        (fun (argument : static_type option) -> Option.bind argument decided)
-        (argument_types ~lang ~type_of_call:typing.type_of_call args)
-    in
+    let arguments = argument_types ~lang ~typing args in
     List.filter
       (fun (f : func_info) ->
         let parameters = call_parameters ~lang f in
+        let written_in = Symbol_table.node_of_function f in
         not
           (List.exists Fun.id
              (List.mapi
                 (fun (i : int) (argument : static_type option) ->
                   match (argument, List.nth_opt parameters i) with
                   | Some argument, Some (G.Param { G.ptype = Some ty; _ }) -> (
-                      match Option.bind (static_type_of_type ~lang ty) decided with
-                      | Some parameter -> types_disagree ~argument ~parameter
+                      match
+                        static_type_of_type ~lang ~typing ~written_in ty
+                      with
+                      | Some parameter ->
+                          types_disagree ~is_subclass:typing.is_subclass
+                            ~argument ~parameter
                       | None -> false)
                   | _ -> false)
                 arguments)))
@@ -243,32 +253,48 @@ let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
   | Some args -> narrow_by_argument_types ~lang ~typing args by_arity
   | None -> by_arity
 
-let return_type ~(lang : Lang.t) (funcs : func_info list) : static_type option
-    =
+let return_type ~(lang : Lang.t) ~(typing : static_typing)
+    (funcs : func_info list) : static_type option =
   match
     List_.uniq_by
       (Option.equal equal_static_type)
       (List_.map
          (fun (f : func_info) ->
-           Option.bind f.fdef.G.frettype (static_type_of_type ~lang))
+           Option.bind f.fdef.G.frettype
+             (static_type_of_type ~lang ~typing
+                ~written_in:(Symbol_table.node_of_function f)))
          funcs)
   with
   | [ (Some _ as common) ] -> common
   | _ -> None
 
-let rec typing ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
-    ~(is_class : G.SId.t -> bool) : static_typing =
-  { type_of_call = type_of_call ~lang ~resolve ~is_class; is_class }
-
-and type_of_call ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
-    ~(is_class : G.SId.t -> bool) (e : G.expr) : static_type option =
+let type_of_call ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
+    ~(typing : static_typing) (e : G.expr) : static_type option =
   match e.G.e with
   | G.Call (callee, (_, args, _)) ->
       resolve callee
-      |> narrow_by_call ~lang ~typing:(typing ~lang ~resolve ~is_class)
-           (Some args)
-      |> return_type ~lang
+      |> narrow_by_call ~lang ~typing (Some args)
+      |> return_type ~lang ~typing
   | _ -> None
+
+let table_typing ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(caller : Function_id.t option) ~(resolve : G.expr -> func_info list) :
+    static_typing =
+  let rec typing =
+    {
+      class_of_type = Symbol_table.class_of_type_written_in table;
+      is_subclass = Symbol_table.is_subclass table;
+      caller;
+      type_of_call =
+        (fun (e : G.expr) -> type_of_call ~lang ~resolve ~typing e);
+      this_type =
+        lazy
+          (Option.map
+             (fun (cls : Class_table.cls) -> Declared_class cls)
+             (Symbol_table.this_class table ~caller));
+    }
+  in
+  typing
 
 (* Graph node type - reuse from Call_graph for consistency *)
 type node = Call_graph.node
@@ -322,6 +348,23 @@ type callee_use =
 let same_use_binding (left : G.SId.t) (right : G.SId.t) : bool =
   G.SId.equal left right && G.SId.same_site left right
 
+let same_callee_use (left : callee_use) (right : callee_use) : bool =
+  match (left, right) with
+  | Name_use left_sid, Name_use right_sid -> same_use_binding left_sid right_sid
+  | Member_use left, Member_use right ->
+      same_use_binding left.receiver right.receiver
+      && Option.equal G.equal_type_ left.receiver_type right.receiver_type
+      && String.equal left.member right.member
+  | Name_use _, Member_use _
+  | Member_use _, Name_use _ ->
+      false
+
+let hash_callee_use (use : callee_use) (arity : int option) : int =
+  match use with
+  | Name_use sid -> Hashtbl.hash (G.SId.hash sid, arity)
+  | Member_use { receiver; member; _ } ->
+      Hashtbl.hash (G.SId.hash receiver, member, arity)
+
 module Callee_use_tbl = Hashtbl.Make (struct
   type t = callee_use * static_type option list option
 
@@ -330,24 +373,19 @@ module Callee_use_tbl = Hashtbl.Make (struct
     Option.equal
       (List.equal (Option.equal equal_static_type))
       left_arguments right_arguments
-    &&
-    match (left, right) with
-    | Name_use left_sid, Name_use right_sid ->
-        same_use_binding left_sid right_sid
-    | Member_use left, Member_use right ->
-        same_use_binding left.receiver right.receiver
-        && Option.equal G.equal_type_ left.receiver_type right.receiver_type
-        && String.equal left.member right.member
-    | Name_use _, Member_use _
-    | Member_use _, Name_use _ ->
-        false
+    && same_callee_use left right
 
   let hash ((use, arguments) : t) : int =
-    let arity = Option.map List.length arguments in
-    match use with
-    | Name_use sid -> Hashtbl.hash (G.SId.hash sid, arity)
-    | Member_use { receiver; member; _ } ->
-        Hashtbl.hash (G.SId.hash receiver, member, arity)
+    hash_callee_use use (Option.map List.length arguments)
+end)
+
+module Callee_arity_tbl = Hashtbl.Make (struct
+  type t = callee_use * int
+
+  let equal ((left, left_arity) : t) ((right, right_arity) : t) : bool =
+    Int.equal left_arity right_arity && same_callee_use left right
+
+  let hash ((use, arity) : t) : int = hash_callee_use use (Some arity)
 end)
 
 let callee_use_of_name (info : G.id_info) : callee_use option =

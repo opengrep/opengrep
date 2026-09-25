@@ -552,17 +552,17 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
   in
   let typing ~(caller_parent_path : IL.name option list) :
       Callee_resolution.static_typing =
-    Callee_resolution.typing ~lang
+    Callee_resolution.table_typing ~lang ~table
+      ~caller:(fn_id_to_node caller_parent_path)
       ~resolve:(fun (callee : G.expr) ->
         Symbol_table.resolve_callee table
           ~caller:(fn_id_to_node caller_parent_path) callee
         |> defined)
-      ~is_class:(Symbol_table.is_class_binding table)
   in
   let argument_types : Callee_resolution.argument_typer =
    fun ~caller_parent_path (args : G.argument list) ->
-    Callee_resolution.argument_types ~lang
-      ~type_of_call:(typing ~caller_parent_path).type_of_call args
+    Callee_resolution.argument_types ~lang ~typing:(typing ~caller_parent_path)
+      args
   in
   let identify_callee : Callee_resolution.call_site_resolver =
    fun ~caller_parent_path ~call_args (callee : G.expr) ->

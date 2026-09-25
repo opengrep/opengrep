@@ -1,3 +1,4 @@
+module Fdef_tbl : Hashtbl.S with type key = AST_generic.function_definition
 module SId_tbl : Hashtbl.S with type key = AST_generic.SId.t
 module Field_path_map : Map.S with type key = string list
 
@@ -34,6 +35,9 @@ type scope_id = {
   scope_binding : AST_generic.SId.t;
   scope_role : role;
 }
+
+val equal_scope_id : scope_id -> scope_id -> bool
+val hash_scope_id : scope_id -> int
 
 module Scope_tbl : Hashtbl.S with type key = scope_id
 
@@ -94,6 +98,7 @@ val order : t -> cls -> cls Linearisation.linearisation
 val parents : t -> cls -> cls option list
 val subclasses : t -> cls -> cls list
 val class_side_parents : t -> cls -> cls option list
+val distinct_definitions : Func_info.t list -> Func_info.t list
 val own_members : cls -> string -> Func_info.t list
 val member_table : cls -> Func_info.t list Common.SMap.t
 val members_along : cls list -> Func_info.t list Common.SMap.t

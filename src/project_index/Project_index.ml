@@ -263,7 +263,48 @@ type written_start =
   | Start_class of Class_table.scope_id
   | Start_module of Names.Module_qn.t
 
-let file_key (file : Fpath.t) : string = Fpath.to_string (Fpath.normalize file)
+module Written_key = struct
+  type t = {
+    position : Class_table.position;
+    context : Class_table.scope_id option;
+    file : string;
+    resolved : G.resolved_name option;
+    head : string list;
+    rest : string list;
+  }
+
+  let equal_position (left : Class_table.position)
+      (right : Class_table.position) : bool =
+    match (left, right) with
+    | Class_table.Term_position, Class_table.Term_position
+    | Class_table.Type_position, Class_table.Type_position -> true
+    | (Class_table.Term_position | Class_table.Type_position), _ -> false
+
+  let equal_resolved (((left_kind : G.resolved_name_kind), (left : G.SId.t)))
+      (((right_kind : G.resolved_name_kind), (right : G.SId.t))) : bool =
+    G.equal_resolved_name_kind left_kind right_kind
+    && G.SId.equal left right
+    && G.SId.same_site left right
+
+  let equal (left : t) (right : t) : bool =
+    equal_position left.position right.position
+    && Option.equal Class_table.equal_scope_id left.context right.context
+    && String.equal left.file right.file
+    && Option.equal equal_resolved left.resolved right.resolved
+    && List.equal String.equal left.head right.head
+    && List.equal String.equal left.rest right.rest
+
+  let hash (key : t) : int =
+    Hashtbl.hash
+      ( key.position,
+        Option.map Class_table.hash_scope_id key.context,
+        key.file,
+        Option.map G.hash_resolved_name key.resolved,
+        key.head,
+        key.rest )
+end
+
+module Written_tbl = Hashtbl.Make (Written_key)
 
 let scope_name (id : Class_table.scope_id) : string =
   let name, _, _, _ = G.SId.to_loc id.Class_table.scope_binding in
@@ -304,7 +345,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   in
   List.iter
     (fun (lf : linked_file) ->
-      Hashtbl.replace files_by_key (file_key lf.lf_info.fi_file) lf)
+      Hashtbl.replace files_by_key (Fpath.to_string lf.lf_info.fi_file) lf)
     files;
   let definitions_of_binding : Class_table.scope_id list Class_table.SId_tbl.t =
     Class_table.SId_tbl.create 1024
@@ -631,7 +672,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
           | G.Id ((id : G.ident), _) -> id
           | G.IdQualified { G.name_last = ((id : G.ident), _); _ } -> id
         in
-        try Some (file_key (Tok.file_of_tok tok))
+        try Some (Fpath.to_string (Tok.file_of_tok tok))
         with Tok.NoTokenLocation _ -> None)
     in
     Option.bind file (Hashtbl.find_opt files_by_key)
@@ -687,7 +728,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
                 | G.Id ((id : G.ident), _) -> id
                 | G.IdQualified { G.name_last = ((id : G.ident), _); _ } -> id
               in
-              G.SId.of_site ~file:(file_key lf.lf_info.fi_file) tok
+              G.SId.of_site ~file:(Fpath.to_string lf.lf_info.fi_file) tok
           in
           let id = Class_table.definition_scope binding in
           let named =
@@ -782,18 +823,39 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
      | None, None -> ());
     linked
   in
+  let resolved_written : Class_table.scope_id option Written_tbl.t =
+    Written_tbl.create 1024
+  in
   let outside (position : Class_table.position)
       (context : Class_table.scope_id option)
       (((name : G.name), (rest : string list)) : G.name * string list)
       : Class_table.scope_id option =
-    let owners =
-      match (name, context) with
-      | G.IdQualified { G.name_top = Some _; _ }, _
-      | _, None -> []
-      | _, Some (id : Class_table.scope_id) -> id :: owners id
+    let context =
+      match name with
+      | G.IdQualified { G.name_top = Some _; _ } -> None
+      | G.Id _
+      | G.IdQualified _ -> context
     in
     Option.bind (file_of_name name) (fun (lf : linked_file) ->
-      resolve_written lf ~owners ~position (name, rest))
+      let key =
+        { Written_key.position;
+          context;
+          file = Fpath.to_string lf.lf_info.fi_file;
+          resolved = !((Class_table.id_info_of_name name).G.id_resolved);
+          head = Class_table.qualified_path name;
+          rest }
+      in
+      match Written_tbl.find_opt resolved_written key with
+      | Some (found : Class_table.scope_id option) -> found
+      | None ->
+        let owners =
+          match context with
+          | None -> []
+          | Some (id : Class_table.scope_id) -> id :: owners id
+        in
+        let found = resolve_written lf ~owners ~position (name, rest) in
+        Written_tbl.replace resolved_written key found;
+        found)
   in
   let may_implement ~(interface : Class_table.cls) (candidate : Class_table.cls)
       : bool =
@@ -1331,8 +1393,8 @@ let build_project_call_graph (caps : < Cap.fork >)
       top_level_node_for;
       stamp_var_types =
         (fun ~table ~type_state ~caller ast ->
-          Type_augment.stamp_var_types_from_bodies ~table ~type_state ~caller
-            ast);
+          Type_augment.stamp_var_types_from_bodies ~lang ~table ~type_state
+            ~caller ast);
       value_alias_index;
     }
   in
@@ -1417,7 +1479,7 @@ let build_project_call_graph (caps : < Cap.fork >)
         ~type_state:ts all_funcs
     in
     let car =
-      Type_augment.build_caller_arg_types ~table_of_file ~type_state:ts
+      Type_augment.build_caller_arg_types ~lang ~table_of_file ~type_state:ts
         ~funcs_by_file:file_funcs_index file_infos
     in
     let ts =

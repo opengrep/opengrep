@@ -47,7 +47,7 @@ let import_of_binding (imports : import list) (sid : G.SId.t)
       | Ok (loc : Tok.location) ->
         G.SId.same_site sid
           (G.SId.of_site
-             ~file:(Fpath.to_string (Fpath.normalize loc.Tok.pos.Pos.file))
+             ~file:(Fpath.to_string loc.Tok.pos.Pos.file)
              imp.im_local_tok)
       | Error _ -> false)
     imports
