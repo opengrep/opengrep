@@ -137,7 +137,8 @@ module Make (F : Flow) = struct
 
   let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow)
       ~(forward : bool) workset =
-    (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
+    (* The iteration limit is the number of vertices times the per node visit
+     * limit raised to one plus the deepest loop nesting, at most 100000. *)
     let max_nodei = Array.length mapping - 1 in
     let num_vertices = flow.graph#nb_nodes in
     let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
@@ -150,14 +151,14 @@ module Make (F : Flow) = struct
         (num_vertices
         * visits_per_loop_nest max_visits_per_node flow.max_loop_depth)
     in
-    let last = Array.length flow.reverse_postorder - 1 in
+    let last = Array.length flow.weak_topological_order - 1 in
     let position (ni : nodei) : int =
-      let index = flow.reverse_postorder_index.(ni) in
+      let index = flow.order_index.(ni) in
       if forward || index < 0 then index else last - index
     in
     let node_at (pos : int) : nodei =
-      if forward then flow.reverse_postorder.(pos)
-      else flow.reverse_postorder.(last - pos)
+      if forward then flow.weak_topological_order.(pos)
+      else flow.weak_topological_order.(last - pos)
     in
     (* The visit limit counts visits since the node's innermost loop was
      * last entered from outside, so a nested loop gets the full limit on
@@ -179,7 +180,7 @@ module Make (F : Flow) = struct
         if
           track_loops
           && Int.equal flow.loop_header.(succ) succ
-          && flow.reverse_postorder_index.(!source) < pos
+          && flow.order_index.(!source) < pos
         then activation.(succ) <- activation.(succ) + 1;
         NodeiSet.add pos work)
     in

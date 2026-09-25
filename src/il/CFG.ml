@@ -28,100 +28,107 @@ type ('node, 'edge) t = {
   entry : nodei;
   exit : nodei;
   reachable : NodeiSet.t;
-  reverse_postorder : nodei array;
-  reverse_postorder_index : int array;
+  (* The reachable nodes in Bourdoncle's weak topological ordering
+   * (F. Bourdoncle, "Efficient chaotic iteration strategies with
+   * widenings", 1993). Each strongly connected region is a component: its
+   * head comes first, its nested components follow inside it, and every
+   * node after the component comes after all of it. *)
+  weak_topological_order : nodei array;
+  order_index : int array;
   loop_header : int array;
   max_loop_depth : int;
 }
 
 type ('node, 'edge) cfg = ('node, 'edge) t
 
-(* For each node, the entry node of its innermost loop (-1 outside loops),
- * and the deepest loop nesting. *)
-let loops_of (graph : _ Ograph_extended.ograph_mutable)
-    (reverse_postorder : nodei array) (reverse_postorder_index : int array) :
-    int array * int =
-  let index (ni : nodei) : int = reverse_postorder_index.(ni) in
-  let has_back_edge =
-    Array.exists
-      (fun (h : nodei) ->
-        (graph#predecessors h)#fold
-          (fun found (p, _) -> found || index p >= index h)
-          false)
-      reverse_postorder
-  in
-  if not has_back_edge then ([||], 0)
-  else
-    let size = Array.length reverse_postorder_index in
-    let loop_header = Array.make size (-1) in
-    let loop_depth = Array.make size 0 in
-    let mark = Array.make size (-1) in
-    let stack = Array.make size 0 in
-    let top = ref 0 in
-    let header = ref 0 in
-    let enter (ni : nodei) : unit =
-      mark.(ni) <- !header;
-      loop_header.(ni) <- !header;
-      loop_depth.(ni) <- loop_depth.(ni) + 1
-    in
-    let push () ((p, _) : nodei * _) : unit =
-      if index p >= 0 && not (Int.equal mark.(p) !header) then (
-        enter p;
-        stack.(!top) <- p;
-        incr top)
-    in
-    let push_back_source () ((p, _) as edge : nodei * _) : unit =
-      if index p >= index !header then push () edge
-    in
-    Array.iter
-      (fun (h : nodei) ->
-        header := h;
-        top := 0;
-        (graph#predecessors h)#fold push_back_source ();
-        if !top > 0 then (
-          if not (Int.equal mark.(h) h) then enter h;
-          while !top > 0 do
-            decr top;
-            let ni = stack.(!top) in
-            if not (Int.equal ni h) then (graph#predecessors ni)#fold push ()
-          done))
-      reverse_postorder;
-    (loop_header, Array.fold_left Int.max 0 loop_depth)
+type wto_element = Vertex of nodei | Component of nodei * wto_element list
 
 let make (graph : _ Ograph_extended.ograph_mutable) entry exit : _ t =
-  let rec aux nodei ((seen, finished) : NodeiSet.t * nodei list) =
-    if NodeiSet.mem nodei seen then (seen, finished)
-    else
-      let seen = NodeiSet.add nodei seen in
-      let succs =
-        (graph#successors nodei)#fold
-          (fun s (ni, _) -> NodeiSet.add ni s)
-          NodeiSet.empty
-      in
-      let seen, finished = NodeiSet.fold aux succs (seen, finished) in
-      (seen, nodei :: finished)
-  in
-  let reachable, finished = aux entry (NodeiSet.empty, []) in
-  let reverse_postorder = Array.of_list finished in
   let max_nodei =
     graph#nodes#fold (fun acc (ni, _) -> Int.max acc ni) (-1)
   in
-  let reverse_postorder_index = Array.make (max_nodei + 1) (-1) in
-  Array.iteri
-    (fun i ni -> reverse_postorder_index.(ni) <- i)
-    reverse_postorder;
-  let loop_header, max_loop_depth =
-    loops_of graph reverse_postorder reverse_postorder_index
+  let successors (ni : nodei) : nodei list =
+    (graph#successors ni)#fold
+      (fun s (succ, _) -> NodeiSet.add succ s)
+      NodeiSet.empty
+    |> NodeiSet.elements
   in
+  let dfn = Array.make (max_nodei + 1) 0 in
+  let rec visit (v : nodei)
+      ((num, stack, partition) : int * nodei list * wto_element list) :
+      int * (int * nodei list * wto_element list) =
+    let v_num = num + 1 in
+    dfn.(v) <- v_num;
+    let head, loop, (num, stack, partition) =
+      List.fold_left
+        (fun (head, loop, state) (w : nodei) ->
+          let min, state =
+            if Int.equal dfn.(w) 0 then visit w state else (dfn.(w), state)
+          in
+          if min <= head then (min, true, state) else (head, loop, state))
+        (v_num, false, (v_num, v :: stack, partition))
+        (successors v)
+    in
+    if not (Int.equal head v_num) then (head, (num, stack, partition))
+    else (
+      dfn.(v) <- max_int;
+      let rec unwind (stack : nodei list) : nodei list =
+        match stack with
+        | w :: rest when not (Int.equal w v) ->
+            dfn.(w) <- 0;
+            unwind rest
+        | _ :: rest
+        | ([] as rest) ->
+            rest
+      in
+      let stack = unwind stack in
+      if loop then
+        let nested, (num, stack) = component v (num, stack) in
+        (head, (num, stack, Component (v, nested) :: partition))
+      else (head, (num, stack, Vertex v :: partition)))
+  and component (v : nodei) ((num, stack) : int * nodei list) :
+      wto_element list * (int * nodei list) =
+    let num, stack, partition =
+      List.fold_left
+        (fun state (w : nodei) ->
+          if Int.equal dfn.(w) 0 then snd (visit w state) else state)
+        (num, stack, []) (successors v)
+    in
+    (partition, (num, stack))
+  in
+  let _, (_, _, wto) = visit entry (0, [], []) in
+  let rec flatten (header : int) (depth : int)
+      (acc : (nodei * int * int) list) (element : wto_element) :
+      (nodei * int * int) list =
+    match element with
+    | Vertex ni -> (ni, header, depth) :: acc
+    | Component (head, nested) ->
+        List.fold_left
+          (flatten head (depth + 1))
+          ((head, head, depth + 1) :: acc)
+          nested
+  in
+  let placed = List.rev (List.fold_left (flatten (-1) 0) [] wto) in
+  let weak_topological_order =
+    Array.of_list (List.map (fun (ni, _, _) -> ni) placed)
+  in
+  let order_index = Array.make (max_nodei + 1) (-1) in
+  let loop_header = Array.make (max_nodei + 1) (-1) in
+  List.iteri
+    (fun i (ni, header, _) ->
+      order_index.(ni) <- i;
+      loop_header.(ni) <- header)
+    placed;
   {
     graph;
     entry;
     exit;
-    reachable;
-    reverse_postorder;
-    reverse_postorder_index;
+    reachable = NodeiSet.of_seq (Array.to_seq weak_topological_order);
+    weak_topological_order;
+    order_index;
     loop_header;
-    max_loop_depth;
+    max_loop_depth =
+      List.fold_left (fun acc (_, _, depth) -> Int.max acc depth) 0 placed;
   }
 
 let reachable_nodes cfg =

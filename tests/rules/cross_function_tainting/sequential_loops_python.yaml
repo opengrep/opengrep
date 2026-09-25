@@ -1,0 +1,13 @@
+rules:
+  - id: sequential_loops_python
+    message: taint that enters in the first of thirty sequential loops reaches the sink after the last loop
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
