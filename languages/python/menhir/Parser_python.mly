@@ -630,8 +630,14 @@ excepthandler:
   | EXCEPT              ":" suite { ExceptHandler ($1, None, None, $3) }
   | EXCEPT test         ":" suite { ExceptHandler ($1, Some $2, None, $4) }
   | EXCEPT test AS NAME ":" suite { ExceptHandler ($1, Some $2, Some $4, $6)}
-  (* python2: *)
-  | EXCEPT test "," NAME ":" suite { ExceptHandler ($1, Some $2, Some $4, $6) }
+  (* python3.14 (PEP 758): `except A, B:` means "catch A or B", same as
+   * `except (A, B):`. Always interpreted as a tuple of exception types.
+   * This drops python2's `except Type, name:` bind-via-comma form, but
+   * that syntax was deprecated in python2 and removed in python3; the
+   * `as` form (`except Type as name:`) works in python 2.6+ and all of
+   * python3. *)
+  | EXCEPT test "," list_sep(test, ",") ":" suite
+      { ExceptHandler ($1, Some (tuple_expr (Tup ($2 :: $4))), None, $6) }
 
 with_stmt:
   | WITH with_inner ":" suite                         { $2 ($1, $4) }
