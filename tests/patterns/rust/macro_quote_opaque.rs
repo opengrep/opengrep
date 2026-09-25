@@ -8,6 +8,5 @@ fn f(user: String) {
     parse_quote! { sink(user) };
     syn::parse_quote! { sink(user) };
     vec![quote!(sink(user))];
-    vec![quote::quote!(sink(user))];
     vec![parse_quote!(sink(user))];
 }

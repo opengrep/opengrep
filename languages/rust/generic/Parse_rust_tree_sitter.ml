@@ -243,7 +243,10 @@ and macro_call_args (anys : G.any list) : G.argument list =
   | [ G.Args args ] -> args
   | xs -> [ G.OtherArg (("ArgMacro", G.fake ""), xs) ]
 
-(* quote! and parse_quote! emit their tokens as code, they do not run them *)
+(* In these macros, a call in the arguments is not run: quote! and
+   parse_quote! emit their tokens as code, stringify! makes them a string,
+   cfg! reads them as a configuration predicate, and the second argument of
+   matches! is a pattern. *)
 and macro_args ~calls (name : G.name) (items : rust_macro_item list) :
     G.argument list =
   let s =
@@ -259,7 +262,12 @@ and macro_args ~calls (name : G.name) (items : rust_macro_item list) :
     | "quote!"
     | "quote_spanned!"
     | "parse_quote!"
-    | "parse_quote_spanned!" ->
+    | "parse_quote_spanned!"
+    | "stringify!"
+    | "cfg!"
+    | "matches!"
+    | "assert_matches!"
+    | "debug_assert_matches!" ->
         false
     | _ -> true
   in
@@ -1106,7 +1114,9 @@ and map_attribute (env : env) tok ((v1, v2) : CST.attribute) : G.attribute =
   | None -> NamedAttr (tok, name, fb [])
   | Some (`Delim_tok_tree x) -> (
       let l, macro_items, r = map_delim_token_tree env x in
-      match macro_items_to_anys ~calls:true macro_items with
+      (* An attribute's arguments are not run, as in
+         #[instrument(skip(password))] or #[cfg(any(unix, windows))]. *)
+      match macro_items_to_anys ~calls:false macro_items with
       | [ G.Args args ] -> NamedAttr (tok, name, (l, args, r))
       | anys ->
           (* TODO Should these each be an individual arg? *)

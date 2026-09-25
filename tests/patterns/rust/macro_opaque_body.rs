@@ -4,7 +4,7 @@
 fn f(user: String) {
     //ERROR: match
     vec![sink(user)];
-    parse_quote! { fn g() -> T { sink(user) } };
+    foo! { fn g() -> T { sink(user) } };
     tokio::select! { v = rx => { sink(user) } };
     foo!(unsafe { sink(user) });
     foo!(a b sink(user));
