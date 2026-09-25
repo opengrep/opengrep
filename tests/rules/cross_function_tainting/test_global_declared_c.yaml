@@ -1,0 +1,13 @@
+rules:
+  - id: test-global-declared-c
+    message: a write to a declared global reaches the functions that call the writer
+    languages:
+      - c
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

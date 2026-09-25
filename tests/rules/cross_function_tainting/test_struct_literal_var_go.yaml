@@ -1,0 +1,13 @@
+rules:
+  - id: test-struct-literal-var-go
+    message: A struct literal keeps its fields apart
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

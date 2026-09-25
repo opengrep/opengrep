@@ -1,0 +1,13 @@
+rules:
+  - id: reflective_call_ruby
+    message: a method called by its name as a symbol reaches the method of the receiver's class
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

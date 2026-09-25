@@ -1,22 +1,5 @@
-open Common
 module G = AST_generic
 module Log = Log_call_graph.Log
-
-let unique_call_threshold = 32
-
-let pathological_candidate_cap = unique_call_threshold * 4
-
-let infer_class_max_depth = 8
-
-let bare_name_of_callee (e : G.expr) : string option =
-  match e.G.e with
-  | G.N (G.Id ((s, _), _))
-  | G.N (G.IdQualified { name_last = ((s, _), _); _ })
-  | G.DotAccess (_, _, G.FN (G.Id ((s, _), _)))
-  | G.DotAccess (_, _, G.FN (G.IdQualified { name_last = ((s, _), _); _ }))
-    -> Some s
-  | _ -> None
-
 
 (* Function identifier as a path from outermost to innermost scope.
  * For example:
@@ -48,35 +31,6 @@ type func_info = Func_info.t = {
   fdef : G.function_definition;
 }
 
-(* Position-aware equality for fn_id paths. Compares function identifiers
-   using both name AND source position (file, line, column) via Function_id.equal. *)
-let equal_with_pos f1 f2 =
-  let equal_il_name n1 n2 =
-    Function_id.equal
-      (Function_id.of_il_name n1)
-      (Function_id.of_il_name n2)
-  in
-  List.equal (Option.equal equal_il_name) f1 f2
-
-(* Free-function check that also matches named-lambda var bindings (which [as_free] alone reports as [_tmp_lambda]). *)
-let is_free_named (f : func_info) (name_str : string) : bool =
-  Option.is_some (Func_info.as_free f.fn_id)
-  && Func_info.name_matches f name_str
-
-(* Find a [func_info] in [all_funcs] whose name matches [name_str] (per
-   [func_info_name_matches]) and whose parent path equals [caller_parent_path]
-   (position-aware, distinguishing same-named functions in different scopes). *)
-let find_func_in_scope (all_funcs : func_info list)
-    (caller_parent_path : IL.name option list) (name_str : string)
-    : func_info option =
-  List.find_opt (fun f ->
-    if Func_info.name_matches f name_str then
-      match List_.init_and_last_opt f.fn_id with
-      | Some (f_parent, _) -> equal_with_pos f_parent caller_parent_path
-      | _ -> false
-    else false
-  ) all_funcs
-
 (* Arity of a function definition as seen from a call site: the parameters
    a call fills, so arity comparison against call sites matches for
    methods. *)
@@ -106,56 +60,14 @@ let prefer_concrete (matches : func_info list) : func_info list =
   | [] -> matches
   | _ -> concrete
 
-(* For a tie between same arity overloads of one scope, the callee is the
-   earliest by position; interfile dispatch widens its signature to the
-   union over the group (see [Structural_dispatch.emit_overload_edges]).
-   For a language whose top level scope is the project, that scope spans
-   files. The result is None when the tie spans scopes or when no union
-   exists, as in a single file graph. *)
-let overload_representative ~(overload_groups : bool)
-    ~(top_level_scope_is_project : bool) (matches : func_info list)
-    : fn_id option =
-  let scope (f : func_info) : (string option * string option) =
-    ( (match Func_info.enclosing_class f.fn_id with
-       | Some (cls : IL.name) -> Some (fst cls.IL.ident)
-       | None -> Func_info.entity_qualifier f),
-      if top_level_scope_is_project then None
-      else Option.map Fpath.to_string (Func_info.def_file_opt f) )
-  in
-  match matches with
-  | [] -> None
-  | _ when not overload_groups -> None
-  | first :: rest ->
-      let same_scope =
-        List.for_all
-          (fun (f : func_info) ->
-            let cls1, file1 = scope first and cls2, file2 = scope f in
-            Option.equal String.equal cls1 cls2
-            && Option.equal String.equal file1 file2)
-          rest
-      in
-      if not same_scope then None
-      else
-        matches
-        |> List.filter_map (fun (f : func_info) ->
-               Option.map
-                 (fun (bare_name : IL.name) ->
-                    (Function_id.of_il_name bare_name, f))
-                 (Func_info.bare_name f.fn_id))
-        |> List.sort (fun ((a : Function_id.t), _) ((b : Function_id.t), _) ->
-               Function_id.compare a b)
-        |> List_.hd_opt
-        |> Option.map (fun (_, (f : func_info)) -> f.fn_id)
-
-let pick_by_arity ?(overload_groups = false)
-    ?(top_level_scope_is_project = false) ~(lang : Lang.t)
-    (call_arity : int option) (matches : func_info list) : fn_id option =
+let narrow_by_arity ~(lang : Lang.t) (call_arity : int option)
+    (matches : func_info list) : func_info list =
   let matches = prefer_concrete matches in
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
      with an empty param list) against a positional-arg call.  A body-less
-     decl WITH params is an interface/abstract declaration and must stay
-     resolvable — dispatch merges the concrete impls' signatures into the
-     decl's vertex, so dropping its edge severs impl dispatch. *)
+     decl WITH params is an interface/abstract declaration and stays
+     resolvable: the call's stamp holds the definitions its arguments
+     select, and dispatch adds the overriding definitions. *)
   let single_synth_with_args (f : func_info) : bool =
     match call_arity with
     | Some n ->
@@ -165,44 +77,198 @@ let pick_by_arity ?(overload_groups = false)
     | None -> false
   in
   match matches with
-  | [single_match] when single_synth_with_args single_match ->
-      None
-  | [single_match] -> Some single_match.fn_id
+  | [single_match] when single_synth_with_args single_match -> []
+  | [_]
   | [] ->
-      Log.debug (fun m -> m "PICK_BY_ARITY: no candidates");
-      None
+      matches
   | _ ->
       (match call_arity with
       | Some arity ->
-          let arity_matches = List.filter (fun f ->
+          List.filter (fun (f : func_info) ->
             Int.equal (get_func_arity ~lang f) arity
-          ) matches in
-          (match arity_matches with
-          | [single_match] -> Some single_match.fn_id
-          | [] ->
-              Log.debug (fun m ->
-                m "PICK_BY_ARITY: %d candidates, none with arity %d; giving up"
-                  (List.length matches) arity);
-              None
-          | _ -> (
-              (* Overloads by parameter type, or entries with the same simple
-                 name across scopes. *)
-              match
-                overload_representative ~overload_groups
-                  ~top_level_scope_is_project arity_matches
-              with
-              | Some _ as representative -> representative
-              | None ->
-                  Log.debug (fun m ->
-                    m "PICK_BY_ARITY: %d candidates, %d still match arity %d \
-                       across scopes; giving up"
-                      (List.length matches) (List.length arity_matches) arity);
-                  None))
+          ) matches
       | None ->
           Log.debug (fun m ->
             m "PICK_BY_ARITY: %d candidates, no arity info; giving up"
               (List.length matches));
+          [])
+
+let use_binding (info : G.id_info) : G.SId.t option =
+  match !(info.G.id_resolved) with
+  | Some (_, sid) when not (G.SId.is_unsafe_default sid) -> Some sid
+  | Some _
+  | None ->
+      None
+
+type static_type =
+  | Declared_class of G.SId.t
+  | Builtin_type of Type.builtin_type
+
+let equal_static_type (left : static_type) (right : static_type) : bool =
+  match (left, right) with
+  | Declared_class left, Declared_class right -> G.SId.equal left right
+  | Builtin_type left, Builtin_type right -> Type.equal_builtin_type left right
+  | Declared_class _, Builtin_type _
+  | Builtin_type _, Declared_class _ ->
+      false
+
+let static_type_of_type ~(lang : Lang.t) (ty : G.type_) : static_type option =
+  match ty.G.t with
+  | G.TyN name
+  | G.TyExpr { G.e = G.N name; _ } -> (
+      match use_binding (snd (AST_generic_helpers.id_of_name name)) with
+      | Some sid -> Some (Declared_class sid)
+      | None ->
+          Option.map
+            (fun (builtin : Type.builtin_type) -> Builtin_type builtin)
+            (Type.builtin_type_of_type lang ty))
+  | _ -> None
+
+let static_type_of_argument ~(lang : Lang.t) (e : G.expr) : static_type option
+    =
+  match e.G.e with
+  | G.N name ->
+      Option.bind
+        (Ty_bare_name.instance_or_declared_type
+           (snd (AST_generic_helpers.id_of_name name)))
+        (static_type_of_type ~lang)
+  | G.L _ -> (
+      match fst (Typing.type_of_expr lang e) with
+      | Type.Builtin (builtin : Type.builtin_type) -> Some (Builtin_type builtin)
+      | _ -> None)
+  | G.New (_, ty, _, _) -> static_type_of_type ~lang ty
+  | G.Call ({ G.e = G.N name; _ }, _) when Lang_config.constructs_by_bare_call lang
+    -> (
+      match !((snd (AST_generic_helpers.id_of_name name)).G.id_resolved) with
+      | Some (G.TypeName, sid) -> Some (Declared_class sid)
+      | Some _
+      | None ->
           None)
+  | _ -> None
+
+let argument_types ~(lang : Lang.t)
+    ~(type_of_call : G.expr -> static_type option) (args : G.argument list) :
+    static_type option list =
+  List_.map
+    (fun (arg : G.argument) ->
+      match arg with
+      | G.Arg e -> (
+          match (static_type_of_argument ~lang e, e.G.e) with
+          | (Some _ as known), _ -> known
+          | None, G.Call _ -> type_of_call e
+          | None, _ -> None)
+      | G.ArgKwd _
+      | G.ArgKwdOptional _
+      | G.ArgType _
+      | G.OtherArg _ ->
+          None)
+    args
+
+let is_numeric (builtin : Type.builtin_type) : bool =
+  match builtin with
+  | Type.Int
+  | Type.Float
+  | Type.Number ->
+      true
+  | Type.String
+  | Type.Bool
+  | Type.OtherBuiltins _ ->
+      false
+
+let types_disagree ~(argument : static_type) ~(parameter : static_type) : bool
+    =
+  match (argument, parameter) with
+  | Declared_class _, Declared_class _ -> false
+  | Builtin_type argument, Builtin_type parameter ->
+      not
+        (Type.equal_builtin_type argument parameter
+        || (is_numeric argument && is_numeric parameter))
+  | Declared_class _, Builtin_type _
+  | Builtin_type _, Declared_class _ ->
+      true
+
+let call_parameters ~(lang : Lang.t) (f : func_info) : G.parameter list =
+  let is_method = Receiver.is_method f.fdef in
+  let is_static = Receiver.is_static f.entity in
+  Tok.unbracket f.fdef.G.fparams
+  |> List.filteri (fun (i : int) (param : G.parameter) ->
+         not
+           (Receiver.implicit_param lang ~is_method ~is_static
+              ~is_first:(Int.equal i 0) param))
+
+type static_typing = {
+  type_of_call : G.expr -> static_type option;
+  is_class : G.SId.t -> bool;
+}
+
+let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
+    (args : G.argument list) (candidates : func_info list) : func_info list =
+  if not (Lang_config.overloads_by_type lang) then candidates
+  else
+    let decided (known : static_type) : static_type option =
+      match known with
+      | Declared_class sid when not (typing.is_class sid) -> None
+      | Declared_class _
+      | Builtin_type _ ->
+          Some known
+    in
+    let arguments =
+      List_.map
+        (fun (argument : static_type option) -> Option.bind argument decided)
+        (argument_types ~lang ~type_of_call:typing.type_of_call args)
+    in
+    List.filter
+      (fun (f : func_info) ->
+        let parameters = call_parameters ~lang f in
+        not
+          (List.exists Fun.id
+             (List.mapi
+                (fun (i : int) (argument : static_type option) ->
+                  match (argument, List.nth_opt parameters i) with
+                  | Some argument, Some (G.Param { G.ptype = Some ty; _ }) -> (
+                      match Option.bind (static_type_of_type ~lang ty) decided with
+                      | Some parameter -> types_disagree ~argument ~parameter
+                      | None -> false)
+                  | _ -> false)
+                arguments)))
+      candidates
+
+let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
+    (call_args : G.argument list option) (candidates : func_info list) :
+    func_info list =
+  let by_arity =
+    narrow_by_arity ~lang (Option.map List.length call_args) candidates
+  in
+  match call_args with
+  | Some args -> narrow_by_argument_types ~lang ~typing args by_arity
+  | None -> by_arity
+
+let return_type ~(lang : Lang.t) (funcs : func_info list) : static_type option
+    =
+  match
+    List_.uniq_by
+      (Option.equal equal_static_type)
+      (List_.map
+         (fun (f : func_info) ->
+           Option.bind f.fdef.G.frettype (static_type_of_type ~lang))
+         funcs)
+  with
+  | [ (Some _ as common) ] -> common
+  | _ -> None
+
+let rec typing ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
+    ~(is_class : G.SId.t -> bool) : static_typing =
+  { type_of_call = type_of_call ~lang ~resolve ~is_class; is_class }
+
+and type_of_call ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
+    ~(is_class : G.SId.t -> bool) (e : G.expr) : static_type option =
+  match e.G.e with
+  | G.Call (callee, (_, args, _)) ->
+      resolve callee
+      |> narrow_by_call ~lang ~typing:(typing ~lang ~resolve ~is_class)
+           (Some args)
+      |> return_type ~lang
+  | _ -> None
 
 (* Graph node type - reuse from Call_graph for consistency *)
 type node = Call_graph.node
@@ -239,678 +305,80 @@ let fn_id_to_node (fn_id : fn_id) : node option =
 let uses_new_keyword (lang : Lang.t) : bool =
   Lang_config.uses_new_keyword lang
 
-(* Resolve a class name to its constructor fn_id using lang config.
-   e.g. Foo → Foo#<init> (Java), Foo → Foo#__init__ (Python), Foo → Foo#initialize (Ruby) *)
-let resolve_constructor ~(lang : Lang.t) ~all_funcs (class_name : string)
-    : fn_id option =
-  List.find_opt (fun f ->
-    match Func_info.as_method f.fn_id with
-    | Some (c, m) ->
-        String.equal (fst c.IL.ident) class_name
-        && Object_initialization.is_constructor lang (fst m.IL.ident)
-             (Some class_name)
-    | None -> false
-  ) all_funcs |> Option.map (fun f -> f.fn_id)
-
-let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs (ty : G.type_) : fn_id option =
-  match ty.G.t with
-  | G.TyN (G.Id ((name, _), _))
-  | G.TyExpr { G.e = G.N (G.Id ((name, _), _)); _ } ->
-    resolve_constructor ~lang ~all_funcs name
-  | _ -> None
-
-let funcs_with_bare_name ~(func_lookup : Func_lookup.t)
-    ~(all_funcs : func_info list) (bare_name : string) : func_info list =
-  Func_lookup.funcs_with_bare_name func_lookup ~all_funcs bare_name
-
-(* Intrafile only. A call whose callee is a dotted name, such as M.f(x),
-   resolves to a function defined under the same dotted name,
-   function M.f(x) or M.f = function(x). The comparison is syntactic:
-   the sequence of identifiers of the callee against the sequence of
-   identifiers of the definition's name. A rebinding of M or of the
-   field between the definition and the call is not followed, as in
-   the other name based arms of this resolver. The interfile resolver
-   does not use this arm: whether M is visible in another file is
-   decided by the index. The candidates are the functions of the file
-   filtered by the dotted name, not the bare name index: a lambda bound
-   to a field has a position identity and no bare name. *)
-let funcs_with_dotted_name ~(all_funcs : func_info list)
-    (chain : string list) : func_info list =
-  List.filter (fun (f : func_info) ->
-      match f.entity with
-      | None -> false
-      | Some (ent : G.entity) ->
-        (match AST_generic_helpers.name_of_entity_name ent.G.name with
-         | None -> false
-         | Some (name : G.name) ->
-           List.equal String.equal
-             (List.map fst (AST_generic_helpers.dotted_ident_of_name name))
-             chain))
-    all_funcs
-
-type construction_resolver =
-  call_arity:int -> G.type_ -> fn_id option
-
-type invocation_resolver =
-  caller_parent_path:IL.name option list -> string -> fn_id option
-
-type call_site_resolver =
-  ?func_lookup:Func_lookup.t ->
-  ?caller_parent_path:IL.name option list ->
-  ?call_arity:int ->
-  ?allow_constructor:bool ->
-  G.expr ->
-  fn_id option
-
-(* Bare-name narrowing of [all_funcs] is required for tractability. *)
-let rec identify_callee ~(lang : Lang.t)
-    ?(all_funcs = [])
-    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
-    ?(type_state : Type_state.t = Type_state.empty)
-    ?(caller_parent_path = []) ?(call_arity : int option)
-    ?(allow_constructor = true) (callee : G.expr) : fn_id option =
-  let is_locally_imported (name : string) : bool =
-    Func_lookup.is_locally_imported func_lookup name
-  in
-  (* every arity tie-break below knows whether overload groups exist *)
-  let pick_by_arity ~(lang : Lang.t) (call_arity : int option)
-      (matches : func_info list) : fn_id option =
-    pick_by_arity
-      ~overload_groups:(Func_lookup.overload_groups func_lookup)
-      ~top_level_scope_is_project:
-        (Func_lookup.top_level_scope_is_project func_lookup)
-      ~lang call_arity matches
-  in
-  let rec collect_dotted_chain (e : G.expr) : (string * string list) option =
-    match e.G.e with
-    | G.N (G.Id ((s, _), _)) -> Some (s, [])
-    | G.DotAccess (sub, _, G.FN (G.Id ((s, _), _))) ->
-      (match collect_dotted_chain sub with
-       | Some (base, parts) -> Some (base, parts @ [s])
-       | None -> None)
-    | _ -> None
-  in
-  let current_file_of_caller : string option =
-    let rec first_real_tok = function
-      | [] -> None
-      | None :: rest -> first_real_tok rest
-      | Some (n : IL.name) :: rest ->
-        let tok = snd n.IL.ident in
-        if Tok.is_fake tok then first_real_tok rest
-        else
-          (try Some (Fpath.to_string (Tok.file_of_tok tok))
-           with Tok.NoTokenLocation _ -> first_real_tok rest)
-    in
-    first_real_tok caller_parent_path
-  in
-  let func_def_file (f : func_info) : string option =
-    try Some (Fpath.to_string (Tok.file_of_tok (snd f.fdef.G.fkind)))
-    with Tok.NoTokenLocation _ -> None
-  in
-  let same_file_filter (matches : func_info list) : func_info list =
-    match current_file_of_caller with
-    | None -> matches
-    | Some cf ->
-      Func_info.prefer matches ~keep:(fun f ->
-        match func_def_file f with
-        | Some df -> String.equal df cf
-        | None -> false)
-  in
-  (* Prefer the caller's own directory (Go packages are directory-scoped). *)
-  let same_dir_filter (matches : func_info list) : func_info list =
-    if not Lang.(lang =*= Go) then matches
-    else
-    match current_file_of_caller with
-    | None -> matches
-    | Some cf ->
-      let cdir = Filename.dirname cf in
-      Func_info.prefer matches ~keep:(fun f ->
-        match func_def_file f with
-        | Some df -> String.equal (Filename.dirname df) cdir
-        | None -> false)
-  in
-  let narrow_by_package_qualifier (qual : string option)
-      (matches : func_info list) : func_info list =
-    match qual with
-    | None -> matches
-    | Some q ->
-      let want = Func_lookup.resolve_alias func_lookup q in
-      let in_package (f : func_info) =
-        match func_def_file f with
-        | None -> false
-        | Some df ->
-          (match want, Func_lookup.module_qn_of_file func_lookup df with
-           | Some w, Some g ->
-             String.equal (Names.Module_qn.to_string w)
-               (Names.Module_qn.to_string g)
-           | _ ->
-             String.equal (Filename.basename (Filename.dirname df)) q)
-      in
-      Func_info.prefer ~keep:in_package matches
-  in
-  (* The candidates defined in the caller's own file are preferred, then
-     those defined in the caller's directory. A Go package is one directory,
-     so two classes of one bare name collide across directories. *)
-  let narrow_file_then_dir matches =
-    if List.length matches > 1 then
-      let by_file = same_file_filter matches in
-      if List.length by_file > 1 then same_dir_filter by_file
-      else by_file
-    else matches
-  in
-  let resolve_class_method ?qualifier ~class_name ~method_name matches
-      : fn_id option =
-    let matches = narrow_by_package_qualifier qualifier matches in
-    let matches = narrow_file_then_dir matches in
-    (* Route to an [FBDecl] match; [Interfile_dispatch] fills its sig (else
-       [prefer_concrete] strips it). *)
-    let interface_match =
-      List.find_opt (fun (f : func_info) ->
-        Func_info.is_method_of ~class_name ~method_name f.fn_id
-        && (match f.fdef.G.fbody with G.FBDecl _ -> true | _ -> false)
-      ) matches
-    in
-    match interface_match with
-    | Some f -> Some f.fn_id
-    | None -> pick_by_arity ~lang call_arity matches
-  in
-  let exceeds (lst : 'a list) (n : int) : bool =
-    let rec go lst k =
-      if k < 0 then true
-      else match lst with
-      | [] -> false
-      | _ :: rest -> go rest (k - 1)
-    in
-    go lst n
-  in
-  let try_unique_by_distinct_key
-      ~(candidate_filter : func_info -> bool)
-      ~(distinct_key : func_info -> string option)
-      (name : string) : fn_id option =
-    let cands =
-      funcs_with_bare_name ~func_lookup ~all_funcs name
-      |> List.filter candidate_filter
-    in
-    match cands with
-    | [] -> None
-    | _ when exceeds cands pathological_candidate_cap -> None
-    | _ ->
-      let distinct xs =
-        List.sort_uniq String.compare (List.filter_map distinct_key xs)
-      in
-      let dk = distinct cands in
-      if Int.equal (List.length dk) 1 then pick_by_arity ~lang call_arity cands
-      else if List.length dk > unique_call_threshold then None
-      else
-        let same = same_file_filter cands in
-        if Int.equal (List.length (distinct same)) 1
-           && List.length same < List.length cands then
-          pick_by_arity ~lang call_arity same
-        else None
-  in
-  let try_unique_callee ~(callee_name : string) : fn_id option =
-    if Lang.equal lang Lang.Ruby then None
-    else
-      try_unique_by_distinct_key
-        ~candidate_filter:(fun _ -> true)
-        ~distinct_key:(fun f ->
-          match List_.init_and_last_opt f.fn_id with
-          | Some (parents, _) ->
-            Some (String.concat "::" (List.map (fun p ->
-              match p with
-              | Some n -> fst n.IL.ident
-              | None -> "_") parents))
-          | _ -> None)
-        callee_name
-  in
-  let try_nested_callee ~(callee_name : string) : fn_id option =
-    (* Methods are excluded: this resolves a BARE call, which supplies no
-       receiver, so a same-named method of some class in the file is not
-       a candidate (it would wire spurious cross-class edges). *)
-    match
-      Func_lookup.nested_in_same_file func_lookup callee_name
-      |> List.filter (fun (f : func_info) ->
-             Option.is_none (Func_info.enclosing_class f.fn_id))
-    with
-    | [] -> None
-    | [single] -> Some single.fn_id
-    | _ -> None
-  in
-  let try_imported_callee ~(callee_name : string) : fn_id option =
-    match Func_lookup.resolve_alias func_lookup callee_name with
-    | None -> None
-    | Some imported_qn ->
-      (match Names.Module_qn.split_last imported_qn with
-       | None -> None
-       | Some (module_qn, _) when Names.Module_qn.is_empty module_qn -> None
-       | Some (module_qn, bare_name) ->
-         let candidates =
-           Func_lookup.funcs_in_module func_lookup module_qn
-           |> List.filter (fun f -> is_free_named f bare_name)
-         in
-         pick_by_arity ~lang call_arity candidates)
-  in
-  let try_unique_method_call ~(method_name : string) : fn_id option =
-    try_unique_by_distinct_key
-      ~candidate_filter:(fun f ->
-        Option.is_some (Func_info.as_method f.fn_id))
-      ~distinct_key:(fun f ->
-        Option.map (fun (c, _) -> fst c.IL.ident)
-          (Func_info.as_method f.fn_id))
-      method_name
-  in
-  let try_module_qn_call ~(base : string) ~(parts : string list)
-      ~(method_name : string) : fn_id option =
-    if not (Func_lookup.imports_indexed func_lookup) then None
-    else
-    match Func_lookup.resolve_alias func_lookup base with
-    | None -> None
-    | Some base_qn ->
-      let target_qn = match parts with
-        | [] -> base_qn
-        | _ ->
-          Names.Module_qn.of_string
-            (Names.Module_qn.to_string base_qn ^ "."
-             ^ String.concat "." parts)
-      in
-      let candidates =
-        Func_lookup.funcs_in_module func_lookup target_qn
-        |> List.filter (fun f -> is_free_named f method_name)
-      in
-      (match pick_by_arity ~lang call_arity candidates with
-          | Some _ as r -> r
-          | None ->
-            let cls_simple =
-              match List_.last_opt parts with
-              | None -> Names.Module_qn.bare_name base_qn
-              | Some p -> p
-            in
-            if not (Type_state.has_class type_state cls_simple) then None
-            else
-              let method_matches =
-                Type_state.find_methods type_state ~fallback:[]
-                  ~class_name:cls_simple ~method_name
-              in
-              pick_by_arity ~lang call_arity method_matches)
-  in
-  let try_dotted_definition ~(base : string) ~(parts : string list)
-      ~(method_name : string) : fn_id option =
-    if is_locally_imported base then None
-    else
-      let chain = (base :: parts) @ [ method_name ] in
-      let candidates = funcs_with_dotted_name ~all_funcs chain in
-      match find_func_in_scope candidates caller_parent_path method_name with
-      | Some (f : func_info) -> Some f.fn_id
-      | None -> pick_by_arity ~lang call_arity candidates
-  in
-  (* Kept un-narrowed for the bare-generic [foo<T>()] reroute. *)
-  let unnarrowed_all_funcs = all_funcs in
-  (* The result is the first constructor the lookup's constructor index
-     holds for the class, and [None] when the index holds no constructor
-     for the class. *)
-  let ctor_of_class (class_name : string) : fn_id option =
-    match Func_lookup.constructors_of_class func_lookup class_name with
-    | (func : func_info) :: _ -> Some func.fn_id
-    | [] -> None
-  in
-  let all_funcs =
-    match bare_name_of_callee callee with
-    | Some bare_name ->
-      (match Func_lookup.narrow_candidates_by_bare_name func_lookup bare_name with
-       | Some narrowed -> narrowed
-       | None -> all_funcs)
-    | None -> all_funcs
-  in
-  let current_class = Func_info.enclosing_class caller_parent_path in
-  match callee.G.e with
-    (* Simple function call: foo() *)
-    | G.N (G.Id ((id, _), id_info)) ->
-        let callee_name_str = id in
-        (* First check if it's a nested function in the same scope.
-           Use position-aware match to distinguish same-named parent functions. *)
-        let nested_match =
-          find_func_in_scope all_funcs caller_parent_path callee_name_str
-        in
-        begin
-          match nested_match with
-          | Some f ->
-              Log.debug (fun m -> m "CALL_EXTRACT: Found nested function %s in same scope" callee_name_str);
-              Some f.fn_id
-          | None when (match !(id_info.G.id_resolved) with
-                       | Some ((G.LocalVar | G.Parameter), _) -> true
-                       | _ -> false) ->
-              None
-          | None ->
-              (* For class-based languages, foo() might be an implicit this.foo() call.
-                 Check if a method with this name exists in the current class. *)
-              match current_class with
-              | Some class_name ->
-                  let class_name_str = fst class_name.IL.ident in
-                  (* [methods_by_class] first: catches MRO-inherited methods. *)
-                  let method_matches =
-                    Type_state.find_methods type_state ~fallback:all_funcs
-                      ~class_name:class_name_str ~method_name:callee_name_str
-                  in
-                  let method_match = match method_matches with
-                    | [] -> None
-                    | x :: _ -> Some x
-                  in
-                  (* Build [all_names] inside the lambda: O(N) only when debug is on. *)
-                  Log.debug (fun m ->
-                      let all_names =
-                          all_funcs
-                          |> List.map (fun f -> show_fn_id f.fn_id)
-                          |> String.concat ", "
-                      in
-                      m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
-                          class_name_str callee_name_str (List.length all_funcs) (Option.is_some method_match) all_names);
-                  (match method_match with
-                  | Some f -> Some f.fn_id
-                  | None when is_locally_imported callee_name_str ->
-                      try_imported_callee ~callee_name:callee_name_str
-                  | None ->
-                      let free_fn_match =
-                        List.find_opt (fun f -> is_free_named f callee_name_str)
-                          all_funcs
-                      in
-                      (match Option.map (fun f -> f.fn_id) free_fn_match with
-                       | Some _ as r -> r
-                       | None ->
-                         (match try_nested_callee ~callee_name:callee_name_str with
-                          | Some _ as r -> r
-                          | None ->
-                            (* [Cls(...)] inside a method is a constructor too
-                               (no [new] keyword in Python/Ruby, so it parses
-                               as a plain call, not [G.New]). The module-level
-                               arm below already does this; without it here a
-                               constructor call written in a method resolved to
-                               nothing. Gated by [allow_constructor] so an
-                               argument being probed as a possible call
-                               ([unresolved_arg_call]) is not mistaken for a
-                               construction — passing a class is not
-                               constructing it. *)
-                            if allow_constructor then
-                              ctor_of_class callee_name_str
-                            else None)))
-              | None when is_locally_imported callee_name_str ->
-                  try_imported_callee ~callee_name:callee_name_str
-              | None ->
-                  (* Top-level free function - use string matching *)
-                  let free_fn_match =
-                    List.find_opt (fun f -> is_free_named f callee_name_str)
-                      all_funcs
-                  in
-                  (match Option.map (fun f -> f.fn_id) free_fn_match with
-                  | Some _ as r -> r
-                  | None ->
-                    match try_nested_callee ~callee_name:callee_name_str with
-                    | Some _ as r -> r
-                    | None ->
-                      (* Try as constructor: ClassName() → ClassName#__init__ etc.
-                         [allow_constructor] false when probing a bare-identifier
-                         ARGUMENT as a possible call (see method arm above). *)
-                      (match (if allow_constructor then
-                                ctor_of_class callee_name_str
-                              else None) with
-                       | Some _ as r -> r
-                       | None ->
-                         if not (Func_lookup.imports_indexed func_lookup) then
-                           try_unique_callee ~callee_name:callee_name_str
-                         else
-                           (match Func_lookup.resolve_alias func_lookup callee_name_str with
-                            | None -> None
-                            | Some imported_qn ->
-                              (match Names.Module_qn.split_last imported_qn with
-                               | None -> None
-                               | Some (module_qn, _)
-                                 when Names.Module_qn.is_empty module_qn ->
-                                 None
-                               | Some (module_qn, bare_name) ->
-                                 let candidates =
-                                   Func_lookup.funcs_in_module func_lookup module_qn
-                                   |> List.filter (fun f -> is_free_named f bare_name)
-                                 in
-                                 (match pick_by_arity ~lang call_arity candidates with
-                                  | Some _ as r -> r
-                                  | None ->
-                                    try_unique_callee ~callee_name:callee_name_str)))))
-        end
-        (* Bare generic [foo<T>()]: reroute through [N (Id)] for the [try_unique_callee] fallback. *)
-        | G.N (G.IdQualified
-                 { name_last = (id, _typeargs); name_middle = None;
-                   name_top = None; name_info; _ }) ->
-            let synth = { callee with G.e = G.N (G.Id (id, name_info)) } in
-            identify_callee ~lang
-              ~all_funcs:unnarrowed_all_funcs ~func_lookup ~type_state
-              ~caller_parent_path ?call_arity synth
-        | G.N (G.IdQualified { name_last = (id, _), _; name_middle; _ }) ->
-            let callee_name_str = id in
-            let qualified_match =
-              List.find_opt (fun f -> is_free_named f callee_name_str) all_funcs
-            in
-            (match qualified_match with
-            | Some f -> Some f.fn_id
-            | None ->
-                let single_qualifier_opt =
-                  match name_middle with
-                  | Some (G.QDots [(seg, _), _]) -> Some seg
-                  | _ -> None
-                in
-                let alias_match =
-                  match single_qualifier_opt with
-                  | None -> None
-                  | Some q ->
-                    if not (Func_lookup.imports_indexed func_lookup) then None
-                    else
-                      match Func_lookup.resolve_alias func_lookup q with
-                      | None -> None
-                      | Some module_qn ->
-                        let candidates =
-                          Func_lookup.funcs_in_module func_lookup module_qn
-                          |> List.filter (fun f ->
-                               is_free_named f callee_name_str)
-                        in
-                        pick_by_arity ~lang call_arity candidates
-                in
-                (match alias_match with
-                | Some _ as r -> r
-                | None ->
-                  let class_name_opt =
-                    match name_middle with
-                    | Some (G.QDots dots) ->
-                      Option.map (fun (cls_id, _) -> fst cls_id)
-                        (List_.last_opt dots)
-                    | _ -> None
-                  in
-                  (match class_name_opt with
-                  | None -> None
-                  | Some class_name_str ->
-                    let method_matches =
-                      Type_state.find_methods type_state
-                        ~fallback:all_funcs
-                        ~class_name:class_name_str
-                        ~method_name:callee_name_str
-                    in
-                    pick_by_arity ~lang call_arity method_matches)))
-        (* Method call: this.method() or self.method() *)
-        | G.DotAccess
-            ( { e = G.IdSpecial ((G.This | G.Self), _); _ },
-              _,
-              G.FN (G.Id ((id, _), _id_info)) ) ->
-            let method_name_str = id in
-            (match current_class with
-            | Some class_name ->
-                let class_name_str = fst class_name.IL.ident in
-                (* [find_methods] unions the class's own methods with the
-                   MRO-inherited ones, so [self.m()] resolves to a method
-                   defined on an ancestor (incl. inherited staticmethods). *)
-                let method_matches =
-                  Type_state.find_methods type_state ~fallback:all_funcs
-                    ~class_name:class_name_str ~method_name:method_name_str
-                in
-                pick_by_arity ~lang call_arity method_matches
-            | None -> None)
-        (* No ctor/fuzzy fallback here (FP-prone on namespaced libs). *)
-        | G.DotAccess
-            ( { e = G.N (G.IdQualified { name_last = ((obj_name, _), _); _ }); _ },
-              _,
-              G.FN (G.Id ((id, _), _id_info)) ) ->
-            let method_name_str = id in
-            let class_member_matches =
-              Type_state.find_methods type_state ~fallback:all_funcs
-                ~class_name:obj_name ~method_name:method_name_str
-            in
-            pick_by_arity ~lang call_arity class_member_matches
-        (* Method call: obj.method() - look up obj's class *)
-        | G.DotAccess
-            ( { e = G.N (G.Id ((obj_name, _), obj_id_info)); _ },
-              _,
-              G.FN (G.Id ((id, _), _id_info)) ) ->
-            let method_name_str = id in
-            (* Receiver's instance class, published on [id_info] by projidx
-               augment / intrafile broadcast, else its declared type. *)
-            let obj_class_opt =
-              Option.bind (Ty_bare_name.instance_or_declared_type obj_id_info)
-                Ty_bare_name.qualified_class_name_of_ty
-            in
-            (match obj_class_opt with
-            | Some class_name ->
-                let class_name_str =
-                  Option.value (Ty_bare_name.bare_name_of_name class_name) ~default:""
-                in
-                let method_matches =
-                  Type_state.find_methods type_state ~fallback:all_funcs
-                    ~class_name:class_name_str ~method_name:method_name_str
-                in
-                resolve_class_method
-                  ?qualifier:(Ty_bare_name.qualifier_of_name class_name)
-                  ~class_name:class_name_str
-                  ~method_name:method_name_str method_matches
-            | None ->
-                let class_member_matches =
-                  let from_class =
-                    Type_state.find_methods type_state ~fallback:[]
-                      ~class_name:obj_name ~method_name:method_name_str
-                  in
-                  let from_all =
-                    List.filter (fun (f : Func_info.t) ->
-                      Func_info.is_method_of ~class_name:obj_name
-                        ~method_name:method_name_str f.fn_id
-                    ) all_funcs
-                  in
-                  from_class @ from_all
-                in
-                (match pick_by_arity ~lang call_arity class_member_matches with
-                | Some _ as r -> r
-                | None ->
-                    let module_match =
-                      try_module_qn_call ~base:obj_name ~parts:[]
-                        ~method_name:method_name_str
-                    in
-                    (match module_match with
-                    | Some _ as r -> r
-                    | None ->
-                         let ctor_via_new =
-                           if String.equal method_name_str "new"
-                              && Lang.(lang =*= Ruby || lang =*= Crystal) then
-                             ctor_of_class obj_name
-                           else None
-                         in
-                         (match ctor_via_new with
-                          | Some _ as r -> r
-                          | None ->
-                         (match resolve_constructor ~lang ~all_funcs obj_name with
-                          | Some _ as r -> r
-                          | None ->
-                            (match try_unique_method_call
-                                     ~method_name:method_name_str with
-                             | Some _ as r -> r
-                             | None ->
-                               try_dotted_definition ~base:obj_name ~parts:[]
-                                 ~method_name:method_name_str))))))
-        (* Chained call: Constructor(...).method() — receiver is a constructor.
-           Python/Kotlin/Scala: ClassName(args).method()
-           Java/JS/TS/C#:       new ClassName(args).method()
-           Ruby/Crystal:        ClassName.new(args).method() *)
-        | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) ->
-            let receiver_chain = collect_dotted_chain receiver in
-            let try_unique_method_or_dotted () : fn_id option =
-              match try_unique_method_call ~method_name with
-              | Some _ as r -> r
-              | None ->
-                (match receiver_chain with
-                 | None -> None
-                 | Some (base, parts) ->
-                   try_dotted_definition ~base ~parts ~method_name)
-            in
-            let module_match =
-              match receiver_chain with
-              | None -> None
-              | Some (base, parts) ->
-                try_module_qn_call ~base ~parts ~method_name
-            in
-            (match module_match with
-            | Some _ as r -> r
-            | None ->
-            let ctx : Type_infer.ctx = {
-              (* No project-wide free-fn return index. *)
-              Type_infer.function_return = (fun _ -> None);
-              method_return = (fun ~class_name ~method_name ->
-                Type_state.method_return type_state ~class_name ~method_name);
-              field_type = (fun ~class_name ~field_name ->
-                Type_state.field_type_for_caller type_state
-                  ~class_name ~field_name
-                  ~caller_dir:(Option.map Filename.dirname
-                                 current_file_of_caller));
-              parent_of = (fun cls -> Type_state.parent type_state cls);
-              has_class = (fun cls -> Type_state.has_class type_state cls);
-              current_class =
-                Option.map (fun (n : IL.name) ->
-                  G.Id (n.IL.ident, G.empty_id_info ())) current_class;
-              uses_new_keyword = uses_new_keyword lang;
-            } in
-            let inferred_receiver_type =
-              Type_infer.type_of_expr ~max_depth:infer_class_max_depth ~ctx
-                receiver
-            in
-            let class_name_opt = match receiver.G.e with
-              (* Ruby/Crystal [ClassName.new(args)]: [new] is a constructor,
-                 not a method-return lookup. *)
-              | G.Call ({ e = G.DotAccess (
-                    { e = G.N (G.Id ((cn, _), _)
-                             | G.IdQualified
-                                 { name_last = ((cn, _), _); _ }); _ }, _,
-                    G.FN (G.Id (("new", _), _))); _ }, _)
-                when Lang.(lang =*= Ruby || lang =*= Crystal) -> Some cn
-              | _ ->
-                Option.bind inferred_receiver_type Ty_bare_name.bare_name_of_name
-            in
-            let qualifier_hint : string option =
-              Option.bind inferred_receiver_type Ty_bare_name.qualifier_of_name
-            in
-            (match class_name_opt with
-            | Some class_name ->
-                let method_matches =
-                  Type_state.find_methods type_state ~fallback:all_funcs
-                    ~class_name ~method_name
-                in
-                (match resolve_class_method ?qualifier:qualifier_hint
-                         ~class_name ~method_name method_matches with
-                 | Some _ as r -> r
-                 | None -> try_unique_method_or_dotted ())
-            | None ->
-              try_unique_method_or_dotted ()))
-        | _ ->
-            Log.debug (fun m ->
-                m "CALL_EXTRACT: Unmatched call pattern: %s"
-                  (G.show_expr callee));
-            None
-
 let expr_of_type_name (ty : G.type_) : G.expr option =
   match ty.G.t with
   | G.TyN (name : G.name) -> Some (G.N name |> G.e)
   | G.TyExpr (e : G.expr) -> Some e
   | _ -> None
+
+type callee_use =
+  | Name_use of G.SId.t
+  | Member_use of {
+      receiver : G.SId.t;
+      receiver_type : G.type_ option;
+      member : string;
+    }
+
+let same_use_binding (left : G.SId.t) (right : G.SId.t) : bool =
+  G.SId.equal left right && G.SId.same_site left right
+
+module Callee_use_tbl = Hashtbl.Make (struct
+  type t = callee_use * static_type option list option
+
+  let equal ((left, left_arguments) : t) ((right, right_arguments) : t) :
+      bool =
+    Option.equal
+      (List.equal (Option.equal equal_static_type))
+      left_arguments right_arguments
+    &&
+    match (left, right) with
+    | Name_use left_sid, Name_use right_sid ->
+        same_use_binding left_sid right_sid
+    | Member_use left, Member_use right ->
+        same_use_binding left.receiver right.receiver
+        && Option.equal G.equal_type_ left.receiver_type right.receiver_type
+        && String.equal left.member right.member
+    | Name_use _, Member_use _
+    | Member_use _, Name_use _ ->
+        false
+
+  let hash ((use, arguments) : t) : int =
+    let arity = Option.map List.length arguments in
+    match use with
+    | Name_use sid -> Hashtbl.hash (G.SId.hash sid, arity)
+    | Member_use { receiver; member; _ } ->
+        Hashtbl.hash (G.SId.hash receiver, member, arity)
+end)
+
+let callee_use_of_name (info : G.id_info) : callee_use option =
+  if Option.is_some !(info.G.id_svalue) then None
+  else Option.map (fun (sid : G.SId.t) -> Name_use sid) (use_binding info)
+
+let callee_use_of_member ~(receiver : G.id_info) (member : string) :
+    callee_use option =
+  Option.map
+    (fun (sid : G.SId.t) ->
+      Member_use
+        { receiver = sid; receiver_type = !(receiver.G.id_instance_type); member })
+    (use_binding receiver)
+
+type call_site_resolver =
+  caller_parent_path:IL.name option list ->
+  call_args:G.argument list option ->
+  G.expr ->
+  fn_id list
+
+type construction_resolver =
+  call_args:G.argument list -> G.type_ -> fn_id list
+
+type invocation_resolver =
+  caller_parent_path:IL.name option list -> G.expr -> fn_id list
+
+type argument_typer =
+  caller_parent_path:IL.name option list ->
+  G.argument list ->
+  static_type option list
+
 
 type binding_target =
   | Bound_module of Names.Module_qn.t
@@ -927,17 +395,7 @@ type dotted_chain = {
   dc_segments : string list;
 }
 
-let rec dotted_chain_of_expr (e : G.expr) : dotted_chain option =
-  match e.G.e with
-  | G.N name -> dotted_chain_of_name name
-  | G.DotAccess (receiver, _, G.FN (G.Id ((segment, _), _))) ->
-    Option.map
-      (fun (chain : dotted_chain) ->
-        { chain with dc_segments = chain.dc_segments @ [ segment ] })
-      (dotted_chain_of_expr receiver)
-  | _ -> None
-
-and dotted_chain_of_name (name : G.name) : dotted_chain option =
+let dotted_chain_of_name (name : G.name) : dotted_chain option =
   match name with
   | G.Id ((segment, _), _) ->
     Some { dc_rooted = false; dc_segments = [ segment ] }
@@ -958,12 +416,6 @@ let entries_in_scope ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) (name : string)
     : Func_lookup.scope_entry list =
   Func_lookup.resolve_in_scope func_lookup ~caller_parent_path name
-
-let class_in_scope ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (name : string)
-    : Names.Class_qn.t option =
-  Func_lookup.class_of_entries
-    (entries_in_scope ~func_lookup ~caller_parent_path name)
 
 let head_binding ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(position : name_position)
@@ -987,31 +439,56 @@ let head_binding ~(func_lookup : Func_lookup.t)
         (fun (qn : Names.Module_qn.t) -> Bound_module qn)
         (Func_lookup.resolve_alias func_lookup segment)))
 
-let attribute_of ~(func_lookup : Func_lookup.t) ~(position : name_position)
-    (target : binding_target) (segment : string) : binding_target option =
+let target_of_attribute ~(position : name_position)
+    (attribute : Func_lookup.module_attribute) : binding_target =
+  match attribute with
+  | Func_lookup.Attr_functions funcs -> Bound_functions funcs
+  | Func_lookup.Attr_class class_qn -> Bound_class class_qn
+  | Func_lookup.Attr_class_with_companion (class_qn, companion_qn) -> (
+    match position with
+    | Term_position -> Bound_class companion_qn
+    | Type_position -> Bound_class class_qn)
+  | Func_lookup.Attr_module submodule_qn -> Bound_module submodule_qn
+
+let attribute_of ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
+    ~(position : name_position) (target : binding_target) (segment : string)
+    : binding_target option =
   match target with
-  | Bound_module (module_qn : Names.Module_qn.t) -> (
-    match Func_lookup.module_attribute func_lookup module_qn segment with
-    | Some (Func_lookup.Attr_functions funcs) -> Some (Bound_functions funcs)
-    | Some (Func_lookup.Attr_class class_qn) -> Some (Bound_class class_qn)
-    | Some (Func_lookup.Attr_class_with_companion (class_qn, companion_qn)) -> (
-      match position with
-      | Term_position -> Some (Bound_class companion_qn)
-      | Type_position -> Some (Bound_class class_qn))
-    | Some (Func_lookup.Attr_module submodule_qn) ->
-      Some (Bound_module submodule_qn)
-    | None -> None)
+  | Bound_module (module_qn : Names.Module_qn.t) ->
+    Option.map (target_of_attribute ~position)
+      (Func_lookup.module_attribute func_lookup module_qn segment)
   | Bound_class (class_qn : Names.Class_qn.t) -> (
-    match
-      Func_lookup.find_along_order func_lookup ~receiver:Func_lookup.On_class
-        (Func_lookup.resolution_order func_lookup class_qn)
-        (fun _ -> [ segment ])
-    with
-    | [] ->
-      let nested = Names.Class_qn.concat class_qn segment in
-      if Func_lookup.has_class func_lookup nested then Some (Bound_class nested)
+    let qualified = Names.Class_qn.concat class_qn segment in
+    let nested () : binding_target option =
+      if Option.is_some (Func_lookup.class_of_qn func_lookup qualified) then
+        Some (Bound_class qualified)
       else None
-    | (_ :: _) as funcs -> Some (Bound_functions funcs))
+    in
+    let defined_by_name () : binding_target option =
+      match
+        Func_lookup.definition func_lookup (Names.Class_qn.to_string qualified)
+      with
+      | Some (attribute : Func_lookup.module_attribute) ->
+        Some (target_of_attribute ~position attribute)
+      | None -> nested ()
+    in
+    match Func_lookup.class_of_qn func_lookup class_qn with
+    | Some (cls : Class_table.cls) -> (
+      match
+        Symbol_table.resolve_member table (Symbol_table.Class_object cls)
+          segment
+      with
+      | Symbol_table.Defined (_ :: _ as funcs) -> Some (Bound_functions funcs)
+      | Symbol_table.Defined []
+      | Symbol_table.External ->
+        let classes = Symbol_table.class_table table in
+        if
+          Common.SMap.mem segment
+            (Class_table.members_along
+               (Class_table.order classes cls).Linearisation.order)
+        then nested ()
+        else defined_by_name ())
+    | None -> defined_by_name ())
   | Bound_object (members : func_info list Common.SMap.t) ->
     Option.map
       (fun (funcs : func_info list) -> Bound_functions funcs)
@@ -1037,24 +514,11 @@ let global_attribute_binding ~(func_lookup : Func_lookup.t)
     ~(position : name_position) (chain : string list)
     : (binding_target * string list) option =
   match chain with
-  | [ (segment : string) ] -> (
-    match
-      Func_lookup.module_attribute func_lookup Names.Module_qn.empty segment
-    with
-    | Some (Func_lookup.Attr_functions (funcs : func_info list)) ->
-      Some (Bound_functions funcs, [])
-    | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) ->
-      Some (Bound_class class_qn, [])
-    | Some
-        (Func_lookup.Attr_class_with_companion
-           ((class_qn : Names.Class_qn.t), (companion_qn : Names.Class_qn.t)))
-      -> (
-      match position with
-      | Term_position -> Some (Bound_class companion_qn, [])
-      | Type_position -> Some (Bound_class class_qn, []))
-    | Some (Func_lookup.Attr_module (module_qn : Names.Module_qn.t)) ->
-      Some (Bound_module module_qn, [])
-    | None -> None)
+  | [ (segment : string) ] ->
+    Option.map
+      (fun (attribute : Func_lookup.module_attribute) ->
+        (target_of_attribute ~position attribute, []))
+      (Func_lookup.module_attribute func_lookup Names.Module_qn.empty segment)
   | []
   | _ :: _ :: _ -> None
 
@@ -1064,7 +528,8 @@ let qualified_prefix_binding ~(func_lookup : Func_lookup.t)
   match
     longest_accepted_prefix
       ~accept:(fun (prefix : string list) ->
-        Func_lookup.is_known_class func_lookup (Names.Class_qn.of_parts prefix))
+        Option.is_some
+          (Func_lookup.class_of_qn func_lookup (Names.Class_qn.of_parts prefix)))
       chain
   with
   | Some ((prefix : string list), (segments : string list)) ->
@@ -1098,18 +563,21 @@ let in_own_modules ~(func_lookup : Func_lookup.t) ~(position : name_position)
           (Names.Module_qn.parts namespace_scope @ chain))
     (Func_lookup.own_modules func_lookup)
 
-let follow_chain ~(func_lookup : Func_lookup.t)
+let completed ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
+    ~(position : name_position)
+    ((target : binding_target), (segments : string list))
+    : binding_target option =
+  List.fold_left
+    (fun (target : binding_target option) (segment : string) ->
+      Option.bind target (fun target ->
+        attribute_of ~table ~func_lookup ~position target segment))
+    (Some target) segments
+
+let follow_chain ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(position : name_position)
     (chain : dotted_chain) : binding_target option =
   let segments_of_chain = chain.dc_segments in
-  let completed ((target : binding_target), (segments : string list))
-      : binding_target option =
-    List.fold_left
-      (fun (target : binding_target option) (segment : string) ->
-        Option.bind target (fun target ->
-          attribute_of ~func_lookup ~position target segment))
-      (Some target) segments
-  in
+  let completed = completed ~table ~func_lookup ~position in
   match segments_of_chain with
   | [] -> None
   | head :: segments -> (
@@ -1137,391 +605,209 @@ let follow_chain ~(func_lookup : Func_lookup.t)
               qualified_prefix_binding ~func_lookup ~position
                 segments_of_chain) ])
 
-let constructor_of_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
-    (class_qn : Names.Class_qn.t) : func_info list =
-  Func_lookup.find_along_order func_lookup ~receiver:Func_lookup.On_any
-    (Func_lookup.resolution_order func_lookup class_qn)
-    (fun (ancestor : Names.Class_qn.t) ->
-      Object_initialization.constructor_names_of_class ~lang
-        ~class_name:(Names.Class_qn.bare_name ancestor))
-
-let enclosing_class_qn ~(func_lookup : Func_lookup.t)
-    (caller_parent_path : IL.name option list) : Names.Class_qn.t option =
-  Option.bind (Func_info.enclosing_class caller_parent_path)
-    (Func_lookup.class_qn_of_definition func_lookup)
-
 let id_info_of_name (name : G.name) : G.id_info =
   match name with
   | G.Id (_, id_info) -> id_info
   | G.IdQualified { name_info; _ } -> name_info
 
-let constant_in_nesting ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (chain : dotted_chain)
-    : Names.Class_qn.t option =
-  let known (parts : string list) : Names.Class_qn.t option =
-    let candidate = Names.Class_qn.of_parts parts in
-    if Func_lookup.is_known_class func_lookup candidate then Some candidate
-    else None
-  in
-  let at_top_level () : Names.Class_qn.t option = known chain.dc_segments in
-  if chain.dc_rooted then at_top_level ()
-  else
-    let enclosing = enclosing_class_qn ~func_lookup caller_parent_path in
-    let scopes : string list list =
-      match enclosing with
-      | None -> []
-      | Some (class_qn : Names.Class_qn.t) ->
-        List.map Names.Class_qn.parts
-          (Names.Class_qn.prefixes class_qn
-           @ Func_lookup.resolution_order func_lookup class_qn)
-    in
-    match
-      List.find_map
-        (fun (scope : string list) -> known (scope @ chain.dc_segments))
-        scopes
-    with
-    | Some _ as resolved -> resolved
-    | None -> at_top_level ()
+let resolution_of_target ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(construct : bool)
+    (target : binding_target option) : Symbol_table.resolution =
+  match target with
+  | Some (Bound_functions funcs) -> Symbol_table.Defined funcs
+  | Some (Bound_class class_qn) -> (
+    match Func_lookup.class_of_qn func_lookup class_qn with
+    | Some (cls : Class_table.cls) when construct ->
+      Symbol_table.constructors_of_class table cls
+    | Some _ -> Symbol_table.Defined []
+    | None -> Symbol_table.External)
+  | Some (Bound_object _)
+  | Some (Bound_module _) -> Symbol_table.Defined []
+  | None -> Symbol_table.External
 
-let is_constant_name (name : G.name) : bool =
-  IdFlags.is_constant !((id_info_of_name name).G.id_flags)
+type chain_root =
+  | Imported_root of dotted_chain
+  | Unbound_root of dotted_chain
+  | Local_root
 
-let reads_own_class ~(lang : Lang.t) (e : G.expr) : bool =
-  let accessor_of (receiver : G.expr) (name : string) : bool =
-    (match receiver.G.e with
-     | G.IdSpecial ((G.This | G.Self), _) -> true
-     | _ -> false)
-    && List.exists (String.equal name)
-         (Lang_config.get lang).Lang_config.class_accessor_methods
-  in
+let rec root_and_members (e : G.expr) : (G.name * string list) option =
   match e.G.e with
-  | G.DotAccess (receiver, _, G.FN (G.Id ((name, _), _))) ->
-    accessor_of receiver name
-  | G.Call ({ G.e = G.DotAccess (receiver, _, G.FN (G.Id ((name, _), _))); _ },
-            _) ->
-    accessor_of receiver name
-  | _ -> false
-
-let class_named_by ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (e : G.expr)
-    : Names.Class_qn.t option =
-  if reads_own_class ~lang e then
-    enclosing_class_qn ~func_lookup caller_parent_path
-  else
-    match e.G.e with
-    | G.N (name : G.name) when is_constant_name name ->
-      Option.bind (dotted_chain_of_name name)
-        (constant_in_nesting ~func_lookup ~caller_parent_path)
-    | _ -> None
-
-let class_constructed_by ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (callee : G.expr)
-    : Names.Class_qn.t option =
-  match callee.G.e with
-  | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _)))
-    when Option.equal String.equal (Lang_config.construction_method lang)
-           (Some method_name) ->
-    class_named_by ~lang ~func_lookup ~caller_parent_path receiver
+  | G.N name
+  | G.Ref (_, { G.e = G.N name; _ }) ->
+    Some (name, [])
+  | G.DotAccess (receiver, _, G.FN (G.Id ((segment, _), _))) ->
+    Option.map
+      (fun ((root : G.name), (members : string list)) ->
+        (root, members @ [ segment ]))
+      (root_and_members receiver)
   | _ -> None
 
-let class_qn_of_resolution ~(func_lookup : Func_lookup.t) (name : G.name)
-    : Names.Class_qn.t option =
-  match !((id_info_of_name name).G.id_resolved) with
-  | Some ((G.ImportedEntity parts | G.GlobalName (parts, _)), _) ->
-    let class_qn = Names.Class_qn.of_parts parts in
-    if Func_lookup.is_known_class func_lookup class_qn then Some class_qn
-    else None
-  | Some _
-  | None -> None
-
-let class_qn_in_module_of ~(func_lookup : Func_lookup.t)
-    ~(owner : Names.Class_qn.t) (bare_name : string)
-    : Names.Class_qn.t option =
-  match Names.Class_qn.split_last owner with
-  | None -> None
-  | Some ((parent : Names.Class_qn.t), _) -> (
-    match
-      Func_lookup.module_attribute func_lookup
-        (Names.Module_qn.of_string (Names.Class_qn.to_string parent)) bare_name
-    with
-    | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t))
-    | Some (Func_lookup.Attr_class_with_companion (class_qn, _)) -> Some class_qn
-    | Some (Func_lookup.Attr_functions _)
-    | Some (Func_lookup.Attr_module _)
-    | None -> None)
-
-let class_qn_of_type_name ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list)
-    ~(owner : Names.Class_qn.t option) (name : G.name)
-    : Names.Class_qn.t option =
-  match class_qn_of_resolution ~func_lookup name with
-  | Some _ as resolved -> resolved
-  | None -> (
-    match name with
-    | G.IdQualified { G.name_middle = Some (G.QDots (_ :: _)); _ } ->
-      Option.bind (dotted_chain_of_name name)
+let root_of_chain ~(func_lookup : Func_lookup.t) (e : G.expr) : chain_root =
+  match root_and_members e with
+  | Some ((name : G.name), (members : string list)) -> (
+    let chain =
+      Option.map
         (fun (chain : dotted_chain) ->
-          match
-            follow_chain ~func_lookup ~caller_parent_path
-              ~position:Type_position chain
-          with
-          | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
-          | Some (Bound_module _)
-          | Some (Bound_object _)
-          | Some (Bound_functions _)
-          | None -> None)
-    | G.Id _
-    | G.IdQualified _ ->
-      Option.bind (Ty_bare_name.bare_name_of_name name)
-        (fun (bare_name : string) ->
-          match
-            Option.bind owner (fun (owner : Names.Class_qn.t) ->
-              class_qn_in_module_of ~func_lookup ~owner bare_name)
-          with
-          | Some _ as resolved -> resolved
-          | None -> (
-            match
-              Option.bind (dotted_chain_of_name name)
-                (constant_in_nesting ~func_lookup ~caller_parent_path)
-            with
-            | Some _ as resolved -> resolved
-            | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name)))
+          { chain with dc_segments = chain.dc_segments @ members })
+        (dotted_chain_of_name name)
+    in
+    match (!((id_info_of_name name).G.id_resolved), chain) with
+    | Some ((G.ImportedEntity _ | G.ImportedModule _ | G.GlobalName _), _),
+      Some (chain : dotted_chain) ->
+      Imported_root chain
+    | Some (_, sid), Some chain when Func_lookup.is_import func_lookup sid ->
+      Imported_root chain
+    | None, Some chain -> Unbound_root chain
+    | _ -> Local_root)
+  | None -> Local_root
 
-let declared_class_name_of_ty (ty : G.type_) : G.name option =
-  match Ty_bare_name.dotted_class_name_of_ty ty with
-  | Some _ as dotted -> dotted
-  | None -> Ty_bare_name.qualified_class_name_of_ty ty
-
-let return_type_class_qn ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (funcs : func_info list)
-    : Names.Class_qn.t option =
+let member_of_member_classes ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) (name : string) : func_info list =
   List.find_map
-    (fun (f : func_info) ->
-      Option.bind f.fdef.G.frettype (fun (ty : G.type_) ->
-        Option.bind (declared_class_name_of_ty ty)
-          (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)))
-    funcs
+    (fun (class_qn : Names.Class_qn.t) ->
+      Option.bind (Func_lookup.class_of_qn func_lookup class_qn)
+        (fun (cls : Class_table.cls) ->
+          match
+            Symbol_table.resolve_member table (Symbol_table.Class_object cls)
+              name
+          with
+          | Symbol_table.Defined (_ :: _ as funcs) -> Some funcs
+          | Symbol_table.Defined []
+          | Symbol_table.External -> None))
+    (Func_lookup.member_classes func_lookup)
+  |> Option.value ~default:[]
 
-let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
-    ~(type_state : Type_state.t)
-    ~(caller_parent_path : IL.name option list) (receiver : G.expr)
-    : Names.Class_qn.t option =
-  let of_receiver = receiver_class_qn ~lang ~func_lookup ~type_state
-      ~caller_parent_path in
-  match receiver.G.e with
-  | G.IdSpecial ((G.This | G.Self | G.LateStatic), _) ->
-    enclosing_class_qn ~func_lookup caller_parent_path
-  | G.DeRef (_, (inner : G.expr)) -> of_receiver inner
-  | G.N (G.Id ((name, _), id_info)) ->
-    if Receiver.is_self_name lang name then
-      enclosing_class_qn ~func_lookup caller_parent_path
-    else
-      Option.bind
-        (Option.bind (Ty_bare_name.instance_or_declared_type id_info)
-           declared_class_name_of_ty)
-        (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
-  | G.Call (callee, _)
-    when Option.is_some
-           (class_constructed_by ~lang ~func_lookup ~caller_parent_path callee)
-    ->
-    class_constructed_by ~lang ~func_lookup ~caller_parent_path callee
-  | G.Call (callee, _) -> (
-    match
-      Option.bind (dotted_chain_of_expr callee)
-        (follow_chain ~func_lookup ~caller_parent_path ~position:Term_position)
-    with
-    | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
-    | Some (Bound_functions (funcs : func_info list))
-      when Option.is_some
-             (return_type_class_qn ~func_lookup ~caller_parent_path funcs) ->
-      return_type_class_qn ~func_lookup ~caller_parent_path funcs
-    | Some (Bound_functions _)
-    | Some (Bound_object _)
-    | Some (Bound_module _)
-    | None -> (
-      match callee.G.e with
-      | G.DotAccess (inner, _, G.FN (G.Id ((method_name, _), _))) ->
-        Option.bind (of_receiver inner) (fun (owner : Names.Class_qn.t) ->
-          Option.bind
-            (Type_state.method_return type_state
-               ~class_name:(Names.Class_qn.bare_name owner)
-               ~method_name)
-            (class_qn_of_type_name ~func_lookup ~caller_parent_path
-               ~owner:(Some owner)))
-      | _ -> None))
-  | G.New (_, (ty : G.type_), _, _) ->
-    Option.bind (declared_class_name_of_ty ty)
-      (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
-  | G.DotAccess (inner, _, G.FN (G.Id ((field_name, _), _))) ->
-    Option.bind (of_receiver inner) (fun (owner : Names.Class_qn.t) ->
-      Option.bind
-        (Type_state.field_type_for_caller type_state
-           ~class_name:(Names.Class_qn.bare_name owner) ~field_name
-           ~caller_dir:None)
-        (class_qn_of_type_name ~func_lookup ~caller_parent_path
-               ~owner:(Some owner)))
-  | _ -> None
-
-let receiver_parameter_type (f : func_info) : G.type_ option =
-  match Tok.unbracket f.fdef.G.fparams with
-  | G.ParamReceiver { G.ptype = Some (ty : G.type_); _ } :: _ -> Some ty
-  | _ -> None
-
-let extension_functions ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list)
-    ~(receiver_qn : Names.Class_qn.t) (method_name : string) : func_info list =
-  (let nearest = entries_in_scope ~func_lookup ~caller_parent_path method_name in
-   Func_lookup.extensions_of_entries nearest
-   @ Func_lookup.functions_of_entries nearest)
-  |> List.filter (fun (f : func_info) ->
-       match
-         Option.bind (receiver_parameter_type f)
-           Ty_bare_name.qualified_class_name_of_ty
-       with
-       | None -> false
-       | Some (type_name : G.name) -> (
-         match
-           class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None
-             type_name
-         with
-         | Some (declared : Names.Class_qn.t) ->
-           Names.Class_qn.equal declared receiver_qn
-         | None -> false))
-
-let is_super_call (e : G.expr) : bool =
-  match e.G.e with
-  | G.Call ({ G.e = G.N (G.Id (("super", _), _)); _ }, _) -> true
-  | G.IdSpecial ((G.Super | G.Parent), _) -> true
-  | _ -> false
-
-let identify_callee_interfile ~(lang : Lang.t)
-    ~(type_state : Type_state.t)
-    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
-    ?(caller_parent_path : IL.name option list = [])
-    ?(call_arity : int option)
-    ?(allow_constructor = Lang_config.constructs_by_bare_call lang)
-    (callee : G.expr) : fn_id option =
-  let pick (matches : func_info list) : fn_id option =
-    pick_by_arity
-      ~overload_groups:(Func_lookup.overload_groups func_lookup)
-      ~top_level_scope_is_project:
-        (Func_lookup.top_level_scope_is_project func_lookup)
-      ~lang call_arity matches
-  in
-  let along_order ~(receiver : Func_lookup.method_receiver)
-      (class_qn : Names.Class_qn.t) (method_name : string) : fn_id option =
-    pick
-      (Func_lookup.find_along_order func_lookup ~receiver
-         (Func_lookup.resolution_order func_lookup class_qn)
-         (fun _ -> [ method_name ]))
-  in
-  let of_target (target : binding_target option) : fn_id option =
-    match target with
-    | Some (Bound_functions funcs) -> pick funcs
-    | Some (Bound_class class_qn) ->
-      if allow_constructor then
-        pick (constructor_of_class ~lang ~func_lookup class_qn)
-      else None
-    | Some (Bound_object _)
-    | Some (Bound_module _)
-    | None -> None
-  in
-  let of_entries (entries : Func_lookup.scope_entry list) : fn_id option =
-    match Func_lookup.class_of_entries entries with
-    | Some (class_qn : Names.Class_qn.t) ->
-      of_target (Some (Bound_class class_qn))
-    | None -> pick (Func_lookup.functions_of_entries entries)
-  in
-  let of_bare_name (id : string) : fn_id option =
-    of_entries (entries_in_scope ~func_lookup ~caller_parent_path id)
-  in
-  match callee.G.e with
-  | G.IdSpecial (G.Super, _) -> (
-    match
-      (enclosing_class_qn ~func_lookup caller_parent_path,
-       List.rev caller_parent_path)
-    with
-    | Some (class_qn : Names.Class_qn.t), Some (method_il : IL.name) :: _ -> (
-      match Func_lookup.resolution_order func_lookup class_qn with
-      | []
-      | [ _ ] -> None
-      | _ :: after_self ->
-        pick
-          (Func_lookup.find_along_order func_lookup
-             ~receiver:Func_lookup.On_any after_self
-             (fun _ -> [ fst method_il.IL.ident ])))
-    | _ -> None)
-  | G.N (G.Id ((id, _), id_info)) -> (
-    match !(id_info.G.id_resolved) with
-    | Some ((G.LocalVar | G.Parameter), _) ->
-      of_entries
-        (List.filter
-           (fun (entry : Func_lookup.scope_entry) ->
-             equal_with_pos entry.Func_lookup.parent_path caller_parent_path)
-           (entries_in_scope ~func_lookup ~caller_parent_path id))
-    | _ -> of_bare_name id)
-  | G.N (G.IdQualified
-           { name_last = ((id, _), _typeargs); name_middle = None;
-             name_top = None; _ }) -> of_bare_name id
-  | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _)))
-    when is_super_call receiver -> (
-    match enclosing_class_qn ~func_lookup caller_parent_path with
-    | None -> None
-    | Some (class_qn : Names.Class_qn.t) -> (
-      match Func_lookup.resolution_order func_lookup class_qn with
-      | [] | [ _ ] -> None
-      | _ :: after_self ->
-        pick (Func_lookup.find_along_order func_lookup
-                ~receiver:Func_lookup.On_any after_self
-                (fun _ -> [ method_name ]))))
-  | G.DotAccess
-      (({ G.e = G.IdSpecial ((G.This | G.Self | G.LateStatic), _); _ }
-       | { G.e =
-             G.DeRef (_,
-               { G.e = G.IdSpecial ((G.This | G.Self | G.LateStatic), _); _ });
-           _ }),
-       _, G.FN (G.Id ((method_name, _), _))) -> (
-    match enclosing_class_qn ~func_lookup caller_parent_path with
-    | None -> None
-    | Some (class_qn : Names.Class_qn.t) ->
-      along_order ~receiver:Func_lookup.On_any class_qn method_name)
-  | G.DotAccess ({ G.e = G.N (G.Id ((receiver_name, _), _)); _ },
-                 _, G.FN (G.Id ((method_name, _), _)))
-    when Receiver.is_self_name lang receiver_name -> (
-    match enclosing_class_qn ~func_lookup caller_parent_path with
-    | None -> None
-    | Some (class_qn : Names.Class_qn.t) ->
-      along_order ~receiver:Func_lookup.On_any class_qn method_name)
-  | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) -> (
-    match
-      class_constructed_by ~lang ~func_lookup ~caller_parent_path callee
-    with
-    | Some (class_qn : Names.Class_qn.t) ->
-      pick (constructor_of_class ~lang ~func_lookup class_qn)
-    | None -> (
-    match
-      of_target
-        (Option.bind (dotted_chain_of_expr callee)
-        (follow_chain ~func_lookup ~caller_parent_path
-           ~position:Term_position))
-    with
-    | Some _ as resolved -> resolved
-    | None -> (
+let resolve_name_in_scope ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
+    ~(caller_parent_path : IL.name option list) ~(construct : bool)
+    ~(unbound : bool) (name : string) : Symbol_table.resolution =
+  let of_self_class () : func_info list =
+    if unbound && Naming_AST.members_in_scope_in_methods lang then
       match
-        receiver_class_qn ~lang ~func_lookup ~type_state ~caller_parent_path
-          receiver
+        Symbol_table.resolve_member table
+          (Symbol_table.self_receiver table ~caller) name
       with
-      | None -> None
-      | Some (class_qn : Names.Class_qn.t) -> (
-        match along_order ~receiver:Func_lookup.On_instance class_qn method_name with
-        | Some _ as resolved -> resolved
-        | None ->
-          pick
-            (extension_functions ~func_lookup ~caller_parent_path
-               ~receiver_qn:class_qn method_name)))))
-  | G.N (G.IdQualified _) ->
-    of_target
-      (Option.bind (dotted_chain_of_expr callee)
-         (follow_chain ~func_lookup ~caller_parent_path
-            ~position:Term_position))
-  | _ -> None
+      | Symbol_table.Defined funcs -> funcs
+      | Symbol_table.External -> []
+    else []
+  in
+  match of_self_class () with
+  | _ :: _ as funcs -> Symbol_table.Defined funcs
+  | [] -> (
+    let entries = entries_in_scope ~func_lookup ~caller_parent_path name in
+    match
+      (head_binding ~func_lookup ~caller_parent_path ~position:Term_position
+         name,
+       Func_lookup.functions_of_entries entries)
+    with
+    | Some ((Bound_class _ | Bound_object _) as target), _ ->
+      resolution_of_target ~table ~func_lookup ~construct (Some target)
+    | _, (_ :: _ as funcs) -> Symbol_table.Defined funcs
+    | (Some (Bound_module _ | Bound_functions _) | None), [] -> (
+      match member_of_member_classes ~table ~func_lookup name with
+      | _ :: _ as funcs -> Symbol_table.Defined funcs
+      | [] -> Symbol_table.External))
+
+let resolve_chain ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) ~(position : name_position)
+    ~(construct : bool) (e : G.expr) : Symbol_table.resolution =
+  let target =
+    match root_of_chain ~func_lookup e with
+    | Imported_root (chain : dotted_chain)
+    | Unbound_root chain ->
+      follow_chain ~table ~func_lookup ~caller_parent_path ~position chain
+    | Local_root -> None
+  in
+  resolution_of_target ~table ~func_lookup ~construct target
+
+let defined_of_any (resolutions : Symbol_table.resolution list)
+    : Symbol_table.resolution =
+  match
+    List.concat_map
+      (fun (resolution : Symbol_table.resolution) ->
+        match resolution with
+        | Symbol_table.Defined (funcs : func_info list) -> funcs
+        | Symbol_table.External -> [])
+      resolutions
+  with
+  | [] when List.for_all
+              (fun (resolution : Symbol_table.resolution) ->
+                match resolution with
+                | Symbol_table.External -> true
+                | Symbol_table.Defined _ -> false)
+              resolutions ->
+    Symbol_table.External
+  | (funcs : func_info list) -> Symbol_table.Defined funcs
+
+let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
+    ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
+    ~(visited : G.SId.t list) (e : G.expr) : Symbol_table.resolution =
+  let construct = Symbol_table.constructs table use in
+  match e.G.e with
+  | G.N (G.Id ((name, _), info))
+  | G.N
+      (G.IdQualified
+        {
+          G.name_last = (name, _), _;
+          name_middle = None;
+          name_top = None;
+          name_info = info;
+        })
+  | G.Ref (_, { G.e = G.N (G.Id ((name, _), info)); _ }) -> (
+    match root_of_chain ~func_lookup e with
+    | Unbound_root _ ->
+      resolve_name_in_scope ~lang ~table ~func_lookup ~caller
+        ~caller_parent_path ~construct ~unbound:true name
+    | Imported_root _ ->
+      resolve_name_in_scope ~lang ~table ~func_lookup ~caller
+        ~caller_parent_path ~construct ~unbound:false name
+    | Local_root -> (
+      let follow (sid : G.SId.t) (value : G.expr) : Symbol_table.resolution =
+        resolve_outside_file_from ~lang ~table ~func_lookup ~caller
+          ~caller_parent_path ~use ~visited:(sid :: visited) value
+      in
+      match use_binding info with
+      | Some (sid : G.SId.t) when not (List.exists (G.SId.equal sid) visited)
+        -> (
+        match
+          (Symbol_table.values_in_force table ~caller sid, !(info.G.id_svalue))
+        with
+        | (_ :: _ as assigned), _ ->
+          defined_of_any (List.map (follow sid) assigned)
+        | [], Some (G.Sym (value : G.expr)) -> follow sid value
+        | [], (Some _ | None) -> Symbol_table.External)
+      | Some _
+      | None -> Symbol_table.External))
+  | G.N (G.IdQualified _)
+  | G.DotAccess _ ->
+    resolve_chain ~table ~func_lookup ~caller_parent_path
+      ~position:Term_position ~construct e
+  | G.ArrayAccess (indexed, _) ->
+    resolve_outside_file_from ~lang ~table ~func_lookup ~caller
+      ~caller_parent_path ~use ~visited indexed
+  | _ -> Symbol_table.External
+
+let resolve_outside_file ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
+    ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
+    (e : G.expr) : Symbol_table.resolution =
+  resolve_outside_file_from ~lang ~table ~func_lookup ~caller
+    ~caller_parent_path ~use ~visited:[] e
+
+let resolve_construction_outside_file ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(caller_parent_path : IL.name option list)
+    (ty : G.type_) : Symbol_table.resolution =
+  match expr_of_type_name ty with
+  | Some (e : G.expr) ->
+    resolve_chain ~table ~func_lookup ~caller_parent_path
+      ~position:Type_position ~construct:true e
+  | None -> Symbol_table.External
+
+let extension_visible ~(func_lookup : Func_lookup.t) (name : string)
+    (func : func_info) : bool =
+  let entries = entries_in_scope ~func_lookup ~caller_parent_path:[] name in
+  List.exists
+    (fun (visible : func_info) -> visible.fdef == func.fdef)
+    (Func_lookup.extensions_of_entries entries
+    @ Func_lookup.functions_of_entries entries)

@@ -1,0 +1,12 @@
+rules:
+  - id: module-global-source
+    languages: [python]
+    severity: ERROR
+    message: a module-level global assigned from a source reaches a sink
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

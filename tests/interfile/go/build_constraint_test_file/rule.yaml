@@ -1,0 +1,15 @@
+rules:
+  - id: build-constraint-test-file
+    languages: [go]
+    severity: ERROR
+    message: >
+      A file whose name ends in _test.go is compiled only when the package is
+      tested, so a function it declares is not reached from the other files,
+      while its own functions reach theirs.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

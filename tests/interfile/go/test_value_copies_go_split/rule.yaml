@@ -1,0 +1,13 @@
+rules:
+  - id: test-value-copies-split
+    message: A struct declared in another file and passed by value is a copy
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

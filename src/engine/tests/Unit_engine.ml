@@ -43,6 +43,8 @@ let polyglot_pattern_path = tests_path_patterns / "POLYGLOT"
 (* TODO: infer dir and ext from lang using Lang helper functions *)
 let full_lang_info =
   [
+    (Lang.Apex, "apex", ".cls");
+    (Lang.Apex, "apex", ".trigger");
     (Lang.Bash, "bash", ".bash");
     (Lang.C, "c", ".c");
     (Lang.Cairo, "cairo", ".cairo");
@@ -686,7 +688,7 @@ let lang_tainting_tests () =
       (Lang.Php, "php", ".php");
       (Lang.Python, "python", ".py");
       (Lang.Ruby, "ruby", ".rb");
-      (Lang.Ruby, "rust", ".rs");
+      (Lang.Rust, "rust", ".rs");
       (Lang.Scala, "scala", ".scala");
       (Lang.Ts, "ts", ".ts");
       (Lang.Vb, "vb", ".vb");
@@ -823,6 +825,23 @@ let semgrep_rules_repo_tests () : Testo.t list =
              | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-cookie-store-session-security-attributes.yaml" -> None
              | s when s =~ ".*/semgrep-rules/java/spring/security/injection/tainted-sql-string.yaml" -> None
              | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None
+             (* The expected finding relied on the Go tree-sitter parser
+                wrapping a top-level multi-name var declaration in a block,
+                which bounded the rule's [pattern-not-inside: ... =
+                url.Parse(...) ...]; without it the region runs to the end of
+                the file, as it already did for a single-name declaration. *)
+             | s when s =~ ".*/semgrep-rules/go/lang/security/shared-url-struct-mutation.yaml" -> None
+             (* These expect a name to keep a binding the language gives it
+                elsewhere: a Python name assigned in a function is local to
+                the whole function, a module-level assignment rebinds an
+                imported name, and a Ruby method body does not see the
+                file's local variables. tests/rules/pdb_local_shadows_import,
+                paramiko_module_rebinds_import and
+                ruby_def_does_not_see_file_locals hold the same rules and
+                targets with those lines marked ok. *)
+             | s when s =~ ".*/semgrep-rules/python/lang/correctness/pdb.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/python/lang/security/audit/paramiko/paramiko-exec-command.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/ruby/jwt/security/jwt-hardcode.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming

@@ -2087,7 +2087,7 @@ and equals_value : G.expr parser = fun __n -> (
   expression
 ) __n
 
-and event_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
+and event_block (attrs : G.attribute list) : G.stmt list parser = fun __n -> (
   (* event_block -> event_statement (event_accessor_elem* end_event_statement)? *)
   let* id, stmt = event_statement attrs in
   let* elems = optional
@@ -2101,8 +2101,8 @@ and event_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
     G.DefStmt stmt |> G.s
   in
   match elems with
-  | None | Some [] -> pure stmt
-  | Some xs -> pure (G.Block (fb (stmt :: xs)) |> G.s)
+  | None -> pure [ stmt ]
+  | Some xs -> pure (stmt :: xs)
 ) __n
 
 and event_statement (attrs : G.attribute list) : (G.ident * G.definition) parser = fun __n -> (
@@ -2129,6 +2129,7 @@ and event_statement (attrs : G.attribute list) : (G.ident * G.definition) parser
           | None -> fb []
           | Some ps -> ps);
         frettype = as_clause;
+        fcaptures = G.no_captures;
         fbody = G.FBDecl Tok.unsafe_sc
       }
   in
@@ -2182,6 +2183,7 @@ and event_accessor_block ((event_name_str, _) : G.ident) (attrs : G.attribute li
       { fkind = (G.Function, tok.tok);
         fparams = params;
         frettype = None;
+        fcaptures = G.no_captures;
         fbody = G.FBStmt stmt
       }
   in
@@ -2509,6 +2511,7 @@ and declare_statement (attrs : G.attribute list) : G.stmt parser = fun __n -> (
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBDecl Tok.unsafe_sc
         }
   in
@@ -2749,6 +2752,7 @@ and function_statement (where_am_i : G.function_kind) (attrs : G.attribute list)
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBDecl Tok.unsafe_sc
         }
   in
@@ -2856,6 +2860,7 @@ and sub_statement (where_am_i : G.function_kind) (attrs : G.attribute list)
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBDecl Tok.unsafe_sc
         }
   in
@@ -2941,6 +2946,7 @@ and constructor_block (attrs : G.attribute list) (class_name : G.name) : G.stmt 
             | None -> fb []
             | Some p -> p);
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt stmt
         }
   in
@@ -3005,6 +3011,7 @@ and operator_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt stmt
         }
   in
@@ -3028,7 +3035,7 @@ and namespace_block : G.stmt parser = fun __n -> (
   pure (G.DefStmt (entity, def) |> G.s)
 ) __n
 
-and property_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
+and property_block (attrs : G.attribute list) : G.stmt list parser = fun __n -> (
   (* property_block -> property_statement (property_accessor_block* end_property_statement)? *)
   let* _property = token "PROPERTY" in
   let* id = identifier_name in
@@ -3067,8 +3074,8 @@ and property_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   in
   let var_stmt = G.DefStmt (entity, def) |> G.s in
   match accessors_opt with
-  | None | Some [] -> pure var_stmt
-  | Some accessors -> pure (G.Block (fb (var_stmt :: accessors)) |> G.s)
+  | None -> pure [ var_stmt ]
+  | Some accessors -> pure (var_stmt :: accessors)
 ) __n
 
 and property_accessor_block ((property_name_str, _) : G.ident)
@@ -3093,6 +3100,7 @@ and property_accessor_block ((property_name_str, _) : G.ident)
           { fkind = (G.Method, get.tok);
             fparams = fb [];
             frettype = typ;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt
           }
       in
@@ -3119,6 +3127,7 @@ and property_accessor_block ((property_name_str, _) : G.ident)
               | Some p -> p
               | None -> fb []);
             frettype = typ;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt
           }
       in
@@ -3197,13 +3206,30 @@ and class_block_declaration (class_name : G.name) : G.field list parser = fun __
     end;
     begin
       (* class_block_declaration -> attribute_list* method_modifier* class_block_kw_declaration *)
-      let* s = class_block_kw_declaration attrs class_name in
-      pure [G.F s]
+      let* ss = class_block_kw_declarations attrs class_name in
+      pure (List.map (fun s -> G.F s) ss)
     end;
     begin
       (* class_block_declaration -> field_declaration *)
       let* _ = if List.is_empty attrs then fail else pure () in
       field_declaration attrs
+    end;
+  ]
+) __n
+
+and class_block_kw_declarations (attrs : G.attribute list) (class_name : G.name) : G.stmt list parser = fun __n -> (
+  choice [
+    begin
+      (* class_block_kw_declaration -> property_block *)
+      property_block attrs
+    end;
+    begin
+      (* class_block_kw_declaration -> event_block *)
+      event_block attrs
+    end;
+    begin
+      let* s = class_block_kw_declaration attrs class_name in
+      pure [ s ]
     end;
   ]
 ) __n
@@ -3223,10 +3249,6 @@ and class_block_kw_declaration (attrs : G.attribute list) (class_name : G.name) 
       constructor_block attrs class_name
     end;
     begin
-      (* class_block_kw_declaration -> property_block *)
-      property_block attrs
-    end;
-    begin
       (* class_block_kw_declaration -> class_block *)
       class_block attrs
     end;
@@ -3241,10 +3263,6 @@ and class_block_kw_declaration (attrs : G.attribute list) (class_name : G.name) 
     begin
       (* class_block_kw_declaration -> structure_block *)
       structure_block attrs
-    end;
-    begin
-      (* class_block_kw_declaration -> event_block *)
-      event_block attrs
     end;
     begin
       (* class_block_kw_declaration -> operator_block *)
@@ -3329,11 +3347,9 @@ and module_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   pure (G.DefStmt (entity, def) |> G.s)
 ) __n
 
-(* TODO: structures are represented the same way as classes, so we cannot distinguish them
- * by matching. Is it fixable? *)
 and structure_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   (* structure_block -> structure_statement inherits_statement* implements_statement* class_block_declaration* end_structure_statement *)
-  let* class_ = token "STRUCTURE" in
+  let* structure = token "STRUCTURE" in
   let* qname = qualified_name in
   let* tparams = optional type_parameter_list in
   let* inherits = list_of inherits_statement in
@@ -3347,7 +3363,7 @@ and structure_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   in
   let def =
     G.ClassDef
-      G.{ ckind = (G.Class, class_.tok);
+      G.{ ckind = (G.Struct, structure.tok);
           cextends = List.concat inherits;
           cimplements = List.concat implements;
           cmixins = [];
@@ -3436,6 +3452,7 @@ and assignment_statement : G.stmt parser = fun __n -> (
   let expr =
     match op_rhs_opt with
     | None -> lhs
+    | Some ((G.Eq, tok), rhs) -> G.Assign (lhs, tok, rhs) |> G.e
     | Some (op, rhs) -> G.AssignOp (lhs, op, rhs) |> G.e
   in
   pure (G.ExprStmt (expr, Tok.unsafe_sc) |> G.s)
@@ -4493,6 +4510,7 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt (G.Block (fb [G.ExprStmt ({expr with is_implicit_return = true}, Tok.unsafe_sc) |> G.s]) |> G.s) }
       in
       pure (G.Lambda fdef |> G.e)
@@ -4510,6 +4528,7 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt (stmt_of_stmts ~always_block:true stmts) }
       in
       pure (G.Lambda fdef |> G.e)
@@ -4537,6 +4556,7 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt }
       in
       pure (G.Lambda fdef |> G.e)
@@ -4557,6 +4577,7 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
+            fcaptures = G.no_captures;
             fbody = G.FBStmt stmt }
       in
       pure (G.Lambda fdef |> G.e)
@@ -5687,7 +5708,7 @@ and modifier : G.attribute parser = fun __n -> (
     begin
       (* modifier -> 'MustOverride' *)
       let* t = token "MUSTOVERRIDE" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Abstract, t.tok))
     end;
     begin
       (* modifier -> 'Narrowing' *)
@@ -5717,12 +5738,12 @@ and modifier : G.attribute parser = fun __n -> (
     begin
       (* modifier -> 'Overridable' *)
       let* t = token "OVERRIDABLE" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Virtual, t.tok))
     end;
     begin
       (* modifier -> 'Overrides' *)
       let* t = token "OVERRIDES" in
-      pure (G.OtherAttribute ((t.content, t.tok), []))
+      pure (G.KeywordAttr (G.Override, t.tok))
     end;
     begin
       (* modifier -> 'Partial' *)
@@ -5876,6 +5897,7 @@ and opengrep_assignment_statement : G.any parser = fun __n -> (
   in
   match op_rhs_opt with
   | None -> pure (G.E lhs)
+  | Some ((G.Eq, tok), rhs) -> pure (G.E (G.Assign (lhs, tok, rhs) |> G.e))
   | Some (op, rhs) -> pure (G.E (G.AssignOp (lhs, op, rhs) |> G.e))
 ) __n
 

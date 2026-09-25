@@ -1673,6 +1673,7 @@ and map_yul_statement (env : env) (x : CST.yul_statement) : stmt =
           fkind = (Function, tfunc);
           fparams = fb params;
           frettype = tret;
+          fcaptures = G.no_captures;
           fbody = FBStmt body;
         }
       in
@@ -1690,18 +1691,23 @@ let map_state_variable_declaration (env : env)
     ((v1, v2, v3, v4, v5) : CST.state_variable_declaration) : definition =
   let ty = map_type_name env v1 in
   let attrs =
-    List_.map
+    List.concat_map
       (fun x ->
         match x with
-        | `Visi x -> map_visibility env x
+        | `Visi x -> [ map_visibility env x ]
         | `Cst tok ->
             let x = (* "constant" *) token env tok in
-            G.attr Const x
+            [ G.attr Const x ]
         | `Over_spec x ->
             let x = map_override_specifier env x in
-            x
+            [ x ]
         (* TODO: difference between constant and immutable? *)
-        | `Immu tok -> (* "immutable" *) str env tok |> G.unhandled_keywordattr)
+        | `Immu tok ->
+            (* "immutable": assigned once, in the constructor *)
+            [
+              str env tok |> G.unhandled_keywordattr;
+              G.attr Final (token env tok);
+            ])
       v2
   in
   let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v3 in
@@ -1958,7 +1964,7 @@ let map_event_definition (env : env)
   let ent = G.basic_entity id ~attrs in
   (* TODO? make a new fkind? *)
   let fdef =
-    { fkind = (Function, tevent); fparams; frettype = None; fbody = FBDecl sc }
+    { fkind = (Function, tevent); fparams; frettype = None; fcaptures = G.no_captures; fbody = FBDecl sc }
   in
   (ent, FuncDef fdef)
 
@@ -2095,6 +2101,7 @@ and map_statement (env : env) (x : CST.statement) : stmt =
           fkind = (LambdaKind, ttry);
           fparams = params;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = FBStmt st;
         }
       in
@@ -2226,7 +2233,7 @@ let map_constructor_definition (env : env)
   let attrs = ctor_attr :: attrs in
   let ent = G.basic_entity ("constructor", tctor) ~attrs in
   let def =
-    { fkind = (Method, tctor); fparams = params; frettype = None; fbody }
+    { fkind = (Method, tctor); fparams = params; frettype = None; fcaptures = G.no_captures; fbody }
   in
   (ent, FuncDef def)
 
@@ -2247,7 +2254,7 @@ let visi_and_co env x : attribute =
   | `State_muta x -> map_state_mutability env x
   | `Virt tok ->
       let x = (* "virtual" *) token env tok in
-      G.attr Abstract x
+      G.attr Virtual x
   | `Over_spec x -> map_override_specifier env x
 
 let map_fallback_receive_definition (env : env)
@@ -2273,7 +2280,7 @@ let map_fallback_receive_definition (env : env)
   let attrs = List_.map (fun x -> visi_and_co env x) v3 in
   let ent = G.basic_entity ~attrs id in
   let fbody = map_anon_choice_semi_f2fe6be env v4 in
-  let def = { fkind = (Function, snd id); fparams; frettype = None; fbody } in
+  let def = { fkind = (Function, snd id); fparams; frettype = None; fcaptures = G.no_captures; fbody } in
   (ent, FuncDef def)
 
 let map_function_definition (env : env)
@@ -2290,7 +2297,7 @@ let map_function_definition (env : env)
   let fbody = map_anon_choice_semi_f2fe6be env v6 in
   let ent = G.basic_entity id ~attrs in
   let def =
-    { fkind = (Function, tfunc); fparams = params; frettype = None; fbody }
+    { fkind = (Function, tfunc); fparams = params; frettype = None; fcaptures = G.no_captures; fbody }
   in
   (ent, FuncDef def)
 
@@ -2309,7 +2316,7 @@ let map_modifier_definition (env : env)
         match x with
         | `Virt tok ->
             let t = (* "virtual" *) token env tok in
-            G.attr Abstract t
+            G.attr Virtual t
         | `Over_spec x -> map_override_specifier env x)
       v4
   in
@@ -2322,7 +2329,7 @@ let map_modifier_definition (env : env)
       fkind = (Function, tmodif);
       fparams = params;
       frettype = None;
-      fbody;
+      fcaptures = G.no_captures; fbody;
     }
   in
   (ent, FuncDef def)

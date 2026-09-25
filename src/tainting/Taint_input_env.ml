@@ -19,7 +19,8 @@ module T = Taint
 module Effects = Shape_and_sig.Effects
 module Log = Log_tainting.Log
 
-let check_var_def (taint_inst : Taint_rule_inst.t) env id ii expr =
+let check_var_def (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t) env id ii expr =
   let name = AST_to_IL.var_of_id_info id ii in
   let assign =
     G.Assign (G.N (G.Id (id, ii)) |> G.e, Tok.fake_tok (snd id) "=", expr)
@@ -36,15 +37,16 @@ let check_var_def (taint_inst : Taint_rule_inst.t) env id ii expr =
         (fst id));
   let effects, end_mapping =
     (* There could be taint effects indeed, e.g. if 'expr' is `sink(taint)`. *)
-    Dataflow_tainting.fixpoint taint_inst ~in_env:env
-      IL.{ params = []; cfg; lambdas }
+    Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env:env
+      IL.{ params = []; frettype = None; captures = IL.no_captures; cfg; lambdas; source_range = None }
   in
   let out_env = end_mapping.(cfg.exit).Dataflow_core.out_env in
   let lval : IL.lval = { base = Var name; rev_offset = [] } in
   let xtaint = Taint_lval_env.find_lval_xtaint taint_inst.lang out_env lval in
   (xtaint, effects)
 
-let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
+let add_to_env_aux (taint_inst : Taint_rule_inst.t)
+    (shared_tables : Taint_shared_tables.t) env id ii opt_expr =
   let var = AST_to_IL.var_of_id_info id ii in
   let var_type = Typing.resolved_type_of_id_info taint_inst.lang var.id_info in
   let id_taints =
@@ -59,7 +61,7 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
   let expr_taints, expr_effects =
     match opt_expr with
     | Some e ->
-        let xtaint, effects = check_var_def taint_inst env id ii e in
+        let xtaint, effects = check_var_def taint_inst shared_tables env id ii e in
         (Xtaint.to_taints xtaint, effects)
     | None -> (T.Taint_set.empty, Effects.empty)
   in
@@ -75,13 +77,13 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
   in
   (env, expr_effects)
 
-let add_to_env taint_inst (env, effects) id id_info opt_expr =
-  let env, new_effects = add_to_env_aux taint_inst env id id_info opt_expr in
+let add_to_env taint_inst shared_tables (env, effects) id id_info opt_expr =
+  let env, new_effects = add_to_env_aux taint_inst shared_tables env id id_info opt_expr in
   (env, Effects.union new_effects effects)
 
-let mk_fun_input_env taint_inst ?(glob_env = Taint_lval_env.empty)
+let mk_fun_input_env taint_inst shared_tables ?(glob_env = Taint_lval_env.empty)
     (fparams : IL.param list) =
-  let add_to_env = add_to_env taint_inst in
+  let add_to_env = add_to_env taint_inst shared_tables in
   fparams
   (* For each argument, check if it's a source and, if so, add it to the input
      * environment. *)
@@ -91,8 +93,8 @@ let is_global (id_info : G.id_info) =
   let* kind, _sid = !(id_info.id_resolved) in
   Some (H.name_is_global kind)
 
-let mk_file_env taint_inst ast =
-  let add_to_env = add_to_env taint_inst in
+let mk_file_env taint_inst shared_tables ast =
+  let add_to_env = add_to_env taint_inst shared_tables in
   let env = ref (Taint_lval_env.empty, Effects.empty) in
   let visitor =
     object (_self : 'self)

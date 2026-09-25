@@ -1,0 +1,13 @@
+rules:
+  - id: bracket_member_call_javascript
+    message: a call through a bracket member access with a string key reaches that member
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

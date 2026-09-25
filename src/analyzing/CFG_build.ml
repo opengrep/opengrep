@@ -177,7 +177,12 @@ let rec cfg_stmt : state -> F.nodei option -> stmt -> cfg_stmt_result =
             state.g |> add_arc_opt_to_opt (Some newi, state.throw_destination);
             true
         | AssignAnon ({ base = Var name; rev_offset = [] }, Lambda fdef) ->
-            let lambda_cfg = cfg_of_fdef fdef in
+            let source_range =
+              AST_generic_helpers.range_of_any_opt (IL.any_of_orig x.iorig)
+              |> Option.map (fun (first, last) ->
+                     IL_helpers.source_range_of_locs first last)
+            in
+            let lambda_cfg = cfg_of_fdef ?source_range fdef in
             state.lambdas_cfgs :=
               IL.NameMap.add name lambda_cfg !(state.lambdas_cfgs);
             false
@@ -448,11 +453,45 @@ and cfg_of_stmts ?tok (xs : stmt list) : IL.cfg * IL.lambdas_cfgs =
   let cfg = CFG.make g enteri exiti in
   (cfg, !(state.lambdas_cfgs))
 
-and cfg_of_fdef fdef =
+and cfg_of_fdef ?source_range fdef =
   let cfg, lambdas = cfg_of_stmts ~tok:(snd fdef.fkind) fdef.fbody in
   mark_at_exit_nodes cfg;
-  IL.{ params = fdef.fparams; cfg; lambdas }
+  IL.
+    {
+      params = fdef.fparams;
+      frettype = fdef.frettype;
+      captures = fdef.fcaptures;
+      cfg;
+      lambdas;
+      source_range;
+    }
+
+let source_range_of_gfdef (fdef : G.function_definition) :
+    IL.source_range option =
+  let body_range =
+    match fdef.fbody with
+    | G.FBStmt st -> AST_generic_helpers.range_of_any_opt (G.S st)
+    | G.FBExpr e -> AST_generic_helpers.range_of_any_opt (G.E e)
+    | G.FBDecl _
+    | G.FBNothing ->
+        None
+  in
+  let* body_first, last = body_range in
+  let first =
+    [
+      Result.to_option (Tok.loc_of_tok (snd fdef.fkind));
+      AST_generic_helpers.range_of_any_opt
+        (G.Params (Tok.unbracket fdef.fparams))
+      |> Option.map fst;
+    ]
+    |> List.filter_map Fun.id
+    |> List.fold_left
+         (fun (a : Tok.location) (b : Tok.location) ->
+           if b.pos.bytepos < a.pos.bytepos then b else a)
+         body_first
+  in
+  Some (IL_helpers.source_range_of_locs first last)
 
 let cfg_of_gfdef lang fdef =
   let fdef_il = AST_to_IL.function_definition lang fdef in
-  cfg_of_fdef fdef_il
+  cfg_of_fdef ?source_range:(source_range_of_gfdef fdef) fdef_il

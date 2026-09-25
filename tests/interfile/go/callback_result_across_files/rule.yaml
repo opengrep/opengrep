@@ -1,0 +1,14 @@
+rules:
+  - id: callback-result-across-files-go
+    languages: [go]
+    severity: ERROR
+    message: >
+      The result of calling a callback in another package is what the callback
+      returns, where that package uses it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

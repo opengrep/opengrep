@@ -3,3 +3,5 @@
  * specific to a language.
  *)
 val resolve : Lang.t -> AST_generic.program -> unit
+val members_in_scope_in_methods : Lang.t -> bool
+val constructor_named_after_class : Lang.t -> bool

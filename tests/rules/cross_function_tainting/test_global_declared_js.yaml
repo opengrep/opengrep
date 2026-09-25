@@ -1,0 +1,13 @@
+rules:
+  - id: test-global-declared-js
+    message: a write to a declared global reaches the functions that call the writer
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

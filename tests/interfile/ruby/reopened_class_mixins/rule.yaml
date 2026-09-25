@@ -1,0 +1,13 @@
+rules:
+  - id: reopened_class_mixins
+    message: a class reopened in several files has the modules every definition includes
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

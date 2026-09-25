@@ -15,7 +15,7 @@ let binding_of (imp : import) : binding =
   if String.equal imp.im_local wildcard_local then Wildcard_from imp.im_target
   else Named_binding { local = imp.im_local; target = imp.im_target }
 
-let record_field_names (e : G.expr) : (G.ident * string) list =
+let record_field_locals (e : G.expr) : (G.ident * G.ident) list =
   match e.G.e with
   | G.Record (_, fields, _) ->
     List.filter_map
@@ -25,12 +25,32 @@ let record_field_names (e : G.expr) : (G.ident * string) list =
                                  (G.FieldDefColon vd | G.VarDef vd)); _ } -> (
           match (ent.G.name, vd.G.vinit) with
           | G.EN (G.Id ((key : G.ident), _)),
-            Some { G.e = G.N (G.Id ((value, _), _)); _ } -> Some (key, value)
-          | G.EN (G.Id ((key : G.ident), _)), _ -> Some (key, fst key)
+            Some { G.e = G.N (G.Id ((local : G.ident), _)); _ } ->
+            Some (key, local)
+          | G.EN (G.Id ((key : G.ident), _)), _ -> Some (key, key)
           | _ -> None)
         | _ -> None)
       fields
   | _ -> []
+
+let record_field_names (e : G.expr) : (G.ident * string) list =
+  List.map
+    (fun (((key : G.ident), (local : G.ident)) : G.ident * G.ident) ->
+      (key, fst local))
+    (record_field_locals e)
+
+let import_of_binding (imports : import list) (sid : G.SId.t)
+    : import option =
+  List.find_opt
+    (fun (imp : import) ->
+      match Tok.loc_of_tok imp.im_local_tok with
+      | Ok (loc : Tok.location) ->
+        G.SId.same_site sid
+          (G.SId.of_site
+             ~file:(Fpath.to_string (Fpath.normalize loc.Tok.pos.Pos.file))
+             imp.im_local_tok)
+      | Error _ -> false)
+    imports
 
 (* Clojure [(ns x (:require ...))] is one [OtherDirective("NsDirective")] whose
    requires the parser doesn't surface as imports; pull aliases/refers out here. *)
@@ -51,6 +71,7 @@ let collect_clojure_ns_form ~(tok : Tok.t) (st : import list)
   let is_kwd name expr = match kwd_name expr with Some str -> String.equal str name | None -> false in
   let add (acc : import list) (local : string) (target : Names.Module_qn.t) =
     { im_local = local; im_alias = None; im_target = target; im_tok = tok;
+      im_local_tok = tok;
       im_static = false; im_global = false; im_binds = Binds_any;
       im_role = Role_binds; im_hidden = [] }
     :: acc
@@ -127,11 +148,12 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     ~(current_module_path : Names.Module_qn.t)
     ~(is_init_file : bool)
     (ast : G.program) : import list =
-  let add ~(tok : Tok.t) ~(static : bool) ~(global : bool)
-      ~(binds : import_binds) ~(role : import_role)
+  let add ~(tok : Tok.t) ~(local_tok : Tok.t) ~(static : bool)
+      ~(global : bool) ~(binds : import_binds) ~(role : import_role)
       ~(alias : string option) ~(hidden : string list) (acc : import list)
       local target =
     { im_local = local; im_alias = alias; im_target = target; im_tok = tok;
+      im_local_tok = local_tok;
       im_static = static; im_global = global; im_binds = binds;
       im_role = role; im_hidden = hidden }
     :: acc
@@ -206,36 +228,38 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     match dir.G.d with
     | G.ImportAs (tok, mn, alias_opt) ->
       let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
-      let local =
-        match alias with
-        | Some (alias : string) -> alias
+      let local, local_tok =
+        match alias_opt with
+        | Some (((alias : string), (alias_tok : Tok.t)), _) -> (alias, alias_tok)
         | None ->
           (match mn with
-           | G.DottedName (((first_seg : string), _) :: _ as segs) -> (
+           | G.DottedName (((first_seg : string), (first_tok : Tok.t)) :: _ as segs) -> (
              match cfg.Index_lang_rules.unaliased_import_binds with
-             | Index_lang_rules.First_segment_binds -> first_seg
+             | Index_lang_rules.First_segment_binds -> (first_seg, first_tok)
              | Index_lang_rules.Last_segment_binds ->
                (match List.rev segs with
-                | ((last_seg : string), _) :: _ -> last_seg
-                | [] -> first_seg))
-           | G.DottedName [] -> ""
+                | ((last_seg : string), (last_tok : Tok.t)) :: _ ->
+                  (last_seg, last_tok)
+                | [] -> (first_seg, first_tok)))
+           | G.DottedName [] -> ("", tok)
            (* Unaliased path import: dir-scoped langs (Go) use the path's last
               segment as local; other langs keep the raw specifier. *)
-           | G.FileName (spec, _) ->
+           | G.FileName (spec, spec_tok) ->
              (match cfg.Index_lang_rules.unqualified_scope with
               | `Per_directory
               | `Per_go_package ->
-                (match Fpath.of_string spec with
-                 | Ok path -> Fpath.basename path
-                 | Error _ -> spec)
-              | `Per_module -> ""
+                ((match Fpath.of_string spec with
+                  | Ok path -> Fpath.basename path
+                  | Error _ -> spec),
+                 spec_tok)
+              | `Per_module -> ("", spec_tok)
               | `Per_file
               | `Per_crate
               | `Per_constant_path
               | `Per_package
               | `Per_namespace
               | `Per_translation_unit
-              | `Per_project -> spec))
+              | `Per_project -> (spec, spec_tok)))
       in
       let binds =
         match (attr_binds, cfg.Index_lang_rules.unqualified_scope) with
@@ -251,7 +275,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
          (module_name_of mn, Int.compare (String.length local) 0 > 0)
        with
        | Some (qn : Names.Module_qn.t), true ->
-         (add ~binds ~alias ~hidden:[] ~tok st local qn, hiding)
+         (add ~binds ~alias ~hidden:[] ~tok ~local_tok st local qn, hiding)
        | Some _, false
        | None, _ -> (st, hiding))
     | G.ImportFrom (tok, mn, names) -> (
@@ -260,7 +284,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | Some (qn : Names.Module_qn.t) ->
         List.fold_left
           (fun ((st : import list), (hiding : hidden_name list))
-               ((name, _), alias_opt) ->
+               ((name, (name_tok : Tok.t)), alias_opt) ->
             let alias = Option.map (fun ((name, _), _) -> name) alias_opt in
             match (alias, cfg.Index_lang_rules.hiding_alias) with
             | Some (alias_name : string), Some (hiding_alias : string)
@@ -268,8 +292,14 @@ let collect_imports ~(cfg : Index_lang_rules.t)
               (st, { hn_tok = tok; hn_target = qn; hn_name = name } :: hiding)
             | _ ->
               let local = Option.value alias ~default:name in
+              let local_tok =
+                match alias_opt with
+                | Some ((_, (alias_tok : Tok.t)), _) -> alias_tok
+                | None -> name_tok
+              in
               let target = Names.Module_qn.concat qn name in
-              (add ~binds:attr_binds ~alias ~hidden:[] ~tok st local target,
+              (add ~binds:attr_binds ~alias ~hidden:[] ~tok ~local_tok st local
+                 target,
                hiding))
           (st, hiding) names)
     (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs. *)
@@ -287,7 +317,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         (add ~binds:attr_binds ~alias:None
            ~hidden:
              (List.map (fun (hidden : hidden_name) -> hidden.hn_name) excluded)
-           ~tok st wildcard_local qn,
+           ~tok ~local_tok:tok st wildcard_local qn,
          pending))
     | G.OtherDirective (("NsDirective", tok), exprs)
     | G.OtherDirective (("RequireDirective", tok), exprs) ->
@@ -313,13 +343,14 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | None -> st
     | Some rhs ->
       let bind_names (spec : string)
-          (names : (G.ident * string) list) =
+          (names : (G.ident * G.ident) list) =
         match qn_of_specifier spec with
         | None -> st
         | Some (qn : Names.Module_qn.t) ->
           List.fold_left
-            (fun st (((key : string), (tok : Tok.t)), (local : string)) ->
-              add ~tok ~static:false ~global:false ~binds:Binds_any
+            (fun st (((key : string), (tok : Tok.t)),
+                     ((local : string), (local_tok : Tok.t))) ->
+              add ~tok ~local_tok ~static:false ~global:false ~binds:Binds_any
                 ~alias:(Some local) ~role:Role_binds ~hidden:[] st local
                 (Names.Module_qn.concat qn key))
             st names
@@ -330,16 +361,17 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         match qn_of_specifier spec with
         | None -> st
         | Some (qn : Names.Module_qn.t) ->
-          add ~tok ~static:false ~global:false ~binds:Binds_module
-            ~alias:(Some local) ~role:Role_binds ~hidden:[] st local qn)
+          add ~tok ~local_tok:tok ~static:false ~global:false
+            ~binds:Binds_module ~alias:(Some local) ~role:Role_binds
+            ~hidden:[] st local qn)
       | Some spec, G.EPattern (G.PatRecord (_, fields, _)) ->
         bind_names spec
           (List.filter_map
              (fun (((dotted_name : G.dotted_ident), (value_pat : G.pattern))) ->
                match (dotted_name, value_pat) with
-               | (key : G.ident) :: _, G.PatId ((id_str, _), _) ->
-                 Some (key, id_str)
-               | (key : G.ident) :: _, _ -> Some (key, fst key)
+               | (key : G.ident) :: _, G.PatId ((local : G.ident), _) ->
+                 Some (key, local)
+               | (key : G.ident) :: _, _ -> Some (key, key)
                | [], _ -> None)
              fields)
       | None, _ -> (
@@ -347,7 +379,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         | G.Assign (pattern, _, (inner : G.expr)) -> (
           match extract_require_spec inner with
           | None -> st
-          | Some (spec : string) -> bind_names spec (record_field_names pattern))
+          | Some (spec : string) -> bind_names spec (record_field_locals pattern))
         | _ -> st)
       | Some _, _ -> st
   in
@@ -363,8 +395,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
 
 let with_package_clause_locals ~(cfg : Index_lang_rules.t)
     ~(clause_of_module : Names.Module_qn.t -> string option)
-    ((file_infos : file_info list), (class_infos : class_info list))
-    : file_info list * class_info list =
+    (file_infos : file_info list) : file_info list =
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_file
   | `Per_crate
@@ -374,7 +405,7 @@ let with_package_clause_locals ~(cfg : Index_lang_rules.t)
   | `Per_namespace
   | `Per_translation_unit
   | `Per_project
-  | `Per_package -> (file_infos, class_infos)
+  | `Per_package -> file_infos
   | `Per_go_package ->
     let of_import (imp : import) : import =
       if String.equal imp.im_local wildcard_local then imp
@@ -386,11 +417,7 @@ let with_package_clause_locals ~(cfg : Index_lang_rules.t)
           | None -> imp
           | Some (clause : string) -> { imp with im_local = clause })
     in
-    ( List.map
-        (fun (fi : file_info) ->
-          { fi with fi_imports = List.map of_import fi.fi_imports })
-        file_infos,
-      List.map
-        (fun (ci : class_info) ->
-          { ci with ci_imports = List.map of_import ci.ci_imports })
-        class_infos )
+    List.map
+      (fun (fi : file_info) ->
+        { fi with fi_imports = List.map of_import fi.fi_imports })
+      file_infos

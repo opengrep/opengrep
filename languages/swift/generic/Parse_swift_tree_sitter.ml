@@ -813,7 +813,7 @@ and map_computed_getter (env : env) ((v1, v2, v3) : CST.computed_getter) =
           G.fkind = (G.Method, v2 |> snd);
           G.fparams = fb [];
           G.frettype = None;
-          G.fbody = v3;
+          G.fcaptures = G.no_captures; fbody = v3;
         } )
   |> G.s
 
@@ -835,7 +835,7 @@ and map_computed_modify (env : env) ((v1, v2, v3) : CST.computed_modify) =
           G.fkind = (G.Method, v2 |> snd);
           G.fparams = fb [];
           G.frettype = None;
-          G.fbody;
+          G.fcaptures = G.no_captures; fbody;
         } )
   |> G.s
 
@@ -893,7 +893,7 @@ and map_computed_setter (env : env) ((v1, v2, v3, v4) : CST.computed_setter) =
           G.fkind = (G.Method, v2 |> snd);
           G.fparams;
           G.frettype = None;
-          G.fbody;
+          G.fcaptures = G.no_captures; fbody;
         } )
   |> G.s
 
@@ -1157,7 +1157,7 @@ and map_fn_call_lambda_arguments (env : env)
   anon_arg :: labeled_args
 
 and map_capture_list (env : env) ((v1, v2, v3, v4) : CST.capture_list) :
-    G.parameter list =
+    G.capture list =
   let _lb = (* "[" *) token env v1 in
   let v2 = map_capture_list_item env v2 in
   let v3 =
@@ -1168,26 +1168,29 @@ and map_capture_list (env : env) ((v1, v2, v3, v4) : CST.capture_list) :
       v3
   in
   let _rb = (* "]" *) token env v4 in
-  v2 :: v3
+  List.filter_map Fun.id (v2 :: v3)
 
-and map_capture_list_item (env : env) (x : CST.capture_list_item) =
+(* [self] captures the object, not a variable; an entry of a capture list
+ * holds the value at creation, [weak] and [unowned] only change how the
+ * object is retained. *)
+and map_capture_list_item (env : env) (x : CST.capture_list_item) :
+    G.capture option =
   match x with
   | `Self_exp tok ->
-      (* "self" *) G.Param (G.param_of_id ("self", token env tok))
+      let _self = (* "self" *) token env tok in
+      None
   | `Opt_owne_modi_simple_id_opt_equal_sign_exp (v1, v2_tok, v3) ->
-      let pattrs =
-        Option.map (map_ownership_modifier env) v1 |> Option.to_list
-      in
+      let _ownership = Option.map (map_ownership_modifier env) v1 in
       let id = map_simple_identifier env v2_tok in
-      let pdefault =
+      let cinit =
         match v3 with
         | Some (v1, v2) ->
-            let _exprTODO = G.N (H2.name_of_id id) |> G.e in
             let _v1 = (* eq_custom *) token env v1 in
             Some (map_expression env v2)
         | None -> None
       in
-      G.Param (G.param_of_id ~pattrs ?pdefault id)
+      Some
+        { G.cmode = G.Capture_by_value; cname = (id, G.empty_id_info ()); cinit }
 
 and map_catch_block (env : env) ((v1, v2, v3, v4) : CST.catch_block) =
   let catch_tok = (* catch_keyword *) token env v1 in
@@ -1282,6 +1285,7 @@ and map_deinit_declaration (env : env) ((v1, v2, v3) : CST.deinit_declaration) =
         fkind = (G.Method, snd v2);
         fparams = fb [];
         frettype = None;
+        fcaptures = G.no_captures;
         fbody = G.FBStmt v3;
       }
   in
@@ -1836,19 +1840,7 @@ and map_lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) :
     (* Fake brackets here since the brackets delimit the lambda expression as a
      * whole, not just the statements *)
     (* TODO consider using `in` and the closing bracket as the delimiters *)
-    (* We put it into the top-level statements so that we do not prevent the inner statements
-       from surviving IL translation. It shouldn't mess anything up, because it shouldn't be
-       translated.
-       We need somewhere for the capture list to go, however, so we just put it first in the
-       list of statements. It shouldn't survive to semantic analysis anyways.
-    *)
-    let capture_group_stmt =
-      G.exprstmt
-        (G.OtherExpr (("CaptureGroup", v1), List_.map (fun x -> G.Pa x) captures)
-        |> G.e)
-    in
-    G.FBStmt
-      (G.Block (Tok.unsafe_fake_bracket (capture_group_stmt :: stmts)) |> G.s)
+    G.FBStmt (G.Block (Tok.unsafe_fake_bracket stmts) |> G.s)
   in
   let _rb = (* "}" *) token env v4 in
   let def =
@@ -1856,6 +1848,7 @@ and map_lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) :
       G.fkind = (G.LambdaKind, v1);
       fparams = params;
       frettype = rettype;
+      fcaptures = { cdefault = None; clist = captures };
       fbody = body;
     }
   in
@@ -2018,19 +2011,19 @@ and map_modifierless_class_declaration (env : env) (attrs : G.attribute list)
   match x with
   | `Choice_class_simple_id_opt_type_params_opt_COLON_inhe_specis_opt_type_consts_class_body
       (v1, v2, v3, v4, v5, v6) ->
-      let v1 =
+      let kind, v1 =
         (* TODO differentiate between class, struct, and actor? Maybe use
          * RecordClass attribute? *)
         match v1 with
-        | `Class tok -> (* "class" *) token env tok
-        | `Struct tok -> (* "struct" *) token env tok
-        | `Actor tok -> (* "actor" *) token env tok
+        | `Class tok -> (* "class" *) (G.Class, token env tok)
+        | `Struct tok -> (* "struct" *) (G.Struct, token env tok)
+        | `Actor tok -> (* "actor" *) (G.Class, token env tok)
       in
       let v2 = map_simple_identifier env v2 in
       let tparams = Option.map (map_type_parameters env) v3 in
 
       let entity = G.basic_entity ?tparams ~attrs v2 in
-      construct_class_def env v1 v4 entity v5 v6 map_class_body
+      construct_class_def env ~kind v1 v4 entity v5 v6 map_class_body
   | `Exte_unan_type_opt_type_params_opt_COLON_inhe_specis_opt_type_consts_class_body
       (v1, v2, v3, v4, v5, v6) ->
       let v1 = (* "extension" *) token env v1 in
@@ -2091,10 +2084,13 @@ and map_modifierless_function_declaration_no_body (env : env) ~in_class
     ?(attrs = [])
     ((v1, v2, v3, v4, v5, v6, v7) :
       CST.modifierless_function_declaration_no_body) (body : G.function_body) =
-  let is_quest, v1 =
+  let is_quest, v1, ctor =
     match v1 with
-    | `Cons_func_decl x -> map_constructor_function_decl env x
-    | `Non_cons_func_decl x -> (false, map_non_constructor_function_decl env x)
+    | `Cons_func_decl x ->
+        let is_quest, v1 = map_constructor_function_decl env x in
+        (is_quest, v1, [ G.KeywordAttr (G.Ctor, snd v1) ])
+    | `Non_cons_func_decl x ->
+        (false, map_non_constructor_function_decl env x, [])
   in
   let v2 = Option.map (map_type_parameters env) v2 in
   let fparams = map_function_value_parameters env v3 in
@@ -2119,12 +2115,12 @@ and map_modifierless_function_declaration_no_body (env : env) ~in_class
     | None -> None
   in
 
-  let attrs = attrs in
+  let attrs = attrs @ ctor in
   let entity = G.basic_entity ?tparams:v2 ~attrs v1 in
   let kind = if in_class then G.Method else G.Function in
   let definition_kind =
     G.FuncDef
-      { fkind = (kind, snd v1); fparams = fb fparams; frettype; fbody = body }
+      { fkind = (kind, snd v1); fparams = fb fparams; frettype; fcaptures = G.no_captures; fbody = body }
   in
   G.DefStmt (entity, definition_kind) |> G.s
 
@@ -2716,6 +2712,7 @@ and map_subscript_declaration (env : env)
           fkind = (G.Method, v2);
           fparams = fb fparams;
           frettype;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v7;
         } )
   |> G.s

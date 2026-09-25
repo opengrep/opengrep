@@ -51,6 +51,7 @@ type rule_state = {
   info_map : Match_tainting_mode.fun_info FunctionMap.t;
   file_envs : file_env FpathMap.t;
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
+  shared_tables : Taint_shared_tables.t;
   match_on : [ `Sink | `Source ];
   target_root_map : path_with_root FpathMap.t;  (* by canonical path *)
   scanning_roots : Scanning_root.directory list;
@@ -70,6 +71,7 @@ type lang_context = {
   lc_lang : Lang.t;
   lc_rules : R.taint_rule list;
   lc_interfile_graph : Interfile_graph.interfile_graph;
+  lc_type_state : Type_state.t;
   lc_matching_targets : interfile_target list;
 }
 
@@ -348,6 +350,7 @@ type file_init_acc = {
 (* [fid_set] filters which functions get IL+CFG construction. *)
 let init_file
     ~(lang : Lang.t)
+    ~(shared_tables : Taint_shared_tables.t)
     ~(rule : R.taint_rule)
     ~(xconf : Match_env.xconfig)
     ~(path_root : Fpath.t option)
@@ -356,6 +359,7 @@ let init_file
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(spec_matches : (Fpath.t, Match_taint_spec.spec_matches) Hashtbl.t)
+    ~(type_state : Type_state.t)
     ~(file_path : Fpath.t)
     (acc : file_init_acc)
     : file_init_acc =
@@ -393,7 +397,14 @@ let init_file
   let taint_inst =
     match inst_opt with
     | Some ti ->
-      { ti with Taint_rule_inst.project_root = path_root }
+      let file_value_type = Match_taint_spec.value_type_predicate lang ast in
+      {
+        ti with
+        Taint_rule_inst.project_root = path_root;
+        is_value_type =
+          (fun (ty : AST_generic.type_) ->
+            file_value_type ty || Type_state.is_value_type type_state ty);
+      }
     | None ->
       let empty_preds : Taint_rule_inst.spec_predicates = {
         is_source = (fun _any -> []);
@@ -411,10 +422,16 @@ let init_file
         preds = empty_preds;
         handle_effects = (fun _fn_name effects -> effects);
         recursive = false;
+        is_value_type =
+          (let file_value_type = Match_taint_spec.value_type_predicate lang ast in
+           fun (ty : AST_generic.type_) ->
+             file_value_type ty || Type_state.is_value_type type_state ty);
         java_props_cache = Hashtbl.create 0;
       }
   in
-  let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
+  let glob_env, glob_effects =
+    Taint_input_env.mk_file_env taint_inst shared_tables ast
+  in
   let file_env = { ast; taint_inst; glob_env; glob_effects } in
   let fid_filter (fid : Function_id.t) : bool =
     FidSet.mem (Interfile_graph.absolutify_fid path_root fid) fid_set
@@ -430,7 +447,6 @@ let init_file
     FunctionMap.map
       (fun (info : Match_tainting_mode.fun_info) ->
          { info with
-           file_ast = Some ast;
            taint_inst = Some taint_inst;
            name = IL.absolutify_name path_root info.name })
       raw_info_map
@@ -581,12 +597,7 @@ let compute_rule_subgraph
           (Call_graph.G.nb_vertex relevant_graph)
           (Call_graph.G.nb_edges relevant_graph));
     let _n_pruned = prune_impl_interface_cycles relevant_graph in
-    let topo_order =
-      Call_graph.Topo.fold
-        (fun (fn : Function_id.t) (acc : Function_id.t list) -> fn :: acc)
-        relevant_graph []
-      |> List.rev
-    in
+    let topo_order = Call_graph.topological_order relevant_graph in
     let subgraph_files = Interfile_graph.files_of_graph relevant_graph in
     let graph_fid_set = fid_set_of_graph relevant_graph in
     (* Include target files with source/sink matches but no subgraph
@@ -649,12 +660,14 @@ let init_rule_state
   let lang = rsg.rsg_lang_context.lc_lang in
   let rule = rsg.rsg_specs.rs_rule in
   let rule_id = fst rule.R.id in
+  let shared_tables = Taint_shared_tables.create (Effect_guard.create_atoms ()) in
   let init_acc =
     List.fold_left
       (fun (acc : file_init_acc) (file_path : Fpath.t) ->
          let path_root = path_root_for_file target_root_map file_path in
          try
-           init_file ~lang ~rule ~xconf:rsg.rsg_xconf ~path_root
+           init_file ~lang ~shared_tables ~rule ~xconf:rsg.rsg_xconf ~path_root
+             ~type_state:rsg.rsg_lang_context.lc_type_state
              ~fid_set:rsg.rsg_fid_set
              ~ast_table ~function_maps
              ~spec_matches:rsg.rsg_specs.rs_spec_matches ~file_path acc
@@ -686,7 +699,10 @@ let init_rule_state
     info_map = init_acc.fi_info_map;
     file_envs = init_acc.fi_file_envs;
     builtin_signature_db =
-      Some (Builtin_models.create_all_builtin_models lang);
+      Some
+        (Builtin_models.create_all_builtin_models
+           ~atoms:shared_tables.Taint_shared_tables.guard_atoms lang);
+    shared_tables;
     match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
     scanning_roots;
@@ -700,23 +716,15 @@ let init_rule_state
    handler would drop every finding for the rule. *)
 let taint_inst_of_info (rs : rule_state) (fid : Function_id.t)
     (info : Match_tainting_mode.fun_info)
-    : (Taint_rule_inst.t * G.program) option =
-  match info.Match_tainting_mode.taint_inst,
-        info.Match_tainting_mode.file_ast with
-  | Some ti, Some ast ->
+    : Taint_rule_inst.t option =
+  match info.Match_tainting_mode.taint_inst with
+  | Some ti ->
     Some
-      ({ ti with
-         Taint_rule_inst.recursive = FidSet.mem fid rs.recursive_fids },
-       ast)
-  | None, _ ->
+      { ti with
+        Taint_rule_inst.recursive = FidSet.mem fid rs.recursive_fids }
+  | None ->
     Log.warn (fun m ->
         m "interfile: function %s missing taint_inst — skipping (likely \
-           init_file bug)"
-          (Function_id.show_debug fid));
-    None
-  | _, None ->
-    Log.warn (fun m ->
-        m "interfile: function %s missing file_ast — skipping (likely \
            init_file bug)"
           (Function_id.show_debug fid));
     None
@@ -748,17 +756,16 @@ let extract_and_check_function
   match taint_inst_of_info rs fid info with
   | None ->
     (db, [])
-  | Some (fn_taint_inst, fun_ast) ->
+  | Some fn_taint_inst ->
     let glob_env = glob_env_of_fid rs fid in
     let updated_db, findings =
-      (* No [~call_graph]: interfile callee resolution is sid-only (the
-         [id_callee_definition] def-site sids stamped by projidx). The local
-         call-graph fallback is for the intrafile path. *)
+      (* No [~call_graph]: callees are found through the
+         [id_callee_definition] stamps the project graph writes. *)
       Match_tainting_mode.extract_and_check
         ?builtin_signature_db:rs.builtin_signature_db
         ~glob_env
         ~lang:rs.lang ~db ~match_on:rs.match_on
-        ~taint_inst:fn_taint_inst ~ast:fun_ast
+        ~taint_inst:fn_taint_inst ~shared_tables:rs.shared_tables
         ~detect_findings
         info
     in
@@ -781,77 +788,8 @@ let relevant_graph_of (rs : rule_state) : Call_graph.G.t =
 let topo_order_of (rs : rule_state) : Function_id.t list =
   rs.topo_order
 
-(* Prefer id_resolved_alternatives (AST mirror of Dispatch edges), fall
-   back to graph dispatch_predecessors; drop self-references. *)
-let dispatch_impls (rs : rule_state) (fid : Function_id.t) : Function_id.t list =
-  let from_alts =
-    match FunctionMap.find_opt fid rs.info_map with
-    | None -> []
-    | Some info ->
-      !(info.Match_tainting_mode.name.IL.id_info.G.id_resolved_alternatives)
-      |> List.filter_map (fun ((_, sid) : G.resolved_name) ->
-             if G.SId.is_unsafe_default sid then None
-             else Some (Function_id.of_sid sid))
-  in
-  let impls =
-    match from_alts with
-    | [] -> Call_graph.dispatch_predecessors rs.relevant_graph fid
-    | xs -> xs
-  in
-  List.filter (fun (pred : Function_id.t) ->
-      not (Function_id.equal pred fid)) impls
-
-let has_body (rs : rule_state) (fid : Function_id.t) : bool =
-  match FunctionMap.find_opt fid rs.info_map with
-  | None -> false
-  | Some (info : Match_tainting_mode.fun_info) ->
-      Func_info.has_body info.Match_tainting_mode.fdef
-
-let dispatch_merge_fbdecl (rs : rule_state)
-    (fid : Function_id.t) (fid_arity : int)
-    (db : Shape_and_sig.signature_database)
-    : Shape_and_sig.signature_database =
-  let dpreds = dispatch_impls rs fid in
-  let impl_sigs =
-    dpreds
-    |> List.filter_map (fun (pred : Function_id.t) ->
-           Shape_and_sig.lookup_signature db pred fid_arity)
-  in
-  let interface_sig_opt =
-    Shape_and_sig.lookup_signature db fid fid_arity
-  in
-  match interface_sig_opt, impl_sigs with
-  | _, [] -> db
-  | None, _ ->
-      Log.debug (fun m ->
-          m "merge_dispatch: interface sig not found for %s, \
-             skipping dispatch merge"
-            (Function_id.show_debug fid));
-      db
-  | Some interface_sig, _ ->
-      let representative_sig =
-        if has_body rs fid then Some interface_sig else None
-      in
-      let merged =
-        Sig_inst.merge_dispatch_signatures ?representative_sig impl_sigs
-          interface_sig
-      in
-      let ext_sig =
-        { Shape_and_sig.sig_ = merged;
-          arity =
-            Shape_and_sig.Arity_exact
-              (List.length merged.Shape_and_sig.Signature.params) }
-      in
-      Shape_and_sig.replace_signature db fid ext_sig
-
 let initial_sig_db (_rs : rule_state) : Shape_and_sig.signature_database =
   Builtin_models.init_signature_database None
-
-let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
-    : int =
-  Match_tainting_mode.get_arity
-    (Tok.unbracket info.Match_tainting_mode.fdef.AST_generic.fparams)
-    info rs.lang
 
 let topo_fold ~(detect_findings : bool) (rs : rule_state)
     : Shape_and_sig.signature_database * PM.t list =
@@ -863,11 +801,12 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       : Shape_and_sig.signature_database =
     match taint_inst_of_info rs fid info with
     | None -> db
-    | Some (fn_taint_inst, fun_ast) ->
+    | Some fn_taint_inst ->
       let db', fresh =
         Match_tainting_mode.extract_signatures
           ?builtin_signature_db:rs.builtin_signature_db
-          ~lang:rs.lang ~db ~taint_inst:fn_taint_inst ~ast:fun_ast info
+          ~lang:rs.lang ~db ~taint_inst:fn_taint_inst
+          ~shared_tables:rs.shared_tables info
       in
       (* growth of a function's signature across the fixpoint rounds *)
       Log.debug (fun m ->
@@ -894,28 +833,12 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
         match info.Match_tainting_mode.fdef.G.fbody with
         | G.FBDecl _
         | G.FBNothing ->
-          (* Interface/abstract: signature comes from merging concrete impls.
-             Don't store an empty sig when no impls exist — unsound (callers
-             would see "no effects" instead of conservative propagation).
-             [dispatch_merge_fbdecl] replaces the interface entry, so it does
-             not accumulate across iterations. *)
-          let fid_arity = fid_arity_of rs info in
-          let dpreds = dispatch_impls rs fid in
-          let has_impls =
-            dpreds
-            |> List.exists (fun (pred : Function_id.t) ->
-                   Option.is_some
-                     (Shape_and_sig.lookup_signature db pred fid_arity))
-          in
-          if not has_impls then db
-          else dispatch_merge_fbdecl rs fid fid_arity (extract_replace fid info db)
-        | _ ->
-          (* An overload group's representative carries the union of its
-             members' signatures on top of its own; nothing else has
-             dispatch predecessors. *)
-          let db = extract_replace fid info db in
-          if List_.null (dispatch_impls rs fid) then db
-          else dispatch_merge_fbdecl rs fid (fid_arity_of rs info) db)
+          (* Interface/abstract: no signature is stored, since a call reaches
+             the implementations its stamp lists, and an empty signature
+             would make callers see no effects instead of conservative
+             propagation. *)
+          db
+        | _ -> extract_replace fid info db)
   in
   (* Edge-less SOURCE seeds are outside the SCC list, so nothing else
      computes their signature — yet the epilogue and the
@@ -1106,14 +1029,6 @@ let rebase_pm (scanning_roots : Scanning_root.directory list)
   { pm with PM.path; range_loc; taint_trace; tokens }
 
 let run_rule (rs : rule_state) : PM.t list =
-  (* The constructor-instance-vars table is domain-local and keyed only by
-     [file:class]; without this reset it would carry a prior rule's
-     constructor taint into this rule when both run on the same domain. *)
-  Dataflow_tainting.reset_constructor ();
-  (* Same task boundary for the guard-atom intern table: it is domain-local
-     and cleared per target in the intrafile path, but a run of interfile
-     rules on one domain would otherwise let it grow unbounded. *)
-  Effect_guard.reset_intern ();
   let effects_to_matches =
     Match_tainting_mode.pms_of_effects ~lang:rs.lang ~match_on:rs.match_on
   in
@@ -1166,11 +1081,12 @@ let run_rule (rs : rule_state) : PM.t list =
            let top_cfg, class_init_cfgs =
              accum epilogue_cfg_secs @@ fun () ->
              ( Match_tainting_mode.build_top_level_cfg rs.lang fe.ast,
-               Match_tainting_mode.build_class_init_cfgs rs.lang fe.ast )
+               Match_tainting_mode.build_class_init_cfgs
+                 ~initialisers_are_functions:true rs.lang fe.ast )
            in
            let class_init_effects =
              accum epilogue_class_init_secs @@ fun () ->
-             Match_tainting_mode.check_class_inits_prebuilt fe.taint_inst
+             Match_tainting_mode.check_class_inits_prebuilt fe.taint_inst rs.shared_tables
                class_init_cfgs
                ~signature_db:final_db
                ?builtin_signature_db:rs.builtin_signature_db
@@ -1178,7 +1094,7 @@ let run_rule (rs : rule_state) : PM.t list =
            in
            let top_effects, top_secs =
              Common.with_time @@ fun () ->
-             Match_tainting_mode.check_top_level_prebuilt fe.taint_inst
+             Match_tainting_mode.check_top_level_prebuilt fe.taint_inst rs.shared_tables
                top_cfg
                ~signature_db:final_db
                ?builtin_signature_db:rs.builtin_signature_db
@@ -1509,7 +1425,7 @@ let build_rule_states
      each rule's run. *)
   let bounded_build (lang : Lang.t) (project_root : Fpath.t) :
       ((Interfile_graph.interfile_graph * Interfile_graph.resolved_asts
-        * Interfile_graph.skipped_tokens * E.t list) option,
+        * Interfile_graph.skipped_tokens * E.t list * Type_state.t) option,
        E.t) result =
     match
       Memory_limit.run_with_global_memory_limit
@@ -1559,7 +1475,7 @@ let build_rule_states
                     rules )
           in
           (match build_opt with
-           | Some (_, asts, skipped_tokens, _) ->
+           | Some (_, asts, skipped_tokens, _, _) ->
              Hashtbl.iter (Hashtbl.replace projidx_asts) asts;
              Hashtbl.iter (Hashtbl.replace skipped_tokens_by_file)
                skipped_tokens
@@ -1568,7 +1484,7 @@ let build_rule_states
           let file_failures : E.t list =
             match build_opt with
             | None -> []
-            | Some (_, _, _, failures) -> failures
+            | Some (_, _, _, failures, _) -> failures
           in
           (* A file with an index error is absent from the graph because
              of it; it is not reported a second time as absent. *)
@@ -1622,7 +1538,7 @@ let build_rule_states
                   (Lang.to_string lang) (Fpath.to_string project_root));
             (None,
              not_covered lang_targets "the interfile graph could not be built")
-          | Some (interfile_graph, asts, _, _) ->
+          | Some (interfile_graph, asts, _, _, type_state) ->
             (* covered: every file the index parsed, a file with nothing to
                index (an empty package file) included *)
             let interfile_files = interfile_file_set interfile_graph in
@@ -1672,6 +1588,7 @@ let build_rule_states
                (Some { lc_lang = lang;
                        lc_rules = rules;
                        lc_interfile_graph = interfile_graph;
+                       lc_type_state = type_state;
                        lc_matching_targets = matching_targets },
                 uncovered))
           in

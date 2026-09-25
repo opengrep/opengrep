@@ -26,8 +26,7 @@ public class TestHofCallbackTaint {
     // === Callback-only HOF tests ===
 
     void test_callback_only_propagating_named() {
-        // todoruleid: test-hof-callback-taint
-        // TODO: Java method references (Class::method) not yet supported in IL
+        // ruleid: test-hof-callback-taint
         sink(app_callback_only(TestHofCallbackTaint::propagates, source()));
     }
 
@@ -36,12 +35,10 @@ public class TestHofCallbackTaint {
         sink(app_callback_only(x -> x, source()));
     }
 
-    // NOTE: Method references (Class::method) not yet supported in IL
-    // This test would pass for wrong reason - skipping until method refs work
-    // void test_callback_only_sanitizing_named() {
-    //     // ok: test-hof-callback-taint
-    //     sink(app_callback_only(TestHofCallbackTaint::sanitizes, source()));
-    // }
+    void test_callback_only_sanitizing_named() {
+        // ok: test-hof-callback-taint
+        sink(app_callback_only(TestHofCallbackTaint::sanitizes, source()));
+    }
 
     void test_callback_only_sanitizing_lambda() {
         // ok: test-hof-callback-taint

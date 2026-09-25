@@ -1,0 +1,13 @@
+rules:
+  - id: file_scope_function_pointer_c
+    message: a call through a file scope function pointer reaches every function assigned to it
+    languages:
+      - c
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

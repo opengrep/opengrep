@@ -1,0 +1,13 @@
+rules:
+  - id: imported_name_rebound_to_value
+    message: a module level call reaches the value the name holds at that point
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

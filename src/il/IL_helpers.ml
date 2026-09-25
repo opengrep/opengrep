@@ -76,6 +76,45 @@ let compare_composite_kind (k1 : composite_kind) (k2 : composite_kind) : int =
   | Constructor n1, Constructor n2 -> compare_name n1 n2
   | _ -> Int.compare (composite_kind_tag k1) (composite_kind_tag k2)
 
+let literal_tag : G.literal -> int = function
+  | G.Bool _ -> 0
+  | G.Int _ -> 1
+  | G.Float _ -> 2
+  | G.Char _ -> 3
+  | G.String _ -> 4
+  | G.Regexp _ -> 5
+  | G.Atom _ -> 6
+  | G.Unit _ -> 7
+  | G.Null _ -> 8
+  | G.Undefined _ -> 9
+  | G.Imag _ -> 10
+  | G.Ratio _ -> 11
+
+let compare_literal_value (l1 : G.literal) (l2 : G.literal) : int =
+  match (l1, l2) with
+  | G.Bool (b1, _), G.Bool (b2, _) -> Bool.compare b1 b2
+  | G.Int (i1, _), G.Int (i2, _) -> Option.compare Int64.compare i1 i2
+  | G.Float (f1, _), G.Float (f2, _) -> Option.compare Float.compare f1 f2
+  | G.Char (s1, _), G.Char (s2, _)
+  | G.String (_, (s1, _), _), G.String (_, (s2, _), _)
+  | G.Atom (_, (s1, _)), G.Atom (_, (s2, _))
+  | G.Imag (s1, _), G.Imag (s2, _)
+  | G.Ratio (s1, _), G.Ratio (s2, _) ->
+      String.compare s1 s2
+  | G.Regexp ((_, (s1, _), _), m1), G.Regexp ((_, (s2, _), _), m2) ->
+      let c = String.compare s1 s2 in
+      if c <> 0 then c
+      else
+        Option.compare
+          (fun ((x1, _) : string G.wrap) ((x2, _) : string G.wrap) ->
+            String.compare x1 x2)
+          m1 m2
+  | G.Unit _, G.Unit _
+  | G.Null _, G.Null _
+  | G.Undefined _, G.Undefined _ ->
+      0
+  | _ -> Int.compare (literal_tag l1) (literal_tag l2)
+
 let exp_kind_tag = function
   | Fetch _ -> 0
   | Literal _ -> 1
@@ -93,13 +132,13 @@ let rec compare_exp (e1 : exp) (e2 : exp) : int =
     else
       match (e1.e, e2.e) with
       | Fetch l1, Fetch l2 -> compare_lval l1 l2
-      | Literal a, Literal b -> G.compare_literal a b
+      | Literal a, Literal b -> compare_literal_value a b
       | Composite (k1, (_, xs1, _)), Composite (k2, (_, xs2, _)) ->
           let c = compare_composite_kind k1 k2 in
           if c <> 0 then c else List.compare compare_exp xs1 xs2
       | RecordOrDict f1, RecordOrDict f2 -> List.compare compare_field f1 f2
       | Cast (t1, a), Cast (t2, b) ->
-          let c = G.compare_type_ t1 t2 in
+          let c = if G.equal_type_ t1 t2 then 0 else G.compare_type_ t1 t2 in
           if c <> 0 then c else compare_exp a b
       | Operator ((op1, _), a1), Operator ((op2, _), a2) ->
           let c = G.compare_operator op1 op2 in
@@ -430,6 +469,28 @@ let rlvals_of_instr x =
 (*****************************************************************************)
 (* Public *)
 (*****************************************************************************)
+
+let source_range_of_locs (first : Tok.location) (last : Tok.location) :
+    IL.source_range =
+  {
+    file = Fpath.to_string (Fpath.normalize first.pos.file);
+    first = (first.pos.line, first.pos.column);
+    last = (last.pos.line, last.pos.column);
+  }
+
+let position_leq ((l1, c1) : int * int) ((l2, c2) : int * int) : bool =
+  l1 < l2 || (Int.equal l1 l2 && c1 <= c2)
+
+(* Whether [name] is declared inside [range]: its sid's site lies in the
+ * span, or it is an IL temporary. A name with no site (unresolved, or made
+ * by a converter) is outside. *)
+let declared_in_range (range : IL.source_range) (name : IL.name) : bool =
+  G.SId.is_temp name.sid
+  ||
+  let _, file, line, col = G.SId.to_loc name.sid in
+  String.equal file range.file
+  && position_leq range.first (line, col)
+  && position_leq (line, col) range.last
 
 let is_pro_resolved_global name =
   match !(name.id_info.id_resolved) with

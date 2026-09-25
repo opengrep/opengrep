@@ -43,7 +43,7 @@ let is_local_binding (info : G.id_info) : bool =
       false
 
 let is_resolved_callee (info : G.id_info) : bool =
-  Option.is_some !(info.G.id_callee_definition)
+  not (List.is_empty !(info.G.id_callee_definition))
 
 let acceptable_actual (e : G.expr) : (string * G.expr) option =
   match e.G.e with
@@ -58,15 +58,15 @@ let binding_sid (info : G.id_info) : G.SId.t option =
   | Some (_, sid) -> Some sid
   | None -> None
 
-let callee_sid (info : G.id_info) : G.SId.t option =
+let callee_sids (info : G.id_info) : G.SId.t list =
   match !(info.G.id_callee_definition) with
-  | Some _ as sid -> sid
-  | None -> (
+  | _ :: _ as sids -> sids
+  | [] -> (
       match !(info.G.id_resolved) with
-      | Some (G.Global, sid) -> Some sid
+      | Some (G.Global, sid) -> [ sid ]
       | Some _
       | None ->
-          None)
+          [])
 
 type def_entry = {
   (* Parameter sids by position; [None] for non-classic parameters. *)
@@ -168,24 +168,23 @@ let collect_stamps (asts : G.program list) : (G.SId.t * G.expr) list =
         method! visit_expr () e =
           (match e.G.e with
           | G.Call ({ e = G.N (G.Id (_, cinfo)); _ }, (_, args, _)) -> (
-              match callee_sid cinfo with
-              | None -> ()
-              | Some csid -> (
-                  match Hashtbl.find_opt defs csid with
-                  | None -> ()
-                  | Some de ->
-                      (* Positional args only; a keyword or spread call site
-                         demotes the positions it obscures to [Conflict]. *)
-                      de.de_callee_positions
-                      |> Hashtbl.iter (fun pos () ->
-                             let actual =
-                               match List.nth_opt args pos with
-                               | Some (G.Arg arg_e) -> Some arg_e
-                               | Some _
-                               | None ->
-                                   None
-                             in
-                             observe csid pos actual)))
+              callee_sids cinfo
+              |> List.iter (fun (csid : G.SId.t) ->
+                     match Hashtbl.find_opt defs csid with
+                     | None -> ()
+                     | Some de ->
+                         (* Positional args only; a keyword or spread call site
+                            demotes the positions it obscures to [Conflict]. *)
+                         de.de_callee_positions
+                         |> Hashtbl.iter (fun pos () ->
+                                let actual =
+                                  match List.nth_opt args pos with
+                                  | Some (G.Arg arg_e) -> Some arg_e
+                                  | Some _
+                                  | None ->
+                                      None
+                                in
+                                observe csid pos actual)))
           | _ -> ());
           super#visit_expr () e
       end

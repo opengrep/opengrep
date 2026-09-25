@@ -19,7 +19,7 @@ val collect_in_ast :
   module_path:Names.Module_qn.t ->
   file:Fpath.t ->
   AST_generic.program ->
-  Types.entry list * Types.class_info list * Types.file_info
+  Types.entry list * Types.file_info
 
 (* Synthesised dunder entries for dataclass-like wrapper classes
    ([cfg.wrapper_dunders]), skipping dunders the class already defines. *)
@@ -27,5 +27,4 @@ val dataclass_wrapper_synth_entries :
   cfg:Index_lang_rules.t ->
   wrappers:(string, Types.dataclass_wrapper) Hashtbl.t ->
   Types.entry list ->
-  Types.class_info list ->
   Types.entry list

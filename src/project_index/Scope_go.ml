@@ -107,7 +107,7 @@ let import_aliases (fi : file_info) : Names.Module_qn.t Common.SMap.t =
     Common.SMap.empty fi.fi_imports
 
 let package_bindings
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -275,8 +275,9 @@ let body_bindings ~(lang : Lang.t)
 
 let build ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     ~(package_index : package_index)
+    ~(build_constraints : Go_build_constraints.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -286,9 +287,11 @@ let build ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   let in_package =
     package_bindings ~classes_by_file ~class_parent_paths ~file_funcs_index
       ~package_qn:fi.fi_module_path
-      (files_of_package package_index fi)
+      (List.filter
+         (Go_build_constraints.file_visible_from build_constraints fi.fi_file)
+         (files_of_package package_index fi))
   in
-  let bound_by_package = Scope_binding.bindings_of_positioned in_package in
+  let bound_by_package = Scope_binding.bindings_of_package_block in_package in
   let module_aliases : (string, Names.Module_qn.t) Hashtbl.t =
     Hashtbl.create (List.length fi.fi_imports)
   in
@@ -312,6 +315,6 @@ let build ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     alias_bindings ~attributes_by_module ~module_aliases ~bound_by_package fi
   in
   let in_body = body_bindings ~lang ~bound_by_package fi in
-  ( Scope_binding.bindings_of_positioned
+  ( Scope_binding.bindings_of_package_block
       (imported @ in_package @ aliases @ in_body),
     module_aliases )

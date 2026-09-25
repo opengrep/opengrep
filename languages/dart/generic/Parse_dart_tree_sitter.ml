@@ -1299,7 +1299,7 @@ and map_function_signature ~attrs (env : env)
     | _ ->
         DefStmt
           ( basic_entity ~attrs ?tparams id,
-            FuncDef { fkind; fparams; frettype; fbody } )
+            FuncDef { fkind; fparams; frettype; fcaptures = G.no_captures; fbody } )
         |> G.s
 
 and map_function_type (env : env) (x : CST.function_type) : type_ =
@@ -1842,7 +1842,7 @@ and map_primary (env : env) (p : CST.primary) : expr =
             let lparen, _, _ = fparams in
             let fbody = map_function_expression_body env v2 in
             Lambda
-                { fkind = (LambdaKind, lparen); fparams; frettype = None; fbody }
+                { fkind = (LambdaKind, lparen); fparams; frettype = None; fcaptures = G.no_captures; fbody }
             |> G.e
         | `Id tok ->
             N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
@@ -2352,26 +2352,26 @@ and map_switch_block (env : env) ((v1, v2, v3) : CST.switch_block) :
       (fun x ->
         match x with
         | `Switch_label x -> Either.Left (map_switch_label env x)
-        | `Stmt x -> Either.Right (map_statement_as_stmt env x))
+        | `Stmt x -> Either.Right (map_statement env x))
       v2
   in
   let _v3 = (* "}" *) token env v3 in
-  match
-    List_.fold_right
-      (fun either acc ->
-        match (either, acc) with
-        | Either.Left _case, (None, acc) ->
-            (* this means we saw a case with no stmt below, just skip and move on *)
-            (None, acc)
-        | Either.Right stmt, (None, acc) -> (Some ([], stmt), acc)
-        | Either.Left case, (Some (cases, stmt), acc) ->
-            (Some (case :: cases, stmt), acc)
-        | Either.Right stmt, (Some (cases, stmt'), acc) ->
-            (Some ([], stmt), CasesAndBody (cases, stmt') :: acc))
-      v2 (None, [])
-  with
-  | None, acc -> acc
-  | Some (cases, stmt), acc -> CasesAndBody (cases, stmt) :: acc
+  let close (cases : case list) (rev_stmts : stmt list)
+      (acc : case_and_body list) : case_and_body list =
+    match rev_stmts with
+    | [] -> acc
+    | _ :: _ -> CasesAndBody (List.rev cases, G.stmt1 (List.rev rev_stmts)) :: acc
+  in
+  let cases, rev_stmts, acc =
+    List.fold_left
+      (fun (cases, rev_stmts, acc) either ->
+        match (either, rev_stmts) with
+        | Either.Left case, [] -> (case :: cases, [], acc)
+        | Either.Left case, _ :: _ -> ([ case ], [], close cases rev_stmts acc)
+        | Either.Right stmts, _ -> (cases, List.rev_append stmts rev_stmts, acc))
+      ([], [], []) v2
+  in
+  List.rev (close cases rev_stmts acc)
 
 and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
   (* Not clear to me what these are. *)
@@ -2720,7 +2720,7 @@ let map_setter_signature ~attrs (env : env)
   fun fbody ->
     DefStmt
       ( basic_entity ?tparams ~attrs v3,
-        FuncDef { fkind = (Function, v2); fparams; frettype; fbody } )
+        FuncDef { fkind = (Function, v2); fparams; frettype; fcaptures = G.no_captures; fbody } )
     |> G.s
 
 let map_operator_signature ?(attrs = []) (env : env)
@@ -2752,6 +2752,7 @@ let map_operator_signature ?(attrs = []) (env : env)
         {
           fkind = (Function, fake "function");
           fparams;
+          fcaptures = G.no_captures;
           fbody = FBNothing;
           frettype;
         } )
@@ -2825,7 +2826,7 @@ let map_getter_signature ~attrs (env : env)
   fun fbody ->
     DefStmt
       ( basic_entity ~attrs v3,
-        FuncDef { fkind = (Function, t); fparams = fb []; frettype; fbody } )
+        FuncDef { fkind = (Function, t); fparams = fb []; frettype; fcaptures = G.no_captures; fbody } )
     |> G.s
 
 let map_constant_constructor_signature (env : env)
@@ -3127,6 +3128,12 @@ let augment_body initializers body =
   | _, FBNothing ->
       FBStmt (Block (fb initializers) |> G.s)
 
+(* The attribute of a constructor, from the identifiers it is declared with. *)
+let ctor_attr (dotted : G.ident list) : G.attribute list =
+  match dotted with
+  | (_, tok) :: _ -> [ KeywordAttr (Ctor, tok) ]
+  | [] -> []
+
 let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
   match x with
   | `Cons_sign_opt_initis (v1, v2) ->
@@ -3136,7 +3143,13 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         | Some x -> map_initializers env x
         | None -> []
       in
-      let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
+      let ent =
+        {
+          name = EN (H2.name_of_ids dotted);
+          attrs = attrs @ ctor_attr dotted;
+          tparams = None;
+        }
+      in
       let fbody =
         augment_body
           (init_formal_assignments (Tok.unbracket fparams) @ v2) body
@@ -3144,7 +3157,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
       DefStmt
         ( ent,
           FuncDef
-            { fkind = (Method, fake "Method"); fparams; frettype = None; fbody }
+            { fkind = (Method, fake "Method"); fparams; frettype = None; fcaptures = G.no_captures; fbody }
         )
       |> G.s
   | `Fact_cons_sign x ->
@@ -3163,6 +3176,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
               fkind = (Method, fake "Method");
               fparams;
               frettype = None;
+              fcaptures = G.no_captures;
               fbody = body;
             } )
       |> G.s
@@ -3272,7 +3286,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       let ent =
         {
           name = EN (H2.name_of_ids dotted);
-          attrs = [ attr ] @ attrs;
+          attrs = [ attr ] @ attrs @ ctor_attr dotted;
           tparams = None;
         }
       in
@@ -3284,7 +3298,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
-                fbody;
+                fcaptures = G.no_captures; fbody;
               } )
         |> G.s;
       ]
@@ -3295,7 +3309,13 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | Some x -> map_anon_choice_redi_3f8cf96 env x
         | None -> []
       in
-      let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
+      let ent =
+        {
+          name = EN (H2.name_of_ids dotted);
+          attrs = attrs @ ctor_attr dotted;
+          tparams = None;
+        }
+      in
       let fbody =
         augment_body
           (init_formal_assignments (Tok.unbracket fparams) @ initializers)
@@ -3309,7 +3329,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
-                fbody;
+                fcaptures = G.no_captures; fbody;
               } )
         |> G.s;
       ]
@@ -3337,6 +3357,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3359,6 +3380,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3366,7 +3388,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
   | `Exte_cst_cons_sign (v1, v2) ->
       let v1 = KeywordAttr (Extern, (* "external" *) token env v1) in
       let attr, dotted, fparams = map_constant_constructor_signature env v2 in
-      let attrs = [ v1; attr ] @ attrs in
+      let attrs = [ v1; attr ] @ attrs @ ctor_attr dotted in
       let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
       [
         DefStmt
@@ -3376,6 +3398,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3412,6 +3435,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Method, fake "method");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody =
                   FBExpr
                     (OtherExpr (("Redirect", fake "Redirect"), [ G.T v7 ] @ v8)
@@ -3425,7 +3449,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       let ent =
         {
           name = EN (H2.name_of_ids dotted);
-          attrs = [ v1 ] @ attrs;
+          attrs = [ v1 ] @ attrs @ ctor_attr dotted;
           tparams = None;
         }
       in
@@ -3437,6 +3461,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fkind = (Function, fake "Function");
                 fparams;
                 frettype = None;
+                fcaptures = G.no_captures;
                 fbody = FBNothing;
               } )
         |> G.s;
@@ -3616,24 +3641,21 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
           |> G.s)
         inits
 
-let map_declaration_as_stmt (env : env) (x : CST.declaration_) : stmt =
-  Block (fb (map_declaration_ env x)) |> G.s
-
 let map_class_member_definition ~attrs (env : env)
-    (x : CST.class_member_definition) : field =
+    (x : CST.class_member_definition) : field list =
   match x with
   | `Choice_decl__semi x -> (
       match x with
       | `Decl__semi (v1, v2) ->
-          let v1 = map_declaration_as_stmt env v1 in
+          let v1 = map_declaration_ ~attrs env v1 in
           let _sc = map_semicolon env v2 in
-          G.F v1
+          List_.map (fun st -> G.F st) v1
       | `Meth_sign_func_body (v1, v2) ->
           let v1 = map_method_signature env v1 in
           let fattrs, v2 = map_function_body env v2 in
-          G.F (v1 (attrs @ fattrs, v2)))
+          [ G.F (v1 (attrs @ fattrs, v2)) ])
   (* sgrep-ext: '...' as a class member, e.g. 'class C { ... }' *)
-  | `Semg_ellips tok -> G.field_ellipsis ((* "..." *) token env tok)
+  | `Semg_ellips tok -> [ G.field_ellipsis ((* "..." *) token env tok) ]
 
 let map_extension_body (env : env) ((v1, v2, v3) : CST.extension_body) :
     stmt list =
@@ -3697,15 +3719,14 @@ let map_class_body (env : env) ((v1, v2, v3) : CST.class_body) :
     field list bracket =
   let v1 = (* "{" *) token env v1 in
   let v2 =
-    List_.map
+    List.concat_map
       (fun (v1, v2) ->
         let attrs =
           match v1 with
           | Some x -> map_metadata env x
           | None -> []
         in
-        let v2 = map_class_member_definition ~attrs env v2 in
-        v2)
+        map_class_member_definition ~attrs env v2)
       v2
   in
   let v3 = (* "}" *) token env v3 in

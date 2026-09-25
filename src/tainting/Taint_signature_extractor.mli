@@ -20,22 +20,14 @@ type signature_database = Shape_and_sig.signature_database
 
 val extract_signature :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   ?in_env:Taint_lval_env.t ->
   ?name:IL.name ->
   ?signature_db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t option ->
   IL.fun_cfg ->
   extraction_result
 (** Extract both signature and taint mapping from a function *)
-
-val mk_global_assumptions_with_sids :
-  Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
-(** Create global variable taint assumptions with specific SIDs *)
-
-val mk_global_tracking_without_taint :
-  Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
-(** Register global variables for tracking without pre-tainting them *)
 
 val extract_signature_with_file_context :
   arity:Shape_and_sig.sig_arity ->
@@ -43,13 +35,12 @@ val extract_signature_with_file_context :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   name:IL.name ->
   ?method_properties:AST_generic.expr list ->
-  ?call_graph:Call_graph.G.t option ->
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   IL.fun_cfg ->
-  AST_generic.program ->
   signature_database * Shape_and_sig.Signature.t
-(** Extract signature automatically including global variables from file context
-    and database *)
+(** [extract_signature] with each [this.x]/[self.x] the method reads taken as
+    an input like a parameter; the signature is added to the database. *)
 
 (*****************************************************************************)
 (* Utility functions *)

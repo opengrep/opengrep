@@ -11,6 +11,8 @@ open Types
 
 module FA = Graph_from_AST
 
+type table_of_file = Fpath.t -> Symbol_table.t option
+
 (* Prefers the entity token: reshaped defs (Rust impl) carry a fake [fkind]
    but a real entity name token. *)
 let func_def_file (func : FA.func_info) : string option =
@@ -29,6 +31,35 @@ let func_def_file (func : FA.func_info) : string option =
   | Some _ as resolved -> resolved
   | None -> Option.map Fpath.to_string (Func_info.def_file_opt func)
 
+let table_of_func ~(table_of_file : table_of_file)
+    ~(type_state : Type_state.t) (func : FA.func_info) : Symbol_table.t option =
+  Option.map
+    (fun (table : Symbol_table.t) -> Symbol_table.with_types table type_state)
+    (Option.bind (Func_info.def_file_opt func) table_of_file)
+
+let method_name (func : FA.func_info) : string option =
+  Option.map (fun ((_ : IL.name), (meth : IL.name)) -> fst meth.IL.ident)
+    (Func_info.as_method func.FA.fn_id)
+
+let along (table : Symbol_table.t) (cls : Class_table.cls)
+    (lookup : Class_table.cls -> 'found option) : 'found option =
+  List.find_map lookup
+    (Class_table.order (Symbol_table.class_table table) cls)
+      .Linearisation.order
+
+let names_self_type (ty : G.type_) : bool =
+  match (Ty_bare_name.inner_named_type ty).G.t with
+  | G.TyN (G.Id ((("this" | "Self" | "self"), _), info)) ->
+      Option.is_none (Class_table.binding_of_id_info info)
+  | _ -> false
+
+let declared_class (table : Symbol_table.t) ~(owner : Class_table.cls option)
+    (ty : G.type_) : Class_table.cls option =
+  if names_self_type ty then owner
+  else
+    Symbol_table.class_of_declared_type table ~context:None
+      (Ty_bare_name.inner_named_type ty)
+
 (* Declared return types, in one pass over [all_funcs]:
    - free-function return (bare-name key, [class_name_of_ty]);
    - method return ([(class, method)], [inner_class_name_of_ty], [this]/[self]
@@ -36,60 +67,36 @@ let func_def_file (func : FA.func_info) : string option =
    - tuple returns (Go [func F() (T, error)]) so [a, b := F()] splits into
      [(a, T)]/[(b, error)], keyed by bare name and, for methods, by
      [(class, method)]. *)
-let populate_returns_from_decls
+let populate_returns_from_decls ~(table_of_file : table_of_file)
     (state : Type_state.t) (all_funcs : FA.func_info list) : Type_state.t =
-  let bare_name_is_this_or_self name =
-    match Ty_bare_name.bare_name_of_name name with
-    | Some ("this" | "Self" | "self") -> true
-    | _ -> false
-  in
   List.fold_left (fun state (func : FA.func_info) ->
-    let bare_name = Func_info.bare_name func.FA.fn_id in
-    let method_ = Func_info.as_method func.FA.fn_id in
-    let frettype = func.FA.fdef.G.frettype in
-    let state =
-      match bare_name, Option.bind frettype Ty_bare_name.class_name_of_ty with
-      | Some name, Some ret_type ->
-        Type_state.set_function_return state
-          (Names.Method_name.of_string (fst name.IL.ident)) ret_type
-      | _ -> state
-    in
-    let state =
-      match method_ with
-      | Some (cls, meth) ->
-        let ret =
-          match frettype with
-          | Some ty ->
-            (match Ty_bare_name.inner_class_name_of_ty ty with
-             | Some name when bare_name_is_this_or_self name ->
-               Some (G.Id (cls.IL.ident, G.empty_id_info ()))
-             | other -> other)
-          | None -> None
-        in
-        (match ret, Func_info.def_file_opt func with
-         | Some ret_type, Some def_file ->
-           Type_state.set_method_return state
-             (Names.Class_name.of_string (fst cls.IL.ident))
-             (Names.Method_name.of_string (fst meth.IL.ident)) def_file ret_type
-         | _ -> state)
-      | None -> state
-    in
-    match frettype with
-    | Some { G.t = G.TyTuple (_, ts, _); _ } ->
-      let elems = List.map Ty_bare_name.class_name_of_ty ts in
-      let state =
-        match bare_name with
-        | Some name ->
-          Type_state.set_function_return_tuple state
-            (Names.Method_name.of_string (fst name.IL.ident)) elems
-        | None -> state
+    match
+      ( table_of_func ~table_of_file ~type_state:state func,
+        func.FA.fdef.G.frettype,
+        Symbol_table.node_of_function func )
+    with
+    | Some table, Some (ret : G.type_), Some (node : Function_id.t) -> (
+      let owner = Symbol_table.class_of_function table func in
+      let in_owner (set : Type_state.t -> Class_table.cls -> string -> Type_state.t)
+          (state : Type_state.t) : Type_state.t =
+        match (owner, method_name func) with
+        | Some (cls : Class_table.cls), Some (meth : string) -> set state cls meth
+        | _ -> state
       in
-      (match method_ with
-       | Some (cls, meth) ->
-         Type_state.set_method_return_tuple state
-           (Names.Class_name.of_string (fst cls.IL.ident))
-           (Names.Method_name.of_string (fst meth.IL.ident)) elems
-       | None -> state)
+      match ret.G.t with
+      | G.TyTuple (_, (elements : G.type_ list), _) ->
+        let keys = List.map (declared_class table ~owner) elements in
+        in_owner
+          (fun state cls meth ->
+            Type_state.set_method_return_tuple state cls meth keys)
+          (Type_state.set_function_return_tuple state node keys)
+      | _ -> (
+        match declared_class table ~owner ret with
+        | Some (key : Class_table.cls) ->
+          in_owner
+            (fun state cls meth -> Type_state.set_method_return state cls meth key)
+            (Type_state.set_function_return state node key)
+        | None -> state))
     | _ -> state
   ) state all_funcs
 
@@ -97,80 +104,64 @@ let populate_returns_from_decls
    ([for _, x := range obj.field] -> element type). *)
 let build_fields_by_class_index
     ~(cfg : Index_lang_rules.t)
+    ~(table_of_file : table_of_file)
     (state : Type_state.t)
     (file_infos : file_info list)
-  : Type_state.t * (string * string, G.name) Hashtbl.t =
-  let collected = ref [] in
-  let helems = Hashtbl.create 1024 in
-  let add_field ~def_file cls field_name vtype =
-    (match Ty_bare_name.qualified_class_name_of_ty vtype with
-     | Some name ->
-       collected := (cls, field_name, def_file, name) :: !collected
-     | None -> ());
-    (match Type_infer.slice_element_of_ty vtype with
-     | Some name -> Hashtbl.replace helems (cls, field_name) name
-     | None -> ())
+  : Type_state.t =
+  let add_field (table : Symbol_table.t) (cls : Class_table.cls)
+      (field_name : string) (vtype : G.type_) (state : Type_state.t)
+      : Type_state.t =
+    let state =
+      match declared_class table ~owner:(Some cls) vtype with
+      | Some (key : Class_table.cls) ->
+        Type_state.set_field state cls field_name key
+      | None -> state
+    in
+    match
+      Option.bind (Type_infer.slice_element_of_ty vtype)
+        (declared_class table ~owner:(Some cls))
+    with
+    | Some (element : Class_table.cls) ->
+      Type_state.set_field_element state cls field_name element
+    | None -> state
   in
-  let harvest_ctor_synth_fields ~def_file cls (fdef : G.function_definition) =
-    List.iter (fun (fname, fty) -> add_field ~def_file cls fname fty)
-      (cfg.Index_lang_rules.class_constructor_synth_fields fdef)
-  in
-  let process_field_list ~def_file cls fields =
-    List.iter (fun (G.F stmt) ->
+  let process_field_list (table : Symbol_table.t) (cls : Class_table.cls)
+      (state : Type_state.t) (body : G.stmt list) : Type_state.t =
+    List.fold_left (fun state (stmt : G.stmt) ->
       match stmt.G.s with
       | G.DefStmt (ent, G.VarDef { G.vtype = Some ty; _ }) ->
         (match Index_lang_rules.entity_simple_name ent with
          | Some fname ->
-           add_field ~def_file cls
-             (cfg.Index_lang_rules.strip_field_sigil fname) ty
-         | None -> ())
+           add_field table cls (cfg.Index_lang_rules.strip_field_sigil fname) ty
+             state
+         | None -> state)
       | G.DefStmt (ent, G.FuncDef fdef)
         when (match Index_lang_rules.entity_simple_name ent with
               | Some "constructor" -> true | _ -> false) ->
-        harvest_ctor_synth_fields ~def_file cls fdef
-      | _ -> ()
-    ) fields
+        List.fold_left
+          (fun state ((fname : string), (fty : G.type_)) ->
+            add_field table cls fname fty state)
+          state
+          (cfg.Index_lang_rules.class_constructor_synth_fields fdef)
+      | _ -> state
+    ) state body
   in
-  List.iter (fun fi ->
-    List.iter (fun obs ->
-      match obs with
-      | Walker.Observation.Class_def { ent; cdef } ->
-        (match Index_lang_rules.entity_simple_name ent with
-         | Some cls ->
-           let _, fields, _ = cdef.G.cbody in
-           process_field_list ~def_file:fi.fi_file cls fields
-         | None -> ())
-      | Walker.Observation.Type_def { ent;
-          tdef = { G.tbody = G.NewType
-              { G.t = G.TyRecordAnon (_, (_, fields, _)); _ }; _ } } ->
-        (match Index_lang_rules.entity_simple_name ent with
-         | Some cls -> process_field_list ~def_file:fi.fi_file cls fields
-         | None -> ())
-      (* TS [type X = {...}] aliases parse as [OtherDef("typedef")]; index their
-         fields like a class. *)
-      | Walker.Observation.Other_def { ent; kind; anys }
-        when String.equal kind "typedef" ->
-        (match Index_lang_rules.entity_simple_name ent with
-         | Some cls ->
-           List.iter (function
-             | G.T { G.t = G.TyRecordAnon (_, (_, fields, _)); _ } ->
-               process_field_list ~def_file:fi.fi_file cls fields
-             | _ -> ()
-           ) anys
-         | None -> ())
-      | _ -> ()
-    ) fi.fi_observations
-  ) file_infos;
-  let state =
-    List.fold_left (fun state (cls, field, def_file, ty) ->
-      Type_state.set_field state
-        (Names.Class_name.of_string cls)
-        (Names.Field_name.of_string field)
-        def_file
-        ty
-    ) state (List.rev !collected)
-  in
-  state, helems
+  List.fold_left (fun state (fi : file_info) ->
+    match table_of_file fi.fi_file with
+    | None -> state
+    | Some (table : Symbol_table.t) ->
+      List.fold_left
+        (fun state ((scope : Class_table.scope_id), (def : G.definition_kind)) ->
+          match
+            Class_table.class_of_scope (Symbol_table.class_table table) scope
+          with
+          | Some (cls : Class_table.cls) ->
+            process_field_list table cls state
+              (Class_parents.definition_body def)
+          | None -> state)
+        state
+        (Symbol_table.class_definitions table)
+  ) state file_infos
 
 let build_file_funcs_index (all_funcs : FA.func_info list)
   : (string, FA.func_info list) Hashtbl.t =
@@ -194,7 +185,7 @@ let build_file_funcs_index (all_funcs : FA.func_info list)
 (* Infer return types from [return EXPR] bodies when no declared type exists;
    iterates to a fixpoint so chains like [return self.foo()] resolve. *)
 let augment_return_types_from_bodies
-    ~(uses_new_keyword : bool)
+    ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)
     (all_funcs : FA.func_info list) : Type_state.t =
   let collect_return_exprs (func : FA.func_info) : G.expr list =
@@ -206,60 +197,51 @@ let augment_return_types_from_bodies
         | G.Return (_, Some expr, _) -> expr :: acc
         | _ -> acc) [] body_stmt)
   in
-  let bare_fn_name (func : FA.func_info) =
-    Option.map (fun name -> fst name.IL.ident) (Func_info.bare_name func.FA.fn_id)
-  in
-  let class_method_of (func : FA.func_info) =
-    Option.map (fun (cls, meth) -> (fst cls.IL.ident, fst meth.IL.ident))
-      (Func_info.as_method func.FA.fn_id)
+  let undeclared =
+    List.filter_map (fun (func : FA.func_info) ->
+      match
+        ( func.FA.fdef.G.frettype,
+          Option.bind (Func_info.def_file_opt func) table_of_file,
+          Symbol_table.node_of_function func )
+      with
+      | None, Some (table : Symbol_table.t), Some (node : Function_id.t) -> (
+        match collect_return_exprs func with
+        | [] -> None
+        | (returned : G.expr list) ->
+          Some
+            ( func, table, node, Symbol_table.class_of_function table func,
+              returned ))
+      | _ -> None)
+      all_funcs
   in
   let step (state : Type_state.t) : Type_state.t =
-    List.fold_left (fun state (func : FA.func_info) ->
-      let already_known =
-        match class_method_of func, Func_info.def_file_opt func with
-        | Some (cls, meth), Some def_file ->
+    List.fold_left
+      (fun state
+           ((func : FA.func_info), (table : Symbol_table.t),
+            (node : Function_id.t), (owner : Class_table.cls option),
+            (returned : G.expr list)) ->
+        let already_known =
           (* known for this class, the one of this file: a same-named
              class elsewhere does not stand in for it *)
-          Type_state.has_method_return state
-            (Names.Class_name.of_string cls)
-            (Names.Method_name.of_string meth) def_file
-        | Some _, None -> true
-        | None, _ ->
-          (match bare_fn_name func with
-           | Some name ->
-             Type_state.get_function_return state
-               (Names.Method_name.of_string name)
-             |> Option.is_some
-           | None -> true)
-      in
-      let has_decl =
-        match func.FA.fdef.G.frettype with Some _ -> true | None -> false
-      in
-      if has_decl || already_known then state
-      else
-        let rets = collect_return_exprs func in
-        let inferred =
-          List.filter_map (fun expr ->
-            Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword
-              ~type_state:state expr
-          ) rets
+          Option.is_some (Type_state.function_return state node)
         in
-        match inferred with
-        | [] -> state
-        | ty :: _ ->
-          (match class_method_of func, Func_info.def_file_opt func with
-           | Some (cls, meth), Some def_file ->
-             Type_state.set_method_return state
-               (Names.Class_name.of_string cls)
-               (Names.Method_name.of_string meth) def_file ty
-           | Some _, None -> state
-           | None, _ ->
-             (match bare_fn_name func with
-              | Some name ->
-                Type_state.set_function_return state
-                  (Names.Method_name.of_string name) ty
-              | None -> state))
-    ) state all_funcs
+        if already_known then state
+        else
+          let table = Symbol_table.with_types table state in
+          let inferred =
+            List.filter_map
+              (Symbol_table.class_of_expr table ~caller:(Some node))
+              returned
+          in
+          (match inferred with
+           | [] -> state
+           | ty :: _ ->
+             let state = Type_state.set_function_return state node ty in
+             (match (owner, method_name func) with
+              | Some (cls : Class_table.cls), Some (meth : string) ->
+                Type_state.set_method_return state cls meth ty
+              | _ -> state))
+    ) state undeclared
   in
   let final, iters =
     Fixpoint.run ~equal:Type_state.equal ~step
@@ -273,13 +255,52 @@ let augment_return_types_from_bodies
           Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS);
   final
 
+let fold_calls_of_file ~(table_of_file : table_of_file)
+    ~(type_state : Type_state.t)
+    ~(funcs_by_file : (string, FA.func_info list) Hashtbl.t)
+    (fold :
+      'acc ->
+      Symbol_table.t ->
+      caller:Function_id.t option ->
+      G.expr ->
+      G.argument list ->
+      'acc)
+    (acc : 'acc) (fi : file_info) : 'acc =
+  match table_of_file fi.fi_file with
+  | None -> acc
+  | Some table ->
+    let table = Symbol_table.with_types table type_state in
+    let calls ~(caller : Function_id.t option) (acc : 'acc) (stmt : G.stmt)
+        : 'acc =
+      Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true
+        (fun acc (expr : G.expr) ->
+          match expr.G.e with
+          | G.Call (callee, args) ->
+            fold acc table ~caller callee (Tok.unbracket args)
+          | _ -> acc)
+        acc stmt
+    in
+    let acc =
+      Nonfatal.catch ~on:fi.fi_file ~default:acc (fun () ->
+        List.fold_left (calls ~caller:None) acc fi.fi_ast)
+    in
+    List.fold_left
+      (fun acc (func : FA.func_info) ->
+        Nonfatal.catch ~on:fi.fi_file ~default:acc (fun () ->
+          calls ~caller:(Symbol_table.node_of_function func) acc
+            (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody)))
+      acc
+      (Option.value ~default:[]
+         (Hashtbl.find_opt funcs_by_file (Fpath.to_string fi.fi_file)))
+
 (* [(callee_class, callee_method, arg_idx) -> type] of caller-supplied arg types,
    so [self.X = param] can be typed from what callers pass. *)
 let build_caller_arg_types
-    ~(uses_new_keyword : bool)
+    ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)
+    ~(funcs_by_file : (string, FA.func_info list) Hashtbl.t)
     (file_infos : file_info list)
-  : (string * string * int, G.name) Hashtbl.t =
+  : (Function_id.t * int, Class_table.cls) Hashtbl.t =
   (* Small: only known-class candidate types are stored (zero entries on
      the reference corpora); the table grows if a project really passes
      class instances to constructors. *)
@@ -296,73 +317,59 @@ let build_caller_arg_types
      The precise semantics — the field's type is per construction site —
      needs per-call-site instantiation, not this global table; see the
      ctor-arg-conflict notes in the interfile task list. *)
-  let candidate_bare_names : (string * string * int, string list) Hashtbl.t =
+  let candidates : (Function_id.t * int, Class_table.cls list) Hashtbl.t =
     Hashtbl.create 64
   in
-  let infer expr =
-    Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword ~type_state expr
+  let record (table : Symbol_table.t) ~(caller : Function_id.t option)
+      (callee : G.expr) (args : G.argument list) : unit =
+    let typed =
+      List.filter_map (fun ((i : int), (arg : G.argument)) ->
+        match arg with
+        | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
+          Option.map (fun (cls : Class_table.cls) -> (i, cls))
+            (Symbol_table.class_of_expr table ~caller expr)
+        | _ -> None)
+        (List.mapi (fun (i : int) (arg : G.argument) -> (i, arg)) args)
+    in
+    match typed with
+    | [] -> ()
+    | _ :: _ -> (
+      match Symbol_table.resolve_call table ~caller callee with
+      | Symbol_table.External -> ()
+      | Symbol_table.Defined (funcs : Func_info.t list) ->
+        List.iter (fun ((i : int), (cls : Class_table.cls)) ->
+          List.iter
+            (fun (func : Func_info.t) ->
+              match Symbol_table.node_of_function func with
+              | Some (node : Function_id.t) ->
+                let prev =
+                  Option.value ~default:[]
+                    (Hashtbl.find_opt candidates (node, i))
+                in
+                if not (List.exists (Class_table.same cls) prev) then
+                  Hashtbl.replace candidates (node, i) (cls :: prev)
+              | None -> ())
+            funcs)
+          typed)
   in
-  List.iter (fun fi ->
-    let visitor = object
-      inherit [_] G.iter_no_id_info as super
-      method! visit_expr () expr =
-        (match expr.G.e with
-         | G.Call (callee, args) ->
-           let callee_resolved : (string * string) option =
-             match callee.G.e with
-             | G.DotAccess _ ->
-               Option.bind
-                 (Type_infer.method_call_target ~type_recv:infer callee)
-                 (fun (recv, meth) ->
-                    Option.map (fun cls -> (cls, meth)) (Ty_bare_name.bare_name_of_name recv))
-             (* Bare-name call [Cls(args)]: treat as ctor [(Cls, "__init__")]. *)
-             | G.N (G.Id ((cls, _), _)) ->
-               Some (cls, "__init__")
-             | _ -> None
-           in
-           (match callee_resolved with
-            | Some (cls, meth) ->
-              List.iteri (fun i arg ->
-                match arg with
-                | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
-                  (match infer expr with
-                   | Some ty ->
-                     (match Ty_bare_name.bare_name_of_name ty with
-                      | Some bare_name
-                        when Type_state.has_class type_state bare_name ->
-                        let prev =
-                          Option.value ~default:[]
-                            (Hashtbl.find_opt candidate_bare_names (cls, meth, i))
-                        in
-                        if not (List.mem bare_name prev) then
-                          Hashtbl.replace candidate_bare_names (cls, meth, i)
-                            (bare_name :: prev);
-                        if not (Hashtbl.mem arg_types (cls, meth, i)) then
-                          Hashtbl.replace arg_types (cls, meth, i) ty
-                      | _ -> ())
-                   | None -> ())
-                | _ -> ()
-              ) (Tok.unbracket args)
-            | None -> ())
-         | _ -> ());
-        super#visit_expr () expr
-    end in
-    Nonfatal.catch ~on:fi.fi_file ~default:()
-      (fun () -> visitor#visit_program () fi.fi_ast)
-  ) file_infos;
-  let conflicted_keys =
-    Hashtbl.fold
-      (fun key bare_names acc ->
-        if List.length bare_names > 1 then key :: acc else acc)
-      candidate_bare_names []
-  in
-  List.iter (Hashtbl.remove arg_types) conflicted_keys;
-  if not (List_.null conflicted_keys) then
+  List.iter
+    (fold_calls_of_file ~table_of_file ~type_state ~funcs_by_file
+       (fun () table ~caller callee args -> record table ~caller callee args)
+       ())
+    file_infos;
+  let conflicted = ref 0 in
+  Hashtbl.iter
+    (fun (key : Function_id.t * int) (classes : Class_table.cls list) ->
+      match classes with
+      | [ (cls : Class_table.cls) ] -> Hashtbl.replace arg_types key cls
+      | _ -> incr conflicted)
+    candidates;
+  if !conflicted > 0 then
     Log_projidx.Log.debug (fun m ->
         m
           "build_caller_arg_types: dropped %d arg keys with conflicting \
            caller classes (%d kept)"
-          (List.length conflicted_keys)
+          !conflicted
           (Hashtbl.length arg_types));
   arg_types
 
@@ -370,7 +377,7 @@ let build_caller_arg_types
    [x = SomeClass()] at module scope lets importers' [x.method()] resolve.
    The full-qn key matches [Imports.collect_imports]'s [fi_imports] targets. *)
 let build_module_singleton_types
-    ~(uses_new_keyword : bool)
+    ~(table_of_file : table_of_file)
     (state : Type_state.t)
     (file_infos : file_info list)
   : Type_state.t =
@@ -393,198 +400,273 @@ let build_module_singleton_types
       ) [] fi.fi_ast
       |> List.rev)
   in
-  let collected = List.concat_map module_level_assigns_of_file file_infos in
-  List.fold_left (fun state (mp, name, rhs) ->
-    match Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword
-            ~type_state:state rhs with
-    | Some ty ->
-      let qn = Names.Module_qn.concat mp name in
-      Type_state.set_module_singleton state qn ty
+  List.fold_left (fun state (fi : file_info) ->
+    match table_of_file fi.fi_file with
     | None -> state
-  ) state collected
+    | Some table ->
+      List.fold_left (fun state (mp, name, rhs) ->
+        match
+          Symbol_table.class_of_expr (Symbol_table.with_types table state)
+            ~caller:None rhs
+        with
+        | Some (cls : Class_table.cls) ->
+          Type_state.set_module_singleton state (Names.Module_qn.concat mp name)
+            cls
+        | None -> state
+      ) state (module_level_assigns_of_file fi)
+  ) state file_infos
+
+let stamped_name (table : Symbol_table.t) (cls : Class_table.cls)
+    : G.name option =
+  Class_table.name_of_class (Symbol_table.class_table table) cls
 
 (* Augment fields from [this.X = RHS] in class methods so [self.X.method()]
    chains resolve; [caller_arg_types] types [self.X = param] from callers;
    [ctor_param_promotion] (PHP 8) registers typed ctor params as fields. *)
 let augment_fields_from_self_assignments
     ~(lang : Lang.t)
-    ~(uses_new_keyword : bool)
-    ~(caller_arg_types : (string * string * int, G.name) Hashtbl.t)
+    ~(caller_arg_types : (Function_id.t * int, Class_table.cls) Hashtbl.t)
     ~(cfg : Index_lang_rules.t)
+    ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)
     (all_funcs : FA.func_info list) : Type_state.t =
   let strip = cfg.Index_lang_rules.strip_field_sigil in
-  let seen : (string * string, unit) Hashtbl.t = Hashtbl.create 1024 in
-  let already_known cls field =
-    Hashtbl.mem seen (cls, field) ||
-    (Type_state.get_field type_state
-       (Names.Class_name.of_string cls)
-       (Names.Field_name.of_string field)
-     |> Option.is_some)
-  in
-  let collected =
-    List.fold_left (fun outer_acc (func : FA.func_info) ->
-    match Func_info.as_method func.FA.fn_id with
-    | Some (cls_il, meth_il) ->
-      let cls = fst cls_il.IL.ident in
-      let meth = fst meth_il.IL.ident in
-      let def_file =
-        Option.value (Func_info.def_file_opt func) ~default:(Fpath.v "<fake>")
-      in
-      let param_types : (string, G.name) Hashtbl.t = Hashtbl.create 4 in
-      let params = Tok.unbracket func.FA.fdef.G.fparams in
-      (* [caller_arg_types] is keyed by CALL-argument index, which does
-         not count the receiver; an explicit receiver param ([self]/[cls]
-         in Python, [ParamReceiver] in Go) shifts every later param by
-         one. *)
-      let receiver_offset =
-        List.length params
-        - Receiver.arity lang ~is_method:(Receiver.is_method func.FA.fdef)
-            ~is_static:(Receiver.is_static func.FA.entity) params
-      in
-      let caller_arg_type i =
-        Hashtbl.find_opt caller_arg_types (cls, meth, i - receiver_offset)
-      in
-      List.iteri (fun i param ->
-        match param with
-        | G.Param { pname = Some (pn, _); ptype = Some pty; _ }
-        | G.ParamReceiver { pname = Some (pn, _); ptype = Some pty; _ } ->
-          (match Ty_bare_name.class_name_of_ty pty with
-           | Some name -> Hashtbl.replace param_types pn name
-           | None ->
-             (match caller_arg_type i with
-              | Some name -> Hashtbl.replace param_types pn name
+  List.fold_left (fun state (func : FA.func_info) ->
+    match
+      ( table_of_func ~table_of_file ~type_state:state func,
+        Symbol_table.node_of_function func )
+    with
+    | Some table, Some (node : Function_id.t) -> (
+      match
+        (Func_info.as_method func.FA.fn_id,
+         Symbol_table.class_of_function table func)
+      with
+      | Some _, Some (cls : Class_table.cls) ->
+        let already_known (field : string) (state : Type_state.t) : bool =
+          Option.is_some (Type_state.field state cls field)
+        in
+        let set_new (field : string) (ty : Class_table.cls)
+            (state : Type_state.t) : Type_state.t =
+          if already_known field state then state
+          else Type_state.set_field state cls field ty
+        in
+        let param_types : (string, Class_table.cls) Hashtbl.t =
+          Hashtbl.create 4
+        in
+        let params = Tok.unbracket func.FA.fdef.G.fparams in
+        (* [caller_arg_types] is keyed by CALL-argument index, which does
+           not count the receiver; an explicit receiver param ([self]/[cls]
+           in Python, [ParamReceiver] in Go) shifts every later param by
+           one. *)
+        let receiver_offset =
+          List.length params
+          - Receiver.arity lang ~is_method:(Receiver.is_method func.FA.fdef)
+              ~is_static:(Receiver.is_static func.FA.entity) params
+        in
+        let caller_arg_type (i : int) : Class_table.cls option =
+          Hashtbl.find_opt caller_arg_types (node, i - receiver_offset)
+        in
+        List.iteri (fun (i : int) (param : G.parameter) ->
+          match param with
+          | G.Param { pname = Some (pn, _); ptype; _ }
+          | G.ParamReceiver { pname = Some (pn, _); ptype; _ } -> (
+            let declared =
+              Option.bind ptype (declared_class table ~owner:(Some cls))
+            in
+            match declared with
+            | Some (ty : Class_table.cls) -> Hashtbl.replace param_types pn ty
+            | None -> (
+              match caller_arg_type i with
+              | Some (ty : Class_table.cls) -> Hashtbl.replace param_types pn ty
               | None -> ()))
-        | G.Param { pname = Some (pn, _); ptype = None; _ } ->
-          (match caller_arg_type i with
-           | Some name -> Hashtbl.replace param_types pn name
-           | None -> ())
-        | _ -> ()
-      ) params;
-      (* PHP 8 ctor property promotion: the parser drops the visibility
-         modifier, so every typed ctor param is a candidate field. *)
-      let outer_acc =
-        if cfg.Index_lang_rules.ctor_param_promotion
-           && Object_initialization.is_constructor lang meth (Some cls) then
-          List.fold_left (fun acc param ->
-            match param with
-            | G.Param { G.pname = Some (pn, _); ptype = Some pty; _ }
-            | G.ParamReceiver { G.pname = Some (pn, _); ptype = Some pty; _ } ->
-              (match Ty_bare_name.class_name_of_ty pty with
-               | Some ty ->
-                 let field = strip pn in
-                 if already_known cls field then acc
-                 else begin
-                   Hashtbl.replace seen (cls, field) ();
-                   (cls, field, def_file, ty) :: acc
-                 end
-               | None -> acc)
-            | _ -> acc
-          ) outer_acc (Tok.unbracket func.FA.fdef.G.fparams)
-        else outer_acc
-      in
-      let def_file_opt = func_def_file func |> Option.map Fpath.v in
-      let body =
-        Nonfatal.catch ?on:def_file_opt ~default:None (fun () ->
-          Some (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody))
-      in
-      (match body with
-       | None -> outer_acc
-       | Some body_stmt ->
-         (* Publish parameter classes onto the body's [id_instance_type] so
-            [Type_infer] resolves right-hand-side expressions derived from a
-            parameter. *)
-         let param_facts =
-           Hashtbl.fold (fun pname ty acc ->
-             (G.Id ((pname, Tok.unsafe_fake_tok pname), G.empty_id_info ()),
-              ty) :: acc
-           ) param_types []
-         in
-         Object_initialization.stamp_id_types param_facts [body_stmt];
-         Nonfatal.catch ?on:def_file_opt ~default:outer_acc (fun () ->
-           Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true (fun acc expr ->
-             match expr.G.e with
-             | G.Assign (
-                 { G.e = G.DotAccess (
-                     { G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
-                     G.FN (G.Id ((field_name, _), _))); _ },
-                 _, rhs)
-               when not (already_known cls (strip field_name)) ->
-               let field_name = strip field_name in
-               let rhs_ty =
-                 match rhs.G.e with
-                 | G.N (G.Id ((vn, _), _)) ->
-                   (match Hashtbl.find_opt param_types vn with
-                    | Some _ as resolved -> resolved
-                    | None ->
-                      Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword
-                        ~type_state rhs)
-                 | _ ->
-                   Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword
-                     ~type_state rhs
-               in
-               (match rhs_ty with
-                | Some ty ->
-                  Hashtbl.replace seen (cls, field_name) ();
-                  (cls, field_name, def_file, ty) :: acc
-                | None -> acc)
-             | _ -> acc) outer_acc body_stmt))
-    | None -> outer_acc
-  ) [] all_funcs
-  in
-  List.fold_left (fun state (cls, field, def_file, ty) ->
-    Type_state.set_field state
-      (Names.Class_name.of_string cls)
-      (Names.Field_name.of_string field)
-      def_file
-      ty
-  ) type_state (List.rev collected)
+          | _ -> ()
+        ) params;
+        (* PHP 8 ctor property promotion: the parser drops the visibility
+           modifier, so every typed ctor param is a candidate field. *)
+        let is_constructor () : bool =
+          match Symbol_table.constructors_of_class table cls with
+          | Symbol_table.Defined (constructors : Func_info.t list) ->
+            List.exists
+              (fun (constructor : Func_info.t) ->
+                constructor.Func_info.fdef == func.FA.fdef)
+              constructors
+          | Symbol_table.External -> false
+        in
+        let state =
+          if cfg.Index_lang_rules.ctor_param_promotion && is_constructor ()
+          then
+            List.fold_left (fun state (param : G.parameter) ->
+              match param with
+              | G.Param { G.pname = Some (pn, _); ptype = Some pty; _ }
+              | G.ParamReceiver { G.pname = Some (pn, _); ptype = Some pty; _ } ->
+                (match declared_class table ~owner:(Some cls) pty with
+                 | Some (ty : Class_table.cls) -> set_new (strip pn) ty state
+                 | None -> state)
+              | _ -> state
+            ) state params
+          else state
+        in
+        let def_file_opt = func_def_file func |> Option.map Fpath.v in
+        let body =
+          Nonfatal.catch ?on:def_file_opt ~default:None (fun () ->
+            Some (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody))
+        in
+        (match body with
+         | None -> state
+         | Some body_stmt ->
+           (* Publish parameter classes onto the body's [id_instance_type] so
+              [Type_infer] resolves right-hand-side expressions derived from a
+              parameter. *)
+           let param_facts =
+             Hashtbl.fold (fun pname (ty : Class_table.cls) acc ->
+               match stamped_name table ty with
+               | Some (name : G.name) ->
+                 (G.Id ((pname, Tok.unsafe_fake_tok pname), G.empty_id_info ()),
+                  name) :: acc
+               | None -> acc
+             ) param_types []
+           in
+           Object_initialization.stamp_id_types param_facts [body_stmt];
+           Nonfatal.catch ?on:def_file_opt ~default:state (fun () ->
+             Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true (fun state expr ->
+               match expr.G.e with
+               | G.Assign (
+                   { G.e = G.DotAccess (
+                       { G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
+                       G.FN (G.Id ((field_name, _), _))); _ },
+                   _, rhs)
+                 when not (already_known (strip field_name) state) ->
+                 let field_name = strip field_name in
+                 let rhs_ty =
+                   match rhs.G.e with
+                   | G.N (G.Id ((vn, _), _)) ->
+                     (match Hashtbl.find_opt param_types vn with
+                      | Some _ as resolved -> resolved
+                      | None ->
+                        Symbol_table.class_of_expr table ~caller:(Some node) rhs)
+                   | _ -> Symbol_table.class_of_expr table ~caller:(Some node) rhs
+                 in
+                 (match rhs_ty with
+                  | Some (ty : Class_table.cls) -> set_new field_name ty state
+                  | None -> state)
+               | _ -> state) state body_stmt))
+      | _ -> state)
+    | _ -> state
+  ) type_state all_funcs
+
+let is_value_class ~(lang : Lang.t) (cls : Class_table.cls) : bool =
+  List.exists
+    (fun (scope : Class_table.class_scope) ->
+      match scope.Class_table.kind with
+      | Class_table.Class_kind G.Struct -> true
+      | Class_table.Class_kind G.Class ->
+        Object_initialization.classes_are_value_types lang
+      | Class_table.Class_kind (G.Interface | G.Trait | G.Object)
+      | Class_table.Module_kind -> false)
+    (Class_table.scopes cls)
+
+let add_value_type_sites ~(lang : Lang.t) ~(table_of_file : table_of_file)
+    (state : Type_state.t) (all_funcs : FA.func_info list) : Type_state.t =
+  List.fold_left (fun state (func : FA.func_info) ->
+    match table_of_func ~table_of_file ~type_state:state func with
+    | None -> state
+    | Some table ->
+      List.fold_left (fun state (param : G.parameter) ->
+        match param with
+        | G.Param { ptype = Some ({ G.t = G.TyN (name : G.name); _ } as pty); _ }
+        | G.ParamReceiver
+            { ptype = Some ({ G.t = G.TyN (name : G.name); _ } as pty); _ } -> (
+          match
+            ( Symbol_table.class_of_declared_type table ~context:None pty,
+              Class_table.site_of_name name )
+          with
+          | Some (cls : Class_table.cls), Some (site : G.SId.t)
+            when is_value_class ~lang cls ->
+            Type_state.add_value_type_site state site
+          | _ -> state)
+        | _ -> state)
+        state (Tok.unbracket func.FA.fdef.G.fparams)
+  ) state all_funcs
 
 (* Infer variable classes from assignment/def/range statements and stamp them
    onto [id_instance_type]; iterate so one pass's stamps unlock the next
    pass's inferences ([Type_infer] reads a receiver's class off
    [id_instance_type], else off [id_type]). *)
 let stamp_var_types_from_bodies
-    ~(uses_new_keyword : bool)
+    ~(table : Symbol_table.t)
     ~(type_state : Type_state.t)
-    ~(slice_element_of_field : (string * string, G.name) Hashtbl.t)
+    ~(caller : Function_id.t option)
     (ast : G.program) : unit =
+  let table = Symbol_table.with_types table type_state in
+  let class_of (e : G.expr) : Class_table.cls option =
+    Symbol_table.class_of_expr table ~caller e
+  in
   let pass () : (G.name * G.name) list =
-    let known (name : G.name) = Type_infer.declared_class_of_name name <> None in
+    let known (name : G.name) =
+      Option.is_some
+        (Option.bind
+           (Ty_bare_name.instance_or_declared_type
+              (Class_table.id_info_of_name name))
+           Ty_bare_name.qualified_class_name_of_ty)
+    in
+    let with_class (lhs : G.name) (cls : Class_table.cls) acc =
+      match stamped_name table cls with
+      | Some (name : G.name) -> (lhs, name) :: acc
+      | None -> acc
+    in
     let fact lhs rhs acc =
       if known lhs then acc
       else
-        match Type_infer.infer_expr_type ~uses_new_keyword ~type_state rhs with
+        match class_of rhs with
         | None -> acc
-        | Some ty -> (lhs, ty) :: acc
+        | Some cls -> with_class lhs cls acc
     in
     let rec tuple_facts lhs_names elem_types acc =
       match lhs_names, elem_types with
       | lhs :: lrest, Some ty :: erest ->
-        let acc = if known lhs then acc else (lhs, ty) :: acc in
+        let acc = if known lhs then acc else with_class lhs ty acc in
         tuple_facts lrest erest acc
       | _ :: lrest, None :: erest -> tuple_facts lrest erest acc
       | _ -> acc
     in
+    let returned_tuple (callee : G.expr) : Class_table.cls option list option =
+      let member_call = Symbol_table.class_of_member_call table ~caller callee in
+      let declared =
+        match (callee.G.e, member_call) with
+        | G.DotAccess (_, _, G.FN (G.Id ((mname, _), _))),
+          Some (Some (cls : Class_table.cls), _) ->
+            along table cls (fun (owner : Class_table.cls) ->
+              Type_state.method_return_tuple type_state owner mname)
+        | _ -> None
+      in
+      match declared with
+      | Some _ -> declared
+      | None -> (
+        match
+          match member_call with
+          | Some (_, (resolved : Symbol_table.resolution Lazy.t)) ->
+            Lazy.force resolved
+          | None -> Symbol_table.resolve_call table ~caller callee
+        with
+        | Symbol_table.Defined (funcs : Func_info.t list) -> (
+          match
+            List_.uniq_by (List.equal (Option.equal Class_table.same))
+              (List.filter_map
+                 (fun (func : Func_info.t) ->
+                   Option.bind (Symbol_table.node_of_function func)
+                     (Type_state.function_return_tuple type_state))
+                 funcs)
+          with
+          | [ elements ] -> Some elements
+          | [] | _ :: _ :: _ -> None)
+        | Symbol_table.External -> None)
+    in
     let call_tuple_facts (lhs_names : G.name list) (rhs : G.expr) acc =
       match rhs.G.e with
-      | G.Call ({ G.e = G.N (G.Id ((fname, _), _)); _ }, _) ->
-        (match Type_state.get_function_return_tuple type_state
-                 (Names.Method_name.of_string fname) with
-         | None -> acc
-         | Some elem_types -> tuple_facts lhs_names elem_types acc)
-      | G.Call ({ G.e = G.DotAccess (
-          { G.e = G.N obj_name; _ }, _,
-          G.FN (G.Id ((mname, _), _))); _ }, _) ->
-        (match Option.bind (Type_infer.declared_class_of_name obj_name)
-                 Ty_bare_name.bare_name_of_name with
-         | None -> acc
-         | Some cls ->
-           (match Type_state.get_method_return_tuple type_state
-                    (Names.Class_name.of_string cls)
-                    (Names.Method_name.of_string mname) with
-            | None -> acc
-            | Some elem_types -> tuple_facts lhs_names elem_types acc))
+      | G.Call (callee, _) -> (
+        match returned_tuple callee with
+        | None -> acc
+        | Some elem_types -> tuple_facts lhs_names elem_types acc)
       | _ -> acc
     in
     let extract_tuple_names (expr : G.expr) : G.name list option =
@@ -611,19 +693,17 @@ let stamp_var_types_from_bodies
         | G.PatId (id, info) -> [G.Id (id, info)]
         | _ -> []
       in
-      let elem_class : G.name option =
+      let elem_class : Class_table.cls option =
         match range_expr.G.e with
-        | G.DotAccess ({ G.e = G.N obj_name; _ }, _,
-                       G.FN (G.Id ((field, _), _))) ->
-          (match Option.bind (Type_infer.declared_class_of_name obj_name)
-                   Ty_bare_name.bare_name_of_name with
-           | Some cls -> Hashtbl.find_opt slice_element_of_field (cls, field)
-           | None -> None)
+        | G.DotAccess (obj, _, G.FN (G.Id ((field, _), _))) ->
+          Option.bind (class_of obj) (fun (cls : Class_table.cls) ->
+            along table cls (fun (owner : Class_table.cls) ->
+              Type_state.field_element type_state owner field))
         | _ -> None
       in
       (* Bind the LAST iter var (Go's value position for 1- and 2-var range). *)
       match elem_class, List.rev iter_names with
-      | Some elem, last :: _ when not (known last) -> (last, elem) :: acc
+      | Some elem, last :: _ when not (known last) -> with_class last elem acc
       | _ -> acc
     in
     Walker.fold_stmts_in_program (fun acc stmt ->

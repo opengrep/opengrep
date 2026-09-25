@@ -1,0 +1,13 @@
+rules:
+  - id: test-go-constants-dead-code
+    message: Code after if true { return } is not reached
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

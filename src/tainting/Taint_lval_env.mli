@@ -40,6 +40,18 @@ val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
 
 val add : Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> env -> env
 
+val add_written_through :
+  Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> env -> env
+(** Like [add], and also on the l-values the variable points to (see
+    [set_pointee]): a callee's write to the parameter the variable was passed
+    to. *)
+
+val set_pointee : Lang.t -> IL.name -> IL.lval -> env -> env
+(** The variable now holds the address of the l-value ([v = &x]). *)
+
+val copy_pointees : src:IL.name -> dst:IL.name -> env -> env
+val forget_pointees : IL.name -> env -> env
+
 val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
 (** Assign a set of taints (but no specific shape) to an l-value. *)
 

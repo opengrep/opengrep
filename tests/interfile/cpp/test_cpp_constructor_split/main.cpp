@@ -1,3 +1,8 @@
+#include <string>
+#include "taint.h"
+#include "User.h"
+#include "FieldUser.h"
+
 int main() {
     std::string taintedInput = source();
     User user(taintedInput);

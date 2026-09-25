@@ -1,0 +1,13 @@
+rules:
+  - id: test-closure-captured-go
+    message: a closure reads the variables it captures when it is called
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

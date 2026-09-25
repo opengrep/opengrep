@@ -182,7 +182,7 @@ let inheritance_modifier (env : env) (x : CST.inheritance_modifier) =
   match x with
   | `Abst tok -> KeywordAttr (Abstract, token env tok) (* "abstract" *)
   | `Final tok -> KeywordAttr (Final, token env tok) (* "final" *)
-  | `Open tok -> G.unhandled_keywordattr (str env tok)
+  | `Open tok -> KeywordAttr (Virtual, token env tok)
 (* "open" *)
 
 let postfix_unary_operator (env : env) (x : CST.postfix_unary_operator) =
@@ -815,9 +815,10 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
           in
           (ent, ClassDef cdef) |> G.fld
       | `Anon_init (v1, v2) ->
-          let _v1 = token env v1 (* "init" *) in
+          let v1 = token env v1 (* "init" *) in
           let v2 = block env v2 in
-          F v2
+          (* an instance initialiser, run as part of every constructor *)
+          F (G.OtherStmtWithStmt (G.OSWS_Block ("Init", v1), [], v2) |> G.s)
       | `Seco_cons (v1, v2, v3, v4, v5) ->
           let v1 = modifiers_opt env v1 in
           let v2 = str env v2 (* "constructor" *) in
@@ -835,9 +836,11 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
             | Some x -> G.FBStmt (block env x)
             | None -> G.FBDecl G.sc
           in
-          let ent = G.basic_entity v2 ~attrs:v1 in
+          let ent =
+            G.basic_entity v2 ~attrs:(v1 @ [ G.KeywordAttr (G.Ctor, snd v2) ])
+          in
           let def =
-            { fkind = (Method, snd v2); fparams; frettype = None; fbody }
+            { fkind = (Method, snd v2); fparams; frettype = None; fcaptures = G.no_captures; fbody }
           in
           (ent, FuncDef def) |> G.fld)
   | `Ellips x ->
@@ -1062,7 +1065,7 @@ and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definiti
       let entity = basic_entity v5 ~attrs:v1 ?tparams:v3 in
       let fkind = if is_method then (Method, v2) else (Function, v2) in
       let func_def =
-        { fkind; fparams = v6; frettype = v7; fbody = v9 }
+        { fkind; fparams = v6; frettype = v7; fcaptures = G.no_captures; fbody = v9 }
       in
       let def_kind = FuncDef func_def in
       (entity, def_kind)
@@ -1286,7 +1289,7 @@ and function_literal (env : env) (x : CST.function_literal) =
       in
       let kind = (Function, v1) in
       let func_def =
-        { fkind = kind; fparams = v3; frettype = v4; fbody = v5 }
+        { fkind = kind; fparams = v3; frettype = v4; fcaptures = G.no_captures; fbody = v5 }
       in
       Lambda func_def |> G.e
 
@@ -1520,7 +1523,7 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
   let fbody = G.FBStmt (Block (lbracket_block_start, v3, v4) |> G.s) in
   let kind = (LambdaKind, v1) in
   let func_def =
-    { fkind = kind; fparams = fb params; frettype = None; fbody }
+    { fkind = kind; fparams = fb params; frettype = None; fcaptures = G.no_captures; fbody }
   in
   Lambda func_def |> G.e
 

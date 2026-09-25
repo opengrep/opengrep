@@ -1,3 +1,9 @@
+val chase_reexport :
+  reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
+  is_known:(Names.Module_qn.t -> bool) ->
+  Names.Module_qn.t ->
+  Names.Module_qn.t option
+
 (* [bound -> target] for every name a file re-exports, which is every
    import of an [__init__]-style package file or every import a directive
    marks public, by [cfg.reexport_source]; empty unless

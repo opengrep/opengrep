@@ -1,0 +1,13 @@
+rules:
+  - id: test-returns-this-user-method-java
+    message: Taint flows through a user-defined method that returns this
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

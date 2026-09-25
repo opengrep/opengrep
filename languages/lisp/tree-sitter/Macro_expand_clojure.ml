@@ -40,6 +40,7 @@ let macro_expand_1 (expr : G.expr) : G.expr =
         G.fparams = Tok.unsafe_fake_bracket [param];
         frettype = None;
         fkind = (G.LambdaKind, fn_tok);
+        fcaptures = G.no_captures;
         fbody = G.FBExpr expr;
       }
     |> G.e

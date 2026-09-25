@@ -404,7 +404,8 @@ let typing_visitor =
                   );
               _;
             },
-            _ ) -> (
+            _ )
+        when not (IdFlags.is_data_field !(id_info.id_flags)) -> (
           let obj_ty, _ = type_of_expr lang obj in
           let guessed_type =
             let ty_name_and_targs = name_and_targs_of_named_type lang obj_ty in

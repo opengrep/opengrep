@@ -30,15 +30,6 @@ let function_id_of_entity (ent : G.entity) : Function_id.t option =
 let synth_function_id (parent : Function_id.t) (name : string) : Function_id.t =
   Function_id.of_string_and_tok name (Function_id.tok parent)
 
-let name_to_path = Index_lang_rules.name_to_path
-
-let rec expr_to_path (expr : G.expr) : string list =
-  match expr.G.e with
-  | G.N name -> name_to_path name
-  | G.DotAccess (lhs, _, G.FN name) ->
-    expr_to_path lhs @ name_to_path name
-  | _ -> []
-
 let rec dotted_assignment_target (expr : G.expr)
   : (string list * G.name) option =
   match expr.G.e with
@@ -49,12 +40,6 @@ let rec dotted_assignment_target (expr : G.expr)
       (fun ((segments : string list), _) -> (segments @ [ segment ], gname))
       (dotted_assignment_target receiver)
   | _ -> None
-
-let parent_path (parent_ty : G.type_) : string list =
-  match parent_ty.G.t with
-  | G.TyN name -> name_to_path name
-  | G.TyExpr expr -> expr_to_path expr
-  | _ -> []
 
 type scope_kind =
   | Sc_class of { name : string; id : Function_id.t }
@@ -124,9 +109,8 @@ let cdef_of_module_items (items : G.stmt list) : G.class_definition =
 let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     ~(resolution : Module_paths.specifier_resolution)
     ~(module_path : Names.Module_qn.t) ~(file : Fpath.t)
-    (ast : G.program) : entry list * class_info list * file_info =
+    (ast : G.program) : entry list * file_info =
   let entries = ref [] in
-  let class_infos = ref [] in
   let object_ids : Function_id.t Common.SMap.t ref = ref Common.SMap.empty in
   let opened_module_scopes : Names.Module_qn.t list ref = ref [] in
   let dc_wrappers = ref [] in
@@ -182,39 +166,25 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
               (self#enclosing_object enclosing part)))
         (Some scope) parts
 
+    method private class_qn_and_range (scope : scope_kind list)
+        (ent : G.entity) ~(qn_name : string) : string * Range.t option =
+      (qualified_name_of ~module_path (List.rev scope) qn_name, entity_range ent)
+
     method private record_class (scope : scope_kind list) (ent : G.entity)
         ~(name : string) ~(qn_name : string) ~(id : Function_id.t)
-        ~(kind : def_kind) ~(class_kind : G.class_kind)
-        ~(parent_paths : Index_lang_rules.class_parent list)
-        ~(singleton_exposure : Index_lang_rules.singleton_exposure)
-        ~(decorator_names : string list)
+        ~(kind : def_kind)
         : string * Range.t option =
-      let qn = qualified_name_of ~module_path (List.rev scope) qn_name in
-      let range = entity_range ent in
+      let qn, range = self#class_qn_and_range scope ent ~qn_name in
       entries := mk_entry ~id ~name ~qn:(Names.Def_qn.of_string qn) ~kind
                    ~range
                    ~defining_class_id:(immediate_enclosing_class_id scope)
                    ~entity:(Some ent) :: !entries;
-      class_infos := { ci_id = id;
-                       ci_qn = Names.Class_qn.of_string qn;
-                       ci_name = name;
-                       ci_class_kind = class_kind;
-                       ci_file = file;
-                       ci_range = range;
-                       ci_parent_paths = parent_paths;
-                       ci_singleton_exposure = singleton_exposure;
-                       ci_imports = imports;
-                       ci_decorator_names = decorator_names;
-                       ci_entity = Some ent } :: !class_infos;
       (qn, range)
 
     method private record_object (scope : scope_kind list) (ent : G.entity)
         (name : string) (id : Function_id.t) (elements : G.expr list) : unit =
       let (qn : string), _ =
         self#record_class scope ent ~name ~qn_name:name ~id ~kind:K_class
-          ~class_kind:G.Object ~parent_paths:[]
-          ~singleton_exposure:Index_lang_rules.No_singleton_exposure
-          ~decorator_names:[]
       in
       object_ids := Common.SMap.add qn id !object_ids;
       let scope' = Sc_class { name; id } :: scope in
@@ -286,6 +256,11 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
         super#visit_definition scope' (ent, def_kind)
 
     method! visit_definition (scope : scope_kind list) (ent, def_kind) =
+      let defines_class =
+        match def_kind with
+        | G.OtherDef _ -> false
+        | _ -> true
+      in
       let ent, def_kind =
         match cfg.Index_lang_rules.class_def_reshape ent def_kind with
         | Some pair -> pair
@@ -303,36 +278,19 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let is_companion =
               match
                 (fst cdef.G.ckind,
-                 cfg.Index_lang_rules.companion_object_has_own_name)
+                 Lang_config.companion_object_has_own_name lang)
               with
               | G.Object, true -> true
-              | (G.Object | G.Class | G.Interface | G.Trait), _ -> false
+              | (G.Object | G.Class | G.Struct | G.Interface | G.Trait), _ ->
+                  false
             in
             let qn_name = if is_companion then name ^ "$" else name in
-            let parent_paths =
-              let from_extends =
-                List.filter_map (fun (ty, _) ->
-                  match parent_path ty with
-                  | [] -> None
-                  | path ->
-                    Some { Index_lang_rules.cp_path = path;
-                           cp_position = Index_lang_rules.Appended }
-                ) cdef.G.cextends
-              in
-              let extra = cfg.Index_lang_rules.class_body_extra_parents cdef in
-              match cfg.Index_lang_rules.superclass_position with
-              | Index_lang_rules.Superclass_before_mixins -> from_extends @ extra
-              | Index_lang_rules.Superclass_after_mixins -> extra @ from_extends
-            in
             let parent_class_id = immediate_enclosing_class_id scope in
             let (class_qn : string), (class_range : Range.t option) =
-              self#record_class scope ent ~name ~qn_name ~id:class_id
-                ~kind:(if is_companion then K_companion else K_class)
-                ~class_kind:(fst cdef.G.ckind)
-                ~parent_paths
-                ~singleton_exposure:
-                  (cfg.Index_lang_rules.class_body_singleton_methods cdef)
-                ~decorator_names:(entity_decorator_names ent)
+              if defines_class then
+                self#record_class scope ent ~name ~qn_name ~id:class_id
+                  ~kind:(if is_companion then K_companion else K_class)
+              else self#class_qn_and_range scope ent ~qn_name
             in
             let class_qn_def = Names.Def_qn.of_string class_qn in
             let synthesized =
@@ -436,15 +394,9 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let ns_range = entity_range ent in
             if cfg.Index_lang_rules.walks_inheritance then begin
               let cdef = cdef_of_module_items items in
-              (* A module-level [include N] ([include_module_includes_module])
-                 makes N a parent of the module. *)
-              let parent_paths = cfg.Index_lang_rules.class_body_extra_parents cdef in
               let (ns_qn : string), _ =
                 self#record_class scope ent ~name ~qn_name:name ~id:ns_id
-                  ~kind:K_class ~class_kind:G.Class ~parent_paths
-                  ~singleton_exposure:
-                    (cfg.Index_lang_rules.class_body_singleton_methods cdef)
-                  ~decorator_names:[]
+                  ~kind:K_class
               in
               let ns_qn_def = Names.Def_qn.of_string ns_qn in
               List.iter (fun (m_name, m_tok) ->
@@ -677,7 +629,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
              fi_ast = ast;
              fi_observations = Walker.walk_file ~lang ast;
              fi_module_object = module_object } in
-  (List.rev !entries, List.rev !class_infos, fi)
+  (List.rev !entries, fi)
 
 (* Per-class owned-method-name sets, seeded from [K_method] entries; the
    returned function materialises (and caches) a class's set. *)
@@ -704,27 +656,28 @@ let methods_by_class (entries : entry list)
 
 let dataclass_wrapper_synth_entries ~(cfg : Index_lang_rules.t)
     ~(wrappers : (string, dataclass_wrapper) Hashtbl.t)
-    (entries : entry list) (class_infos : class_info list) : entry list =
+    (entries : entry list) : entry list =
   let ensure_set = methods_by_class entries in
-  List.fold_left (fun acc ci ->
-    match List.find_map (fun dec -> Hashtbl.find_opt wrappers dec)
-            ci.ci_decorator_names with
-    | None -> acc
-    | Some wrapper ->
-      let owned = ensure_set ci.ci_id in
-      List.fold_left (fun acc dunder ->
-        if Hashtbl.mem owned dunder then acc
-        else begin
-          Hashtbl.replace owned dunder ();
-          let m_id = synth_function_id ci.ci_id dunder in
-          { id = m_id; name = dunder;
-            qn = Names.Def_qn.concat
-                   (Names.Def_qn.of_string (Names.Class_qn.to_string ci.ci_qn))
-                   dunder;
-            kind = K_method;
-            file = ci.ci_file; range = ci.ci_range;
-            defining_class_id = Some ci.ci_id; entity = None }
-          :: acc
-        end
-      ) acc (cfg.Index_lang_rules.wrapper_dunders wrapper)
-  ) [] class_infos
+  List.fold_left (fun acc (ci : entry) ->
+    match (ci.kind, ci.entity) with
+    | (K_class | K_companion), Some (ent : G.entity) -> (
+      match List.find_map (fun dec -> Hashtbl.find_opt wrappers dec)
+              (entity_decorator_names ent) with
+      | None -> acc
+      | Some wrapper ->
+        let owned = ensure_set ci.id in
+        List.fold_left (fun acc dunder ->
+          if Hashtbl.mem owned dunder then acc
+          else begin
+            Hashtbl.replace owned dunder ();
+            let m_id = synth_function_id ci.id dunder in
+            { id = m_id; name = dunder;
+              qn = Names.Def_qn.concat ci.qn dunder;
+              kind = K_method;
+              file = ci.file; range = ci.range;
+              defining_class_id = Some ci.id; entity = None }
+            :: acc
+          end
+        ) acc (cfg.Index_lang_rules.wrapper_dunders wrapper))
+    | (K_class | K_companion | K_function | K_method), _ -> acc
+  ) [] entries

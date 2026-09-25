@@ -1,0 +1,13 @@
+rules:
+  - id: fluent_chain_java
+    message: taint reaches a sink through a fluent chain of forty calls
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

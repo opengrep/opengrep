@@ -6,11 +6,11 @@ Pr(
      ({
        name=EN(
               Id(("foo", ()),
-                {id_flags=Ref(0); id_resolved_alternative=Ref([]); 
-                 id_resolved=Ref(Some((Global, 1))); id_type=Ref(None); 
-                 id_instance_type=Ref(None); id_callee_definition=Ref(
-                 None); id_svalue=Ref(None); }));
+                {id_flags=Ref(0); id_resolved=Ref(Some((Global, 1))); 
+                 id_type=Ref(None); id_instance_type=Ref(None); 
+                 id_callee_definition=Ref([]); id_svalue=Ref(None); }));
        attrs=[]; tparams=None; },
       FuncDef(
         {fkind=(Function, ()); fparams=[]; frettype=None; 
+         fcaptures={cdefault=None; clist=[]; }; 
          fbody=FBStmt(Block([Return((), Some(L(Int((Some(42), ())))), ())])); })))])

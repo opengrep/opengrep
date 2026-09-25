@@ -23,16 +23,22 @@ let edge_stage_report () : (string * float) list =
 (* Infer var classes from assignments and stamp them onto
    [id_instance_type]. *)
 type stamp_var_types =
+  table:Symbol_table.t ->
   type_state:Type_state.t ->
-  slice_element_of_field:(string * string, G.name) Hashtbl.t ->
+  caller:Function_id.t option ->
   G.program ->
   unit
 
 type file_scope = {
   scope_table : Func_lookup.scope_table;
-  bound_class_files : (Names.Class_name.t * Fpath.t) list;
   own_modules : Names.Module_qn.t list;
   module_aliases : (string, Names.Module_qn.t) Hashtbl.t option;
+  member_classes : Names.Class_qn.t list;
+}
+
+type project_classes = {
+  class_table : Class_table.t;
+  class_of_qn : Names.Class_qn.t -> Class_table.cls option;
 }
 
 type ctx = {
@@ -43,11 +49,7 @@ type ctx = {
   companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
-  resolution_orders : Func_lookup.resolution_orders;
-  project_classes : Func_lookup.project_classes;
-  class_qn_by_definition : Func_lookup.class_qn_by_definition;
-  methods_by_class : Func_lookup.methods_by_class;
-  singleton_names : Func_lookup.singleton_names;
+  object_classes : unit Common.SMap.t;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t;
@@ -55,10 +57,10 @@ type ctx = {
   include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
+  build_constraints : Go_build_constraints.t;
   top_level_scope : Func_lookup.scope_table;
   module_object_by_module : Names.Class_qn.t Common.SMap.t;
-  namespace_object_members : Scope_binding.positioned_binding list Common.SMap.t;
-  classes_by_file : class_info list Common.SMap.t;
+  classes_by_file : entry list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
@@ -67,7 +69,6 @@ type ctx = {
   file_module_qn : (string, Names.Module_qn.t) Hashtbl.t;
   project_class_names : Object_initialization.class_names;
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
-  slice_element_of_field : (string * string, G.name) Hashtbl.t;
   top_level_node_for : Fpath.t -> Function_id.t;
   stamp_var_types : stamp_var_types;
   (* (module qn string, exported name) -> module-level bare-name alias
@@ -253,11 +254,10 @@ let build_scope_table
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
     ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
-    ~(resolution_orders : Func_lookup.resolution_orders)
-    ~(methods_by_class : Func_lookup.methods_by_class)
+    ~(object_classes : unit Common.SMap.t)
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
@@ -266,10 +266,9 @@ let build_scope_table
     ~(include_map : Include_map.t)
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
+    ~(build_constraints : Go_build_constraints.t)
     ~(top_level_scope : Func_lookup.scope_table)
     ~(module_object_by_module : Names.Class_qn.t Common.SMap.t)
-    ~(namespace_object_members :
-        Scope_binding.positioned_binding list Common.SMap.t)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
@@ -278,46 +277,48 @@ let build_scope_table
   else
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package ->
-      let bindings, bound_class_files =
+      let bindings, member_classes =
         Scope_package.build ~precedence:cfg.Index_lang_rules.precedence
           ~own_package_members_kind:cfg.Index_lang_rules.own_package_members_kind
           ~namespaces_nest:cfg.Index_lang_rules.namespaces_nest
           ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
-          ~resolution_orders ~methods_by_class ~extensions_by_module
-          ~nested_types_by_class ~global_imports ~namespace_object_members
-          ~companions:cfg.Index_lang_rules.companion_object_has_own_name fi
+          ~extensions_by_module ~nested_types_by_class ~global_imports
+          ~object_classes
+          ~companions:(Lang_config.companion_object_has_own_name lang) fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files; own_modules = []; module_aliases = None }
+             own_modules = []; module_aliases = None;
+             member_classes }
     | `Per_go_package ->
       let bindings, module_aliases =
-        Scope_go.build ~lang ~cfg ~package_index:go_packages
+        Scope_go.build ~lang ~cfg ~package_index:go_packages ~build_constraints
           ~attributes_by_module ~classes_by_file ~class_parent_paths
           ~file_funcs_index fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files = []; own_modules = [];
-             module_aliases = Some module_aliases }
+             own_modules = [];
+             module_aliases = Some module_aliases;
+             member_classes = [] }
     | `Per_project ->
       Some { scope_table =
                Scope_project.build ~classes_by_file ~class_parent_paths
-                 ~file_funcs_index ~resolution_orders ~methods_by_class
-                 ~module_object_by_module ~top_level_scope fi;
-             bound_class_files = []; own_modules = [];
-             module_aliases = None }
+                 ~file_funcs_index ~module_object_by_module ~top_level_scope fi;
+             own_modules = [];
+             module_aliases = None;
+             member_classes = [] }
     | `Per_constant_path ->
       let bindings, own_modules =
         Scope_ruby.build ~classes_by_file ~class_parent_paths
-          ~file_funcs_index ~resolution_orders ~methods_by_class
-          ~nested_types_by_class fi
+          ~file_funcs_index ~nested_types_by_class fi
       in
       Some { scope_table =
                Func_lookup.scope_table_union
                  ~front:(Func_lookup.scope_table_of_map bindings)
                  ~back:top_level_scope;
-             bound_class_files = []; own_modules;
-             module_aliases = None }
+             own_modules;
+             module_aliases = None;
+             member_classes = [] }
     | `Per_namespace ->
       let bindings, own_modules =
         Scope_php.build ~definitions_by_qn ~attributes_by_module
@@ -326,8 +327,9 @@ let build_scope_table
           ~classes_by_file ~class_parent_paths ~file_funcs_index fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files = []; own_modules;
-             module_aliases = None }
+             own_modules;
+             module_aliases = None;
+             member_classes = [] }
     | `Per_translation_unit ->
       let closure =
         Include_map.closure_of_file include_map (Fpath.to_string fi.fi_file)
@@ -335,8 +337,7 @@ let build_scope_table
       let bindings =
         Scope_c_family.build ~precedence:cfg.Index_lang_rules.precedence
           ~definitions_by_qn ~attributes_by_module
-          ~classes_by_file ~class_parent_paths ~resolution_orders
-          ~methods_by_class ~namespace_scope_bindings
+          ~classes_by_file ~class_parent_paths ~namespace_scope_bindings
           ~include_bindings:
             (Include_map.bindings_of_file include_map ~closure
                (Fpath.to_string fi.fi_file))
@@ -344,18 +345,19 @@ let build_scope_table
           ~file_funcs_index fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files = []; own_modules = fi.fi_namespace_scopes;
-             module_aliases = None }
+             own_modules = fi.fi_namespace_scopes;
+             module_aliases = None;
+             member_classes = [] }
     | `Per_crate ->
-      let bindings, bound_class_files, module_aliases =
+      let bindings, module_aliases =
         Scope_rust.build ~cfg ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
-          ~resolution_orders ~methods_by_class
           ~import_aliases:(build_alias_to_module_qn ~cfg fi) fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files; own_modules = [];
-             module_aliases = Some module_aliases }
+             own_modules = [];
+             module_aliases = Some module_aliases;
+             member_classes = [] }
     | `Per_module ->
       let bound =
         Scope_module.build ~scope:module_scope ~classes_by_file
@@ -363,9 +365,9 @@ let build_scope_table
       in
       Some { scope_table =
                Func_lookup.scope_table_of_map bound.Scope_module.fb_scope;
-             bound_class_files = bound.Scope_module.fb_class_files;
              own_modules = bound.Scope_module.fb_own_modules;
-             module_aliases = Some bound.Scope_module.fb_module_aliases }
+             module_aliases = Some bound.Scope_module.fb_module_aliases;
+             member_classes = [] }
     | `Per_file
     | `Per_directory ->
     let fi_file_str = Fpath.to_string fi.fi_file in
@@ -385,15 +387,14 @@ let build_scope_table
         (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
            ~default:[])
     in
-    let imported, bound_class_files =
+    let imported =
       List.fold_left
-        (fun ((imported : Scope_binding.positioned_binding list),
-              (bound_class_files : (Names.Class_name.t * Fpath.t) list))
+        (fun (imported : Scope_binding.positioned_binding list)
              (imp : import) ->
           let pos = Scope_binding.position_of_tok imp.im_tok in
           match Imports.binding_of imp with
           | Imports.Wildcard_from (target : Names.Module_qn.t) ->
-            ( Common.SMap.fold
+            Common.SMap.fold
                 (fun (name : string)
                      (attribute : Func_lookup.module_attribute)
                      (imported : Scope_binding.positioned_binding list) ->
@@ -418,88 +419,114 @@ let build_scope_table
                       :: imported
                     | Func_lookup.Attr_module _ -> imported)
                 (Func_lookup.attributes_of_module attributes_by_module target)
-                imported,
-              bound_class_files )
+                imported
           | Imports.Named_binding { local; target } -> (
             match definition_of_target ~definitions_by_qn ~package target with
             | Some (Function_definitions funcs) ->
-              (Scope_binding.function_binding_of ~pos ~parent_path:[] local
-                 funcs
-               @ imported,
-               bound_class_files)
-            | Some (Class_definition { class_file; class_qn; class_companion; _ }) ->
-              ( Scope_binding.class_binding_of ~pos ~parent_path:[] local
-                  class_qn
-                :: (match class_companion with
-                    | Some (companion_qn : Names.Class_qn.t) ->
-                      [ Scope_binding.companion_binding_of ~pos ~parent_path:[]
-                          local companion_qn ]
-                    | None -> [])
-                @ imported,
-                (Names.Class_name.of_string
-                   (Names.Module_qn.bare_name target), class_file)
-                :: bound_class_files )
-            | None -> (imported, bound_class_files)))
-        ([], []) fi.fi_imports
+              Scope_binding.function_binding_of ~pos ~parent_path:[] local
+                funcs
+              @ imported
+            | Some (Class_definition { class_qn; class_companion; _ }) ->
+              Scope_binding.class_binding_of ~pos ~parent_path:[] local
+                class_qn
+              :: (match class_companion with
+                  | Some (companion_qn : Names.Class_qn.t) ->
+                    [ Scope_binding.companion_binding_of ~pos ~parent_path:[]
+                        local companion_qn ]
+                  | None -> [])
+              @ imported
+            | None -> imported))
+        [] fi.fi_imports
     in
     Some { scope_table =
              Func_lookup.scope_table_of_map
                (Scope_binding.bindings_of_positioned
                   (own_bindings @ own_classes @ List.rev imported));
-           bound_class_files; own_modules = []; module_aliases = None }
+           own_modules = []; module_aliases = None;
+             member_classes = [] }
 
-let narrow_methods_by_bound_files
-    ~(bound_class_files : (Names.Class_name.t * Fpath.t) list)
-    ~(file_of_func : Func_info.t -> string option)
-    ~(caller_file : string)
-    (ts : Type_state.t) : Type_state.t =
-  match bound_class_files with
-  | [] -> ts
-  | _ :: _ ->
-    let keep_file (cls : Names.Class_name.t) (file : string) : bool =
-      String.equal file caller_file
-      || List.exists
-           (fun ((bound_cls : Names.Class_name.t), (bound_file : Fpath.t)) ->
-             Names.Class_name.equal bound_cls cls
-             && String.equal (Fpath.to_string bound_file) file)
-           bound_class_files
-    in
-    Type_state.narrow ~keep_file ~file_of_func
-      ~classes:(List.map fst bound_class_files) ts
+let file_scope_of (ctx : ctx) (fi : file_info) : file_scope option =
+  build_scope_table ~lang:ctx.lang ~cfg:ctx.cfg
+    ~definitions_by_qn:ctx.definitions_by_qn
+    ~file_funcs_index:ctx.file_funcs_index
+    ~attributes_by_module:ctx.attributes_by_module ~dunder_all:ctx.dunder_all
+    ~classes_by_file:ctx.classes_by_file
+    ~class_parent_paths:ctx.class_parent_paths
+    ~object_classes:ctx.object_classes
+    ~extensions_by_module:ctx.extensions_by_module
+    ~nested_types_by_class:ctx.nested_types_by_class
+    ~global_imports:ctx.global_imports
+    ~namespace_scope_bindings:ctx.namespace_scope_bindings
+    ~php_global_bindings:ctx.php_global_bindings ~include_map:ctx.include_map
+    ~module_scope:ctx.module_scope ~go_packages:ctx.go_packages
+    ~build_constraints:ctx.build_constraints
+    ~top_level_scope:ctx.top_level_scope
+    ~module_object_by_module:ctx.module_object_by_module fi
 
-let func_file_opt (func : Func_info.t) : string option =
-  Option.map Fpath.to_string (Func_info.def_file_opt func)
+let alias_to_module_qn_of ~(cfg : Index_lang_rules.t)
+    (file_scope : file_scope option) (fi : file_info)
+    : (string, Names.Module_qn.t) Hashtbl.t option =
+  match file_scope with
+  | Some { module_aliases = Some (aliases : (string, Names.Module_qn.t) Hashtbl.t); _ } ->
+    if Int.equal (Hashtbl.length aliases) 0 then None else Some aliases
+  | Some { module_aliases = None; _ }
+  | None -> build_alias_to_module_qn ~cfg fi
 
-let build_same_file_funcs_by_name
-    ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
-    ~(fi_file_str : string)
-  : (string, Func_info.t list) Hashtbl.t =
-  let same_file_list =
-    Option.value (Hashtbl.find_opt file_funcs_index fi_file_str)
-      ~default:[]
-  in
-  let tbl = Hashtbl.create (List.length same_file_list) in
-  List.iter (fun (func : Func_info.t) ->
-    match List_.init_and_last_opt func.Func_info.fn_id with
-    | Some (_, Some bare_name) ->
-      let name = fst bare_name.IL.ident in
-      let cur = Option.value (Hashtbl.find_opt tbl name) ~default:[] in
-      Hashtbl.replace tbl name (func :: cur)
-    | _ -> ()
-  ) same_file_list;
-  tbl
+let attribute_of_definition (definition : definition)
+    : Func_lookup.module_attribute =
+  match definition with
+  | Function_definitions (funcs : Func_info.t list) ->
+    Func_lookup.Attr_functions funcs
+  | Class_definition
+      { class_qn; class_companion = Some (companion : Names.Class_qn.t); _ } ->
+    Func_lookup.Attr_class_with_companion (class_qn, companion)
+  | Class_definition { class_qn; class_companion = None; _ } ->
+    Func_lookup.Attr_class class_qn
+
+let func_lookup_of (ctx : ctx)
+    ~(class_of_qn : Names.Class_qn.t -> Class_table.cls option)
+    (file_scope : file_scope option) (fi : file_info) : Func_lookup.t =
+  Func_lookup.create
+    ?alias_to_module_qn:
+      (Option.map Func_lookup.alias_index_of_hashtbl
+         (alias_to_module_qn_of ~cfg:ctx.cfg file_scope fi))
+    ~module_attributes:ctx.attributes_by_module
+    ~companions:ctx.companions
+    ~class_of_qn
+    ~is_import:(fun (sid : G.SId.t) ->
+      Option.is_some (Imports.import_of_binding fi.fi_imports sid))
+    ~definition:(fun (qualified_name : string) ->
+      Option.map attribute_of_definition
+        (Common.SMap.find_opt qualified_name ctx.definitions_by_qn))
+    ~scope_table:
+      (match file_scope with
+       | Some (scope : file_scope) -> scope.scope_table
+       | None -> Func_lookup.empty_scope_table)
+    ~own_modules:
+      (match file_scope with
+       | Some (scope : file_scope) -> scope.own_modules
+       | None -> [])
+    ~member_classes:
+      (match file_scope with
+       | Some (scope : file_scope) -> scope.member_classes
+       | None -> [])
+    ()
 
 (* Imported module singletons: stamp [local]'s occurrences with the
    singleton's class. *)
 let stamp_singleton_imports
-    ~(type_state : Type_state.t)
+    ~(type_state : Type_state.t) ~(class_table : Class_table.t)
     (fi : file_info) : unit =
   let facts =
     List.fold_left (fun acc (imp : import) ->
       let local = imp.im_local in
       if String.length local = 0 then acc
       else
-        match Type_state.get_module_singleton type_state imp.im_target with
+        match
+          Option.bind
+            (Type_state.get_module_singleton type_state imp.im_target)
+            (Class_table.name_of_class class_table)
+        with
         | None -> acc
         | Some ty ->
           let v_id =
@@ -510,134 +537,147 @@ let stamp_singleton_imports
   in
   Object_initialization.stamp_id_types facts fi.fi_ast
 
-let construction_resolver ~(lang : Lang.t) ~(type_state : Type_state.t)
+let defined_funcs (resolution : Symbol_table.resolution) : Func_info.t list =
+  match resolution with
+  | Symbol_table.Defined (funcs : Func_info.t list) -> funcs
+  | Symbol_table.External -> []
+
+let fn_ids_of (funcs : Func_info.t list) : Func_info.fn_id list =
+  List_.map (fun (func : Func_info.t) -> func.Func_info.fn_id) funcs
+
+let or_outside_file (resolved : Symbol_table.resolution)
+    (outside : unit -> Symbol_table.resolution) : Symbol_table.resolution =
+  match resolved with
+  | Symbol_table.Defined _ -> resolved
+  | Symbol_table.External -> outside ()
+
+let resolve_in_project ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
+    (e : G.expr) : Symbol_table.resolution =
+  let caller = FA.fn_id_to_node caller_parent_path in
+  let resolved =
+    match use with
+    | Symbol_table.Called -> Symbol_table.resolve_callee table ~caller e
+    | Symbol_table.Referenced -> Symbol_table.resolve_reference table ~caller e
+  in
+  or_outside_file resolved (fun () ->
+    Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup ~caller
+      ~caller_parent_path ~use e)
+
+let typing ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) ~(caller_parent_path : IL.name option list)
+    : Callee_resolution.static_typing =
+  Callee_resolution.typing ~lang
+    ~resolve:(fun (callee : G.expr) ->
+      resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
+        ~use:Symbol_table.Called callee
+      |> defined_funcs)
+    ~is_class:(Symbol_table.is_class_binding table)
+
+let argument_types ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) : Callee_resolution.argument_typer =
+ fun ~caller_parent_path (args : G.argument list) ->
+  Callee_resolution.argument_types ~lang
+    ~type_of_call:(typing ~lang ~table ~func_lookup ~caller_parent_path)
+                    .Callee_resolution.type_of_call
+    args
+
+let call_site_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) : Callee_resolution.call_site_resolver =
+ fun ~caller_parent_path ~call_args (callee : G.expr) ->
+  resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
+    ~use:Symbol_table.Called callee
+  |> defined_funcs
+  |> Callee_resolution.narrow_by_call ~lang
+       ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
+       call_args
+  |> fn_ids_of
+
+let callback_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list)
-    ~(call_arity : int) (ty : G.type_) : Func_info.fn_id option =
-  Option.bind (Callee_resolution.expr_of_type_name ty)
-    (fun (callee : G.expr) ->
-      Callee_resolution.identify_callee_interfile ~lang ~type_state
-        ~func_lookup ~caller_parent_path ~call_arity ~allow_constructor:true
-        callee)
+    : Callback_extraction.callback_resolver =
+ fun ~caller:_ (reference : Callback_extraction.reference) ->
+  match reference with
+  | Callback_extraction.Written ({ G.e = G.N (name : G.name); _ } as e) ->
+    or_outside_file (Symbol_table.resolve_qualified table name) (fun () ->
+      Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup
+        ~caller:(FA.fn_id_to_node caller_parent_path) ~caller_parent_path
+        ~use:Symbol_table.Referenced e)
+  | Callback_extraction.Bound (e : G.expr)
+  | Callback_extraction.Written (e : G.expr) ->
+    resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
+      ~use:Symbol_table.Referenced e
 
-let invocation_resolver ~(func_lookup : Func_lookup.t)
-    ~(caller_parent_path : IL.name option list) (var_name : string)
-    : Func_info.fn_id option =
-  match
-    Func_lookup.functions_of_entries
-      (Func_lookup.resolve_in_scope func_lookup ~caller_parent_path var_name)
-  with
-  | (func : Func_info.t) :: _ -> Some func.Func_info.fn_id
-  | [] -> None
+let construction_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list)
+    : Callee_resolution.construction_resolver =
+ fun ~call_args (ty : G.type_) ->
+  or_outside_file (Symbol_table.resolve_construction table ty) (fun () ->
+    Callee_resolution.resolve_construction_outside_file ~table ~func_lookup
+      ~caller_parent_path ty)
+  |> defined_funcs
+  |> Callee_resolution.narrow_by_call ~lang
+       ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
+       (Some call_args)
+  |> fn_ids_of
 
-let edges_for_file (ctx : ctx) (fi : file_info)
-  : (Function_id.t * Function_id.t * Tok.t) list =
-  let { lang; cfg; type_state; definitions_by_qn; companions;
-        attributes_by_module; dunder_all;
-        resolution_orders; project_classes; class_qn_by_definition;
-        methods_by_class;
-        singleton_names;
-        extensions_by_module; nested_types_by_class;
-        namespace_scope_bindings; php_global_bindings; include_map;
-        module_scope; go_packages;
-        top_level_scope; module_object_by_module; namespace_object_members;
-        classes_by_file; class_parent_paths; global_imports;
-        project_funcs_by_name; project_funcs_by_module; file_module_qn;
+let invocation_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(func_lookup : Func_lookup.t) : Callee_resolution.invocation_resolver =
+ fun ~caller_parent_path (receiver : G.expr) ->
+  resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
+    ~use:Symbol_table.Referenced receiver
+  |> defined_funcs
+  |> fn_ids_of
+
+let project_table (ctx : ctx) ~(classes : project_classes)
+    ~(file_table : Symbol_table.t) (file_scope : file_scope option)
+    (fi : file_info) : Symbol_table.t * Func_lookup.t =
+  let func_lookup =
+    func_lookup_of ctx ~class_of_qn:classes.class_of_qn file_scope fi
+  in
+  let outside (table : Symbol_table.t) ~(caller : Function_id.t option)
+      (e : G.expr) : Symbol_table.resolution =
+    let caller_parent_path =
+      match Option.bind caller (Symbol_table.function_of_node table) with
+      | Some (func : Func_info.t) -> func.Func_info.fn_id
+      | None -> []
+    in
+    Callee_resolution.resolve_outside_file ~lang:ctx.lang ~table ~func_lookup
+      ~caller ~caller_parent_path ~use:Symbol_table.Called e
+  in
+  ( Symbol_table.with_project file_table classes.class_table
+      ~extension_visible:(Callee_resolution.extension_visible ~func_lookup)
+      ~compiled_with_file:
+        (Go_build_constraints.visible_from ctx.build_constraints fi.fi_file)
+      ~outside,
+    func_lookup )
+
+let edges_for_file (ctx : ctx) ~(classes : project_classes)
+    ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
+    (fi : file_info) : (Function_id.t * Function_id.t * Tok.t) list =
+  let { lang; cfg; type_state;
         project_class_names;
-        file_funcs_index;
-        slice_element_of_field;
         top_level_node_for;
-        stamp_var_types; value_alias_index } = ctx in
+        stamp_var_types; value_alias_index; _ } = ctx in
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
     let emitter =
       Edge_emitter.create ~top_level:(top_level_node_for fi.fi_file)
     in
-    let fi_file_str = Fpath.to_string fi.fi_file in
     let top_level_node = top_level_node_for fi.fi_file in
     staged "stamp base var types + import aliases" (fun () ->
       stamp_base_var_types ~lang ~project_class_names fi;
       stamp_import_value_aliases ~value_alias_index fi);
-    let file_scope =
-      staged "scope table" @@ fun () ->
-      build_scope_table ~lang ~cfg ~definitions_by_qn
-        ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
-        ~class_parent_paths ~resolution_orders ~methods_by_class
-        ~extensions_by_module ~nested_types_by_class ~global_imports
-        ~namespace_scope_bindings ~php_global_bindings ~include_map ~module_scope
-        ~go_packages ~top_level_scope ~module_object_by_module
-        ~namespace_object_members fi
-    in
-    let alias_to_module_qn =
-      staged "alias to module map" @@ fun () ->
-      match file_scope with
-      | Some { module_aliases = Some (aliases : (string, Names.Module_qn.t) Hashtbl.t); _ } ->
-        if Int.equal (Hashtbl.length aliases) 0 then None else Some aliases
-      | Some { module_aliases = None; _ }
-      | None -> build_alias_to_module_qn ~cfg fi
-    in
-    let funcs_by_module_qn
-      : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
-      match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file | `Per_crate | `Per_directory | `Per_go_package ->
-        Some project_funcs_by_module
-      | `Per_package | `Per_namespace | `Per_module | `Per_project
-      | `Per_constant_path | `Per_translation_unit -> None
-    in
-    let file_type_state =
-      staged "narrow methods by bound files" @@ fun () ->
-      match file_scope with
-      | Some (scope : file_scope) ->
-        narrow_methods_by_bound_files
-          ~bound_class_files:scope.bound_class_files
-          ~file_of_func:func_file_opt ~caller_file:fi_file_str type_state
-      | None -> type_state
-    in
-    let same_file_funcs_by_name =
-      staged "same-file funcs table" @@ fun () ->
-      build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str
-    in
-    let func_lookup =
-      staged "func_lookup create" @@ fun () ->
-      Func_lookup.create
-        ~project_funcs_by_name:
-          (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_name)
-        ?funcs_by_module_qn:
-          (Option.map Func_lookup.module_index_of_hashtbl funcs_by_module_qn)
-        ?alias_to_module_qn:
-          (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)
-        ~same_file_funcs_by_name:
-          (Func_lookup.bare_name_index_of_hashtbl same_file_funcs_by_name)
-        ~overload_groups:(Index_lang_rules.forms_overload_groups ~lang ~cfg)
-        ~top_level_scope_is_project:
-          (Index_lang_rules.top_level_scope_is_project cfg)
-        ~file_module_qn:
-          (Func_lookup.file_module_index_of_hashtbl file_module_qn)
-        ~module_attributes:attributes_by_module
-        ~resolution_orders
-        ~project_classes
-        ~class_qn_by_definition
-        ~methods_by_class
-        ~singleton_names
-        ~companions
-        ~method_sets:(Lang_config.get lang).Lang_config.method_sets
-        ~scope_table:
-          (match file_scope with
-           | Some (scope : file_scope) -> scope.scope_table
-           | None -> Func_lookup.empty_scope_table)
-        ~own_modules:
-          (match file_scope with
-           | Some (scope : file_scope) -> scope.own_modules
-           | None -> [])
-        ()
-    in
+    let table = Symbol_table.with_types table type_state in
     staged "stamp var types" (fun () ->
-      stamp_singleton_imports ~type_state fi;
+      stamp_singleton_imports ~type_state ~class_table:classes.class_table fi;
       (* the file's view: the classes it imports, a method's return type
          from the class it sees *)
-      stamp_var_types ~type_state:file_type_state ~slice_element_of_field
-        fi.fi_ast);
+      stamp_var_types ~table ~type_state ~caller:None fi.fi_ast);
     let per_fdef_edges =
       staged "extract calls" @@ fun () ->
       Visit_function_defs.fold_with_parent_path ~lang
@@ -677,28 +717,24 @@ let edges_for_file (ctx : ctx) (fi : file_info)
              first (fill-on-None): isinstance narrowing, then [self]/[cls],
              then typed params. *)
           let fdef_facts =
+            let stamped (cls : Class_table.cls) : G.name option =
+              Class_table.name_of_class classes.class_table cls
+            in
             let param_facts =
               Tok.unbracket fdef.G.fparams
               |> List.filter_map (fun param ->
                 match param with
                 | G.ParamReceiver { G.pname = Some pn; ptype = Some pty; _ }
                 | G.Param { G.pname = Some pn; ptype = Some pty; _ } ->
-                  (match Ty_bare_name.inner_qualified_class_name_of_ty pty with
+                  (match
+                     Option.bind
+                       (Symbol_table.class_of_declared_type table ~context:None
+                          (Ty_bare_name.inner_named_type pty))
+                       stamped
+                   with
                    | Some cls -> Some (G.Id (pn, G.empty_id_info ()), cls)
                    | None -> None)
                 | _ -> None)
-            in
-            (* An anon fdef's own [fparams] lacks [self]/[cls]; bind them to the enclosing class. *)
-            let self_facts =
-              match opt_ent, parent_path with
-              | None, (Some (cls : IL.name)) :: _
-                when Type_state.has_class file_type_state (fst cls.IL.ident) ->
-                let cls_id = G.Id (cls.IL.ident, G.empty_id_info ()) in
-                let mk str =
-                  G.Id ((str, Tok.unsafe_fake_tok str), G.empty_id_info ())
-                in
-                List.map (fun name -> (mk name, cls_id)) (Receiver.self_names lang)
-              | _ -> []
             in
             (* isinstance narrowing over-applies: [(var, T)] holds for the
                whole function, not just the narrowed scope. *)
@@ -712,37 +748,35 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                     match expr.G.e with
                     | G.Call ({ e = G.N (G.Id (("isinstance", _), _)); _ },
                               (_, [G.Arg var_e; G.Arg ty_e], _)) ->
-                      (match var_e.G.e, ty_e.G.e with
-                       | G.N (G.Id _ as var_n), G.N (G.Id _ as ty_n)
-                       | G.N (G.Id _ as var_n), G.N (G.IdQualified _ as ty_n) ->
-                         let ty_bare_name = match ty_n with
-                           | G.Id _ -> ty_n
-                           | G.IdQualified { name_last = ((str, tok), _); _ } ->
-                             G.Id ((str, tok), G.empty_id_info ())
-                         in
-                         (var_n, ty_bare_name) :: acc
+                      (match
+                         ( var_e.G.e,
+                           Symbol_table.receiver_class table
+                             ~caller:caller_node_opt ty_e )
+                       with
+                       | G.N (G.Id _ as var_n), Symbol_table.Class_object cls ->
+                         (match stamped cls with
+                          | Some (ty_name : G.name) -> (var_n, ty_name) :: acc
+                          | None -> acc)
                        | _ -> acc)
                     | _ -> acc) [] body_stmt
             in
-            isinstance_facts @ self_facts @ param_facts
+            isinstance_facts @ param_facts
           in
           Object_initialization.stamp_id_types fdef_facts body_program;
-          stamp_var_types ~type_state:file_type_state ~slice_element_of_field
+          stamp_var_types ~table ~type_state ~caller:caller_node_opt
             body_program;
           let { FA.calls = callee_calls; callbacks = callback_calls; _ } =
             FA.extract_calls ~lang
-              ~identify_callee:
-                (Callee_resolution.identify_callee_interfile ~lang
-                   ~type_state:file_type_state)
-              ~identify_callback:
-                (Callback_extraction.identify_callback_interfile ~lang
-                   ~type_state:file_type_state)
+              ~identify_callee:(call_site_resolver ~lang ~table ~func_lookup)
+              ~argument_types:(argument_types ~lang ~table ~func_lookup)
+              ~resolve_callback:
+                (callback_resolver ~lang ~table ~func_lookup
+                   ~caller_parent_path:fn_id)
               ~resolve_construction:
-                (construction_resolver ~lang ~type_state:file_type_state
-                   ~func_lookup ~caller_parent_path:fn_id)
+                (construction_resolver ~lang ~table ~func_lookup
+                   ~caller_parent_path:fn_id)
               ~resolve_invocation:
-                (invocation_resolver ~func_lookup)
-              ~func_lookup
+                (invocation_resolver ~lang ~table ~func_lookup)
               ~caller_parent_path:fn_id fdef
           in
           let edges =
@@ -763,10 +797,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
            | Some ent ->
              let dec_calls =
                FA.extract_decorator_calls
-                 ~identify_callee:
-                   (Callee_resolution.identify_callee_interfile ~lang
-                   ~type_state:file_type_state)
-                 ~func_lookup
+                 ~identify_callee:(call_site_resolver ~lang ~table ~func_lookup)
                  ~caller_parent_path:fn_id ent.G.attrs
              in
              List.fold_left (fun edges (callee, call_tok) ->
@@ -776,11 +807,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       [] fi.fi_ast
     in
     let toplevel_calls =
-      FA.extract_toplevel_calls
-        ~identify_callee:
-          (Callee_resolution.identify_callee_interfile ~lang
-                   ~type_state:file_type_state)
-        ~func_lookup
+      FA.extract_toplevel_calls ~lang
+        ~identify_callee:(call_site_resolver ~lang ~table ~func_lookup)
+        ~argument_types:(argument_types ~lang ~table ~func_lookup)
         fi.fi_ast
     in
     let toplevel_call_edges =
@@ -789,36 +818,10 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       ) [] toplevel_calls
     in
     let toplevel_callbacks =
-      let toplevel_func_lookup =
-        Func_lookup.create
-          ~overload_groups:(Index_lang_rules.forms_overload_groups ~lang ~cfg)
-          ~top_level_scope_is_project:
-            (Index_lang_rules.top_level_scope_is_project cfg)
-          ~module_attributes:attributes_by_module
-          ~resolution_orders
-          ~project_classes
-          ~class_qn_by_definition
-          ~methods_by_class
-          ~singleton_names
-          ~companions
-          ~method_sets:(Lang_config.get lang).Lang_config.method_sets
-          ?alias_to_module_qn:
-            (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)
-          ~scope_table:
-            (match file_scope with
-             | Some (scope : file_scope) -> scope.scope_table
-             | None -> Func_lookup.empty_scope_table)
-          ~own_modules:
-            (match file_scope with
-             | Some (scope : file_scope) -> scope.own_modules
-             | None -> [])
-          ()
-      in
       FA.extract_toplevel_hof_callbacks ~lang
-        ~identify_callback:
-          (Callback_extraction.identify_callback_interfile ~lang
-             ~type_state:file_type_state)
-        ~func_lookup:toplevel_func_lookup fi.fi_ast
+        ~resolve_callback:
+          (callback_resolver ~lang ~table ~func_lookup ~caller_parent_path:[])
+        fi.fi_ast
     in
     let toplevel_callback_edges =
       List.fold_left (fun edges (callback, call_tok) ->

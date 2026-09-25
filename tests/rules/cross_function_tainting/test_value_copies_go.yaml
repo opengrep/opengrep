@@ -1,0 +1,13 @@
+rules:
+  - id: test-value-copies-go
+    message: A struct passed by value is a copy
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,13 @@
+rules:
+  - id: test-own-locals-go
+    message: A callee's writes to its own locals and temporaries do not reach callers
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

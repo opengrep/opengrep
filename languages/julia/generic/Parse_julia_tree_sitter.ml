@@ -325,6 +325,7 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
                   fkind = (LambdaKind, func_tok);
                   fparams;
                   frettype;
+                  fcaptures = G.no_captures;
                   fbody = FBStmt body;
                 }
               |> G.e,
@@ -348,6 +349,7 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
               fkind = (Function, func_tok);
               fparams = fb [];
               frettype = None;
+              fcaptures = G.no_captures;
               fbody = FBNothing;
             } )
       |> G.s
@@ -377,6 +379,41 @@ and map_multi_assign ?(attrs = []) (env : env) x =
       |> G.s
   | `Func_defi x -> map_function_definition env x
   | `Short_func_defi x -> map_short_function_definition env x
+
+and map_global_declaration (env : env) (global_tok : tok)
+    (x : CST.anon_choice_assign_b59cd00) : stmt list =
+  let declare (target : expr) : stmt list =
+    let names =
+      match target.e with
+      | N (Id (id, _)) -> [ id ]
+      | Container (Tuple, (_, elements, _)) ->
+          List.filter_map
+            (fun (element : expr) ->
+              match element.e with
+              | N (Id (id, _)) -> Some id
+              | _ -> None)
+            elements
+      | _ -> []
+    in
+    List_.map
+      (fun (id : ident) ->
+        DefStmt (basic_entity id, UseOuterDecl global_tok) |> G.s)
+      names
+  in
+  match x with
+  | `Assign x ->
+      let l_exp, tok, r_exp = map_assignment env x in
+      declare l_exp @ [ ExprStmt (Assign (l_exp, tok, r_exp) |> G.e, G.sc) |> G.s ]
+  | `Id tok -> declare (N (H2.name_of_id (map_identifier env tok)) |> G.e)
+  | `Bare_tuple x -> declare (map_bare_tuple_exp env x)
+  | `Typed_exp _
+  | `Func_defi _
+  | `Short_func_defi _ ->
+      [
+        map_multi_assign
+          ~attrs:[ OtherAttribute ((Tok.content_of_tok global_tok, global_tok), []) ]
+          env x;
+      ]
 
 and map_anon_choice_decl_f2ab0d0 (env : env) (x : CST.anon_choice_exp_0ff8d07) :
     expr =
@@ -440,14 +477,11 @@ and map_anon_choice_exp_772c79a_stmt (env : env)
     (x : CST.anon_choice_exp_772c79a) : stmt =
   match x with
   | `Exp x -> H2.expr_to_stmt (map_expression env x)
-  | `Assign x -> (
-      (* TODO: Might be good to translate this to a `DefStmt` in the future.
-         Python just lets it be an `Assign`, though, so we will too.
-      *)
+  | `Assign x ->
+      (* Every statement-level assignment is an [Assign], as in Python:
+         Julia writes a first binding and a reassignment the same way. *)
       let l, t, r = map_assignment env x in
-      match AST_generic_helpers.assign_to_vardef_opt (l, t, r) with
-      | None -> ExprStmt (Assign (l, t, r) |> G.e, G.sc) |> G.s
-      | Some stmt -> stmt)
+      ExprStmt (Assign (l, t, r) |> G.e, G.sc) |> G.s
   | `Bare_tuple x -> ExprStmt (map_bare_tuple_exp env x, G.sc) |> G.s
   | `Short_func_defi x -> map_short_function_definition env x
 
@@ -1236,6 +1270,7 @@ and map_do_clause (env : env) ((v1, v2, v3, v4) : CST.do_clause) =
       fkind = (LambdaKind, v1);
       fparams = fb fparams;
       frettype = None;
+      fcaptures = G.no_captures;
       fbody = FBStmt body;
     }
   |> G.e
@@ -1310,6 +1345,7 @@ and map_operation (env : env) (x : CST.operation) =
           fkind = (LambdaKind, v2_arrow);
           fparams;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = FBExpr v3;
         }
       |> G.e
@@ -1530,7 +1566,7 @@ and map_function_signature ~body ~func_tok (env : env)
         Some v2
     | None -> None
   in
-  (ent, { fkind = (Function, func_tok); fparams; frettype; fbody = body })
+  (ent, { fkind = (Function, func_tok); fparams; frettype; fcaptures = G.no_captures; fbody = body })
 
 and map_import_alias (env : env) ((v1, v2, v3) : CST.import_alias) :
     (dotted_ident * alias) option =
@@ -2220,9 +2256,7 @@ and map_statement (env : env) (x : CST.statement) : stmt list =
       | `Local_stmt (v1, v2) ->
           let v1 = (* "local" *) str env v1 in
           [ map_multi_assign ~attrs:[ OtherAttribute (v1, []) ] env v2 ]
-      | `Global_stmt (v1, v2) ->
-          let v1 = (* "global" *) str env v1 in
-          [ map_multi_assign ~attrs:[ OtherAttribute (v1, []) ] env v2 ])
+      | `Global_stmt (v1, v2) -> map_global_declaration env (token env v1) v2)
 
 and map_string_literal (env : env) (x : CST.string_) : expr =
   match x with

@@ -1,0 +1,13 @@
+rules:
+  - id: redefinition_in_force_python
+    message: a call reaches the definition in force at the call
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

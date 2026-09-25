@@ -1,0 +1,13 @@
+rules:
+  - id: test-callback-result-py
+    message: the result of calling a callback is what the callback returns, where it is used
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

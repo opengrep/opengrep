@@ -669,13 +669,15 @@ and pattern env pat : stmts * lval * stmts =
       let pre_ss, _ = type_ env ty in
       let inner_pre_ss, lval, post_ss = pattern env pat1 in
       (pre_ss @ inner_pre_ss, lval, post_ss)
-  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
+  | G.PatConstructor (name, pats)
     when pats <> [] && List.for_all is_map_pair_pattern pats ->
       (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
        * a flat list of [PatKeyVal]s over the incoming map. Lower as a
        * map destructure rather than a positional tuple. *)
+      let (_s, tok), _id_info = H.id_of_name name in
       pattern env (G.PatList (G.fake "[", pats, tok))
-  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
+  | G.PatConstructor (name, pats) ->
+      let (_s, tok), _id_info = H.id_of_name name in
       pattern env (G.PatTuple (G.fake "(", pats, tok))
   | G.PatKeyVal (key_pat, val_pat) ->
       (* Standalone [PatKeyVal] outside a [PatList]/[PatConstructor]
@@ -1652,15 +1654,16 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       ( { e = G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _))); _ } as
           callee,
         args )
-    when env.lang =*= Lang.Ruby
-         && (match method_name with
-            | "fetch"
-            | "send"
-            | "public_send"
-            | "dig" ->
-                true
-            | _ -> false) -> (
-      match (callee.G.e, ruby_field_access_decode method_name args) with
+    when (env.lang =*= Lang.Ruby
+          && (match method_name with
+             | "fetch"
+             | "dig" ->
+                 true
+             | _ -> false))
+         || Lang_reflection.is_send_method env.lang method_name -> (
+      match
+        (callee.G.e, ruby_field_access_decode env.lang method_name args)
+      with
       | ( G.DotAccess (receiver, _, _),
           Some (first_id :: rest_ids, [], default_opt) ) ->
           let ss_recv, head_lval = build_field_lval env ~callee receiver first_id in
@@ -1727,10 +1730,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args
       | G.DotAccess (receiver, dot, G.FN (G.Id (_, send_info))), None
-        when (match method_name with
-              | "send"
-              | "public_send" -> true
-              | _ -> false) -> (
+        when Lang_reflection.is_send_method env.lang method_name -> (
           match Tok.unbracket args with
           | G.Arg key_expr :: (_ :: _ as sent_args) -> (
               match literal_field_ident key_expr with
@@ -2243,8 +2243,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       (ss_e2 @ ss_assign, result)
   | G.AssignOp (e1, (G.Eq, tok), e2) ->
       (* AsssignOp(Eq) is used to represent plain assignment in some languages,
-       * e.g. Go's `:=` is represented as `AssignOp(Eq)`, and C#'s assignments
-       * are all represented this way too. *)
+       * e.g. Go's `:=` is represented as `AssignOp(Eq)`. *)
       let ss_e2, exp = expr env e2 in
       let ss_assign, result = assign env ~g_expr e1 tok exp in
       (ss_e2 @ ss_assign, result)
@@ -2299,6 +2298,24 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       comprehension env er clauses
   | G.Lambda fdef ->
       let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+      (* An initialised capture is set where the closure is created. *)
+      let ss_captures =
+        fdef.fcaptures.clist
+        |> List.concat_map (fun (c : G.capture) ->
+               match c.cinit with
+               | None -> []
+               | Some init_gen ->
+                   let ss, init = expr env init_gen in
+                   let id, id_info = c.cname in
+                   ss
+                   @ [
+                       mk_s
+                         (Instr
+                            (mk_i
+                               (Assign (lval_of_id_info id id_info, init))
+                               (related_exp init_gen)));
+                     ])
+      in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -2310,7 +2327,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           fdef
       in
       let instr = mk_s (Instr (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig)) in
-      ([instr], mk_e (Fetch lval) eorig)
+      (ss_captures @ [ instr ], mk_e (Fetch lval) eorig)
   | G.AnonClass def ->
       (* TODO: should use def.ckind *)
       let tok = Common2.fst3 def.G.cbody in
@@ -2478,6 +2495,60 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.OtherExpr (("PipelineCall", _tk), [ G.E inner ])
     when env.lang =*= Lang.Elixir || env.lang =*= Lang.Php ->
       expr env inner
+  (* [new T(args) { X = v, ... }]: the construction, then a field write per
+   * [X = v] entry; other entries (a collection's elements) are passed to the
+   * construction as arguments. *)
+  | G.OtherExpr (("ObjectInitializer", tok), G.E construction :: entries) ->
+      let field_init (entry : G.any) : (G.ident * G.expr) option =
+        match entry with
+        | G.E
+            {
+              e =
+                ( G.AssignOp ({ e = G.N (G.Id (id, _)); _ }, _, v)
+                | G.Assign ({ e = G.N (G.Id (id, _)); _ }, _, v) );
+              _;
+            } ->
+            Some (id, v)
+        | _ -> None
+      in
+      let field_inits = List.filter_map field_init entries in
+      let elements =
+        entries
+        |> List.filter_map (fun (entry : G.any) ->
+               match (field_init entry, entry) with
+               | None, G.E e -> Some (G.Arg e)
+               | _ -> None)
+      in
+      let construction =
+        match (elements, construction.e) with
+        | [], _ -> construction
+        | _, G.New (t, ty, info, (l, args, r)) ->
+            { construction with e = G.New (t, ty, info, (l, args @ elements, r)) }
+        | _, G.Call (f, (l, args, r)) ->
+            { construction with e = G.Call (f, (l, args @ elements, r)) }
+        | _ -> construction
+      in
+      let ss_obj, obj = expr env construction in
+      let lval = fresh_lval env tok in
+      let assign_obj = mk_s (Instr (mk_i (Assign (lval, obj)) eorig)) in
+      let ss_fields =
+        field_inits
+        |> List.concat_map (fun ((id : G.ident), (v : G.expr)) ->
+               let ss_v, v = expr env v in
+               let field : name =
+                 {
+                   ident = id;
+                   sid = G.SId.unsafe_default;
+                   id_info = G.empty_id_info ();
+                 }
+               in
+               let field_lval =
+                 { lval with rev_offset = [ { o = Dot field; oorig = NoOrig } ] }
+               in
+               ss_v
+               @ [ mk_s (Instr (mk_i (Assign (field_lval, v)) (related_tok (snd id)))) ])
+      in
+      (ss_obj @ [ assign_obj ] @ ss_fields, mk_e (Fetch lval) NoOrig)
   (* The idea here is that this is like a block, and we only
    * really care about the last expression. *)
   (* TODO: What if a statement creeps in? E.g. an If, `fn`..?
@@ -2649,6 +2720,11 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
     | CLJ_ME1.Macroexpansion_error (_msg, any_expr) ->
       ([], fixme_exp ToDo any_expr (related_tok tok))
     | exn -> raise exn)
+  | G.OtherExpr
+      ( ("MethodRef", _),
+        G.E ({ G.e = G.DotAccess (_, _, G.FN (G.Id _)); _ } as reference) :: _ )
+    ->
+      expr env reference
   (* Default. *)
   | G.OtherExpr ((str, tok), xs) ->
       let results =
@@ -2669,6 +2745,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.RawExpr _ -> todo (G.E g_expr)
 
 and expr env ?void e_gen : stmts * exp =
+  let e_gen = Option.value (G.callable_reference_of e_gen) ~default:e_gen in
   try expr_aux env ?void e_gen with
   | Fixme (kind, any_generic) ->
       ([], fixme_exp kind any_generic (related_exp e_gen))
@@ -2787,7 +2864,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+                  let lval = fresh_lval env ~str:"_tmp_lambda" (snd id) in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
@@ -3034,11 +3111,14 @@ and longest_literal_key_prefix (args : G.argument list) :
  * The [tail_args] list is empty when every [dig] key is literal;
  * when non-empty, the literal prefix is precise and the tail is
  * handed to the generic call as [prefix_lval.dig(tail_args)]. *)
-and ruby_field_access_decode (method_name : string) (args : G.arguments) :
+and ruby_field_access_decode (lang : Lang.t) (method_name : string)
+    (args : G.arguments) :
     (G.ident list * G.argument list * G.expr option) option =
   let arg_list = Tok.unbracket args in
   match (method_name, arg_list) with
-  | ("fetch" | "send" | "public_send"), [ G.Arg key_expr ] -> (
+  | _, [ G.Arg key_expr ]
+    when String.equal method_name "fetch"
+         || Lang_reflection.is_send_method lang method_name -> (
       match literal_field_ident key_expr with
       | Some id -> Some ([ id ], [], None)
       | None -> None)
@@ -3706,28 +3786,68 @@ and for_var_or_expr_list env xs : stmts =
 (*****************************************************************************)
 (* Parameters *)
 (*****************************************************************************)
+(* A parameter the callee can rebind for the caller. *)
+and parameter_is_by_reference (lang : Lang.t) (p : G.parameter_classic) : bool =
+  let has_named_attr (names : string list) (attrs : G.attribute list) =
+    List.exists
+      (function
+        | G.NamedAttr (_, G.Id ((s, _), _), _) -> List.mem s names
+        | _ -> false)
+      attrs
+  in
+  match lang with
+  | Lang.Cpp -> (
+      match p.ptype with
+      | Some { t = G.TyRef _; _ } -> true
+      | _ -> false)
+  | Lang.Csharp -> has_named_attr [ "ref"; "out" ] p.pattrs
+  | Lang.Vb ->
+      List.exists
+        (function
+          | G.OtherAttribute (("BYREF", _), _) -> true
+          | _ -> false)
+        p.pattrs
+  | Lang.Swift -> (
+      match p.ptype with
+      | Some { t_attrs; _ } -> has_named_attr [ "inout" ] t_attrs
+      | None -> false)
+  | _ -> false
+
 and parameters env params : param list =
   params |> Tok.unbracket
   |> List_.mapi (fun idx gparam ->
        match gparam with
-       | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ }
+       | G.Param { pname = Some i; pinfo; pdefault; pattrs; ptype; _ }
          when List.exists
                 (function
                   | G.KeywordAttr (G.KeywordOnly, _) -> true
                   | _ -> false)
                 pattrs ->
-           ParamKwd { pname = var_of_id_info i pinfo; pdefault }
-       | G.Param { pname = Some i; pinfo; pdefault; _ } ->
+           ParamKwd
+             {
+               pname = var_of_id_info i pinfo;
+               pdefault;
+               by_reference = false;
+               ptype;
+             }
+       | G.Param ({ pname = Some i; pinfo; pdefault; ptype; _ } as classic) ->
            let pname = var_of_id_info i pinfo in
            (* Clojure/Elixir/OCaml encode multi-clause functions with a
               single synthetic !!_implicit_param! that already receives the
               CList of actual arguments (the call site wraps them). Keep it
               as a plain positional Param so the signature layer binds the
               CList directly instead of re-wrapping it. *)
-           Param { pname; pdefault }
+           Param
+             {
+               pname;
+               pdefault;
+               by_reference = parameter_is_by_reference env.lang classic;
+               ptype;
+             }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
-           ParamRest { pname = var_of_id_info i pinfo; pdefault }
-       | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; _ }) ->
+           ParamRest
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false; ptype = None }
+       | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; ptype; _ }) ->
            (* The synthetic [!!_implicit_param!] binder from
             * [implicit_param_classic] becomes the IL name_param. Rename
             * it to [!!_implicit_param!_idx] so multiple destructuring
@@ -3739,20 +3859,39 @@ and parameters env params : param list =
            let _, tk = i in
            let i = G.implicit_param_id_indexed idx tk in
            let pname = var_of_id_info i pinfo in
-           ParamPattern ({ pname; pdefault }, pat)
-       | G.ParamReceiver { pname = Some i; pinfo; pdefault; _ } ->
-           ParamReceiver { pname = var_of_id_info i pinfo; pdefault }
+           ParamPattern ({ pname; pdefault; by_reference = false; ptype }, pat)
+       | G.ParamReceiver { pname = Some i; pinfo; pdefault; ptype; _ } ->
+           ParamReceiver
+             {
+               pname = var_of_id_info i pinfo;
+               pdefault;
+               by_reference = false;
+               ptype;
+             }
        (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
        | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
          ->
-           Param { pname = var_of_id_info i pinfo; pdefault }
+           Param
+             {
+               pname = var_of_id_info i pinfo;
+               pdefault;
+               by_reference = Lang.equal env.lang Lang.Php;
+               ptype = None;
+             }
        (* Ruby, Crystal: the anonymous block parameter '&' takes the block
         * like a named one does *)
        | G.OtherParam (("Ref", t), []) ->
-           Param { pname = fresh_var env ~str:"block" t; pdefault = None }
+           Param
+             {
+               pname = fresh_var env ~str:"block" t;
+               pdefault = None;
+               by_reference = false;
+               ptype = None;
+             }
        | G.ParamHashSplat (_, { pname = Some i; pinfo; pdefault; _ }) ->
            (* **kwargs in Python / **opts in Ruby: treat as rest param *)
-           ParamRest { pname = var_of_id_info i pinfo; pdefault }
+           ParamRest
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false; ptype = None }
        | G.Param { pname = None; _ }
        | G.ParamReceiver { pname = None; _ }
        | G.ParamRest (_, _)
@@ -4250,6 +4389,7 @@ and stmt_aux env st : stmts =
       let new_stmts = stmt env stmt1 in
       ss @ new_stmts
   (* Rust: unsafe block *)
+  | G.OtherStmtWithStmt (G.OSWS_Block ("Init", _), [], stmt1) -> stmt env stmt1
   | G.OtherStmtWithStmt (G.OSWS_Block ("Unsafe", tok), [], stmt1) ->
       let todo_stmt = fixme_stmt ToDo (G.TodoK ("unsafe_block", tok)) in
       let new_stmts = stmt env stmt1 in
@@ -4575,7 +4715,8 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
     | Some block -> Some (block, fparams)
     | None ->
         let block = fresh_var env ~str:"block" (snd fdef.G.fkind) in
-        Some (block, fparams @ [ Param { pname = block; pdefault = None } ])
+        Some (block, fparams @ [ Param
+                 { pname = block; pdefault = None; by_reference = false; ptype = None } ])
   else None
 
 and function_definition env fdef : function_definition =
@@ -4612,7 +4753,17 @@ and function_definition env fdef : function_definition =
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
   let fbody = rec_point_label_stmts @ fbody in
-  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
+  let fcaptures =
+    {
+      cdefault = fdef.fcaptures.cdefault;
+      clist =
+        fdef.fcaptures.clist
+        |> List_.map (fun (c : G.capture) ->
+               let id, id_info = c.cname in
+               (var_of_id_info id id_info, c.cmode));
+    }
+  in
+  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fcaptures; fbody }
 
 (****************************************************************************)
 (* Entry points *)

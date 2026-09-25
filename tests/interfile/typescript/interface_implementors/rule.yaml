@@ -1,0 +1,13 @@
+rules:
+  - id: interface_implementors
+    message: a call through an interface type reaches the classes that implement it
+    languages:
+      - typescript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

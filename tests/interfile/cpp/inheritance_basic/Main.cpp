@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <string>
+#include "Dog.h"
 
 std::string source() {
     const char *env = std::getenv("SECRET");

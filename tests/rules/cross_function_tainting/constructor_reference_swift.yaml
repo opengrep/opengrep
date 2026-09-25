@@ -1,0 +1,13 @@
+rules:
+  - id: constructor_reference_swift
+    message: a constructor reference called through a parameter reaches the initialiser
+    languages:
+      - swift
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -318,7 +318,18 @@ and expr e =
       in
       let v4 = ident v4 in
       (* TODO? use G.GetRef? *)
-      G.OtherExpr (("MethodRef", v2), (v1 :: v3) @ [ G.I v4 ])
+      let member_of (receiver : G.expr) : G.any =
+        G.E
+          (G.DotAccess (receiver, v2, G.FN (G.Id (v4, G.empty_id_info ())))
+          |> G.e)
+      in
+      let parts =
+        match v1 with
+        | G.E receiver -> member_of receiver :: v3
+        | G.T { G.t = G.TyN name; _ } -> member_of (G.N name |> G.e) :: v3
+        | _ -> (v1 :: v3) @ [ G.I v4 ]
+      in
+      G.OtherExpr (("MethodRef", v2), parts)
   | Call (v1, v2) ->
       let v1 = expr v1 and v2 = arguments v2 in
       G.Call (v1, v2)
@@ -381,6 +392,7 @@ and expr e =
         {
           G.fparams = fb fparams;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v2;
           fkind = (G.Arrow, t);
         }
@@ -654,11 +666,17 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
     | _, { s = G.Block (_, [], _); _ } when is_abstract -> G.FBNothing
     | _ -> FBStmt v4
   in
-  ( { ent with G.attrs = ent.G.attrs @ throws },
+  (* a constructor is the method without a return type *)
+  let ctor =
+    match m_var.type_ with
+    | None -> [ G.KeywordAttr (G.Ctor, snd m_var.name) ]
+    | Some _ -> []
+  in
+  ( { ent with G.attrs = ent.G.attrs @ ctor @ throws },
     {
       G.fparams = fb fparams;
       frettype = rett;
-      fbody;
+      fcaptures = G.no_captures; fbody;
       fkind = (G.Method, G.fake "");
     } )
 
@@ -759,7 +777,14 @@ and decl ?cl_kind decl : G.stmt =
       match v1 with
       | Some tstatic ->
           G.OtherStmtWithStmt (G.OSWS_Block ("Static", tstatic), [], st) |> G.s
-      | None -> st)
+      | None ->
+          (* an instance initialiser, run as part of every constructor *)
+          let tok =
+            match st.G.s with
+            | G.Block (l, _, _) -> l
+            | _ -> G.fake "{"
+          in
+          G.OtherStmtWithStmt (G.OSWS_Block ("Init", tok), [], st) |> G.s)
   | DeclEllipsis v1 -> G.ExprStmt (G.Ellipsis v1 |> G.e, G.sc) |> G.s
   | DeclMetavarEllipsis v1 ->
       G.ExprStmt (G.N (Id (v1, G.empty_id_info ())) |> G.e, G.sc) |> G.s

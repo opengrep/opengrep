@@ -1,0 +1,13 @@
+rules:
+  - id: test-value-copies-vb
+    message: A struct passed by value is a copy
+    languages:
+      - vb
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -186,13 +186,14 @@ and expr =
 
 (* old: was just a string in ast.go *)
 and literal =
-  (* less: Bool of bool wrap | Nil of tok? *)
   | Int of Parsed_int.t
   | Float of float option wrap
   | Imag of string wrap
   | Rune of string wrap (* unicode char *)
   | String of string wrap
 (* unicode string *)
+  | Bool of bool wrap
+  | Nil of tok
 (* TODO: bracket *)
 
 and index = expr
@@ -325,10 +326,18 @@ and import_kind =
 (* Toplevel *)
 (*****************************************************************************)
 
+type build_constraint =
+  | BuildTag of ident
+  | BuildNot of build_constraint
+  | BuildAnd of build_constraint * build_constraint
+  | BuildOr of build_constraint * build_constraint
+[@@deriving show { with_path = false }]
+
 (* only at the toplevel *)
 type top_decl =
   (* old: used to be in a record in program *)
   | Package of tok * ident
+  | BuildConstraint of tok * build_constraint
   | Import of import
   (* the 'func' keyword is accessible in function_ in ftok *)
   | DFunc of ident * type_parameters option (* generics *) * function_

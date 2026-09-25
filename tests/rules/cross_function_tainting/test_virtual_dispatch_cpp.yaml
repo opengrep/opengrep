@@ -1,0 +1,13 @@
+rules:
+  - id: test-virtual-dispatch-cpp
+    message: A call through this reaches the overrides of a virtual method, never a method that hides a non-virtual one
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -22,12 +22,12 @@ val pattern_leaves_with_offsets :
 
 val fixpoint :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   ?in_env:Taint_lval_env.t ->
   ?name:IL.name ->
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   IL.fun_cfg ->
   Shape_and_sig.Effects.t * mapping
 (** Main entry point, [fixpoint config cfg] returns a mapping (effectively a set)
@@ -42,4 +42,19 @@ val fixpoint :
 (* TODO: Move to module 'Taint' maybe. *)
 val drop_taints_if_bool_or_number :
   Rule_options.t -> Taint.Taint_set.t -> 'a Type.t -> Taint.Taint_set.t
-val reset_constructor: unit -> unit
+
+val drop_writes_to_own_vars :
+  IL.fun_cfg -> Shape_and_sig.Effects.t -> Shape_and_sig.Effects.t
+
+val captured_of_fun_cfg : IL.fun_cfg -> (IL.name * AST_generic.capture_mode) list
+
+val seed_captured_vars :
+  Lang.t ->
+  (IL.name * AST_generic.capture_mode) list ->
+  Taint_lval_env.t ->
+  Taint_lval_env.t
+
+val global_vars : IL.fun_cfg -> IL.NameSet.t
+
+val seed_global_vars :
+  Lang.t -> IL.NameSet.t -> Taint_lval_env.t -> Taint_lval_env.t

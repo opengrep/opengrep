@@ -1,0 +1,12 @@
+rules:
+  - id: test-struct-by-value-across-files
+    languages: [vb]
+    message: A structure declared in another file and passed by value is a copy
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink(...)

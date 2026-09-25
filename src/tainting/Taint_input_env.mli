@@ -2,6 +2,7 @@
 
 val mk_fun_input_env :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   ?glob_env:Taint_lval_env.t ->
   IL.param list ->
   Taint_lval_env.t * Shape_and_sig.Effects.t
@@ -12,6 +13,7 @@ val mk_fun_input_env :
 
 val mk_file_env :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   AST_generic.program ->
   Taint_lval_env.t * Shape_and_sig.Effects.t
 (** Constructs the global taint environment for a given file: it finds global-

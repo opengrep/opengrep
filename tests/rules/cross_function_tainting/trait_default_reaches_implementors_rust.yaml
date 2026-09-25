@@ -1,0 +1,13 @@
+rules:
+  - id: trait_default_reaches_implementors_rust
+    message: a call on self in a trait default method reaches every implementor
+    languages:
+      - rust
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

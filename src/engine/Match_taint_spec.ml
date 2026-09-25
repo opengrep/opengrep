@@ -446,8 +446,22 @@ let mk_taint_spec_match_preds rule matches =
 
 let default_effect_handler _fun_name new_effects = new_effects
 
+let value_type_predicate (lang : Lang.t) (ast : G.program) : G.type_ -> bool =
+  match Object_initialization.value_type_names lang ast with
+  | [] -> fun _ -> false
+  | names -> (
+      let set = Hashtbl.create (List.length names) in
+      List.iter (fun name -> Hashtbl.replace set name ()) names;
+      fun (ty : G.type_) ->
+        match ty.G.t with
+        | G.TyN (G.Id ((name, _), _))
+        | G.TyN (G.IdQualified { name_last = (name, _), _; _ }) ->
+            Hashtbl.mem set name
+        | _ -> false)
+
 let taint_config_of_spec_matches
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
+    ?(is_value_type = fun (_ : G.type_) -> false)
     xconf lang file ({ mode = `Taint spec; _ } as rule : R.taint_rule)
     (spec_matches : spec_matches) : Taint_rule_inst.t option =
   match spec_matches with
@@ -470,6 +484,7 @@ let taint_config_of_spec_matches
                 preds;
                 handle_effects;
                 recursive = false;
+                is_value_type;
                 java_props_cache = Hashtbl.create 30;
             })
 
@@ -480,7 +495,8 @@ let taint_config_of_rule ~per_file_formula_cache
     spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
       ast_and_errors rule
   in
-  taint_config_of_spec_matches ~handle_effects ~allow_partial xconf lang file
-    rule spec_matches
+  taint_config_of_spec_matches ~handle_effects ~allow_partial
+    ~is_value_type:(value_type_predicate lang (fst ast_and_errors))
+    xconf lang file rule spec_matches
   |> Option.map (fun inst -> (inst, spec_matches, expls))
 [@@trace_trace]

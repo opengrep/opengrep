@@ -656,6 +656,7 @@ and map_function_declaration (env : env) (x : CST.function_declaration) :
         fkind = (G.Function, tok);
         fparams = params;
         frettype = return_type;
+        fcaptures = G.no_captures;
         fbody = G.FBStmt (G.exprstmt body);
       } )
 
@@ -749,6 +750,7 @@ and map_trait_declaration (env : env) (x : CST.trait_declaration) : G.definition
                  fkind = (G.Function, tok);
                  fparams = parameters;
                  frettype = return_type;
+                 fcaptures = G.no_captures;
                  fbody =
                    (match body with
                    | Some body -> G.FBStmt body

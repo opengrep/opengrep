@@ -1,0 +1,14 @@
+rules:
+  - id: function-reference-across-files
+    languages: [python]
+    severity: ERROR
+    message: >
+      A function from another file that is referred to by name is called
+      through the value.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

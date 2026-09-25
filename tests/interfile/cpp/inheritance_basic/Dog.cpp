@@ -1,4 +1,1 @@
-class Dog : public Animal {
-public:
-    void bark() {}
-};
+#include "Dog.h"

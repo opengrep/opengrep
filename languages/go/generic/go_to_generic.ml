@@ -80,7 +80,7 @@ let list_to_tuple_or_expr xs =
   | xs -> G.Container (G.Tuple, Tok.unsafe_fake_bracket xs) |> G.e
 
 let mk_func_def fkind params ret st : G.function_definition =
-  { G.fparams = params; frettype = ret; fbody = st; fkind }
+  { G.fparams = params; frettype = ret; fcaptures = G.no_captures; fbody = st; fkind }
 
 (* TODO: use CondDecl *)
 let wrap_init_in_block_maybe x v =
@@ -145,7 +145,7 @@ let top_func () =
         G.TyApply (G.TyN (mk_name "chan" t) |> G.t, fb [ G.TA v1; G.TA v2 ])
     | TStruct (t, v1) ->
         let v1 = bracket (list struct_field) v1 in
-        G.TyRecordAnon ((G.Class, t), v1)
+        G.TyRecordAnon ((G.Struct, t), v1)
     | TInterface (t, v1) ->
         let v1 = bracket (list interface_field) v1 in
         G.TyRecordAnon ((G.Interface, t), v1)
@@ -213,6 +213,13 @@ let top_func () =
   and tag v =
     let attr = G.(E (e (L (String (fb v))))) in
     [ G.OtherAttribute (("GoTag", snd v), [ attr ]) ]
+  and build_constraint (condition : Ast_go.build_constraint) :
+      G.build_constraint =
+    match condition with
+    | BuildTag v1 -> G.BuildTag (ident v1)
+    | BuildNot v1 -> G.BuildNot (build_constraint v1)
+    | BuildAnd (v1, v2) -> G.BuildAnd (build_constraint v1, build_constraint v2)
+    | BuildOr (v1, v2) -> G.BuildOr (build_constraint v1, build_constraint v2)
   and interface_field = function
     | Method (v1, v2) ->
         let v1 = ident v1 in
@@ -381,6 +388,12 @@ let top_func () =
     | String v1 ->
         let v1 = wrap string v1 in
         G.String (fb v1)
+    | Bool v1 ->
+        let v1 = wrap id v1 in
+        G.Bool v1
+    | Nil v1 ->
+        let v1 = tok v1 in
+        G.Null v1
   and index v = expr v
   and arguments v = list argument v
   and argument = function
@@ -544,9 +557,11 @@ let top_func () =
     | Fallthrough v1 ->
         let v1 = tok v1 in
         [ G.OtherStmt (G.OS_Fallthrough, [ G.Tk v1 ]) |> G.s ]
-    | Label (v1, v2) ->
-        let v1 = ident v1 and v2 = stmt v2 in
-        [ G.Label (v1, v2) |> G.s ]
+    | Label (v1, v2) -> (
+        let v1 = ident v1 in
+        match stmt_aux v2 with
+        | first :: rest -> (G.Label (v1, first) |> G.s) :: rest
+        | [] -> [ G.Label (v1, G.stmt1 []) |> G.s ])
     | Go (v1, v2) ->
         let _v1 = tok v1 and e, args = call_expr v2 in
         [ G.OtherStmt (G.OS_Go, [ G.E (G.Call (e, args) |> G.e) ]) |> G.s ]
@@ -689,6 +704,10 @@ let top_func () =
     | Package (t1, id) ->
         let id = ident id in
         G.DirectiveStmt (G.Package (t1, [ id ]) |> G.d) |> G.s
+    | BuildConstraint (t1, condition) ->
+        G.DirectiveStmt
+          (G.BuildConstraint (t1, build_constraint condition) |> G.d)
+        |> G.s
     | Import x ->
         let x = import x in
         G.DirectiveStmt (x |> G.d) |> G.s

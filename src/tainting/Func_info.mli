@@ -20,7 +20,6 @@ val as_method : fn_id -> (IL.name * IL.name) option
 val as_free : fn_id -> IL.name option
 val is_method_of : class_name:string -> method_name:string -> fn_id -> bool
 val bare_name : fn_id -> IL.name option
-val name_matches : t -> string -> bool
 val has_body : AST_generic.function_definition -> bool
 val enclosing_class : fn_id -> IL.name option
 val method_id : cls:IL.name -> meth:IL.name -> fn_id
@@ -33,14 +32,3 @@ val def_file_opt : t -> Fpath.t option
    file test that matches nothing must not erase a function. *)
 val prefer : keep:(t -> bool) -> t list -> t list
 
-(* The result is [true] when two entries of the list carry the same bare
-   name. [narrow_colliding_groups] drops entries only from a group of entries
-   that share a bare name. *)
-val has_colliding_bare_names : t list -> bool
-
-(* Drop non-[keep] methods, but only within method-name groups that hold
-   several entries and would keep at least one survivor.  Uniquely named
-   methods and groups [keep] would empty are left alone, so a failed match
-   degrades to the un-narrowed set.  [None] = nothing changed. *)
-val narrow_colliding_groups :
-  keep:(t -> bool) -> t list -> t list option

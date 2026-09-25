@@ -252,6 +252,7 @@ let stab_clauses_to_function_definition tk (xs : stab_clause_generic list) :
     G.fparams = fb params;
     frettype = None;
     fkind = (G.Function, tk);
+    fcaptures = G.no_captures;
     fbody = G.FBStmt body_stmt;
   }
 
@@ -763,6 +764,7 @@ and map_definition env (v : definition) : G.definition =
           G.fkind = (G.Function, f_def);
           fparams;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body_stmt;
         }
       in
@@ -820,6 +822,7 @@ and map_definition env (v : definition) : G.definition =
           G.fkind = (G.Function, tk);
           fparams = synthetic_fparams;
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt body_stmt;
         }
       in
@@ -832,6 +835,7 @@ and map_definition env (v : definition) : G.definition =
           G.fkind = (G.Function, fake_tok);
           fparams = Tok.unsafe_fake_bracket [];
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt (G.Block (Tok.unsafe_fake_bracket []) |> G.s);
         }
       in
@@ -986,7 +990,13 @@ and map_expr env v : G.expr =
       (* TODO: could pass a 'body_or_clauses bracket' to
        * expr_of_body_or_clauses to avoid the fake_bracket above
        *)
-      expr_of_body_or_clauses l body_or_clauses
+      (match body_or_clauses with
+      | Left [ st ] -> G.stmt_to_expr st
+      | Left (_ :: _ :: _ as stmts) ->
+          G.Seq (List_.map G.stmt_to_expr stmts) |> G.e
+      | Left []
+      | Right _ ->
+          expr_of_body_or_clauses l body_or_clauses)
   | DotAlias (v1, tdot, v3) ->
       let e = map_expr env v1 in
       (* TODO: split alias in components, and then use name_of_ids *)

@@ -1,0 +1,12 @@
+rules:
+  - id: test-method-reference-member-java
+    message: A Java method reference reaches the member of its receiver, never a local of the same name
+    languages:
+      - java
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

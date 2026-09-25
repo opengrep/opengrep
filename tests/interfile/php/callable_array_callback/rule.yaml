@@ -6,10 +6,9 @@ rules:
       A callable written as the array `[$obj, 'handle']` names the method
       `handle` of the receiver's class, so the sinking `App\\Store::handle`
       runs and the same-named `Lib\\Store::handle` does not.
-      The call graph carries the callback edge to `App\\Store::handle`. The
-      taint layer instantiates a callback named at a call site only when it is
-      written as a lambda, so no finding is produced and the sink is marked
-      todoruleid.
+      The call graph resolves the callable to `App\\Store::handle`, and the
+      lowering replaces the callable by a reference that carries this
+      resolution.
     mode: taint
     options:
       taint_interfile: true

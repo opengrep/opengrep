@@ -1,0 +1,12 @@
+rules:
+  - id: r_equals_assignment
+    message: An R assignment written with = carries the value to the variable
+    languages:
+      - r
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

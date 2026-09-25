@@ -1,0 +1,13 @@
+rules:
+  - id: test-value-copies-move-on-sui
+    message: A struct passed by value is a copy
+    languages:
+      - move_on_sui
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

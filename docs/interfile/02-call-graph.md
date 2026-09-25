@@ -28,7 +28,7 @@ A `Call_graph.G.t` — a bidirectional labelled directed graph from
   `Call` edges are concrete call expressions; `Dispatch` edges link
   interface declarations to their concrete implementations
   (interface ↔ impl).  The taint engine processes the two kinds
-  differently — see [§ 3](03-dispatch.md) "FBDecl dispatch merge".
+  differently: see [§ 3](03-dispatch.md), "Case 1: bodiless declarations".
 
 ## The four-phase build
 

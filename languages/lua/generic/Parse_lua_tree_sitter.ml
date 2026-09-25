@@ -470,6 +470,7 @@ and map_function_body (env : env) ((v1, v2, v3, v4) : CST.function_body)
     G.fparams = v1;
     frettype = None;
     fkind = (G.Function, token env name);
+    fcaptures = G.no_captures;
     fbody = G.FBStmt body;
   }
 
@@ -728,7 +729,11 @@ and map_statement (env : env) (x : CST.statement) : G.stmt list =
         | Some ((colon, _) as field) ->
             let lp, params, rp = fdef.G.fparams in
             let self = G.Param (G.param_of_id ("self", colon)) in
-            ( { fdef with G.fparams = (lp, self :: params, rp) },
+            ( {
+                fdef with
+                G.fparams = (lp, self :: params, rp);
+                fkind = (G.Method, snd fdef.G.fkind);
+              },
               fields @ [ field ] )
       in
       let ent =

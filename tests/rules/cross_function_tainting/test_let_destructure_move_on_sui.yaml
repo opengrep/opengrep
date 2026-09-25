@@ -1,0 +1,13 @@
+rules:
+  - id: test-let-destructure-move-on-sui
+    message: Destructuring binds each part of the value
+    languages:
+      - move_on_sui
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

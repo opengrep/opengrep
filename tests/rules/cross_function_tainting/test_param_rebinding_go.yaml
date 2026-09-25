@@ -1,0 +1,13 @@
+rules:
+  - id: test-param-rebinding-go
+    message: Rebinding a by-value parameter does not reach the caller
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

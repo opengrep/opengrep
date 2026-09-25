@@ -742,7 +742,6 @@ and m_id_info a b =
   match (a, b) with
   | ( {
         G.id_resolved = _a1;
-        id_resolved_alternatives = _a2;
         id_type = _a3;
         id_instance_type = _a_instance_type;
         id_callee_definition = _a_callee_definition;
@@ -751,7 +750,6 @@ and m_id_info a b =
       },
       {
         B.id_resolved = _b1;
-        id_resolved_alternatives = _b2;
         id_type = _b3;
         id_instance_type = _b_instance_type;
         id_callee_definition = _b_callee_definition;
@@ -2444,6 +2442,16 @@ and m_attribute a b =
       fail ()
 
 and m_attributes a b =
+  (* [Ctor] is what a front end concludes about a definition (in Java, a
+   * method written without a return type), not something a pattern asks
+   * for: a pattern without a return type matches any method. *)
+  let a =
+    List.filter
+      (function
+        | G.KeywordAttr (G.Ctor, _) -> false
+        | _ -> true)
+      a
+  in
   if_config
     (fun x -> x.decorators_order_matters)
     ~then_:
@@ -3146,6 +3154,7 @@ and m_field_pattern a b =
 and m_list__m_field_pattern xsa xsb =
   match (xsa, xsb) with
   | [], _ -> return ()
+  | (_, G.PatEllipsis _) :: xsa, xsb -> m_list__m_field_pattern xsa xsb
   | a :: xsa, xsb ->
       let candidates = all_elem_and_rest_of_list xsb in
       let rec aux xs =
@@ -3174,8 +3183,32 @@ and m_definition a b =
        * which can leads to errors in type_of_string.
        *)
       let* () = m_entity a1 b1 in
-      let* () = m_definition_kind a2 b2 in
-      return ()
+      match (a2, b2) with
+      | G.ClassDef a_class, B.ClassDef b_class
+        when record_kind_left_open a1 b1 ->
+          m_class_definition { a_class with ckind = b_class.ckind } b_class
+      | _ ->
+          let* () = m_definition_kind a2 b2 in
+          return ()
+
+(* A record whose kind is stated by an attribute: a record pattern that
+ * does not state the kind matches a record of either kind. *)
+and record_kind_left_open (a : G.entity) (b : G.entity) : bool =
+  let is_record (ent : G.entity) =
+    List.exists
+      (function
+        | G.KeywordAttr (G.RecordClass, _) -> true
+        | _ -> false)
+      ent.attrs
+  in
+  let states_kind (ent : G.entity) =
+    List.exists
+      (function
+        | G.OtherAttribute ((("class" | "struct"), _), []) -> true
+        | _ -> false)
+      ent.attrs
+  in
+  is_record a && (not (states_kind a)) && states_kind b
 
 and m_entity a b =
   match (a, b) with
@@ -3347,8 +3380,9 @@ and m_function_kind a b =
 and m_function_definition a b =
   Trace_matching.(if on then print_function_definition_pair a b);
   match (a, b) with
-  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4 },
-      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4 } ) ->
+  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4; fcaptures = _ },
+      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4; fcaptures = _ } )
+    ->
       m_parameters a1 b1 >>= fun () ->
       (m_option_none_can_match_some m_type_) a2 b2 >>= fun () ->
       m_function_body a3 b3 >>= fun () -> m_wrap m_function_kind a4 b4
@@ -3569,12 +3603,15 @@ and m_list__m_field ?(mvar_ellipsis = []) ~less_is_ok (xsa : G.field list)
    *)
   | ( G.F
         {
-          s = G.DefStmt (({ G.name = G.EN (G.Id ((s1, _), _)); _ }, _) as adef);
+          s =
+            G.DefStmt (({ G.name = G.EN (G.Id ((s1, _), info1)); _ }, _) as adef);
           _;
         }
       :: xsa,
       xsb )
-    when (not (Mvar.is_metavar_name s1)) && not (Pattern.is_regexp_string s1)
+    when (not (Mvar.is_metavar_name s1))
+         && (not (Pattern.is_regexp_string s1))
+         && not (String.contains s1 '$' && IdFlags.is_hidden !(info1.G.id_flags))
     -> (
       try
         let before, there, after =
@@ -3751,11 +3788,13 @@ and m_class_kind a b = m_wrap m_class_kind_bis a b
 and m_class_kind_bis a b =
   match (a, b) with
   | G.Class, B.Class
+  | G.Struct, B.Struct
   | G.Interface, B.Interface
   | G.Trait, B.Trait
   | G.Object, B.Object ->
       return ()
   | G.Class, _
+  | G.Struct, _
   | G.Interface, _
   | G.Trait, _
   | G.Object, _ ->
@@ -3821,6 +3860,7 @@ and m_directive a b =
   | G.Package _
   | G.PackageEnd _
   | G.Pragma _
+  | G.BuildConstraint _
   | G.OtherDirective _ ->
       fail ()
 
@@ -3980,7 +4020,8 @@ and m_directive_basic a b =
   | G.Pragma _, _
   | G.ImportAll _, _
   | G.Package _, _
-  | G.PackageEnd _, _ ->
+  | G.PackageEnd _, _
+  | G.BuildConstraint _, _ ->
       fail ()
 
 and m_normalized_imports a b =

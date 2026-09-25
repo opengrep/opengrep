@@ -278,7 +278,7 @@ let modifier (env : env) (x : CST.modifier) : G.attribute =
   | `Pat_priv x ->
       G.KeywordAttr (G.Private, token env x)
   | `Pat_virt x ->
-      G.OtherAttribute (("virtual", token env x), [])
+      G.KeywordAttr (G.Virtual, token env x)
   | `Pat_abst x ->
       G.KeywordAttr (G.Abstract, token env x)
   | `Pat_static x ->
@@ -1100,7 +1100,7 @@ and binary_expression (env : env) (x : CST.binary_expression) : G.expr =
 (* NEW *)
 and block (env : env) ((v1, v2, v3) : CST.block) : G.stmt =
   let v1 = token env v1 (* "{" *) in
-  let v2 = List_.map (statement env) v2 in
+  let v2 = List.concat_map (statements env) v2 in
   let v3 = token env v3 (* "}" *) in
   G.Block (v1, v2, v3) |> G.s
 
@@ -1174,39 +1174,46 @@ and catch_formal_parameter (env : env) (x : CST.catch_formal_parameter) : G.catc
 and class_body (env : env) ((v1, v2, v3) : CST.class_body) : G.stmt list bracket =
   let v1 = (* "{" *) token env v1 in
   let v2 =
-    List.filter_map (class_body_declaration env) v2
+    List.concat_map (class_body_declaration env) v2
   in
   let v3 = (* "}" *) token env v3 in
   v1, v2, v3
 
 (* NEW *)
-and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt option =
+and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt list =
   match x with
   | `Semg_ellips tok ->
       let t = (* "..." *) token env tok in
       let v2 = G.sc in
-      Some (G.ExprStmt (G.Ellipsis t |> G.e, v2) |> G.s)
+      [ G.ExprStmt (G.Ellipsis t |> G.e, v2) |> G.s ]
   | `Choice_field_decl x ->
       match x with
       | `Field_decl x ->
-          Some (field_declaration env x)
+          field_declaration env x
       | `Meth_decl x ->
-          Some (method_declaration env x)
+          [ method_declaration env x ]
       | `Class_decl x ->
-          Some (class_declaration env x)
+          [ class_declaration env x ]
       | `Inte_decl x ->
-          Some (interface_declaration env x)
+          [ interface_declaration env x ]
       | `Enum_decl x ->
-          Some (enum_declaration env x)
+          [ enum_declaration env x ]
       | `Blk x ->
-          Some (block env x)
+          (* an instance initialiser, run as part of every constructor *)
+          let st = block env x in
+          let tok =
+            match st.G.s with
+            | G.Block (l, _, _) -> l
+            | _ -> G.fake "{"
+          in
+          [ G.OtherStmtWithStmt (G.OSWS_Block ("Init", tok), [], st) |> G.s ]
       | `Static_init x ->
-          Some (static_initializer env x)
+          [ static_initializer env x ]
       | `Cons_decl x ->
-          Some (constructor_declaration env x)
+          [ constructor_declaration env x ]
       | `SEMI tok ->
           let _t = (* ";" *) token env tok
-          in None
+          in []
 
 (* NEW *)
 and class_declaration (env : env) ((h, b) : CST.class_declaration) : G.stmt =
@@ -1302,7 +1309,7 @@ and condition_expression (env : env) (x : CST.condition_expression) : G.expr =
 
 (* NEW *)
 and constant_declaration (env : env) ((v1, v2, v3, v4) : CST.constant_declaration)
-    : G.stmt =
+    : G.stmt list =
   local_variable_declaration env (v1, v2, v3, v4)
 
 (* NEW *)
@@ -1314,7 +1321,7 @@ and constructor_body (env : env) ((v1, v2, v3, v4) : CST.constructor_body)
     | Some x -> [explicit_constructor_invocation env x]
     | None -> []
   in
-  let v3 = List.map (statement env) v3 in
+  let v3 = List.concat_map (statements env) v3 in
   let v4 = (* "}" *) token env v4 in
   G.Block (v1, v2 @ v3, v4) |> G.s
 
@@ -1337,7 +1344,7 @@ and constructor_declaration (env : env) ((v1, v2, v3) : CST.constructor_declarat
       fkind = (G.Method, t);
       fparams;
       frettype = None;
-      fbody;
+      fcaptures = G.no_captures; fbody;
     }
   in
   G.DefStmt (ent, def) |> G.s
@@ -1391,6 +1398,7 @@ and declaration (env : env) (x : CST.declaration) : G.stmt =
         { fkind = (G.Function, v1);
           fparams = fb [];
           frettype = None;
+          fcaptures = G.no_captures;
           fbody = G.FBStmt v9
         }
       in
@@ -1583,7 +1591,9 @@ and expression (env : env) (x : CST.expression) : G.expr =
       in
       let v2 = assignment_operator env v2 in
       let v3 = expression env v3 in
-      G.AssignOp (v1, v2, v3) |> G.e
+      (match v2 with
+      | Eq, tok -> G.Assign (v1, tok, v3) |> G.e
+      | _ -> G.AssignOp (v1, v2, v3) |> G.e)
   | `Bin_exp x ->
       binary_expression env x
   | `Inst_exp (v1, v2, v3) ->
@@ -1665,7 +1675,7 @@ and field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) : G.expr =
   G.DotAccess (v, t, v4) |> G.e
 
 (* NEW *)
-and field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration) : G.stmt =
+and field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration) : G.stmt list =
 match v4 with
   | `SEMI tok ->
       local_variable_declaration env (v1, v2, v3, tok)
@@ -1674,8 +1684,8 @@ match v4 with
       let attrs = Option.map (modifiers env) v1 in
       let typ = unannotated_type env v2 in
       let ptype = Some (make_type_opt attrs typ) in
-      let varStmt = local_variable_declaration_data_only env (v1, v2, v3) |> var_def_stmt (fake ";") in
-      let lb, accessors, rb = accessor_list env x in
+      let varStmts = local_variable_declaration_data_only env (v1, v2, v3) |> var_def_stmts (fake ";") in
+      let _, accessors, _ = accessor_list env x in
       let funcs =
         accessors |>
         List.map
@@ -1716,13 +1726,12 @@ match v4 with
                         else []);
                   frettype = (if has_return then ptype else None);
                   (* TODO Should this be "void"? *)
-                  fbody;
+                  fcaptures = G.no_captures; fbody;
                 }
             in
             DefStmt (ent, funcdef) |> G.s)
       in
-      Block (lb, varStmt :: funcs, rb)
-      |> G.s
+      varStmts @ funcs
 
 (* NEW *)
 and finally_clause (env : env) ((v1, v2) : CST.finally_clause) : G.finally =
@@ -2045,25 +2054,25 @@ and interface_body (env : env) ((v1, v2, v3) : CST.interface_body)
     : G.stmt list bracket =
   let v1 = (* "{" *) token env v1 in
   let v2 =
-    List.filter_map (fun x ->
+    List.concat_map (fun x ->
       match x with
       | `Semg_ellips tok ->
           let t = (* "..." *) token env tok in
           let v2 = G.sc in
-          Some (G.ExprStmt (G.Ellipsis v1 |> G.e, v2) |> G.s)
+          [ G.ExprStmt (G.Ellipsis t |> G.e, v2) |> G.s ]
       | `Cst_decl x ->
-          Some (constant_declaration env x)
+          constant_declaration env x
       | `Enum_decl x ->
-          Some (enum_declaration env x)
+          [ enum_declaration env x ]
       | `Meth_decl x ->
-          Some (method_declaration env x)
+          [ method_declaration env x ]
       | `Class_decl x ->
-          Some (class_declaration env x)
+          [ class_declaration env x ]
       | `Inte_decl x ->
-          Some (interface_declaration env x)
+          [ interface_declaration env x ]
       | `SEMI tok ->
           let _t = (* ";" *) token env tok
-          in None
+          in []
     ) v2
   in
   let v3 = (* "}" *) token env v3 in
@@ -2109,11 +2118,16 @@ and interfaces (env : env) ((v1, v2) : CST.interfaces) : G.type_ list =
   v2
 
 (* NEW *)
-and labeled_statement (env : env) ((v1, v2, v3) : CST.labeled_statement) : G.stmt =
+and labeled_statement (env : env) (x : CST.labeled_statement) : G.stmt =
+  G.stmt1 (labeled_statements env x)
+
+and labeled_statements (env : env) ((v1, v2, v3) : CST.labeled_statement) :
+    G.stmt list =
   let v1 = identifier env v1 (* identifier *) in
   let _v2 = token env v2 (* ":" *) in
-  let v3 = statement env v3 in
-  G.Label (v1, v3) |> G.s
+  match statements env v3 with
+  | first :: rest -> (G.Label (v1, first) |> G.s) :: rest
+  | [] -> [ G.Label (v1, G.stmt1 []) |> G.s ]
 
 (* RAW QUERY *)
 and limit_clause (env : env) ((v1, v2) : CST.limit_clause) : G.expr list =
@@ -2122,10 +2136,10 @@ and limit_clause (env : env) ((v1, v2) : CST.limit_clause) : G.expr list =
   [G.L (G.String (fb v1)) |> G.e; v2]
 
 (* NEW *)
-and local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) : G.stmt =
+and local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) : G.stmt list =
   let d = local_variable_declaration_data_only env (v1, v2, v3) in
   let v4 = (* ";" *) token env v4 in
-  var_def_stmt v4 d
+  var_def_stmts v4 d
 
 (* AUX *)
 (* without semicolon *)
@@ -2138,19 +2152,17 @@ and local_variable_declaration_data_only (env : env) ((v1, v2, v3))
   in
   let v2 = unannotated_type env v2 in
   let v3 = variable_declarator_list env v3 in
+  (* the modifiers belong to the declaration, not to its type *)
   List_.map
-    (fun (ent, vardef) ->
-      (ent, { vinit = vardef.vinit; vtype = Some (make_type v1 v2); vtok = G.no_sc }))
+    (fun ((ent : entity), vardef) ->
+      ( { ent with attrs = ent.attrs @ v1 },
+        { vinit = vardef.vinit; vtype = Some (make_type [] v2); vtok = G.no_sc } ))
     v3
 
 (* AUX *)
-and var_def_stmt (sc : Tok.t)
-    (decls : (entity * variable_definition) list) : G.stmt =
-  let stmts =
-    decls
-    |> H2.add_semicolon_to_last_var_def_and_convert_to_stmts sc
-  in
-  G.stmt1 stmts
+and var_def_stmts (sc : Tok.t)
+    (decls : (entity * variable_definition) list) : G.stmt list =
+  H2.add_semicolon_to_last_var_def_and_convert_to_stmts sc decls
 
 (* NEW *)
 and new_map_creation_expression (env : env) ((v1, v2, v3) : CST.map_creation_expression)
@@ -2239,6 +2251,7 @@ and method_header (env : env) ((v1, v2, v3) : CST.method_header)
     fkind = (G.Method, tok);
     fparams = params;
     frettype = Some (make_type annots v2);
+    fcaptures = G.no_captures;
     fbody = G.FBNothing;
   }
 
@@ -2788,6 +2801,12 @@ and sosl_with_type (env : env) (x : CST.sosl_with_type) : raw =
       R.Tuple [R.Token v1; R.Any (G.E e)]
 
 (* NEW *)
+and statements (env : env) (x : CST.statement) : G.stmt list =
+  match x with
+  | `Choice_decl (`Local_var_decl x) -> local_variable_declaration env x
+  | `Choice_decl (`Labe_stmt x) -> labeled_statements env x
+  | _ -> [ statement env x ]
+
 and statement (env : env) (x : CST.statement) : G.stmt =
   match x with
   | `Choice_decl x ->
@@ -2822,7 +2841,7 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       | `Switch_exp x ->
           switch_expression env x
       | `Local_var_decl x ->
-          local_variable_declaration env x
+          G.stmt1 (local_variable_declaration env x)
       | `Throw_stmt x ->
           throw_statement env x
       | `Try_stmt x ->
@@ -2837,15 +2856,10 @@ and statement (env : env) (x : CST.statement) : G.stmt =
 
 (* NEW *)
 and static_initializer (env : env) ((v1, v2) : CST.static_initializer) : G.stmt =
-  let _, t as v1 = str env v1 in
+  let _, t = str env v1 in
   let v2 = trigger_body env v2 in
-  let attrs = [KeywordAttr (G.Static, t)] in
-  let ent = basic_entity v1 ~attrs in
-  let def =
-    G.FuncDef
-      { fkind = (G.Method, t); fparams = fb []; frettype = None; fbody = G.FBStmt v2 }
-  in
-  G.DefStmt (ent, def) |> G.s
+  (* the same construct as Java's static initialiser *)
+  G.OtherStmtWithStmt (G.OSWS_Block ("Static", t), [], v2) |> G.s
 
 (* RAW QUERY *)
 and subquery (env : env) ((v1, v2, v3) : CST.subquery) : raw =
@@ -3182,7 +3196,7 @@ and while_statement (env : env) ((v1, v2, v3) : CST.while_statement) : G.stmt =
 let parser_output (env : env) (x : CST.parser_output) : G.any =
   match x with
   | `Rep_stmt xs ->
-      G.Ss (List.map (statement env) xs)
+      G.Ss (List.concat_map (statements env) xs)
   | `Cons_decl x ->
       G.S (constructor_declaration env x)
   | `Exp x ->
@@ -3191,8 +3205,10 @@ let parser_output (env : env) (x : CST.parser_output) : G.any =
       G.At (annotation env x)
   | `Meth_decl x ->
       G.S (method_declaration env x)
-  | `Local_var_decl x ->
-      G.S (local_variable_declaration env x)
+  | `Local_var_decl x -> (
+      match local_variable_declaration env x with
+      | [ st ] -> G.S st
+      | sts -> G.Ss sts)
   | `Class_header x ->
       let ent, d = class_header env x in
       G.Partial (G.PartialDef (ent, G.ClassDef d))

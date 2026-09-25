@@ -1,0 +1,13 @@
+rules:
+  - id: test-capture-modes-php
+    message: a closure holds a variable captured by value as it was at creation
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

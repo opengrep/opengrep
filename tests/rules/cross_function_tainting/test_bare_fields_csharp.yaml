@@ -1,0 +1,13 @@
+rules:
+  - id: test-bare-fields-csharp
+    message: a field written by its bare name is written for the callers
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink(...)

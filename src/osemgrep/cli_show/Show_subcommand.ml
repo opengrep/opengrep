@@ -320,10 +320,6 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       | _ ->
         List.iter
           (fun rule ->
-            (* This loop calls [check_rule] directly, bypassing the
-             * [reset_intern] in [check_rules]: clear the guard-atom intern
-             * table per rule so canonical atoms never leak across rules. *)
-            Effect_guard.reset_intern ();
             let xconf = Match_env.default_xconfig in
             let xconf = { xconf with config = { xconf.config with taint_intrafile = true; effect_guards = true } } in
             let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.Rule.options in
@@ -339,7 +335,10 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
               Xtarget.resolve parser (Target.mk_regular xlang Product.all (File target_file))
             in
             let _report, signature_db_opt =
-              Match_tainting_mode.check_rule tbl rule Fun.id xconf xtarget
+              Match_tainting_mode.check_rule tbl rule Fun.id
+                ~shared_tables:
+                  (Taint_shared_tables.create (Effect_guard.create_atoms ()))
+                xconf xtarget
             in
             begin match signature_db_opt with
             | None ->

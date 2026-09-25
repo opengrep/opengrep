@@ -111,11 +111,14 @@ type ident = G.ident [@@deriving show, eq, ord]
 type name = { ident : ident; sid : G.sid; id_info : G.id_info }
 [@@deriving show,eq]
 
-(* [SId.to_string], not the derived [show]: this string keys the constant
-   propagation environment on every variable access, and the derived
-   printer goes through [Format]. *)
+(* This string keys the constant propagation environment on every variable
+   access, so it is the binding's identity (file and number), which
+   [SId.equal] compares, and never the site: a rebinding of one name in one
+   scope is the same variable at another site. Not the derived [show], which
+   goes through [Format]. *)
 let str_of_name name =
-  Common.spf "%s:%s" (fst name.ident) (G.SId.to_string name.sid)
+  let _, file, _, _ = G.SId.to_loc name.sid in
+  Common.spf "%s:%s#%d" (fst name.ident) file (G.SId.to_int name.sid)
 
 let compare_name name1 name2 =
   let { ident = str1, _tok1; sid = sid1; id_info = _ } = name1 in
@@ -190,7 +193,12 @@ let any_of_orig = function
 (* Parameters and arguments *)
 (*****************************************************************************)
 
-type name_param = { pname : name; pdefault : G.expr option }
+type name_param = {
+  pname : name;
+  pdefault : G.expr option;
+  by_reference : bool;
+  ptype : G.type_ option;
+}
 [@@deriving show { with_path = false }, ord]
 
 type param =
@@ -233,11 +241,11 @@ class virtual ['self] iter_parent =
 
     method visit_param env param =
       match param with
-      | Param { pname; pdefault = _ }
-      | ParamReceiver { pname; pdefault = _ }
-      | ParamRest { pname; pdefault = _ }
-      | ParamKwd { pname; pdefault = _ }
-      | ParamPattern ({ pname; pdefault = _ }, _) ->
+      | Param { pname; pdefault = _; _ }
+      | ParamReceiver { pname; pdefault = _; _ }
+      | ParamRest { pname; pdefault = _; _ }
+      | ParamKwd { pname; pdefault = _; _ }
+      | ParamPattern ({ pname; pdefault = _; _ }, _) ->
           self#visit_name env pname
       | ParamFixme -> ()
 
@@ -257,6 +265,7 @@ class virtual ['self] iter_parent =
     method visit_any _env _any = ()
     method visit_definition _env _def = ()
     method visit_function_kind _env _def = ()
+    method visit_capture_mode _env _mode = ()
     method visit_class_definition _env _class_def = ()
     method visit_directive _env _directive = ()
   end
@@ -468,7 +477,13 @@ and function_definition = {
   fkind : G.function_kind wrap;
   fparams : param list;
   frettype : G.type_ option;
+  fcaptures : captures;
   fbody : stmt list;
+}
+
+and captures = {
+  cdefault : G.capture_mode option;
+  clist : (name * G.capture_mode) list;
 }
 
 (*****************************************************************************)
@@ -509,13 +524,26 @@ and node_kind =
 type edge = Direct
 type cfg = (node, edge) CFG.t
 
-type fun_cfg = { params : param list; cfg : cfg; lambdas : lambdas_cfgs }
+type fun_cfg = {
+  params : param list;
+  frettype : G.type_ option;
+  captures : captures;
+  cfg : cfg;
+  lambdas : lambdas_cfgs;
+  source_range : source_range option;
+}
+
 and lambdas_cfgs = fun_cfg NameMap.t
+
+(* The span of a function in its source file, inclusive, as (line, column)
+ * pairs; the file as naming records it in a sid. *)
+and source_range = { file : string; first : int * int; last : int * int }
 
 (* an int representing the index of a node in the graph *)
 type nodei = Ograph_extended.nodei
 
 let mk_node n = { n; at_exit = false }
+let no_captures = { cdefault = None; clist = [] }
 
 (*****************************************************************************)
 (* Any *)

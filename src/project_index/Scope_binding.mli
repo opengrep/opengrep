@@ -29,30 +29,29 @@ val companion_binding_of :
 val bindings_of_positioned :
   positioned_binding list -> Func_lookup.scope_entry list Common.SMap.t
 
-val class_il_name_of : Types.class_info -> IL.name
+val bindings_of_package_block :
+  positioned_binding list -> Func_lookup.scope_entry list Common.SMap.t
 
-val classes_by_qn : Types.class_info list -> Types.class_info Common.SMap.t
+val class_qn_of_entry : Types.entry -> Names.Class_qn.t
+val class_il_name_of : Types.entry -> IL.name
+
+val classes_by_qn : Types.entry list -> Types.entry Common.SMap.t
 
 val bindings_in_class :
-  Types.class_info ->
+  Types.entry ->
   (pos:Pos.t option -> parent_path:IL.name option list ->
    positioned_binding list) ->
   positioned_binding list
 
-val class_member_bindings :
-  members_of:(Names.Class_qn.t -> (string * Func_info.t list) list) ->
-  Types.class_info list ->
-  positioned_binding list
-
-val no_companion : Types.class_info -> bool
+val no_companion : Types.entry -> bool
 
 val own_class_bindings :
-  companion:(Types.class_info -> bool) ->
+  companion:(Types.entry -> bool) ->
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->
   binds_at_file_scope:(Names.Class_qn.t -> bool) ->
   scope_of_owner:(Names.Class_qn.t -> IL.name option list option) ->
-  Types.class_info list ->
+  Types.entry list ->
   positioned_binding list
 
 val own_definitions_of_file :

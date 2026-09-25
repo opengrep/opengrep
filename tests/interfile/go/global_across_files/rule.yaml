@@ -1,0 +1,12 @@
+rules:
+  - id: global-across-files-go
+    languages: [go]
+    severity: ERROR
+    message: a write to a package variable reaches the functions that call the writer
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

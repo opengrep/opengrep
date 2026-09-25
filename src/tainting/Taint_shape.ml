@@ -157,6 +157,21 @@ let compose_offset ?(max : int option) ~(lang : Lang.t)
   in
   go (List.rev base) (List.length base) offset
 
+(* A field offset of function type is a method, unless naming found it to be
+ * a data field of the receiver's type, which holds a function. *)
+let is_method_offset (o : T.offset) : bool =
+  match o with
+  | T.Ofld n -> (
+      match !(n.id_info.id_type) with
+      | Some { t = G.TyFun _; _ } ->
+          not (IdFlags.is_data_field !(n.id_info.id_flags))
+      | _ -> false)
+  | T.Oint _
+  | T.Ostr _
+  | T.Oslice _
+  | T.Oany ->
+      false
+
 let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
     taints =
   let type_of_offset o =
@@ -204,7 +219,7 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
   |> List.fold_left
        (fun taints o ->
          match (type_of_offset o, o) with
-         | Some { t = TyFun _; _ }, _ ->
+         | Some { t = TyFun _; _ }, _ when is_method_offset o ->
             (* We have an l-value like `o.f` where `f` has a function type,
              * so it's a method call, we return nothing here. We cannot just
              * return `xtaint`, which is the taint of `o` in the environment;
@@ -244,16 +259,7 @@ let find_in_arg ?max ~lang ~taints offset arg base_offsets =
    * value (e.g. [arr.begin()] in C++). Extending the Arg shape through
    * the method would make the receiver look like a callback and fire
    * false HOF dispatch. Fall through to the poly-taint path instead. *)
-  let offset_is_method =
-    List.exists
-      (function
-        | T.Ofld n -> (
-            match !(n.id_info.id_type) with
-            | Some { t = G.TyFun _; _ } -> true
-            | _ -> false)
-        | _ -> false)
-      offset
-  in
+  let offset_is_method = List.exists is_method_offset offset in
   if offset_is_method then None
   else
     (* Extend each alternative path with the additional [offset],
@@ -419,39 +425,12 @@ and unify_shape ~lang shape1 shape2 =
       (* 'Bot' acts like a do-not-care. *)
       shape
   | Obj obj1, Obj obj2 -> Obj (unify_obj ~lang obj1 obj2)
-  | ( Fun { params = params1; params_il = params_il1; effects = effects1 },
-      Fun { params = params2; params_il = params_il2; effects = effects2 } )
-    ->
-      let equal_il_param p1 p2 =
-        match
-          (IL_helpers.pname_of_param p1, IL_helpers.pname_of_param p2)
-        with
-        | None, None -> true
-        | Some n1, Some n2 -> IL.equal_name n1 n2
-        | _ -> false
-      in
-      if Signature.equal_params params1 params2
-         && List.equal equal_il_param params_il1 params_il2
-      then
-        Fun {
-          params = params1;
-          params_il = params_il1;
-          effects = Effects.union effects1 effects2;
-        }
-      else (
-        (* Two Fun shapes from different lambdas. Their effects'
-         * guards anchor in distinct IL.names (sids differ), so we
-         * cannot pick a single [params_il] that lets the walker
-         * substitute both sides' captures. Keep shape1; drop shape2.
-         * Same precedent as below for non-equal simplified params. *)
-        Log.warn (fun m ->
-            m
-              "Trying to unify two fun shapes with different parameters: %s ~ \
-               %s"
-              (Signature.show_params params1)
-              (Signature.show_params params2));
-        shape1)
-  | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_arg arg1 arg2 ->
+  | Fun (c1, cs1), Fun (c2, cs2) ->
+      if phys_equal shape1 shape2 then shape1
+      else
+        let c, cs = unify_closure_sets ~lang (c1, cs1) (c2, cs2) in
+        Fun (c, cs)
+  | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_formal arg1 arg2 ->
       (* Same parameter — set-union the alternative offsets so a value
        * bound to different offsets across branches retains every
        * alternative. [sort_uniq] gives a canonical order and dedups. *)
@@ -472,7 +451,7 @@ and unify_shape ~lang shape1 shape2 =
        * TODO: record and solve constraints. *)
       Log.warn (fun m ->
           m "Trying to unify two different arg shapes: %s ~ %s"
-            (T.show_arg arg1) (T.show_arg arg2));
+            (T.show_formal arg1) (T.show_formal arg2));
       shape1
   (* 'Arg' acts like a shape variable. *)
   | Arg _, (Obj _ as obj)
@@ -495,6 +474,49 @@ and unify_shape ~lang shape1 shape2 =
 and unify_obj ~lang obj1 obj2 =
   (* THINK: Apply taint_MAX_OBJ_FIELDS limit ? *)
   Fields.union (fun _ x y -> Some (unify_cell ~lang x y)) obj1 obj2
+
+and unify_closure ~lang (c1 : closure) (c2 : closure) : closure =
+  if phys_equal c1 c2 then c1
+  else
+    {
+      c1 with
+      sig_ =
+        {
+          c1.sig_ with
+          Signature.effects =
+            Effects.union c1.sig_.Signature.effects c2.sig_.Signature.effects;
+        };
+      env = unify_env ~lang c1.env c2.env;
+    }
+
+and unify_closure_sets ~lang ((c1, cs1) : closure * closure list)
+    ((c2, cs2) : closure * closure list) : closure * closure list =
+  match Function_id.compare c1.def c2.def with
+  | 0 -> (unify_closure ~lang c1 c2, unify_closures ~lang cs1 cs2)
+  | n when n < 0 -> (c1, unify_closures ~lang cs1 (c2 :: cs2))
+  | _ -> (c2, unify_closures ~lang (c1 :: cs1) cs2)
+
+and unify_closures ~lang (cs1 : closure list) (cs2 : closure list) :
+    closure list =
+  match (cs1, cs2) with
+  | [], cs
+  | cs, [] ->
+      cs
+  | c1 :: rest1, c2 :: rest2 ->
+      let c, cs = unify_closure_sets ~lang (c1, rest1) (c2, rest2) in
+      c :: cs
+
+(* Both environments belong to the same code, so they bind the same
+ * variables in the same order. *)
+and unify_env ~lang (env1 : env) (env2 : env) : env =
+  List.map2
+    (fun ((x, entry1) as binding1) (_, entry2) ->
+      match (entry1, entry2) with
+      | Val cell1, Val cell2 -> (x, Val (unify_cell ~lang cell1 cell2))
+      | Ref _, _
+      | Val _, Ref _ ->
+          binding1)
+    env1 env2
 
 (*********************************************************)
 (* Object shapes *)
@@ -590,8 +612,8 @@ and gather_all_taints_in_shape_acc acc = function
       (* One [Shape_var] per alternative offset. *)
       List.fold_left
         (fun acc off ->
-          let lval = { T.base = T.BArg arg; offset = off } in
-          let taint = { T.orig = T.Shape_var lval; tokens = [] } in
+          let lval = { T.base = T.base_of_formal arg; offset = off } in
+          let taint = T.taint_of_orig (T.Shape_var lval) in
           Taints.add_taint taint acc)
         acc offsets
   | Fun _ ->
@@ -749,16 +771,35 @@ and bound_fun_shape ~levels (shape : shape) : shape =
   | Bot
   | Arg _ ->
       shape
-  | Fun sig_ ->
+  | Fun (c, cs) ->
       if levels <= 0 then Bot
       else
-        let effects =
-          Effects.map
-            (map_effect_shapes ~widen:(bound_fun_shape ~levels:(levels - 1)))
-            sig_.Signature.effects
+        let bound_closure (closure : closure) : closure =
+          let sig_ = closure.sig_ in
+          let effects =
+            Effects.map
+              (map_effect_shapes ~widen:(bound_fun_shape ~levels:(levels - 1)))
+              sig_.Signature.effects
+          in
+          let env' =
+            List_.map
+              (fun ((x, entry) as binding) ->
+                match entry with
+                | Ref _ -> binding
+                | Val (Cell (xtaint, inner)) ->
+                    let inner' = bound_fun_shape ~levels:(levels - 1) inner in
+                    if phys_equal inner' inner then binding
+                    else (x, Val (Cell (xtaint, inner'))))
+              closure.env
+          in
+          if
+            phys_equal effects sig_.Signature.effects
+            && List.for_all2 phys_equal env' closure.env
+          then closure
+          else { closure with sig_ = { sig_ with Signature.effects }; env = env' }
         in
-        if phys_equal effects sig_.Signature.effects then shape
-        else Fun { sig_ with Signature.effects }
+        let c', cs' = Shape_and_sig.map_closures bound_closure (c, cs) in
+        if phys_equal c' c && phys_equal cs' cs then shape else Fun (c', cs')
   | Obj obj ->
       let changed = ref false in
       let obj' =
@@ -775,6 +816,15 @@ and bound_fun_shape ~levels (shape : shape) : shape =
 
 let truncate_effect ~max_depth (eff : Shape_and_sig.Effect.t) :
     Shape_and_sig.Effect.t =
+  (* The positions holding several results are not a level of a value:
+   * each result keeps [max_depth] levels. *)
+  let max_depth =
+    match eff with
+    | Shape_and_sig.Effect.ToReturn { several_results = true; _ }
+      when max_depth >= 1 ->
+        max_depth + 1
+    | _ -> max_depth
+  in
   let widen shape =
     truncate_shape ~max_depth shape
     |> bound_fun_shape ~levels:Limits_semgrep.taint_MAX_SIG_FUN_DEPTH

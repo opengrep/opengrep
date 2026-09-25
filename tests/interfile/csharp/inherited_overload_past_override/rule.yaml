@@ -1,0 +1,14 @@
+rules:
+  - id: inherited-overload-past-override-csharp
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      Tainted data reaches an overload inherited from the base class of a
+      class that overrides another overload of the same name.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source(...)
+    pattern-sinks:
+      - pattern: Sink(...)

@@ -84,55 +84,24 @@ let keep_highest_precedence ~(precedence : Index_lang_rules.binding_kind -> int)
         | None -> None)
     bindings
 
-let members_along_order
-    ~(resolution_orders : Func_lookup.resolution_orders)
-    ~(methods_by_class : Func_lookup.methods_by_class)
-    (class_qn : Names.Class_qn.t) : (string * Func_info.t list) list =
-  let order =
-    Option.value
-      (Common.SMap.find_opt (Names.Class_qn.to_string class_qn)
-         resolution_orders)
-      ~default:[]
-  in
-  let bound_on (ancestor : Names.Class_qn.t)
-    : Func_info.t list Common.SMap.t =
-    Option.value
-      (Func_lookup.Class_qn_map.find_opt ancestor methods_by_class)
-      ~default:Common.SMap.empty
-  in
-  List.fold_left
-    (fun (members : Func_info.t list Common.SMap.t)
-         (ancestor : Names.Class_qn.t) ->
-      Common.SMap.fold
-        (fun (name : string) (funcs : Func_info.t list)
-             (members : Func_info.t list Common.SMap.t) ->
-          if Common.SMap.mem name members then members
-          else Common.SMap.add name funcs members)
-        (bound_on ancestor) members)
-    Common.SMap.empty order
-  |> Common.SMap.bindings
-
 let build
     ~(precedence : Index_lang_rules.binding_kind -> int)
     ~(own_package_members_kind : Index_lang_rules.binding_kind)
     ~(namespaces_nest : bool)
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
-    ~(classes_by_file : class_info list Common.SMap.t)
+    ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
-    ~(resolution_orders : Func_lookup.resolution_orders)
-    ~(methods_by_class : Func_lookup.methods_by_class)
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
-    ~(namespace_object_members :
-        Scope_binding.positioned_binding list Common.SMap.t)
+    ~(object_classes : unit Common.SMap.t)
     ~(companions : bool)
     (fi : file_info)
     : Func_lookup.scope_entry list Common.SMap.t
-      * (Names.Class_name.t * Fpath.t) list =
+      * Names.Class_qn.t list =
   let fi_file_str = Fpath.to_string fi.fi_file in
   let own_classes =
     Option.value (Common.SMap.find_opt fi_file_str classes_by_file) ~default:[]
@@ -143,27 +112,27 @@ let build
         Common.SMap.add (Names.Module_qn.to_string namespace_scope) () namespace_scopes)
       Common.SMap.empty fi.fi_namespace_scopes
   in
-  let own_class_by_qn : class_info Common.SMap.t =
+  let own_class_by_qn : entry Common.SMap.t =
     List.fold_left
-      (fun (by_qn : class_info Common.SMap.t) (ci : class_info) ->
-        Common.SMap.add (Names.Class_qn.to_string ci.ci_qn) ci by_qn)
+      (fun (by_qn : entry Common.SMap.t) (ci : entry) ->
+        Common.SMap.add (Names.Class_qn.to_string (Scope_binding.class_qn_of_entry ci)) ci by_qn)
       Common.SMap.empty own_classes
   in
   let type_bindings =
     Scope_binding.own_class_bindings
-      ~companion:(fun (ci : class_info) ->
+      ~companion:(fun (ci : entry) ->
         companions
-        && (match ci.ci_class_kind with
-            | G.Object -> true
-            | G.Class
-            | G.Interface
-            | G.Trait -> false))
+        && (match ci.kind with
+            | K_companion -> true
+            | K_class
+            | K_function
+            | K_method -> false))
       ~class_parent_paths
       ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
         Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scopes)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
-          (fun (ci : class_info) ->
+          (fun (ci : entry) ->
             [ Some (Scope_binding.class_il_name_of ci) ])
           (Common.SMap.find_opt (Names.Class_qn.to_string owner)
              own_class_by_qn))
@@ -175,37 +144,26 @@ let build
   let alias_bindings =
     Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
-  let member_bindings =
-    List.concat_map
-      (fun (ci : class_info) ->
-        let parent_path = [ Some (Scope_binding.class_il_name_of ci) ] in
-        let pos = Scope_binding.position_of_tok (Function_id.tok ci.ci_id) in
-        List.concat_map
-          (fun ((name : string), (funcs : Func_info.t list)) ->
-            Scope_binding.function_binding_of ~pos ~parent_path name funcs)
-          (members_along_order ~resolution_orders ~methods_by_class ci.ci_qn))
-      own_classes
-  in
-  let bindings_of_class_members ~(pos : Pos.t option)
-      (class_qn : Names.Class_qn.t)
-      : Scope_binding.positioned_binding list =
-    List.concat_map
-      (fun ((name : string), (funcs : Func_info.t list)) ->
-        Scope_binding.function_binding_of ~pos ~parent_path:[] name funcs)
-      (members_along_order ~resolution_orders ~methods_by_class class_qn)
-  in
   let bindings_of_module ~(pos : Pos.t option) (target : Names.Module_qn.t)
       : Scope_binding.positioned_binding list =
-    let attributes =
-      Func_lookup.attributes_of_module attributes_by_module target
-    in
-    let bound = Scope_binding.bindings_of_every_attribute ~pos attributes in
-    match
-      Common.SMap.find_opt (Names.Module_qn.to_string target)
-        namespace_object_members
-    with
-    | None -> bound
-    | Some (lifted : Scope_binding.positioned_binding list) -> bound @ lifted
+    Scope_binding.bindings_of_every_attribute ~pos
+      (Func_lookup.attributes_of_module attributes_by_module target)
+  in
+  let objects_of_module (target : Names.Module_qn.t) : Names.Class_qn.t list =
+    Common.SMap.fold
+      (fun (_ : string) (attribute : Func_lookup.module_attribute)
+           (objects : Names.Class_qn.t list) ->
+        match attribute with
+        | Func_lookup.Attr_class (class_qn : Names.Class_qn.t)
+          when Common.SMap.mem (Names.Class_qn.to_string class_qn)
+                 object_classes ->
+          class_qn :: objects
+        | Func_lookup.Attr_class _
+        | Func_lookup.Attr_class_with_companion _
+        | Func_lookup.Attr_functions _
+        | Func_lookup.Attr_module _ -> objects)
+      (Func_lookup.attributes_of_module attributes_by_module target)
+      []
   in
   let bindings_of_nested_types ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)
@@ -233,13 +191,10 @@ let build
       : Scope_binding.positioned_binding list =
     let bindings =
       match class_target target with
+      | Some _ when imp.im_static -> []
       | Some (class_qn : Names.Class_qn.t) ->
-        if imp.im_static then
-          bindings_of_class_members
-            ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
-        else
-          bindings_of_nested_types
-            ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
+        bindings_of_nested_types
+          ~pos:(Scope_binding.position_of_tok imp.im_tok) class_qn
       | None ->
         bindings_of_module ~pos:(Scope_binding.position_of_tok imp.im_tok)
           target
@@ -252,16 +207,14 @@ let build
           not (List.exists (String.equal binding.Scope_binding.pb_name) hidden))
         bindings
   in
-  let imported, on_demand, bound_class_files =
+  let imported, on_demand =
     List.fold_left
       (fun ((imported : Scope_binding.positioned_binding list),
-            (on_demand : Scope_binding.positioned_binding list),
-            (bound_class_files : (Names.Class_name.t * Fpath.t) list))
+            (on_demand : Scope_binding.positioned_binding list))
            (imp : import) ->
         match Imports.binding_of imp with
         | Imports.Wildcard_from (target : Names.Module_qn.t) ->
-          (imported, on_demand_bindings imp target @ on_demand,
-           bound_class_files)
+          (imported, on_demand_bindings imp target @ on_demand)
         | Imports.Named_binding { local; target } -> (
           match
             Common.SMap.find_opt (Names.Module_qn.to_string target)
@@ -271,8 +224,8 @@ let build
             ( Scope_binding.function_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local funcs
               @ imported,
-              on_demand, bound_class_files )
-          | Some (Class_definition { class_file; class_qn; class_companion; _ }) ->
+              on_demand )
+          | Some (Class_definition { class_qn; class_companion; _ }) ->
             ( Scope_binding.class_binding_of ~pos:(Scope_binding.position_of_tok imp.im_tok) ~parent_path:[]
                 local class_qn
               :: (match class_companion with
@@ -282,12 +235,9 @@ let build
                         ~parent_path:[] local companion_qn ]
                   | None -> [])
               @ imported,
-              on_demand,
-              (Names.Class_name.of_string (Names.Module_qn.bare_name target),
-               class_file)
-              :: bound_class_files )
-          | None -> (imported, on_demand, bound_class_files)))
-      ([], [], []) fi.fi_imports
+              on_demand )
+          | None -> (imported, on_demand)))
+      ([], []) fi.fi_imports
   in
   let global_bindings =
     List.concat_map
@@ -357,8 +307,23 @@ let build
        @ extension_bindings)
     @ of_kind own_package_members_kind own_namespace_scope_bindings
     @ of_kind Index_lang_rules.Own_definition
-        (function_bindings @ alias_bindings @ type_bindings @ member_bindings)
+        (function_bindings @ alias_bindings @ type_bindings)
     @ of_kind Index_lang_rules.Single_import (List.rev imported)
   in
+  let wildcard_targets (static : bool) : Names.Module_qn.t list =
+    List.filter_map
+      (fun (imp : import) ->
+        match Imports.binding_of imp with
+        | Imports.Wildcard_from (target : Names.Module_qn.t)
+          when Bool.equal imp.im_static static -> Some target
+        | Imports.Wildcard_from _
+        | Imports.Named_binding _ -> None)
+      (fi.fi_imports @ global_imports)
+  in
+  let member_classes =
+    List.filter_map class_target (wildcard_targets true)
+    @ List.concat_map objects_of_module
+        (own_namespaces @ wildcard_targets false)
+  in
   (Scope_binding.bindings_of_positioned (keep_highest_precedence ~precedence bindings),
-   bound_class_files)
+   member_classes)

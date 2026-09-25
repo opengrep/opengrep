@@ -40,6 +40,12 @@ val stamp_id_types : object_mapping list -> AST_generic.program -> unit
 (* Collect all class names from an AST *)
 val collect_class_names : AST_generic.program -> AST_generic.name list
 
+(* Whether every class of the language is a value type (C, C++, Rust). *)
+val classes_are_value_types : Lang.t -> bool
+
+(* The names of the value types the program declares. *)
+val value_type_names : Lang.t -> AST_generic.program -> string list
+
 (* Extract class name from a constructor expression *)
 val extract_class_name_from_constructor :
   AST_generic.expr -> Lang.t -> class_names -> AST_generic.name option

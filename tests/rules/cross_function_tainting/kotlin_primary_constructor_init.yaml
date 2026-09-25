@@ -1,0 +1,13 @@
+rules:
+  - id: kotlin_primary_constructor_init
+    message: a construction reaches the init blocks and property initialisers of the primary constructor
+    languages:
+      - kotlin
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

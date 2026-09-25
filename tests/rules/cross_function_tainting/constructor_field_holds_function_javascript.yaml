@@ -1,0 +1,13 @@
+rules:
+  - id: constructor_field_holds_function_javascript
+    message: a call through an instance field reaches the function the constructor stored there
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

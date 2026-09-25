@@ -49,19 +49,26 @@ let extract_param_labels_from_sink (sink_info : Effect.taints_to_sink) :
          | _ -> acc)
        []
 
-(* Extract this.x and self.x properties from a function definition *)
+(* Extract this.x and self.x properties from a function definition, and the
+ * instance fields it uses without [this], which are this.x too. *)
 let extract_method_properties (fdef : G.function_definition) :
     G.expr list =
   let found_properties = ref [] in
   let visitor =
-    object
+    object (self)
       inherit [_] G.iter as super
 
       method! visit_expr () expr =
-        (match expr.G.e with
-        | G.DotAccess (obj, _, G.FN (G.Id (_, _))) -> (
+        match expr.G.e with
+        | G.N (G.Id (_, { id_resolved = { contents = Some (G.EnclosedVar, _) }; _ }))
+          ->
+            found_properties := expr :: !found_properties
+        | G.Call ({ e = G.N (G.Id _); _ }, args) ->
+            (* A method called by its bare name is not a field. *)
+            self#visit_arguments () args
+        | G.DotAccess (obj, _, G.FN (G.Id (_, _))) ->
             (* Check if base object is IdSpecial This or Self *)
-            match obj.G.e with
+            (match obj.G.e with
             | G.IdSpecial (G.This, _)
             | G.IdSpecial (G.Self, _) ->
                 found_properties := expr :: !found_properties
@@ -70,9 +77,9 @@ let extract_method_properties (fdef : G.function_definition) :
                 | G.IdSpecial (G.This, _) ->
                     found_properties := expr :: !found_properties
                 | _ -> ())
-            | _ -> ())
-        | _ -> ());
-        super#visit_expr () expr
+            | _ -> ());
+            super#visit_expr () expr
+        | _ -> super#visit_expr () expr
     end
   in
   (* Convert function body to statement and visit it *)
@@ -100,6 +107,13 @@ let mk_method_property_assumptions (properties : G.expr list)
                    ~rev_offset:il_lval.rev_offset
                in
                Taint.{ base = BThis; offset = taint_offsets }
+           | Var field ->
+               (* A bare instance field *)
+               let taint_offsets =
+                 Taint.offset_of_rev_IL_offset lang
+                   ~rev_offset:il_lval.rev_offset
+               in
+               Taint.{ base = BThis; offset = Ofld field :: taint_offsets }
            | _ ->
                (* Fallback for other cases *)
                let taint_offsets =
@@ -108,14 +122,14 @@ let mk_method_property_assumptions (properties : G.expr list)
                in
                Taint.{ base = BThis; offset = taint_offsets }
          in
-         let generic_taint = Taint.{ orig = Var taint_lval; tokens = [] } in
+         let generic_taint = Taint.(taint_of_orig (Var taint_lval)) in
          let taint_set = Taint.Taint_set.singleton generic_taint in
          Taint_lval_env.add_lval lang il_lval taint_set taint_env)
        Taint_lval_env.empty
 
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env lang il_lval taint_set taint_arg env =
-  let param_shape = Shape.Arg (taint_arg, [ [] ]) in
+  let param_shape = Shape.Arg (Taint.Param taint_arg, [ [] ]) in
   Taint_lval_env.add_lval_shape lang il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
@@ -144,7 +158,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                  (* Use BArg instead of BGlob for function parameters *)
                in
                let generic_taint =
-                 Taint.{ orig = Var taint_lval; tokens = [] }
+                 Taint.(taint_of_orig (Var taint_lval))
                in
                (* Check if this parameter matches a source pattern *)
                let source_taints =
@@ -201,13 +215,12 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                              *   so the only way a source match at the
                              *   declaration can taint the leaf is by
                              *   consulting the rule predicate here. *)
-                            let leaf_shape = Shape.Arg (taint_arg, [ offset ]) in
+                            let leaf_shape = Shape.Arg (Taint.Param taint_arg, [ offset ]) in
                             let leaf_taint_lval : Taint.lval =
                               { base = BArg taint_arg; offset }
                             in
                             let leaf_taint =
-                              Taint.
-                                { orig = Var leaf_taint_lval; tokens = [] }
+                              Taint.(taint_of_orig (Var leaf_taint_lval))
                             in
                             let source_taints =
                               let _, tok = leaf_name.ident in
@@ -249,7 +262,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                  { base = BThis; offset = [] }
                in
                let generic_taint =
-                 Taint.{ orig = Var taint_lval; tokens = [] }
+                 Taint.(taint_of_orig (Var taint_lval))
                in
                let taint_set = Taint.Taint_set.singleton generic_taint in
                let new_env =
@@ -263,22 +276,26 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
   in
   env
 
-let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
+let extract_signature (taint_inst : TRI.t)
+    (shared_tables : Taint_shared_tables.t) ?(in_env : Taint_lval_env.t option)
     ?(name : IL.name option) ?(signature_db : signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Call_graph.G.t option = None)
     (func_cfg : IL.fun_cfg) : extraction_result =
-  let params = Signature.of_IL_params func_cfg.params in
+  let params = Signature_params.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
+  let captured = Dataflow_tainting.captured_of_fun_cfg func_cfg in
   let combined_env =
-    match in_env with
+    (match in_env with
     | Some env ->
         Taint_lval_env.union ~lang:taint_inst.lang env param_assumptions
-    | None -> param_assumptions
+    | None -> param_assumptions)
+    |> Dataflow_tainting.seed_global_vars taint_inst.lang
+         (Dataflow_tainting.global_vars func_cfg)
+    |> Dataflow_tainting.seed_captured_vars taint_inst.lang captured
   in
   let fixpoint_effects, mapping =
-    Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ?name
-      ?signature_db ?builtin_signature_db ?call_graph
+    Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env:combined_env ?name
+      ?signature_db ?builtin_signature_db
       func_cfg
   in
   Log.debug (fun m ->
@@ -290,7 +307,9 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
       m "SIG_RAW_EFFECTS: %s has %d effect(s): [%s]" fn
         (List.length (Effects.elements fixpoint_effects)) items);
   let effects_with_preconditions =
-    fixpoint_effects |> Effects.elements
+    fixpoint_effects
+    |> Dataflow_tainting.drop_writes_to_own_vars func_cfg
+    |> Effects.elements
     |> List.fold_left
          (fun acc eff ->
            match eff with
@@ -397,6 +416,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     {
       Signature.params;
       params_il = func_cfg.params;
+      captured;
       effects = effects_with_preconditions;
     }
   in
@@ -407,98 +427,24 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
         (Signature.show signature));
   { signature; mapping }
 
-let mk_global_assumptions_with_sids (lang : Lang.t)
-    (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
-  global_vars
-  |> List.fold_left
-       (fun env (var_name, sid) ->
-         let fake_tok = Tok.unsafe_fake_tok var_name in
-         let var_id =
-           IL.
-             {
-               ident = (var_name, fake_tok);
-               sid;
-               id_info = G.empty_id_info ();
-             }
-         in
-         let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
-         let taint_lval : Taint.lval = { base = BGlob var_id; offset = [] } in
-         let generic_taint = Taint.{ orig = Var taint_lval; tokens = [] } in
-         let taint_set = Taint.Taint_set.singleton generic_taint in
-         Taint_lval_env.add_lval lang il_lval taint_set env)
-       Taint_lval_env.empty
-
-let mk_global_tracking_without_taint (lang : Lang.t)
-    (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
-  global_vars
-  |> List.fold_left
-       (fun env (var_name, sid) ->
-         let fake_tok = Tok.unsafe_fake_tok var_name in
-         let var_id =
-           IL.
-             {
-               ident = (var_name, fake_tok);
-               sid;
-               id_info = G.empty_id_info ();
-             }
-         in
-         let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
-         (* Register the lval for tracking but with empty taint set *)
-         Taint_lval_env.add_lval lang il_lval Taint.Taint_set.empty env)
-       Taint_lval_env.empty
-
-let extract_global_var_sids_from_ast (ast : G.program) :
-    (string * G.SId.t) list =
-  ast
-  |> List.fold_left
-       (fun acc stmt ->
-         match stmt with
-         | {
-          G.s =
-            G.ExprStmt ({ e = G.Assign (lhs, _, _); _ }, _);
-          _;
-         } -> (
-             match lhs with
-             | { e = G.N (G.Id ((name, _), id_info)); _ }
-               -> (
-                 match !(id_info.id_resolved) with
-                 | Some (G.Global, sid) -> (name, sid) :: acc
-                 | _ -> acc)
-             | _ -> acc)
-         | _ -> acc)
-       []
-  |> List.rev
-
 let extract_signature_with_file_context
     ~(arity : Shape_and_sig.sig_arity)
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ~(name : IL.name)
     ?(method_properties : AST_generic.expr list = [])
-    ?(call_graph : Call_graph.G.t option = None)
     (taint_inst : Taint_rule_inst.t)
-    func_cfg
-    (ast : G.program) : signature_database * Signature.t =
-  let global_sids = extract_global_var_sids_from_ast ast in
-  let global_env =
-    mk_global_assumptions_with_sids taint_inst.lang global_sids
-  in
-
+    (shared_tables : Taint_shared_tables.t)
+    func_cfg : signature_database * Signature.t =
   (* Add method property assumptions for methods with properties *)
-  let combined_global_env =
+  let in_env =
     match method_properties with
-    | [] -> global_env
-    | props ->
-        let method_property_env =
-          mk_method_property_assumptions props taint_inst.lang
-        in
-        Taint_lval_env.union ~lang:taint_inst.lang global_env
-          method_property_env
+    | [] -> Taint_lval_env.empty
+    | props -> mk_method_property_assumptions props taint_inst.lang
   in
-
   let { signature; _ } =
-    extract_signature taint_inst ~in_env:combined_global_env ~name
-      ~signature_db:db ?builtin_signature_db ~call_graph func_cfg
+    extract_signature taint_inst shared_tables ~in_env ~name
+      ~signature_db:db ?builtin_signature_db func_cfg
   in
   let updated_db = Shape_and_sig.add_signature db (Function_id.of_il_name name) {sig_ = signature; arity} in
   (updated_db, signature)

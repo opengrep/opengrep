@@ -1,0 +1,17 @@
+rules:
+  - id: test-mutate-then-rebind-python
+    message: Changes made before a parameter is rebound reach the caller
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-propagators:
+      - pattern: $BOX.append($V)
+        from: $V
+        to: $BOX

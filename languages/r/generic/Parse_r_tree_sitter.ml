@@ -152,7 +152,7 @@ and map_assignment (env : env) (x : CST.assignment) : G.expr =
       let v2 = (* "=" *) token env v2 in
       let v3 = map_expression env v3 in
       (* Eq or Assign? *)
-      G.opcall (Eq, v2) [ v1; v3 ]
+      Assign (v1, v2, v3) |> G.e
   | `Left_assign (v1, v2, v3) ->
       let v1 = map_expression env v1 in
       let v2 = (* "<-" *) token env v2 in
@@ -172,7 +172,7 @@ and map_assignment (env : env) (x : CST.assignment) : G.expr =
       let v1 = map_expression env v1 in
       let v2 = (* "<<-" *) token env v2 in
       let v3 = map_expression env v3 in
-      OtherExpr (("<<=", v2), [ E v1; E v3 ]) |> G.e
+      OtherExpr (("<<-", v2), [ E v1; E v3 ]) |> G.e
   | `Super_right_assign (v1, v2, v3) ->
       let v1 = map_expression env v1 in
       let v2 = (* "->>" *) token env v2 in
@@ -507,7 +507,7 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
   let tk = (* "function" *) token env v1 in
   let fparams = map_formal_parameters env v2 in
   let body = map_expression env v3 in
-  { G.fkind = (LambdaKind, tk); fparams; frettype = None; fbody = FBExpr body }
+  { G.fkind = (LambdaKind, tk); fparams; frettype = None; fcaptures = G.no_captures; fbody = FBExpr body }
 
 and map_lambda_function (env : env) ((v1, v2, v3) : CST.lambda_function) :
     G.function_definition =
@@ -518,6 +518,7 @@ and map_lambda_function (env : env) ((v1, v2, v3) : CST.lambda_function) :
     G.fkind = (LambdaKind, tk);
     fparams = params;
     frettype = None;
+    fcaptures = G.no_captures;
     fbody = FBExpr body;
   }
 

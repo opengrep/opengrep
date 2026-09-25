@@ -1,0 +1,12 @@
+rules:
+  - id: hack_self_is_defining_class
+    message: "Hack self:: calls the method of the class where the call is written; static:: dispatches on the class of the call"
+    languages:
+      - hack
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

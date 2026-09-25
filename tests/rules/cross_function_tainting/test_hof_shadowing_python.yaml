@@ -1,0 +1,13 @@
+rules:
+  - id: test-hof-shadowing
+    message: Test that parameter shadowing does not create false HOF detection
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

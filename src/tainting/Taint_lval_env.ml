@@ -75,6 +75,10 @@ type t = {
           branch where the guard was established. Such guards are dropped
           when stamping effects (see [live_guards]). Merged by UNION at a
           Join — a variable reassigned on any incoming path counts. *)
+  pointees : (IL.name * T.offset list) list NameMap.t;
+      (** Variables holding an address taken with [&] ([__ref__]), with
+          the l-values they may point to. A write through such a variable
+          also lands on its targets. One level; merged by UNION at a Join. *)
 }
 
 type env = t
@@ -88,9 +92,16 @@ let empty =
     active_guards = Effect_guard.Set.empty;
     dead = false;
     reassigned_vars = IL.NameSet.empty;
+    pointees = NameMap.empty;
   }
 
 let empty_inout = { Dataflow_core.in_env = empty; out_env = empty }
+
+let compare_target ((n1, o1) : IL.name * T.offset list)
+    ((n2, o2) : IL.name * T.offset list) : int =
+  match IL.compare_name n1 n2 with
+  | 0 -> List.compare T.compare_offset o1 o2
+  | c -> c
 
 let union ~lang le1 le2 =
   match (le1.dead, le2.dead) with
@@ -128,6 +139,13 @@ let union ~lang le1 le2 =
           (* UNION: a variable reassigned on either incoming path may carry
            * a value that invalidates a guard reaching this point. *)
           IL.NameSet.union le1.reassigned_vars le2.reassigned_vars;
+        pointees =
+          NameMap.union
+            (fun _ targets1 targets2 ->
+              Some
+                (List.sort_uniq compare_target
+                   (List.rev_append targets1 targets2)))
+            le1.pointees le2.pointees;
       }
 
 let union_list ~lang ?(default = empty) les =
@@ -219,7 +237,7 @@ let add_shape lang var offset new_taints new_shape lval_env =
         else
           new_taints
           |> Taints.map_taint (fun (t : T.taint) ->
-                 { t with tokens = var_tok :: t.tokens })
+                 T.push_token var_tok t)
       in
       {
         lval_env with
@@ -231,6 +249,24 @@ let add_shape lang var offset new_taints new_shape lval_env =
             tainted;
       }
 
+let add_through_pointees lang var offset new_taints new_shape lval_env =
+  match NameMap.find_opt var lval_env.pointees with
+  | None -> lval_env
+  | Some targets ->
+      List.fold_left
+        (fun lval_env (target, target_offset) ->
+          add_shape lang target (target_offset @ offset) new_taints new_shape
+            lval_env)
+        lval_env targets
+
+(* A write through [x] ([*x = ...], [x.f = ...]), as opposed to a rebinding
+ * of [x] itself. *)
+let writes_through (lval : IL.lval) : bool =
+  match lval with
+  | { base = Var _; rev_offset = [] } -> false
+  | { base = Var _ | Mem _; _ } -> true
+  | { base = VarSpecial _; _ } -> false
+
 let add_lval_shape lang lval new_taints new_shape lval_env =
   match normalize_lval lang lval with
   | None ->
@@ -238,10 +274,34 @@ let add_lval_shape lang lval new_taints new_shape lval_env =
          variable. We just return the same environment untouched. *)
       lval_env
   | Some (var, offset) ->
-      add_shape lang var offset new_taints new_shape lval_env
+      let lval_env = add_shape lang var offset new_taints new_shape lval_env in
+      if writes_through lval then
+        add_through_pointees lang var offset new_taints new_shape lval_env
+      else lval_env
 
 let add lang var offset new_taints lval_env =
   add_shape lang var offset new_taints Bot lval_env
+
+let add_written_through lang var offset new_taints lval_env =
+  add lang var offset new_taints lval_env
+  |> add_through_pointees lang var offset new_taints Bot
+
+let forget_pointees var lval_env =
+  if NameMap.mem var lval_env.pointees then
+    { lval_env with pointees = NameMap.remove var lval_env.pointees }
+  else lval_env
+
+let set_pointee lang var (target : IL.lval) lval_env =
+  match normalize_lval lang target with
+  | Some target ->
+      { lval_env with pointees = NameMap.add var [ target ] lval_env.pointees }
+  | None -> forget_pointees var lval_env
+
+let copy_pointees ~(src : IL.name) ~(dst : IL.name) lval_env =
+  match NameMap.find_opt src lval_env.pointees with
+  | Some targets ->
+      { lval_env with pointees = NameMap.add dst targets lval_env.pointees }
+  | None -> forget_pointees dst lval_env
 
 let add_lval lang lval new_taints lval_env =
   add_lval_shape lang lval new_taints Bot lval_env
@@ -386,6 +446,7 @@ let equal
       active_guards = guards1;
       dead = dead1;
       reassigned_vars = reassigned1;
+      pointees = pointees1;
     }
     {
       tainted = tainted2;
@@ -395,6 +456,7 @@ let equal
       active_guards = guards2;
       dead = dead2;
       reassigned_vars = reassigned2;
+      pointees = pointees2;
     } =
   Bool.equal dead1 dead2
   (* Guard-aware equality: this function is the fixpoint's [eq_env], and a
@@ -408,6 +470,9 @@ let equal
   && Taints.equal_with_guards control1 control2
   && Effect_guard.Set.equal guards1 guards2
   && IL.NameSet.equal reassigned1 reassigned2
+  && NameMap.equal
+       (List.equal (fun t1 t2 -> Int.equal (compare_target t1 t2) 0))
+       pointees1 pointees2
 
 let equal_by_lval lang { tainted = tainted1; _ } { tainted = tainted2; _ } lval
     =

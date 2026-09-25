@@ -6,7 +6,6 @@ type fun_info = {
   fdef : AST_generic.function_definition;
   is_static : bool;
   is_lambda_assignment : bool;
-  file_ast : AST_generic.program option;
   taint_inst : Taint_rule_inst.t option;
 }
 
@@ -41,11 +40,10 @@ val get_arity :
 
 val extract_signatures :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   lang:Lang.t ->
   db:Shape_and_sig.signature_database ->
   taint_inst:Taint_rule_inst.t ->
-  ast:AST_generic.program ->
+  shared_tables:Taint_shared_tables.t ->
   fun_info ->
   Shape_and_sig.signature_database * Shape_and_sig.extended_sig list
 (** Extract a function's taint signature(s) into the db, returning the freshly
@@ -55,29 +53,29 @@ val extract_signatures :
 
 val extract_and_check :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   ?glob_env:Taint_lval_env.t ->
   lang:Lang.t ->
   db:Shape_and_sig.signature_database ->
   match_on:[ `Sink | `Source ] ->
   taint_inst:Taint_rule_inst.t ->
-  ast:AST_generic.program ->
+  shared_tables:Taint_shared_tables.t ->
   detect_findings:bool ->
   fun_info ->
   Shape_and_sig.signature_database * Core_match.t list
 (** Shared signature-extraction + finding-detection logic. *)
 
 val build_class_init_cfgs :
+  initialisers_are_functions:bool ->
   Lang.t ->
   AST_generic.program ->
   (IL.name option * IL.fun_cfg) list
 
 val check_class_inits_prebuilt :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   (IL.name option * IL.fun_cfg) list ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   unit ->
   Shape_and_sig.Effects.t
 
@@ -88,21 +86,21 @@ val build_top_level_cfg :
 
 val check_top_level_prebuilt :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   IL.name * IL.fun_cfg ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   unit ->
   Shape_and_sig.Effects.t
 
 val check_fundef :
   Taint_rule_inst.t ->
+  Taint_shared_tables.t ->
   IL.name (** entity being analyzed *) ->
   ?glob_env:Taint_lval_env.t ->
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Call_graph.G.t ->
   AST_generic.function_definition ->
   IL.fun_cfg * Shape_and_sig.Effects.t * Dataflow_tainting.mapping
 (** Check a function definition using a [Dataflow_tainting.config] (which can
@@ -116,6 +114,7 @@ val check_rule :
   Formula_cache.t ->
   Rule.taint_rule ->
   (Core_match.t list -> Core_match.t list) ->
+  shared_tables:Taint_shared_tables.t ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?local_ast_call_graph:Call_graph.G.t option ->

@@ -1,3 +1,9 @@
+val source_range_of_locs : Tok.location -> Tok.location -> IL.source_range
+
+val declared_in_range : IL.source_range -> IL.name -> bool
+(** Whether the name's declaration site lies in the range, or the name is an
+    IL temporary. A name with no site is outside. *)
+
 val is_pro_resolved_global : IL.name -> bool
 (** Test whether a name is global and has been resolved by Pro-naming. *)
 
