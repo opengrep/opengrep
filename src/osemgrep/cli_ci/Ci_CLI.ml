@@ -91,7 +91,8 @@ let cmdline_term : conf Term.t =
       opengrep_ignore_pattern
       optimizations output rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions skin subdir suppress_errors taint_interfile
-      taint_interfile_depth taint_intrafile text text_outputs time_flag timeout
+      taint_interfile_depth taint_intrafile disable_intrafile disable_interfile
+      text text_outputs time_flag timeout
       timeout_interfile timeout_threshold use_git
       _version_check vim
       vim_outputs =
@@ -137,6 +138,10 @@ let cmdline_term : conf Term.t =
         Engine_config.custom_ignore_pattern = None;
       }
     in
+    let taint_intrafile, taint_interfile =
+      Core_runner.effective_taint_modes ~disable_intrafile ~disable_interfile
+        ~intrafile:taint_intrafile ~interfile:taint_interfile
+    in
     let core_runner_conf : Core_runner.conf =
       {
         Core_runner.num_jobs;
@@ -166,6 +171,8 @@ let cmdline_term : conf Term.t =
         effect_guards = false;
         taint_interfile;
         taint_interfile_depth;
+        disable_intrafile;
+        disable_interfile;
         interfile_dedup_by;
         engine_config;
       }
@@ -276,7 +283,8 @@ let cmdline_term : conf Term.t =
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ Skin_CLI.o_skin
     $ o_subdir
     $ o_suppress_errors $ SC.o_taint_interfile $ SC.o_taint_interfile_depth
-    $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
+    $ SC.o_taint_intrafile $ SC.o_disable_intrafile $ SC.o_disable_interfile
+    $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
     $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_version_check $ SC.o_vim
     $ SC.o_vim_outputs)
