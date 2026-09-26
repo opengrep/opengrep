@@ -98,7 +98,8 @@ and params_any_of_vardecls vardecls =
 
 and predicate_definition (v1, v2, v3, v4) =
   let v1 = option type_ v1 in
-  let ent = G.basic_entity (ident v2) in
+  let name = ident v2 in
+  let ent = G.basic_entity name in
   let fparams = List_.map param_of_vardecl v3 |> fb in
   let body =
     match v4 with
@@ -115,7 +116,7 @@ and predicate_definition (v1, v2, v3, v4) =
     ( ent,
       FuncDef
         {
-          fkind = (Function, unsafe_fake "");
+          fkind = (Function, snd name);
           fparams;
           frettype = v1;
           fcaptures = G.no_captures;

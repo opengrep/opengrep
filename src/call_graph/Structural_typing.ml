@@ -1,26 +1,27 @@
 module G = AST_generic
 
-type method_ = {
-  name : string;
-  entity : G.entity option;
-  fdef : G.function_definition;
+type 't signature = {
+  arity : int;
+  parameters : 't option list option;
+  return : 't option;
 }
 
-type equal_type = required:G.type_ -> candidate:G.type_ -> bool option
+type 't equal_type = required:'t -> candidate:'t -> bool option
 
 (* Without the receiver, present on impls but not on interface decls. *)
-let method_arity ~(lang : Lang.t) (method_ : method_) : int =
-  Receiver.arity lang ~is_method:(Receiver.is_method method_.fdef)
-    ~is_static:(Receiver.is_static method_.entity)
-    (Tok.unbracket method_.fdef.G.fparams)
+let method_arity ~(lang : Lang.t) (entity : G.entity option)
+    (fdef : G.function_definition) : int =
+  Receiver.arity lang ~is_method:(Receiver.is_method fdef)
+    ~is_static:(Receiver.is_static entity)
+    (Tok.unbracket fdef.G.fparams)
 
 (* Only a definite type mismatch (both sides a simple named type with
    different identity keys) rejects; either side unknown stays compatible,
    so the match degrades to name and arity where types are absent or
    complex. The key is the one the declaring file's own bindings give the
    type, so two packages that both declare [Service] compare unequal. *)
-let types_compatible ~(equal_type : equal_type) (required : G.type_ option)
-    (candidate : G.type_ option) : bool =
+let types_compatible (type declared) ~(equal_type : declared equal_type)
+    (required : declared option) (candidate : declared option) : bool =
   match (required, candidate) with
   | Some required, Some candidate ->
       Option.value (equal_type ~required ~candidate) ~default:true
@@ -38,10 +39,9 @@ let types_compatible ~(equal_type : equal_type) (required : G.type_ option)
    garbled params. A return position is always a bare type (no
    [name type] ambiguity), so its key is trustworthy on both the decl
    and the impl. *)
-let returns_compatible ~(equal_type : equal_type) (required : method_)
-    (candidate : method_) : bool =
-  types_compatible ~equal_type required.fdef.G.frettype
-    candidate.fdef.G.frettype
+let returns_compatible (type declared) ~(equal_type : declared equal_type)
+    (required : declared signature) (candidate : declared signature) : bool =
+  types_compatible ~equal_type required.return candidate.return
 
 (* tree-sitter-go misparses an UNNAMED-param interface decl when a
    composite-type keyword ([func]/[map]/[chan]) follows a bare type
@@ -73,48 +73,59 @@ let untrustworthy_pname (name : string) : bool =
   | "float32" | "float64" | "complex64" | "complex128" -> true
   | _ -> false
 
-let params_of (method_ : method_) : G.parameter list =
-  match Tok.unbracket method_.fdef.G.fparams with
+let params_of (fdef : G.function_definition) : G.parameter list =
+  match Tok.unbracket fdef.G.fparams with
   | G.ParamReceiver _ :: rest -> rest
   | params -> params
 
-let params_trustworthy (method_ : method_) : bool =
+let params_trustworthy (fdef : G.function_definition) : bool =
   List.for_all
     (fun (param : G.parameter) ->
       match param with
       | G.Param { G.pname = Some (name, _); _ } -> not (untrustworthy_pname name)
       | _ -> true)
-    (params_of method_)
+    (params_of fdef)
 
 (* The result lists the identity key of each parameter's type in position
    order, with [None] for a parameter whose type is not a simple named
    type. *)
-let param_types (method_ : method_) : G.type_ option list =
+let param_types (type declared) ~(declared : G.type_ -> declared)
+    (fdef : G.function_definition) : declared option list =
   List.map
     (fun (param : G.parameter) ->
       match param with
-      | G.Param { G.ptype; _ } -> ptype
+      | G.Param { G.ptype; _ } -> Option.map declared ptype
       | _ -> None)
-    (params_of method_)
+    (params_of fdef)
 
-let params_compatible ~(equal_type : equal_type) (required : method_)
-    (candidate : method_) : bool =
+let params_compatible (type declared) ~(equal_type : declared equal_type)
+    (required : declared signature) (candidate : declared signature) : bool =
   (* Skip when either side's param parse is untrustworthy (unnamed-param
      decl garble): fall back to name+arity+return only. *)
-  if not (params_trustworthy required && params_trustworthy candidate) then
-    true
-  else
-    let required_types = param_types required in
-    let candidate_types = param_types candidate in
-    Int.equal (List.length required_types) (List.length candidate_types)
-    && List.for_all2 (types_compatible ~equal_type) required_types
-         candidate_types
+  match (required.parameters, candidate.parameters) with
+  | Some required_types, Some candidate_types ->
+      Int.equal (List.length required_types) (List.length candidate_types)
+      && List.for_all2 (types_compatible ~equal_type) required_types
+           candidate_types
+  | None, _
+  | _, None ->
+      true
 
-(* [iface_m] is satisfied by [concrete_m]: same name, same arity, no
-   definite return-type mismatch, and no definite param-type mismatch. *)
-let method_satisfies ~(lang : Lang.t) ~(equal_type : equal_type)
-    ~(required : method_) (candidate : method_) : bool =
-  String.equal required.name candidate.name
-  && Int.equal (method_arity ~lang required) (method_arity ~lang candidate)
+let signature (type declared) ~(lang : Lang.t)
+    ~(declared : G.type_ -> declared) (entity : G.entity option)
+    (fdef : G.function_definition) : declared signature =
+  {
+    arity = method_arity ~lang entity fdef;
+    parameters =
+      (if params_trustworthy fdef then Some (param_types ~declared fdef)
+       else None);
+    return = Option.map declared fdef.G.frettype;
+  }
+
+(* [required] is satisfied by [candidate]: same arity, no definite
+   return-type mismatch, and no definite param-type mismatch. *)
+let satisfies (type declared) ~(equal_type : declared equal_type)
+    ~(required : declared signature) (candidate : declared signature) : bool =
+  Int.equal required.arity candidate.arity
   && returns_compatible ~equal_type required candidate
   && params_compatible ~equal_type required candidate

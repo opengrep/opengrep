@@ -75,6 +75,46 @@ val is_dereference_trait : Lang.t -> AST_generic.type_ -> bool
 
 type cls
 type t
+type declared_type
+
+type definition = {
+  func : Func_info.t;
+  signature : declared_type Structural_typing.signature;
+}
+
+type selected = {
+  definitions : (cls, definition) Linearisation.selection;
+  functions : (cls, Func_info.t) Linearisation.selection;
+}
+
+module Selection_key : sig
+  type t = {
+    build_configuration : int;
+    side : Class_parents.side;
+    name : string;
+    importing : int list;
+    tiers : (int * int) list list;
+  }
+end
+
+module Selection_tbl : Hashtbl.S with type key = Selection_key.t
+
+module Overriding_key : sig
+  type t = {
+    build_configuration : int;
+    cls : int;
+    name : string;
+  }
+end
+
+module Overriding_tbl : Hashtbl.S with type key = Overriding_key.t
+
+type memo = {
+  selections : selected Selection_tbl.t;
+  overriding : Func_info.t list Overriding_tbl.t;
+}
+
+val create_memo : unit -> memo
 
 type position =
   | Term_position
@@ -84,6 +124,7 @@ val build :
   lang:Lang.t ->
   classes:class_scope list list ->
   compiled_together:(Func_info.t list -> bool) ->
+  compiled_in:(int -> Func_info.t -> bool) ->
   defined:(class_scope -> bool) ->
   link:(class_scope -> parent -> scope_id option) ->
   outside:
@@ -142,26 +183,22 @@ val is_interface : cls -> bool
 val is_trait : cls -> bool
 val is_trait_impl : cls -> bool
 val name_of_class : t -> cls -> AST_generic.name option
-val equal_type : t -> Structural_typing.equal_type
-val method_of : string -> Func_info.t -> Structural_typing.method_
-
-val overrides :
-  lang:Lang.t ->
-  equal_type:Structural_typing.equal_type ->
-  string ->
-  nearer:Func_info.t ->
-  farther:Func_info.t ->
-  bool
+val satisfies : required:definition -> definition -> bool
+val overrides : lang:Lang.t -> nearer:definition -> farther:definition -> bool
 
 val select_member :
   lang:Lang.t ->
-  equal_type:Structural_typing.equal_type ->
   cls Linearisation.tier list ->
-  string ->
-  defines:(cls -> Func_info.t list) ->
-  (cls, Func_info.t) Linearisation.selection
+  defines:(cls -> definition list) ->
+  (cls, definition) Linearisation.selection
 
+val definition_table : t -> cls -> definition list Common.SMap.t
+val own_definitions : t -> cls -> string -> definition list
+val member_definitions : t -> cls -> definition list Common.SMap.t
 val members : t -> cls -> Func_info.t list Common.SMap.t
+val compiled_in : t -> build_configuration:int -> Func_info.t -> bool
+val memo : t -> memo
+val selected_of : (cls, definition) Linearisation.selection -> selected
 val tier_classes : cls Linearisation.tier list -> cls list
 
 val nearest :

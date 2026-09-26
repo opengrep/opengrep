@@ -649,8 +649,9 @@ let project_table (ctx : ctx) ~(classes : project_classes)
   in
   ( Symbol_table.with_project file_table classes.class_table
       ~extension_visible:(Callee_resolution.extension_visible ~func_lookup)
-      ~compiled_with_file:
-        (Go_build_constraints.visible_from ctx.build_constraints fi.fi_file)
+      ~build_configuration:
+        (Go_build_constraints.build_configuration ctx.build_constraints
+           fi.fi_file)
       ~outside,
     func_lookup )
 
@@ -671,7 +672,9 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
     staged "stamp base var types + import aliases" (fun () ->
       stamp_base_var_types ~lang ~project_class_names fi;
       stamp_import_value_aliases ~value_alias_index fi);
-    let table = Symbol_table.with_types table type_state in
+    let table =
+      Symbol_table.with_own_memo (Symbol_table.with_types table type_state)
+    in
     staged "stamp var types" (fun () ->
       stamp_singleton_imports ~type_state ~class_table:classes.class_table fi;
       (* the file's view: the classes it imports, a method's return type

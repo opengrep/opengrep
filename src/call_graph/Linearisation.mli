@@ -76,6 +76,7 @@ val select :
   equal:('c -> 'c -> bool) ->
   defines:('c -> 'a list) ->
   overrides:(nearer:'a -> farther:'a -> bool) ->
+  overload_key:('a -> int) ->
   declared_only:('a -> bool) ->
   shared:('a -> bool) ->
   accumulate:bool ->

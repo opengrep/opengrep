@@ -101,9 +101,11 @@ val with_project :
   t ->
   Class_table.t ->
   extension_visible:(string -> Func_info.t -> bool) ->
-  compiled_with_file:(Func_info.t -> bool) ->
+  build_configuration:int ->
   outside:(t -> caller:Function_id.t option -> AST_generic.expr -> resolution) ->
   t
+
+val with_own_memo : t -> t
 
 val with_types : t -> Type_state.t -> t
 

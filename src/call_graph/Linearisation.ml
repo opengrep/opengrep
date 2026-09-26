@@ -287,12 +287,34 @@ let subobject_lookup (type c a) ~(equal : c -> c -> bool)
         { found with subobjects = List_.uniq_by same_subobject found.subobjects }
   | set -> set
 
+module Key_map = Map.Make (Int)
+
 let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
-    ~(overrides : nearer:a -> farther:a -> bool) ~(declared_only : a -> bool)
-    ~(shared : a -> bool) ~(accumulate : bool) (tiers : c tier list) :
-    (c, a) selection =
+    ~(overrides : nearer:a -> farther:a -> bool) ~(overload_key : a -> int)
+    ~(declared_only : a -> bool) ~(shared : a -> bool) ~(accumulate : bool)
+    (tiers : c tier list) : (c, a) selection =
+  let may_override (nearer : a) (farther : a) : bool =
+    Int.equal (overload_key nearer) (overload_key farther)
+    && overrides ~nearer ~farther
+  in
   let overridden (nearer : a list) (farther : a) : bool =
-    List.exists (fun (found : a) -> overrides ~nearer:found ~farther) nearer
+    List.exists (fun (found : a) -> may_override found farther) nearer
+  in
+  let overridden_earlier (earlier : a list Key_map.t) (farther : a) : bool =
+    match Key_map.find_opt (overload_key farther) earlier with
+    | Some nearer ->
+        List.exists (fun (found : a) -> overrides ~nearer:found ~farther) nearer
+    | None -> false
+  in
+  let indexed (earlier : a list Key_map.t) (found : a list) :
+      a list Key_map.t =
+    List.fold_left
+      (fun (earlier : a list Key_map.t) (found : a) ->
+        Key_map.update (overload_key found)
+          (fun (same_key : a list option) ->
+            Some (found :: Option.value same_key ~default:[]))
+          earlier)
+      earlier found
   in
   let finish (definer : c option) (visible : a list) (blocked : a list)
       (unknown : bool) : (c, a) selection =
@@ -302,29 +324,32 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
     | _ -> if unknown then Unknown else Undefined
   in
   let rec walk (definer : c option) (visible : a list) (blocked : a list)
-      (remaining : c tier list) : (c, a) selection =
+      (earlier : a list Key_map.t) (remaining : c tier list) :
+      (c, a) selection =
     match remaining with
     | [] -> finish definer visible blocked false
     | Unknown_classes :: _ -> finish definer visible blocked true
     | Base_subobjects bases :: rest -> (
-        let next (definer : c option) (visible : a list) (blocked : a list) =
-          if accumulate then walk definer visible blocked rest
+        let next (definer : c option) (visible : a list) (blocked : a list)
+            (found : a list) =
+          if accumulate then
+            walk definer visible blocked (indexed earlier found) rest
           else finish definer visible blocked false
         in
         match subobject_lookup ~equal ~defines bases with
-        | Nothing_found -> walk definer visible blocked rest
+        | Nothing_found -> walk definer visible blocked earlier rest
         | Unknown_set -> finish definer visible blocked true
         | Found { owner; defs; subobjects } -> (
             match subobjects with
             | _ :: _ :: _ when not (List.for_all shared defs) ->
-                next definer visible (blocked @ defs)
+                next definer visible (blocked @ defs) defs
             | _ ->
                 next
                   (match definer with
                   | Some _ -> definer
                   | None -> Some owner)
-                  (visible @ defs) blocked)
-        | Invalid { defs; _ } -> next definer visible (blocked @ defs))
+                  (visible @ defs) blocked defs)
+        | Invalid { defs; _ } -> next definer visible (blocked @ defs) defs)
     | Candidates candidates :: rest -> (
         let defining =
           List.concat
@@ -332,8 +357,7 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
                (fun (position : int) (candidate : c candidate) ->
                  match
                    List.filter
-                     (fun (found : a) ->
-                       not (overridden (visible @ blocked) found))
+                     (fun (found : a) -> not (overridden_earlier earlier found))
                      (defines candidate.cls)
                  with
                  | [] -> []
@@ -366,7 +390,7 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
                  (not (Int.equal other position))
                  && List.exists
                       (fun (other_found : a) ->
-                        overrides ~nearer:other_found ~farther:found
+                        may_override other_found found
                         && not (declared_only other_found && declared_only found))
                       nearer)
                unhidden
@@ -393,13 +417,16 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
         let visible = visible @ List.map snd selected in
         let blocked = blocked @ ambiguous in
         match (selected, ambiguous) with
-        | [], [] -> walk definer visible blocked rest
+        | [], [] -> walk definer visible blocked earlier rest
         | _ :: _, _
         | _, _ :: _ ->
-            if accumulate then walk definer visible blocked rest
+            if accumulate then
+              walk definer visible blocked
+                (indexed (indexed earlier (List.map snd selected)) ambiguous)
+                rest
             else finish definer visible blocked false)
   in
-  walk None [] [] tiers
+  walk None [] [] Key_map.empty tiers
 
 let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
     ~(hash : c -> int) ~(parents : c -> c parent list list)

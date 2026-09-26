@@ -89,22 +89,21 @@ let emit_dispatch_edges
     ~(lang : Lang.t)
     ~(class_table : Class_table.t)
     ~(graph : Call_graph.G.t) : int =
-  let members (cls : Class_table.cls) : FA.func_info list Common.SMap.t =
-    Class_table.members class_table cls
+  let members (cls : Class_table.cls) :
+      Class_table.definition list Common.SMap.t =
+    Class_table.member_definitions class_table cls
   in
-  let equal_type = Class_table.equal_type class_table in
-  let emit_dispatch_edge (name : string) (c_methods : FA.func_info list)
-      (n : int) (i_m : FA.func_info) : int =
+  let emit_dispatch_edge (c_methods : Class_table.definition list) (n : int)
+      (i_m : Class_table.definition) : int =
     match
       List.find_opt
-        (fun (c_m : FA.func_info) ->
-          Structural_typing.method_satisfies ~lang ~equal_type
-            ~required:(Class_table.method_of name i_m)
-            (Class_table.method_of name c_m))
+        (fun (c_m : Class_table.definition) ->
+          Class_table.satisfies ~required:i_m c_m)
         c_methods
     with
     | None -> n
-    | Some c_m ->
+    | Some { Class_table.func = c_m; _ } ->
+      let i_m = i_m.Class_table.func in
       (match FA.fn_id_to_node c_m.FA.fn_id,
              FA.fn_id_to_node i_m.FA.fn_id with
        | Some src, Some dst ->
@@ -120,15 +119,16 @@ let emit_dispatch_edges
     List.fold_left (fun n (interface : Class_table.cls) ->
       if not (Class_table.is_interface interface) then n
       else
-        let required = Class_table.member_table interface in
+        let required = Class_table.definition_table class_table interface in
         List.fold_left (fun n (implementor : Class_table.cls) ->
           if Class_table.is_interface implementor then n
           else
             let available = members implementor in
             Common.SMap.fold
-              (fun (name : string) (i_methods : FA.func_info list) (n : int) ->
+              (fun (name : string) (i_methods : Class_table.definition list)
+                   (n : int) ->
                 List.fold_left
-                  (emit_dispatch_edge name
+                  (emit_dispatch_edge
                      (Option.value (Common.SMap.find_opt name available)
                         ~default:[]))
                   n i_methods)

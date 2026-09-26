@@ -1,13 +1,17 @@
-type method_ = {
-  name : string;
-  entity : AST_generic.entity option;
-  fdef : AST_generic.function_definition;
+type 't signature = {
+  arity : int;
+  parameters : 't option list option;
+  return : 't option;
 }
 
-type equal_type =
-  required:AST_generic.type_ -> candidate:AST_generic.type_ -> bool option
+type 't equal_type = required:'t -> candidate:'t -> bool option
 
-val method_arity : lang:Lang.t -> method_ -> int
+val signature :
+  lang:Lang.t ->
+  declared:(AST_generic.type_ -> 't) ->
+  AST_generic.entity option ->
+  AST_generic.function_definition ->
+  't signature
 
-val method_satisfies :
-  lang:Lang.t -> equal_type:equal_type -> required:method_ -> method_ -> bool
+val satisfies :
+  equal_type:'t equal_type -> required:'t signature -> 't signature -> bool

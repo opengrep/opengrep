@@ -6,7 +6,11 @@ module Fdef_tbl = Hashtbl.Make (struct
   type t = G.function_definition
 
   let equal = ( == )
-  let hash (fdef : t) = Hashtbl.hash (snd fdef.G.fkind)
+
+  let hash (fdef : t) : int =
+    match Tok.loc_of_tok (snd fdef.G.fkind) with
+    | Ok (loc : Tok.location) -> loc.Tok.pos.Pos.bytepos
+    | Error _ -> Hashtbl.hash (snd fdef.G.fkind)
 end)
 
 module SId_tbl = Hashtbl.Make (struct
@@ -218,6 +222,81 @@ type cls = {
   scopes : class_scope list;
 }
 
+type declared_type =
+  | Project_class of cls
+  | Unbound_path of string list
+  | Not_compared
+
+type definition = {
+  func : Func_info.t;
+  signature : declared_type Structural_typing.signature;
+}
+
+type selected = {
+  definitions : (cls, definition) Linearisation.selection;
+  functions : (cls, Func_info.t) Linearisation.selection;
+}
+
+let equal_side (left : Class_parents.side) (right : Class_parents.side) : bool =
+  match (left, right) with
+  | Class_parents.Instance_side, Class_parents.Instance_side
+  | Class_parents.Class_side, Class_parents.Class_side ->
+      true
+  | (Class_parents.Instance_side | Class_parents.Class_side), _ -> false
+
+module Selection_key = struct
+  type t = {
+    build_configuration : int;
+    side : Class_parents.side;
+    name : string;
+    importing : int list;
+    tiers : (int * int) list list;
+  }
+
+  let equal (left : t) (right : t) : bool =
+    Int.equal left.build_configuration right.build_configuration
+    && equal_side left.side right.side
+    && String.equal left.name right.name
+    && List.equal Int.equal left.importing right.importing
+    && List.equal
+         (List.equal (fun ((left_class : int), (left_paths : int))
+                          ((right_class : int), (right_paths : int)) ->
+              Int.equal left_class right_class && Int.equal left_paths right_paths))
+         left.tiers right.tiers
+
+  let hash (key : t) : int =
+    Hashtbl.hash
+      (key.build_configuration, key.side, key.name, key.importing, key.tiers)
+end
+
+module Selection_tbl = Hashtbl.Make (Selection_key)
+
+module Overriding_key = struct
+  type t = {
+    build_configuration : int;
+    cls : int;
+    name : string;
+  }
+
+  let equal (left : t) (right : t) : bool =
+    Int.equal left.build_configuration right.build_configuration
+    && Int.equal left.cls right.cls
+    && String.equal left.name right.name
+
+  let hash (key : t) : int =
+    Hashtbl.hash (key.build_configuration, key.cls, key.name)
+end
+
+module Overriding_tbl = Hashtbl.Make (Overriding_key)
+
+type memo = {
+  selections : selected Selection_tbl.t;
+  overriding : Func_info.t list Overriding_tbl.t;
+}
+
+let create_memo () : memo =
+  { selections = Selection_tbl.create 64; overriding = Overriding_tbl.create 64 }
+
 type import_origin =
   | Imported_from of cls
   | Imported_from_mixins
@@ -244,6 +323,9 @@ type t = {
   definitions : cls list SId_tbl.t;
   outside : position -> scope_id option -> G.name * string list -> cls option;
   descendants : cls list option array;
+  own_definitions : definition list SMap.t array;
+  compiled_in : int -> Func_info.t -> bool;
+  memo : memo;
 }
 
 let same (left : cls) (right : cls) : bool = Int.equal left.id right.id
@@ -400,23 +482,6 @@ let object_of_binding (t : t) (sid : G.SId.t) : cls option =
   | Some _ as found -> found
   | None -> class_of_binding t sid
 
-let class_of_name_in (by_scope : cls Scope_tbl.t)
-    (definitions : cls list SId_tbl.t)
-    (outside :
-      position -> scope_id option -> G.name * string list -> scope_id option)
-    (name : G.name) : cls option =
-  let own =
-    Option.bind
-      (binding_of_id_info (id_info_of_name name))
-      (class_of_binding_in by_scope definitions)
-  in
-  match own with
-  | Some _ -> own
-  | None ->
-      Option.bind
-        (outside Type_position None (name, []))
-        (Scope_tbl.find_opt by_scope)
-
 let class_of_name (t : t) ~(position : position)
     ~(context : scope_id option) (name : G.name) : cls option =
   match
@@ -433,61 +498,50 @@ let class_of_path (t : t) ~(position : position) ~(context : scope_id option)
   | [] -> class_of_name t ~position ~context head
   | _ :: _ -> t.outside position context path
 
-let same_type_by_class (class_of : G.name -> cls option)
-    ~(required : G.type_) ~(candidate : G.type_) : bool option =
-  match (name_of_type required, name_of_type candidate) with
-  | Some required, Some candidate -> (
-      match (class_of required, class_of candidate) with
-      | Some required, Some candidate -> Some (same required candidate)
-      | Some _, None
-      | None, Some _ ->
-          None
-      | None, None -> (
-          match
-            ( binding_of_id_info (id_info_of_name required),
-              binding_of_id_info (id_info_of_name candidate) )
-          with
-          | None, None ->
-              Some
-                (List.equal String.equal (qualified_path required)
-                   (qualified_path candidate))
-          | Some required, Some candidate when G.SId.equal required candidate ->
-              Some true
-          | Some _, _
-          | None, Some _ ->
-              None))
-  | _ -> None
+let declared_type (class_of : G.name -> cls option) (ty : G.type_) :
+    declared_type =
+  match name_of_type ty with
+  | None -> Not_compared
+  | Some name -> (
+      match class_of name with
+      | Some cls -> Project_class cls
+      | None -> (
+          match binding_of_id_info (id_info_of_name name) with
+          | None -> Unbound_path (qualified_path name)
+          | Some _ -> Not_compared))
 
-let method_of (name : string) (func : Func_info.t) : Structural_typing.method_ =
-  {
-    Structural_typing.name;
-    entity = func.Func_info.entity;
-    fdef = func.Func_info.fdef;
-  }
+let same_declared_type ~(required : declared_type) ~(candidate : declared_type)
+    : bool option =
+  match (required, candidate) with
+  | Project_class required, Project_class candidate ->
+      Some (same required candidate)
+  | Unbound_path required, Unbound_path candidate ->
+      Some (List.equal String.equal required candidate)
+  | (Project_class _ | Unbound_path _ | Not_compared), _ -> None
 
-let structural_methods (members : Func_info.t list SMap.t) :
-    (Func_info.t * Structural_typing.method_) list =
+let satisfies ~(required : definition) (candidate : definition) : bool =
+  Structural_typing.satisfies ~equal_type:same_declared_type
+    ~required:required.signature candidate.signature
+
+let structural_methods (members : definition list SMap.t) :
+    (string * definition) list =
   SMap.fold
-    (fun (name : string) (funcs : Func_info.t list)
-         (methods : (Func_info.t * Structural_typing.method_) list) ->
-      List.map (fun (func : Func_info.t) -> (func, method_of name func)) funcs
+    (fun (name : string) (definitions : definition list)
+         (methods : (string * definition) list) ->
+      List.map (fun (definition : definition) -> (name, definition)) definitions
       @ methods)
     members []
 
-let satisfied_in_one_build ~(lang : Lang.t)
-    ~(equal_type : Structural_typing.equal_type)
-    ~(compiled_together : Func_info.t list -> bool)
-    ~(interface : (Func_info.t * Structural_typing.method_) list)
-    ~(candidate : (Func_info.t * Structural_typing.method_) list) : bool =
+let satisfied_in_one_build ~(compiled_together : Func_info.t list -> bool)
+    ~(interface : (string * definition) list)
+    ~(candidate : (string * definition) list) : bool =
   let options =
     List.map
-      (fun ((_ : Func_info.t), (required : Structural_typing.method_)) ->
+      (fun ((name : string), (required : definition)) ->
         List.filter_map
-          (fun ((func : Func_info.t), (offered : Structural_typing.method_)) ->
-            if
-              Structural_typing.method_satisfies ~lang ~equal_type ~required
-                offered
-            then Some func
+          (fun ((offered_name : string), (offered : definition)) ->
+            if String.equal name offered_name && satisfies ~required offered
+            then Some offered.func
             else None)
           candidate)
       interface
@@ -502,24 +556,31 @@ let satisfied_in_one_build ~(lang : Lang.t)
             compiled_together (func :: chosen) && choose (func :: chosen) rest)
           alternatives
   in
-  (not (List_.null interface)) && choose (List.map fst interface) options
+  (not (List_.null interface))
+  && choose
+       (List.map (fun ((_ : string), (required : definition)) -> required.func)
+          interface)
+       options
 
-let overrides ~(lang : Lang.t) ~(equal_type : Structural_typing.equal_type)
-    (name : string) ~(nearer : Func_info.t) ~(farther : Func_info.t) : bool =
+let overrides ~(lang : Lang.t) ~(nearer : definition) ~(farther : definition) :
+    bool =
   (not (Lang_config.overloads_by_type lang))
-  || Structural_typing.method_satisfies ~lang ~equal_type
-       ~required:(method_of name farther) (method_of name nearer)
+  || satisfies ~required:farther nearer
 
-let select_member ~(lang : Lang.t) ~(equal_type : Structural_typing.equal_type)
-    (tiers : cls Linearisation.tier list) (name : string)
-    ~(defines : cls -> Func_info.t list) :
-    (cls, Func_info.t) Linearisation.selection =
-  Linearisation.select ~equal:same ~defines
-    ~overrides:(overrides ~lang ~equal_type name)
-    ~declared_only:(fun (func : Func_info.t) ->
-      not (Func_info.has_body func.Func_info.fdef))
-    ~shared:(fun (func : Func_info.t) ->
-      Receiver.is_static func.Func_info.entity)
+let overload_key (lang : Lang.t) (definition : definition) : int =
+  if Lang_config.overloads_by_type lang then
+    definition.signature.Structural_typing.arity
+  else 0
+
+let select_member ~(lang : Lang.t) (tiers : cls Linearisation.tier list)
+    ~(defines : cls -> definition list) :
+    (cls, definition) Linearisation.selection =
+  Linearisation.select ~equal:same ~defines ~overrides:(overrides ~lang)
+    ~overload_key:(overload_key lang)
+    ~declared_only:(fun (definition : definition) ->
+      not (Func_info.has_body definition.func.Func_info.fdef))
+    ~shared:(fun (definition : definition) ->
+      Receiver.is_static definition.func.Func_info.entity)
     ~accumulate:
       (Lang_config.overloads_by_type lang
       && not
@@ -531,19 +592,20 @@ let tier_classes (tiers : cls Linearisation.tier list) : cls list =
   List.concat_map Linearisation.tier_classes tiers
 
 let members_by_tiers ~(lang : Lang.t)
-    ~(equal_type : Structural_typing.equal_type)
-    (tiers : cls Linearisation.tier list) : Func_info.t list SMap.t =
+    ~(definition_table : cls -> definition list SMap.t)
+    (tiers : cls Linearisation.tier list) : definition list SMap.t =
   List.fold_left
-    (fun (names : Func_info.t list SMap.t) (cls : cls) ->
+    (fun (names : definition list SMap.t) (cls : cls) ->
       SMap.union
-        (fun (_ : string) (known : Func_info.t list) (_ : Func_info.t list) ->
+        (fun (_ : string) (known : definition list) (_ : definition list) ->
           Some known)
-        names (member_table cls))
+        names (definition_table cls))
     SMap.empty (tier_classes tiers)
-  |> SMap.filter_map (fun (name : string) (_ : Func_info.t list) ->
+  |> SMap.filter_map (fun (name : string) (_ : definition list) ->
          match
-           select_member ~lang ~equal_type tiers name
-             ~defines:(fun (cls : cls) -> own_members cls name)
+           select_member ~lang tiers ~defines:(fun (cls : cls) ->
+               Option.value (SMap.find_opt name (definition_table cls))
+                 ~default:[])
          with
          | Linearisation.Selected (_, defined) -> Some defined
          | Linearisation.Ambiguous
@@ -570,6 +632,7 @@ let is_dereference_trait (lang : Lang.t) (written : G.type_) : bool =
 
 let build ~(lang : Lang.t) ~(classes : class_scope list list)
     ~(compiled_together : Func_info.t list -> bool)
+    ~(compiled_in : int -> Func_info.t -> bool)
     ~(defined : class_scope -> bool)
     ~(link : class_scope -> parent -> scope_id option)
     ~(outside :
@@ -615,6 +678,30 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
   in
   let linked (scope : class_scope) (parent : parent) : cls option =
     Option.bind (link scope parent) class_of_id
+  in
+  let class_of_type_name (name : G.name) : cls option =
+    match
+      Option.bind
+        (binding_of_id_info (id_info_of_name name))
+        (class_of_binding_in by_scope definitions)
+    with
+    | Some _ as found -> found
+    | None -> Option.bind (outside Type_position None (name, [])) class_of_id
+  in
+  let own_definitions =
+    Array.map
+      (fun (cls : cls) ->
+        SMap.map
+          (List.map (fun (func : Func_info.t) ->
+               {
+                 func;
+                 signature =
+                   Structural_typing.signature ~lang
+                     ~declared:(declared_type class_of_type_name)
+                     func.Func_info.entity func.Func_info.fdef;
+               }))
+          (member_table cls))
+      classes
   in
   let written_parents =
     Array.map
@@ -698,10 +785,9 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
         (List.concat written_parents.(cls.id)))
     classes;
   (if Lang_config.interfaces_are_structural lang then
-     let members_of (cls : cls) : Func_info.t list SMap.t =
+     let members_of (cls : cls) : definition list SMap.t =
        members_by_tiers ~lang
-         ~equal_type:
-           (same_type_by_class (class_of_name_in by_scope definitions outside))
+         ~definition_table:(fun (cls : cls) -> own_definitions.(cls.id))
          orders.(cls.id).Linearisation.tiers
      in
      let interfaces, candidates =
@@ -713,7 +799,7 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
          let members = members_of cls in
          let candidate = (cls, structural_methods members) in
          SMap.iter
-           (fun (name : string) (_ : Func_info.t list) ->
+           (fun (name : string) (_ : definition list) ->
              Hashtbl.replace by_member_name name
                (candidate
                :: Option.value (Hashtbl.find_opt by_member_name name)
@@ -726,10 +812,8 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
          let required = structural_methods members in
          let fewest =
            SMap.fold
-             (fun (name : string) (_ : Func_info.t list)
-                  (fewest :
-                    (cls * (Func_info.t * Structural_typing.method_) list) list
-                    option) ->
+             (fun (name : string) (_ : definition list)
+                  (fewest : (cls * (string * definition) list) list option) ->
                let having =
                  Option.value (Hashtbl.find_opt by_member_name name) ~default:[]
                in
@@ -742,15 +826,11 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
              members None
          in
          List.iter
-           (fun ((cls, methods) :
-                  cls * (Func_info.t * Structural_typing.method_) list) ->
+           (fun ((cls, methods) : cls * (string * definition) list) ->
              if
                may_implement ~interface cls
-               && satisfied_in_one_build ~lang
-                    ~equal_type:
-                      (same_type_by_class
-                         (class_of_name_in by_scope definitions outside))
-                    ~compiled_together ~interface:required ~candidate:methods
+               && satisfied_in_one_build ~compiled_together
+                    ~interface:required ~candidate:methods
              then
                direct_subclasses.(interface.id) <-
                  cls :: direct_subclasses.(interface.id))
@@ -813,6 +893,9 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
            (path : G.name * string list) ->
         Option.bind (outside position context path) class_of_id);
     descendants = Array.make (Array.length classes) None;
+    own_definitions;
+    compiled_in;
+    memo = create_memo ();
   }
 
 let name_of_class (t : t) (cls : cls) : G.name option =
@@ -827,17 +910,48 @@ let name_of_class (t : t) (cls : cls) : G.name option =
       | (Definition _ | Singleton_object | Trait_impl _), _ -> None)
     cls.scopes
 
-let equal_type (t : t) : Structural_typing.equal_type =
-  same_type_by_class (class_of_name t ~position:Type_position ~context:None)
+let definition_table (t : t) (cls : cls) : definition list SMap.t =
+  t.own_definitions.(cls.id)
+
+let own_definitions (t : t) (cls : cls) (name : string) : definition list =
+  Option.value (SMap.find_opt name (definition_table t cls)) ~default:[]
+
+let member_definitions (t : t) (cls : cls) : definition list SMap.t =
+  members_by_tiers ~lang:t.lang ~definition_table:(definition_table t)
+    (order t cls).Linearisation.tiers
 
 let members (t : t) (cls : cls) : Func_info.t list SMap.t =
-  members_by_tiers ~lang:t.lang ~equal_type:(equal_type t)
-    (order t cls).Linearisation.tiers
+  SMap.map
+    (List.map (fun (definition : definition) -> definition.func))
+    (member_definitions t cls)
+
+let compiled_in (t : t) ~(build_configuration : int) (func : Func_info.t) :
+    bool =
+  t.compiled_in build_configuration func
+
+let memo (t : t) : memo = t.memo
+
+let selected_of (definitions : (cls, definition) Linearisation.selection) :
+    selected =
+  {
+    definitions;
+    functions =
+      (match definitions with
+      | Linearisation.Selected (definer, found) ->
+          Linearisation.Selected
+            ( definer,
+              List.map (fun (definition : definition) -> definition.func) found
+            )
+      | Linearisation.Ambiguous -> Linearisation.Ambiguous
+      | Linearisation.Undefined -> Linearisation.Undefined
+      | Linearisation.Unknown -> Linearisation.Unknown);
+  }
 
 let nearest (type found) (tiers : cls Linearisation.tier list)
     ~(defines : cls -> found list) : (cls, found) Linearisation.selection =
   Linearisation.select ~equal:same ~defines
     ~overrides:(fun ~nearer:_ ~farther:_ -> true)
+    ~overload_key:(fun (_ : found) -> 0)
     ~declared_only:(fun (_ : found) -> false)
     ~shared:(fun (_ : found) -> false)
     ~accumulate:false tiers

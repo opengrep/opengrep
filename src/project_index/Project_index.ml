@@ -920,6 +920,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   let class_table =
     Class_table.build ~lang ~classes
       ~compiled_together:(Go_build_constraints.compiled_together build_constraints)
+      ~compiled_in:(Go_build_constraints.compiled_in build_constraints)
       ~defined:(fun (scope : Class_table.class_scope) ->
         Scope_tbl.mem defined (Class_table.scope_id_of scope))
       ~link ~outside ~may_implement

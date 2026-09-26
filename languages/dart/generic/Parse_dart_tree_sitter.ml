@@ -1290,7 +1290,7 @@ and map_function_signature ~attrs (env : env)
      In this case, when in a pattern, we might actually prefer to say that
      this should be a call to a function named `foo`.
   *)
-  fun (fkind, fbody) ->
+  fun ((kind : function_kind), fbody) ->
     match (env.extra, fparams) with
     | Pattern, (_, [], _) ->
         ExprStmt
@@ -1299,7 +1299,14 @@ and map_function_signature ~attrs (env : env)
     | _ ->
         DefStmt
           ( basic_entity ~attrs ?tparams id,
-            FuncDef { fkind; fparams; frettype; fcaptures = G.no_captures; fbody } )
+            FuncDef
+              {
+                fkind = (kind, snd id);
+                fparams;
+                frettype;
+                fcaptures = G.no_captures;
+                fbody;
+              } )
         |> G.s
 
 and map_function_type (env : env) (x : CST.function_type) : type_ =
@@ -1437,7 +1444,7 @@ and map_lambda_expression ~attrs (env : env) ((v1, v2) : CST.lambda_expression)
   let fattrs, fbody = map_function_body env v2 in
   let v1 =
     map_function_signature ~attrs:(attrs @ fattrs) env v1
-      ((Function, fake "function"), fbody)
+      (Function, fbody)
   in
   v1
 
@@ -2750,7 +2757,7 @@ let map_operator_signature ?(attrs = []) (env : env)
     ( basic_entity ~attrs v3,
       FuncDef
         {
-          fkind = (Function, fake "function");
+          fkind = (Function, snd v3);
           fparams;
           fcaptures = G.no_captures;
           fbody = FBNothing;
@@ -3128,6 +3135,8 @@ let augment_body initializers body =
   | _, FBNothing ->
       FBStmt (Block (fb initializers) |> G.s)
 
+let declared_tok (name : name) : tok = snd (fst (H2.id_of_name name))
+
 (* The attribute of a constructor, from the identifiers it is declared with. *)
 let ctor_attr (dotted : G.ident list) : G.attribute list =
   match dotted with
@@ -3143,9 +3152,10 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         | Some x -> map_initializers env x
         | None -> []
       in
+      let name = H2.name_of_ids dotted in
       let ent =
         {
-          name = EN (H2.name_of_ids dotted);
+          name = EN name;
           attrs = attrs @ ctor_attr dotted;
           tparams = None;
         }
@@ -3157,14 +3167,15 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
       DefStmt
         ( ent,
           FuncDef
-            { fkind = (Method, fake "Method"); fparams; frettype = None; fcaptures = G.no_captures; fbody }
+            { fkind = (Method, declared_tok name); fparams; frettype = None; fcaptures = G.no_captures; fbody }
         )
       |> G.s
   | `Fact_cons_sign x ->
       let attr, dotted, fparams = map_factory_constructor_signature env x in
+      let name = H2.name_of_ids dotted in
       let ent =
         {
-          name = EN (H2.name_of_ids dotted);
+          name = EN name;
           attrs = [ attr ] @ attrs;
           tparams = None;
         }
@@ -3173,7 +3184,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         ( ent,
           FuncDef
             {
-              fkind = (Method, fake "Method");
+              fkind = (Method, declared_tok name);
               fparams;
               frettype = None;
               fcaptures = G.no_captures;
@@ -3191,7 +3202,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         match v2 with
         | `Func_sign x ->
             map_function_signature ~attrs env x
-              ((Method, fake "Method"), body)
+              (Method, body)
         | `Getter_sign x -> map_getter_signature ~attrs env x body
         | `Setter_sign x -> map_setter_signature ~attrs env x body
       in
@@ -3283,9 +3294,10 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | None -> []
       in
       let fbody = augment_body initializers FBNothing in
+      let name = H2.name_of_ids dotted in
       let ent =
         {
-          name = EN (H2.name_of_ids dotted);
+          name = EN name;
           attrs = [ attr ] @ attrs @ ctor_attr dotted;
           tparams = None;
         }
@@ -3295,7 +3307,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
           ( ent,
             FuncDef
               {
-                fkind = (Function, fake "Function");
+                fkind = (Function, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures; fbody;
@@ -3309,9 +3321,10 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | Some x -> map_anon_choice_redi_3f8cf96 env x
         | None -> []
       in
+      let name = H2.name_of_ids dotted in
       let ent =
         {
-          name = EN (H2.name_of_ids dotted);
+          name = EN name;
           attrs = attrs @ ctor_attr dotted;
           tparams = None;
         }
@@ -3326,7 +3339,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
           ( ent,
             FuncDef
               {
-                fkind = (Function, fake "Function");
+                fkind = (Function, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures; fbody;
@@ -3342,9 +3355,10 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       in
       let attr, dotted, fparams = map_factory_constructor_signature env v3 in
       let attrs = [ v1 ] @ v2 @ [ attr ] in
+      let name = H2.name_of_ids dotted in
       let ent =
         {
-          name = EN (H2.name_of_ids dotted);
+          name = EN name;
           attrs = [ attr ] @ attrs;
           tparams = None;
         }
@@ -3354,7 +3368,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
           ( ent,
             FuncDef
               {
-                fkind = (Function, fake "Function");
+                fkind = (Function, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures;
@@ -3371,13 +3385,14 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       let attr, dotted, fparams = map_factory_constructor_signature env v2 in
       let attrs = v1 @ [ attr ] @ attrs in
       let _v3_TODO = map_native env v3 in
-      let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
+      let name = H2.name_of_ids dotted in
+      let ent = { name = EN name; attrs; tparams = None } in
       [
         DefStmt
           ( ent,
             FuncDef
               {
-                fkind = (Function, fake "Function");
+                fkind = (Function, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures;
@@ -3389,13 +3404,14 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
       let v1 = KeywordAttr (Extern, (* "external" *) token env v1) in
       let attr, dotted, fparams = map_constant_constructor_signature env v2 in
       let attrs = [ v1; attr ] @ attrs @ ctor_attr dotted in
-      let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
+      let name = H2.name_of_ids dotted in
+      let ent = { name = EN name; attrs; tparams = None } in
       [
         DefStmt
           ( ent,
             FuncDef
               {
-                fkind = (Function, fake "Function");
+                fkind = (Function, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures;
@@ -3427,12 +3443,13 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | Some x -> [ G.I (map_type_dot_identifier env x) ]
         | None -> []
       in
+      let name = H2.name_of_ids dotted in
       [
         DefStmt
-          ( { name = EN (H2.name_of_ids dotted); attrs; tparams = None },
+          ( { name = EN name; attrs; tparams = None },
             FuncDef
               {
-                fkind = (Method, fake "method");
+                fkind = (Method, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures;
@@ -3446,9 +3463,10 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
   | `Exte_cons_sign (v1, v2) ->
       let v1 = KeywordAttr (Extern, (* "external" *) token env v1) in
       let dotted, fparams = map_constructor_signature env v2 in
+      let name = H2.name_of_ids dotted in
       let ent =
         {
-          name = EN (H2.name_of_ids dotted);
+          name = EN name;
           attrs = [ v1 ] @ attrs @ ctor_attr dotted;
           tparams = None;
         }
@@ -3458,7 +3476,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
           ( ent,
             FuncDef
               {
-                fkind = (Function, fake "Function");
+                fkind = (Function, declared_tok name);
                 fparams;
                 frettype = None;
                 fcaptures = G.no_captures;
@@ -3504,14 +3522,14 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | None -> attrs
       in
       let v2 =
-        map_function_signature ~attrs env v2 ((Method, fake "method"), FBNothing)
+        map_function_signature ~attrs env v2 (Method, FBNothing)
       in
       [ v2 ]
   | `Static_func_sign (v1, v2) ->
       let v1 = KeywordAttr (Static, (* "static" *) token env v1) in
       let v2 =
         map_function_signature ~attrs:([ v1 ] @ attrs) env v2
-          ((Method, fake "method"), FBNothing)
+          (Method, FBNothing)
       in
       [ v2 ]
   | `Static_choice_final_or_const_opt_type_static_final_decl_list (v1, v2) ->
@@ -3866,7 +3884,7 @@ let map_top_level_definition ~attrs (env : env) (x : CST.top_level_definition) :
       in
       let v2 =
         map_function_signature ~attrs env v2
-          ((Function, fake "function"), FBStmt (Block (fb []) |> G.s))
+          (Function, FBStmt (Block (fb []) |> G.s))
       in
       let _sc = map_semicolon env v3 in
       [ v2 ]

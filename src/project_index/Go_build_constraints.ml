@@ -247,9 +247,37 @@ type file =
       test_directory : string option;
     }
 
-type t = file SMap.t
+let equal_normal_form (left : normal_form) (right : normal_form) : bool =
+  List.equal
+    (fun ((left_residual : expr), (left_worlds : int array))
+         ((right_residual : expr), (right_worlds : int array)) ->
+      equal_expr left_residual right_residual
+      && Int.equal (Array.length left_worlds) (Array.length right_worlds)
+      && Array.for_all2 Int.equal left_worlds right_worlds)
+    left right
 
-let empty : t = SMap.empty
+let equal_file (left : file) (right : file) : bool =
+  match (left, right) with
+  | Unconstrained, Unconstrained -> true
+  | Constrained left, Constrained right ->
+      Option.equal String.equal left.test_directory right.test_directory
+      && equal_normal_form left.normal_form right.normal_form
+  | (Unconstrained | Constrained _), _ -> false
+
+module File_tbl = Hashtbl.Make (struct
+  type t = file
+
+  let equal = equal_file
+  let hash (file : t) : int = Hashtbl.hash file
+end)
+
+type t = {
+  configurations : file array;
+  configuration_of_file : int SMap.t;
+}
+
+let empty : t =
+  { configurations = [| Unconstrained |]; configuration_of_file = SMap.empty }
 
 let rec expr_of (condition : G.build_constraint) : expr =
   match condition with
@@ -289,18 +317,41 @@ let file_of ((path : Fpath.t), (program : G.program)) : file =
         }
 
 let of_files (files : (Fpath.t * G.program) list) : t =
-  List.fold_left
-    (fun (table : t) (((path : Fpath.t), (_ : G.program)) as file) ->
-      match file_of file with
-      | Unconstrained -> table
-      | Constrained _ as constrained ->
-          SMap.add (Fpath.to_string (Fpath.normalize path)) constrained table)
-    empty files
+  let indexes : int File_tbl.t = File_tbl.create 16 in
+  File_tbl.replace indexes Unconstrained 0;
+  let configuration_of_file, (_ : int), configurations =
+    List.fold_left
+      (fun ((by_file : int SMap.t), (count : int), (configurations : file list))
+           (((path : Fpath.t), (_ : G.program)) as file) ->
+        match file_of file with
+        | Unconstrained -> (by_file, count, configurations)
+        | Constrained _ as constrained ->
+            let index, count, configurations =
+              match File_tbl.find_opt indexes constrained with
+              | Some index -> (index, count, configurations)
+              | None ->
+                  File_tbl.replace indexes constrained count;
+                  (count, count + 1, constrained :: configurations)
+            in
+            ( SMap.add (Fpath.to_string (Fpath.normalize path)) index by_file,
+              count,
+              configurations ))
+      (SMap.empty, 1, [ Unconstrained ])
+      files
+  in
+  {
+    configurations = Array.of_list (List.rev configurations);
+    configuration_of_file;
+  }
+
+let build_configuration (t : t) (path : Fpath.t) : int =
+  Option.value
+    (SMap.find_opt (Fpath.to_string (Fpath.normalize path))
+       t.configuration_of_file)
+    ~default:0
 
 let entry (t : t) (path : Fpath.t) : file =
-  Option.value
-    (SMap.find_opt (Fpath.to_string (Fpath.normalize path)) t)
-    ~default:Unconstrained
+  t.configurations.(build_configuration t path)
 
 let test_directory_of (file : file) : string option =
   match file with
@@ -334,17 +385,18 @@ let visible (source : file) (target : file) : bool =
 let file_visible_from (t : t) (source : Fpath.t) (target : Fpath.t) : bool =
   visible (entry t source) (entry t target)
 
-let visible_from (t : t) (source : Fpath.t) : Func_info.t -> bool =
-  if SMap.is_empty t then fun (_ : Func_info.t) -> true
-  else
-    let source = entry t source in
-    fun (func : Func_info.t) ->
-      match Func_info.def_file_opt func with
-      | Some (path : Fpath.t) -> visible source (entry t path)
-      | None -> true
+let compiled_in (t : t) (build_configuration : int) (func : Func_info.t) :
+    bool =
+  SMap.is_empty t.configuration_of_file
+  ||
+  match Func_info.def_file_opt func with
+  | Some (path : Fpath.t) ->
+      visible t.configurations.(build_configuration) (entry t path)
+  | None -> true
 
 let files_compiled_together (t : t) (files : Fpath.t list) : bool =
-  SMap.is_empty t || jointly (List.map (entry t) (List_.uniq_by Fpath.equal files))
+  SMap.is_empty t.configuration_of_file
+  || jointly (List.map (entry t) (List_.uniq_by Fpath.equal files))
 
 let compiled_together (t : t) (funcs : Func_info.t list) : bool =
   files_compiled_together t (List.filter_map Func_info.def_file_opt funcs)

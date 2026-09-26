@@ -686,7 +686,7 @@ and method_decl ?cl_kind { m_var; m_tparams; m_formals; m_throws; m_body } =
       G.fparams = fb fparams;
       frettype = rett;
       fcaptures = G.no_captures; fbody;
-      fkind = (G.Method, G.fake "");
+      fkind = (G.Method, snd m_var.name);
     } )
 
 and field v = var_with_init v

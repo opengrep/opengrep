@@ -212,46 +212,12 @@ let holds_function_value (e : G.expr) : bool =
       true
   | _ -> false
 
-module Defining_key = struct
-  type t = {
-    side : Class_parents.side;
-    name : string;
-    tiers : (int * int) list list;
-  }
-
-  let equal_side (left : Class_parents.side) (right : Class_parents.side) :
-      bool =
-    match (left, right) with
-    | Class_parents.Instance_side, Class_parents.Instance_side
-    | Class_parents.Class_side, Class_parents.Class_side ->
-        true
-    | (Class_parents.Instance_side | Class_parents.Class_side), _ -> false
-
-  let equal (left : t) (right : t) : bool =
-    equal_side left.side right.side
-    && String.equal left.name right.name
-    && List.equal
-         (List.equal (fun ((left_class : int), (left_paths : int))
-                          ((right_class : int), (right_paths : int)) ->
-              Int.equal left_class right_class && Int.equal left_paths right_paths))
-         left.tiers right.tiers
-
-  let hash (key : t) : int = Hashtbl.hash (key.side, key.name, key.tiers)
-end
-
-module Defining_tbl = Hashtbl.Make (Defining_key)
-
-module Member_key = struct
-  type t = int * string
-
-  let equal (((left_class : int), (left_name : string)) : t)
-      (((right_class : int), (right_name : string)) : t) : bool =
-    Int.equal left_class right_class && String.equal left_name right_name
-
-  let hash (key : t) : int = Hashtbl.hash key
-end
-
-module Member_tbl = Hashtbl.Make (Member_key)
+(* A lookup the class table's memo does not hold is recorded there while
+   files are read one at a time, and in the table's own memo in a pass that
+   reads files in parallel, so no two domains write one memo. *)
+type memo_writes =
+  | Into_class_table
+  | Into_own of Class_table.memo
 
 type t = {
   lang : Lang.t;
@@ -272,7 +238,7 @@ type t = {
   values : assigned_value list SId_tbl.t;
   by_node : Func_info.t Node_tbl.t;
   extension_visible : string -> Func_info.t -> bool;
-  compiled_with_file : Func_info.t -> bool;
+  build_configuration : int;
   outside : t -> caller:Function_id.t option -> G.expr -> resolution;
   types : Type_state.t;
   declared_types : (G.SId.t * G.SId.t option, receiver_class) Hashtbl.t;
@@ -280,8 +246,7 @@ type t = {
   module_uses : module_use list Path_tbl.t;
   block_uses : (int * int * module_use list) list;
   index_links : G.SId.t list SId_tbl.t;
-  defining : (Class_table.cls, Func_info.t) Linearisation.selection Defining_tbl.t;
-  overriding : Func_info.t list Member_tbl.t;
+  memo_writes : memo_writes;
 }
 
 let binding_of_id_info = Class_table.binding_of_id_info
@@ -1283,6 +1248,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let classes =
     Class_table.build ~lang
       ~compiled_together:(fun (_ : Func_info.t list) -> true)
+      ~compiled_in:(fun (_ : int) (_ : Func_info.t) -> true)
       ~classes:
         (Scope_tbl.fold
            (fun (_ : scope_id) (scope : class_scope)
@@ -1326,7 +1292,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     values;
     by_node;
     extension_visible = (fun (_ : string) (_ : Func_info.t) -> true);
-    compiled_with_file = (fun (_ : Func_info.t) -> true);
+    build_configuration = 0;
     outside = (fun (_ : t) ~caller:_ (_ : G.expr) -> External);
     types = Type_state.empty;
     declared_types = Hashtbl.create 64;
@@ -1334,8 +1300,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     module_uses;
     block_uses = !block_uses;
     index_links;
-    defining = Defining_tbl.create 64;
-    overriding = Member_tbl.create 64;
+    memo_writes = Into_class_table;
   }
 
 let functions_of_binding (t : t) (sid : G.SId.t) : Func_info.t list =
@@ -1371,18 +1336,39 @@ let class_table (t : t) : Class_table.t = t.classes
 
 let with_project (t : t) (classes : Class_table.t)
     ~(extension_visible : string -> Func_info.t -> bool)
-    ~(compiled_with_file : Func_info.t -> bool)
+    ~(build_configuration : int)
     ~(outside : t -> caller:Function_id.t option -> G.expr -> resolution) : t =
   {
     t with
     classes;
     extension_visible;
-    compiled_with_file;
+    build_configuration;
     outside;
     declared_types = Hashtbl.create 64;
-    defining = Defining_tbl.create 64;
-    overriding = Member_tbl.create 64;
+    memo_writes = Into_class_table;
   }
+
+let with_own_memo (t : t) : t =
+  { t with memo_writes = Into_own (Class_table.create_memo ()) }
+
+let recorded (type found) (t : t)
+    ~(find : Class_table.memo -> found option)
+    ~(record : Class_table.memo -> found -> unit) (compute : unit -> found) :
+    found =
+  let computed_into (memo : Class_table.memo) : found =
+    let found = compute () in
+    record memo found;
+    found
+  in
+  match find (Class_table.memo t.classes) with
+  | Some found -> found
+  | None -> (
+      match t.memo_writes with
+      | Into_class_table -> computed_into (Class_table.memo t.classes)
+      | Into_own memo -> (
+          match find memo with
+          | Some found -> found
+          | None -> computed_into memo))
 
 let order (t : t) (cls : Class_table.cls) :
     Class_table.cls Linearisation.linearisation =
@@ -1397,8 +1383,13 @@ let is_subclass (t : t) (sub : Class_table.cls) (super : Class_table.cls) :
   else None
 
 let own_members (t : t) (cls : Class_table.cls) (name : string) :
-    Func_info.t list =
-  List.filter t.compiled_with_file (Class_table.own_members cls name)
+    Class_table.definition list =
+  List.filter
+    (fun (definition : Class_table.definition) ->
+      Class_table.compiled_in t.classes
+        ~build_configuration:t.build_configuration
+        definition.Class_table.func)
+    (Class_table.own_definitions t.classes cls name)
 
 let on_side (t : t) (side : Class_parents.side) (cls : Class_table.cls)
     (name : string) (func : Func_info.t) : bool =
@@ -1464,27 +1455,30 @@ let with_unknown_imports (t : t) (name : string)
    declaration of the class overrides. *)
 let rec own_members_on (t : t) ~(importing : Class_table.cls list)
     (side : Class_parents.side) (cls : Class_table.cls) (name : string) :
-    Func_info.t list =
-  let own = List.filter (on_side t side cls name) (own_members t cls name) in
+    Class_table.definition list =
+  let own =
+    List.filter
+      (fun (definition : Class_table.definition) ->
+        on_side t side cls name definition.Class_table.func)
+      (own_members t cls name)
+  in
   let imported =
     if List.exists (Class_table.same cls) importing then []
     else imported_members t ~importing:(cls :: importing) side cls name
   in
   own
   @ List.filter
-      (fun (farther : Func_info.t) ->
+      (fun (farther : Class_table.definition) ->
         not
           (List.exists
-             (fun (nearer : Func_info.t) ->
-               Class_table.overrides ~lang:t.lang
-                 ~equal_type:(Class_table.equal_type t.classes)
-                 name ~nearer ~farther)
+             (fun (nearer : Class_table.definition) ->
+               Class_table.overrides ~lang:t.lang ~nearer ~farther)
              own))
       imported
 
 and imported_members (t : t) ~(importing : Class_table.cls list)
     (side : Class_parents.side) (cls : Class_table.cls) (name : string) :
-    Func_info.t list =
+    Class_table.definition list =
   List.concat_map
     (fun ((origin : Class_table.import_origin), (imported : string)) ->
       let tiers =
@@ -1504,7 +1498,10 @@ and imported_members (t : t) ~(importing : Class_table.cls list)
             ]
         | Class_table.Imported_from_unknown -> [ Linearisation.Unknown_classes ]
       in
-      match first_defining_from t ~importing side tiers imported with
+      match
+        (first_defining_from t ~importing side tiers imported)
+          .Class_table.definitions
+      with
       | Linearisation.Selected (_, defined) -> defined
       | Linearisation.Ambiguous
       | Linearisation.Undefined
@@ -1515,12 +1512,15 @@ and imported_members (t : t) ~(importing : Class_table.cls list)
 and first_defining_from (t : t) ~(importing : Class_table.cls list)
     (side : Class_parents.side)
     (tiers : Class_table.cls Linearisation.tier list) (name : string) :
-    (Class_table.cls, Func_info.t) Linearisation.selection =
+    Class_table.selected =
   let tiers = with_unknown_imports t name tiers in
   let key =
     {
-      Defining_key.side;
+      Class_table.Selection_key.build_configuration = t.build_configuration;
+      side;
       name;
+      importing =
+        List.sort_uniq Int.compare (List.map Class_table.index importing);
       tiers =
         List.map
           (fun (tier : Class_table.cls Linearisation.tier) ->
@@ -1536,24 +1536,21 @@ and first_defining_from (t : t) ~(importing : Class_table.cls list)
           tiers;
     }
   in
-  match Defining_tbl.find_opt t.defining key with
-  | Some (found : (Class_table.cls, Func_info.t) Linearisation.selection) ->
-      found
-  | None ->
-      let found =
-        Class_table.select_member ~lang:t.lang
-          ~equal_type:(Class_table.equal_type t.classes)
-          tiers name
-          ~defines:(fun (cls : Class_table.cls) ->
-            own_members_on t ~importing side cls name)
-      in
-      Defining_tbl.replace t.defining key found;
-      found
+  recorded t
+    ~find:(fun (memo : Class_table.memo) ->
+      Class_table.Selection_tbl.find_opt memo.Class_table.selections key)
+    ~record:(fun (memo : Class_table.memo) (found : Class_table.selected) ->
+      Class_table.Selection_tbl.replace memo.Class_table.selections key found)
+    (fun () ->
+      Class_table.selected_of
+        (Class_table.select_member ~lang:t.lang tiers
+           ~defines:(fun (cls : Class_table.cls) ->
+             own_members_on t ~importing side cls name)))
 
 let first_defining_on (t : t) (side : Class_parents.side)
     (tiers : Class_table.cls Linearisation.tier list) (name : string) :
     (Class_table.cls, Func_info.t) Linearisation.selection =
-  first_defining_from t ~importing:[] side tiers name
+  (first_defining_from t ~importing:[] side tiers name).Class_table.functions
 
 let descendants (t : t) (cls : Class_table.cls) : Class_table.cls list =
   Class_table.descendants t.classes cls
@@ -1653,27 +1650,32 @@ let instance_fields_along (tiers : Class_table.cls Linearisation.tier list)
 
 let overrides (t : t) (cls : Class_table.cls) (name : string) :
     Func_info.t list =
-  let key = (Class_table.index cls, name) in
-  match Member_tbl.find_opt t.overriding key with
-  | Some (found : Func_info.t list) -> found
-  | None ->
-      let found =
-        List.concat_map
-          (fun (sub : Class_table.cls) ->
-            match
-              first_defining_on t Class_parents.Instance_side
-                (order t sub).Linearisation.tiers name
-            with
-            | Linearisation.Selected (_, defined) -> defined
-            | Linearisation.Ambiguous
-            | Linearisation.Undefined
-            | Linearisation.Unknown ->
-                [])
-          (descendants t cls)
-        |> distinct_definitions
-      in
-      Member_tbl.replace t.overriding key found;
-      found
+  let key =
+    {
+      Class_table.Overriding_key.build_configuration = t.build_configuration;
+      cls = Class_table.index cls;
+      name;
+    }
+  in
+  recorded t
+    ~find:(fun (memo : Class_table.memo) ->
+      Class_table.Overriding_tbl.find_opt memo.Class_table.overriding key)
+    ~record:(fun (memo : Class_table.memo) (found : Func_info.t list) ->
+      Class_table.Overriding_tbl.replace memo.Class_table.overriding key found)
+    (fun () ->
+      List.concat_map
+        (fun (sub : Class_table.cls) ->
+          match
+            first_defining_on t Class_parents.Instance_side
+              (order t sub).Linearisation.tiers name
+          with
+          | Linearisation.Selected (_, defined) -> defined
+          | Linearisation.Ambiguous
+          | Linearisation.Undefined
+          | Linearisation.Unknown ->
+              [])
+        (descendants t cls)
+      |> distinct_definitions)
 
 let found_in_descendants (t : t) (cls : Class_table.cls) : bool =
   Class_table.is_abstraction cls
@@ -2254,8 +2256,10 @@ let with_overrides (t : t) (defined : Func_info.t list) : Func_info.t list =
       (fun (groups : (Class_table.cls * string) list) (func : Func_info.t) ->
         match (method_class t func, member_name func) with
         | Some cls, Some name
-          when List.exists (same_definition func)
-                 (Class_table.own_members cls name)
+          when List.exists
+                 (fun (definition : Class_table.definition) ->
+                   same_definition func definition.Class_table.func)
+                 (Class_table.own_definitions t.classes cls name)
                && dispatches t cls [ func ] name ->
             if
               List.exists

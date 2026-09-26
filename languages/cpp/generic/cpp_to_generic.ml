@@ -1506,10 +1506,11 @@ and map_onedecl env x : G.definition list =
 
 and map_declared_var env (v : var_decl) : G.definition =
   let ent, vardef = map_var_decl env v in
-  match vardef with
-  | { G.vtype = Some { G.t = G.TyFun ((params : G.parameter list),
-                                      (ret : G.type_)); _ };
-      vinit = None; _ }
+  match (vardef, snd v) with
+  | ( { G.vtype = Some { G.t = G.TyFun ((params : G.parameter list),
+                                        (ret : G.type_)); _ };
+        vinit = None; _ },
+      { v_type = _, TFunction { ft_params = (lparen : tok), _, _; _ }; _ } )
     when (match env.declaration_context with
           | At_file_scope -> true
           | In_class_body
@@ -1518,7 +1519,7 @@ and map_declared_var env (v : var_decl) : G.definition =
       ( ent,
         G.FuncDef
           {
-            G.fkind = (function_kind env, G.fake "");
+            G.fkind = (function_kind env, lparen);
             fparams = (G.fake "(", params, G.fake ")");
             frettype = Some ret;
             fcaptures = G.no_captures;
@@ -1725,8 +1726,8 @@ and map_function_definition env
   let env = { env with declaration_context = In_function_body } in
   let _v_f_specsTODO = map_of_list (map_specifier env) v_f_specs in
   let fbody, _attrsTODO = map_function_body env v_f_body in
-  let fparams, fret = map_functionType env v_f_type in
-  { G.fkind = (kind, G.fake ""); fparams; frettype = Some fret; fcaptures = G.no_captures; fbody }
+  let ((lparen, _, _) as fparams), fret = map_functionType env v_f_type in
+  { G.fkind = (kind, lparen); fparams; frettype = Some fret; fcaptures = G.no_captures; fbody }
 
 and map_functionType env x : G.parameters * G.type_ =
   match x with
