@@ -734,6 +734,130 @@ let overloads_by_type (lang : Lang.t) : bool =
       true
   | _ -> false
 
+type class_declaration =
+  | Plain_class
+  | Enum_class
+  | Record_class
+  | Annotation_class
+  | Struct_class
+
+type implicit_supertypes = {
+  of_every_class : string list list;
+  of_declaration : class_declaration -> string list list;
+  user_defined_conversions : bool;
+}
+
+let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
+  let none (_ : class_declaration) : string list list = [] in
+  let unknown =
+    { of_every_class = []; of_declaration = none; user_defined_conversions = true }
+  in
+  match lang with
+  | Lang.Java ->
+      {
+        of_every_class = [ [ "Object" ]; [ "java"; "lang"; "Object" ] ];
+        of_declaration =
+          (function
+          | Enum_class ->
+              [
+                [ "Enum" ];
+                [ "java"; "lang"; "Enum" ];
+                [ "Comparable" ];
+                [ "java"; "lang"; "Comparable" ];
+                [ "Serializable" ];
+                [ "java"; "io"; "Serializable" ];
+                [ "Constable" ];
+                [ "java"; "lang"; "constant"; "Constable" ];
+              ]
+          | Record_class -> [ [ "Record" ]; [ "java"; "lang"; "Record" ] ]
+          | Annotation_class ->
+              [ [ "Annotation" ]; [ "java"; "lang"; "annotation"; "Annotation" ] ]
+          | Plain_class
+          | Struct_class ->
+              []);
+        user_defined_conversions = false;
+      }
+  | Lang.Kotlin ->
+      {
+        of_every_class = [ [ "Any" ]; [ "kotlin"; "Any" ] ];
+        of_declaration =
+          (function
+          | Enum_class ->
+              [
+                [ "Enum" ];
+                [ "kotlin"; "Enum" ];
+                [ "Comparable" ];
+                [ "kotlin"; "Comparable" ];
+                [ "Serializable" ];
+                [ "java"; "io"; "Serializable" ];
+              ]
+          | Annotation_class -> [ [ "Annotation" ]; [ "kotlin"; "Annotation" ] ]
+          | Plain_class
+          | Record_class
+          | Struct_class ->
+              []);
+        user_defined_conversions = false;
+      }
+  | Lang.Apex ->
+      {
+        of_every_class = [ [ "Object" ] ];
+        of_declaration = none;
+        user_defined_conversions = false;
+      }
+  | Lang.Csharp ->
+      {
+        of_every_class =
+          [ [ "object" ]; [ "Object" ]; [ "System"; "Object" ]; [ "dynamic" ] ];
+        of_declaration =
+          (function
+          | Struct_class -> [ [ "ValueType" ]; [ "System"; "ValueType" ] ]
+          | Enum_class -> [ [ "Enum" ]; [ "System"; "Enum" ] ]
+          | Plain_class
+          | Record_class
+          | Annotation_class ->
+              []);
+        user_defined_conversions = true;
+      }
+  | Lang.Scala ->
+      {
+        of_every_class =
+          [
+            [ "Any" ];
+            [ "scala"; "Any" ];
+            [ "AnyRef" ];
+            [ "scala"; "AnyRef" ];
+            [ "Object" ];
+            [ "java"; "lang"; "Object" ];
+          ];
+        of_declaration =
+          (function
+          | Record_class ->
+              [
+                [ "Product" ];
+                [ "scala"; "Product" ];
+                [ "Serializable" ];
+                [ "scala"; "Serializable" ];
+                [ "java"; "io"; "Serializable" ];
+                [ "Equals" ];
+                [ "scala"; "Equals" ];
+              ]
+          | Plain_class
+          | Enum_class
+          | Annotation_class
+          | Struct_class ->
+              []);
+        user_defined_conversions = true;
+      }
+  | Lang.Swift ->
+      {
+        of_every_class = [ [ "Any" ]; [ "AnyObject" ] ];
+        of_declaration = none;
+        user_defined_conversions = true;
+      }
+  | Lang.Cpp ->
+      { of_every_class = []; of_declaration = none; user_defined_conversions = true }
+  | _ -> unknown
+
 let interfaces_are_structural (lang : Lang.t) : bool =
   match lang with
   | Lang.Go -> true

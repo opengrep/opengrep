@@ -144,6 +144,12 @@ let type_parameter = function
       let v1 = ident v1 and v2 = list ref_type v2 in
       G.tparam_of_id v1 ~tp_bounds:v2
 
+let type_parameters (tparams : type_parameter list) :
+    G.type_parameters option =
+  match tparams with
+  | [] -> None
+  | xs -> Some (Tok.unsafe_fake_bracket (list type_parameter xs))
+
 let rec modifier (x, tok) =
   let s = Tok.content_of_tok tok in
   match x with
@@ -639,8 +645,9 @@ and parameter_binding = function
       G.ParamRest (tk, p)
   | ParamEllipsis t -> G.ParamEllipsis t
 
-and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
+and method_decl ?cl_kind { m_var; m_tparams; m_formals; m_throws; m_body } =
   let ent, rett = var m_var in
+  let ent = { ent with G.tparams = type_parameters m_tparams } in
   let fparams = parameters m_formals in
   let v3 = list typ m_throws in
   let v4 = stmt m_body in
@@ -728,11 +735,7 @@ and class_decl
     } =
   let v1 = ident cl_name in
   let v2, more_attrs = class_kind_and_more cl_kind in
-  let v3 =
-    match cl_tparams with
-    | [] -> None
-    | xs -> Some (Tok.unsafe_fake_bracket (list type_parameter xs))
-  in
+  let v3 = type_parameters cl_tparams in
   let v4 = modifiers cl_mods in
   let v5 = option class_parent cl_extends in
   let v6 = list ref_type cl_impls in

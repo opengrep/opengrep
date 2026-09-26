@@ -390,6 +390,7 @@ item_other:
 item_declaration:
  | class_and_co_declaration { $1 }
  | method_declaration       { Method $1 }
+ | generic_method_or_constructor_decl { Method $1 }
  | constructor_declaration_top  { $1 }
 
 (* coupling: copy paste of statement, without dots *)
@@ -413,7 +414,7 @@ constructor_declaration_top:
   modifiers_opt constructor_declarator_top optl(throws) constructor_body
   { let (id, formals) = $2 in
     let var = { mods = $1; type_ = None; name = id } in
-    Method { m_var = var; m_formals = formals; m_throws = $3;
+    Method { m_var = var; m_tparams = []; m_formals = formals; m_throws = $3;
 	     m_body = $4 }
   }
 
@@ -1234,9 +1235,9 @@ method_declaration: method_header method_body  { { $1 with m_body = $2 } }
 
 method_header:
  | modifiers_opt type_ method_declarator optl(throws)
-     { method_header $1 $2 $3 $4 }
+     { method_header $1 [] $2 $3 $4 }
  | modifiers_opt VOID method_declarator optl(throws)
-     { method_header $1 (void_type $2) $3 $4 }
+     { method_header $1 [] (void_type $2) $3 $4 }
 
 method_declarator:
  | identifier "(" listc0(formal_parameter) ")"  { (IdentDecl $1), $3 }
@@ -1253,13 +1254,13 @@ generic_method_or_constructor_decl:
 |  modifiers_opt type_parameters type_
    identifier formal_parameters optl(throws) method_body
     { let (t, mdecl, throws, body) = $3, (IdentDecl $4, $5), $6, $7 in
-      let header = method_header $1 (* TODO $2 *) t mdecl throws in
+      let header = method_header $1 $2 t mdecl throws in
       { header with m_body = body }
     }
 |  modifiers_opt type_parameters VOID
    identifier formal_parameters optl(throws) method_body
    { let (t, mdecl, throws, body) = void_type $3, (IdentDecl $4, $5), $6, $7 in
-      let header = method_header $1 (* TODO $2 *) t mdecl throws in
+      let header = method_header $1 $2 t mdecl throws in
       { header with m_body = body }
     }
 
@@ -1271,7 +1272,7 @@ constructor_declaration:
  modifiers_opt constructor_declarator optl(throws) constructor_body
   { let (id, formals) = $2 in
     let var = { mods = $1; type_ = None; name = id } in
-    Method { m_var = var; m_formals = formals; m_throws = $3;
+    Method { m_var = var; m_tparams = []; m_formals = formals; m_throws = $3;
 	     m_body = $4 }
   }
 
@@ -1386,12 +1387,12 @@ interface_generic_method_decl:
 | modifiers_opt type_parameters type_
   identifier formal_parameters optl(throws) ";"
     { let (t, mdecl, throws) = $3, (IdentDecl $4, $5), $6 in
-      method_header $1 (* TODO $2 *) t mdecl throws
+      method_header $1 $2 t mdecl throws
     }
 | modifiers_opt type_parameters VOID
   identifier formal_parameters optl(throws) ";"
     { let (t, mdecl, throws) = void_type $3, (IdentDecl $4, $5), $6 in
-      method_header $1 (* TODO $2 *) t mdecl throws
+      method_header $1 $2 t mdecl throws
     }
 
 (*************************************************************************)
@@ -1437,7 +1438,7 @@ annotation_type_element_declaration: annotation_type_element_rest { $1 }
 
 annotation_type_element_rest:
  | modifiers_opt type_ identifier annotation_method_or_constant_rest ";"
-   { let md = method_header $1 $2 (IdentDecl $3, []) [] in
+   { let md = method_header $1 [] $2 (IdentDecl $3, []) [] in
      AnnotationTypeElement (md, $4) }
  | class_and_co_declaration    { $1 }
  (* sgrep-ext: allows ... inside @interface body *)

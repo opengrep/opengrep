@@ -341,9 +341,10 @@ and init = ExprInit of expr | ArrayInit of init list bracket
 and method_decl = {
   (* m_var.type_ is None for a constructor *)
   m_var : var_definition;
+  m_tparams : type_parameter list;
   (* the var.mod in params can only be Final or Annotation *)
   m_formals : parameters;
-  m_throws : typ list; (* todo: m_tparams *)
+  m_throws : typ list;
   (* Empty for methods in interfaces.
    * For constructor the first stmts can contain
    * explicit_constructor_invocations (which are currently parsed as
@@ -589,9 +590,10 @@ let rec canon_var mods t_opt v =
           canon_var mods (Some (TArray (Tok.fake_bracket (tok_of_var v') t))) v'
       )
 
-let method_header mods mtype (v, formals) throws =
+let method_header mods tparams mtype (v, formals) throws =
   {
     m_var = canon_var mods (Some mtype) v;
+    m_tparams = tparams;
     m_formals = formals;
     m_throws = throws;
     m_body = EmptyStmt (Tok.fake_tok (tok_of_var v) ";");

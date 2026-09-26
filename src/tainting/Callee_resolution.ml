@@ -116,6 +116,9 @@ type static_typing = {
   class_of_type :
     written_in:Function_id.t option -> G.type_ -> Class_table.cls option;
   is_subclass : Class_table.cls -> Class_table.cls -> bool option;
+  external_type_path :
+    written_in:Function_id.t option -> G.type_ -> string list option;
+  accepts_external : Class_table.cls -> string list -> bool option;
   caller : Function_id.t option;
   type_of_call : G.expr -> static_type option;
   this_type : static_type option Lazy.t;
@@ -190,23 +193,25 @@ let is_numeric (builtin : Type.builtin_type) : bool =
   | Type.OtherBuiltins _ ->
       false
 
-let types_disagree
+let accepts
     ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
-    ~(argument : static_type) ~(parameter : static_type) : bool =
+    (argument : static_type option) (parameter : static_type option) :
+    bool option =
   match (argument, parameter) with
-  | Declared_class argument, Declared_class parameter -> (
-      match is_subclass argument parameter with
-      | Some false -> true
-      | Some true
-      | None ->
-          false)
-  | Builtin_type argument, Builtin_type parameter ->
-      not
-        (Type.equal_builtin_type argument parameter
-        || (is_numeric argument && is_numeric parameter))
-  | Declared_class _, Builtin_type _
-  | Builtin_type _, Declared_class _ ->
-      true
+  | Some (Declared_class argument), Some (Declared_class parameter) ->
+      is_subclass argument parameter
+  | Some (Builtin_type argument), Some (Builtin_type parameter) ->
+      if is_numeric argument && is_numeric parameter then None
+      else Some (Type.equal_builtin_type argument parameter)
+  | Some (Declared_class _), Some (Builtin_type _)
+  | Some (Builtin_type _), Some (Declared_class _) ->
+      Some false
+  | None, _
+  | _, None ->
+      None
+
+let is_decided (expected : bool) (decision : bool option) : bool =
+  Option.equal Bool.equal (Some expected) decision
 
 let call_parameters ~(lang : Lang.t) (f : func_info) : G.parameter list =
   let is_method = Receiver.is_method f.fdef in
@@ -217,31 +222,101 @@ let call_parameters ~(lang : Lang.t) (f : func_info) : G.parameter list =
            (Receiver.implicit_param lang ~is_method ~is_static
               ~is_first:(Int.equal i 0) param))
 
+type parameter_type =
+  | Typed of static_type
+  | External_type of string list
+  | Untyped
+
+let static_type_of_parameter (parameter : parameter_type) : static_type option =
+  match parameter with
+  | Typed static -> Some static
+  | External_type _
+  | Untyped ->
+      None
+
+let applies ~(typing : static_typing) (argument : static_type option)
+    (parameter : parameter_type) : bool option =
+  match (argument, parameter) with
+  | Some (Declared_class cls), External_type path ->
+      typing.accepts_external cls path
+  | _, (Typed _ | External_type _ | Untyped) ->
+      accepts ~is_subclass:typing.is_subclass argument
+        (static_type_of_parameter parameter)
+
+let parameter_types ~(lang : Lang.t) ~(typing : static_typing)
+    (arguments : static_type option list) (f : func_info) :
+    parameter_type list =
+  let parameters = call_parameters ~lang f in
+  let written_in = Symbol_table.node_of_function f in
+  List.mapi
+    (fun (i : int) (argument : static_type option) ->
+      match (argument, List.nth_opt parameters i) with
+      | Some _, Some (G.Param { G.ptype = Some ty; _ }) -> (
+          match static_type_of_type ~lang ~typing ~written_in ty with
+          | Some static -> Typed static
+          | None -> (
+              match typing.external_type_path ~written_in ty with
+              | Some path -> External_type path
+              | None -> Untyped))
+      | _ -> Untyped)
+    arguments
+
+type applicable_overload = {
+  candidate : func_info;
+  parameters : static_type option list;
+  decided : bool;
+}
+
+let more_specific
+    ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
+    (left : static_type option list) (right : static_type option list) : bool =
+  List.for_all2
+    (fun (left : static_type option) (right : static_type option) ->
+      is_decided true (accepts ~is_subclass left right))
+    left right
+
+let most_specific
+    ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
+    (overloads : applicable_overload list) : func_info list =
+  let strictly_more_specific (left : applicable_overload)
+      (right : applicable_overload) : bool =
+    more_specific ~is_subclass left.parameters right.parameters
+    && not (more_specific ~is_subclass right.parameters left.parameters)
+  in
+  let decided =
+    List.filter (fun (overload : applicable_overload) -> overload.decided)
+      overloads
+  in
+  List.filter_map
+    (fun (overload : applicable_overload) ->
+      if
+        List.exists
+          (fun (other : applicable_overload) ->
+            strictly_more_specific other overload)
+          decided
+      then None
+      else Some overload.candidate)
+    overloads
+
 let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
     (args : G.argument list) (candidates : func_info list) : func_info list =
   if not (Lang_config.overloads_by_type lang) then candidates
   else
     let arguments = argument_types ~lang ~typing args in
-    List.filter
+    List.filter_map
       (fun (f : func_info) ->
-        let parameters = call_parameters ~lang f in
-        let written_in = Symbol_table.node_of_function f in
-        not
-          (List.exists Fun.id
-             (List.mapi
-                (fun (i : int) (argument : static_type option) ->
-                  match (argument, List.nth_opt parameters i) with
-                  | Some argument, Some (G.Param { G.ptype = Some ty; _ }) -> (
-                      match
-                        static_type_of_type ~lang ~typing ~written_in ty
-                      with
-                      | Some parameter ->
-                          types_disagree ~is_subclass:typing.is_subclass
-                            ~argument ~parameter
-                      | None -> false)
-                  | _ -> false)
-                arguments)))
+        let parameters = parameter_types ~lang ~typing arguments f in
+        let decisions = List.map2 (applies ~typing) arguments parameters in
+        if List.exists (is_decided false) decisions then None
+        else
+          Some
+            {
+              candidate = f;
+              parameters = List_.map static_type_of_parameter parameters;
+              decided = List.for_all (is_decided true) decisions;
+            })
       candidates
+    |> most_specific ~is_subclass:typing.is_subclass
 
 let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
     (call_args : G.argument list option) (candidates : func_info list) :
@@ -284,6 +359,8 @@ let table_typing ~(lang : Lang.t) ~(table : Symbol_table.t)
     {
       class_of_type = Symbol_table.class_of_type_written_in table;
       is_subclass = Symbol_table.is_subclass table;
+      external_type_path = Symbol_table.external_type_path table;
+      accepts_external = Symbol_table.accepts_external table;
       caller;
       type_of_call =
         (fun (e : G.expr) -> type_of_call ~lang ~resolve ~typing e);

@@ -1307,7 +1307,7 @@ and comp_cons_decl env (v1, v2, v3) =
   let v2 = (* pattern [\p{L}_$][\p{L}\p{Nd}_$]* *) str env v2 in
   let ent = { name = v2; mods = v1; type_ = None } in
   let v3 = block env v3 in
-  { m_var = ent; m_formals = []; m_throws = []; m_body = v3 }
+  { m_var = ent; m_tparams = []; m_formals = []; m_throws = []; m_body = v3 }
 
 and class_body_decl env (x : CST.class_body_declaration) =
   match x with
@@ -1502,10 +1502,10 @@ and constructor_declaration (env : env)
     | Some x -> throws env x
     | None -> []
   in
-  let _tparams, id, params = v2 in
+  let tparams, id, params = v2 in
   let vdef = { name = id; mods = v1; type_ = None } in
   let v4 = constructor_body env v4 in
-  { m_var = vdef; m_formals = params; m_throws = v3; m_body = v4 }
+  { m_var = vdef; m_tparams = tparams; m_formals = params; m_throws = v3; m_body = v4 }
 
 and constructor_declarator (env : env)
     ((v1, v2, v3) : CST.constructor_declarator) =
@@ -1623,7 +1623,7 @@ and annotation_type_element_declaration (env : env)
     | None -> None
   in
   let _v8 = token env v8 (* ";" *) in
-  let md = AST.method_header v1 typ (IdentDecl v3, []) [] in
+  let md = AST.method_header v1 [] typ (IdentDecl v3, []) [] in
   AnnotationTypeElement (md, v7)
 
 and default_value (env : env) ((v1, v2) : CST.default_value) =
@@ -1939,8 +1939,8 @@ and method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) =
     | `SEMI tok -> EmptyStmt (token env tok)
     (* ";" *)
   in
-  let _tparams, t, id, params, throws = v2 in
-  { (AST.method_header v1 t (IdentDecl id, params) throws) with m_body = v3 }
+  let tparams, t, id, params, throws = v2 in
+  { (AST.method_header v1 tparams t (IdentDecl id, params) throws) with m_body = v3 }
 
 let partials (env : env) (x : CST.partials) =
   match x with
@@ -1948,11 +1948,11 @@ let partials (env : env) (x : CST.partials) =
       let v1 = modifiers_opt env v1 in
       let v2 = method_header env v2 in
       let v3 = EmptyStmt (Tok.unsafe_fake_tok "") in
-      let _tparams, t, id, params, throws = v2 in
+      let tparams, t, id, params, throws = v2 in
       PartialDecl
         (Method
            {
-             (AST.method_header v1 t (IdentDecl id, params) throws) with
+             (AST.method_header v1 tparams t (IdentDecl id, params) throws) with
              m_body = v3;
            })
 

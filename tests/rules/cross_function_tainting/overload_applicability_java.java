@@ -1,6 +1,6 @@
 // An overload applies to a call when the static type of each argument is the
 // parameter's type or a subtype of it. The call reaches the overrides of the
-// overloads that apply, and no other override.
+// most specific overloads that apply, and no other override.
 interface Node {}
 
 class A implements Node {
@@ -19,7 +19,7 @@ class ByA {
 
 class ByAPrinter extends ByA {
     void visit(Node n, String s) {
-        // todook: overload_applicability_java
+        // ok: overload_applicability_java
         sink(s);
     }
 
@@ -65,7 +65,7 @@ class ByCast {
 
 class ByCastPrinter extends ByCast {
     void visit(Node n, String s) {
-        // todook: overload_applicability_java
+        // ok: overload_applicability_java
         sink(s);
     }
 
@@ -111,7 +111,7 @@ class ByThis {
 
 class ByThisPrinter extends ByThis {
     void visit(Node n, String s) {
-        // todook: overload_applicability_java
+        // ok: overload_applicability_java
         sink(s);
     }
 

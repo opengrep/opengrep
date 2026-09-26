@@ -1,0 +1,13 @@
+rules:
+  - id: overload_unresolved_parameter_csharp
+    message: a call keeps an overload whose parameter class is not in the program, because a user defined conversion can accept the argument
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

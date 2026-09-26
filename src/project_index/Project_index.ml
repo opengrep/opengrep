@@ -754,6 +754,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
                 parents = [];
                 class_side_parents = [];
                 kind = Class_table.Class_kind G.Class;
+                declaration = Lang_config.Plain_class;
                 singleton_exposure = Class_parents.No_singleton_exposure;
                 bound_functions = [];
                 object_fields = Class_table.Field_path_map.empty;
@@ -889,6 +890,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
               parents = [];
               class_side_parents = [];
               kind = Class_table.Class_kind G.Class;
+              declaration = Lang_config.Plain_class;
               singleton_exposure = Class_parents.No_singleton_exposure;
               bound_functions = [];
               object_fields = Class_table.Field_path_map.empty;

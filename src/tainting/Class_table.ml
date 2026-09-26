@@ -44,6 +44,7 @@ type class_scope = {
   parents : (parent * Linearisation.placement) list;
   class_side_parents : parent list;
   kind : kind;
+  declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
   bound_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
@@ -268,6 +269,9 @@ let is_abstraction (cls : cls) : bool =
       | Module_kind ->
           false)
     cls.scopes
+
+let declarations (cls : cls) : Lang_config.class_declaration list =
+  List.map (fun (scope : class_scope) -> scope.declaration) cls.scopes
 
 let is_interface (cls : cls) : bool =
   List.exists

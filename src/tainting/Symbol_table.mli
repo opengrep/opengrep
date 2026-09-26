@@ -22,6 +22,7 @@ type class_scope = Class_table.class_scope = {
   parents : (parent * Linearisation.placement) list;
   class_side_parents : parent list;
   kind : kind;
+  declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
   bound_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
@@ -110,6 +111,13 @@ val class_of_type_written_in :
   AST_generic.type_ ->
   Class_table.cls option
 
+val external_type_path :
+  t ->
+  written_in:Function_id.t option ->
+  AST_generic.type_ ->
+  string list option
+
+val accepts_external : t -> Class_table.cls -> string list -> bool option
 val this_class : t -> caller:Function_id.t option -> Class_table.cls option
 val class_of_function : t -> Func_info.t -> Class_table.cls option
 val constructors : t -> class_scope -> resolution

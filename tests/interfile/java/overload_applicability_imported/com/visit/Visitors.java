@@ -17,7 +17,7 @@ class ByA {
 
 class ByAPrinter extends ByA {
     void visit(Node n, String s) {
-        // todook: overload-applicability-imported
+        // ok: overload-applicability-imported
         sink(s);
     }
 
@@ -67,7 +67,7 @@ class ByCast {
 
 class ByCastPrinter extends ByCast {
     void visit(Node n, String s) {
-        // todook: overload-applicability-imported
+        // ok: overload-applicability-imported
         sink(s);
     }
 

@@ -1,0 +1,13 @@
+rules:
+  - id: overload_unresolved_parameter_java
+    message: a call reaches an overload whose parameter class is not in the program only when the argument's class can be a subtype of it
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

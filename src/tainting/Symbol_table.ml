@@ -48,6 +48,7 @@ type class_scope = Class_table.class_scope = {
   parents : (parent * Linearisation.placement) list;
   class_side_parents : parent list;
   kind : kind;
+  declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
   bound_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
@@ -258,6 +259,21 @@ let defined_elsewhere (info : G.id_info) : bool =
         _ ) ->
       false
 
+let declaration_of (kind : kind) (ent : G.entity) :
+    Lang_config.class_declaration =
+  let declared (attribute : G.keyword_attribute) : bool =
+    AST_generic_helpers.has_keyword_attr attribute ent.G.attrs
+  in
+  if declared G.EnumClass then Lang_config.Enum_class
+  else if declared G.RecordClass then Lang_config.Record_class
+  else if declared G.AnnotationClass then Lang_config.Annotation_class
+  else
+    match kind with
+    | Class_kind G.Struct -> Lang_config.Struct_class
+    | Class_kind (G.Class | G.Interface | G.Trait | G.Object)
+    | Module_kind ->
+        Lang_config.Plain_class
+
 let binding_of_function (func : Func_info.t) : G.SId.t option =
   match func.Func_info.entity with
   | Some { G.name = G.EN name; _ } -> binding_of_id_info (id_info_of_name name)
@@ -417,6 +433,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     | None -> []
   in
   let kinds = Scope_tbl.create 16 in
+  let declarations = Scope_tbl.create 16 in
   let external_classes = Scope_tbl.create 16 in
   let written_parents = Scope_tbl.create 16 in
   let written_class_side_parents = Scope_tbl.create 16 in
@@ -492,6 +509,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let declare_class (context : context) (scope : scope_id) (kind : kind)
       (ent : G.entity) (name : G.name) (def : G.definition_kind) : unit =
     Scope_tbl.replace kinds scope kind;
+    Scope_tbl.replace declarations scope (declaration_of kind ent);
     class_definitions := (scope, def) :: !class_definitions;
     add_initialiser scope ent def;
     if Class_parents.reopens lang ent def then
@@ -982,6 +1000,10 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
           kind =
             Option.value (Scope_tbl.find_opt kinds id)
               ~default:(Class_kind G.Class);
+          declaration =
+            Option.value
+              (Scope_tbl.find_opt declarations id)
+              ~default:Lang_config.Plain_class;
           singleton_exposure =
             Option.value
               (Scope_tbl.find_opt exposures id)
@@ -2203,6 +2225,38 @@ let class_of_declared_type (t : t) ~(context : scope_id option) (ty : G.type_)
 let class_of_type_written_in (t : t) ~(written_in : Function_id.t option)
     (ty : G.type_) : Class_table.cls option =
   class_of_declared_type t ~context:(self_scope t ~caller:written_in) ty
+
+let external_type_path (t : t) ~(written_in : Function_id.t option)
+    (ty : G.type_) : string list option =
+  match class_of_type t ~context:(self_scope t ~caller:written_in) ty with
+  | External_class -> Option.map qualified_path (name_of_type ty)
+  | Class _
+  | Exact _
+  | Class_object _
+  | Ancestors_of _
+  | Object_of _
+  | Root
+  | Unknown ->
+      None
+
+let accepts_external (t : t) (cls : Class_table.cls) (path : string list) :
+    bool option =
+  let supertypes = Lang_config.implicit_supertypes t.lang in
+  let linearisation = order t cls in
+  let implicit =
+    supertypes.Lang_config.of_every_class
+    @ List.concat_map
+        (fun (ancestor : Class_table.cls) ->
+          List.concat_map supertypes.Lang_config.of_declaration
+            (Class_table.declarations ancestor))
+        linearisation.Linearisation.order
+  in
+  if List.exists (List.equal String.equal path) implicit then Some true
+  else if
+    supertypes.Lang_config.user_defined_conversions
+    || not linearisation.Linearisation.complete
+  then None
+  else Some false
 
 let this_class (t : t) ~(caller : Function_id.t option) :
     Class_table.cls option =

@@ -24,6 +24,7 @@ type class_scope = {
   parents : (parent * Linearisation.placement) list;
   class_side_parents : parent list;
   kind : kind;
+  declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
   bound_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
@@ -108,6 +109,7 @@ val extensions : cls -> string -> Func_info.t list
 val bound_functions : cls -> Func_info.t list
 val exposes : cls -> string -> bool
 val is_abstraction : cls -> bool
+val declarations : cls -> Lang_config.class_declaration list
 val is_interface : cls -> bool
 val is_trait_impl : cls -> bool
 val name_of_class : t -> cls -> AST_generic.name option
