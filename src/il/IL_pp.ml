@@ -360,7 +360,7 @@ let pp_instr_kind ik =
       Printf.sprintf "%s = <lambda>;" (pp_lval lv)
   | AssignAnon (lv, AnonClass _) ->
       Printf.sprintf "%s = <class>;" (pp_lval lv)
-  | Call (lv_opt, func, args) ->
+  | Call (lv_opt, func, args, _) ->
       let call_str =
         Printf.sprintf "%s(%s)" (pp_exp func) (pp_args args)
       in

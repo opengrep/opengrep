@@ -1397,7 +1397,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                   { e = Fetch method_lval; eorig = related_tok tok }
                 in
                 let call_ss, call_exp = call_instr env tok eorig ~void (fun res ->
-                    Call (res, method_, args')) in
+                    Call (res, method_, args', All_results)) in
                 (ss_args @ aux_ss @ call_ss, call_exp)))
   | G.Call
       ( ({ e =
@@ -1522,7 +1522,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       with
       | Fixme (kind, any_generic) ->
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
-          let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, fixme, args)) in
+          let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, fixme, args, All_results)) in
           (ss_args @ call_ss, call_exp))
   (* Clojure keyword-as-function [(:body m)]: a single-argument map
    * lookup by the atom [:body]. Lower as a field access
@@ -2262,13 +2262,13 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       in
       expr_aux env ~void update_call
   | G.Assign (e1, tok, e2) ->
-      let ss_e2, exp = expr env e2 in
+      let ss_e2, exp = assigned_value env e1 e2 in
       let ss_assign, result = assign env ~g_expr e1 tok exp in
       (ss_e2 @ ss_assign, result)
   | G.AssignOp (e1, (G.Eq, tok), e2) ->
       (* AsssignOp(Eq) is used to represent plain assignment in some languages,
        * e.g. Go's `:=` is represented as `AssignOp(Eq)`. *)
-      let ss_e2, exp = expr env e2 in
+      let ss_e2, exp = assigned_value env e1 e2 in
       let ss_assign, result = assign env ~g_expr e1 tok exp in
       (ss_e2 @ ss_assign, result)
   | G.AssignOp (e1, op, e2) ->
@@ -2419,7 +2419,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           match env.yield_block with
           | Some block ->
               let block = mk_e (Fetch (lval_of_base (Var block))) NoOrig in
-              Call (Some tmp, block, mk_unnamed_args yield_args)
+              Call (Some tmp, block, mk_unnamed_args yield_args, All_results)
           | None -> CallSpecial (Some tmp, (Yield, tok), mk_unnamed_args yield_args)
         in
         let instr = mk_s (Instr (mk_i call eorig)) in
@@ -2720,6 +2720,36 @@ and expr env ?void e_gen : stmts * exp =
   | Fixme (kind, any_generic) ->
       ([], fixme_exp kind any_generic (related_exp e_gen))
 
+and one_target_value env (e : G.expr) : stmts * exp =
+  let ss, e' = expr env e in
+  match e'.e with
+  | Fetch { base = Var result; rev_offset = [] } ->
+      let first_result (st : stmt) : stmt =
+        match st.s with
+        | Instr
+            ({
+               i =
+                 Call
+                   ( (Some { base = Var x; rev_offset = [] } as lval),
+                     callee,
+                     args,
+                     All_results );
+               _;
+             } as instr)
+          when Int.equal (IL.compare_name x result) 0 ->
+            { s = Instr { instr with i = Call (lval, callee, args, First_result) } }
+        | _ -> st
+      in
+      (List_.map first_result ss, e')
+  | _ -> (ss, e')
+
+and assigned_value env (lhs : G.expr) (rhs : G.expr) : stmts * exp =
+  match lhs.G.e with
+  | G.Container ((G.Tuple | G.List | G.Array), _)
+  | G.Record _ ->
+      expr env rhs
+  | _ -> one_target_value env rhs
+
 and expr_opt env tok : G.expr option -> stmts * exp = function
   | None ->
       let void = G.Unit tok in
@@ -2750,7 +2780,7 @@ and expr_lazy_op env op tok arg0 args eorig : stmts * exp =
 and call_generic env ?(void = false) tok eorig e args : stmts * exp =
   let ss_e, e = expr env e in
   let ss_args, args = arguments env (Tok.unbracket args) in
-  let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, e, args)) in
+  let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, e, args, All_results)) in
   (ss_e @ ss_args @ call_ss, call_exp)
 
 and call_special _env (x, tok) : call_special * Tok.t =
@@ -3459,7 +3489,7 @@ and xml_expr env ~void eorig xml : stmts * exp =
       in
       let record = mk_e (RecordOrDict fields) fields_orig in
       let args = [ Unnamed record ] in
-      let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, e, args)) in
+      let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, e, args, All_results)) in
       (body_ss @ attrs_ss @ call_ss, call_exp)
   | Some _
   | None ->
@@ -3761,33 +3791,6 @@ and declaration env (def : G.definition) (ty : G.type_) : stmts =
 (*****************************************************************************)
 (* Parameters *)
 (*****************************************************************************)
-(* A parameter the callee can rebind for the caller. *)
-and parameter_is_by_reference (lang : Lang.t) (p : G.parameter_classic) : bool =
-  let has_named_attr (names : string list) (attrs : G.attribute list) =
-    List.exists
-      (function
-        | G.NamedAttr (_, G.Id ((s, _), _), _) -> List.mem s names
-        | _ -> false)
-      attrs
-  in
-  match lang with
-  | Lang.Cpp -> (
-      match p.ptype with
-      | Some { t = G.TyRef _; _ } -> true
-      | _ -> false)
-  | Lang.Csharp -> has_named_attr [ "ref"; "out" ] p.pattrs
-  | Lang.Vb ->
-      List.exists
-        (function
-          | G.OtherAttribute (("BYREF", _), _) -> true
-          | _ -> false)
-        p.pattrs
-  | Lang.Swift -> (
-      match p.ptype with
-      | Some { t_attrs; _ } -> has_named_attr [ "inout" ] t_attrs
-      | None -> false)
-  | _ -> false
-
 (* The decorators' arguments, then the default values, in source order. *)
 and definition_time_stmts env (ent : G.entity) (fdef : G.function_definition) :
     stmts =
@@ -3840,7 +3843,8 @@ and parameters env params : param list =
              {
                pname;
                pdefault;
-               by_reference = parameter_is_by_reference env.lang classic;
+               by_reference =
+                 Lang_evaluation.parameter_is_by_reference env.lang classic;
                ptype;
              }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
@@ -4187,7 +4191,7 @@ and stmt_aux env st : stmts =
       @ let_pattern_stmts (assign_pattern_env env) ~eorig:(Related (G.S st))
           pat e
   | G.DefStmt (ent, G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ }) ->
-      let ss1, e' = expr env e in
+      let ss1, e' = one_target_value env e in
       let ss_lv, lv = lval_of_ent env ent in
       let ss2, () = type_opt env opt_ty in
       ss1 @ ss_lv @ ss2 @ [ mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.S st)))) ]
@@ -4787,6 +4791,10 @@ and promoted_property_assignments env (params : G.parameters) : stmts =
   let promotes (attr : G.attribute) : bool =
     match attr with
     | G.KeywordAttr ((G.Public | G.Private | G.Protected | G.Const), _) -> true
+    (* PHP 8.4: "If a property is public, then the main visibility may be
+     * omitted. That is, public private(set) and private(set) will have the
+     * same result." *)
+    | G.OtherAttribute ((("private(set)" | "protected(set)"), _), []) -> true
     | _ -> false
   in
   Tok.unbracket params

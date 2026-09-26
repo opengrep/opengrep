@@ -420,7 +420,7 @@ let rexps_of_instr x =
   | AugmentedAssign (_, exp) ->
       [ exp ]
   | AssignAnon _ -> []
-  | Call (_, e1, args) -> e1 :: List_.map exp_of_arg args
+  | Call (_, e1, args, _) -> e1 :: List_.map exp_of_arg args
   | New (_, _, _, args)
   | CallSpecial (_, _, args) ->
       List_.map exp_of_arg args
@@ -524,7 +524,7 @@ let lval_of_instr_opt x =
   | Assign (lval, _)
   | AugmentedAssign (lval, _)
   | AssignAnon (lval, _)
-  | Call (Some lval, _, _)
+  | Call (Some lval, _, _, _)
   | New (lval, _, _, _)
   | CallSpecial (Some lval, _, _) ->
       Some lval

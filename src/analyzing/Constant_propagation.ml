@@ -72,6 +72,8 @@ let default_lr_stats () = { lvalue = ref 0; rvalue = ref 0 }
 
 type class_stats = { mutable num_constructors : int }
 
+module SIdMap = Map.Make (G.SId)
+
 type stats = {
   var_stats : (Eval.var, lr_stats) Hashtbl.t;
   (* by class, identified by its name and the line and column of its
@@ -81,13 +83,17 @@ type stats = {
    * receiver's class is not known, so no field of that name is assigned
    * once *)
   fields_written_elsewhere : (string, unit) Hashtbl.t;
+  (* the functions of the program, by binding: whether each positional
+   * parameter is passed by reference *)
+  by_reference_parameters : bool list SIdMap.t;
 }
 
-let new_stats () =
+let new_stats (by_reference_parameters : bool list SIdMap.t) =
   {
     var_stats = Hashtbl.create 100;
     class_stats = Hashtbl.create 1;
     fields_written_elsewhere = Hashtbl.create 8;
+    by_reference_parameters;
   }
 
 (*****************************************************************************)
@@ -303,6 +309,21 @@ class ['self] stats_of_prog_visitor =
            incr stat.lvalue;
            stat)
   in
+  let callee_by_reference_parameters (env : stats) (callee : expr) : bool list =
+    match callee.e with
+    | N (Id (_, { id_resolved = { contents = Some (_, sid) }; _ }))
+    | DotAccess
+        (_, _, FN (Id (_, { id_resolved = { contents = Some (_, sid) }; _ })))
+      ->
+        SIdMap.find_opt sid env.by_reference_parameters
+        |> Option.value ~default:[]
+    | _ -> []
+  in
+  let is_by_reference (by_reference : bool list) (position : int) : bool =
+    match List.nth_opt by_reference position with
+    | Some by_reference -> by_reference
+    | None -> false
+  in
   object (_self : 'self)
     inherit [_] Iter_with_context.iter_with_context as super
 
@@ -381,7 +402,17 @@ class ['self] stats_of_prog_visitor =
           let var = (H.str_of_ident id, sid) in
           let stat = get_stat_or_create var env.var_stats in
           incr stat.lvalue
-      | Call (_, (_, args, _))
+      | Call (callee, (_, args, _)) ->
+          let by_reference = callee_by_reference_parameters env callee in
+          args
+          |> List.iteri (fun position arg ->
+                 match arg with
+                 | Arg { e = Ref (_, e); _ }
+                 | ArgKwd (_, { e = Ref (_, e); _ }) ->
+                     ignore (record_write env e : lr_stats list)
+                 | Arg e when is_by_reference by_reference position ->
+                     ignore (record_write env e : lr_stats list)
+                 | _ -> ())
       | New (_, _, _, (_, args, _)) ->
           args
           |> List.iter (function
@@ -398,9 +429,30 @@ class ['self] stats_of_prog_visitor =
       super#visit_expr (env, ctx) x
   end
 
+let by_reference_parameters_of_prog (lang : Lang.t) (prog : program) :
+    bool list SIdMap.t =
+  Visit_function_defs.fold
+    (fun acc (ent : entity option) (fdef : function_definition) ->
+      match ent with
+      | Some
+          {
+            name = EN (Id (_, { id_resolved = { contents = Some (_, sid) }; _ }));
+            _;
+          } ->
+          let by_reference =
+            Tok.unbracket fdef.fparams
+            |> List_.map (function
+                 | Param classic ->
+                     Lang_evaluation.parameter_is_by_reference lang classic
+                 | _ -> false)
+          in
+          SIdMap.add sid by_reference acc
+      | _ -> acc)
+    SIdMap.empty prog
+
 let stats_of_prog_visitor_instance = new stats_of_prog_visitor
-let stats_of_prog prog : stats =
-  let stats = new_stats () in
+let stats_of_prog (lang : Lang.t) prog : stats =
+  let stats = new_stats (by_reference_parameters_of_prog lang prog) in
   let visitor = stats_of_prog_visitor_instance 
   in
   visitor#visit_program (stats, Iter_with_context.initial_context) prog;
@@ -729,7 +781,7 @@ let propagate_basic lang prog =
   add_special_constants env lang prog;
 
   (* step1: first pass const analysis for languages without 'const/final' *)
-  let stats = stats_of_prog prog in
+  let stats = stats_of_prog lang prog in
 
   (* step2: second pass where we actually propagate when we can *)
   (* XXX: Moved to class, since there seems to be a race condition with

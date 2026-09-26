@@ -100,7 +100,7 @@ let short_string_of_node_kind nkind =
       | AugmentedAssign (lval, exp) ->
           string_of_lval lval ^ " = " ^ string_of_exp exp
       | AssignAnon (lval, _) -> string_of_lval lval ^ " = " ^ "<lambda|class>"
-      | Call (lval_opt, exp, args) ->
+      | Call (lval_opt, exp, args, _) ->
           let lval_str =
             match lval_opt with
             | None -> ""

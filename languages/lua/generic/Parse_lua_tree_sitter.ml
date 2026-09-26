@@ -54,29 +54,41 @@ let deoptionalize l =
   in
   deopt [] l
 
+(* A function call gives several values; a call in parentheses gives one
+ * (reference manual 3.4.12). *)
+let gives_several_values (x : CST.expression) : bool =
+  match x with
+  | `Prefix (`Func_call_stmt _) -> true
+  | _ -> false
+
 (* Lua adjusts a list of expressions to its targets: every expression gives
  * one value, except a call in last position, which gives the values of the
  * targets left, in order (reference manual 3.4.12). Each target group is its
  * first target and the targets after it. *)
-let adjust_to_targets targets (exprs : G.expr list) =
+let adjust_to_targets targets (exprs : G.expr list) ~(last_gives_several : bool)
+    =
   let rec aux targets exprs =
     match (targets, exprs) with
     | [], _ -> []
     | _ :: _, [] -> List_.map (fun target -> ((target, []), None)) targets
-    | first :: rest, [ ({ G.e = G.Call _; _ } as e) ] ->
-        [ ((first, rest), Some e) ]
+    | first :: rest, [ e ] when last_gives_several -> [ ((first, rest), Some e) ]
     | first :: rest, e :: exprs -> ((first, []), Some e) :: aux rest exprs
   in
   aux targets exprs
 
-let mk_vars (entities : G.entity list) (exprs : G.expr list) : G.definition list
-    =
+let last_gives_several_values (exprs : CST.expression list) : bool =
+  match List.rev exprs with
+  | last :: _ -> gives_several_values last
+  | [] -> false
+
+let mk_vars (entities : G.entity list) (exprs : G.expr list)
+    ~(last_gives_several : bool) : G.definition list =
   let pattern_of_entity (entity : G.entity) : G.pattern option =
     match entity.name with
     | G.EN (G.Id (id, id_info)) -> Some (G.PatId (id, id_info))
     | _ -> None
   in
-  adjust_to_targets entities exprs
+  adjust_to_targets entities exprs ~last_gives_several
   |> List_.map (fun (((first : G.entity), rest), init) ->
          let var =
            match init with
@@ -90,9 +102,9 @@ let mk_vars (entities : G.entity list) (exprs : G.expr list) : G.definition list
              ( { first with name = G.EPattern (G.PatTuple (fb pats)) },
                G.VarDef var ))
 
-let mk_assigns (lvals : G.expr list) (exprs : G.expr list) (equal : G.tok) :
-    G.expr list =
-  adjust_to_targets lvals exprs
+let mk_assigns (lvals : G.expr list) (exprs : G.expr list) (equal : G.tok)
+    ~(last_gives_several : bool) : G.expr list =
+  adjust_to_targets lvals exprs ~last_gives_several
   |> List.filter_map (fun ((first, rest), init) ->
          match (init, rest) with
          | None, _ -> None
@@ -651,6 +663,8 @@ and map_statement (env : env) (x : CST.statement) : G.stmt list =
       in
       let assigns =
         mk_assigns (ident_first :: ident_rest) (expr_first :: expr_rest) equal
+          ~last_gives_several:
+            (last_gives_several_values (v4 :: List_.map snd v5))
       in
       List_.map (fun x -> G.ExprStmt (x, G.sc) |> G.s) assigns
   | `Local_var_decl (v1, v2, v3) ->
@@ -672,7 +686,13 @@ and map_statement (env : env) (x : CST.statement) : G.stmt list =
             v2 :: v3
         | None -> []
       in
-      let defs = mk_vars entities exprs in
+      let last_gives_several =
+        match v3 with
+        | Some (_, v2, v3) ->
+            last_gives_several_values (v2 :: List_.map snd v3)
+        | None -> false
+      in
+      let defs = mk_vars entities exprs ~last_gives_several in
       List_.map (fun x -> G.DefStmt x |> G.s) defs
   | `Do_stmt (v1, v2, v3, v4) -> [ map_do_block env (v1, v2, v3, v4) ]
   | `If_stmt (v1, v2, v3, v4, v5, v6, v7, v8) ->

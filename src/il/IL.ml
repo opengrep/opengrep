@@ -397,11 +397,17 @@ and instr_kind =
    * languages the operation updates the object [lval] refers to in place. *)
   | AugmentedAssign of lval * exp
   | AssignAnon of lval * anonymous_entity
-  | Call of lval option * exp (* less: enforce lval? *) * exp argument list
+  | Call of
+      lval option * exp (* less: enforce lval? *) * exp argument list * call_results
   | CallSpecial of lval option * call_special wrap * exp argument list
   | New of lval * G.type_ * exp option (* constructor *) * exp argument list
   (* todo: PhiSSA! *)
   | FixmeInstr of fixme_kind * G.any
+
+(* A call bound to one target gives it its first result when the callee
+ * returns several (Lua reference manual 3.4.12). In Go a call with several
+ * results is never bound to one target. *)
+and call_results = All_results | First_result
 
 and call_special =
   | Eval

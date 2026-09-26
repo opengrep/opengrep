@@ -729,16 +729,16 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
  * which declares no result types, a returned tuple is several results. *)
 let returns_several_results (lang : Lang.t) (fun_cfg : IL.fun_cfg)
     (e : IL.exp) : bool =
-  match lang with
-  | Lang.Go -> (
+  match (Lang_config.get lang).several_results with
+  | Declared_result_types -> (
       match fun_cfg.frettype with
       | Some { t = G.TyTuple _; _ } -> true
       | _ -> false)
-  | Lang.Lua -> (
+  | Returned_expression_list -> (
       match e.e with
       | Composite (CTuple, _) -> true
       | _ -> false)
-  | _ -> false
+  | No_several_results -> false
 
 let effects_of_tainted_return env ~(several_results : bool) taints shape
     return_tok : Effect.t list =
@@ -2100,6 +2100,21 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
         ];
       (taints_acc, shape_acc, lval_env)
 
+let first_result env ~(results : IL.call_results) ~(several_results : bool)
+    (taints : Taints.t) (shape : S.shape) : Taints.t * S.shape =
+  match results with
+  | First_result when several_results -> (
+      match
+        Shape.find_in_shape_poly
+          ~max:(Shape.max_poly_offset env.taint_inst.lang)
+          ~lang:env.taint_inst.lang ~taints [ T.Oint 0 ] shape
+      with
+      | Some (taints, shape) -> (taints, shape)
+      | None -> (Taints.empty, Bot))
+  | First_result
+  | All_results ->
+      (taints, shape)
+
 (* This function is consuming the taint signature of a function to determine
    a few things:
    1) What is the status of taint in the current environment, after the function
@@ -2107,7 +2122,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
    2) Are there any effects that occur within the function due to taints being
       input into the function body, from the calling context?
 *)
-let check_function_call env fun_exp args
+let check_function_call env ~(results : IL.call_results) fun_exp args
     (args_taints : (Taints.t * S.shape) argument list) () :
     (Taints.t * S.shape * Lval_env.t) option =
   let arity = List.length args in
@@ -2296,10 +2311,14 @@ let check_function_call env fun_exp args
                    {
                      data_taints = taints;
                      data_shape = shape;
+                     several_results;
                      control_taints;
                      guards = inner_guards;
                      _;
                    } ->
+                   let taints, shape =
+                     first_result env ~results ~several_results taints shape
+                   in
                    (* Conjoin the callee's rebound guard onto each guarded
                     * taint. The guarded taints travel with the value through the
                     * outer's storage; at outer's later emission sites
@@ -2390,7 +2409,7 @@ let check_function_call_callee ~(arity : int) env e =
 
 (* Test whether an instruction is tainted, and if it is also a sink,
  * report the effect too (by side effect). *)
-let call_with_intrafile lval_opt e env args instr =
+let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
   in
@@ -2566,21 +2585,21 @@ let call_with_intrafile lval_opt e env args instr =
                     (call_taints, shape, lval_env)
             | Some (S.Cell (_, _)) ->
                 (* Try signature lookup instead *)
-                (match check_function_call { env with lval_env } inner_e args args_taints () with
+                (match check_function_call { env with lval_env } ~results inner_e args args_taints () with
                 | Some (call_taints, shape, lval_env) ->
                     (call_taints, shape, lval_env)
                 | None ->
                     (all_args_taints, S.Bot, lval_env))
             | None ->
                 (* Try signature lookup instead *)
-                (match check_function_call { env with lval_env } inner_e args args_taints () with
+                (match check_function_call { env with lval_env } ~results inner_e args args_taints () with
                 | Some (call_taints, shape, lval_env) ->
                     (call_taints, shape, lval_env)
                 | None ->
                     (all_args_taints, S.Bot, lval_env)))
         | _ ->
             (* Try signature lookup instead *)
-            (match check_function_call { env with lval_env } inner_e args args_taints () with
+            (match check_function_call { env with lval_env } ~results inner_e args args_taints () with
             | Some (call_taints, shape, lval_env) ->
                 (call_taints, shape, lval_env)
             | None ->
@@ -2612,7 +2631,7 @@ let call_with_intrafile lval_opt e env args instr =
         (* Receiver is stripped from sigs (reaches body as [BThis]); pass actuals verbatim — a synthetic [self] would shift every [BArg] index by one. *)
         (* No implicit lambda, try unified constructor execution *)
         let check_function_call_wrapper env' e' args' args_taints' =
-          check_function_call env' e' args' args_taints' ()
+          check_function_call env' ~results e' args' args_taints' ()
         in
         match
           Object_initialization.execute_unified_constructor e args args_taints
@@ -2643,7 +2662,7 @@ let call_with_intrafile lval_opt e env args instr =
             in
             (call_taints, shape, lval_env)
         | None -> (
-            match check_function_call { env with lval_env } e args args_taints () with
+            match check_function_call { env with lval_env } ~results e args args_taints () with
         | Some (call_taints, shape, lval_env) ->
             Log.debug (fun m ->
                 m ~tags:sigs_tag "- Instantiating %s: returns %s & %s"
@@ -2816,7 +2835,7 @@ let new_with_intrafile env _result_lval _ty args constructor =
   let call_result =
     (* Try unified constructor execution first *)
     let check_function_call_wrapper env' e' args' args_taints' =
-      check_function_call env' e' args' args_taints' ()
+      check_function_call env' ~results:All_results e' args' args_taints' ()
     in
     match
       Object_initialization.execute_unified_constructor constructor args
@@ -2824,7 +2843,7 @@ let new_with_intrafile env _result_lval _ty args constructor =
     with
     | Some (call_taints, shape, lval_env) -> Some (call_taints, shape, lval_env)
     | None ->
-        check_function_call { env with lval_env } constructor args args_taints ()
+        check_function_call { env with lval_env } ~results:All_results constructor args args_taints ()
   in
   match call_result with
   | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
@@ -2893,9 +2912,9 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             (* Anonymous class instantiations are detected by Object_initialization.ml
              * before dataflow analysis and added to object_mappings. *)
             (Taints.empty, Bot, env.lval_env))
-    | Call (lval_opt, e, args) ->
+    | Call (lval_opt, e, args, results) ->
         let intrafile = env.taint_inst.options.taint_intrafile in
-        if intrafile then call_with_intrafile lval_opt e env args instr
+        if intrafile then call_with_intrafile ~results lval_opt e env args instr
         else
           let args_taints, all_args_taints, lval_env =
             check_function_call_arguments env args
@@ -2921,7 +2940,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
               not (m.spec.sink_exact && m.spec.sink_has_focus));
           let call_taints, shape, lval_env =
             match
-              check_function_call { env with lval_env } e args args_taints ()
+              check_function_call { env with lval_env } ~results e args args_taints ()
             with
             | Some (call_taints, shape, lval_env) ->
                 (* THINK: For debugging, we could print a diff of the previous and new lval_env *)
@@ -2994,7 +3013,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             check_function_call_arguments env args
           in
           match
-            check_function_call { env with lval_env } constructor args
+            check_function_call { env with lval_env } ~results:All_results constructor args
               args_taints ()
           with
           | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
@@ -3237,7 +3256,7 @@ let global_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
        (fun acc (node : IL.node) ->
          let callee =
            match node.n with
-           | NInstr { i = Call (_, { e = Fetch callee; _ }, _); _ } ->
+           | NInstr { i = Call (_, { e = Fetch callee; _ }, _, _); _ } ->
                Some callee
            | _ -> None
          in
@@ -4555,7 +4574,7 @@ and (fixpoint :
              | [] -> needed
              | _ -> (
                  match node.n with
-                 | NInstr { i = Call (_, callee, args); _ } ->
+                 | NInstr { i = Call (_, callee, args, _); _ } ->
                      let bare_args =
                        List.filter_map
                          (function

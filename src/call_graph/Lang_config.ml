@@ -72,6 +72,11 @@ type receiver_parameter =
   | Declares_method
   | Declares_extension
 
+type several_results =
+  | No_several_results
+  | Declared_result_types
+  | Returned_expression_list
+
 type reflection = Lang_reflection.t = {
   callable_literals : bool;
   send_methods : string list;
@@ -99,6 +104,8 @@ type t = {
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
   implicit_capture_mode : AST_generic.capture_mode;
+  (* Go: a function declares several result types (specification, "Return statements"); Lua: a return lists several expressions (reference manual 3.4.12). *)
+  several_results : several_results;
 }
 
 let empty = {
@@ -117,6 +124,7 @@ let empty = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let python = {
@@ -147,6 +155,7 @@ let python = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let ruby = {
@@ -185,6 +194,7 @@ let ruby = {
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let crystal = { ruby with reflection = Lang_reflection.of_lang Lang.Crystal }
@@ -220,6 +230,7 @@ let javascript = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let typescript = {
@@ -257,6 +268,7 @@ let java = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let kotlin = {
@@ -290,6 +302,7 @@ let kotlin = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let scala = {
@@ -318,6 +331,7 @@ let scala = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let csharp = {
@@ -347,6 +361,7 @@ let csharp = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let go = {
@@ -370,6 +385,7 @@ let go = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = Declared_result_types;
 }
 
 let rust = {
@@ -398,6 +414,7 @@ let rust = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let swift = {
@@ -427,6 +444,7 @@ let swift = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let php = {
@@ -449,6 +467,7 @@ let php = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let cpp = {
@@ -470,6 +489,7 @@ let cpp = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let c = {
@@ -494,6 +514,7 @@ let ocaml_lang = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let lua = {
@@ -512,6 +533,7 @@ let lua = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = Returned_expression_list;
 }
 
 let dart = {
@@ -561,6 +583,7 @@ let dart = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let elixir = {
@@ -604,6 +627,7 @@ let elixir = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let julia = {
@@ -626,6 +650,7 @@ let julia = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let clojure = {
@@ -670,6 +695,7 @@ let clojure = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let apex = {
@@ -688,6 +714,7 @@ let apex = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
+  several_results = No_several_results;
 }
 
 let vb = {
@@ -706,6 +733,7 @@ let vb = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
+  several_results = No_several_results;
 }
 
 let r = {

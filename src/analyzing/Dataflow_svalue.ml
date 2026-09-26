@@ -393,7 +393,7 @@ let rec transfer :
          * above for why. *)
         let inp' =
           match instr.i with
-          | Call (_, _, args)
+          | Call (_, _, args, _)
           | CallSpecial (_, _, args)
           | New (_, _, _, args) ->
               invalidate_container_args inp' args
@@ -410,7 +410,7 @@ let rec transfer :
         | AssignAnon ({ base = Var var; rev_offset = [] }, Lambda _) ->
             (* var = <lambda>: propagate the lambda expr as var's svalue. *)
             update_env_with inp' var (sym_prop instr.iorig)
-        | Call (Some { base = Var var; rev_offset = [] }, func, args) -> (
+        | Call (Some { base = Var var; rev_offset = [] }, func, args, _) -> (
             let args_val =
               List_.map
                 (fun arg -> Eval.eval eval_env (IL_helpers.exp_of_arg arg))
@@ -455,6 +455,7 @@ let rec transfer :
                     { base = Var var; rev_offset = { o = Dot _; _ } :: _; _ };
                 _;
               },
+              _,
               _ ) ->
             (* Method call `var.f(args)` that returns void, we conservatively
              * assume that it may be updating `var`; e.g. in Ruby strings are
