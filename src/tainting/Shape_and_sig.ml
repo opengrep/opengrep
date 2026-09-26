@@ -1246,6 +1246,82 @@ let map_closures (f : Shape.closure -> Shape.closure)
   let cs' = List_.map f cs in
   (f c, if List.for_all2 phys_equal cs' cs then cs else cs')
 
+(* Rewrites the references of the closure environments in an effect's
+   shapes. *)
+let map_closure_refs (f : T.lval -> T.lval) (eff : Effect.t) : Effect.t =
+  let rec map_shape (shape : Shape.shape) : Shape.shape =
+    match shape with
+    | Shape.Bot
+    | Shape.Arg _ ->
+        shape
+    | Shape.Obj obj -> Shape.Obj (Fields.map map_cell obj)
+    | Shape.Fun (c, cs) ->
+        let c, cs =
+          map_closures
+            (fun (closure : Shape.closure) ->
+              {
+                closure with
+                env =
+                  List_.map
+                    (fun (x, entry) ->
+                      match entry with
+                      | Shape.Ref lval -> (x, Shape.Ref (f lval))
+                      | Shape.Val cell -> (x, Shape.Val (map_cell cell)))
+                    closure.env;
+              })
+            (c, cs)
+        in
+        Shape.Fun (c, cs)
+  and map_cell (Shape.Cell (xtaint, shape) : Shape.cell) : Shape.cell =
+    Shape.Cell (xtaint, map_shape shape)
+  in
+  let map_arg = function
+    | IL.Unnamed (taints, shape) -> IL.Unnamed (taints, map_shape shape)
+    | IL.Named (id, (taints, shape)) -> IL.Named (id, (taints, map_shape shape))
+  in
+  match eff with
+  | Effect.ToReturn ret ->
+      Effect.ToReturn { ret with data_shape = map_shape ret.data_shape }
+  | Effect.ToLval write ->
+      Effect.ToLval { write with shape = map_shape write.shape }
+  | Effect.ToSinkInCall call ->
+      Effect.ToSinkInCall
+        { call with args_taints = List_.map map_arg call.args_taints }
+  | Effect.ToSink _ -> eff
+
+(* Whether a reference of the closure environments in an effect's shapes
+   satisfies [p]. *)
+let exists_closure_ref (p : T.lval -> bool) (eff : Effect.t) : bool =
+  let rec in_shape (shape : Shape.shape) : bool =
+    match shape with
+    | Shape.Bot
+    | Shape.Arg _ ->
+        false
+    | Shape.Obj obj ->
+        Fields.exists (fun _ (Shape.Cell (_, shape)) -> in_shape shape) obj
+    | Shape.Fun (c, cs) ->
+        List.exists
+          (fun (closure : Shape.closure) ->
+            List.exists
+              (fun (_, entry) ->
+                match entry with
+                | Shape.Ref lval -> p lval
+                | Shape.Val (Shape.Cell (_, shape)) -> in_shape shape)
+              closure.env)
+          (c :: cs)
+  in
+  match eff with
+  | Effect.ToReturn ret -> in_shape ret.data_shape
+  | Effect.ToLval write -> in_shape write.shape
+  | Effect.ToSinkInCall call ->
+      List.exists
+        (function
+          | IL.Unnamed (_, shape)
+          | IL.Named (_, (_, shape)) ->
+              in_shape shape)
+        call.args_taints
+  | Effect.ToSink _ -> false
+
 let closure_of_definition ((def, sig_) : Function_id.t * Signature.t)
     (env : Shape.env) : Shape.shape =
   Shape.Fun ({ Shape.def; sig_; env }, [])

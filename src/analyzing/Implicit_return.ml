@@ -52,6 +52,7 @@ let rec mark_first_instr_ancestor (cfg : IL.cfg) i =
   | NInstr instr -> (
       match instr with
       | { i = Assign (_, { eorig = SameAs e; _ }); _ }
+      | { i = AugmentedAssign (_, { eorig = SameAs e; _ }); _ }
       | { i = Call _; iorig = SameAs e }
       (* an interpolated string, a 'yield' that has a value, a lambda *)
       | { i = CallSpecial (_, (Concat, _), _); iorig = SameAs e }

@@ -96,7 +96,9 @@ let short_string_of_node_kind nkind =
   | NOther _ -> "<other>"
   | NInstr x -> (
       match x.i with
-      | Assign (lval, exp) -> string_of_lval lval ^ " = " ^ string_of_exp exp
+      | Assign (lval, exp)
+      | AugmentedAssign (lval, exp) ->
+          string_of_lval lval ^ " = " ^ string_of_exp exp
       | AssignAnon (lval, _) -> string_of_lval lval ^ " = " ^ "<lambda|class>"
       | Call (lval_opt, exp, args) ->
           let lval_str =

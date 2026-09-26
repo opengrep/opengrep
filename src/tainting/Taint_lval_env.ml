@@ -76,9 +76,10 @@ type t = {
           when stamping effects (see [live_guards]). Merged by UNION at a
           Join — a variable reassigned on any incoming path counts. *)
   pointees : (IL.name * T.offset list) list NameMap.t;
-      (** Variables holding an address taken with [&] ([__ref__]), with
-          the l-values they may point to. A write through such a variable
-          also lands on its targets. One level; merged by UNION at a Join. *)
+      (** The l-values a variable may point to: an address taken with [&]
+          ([__ref__]), or for a parameter passed by value the parameter
+          itself, its entry object. A write through the variable also lands
+          on its targets. One level; merged by UNION at a Join. *)
 }
 
 type env = t
@@ -249,14 +250,21 @@ let add_shape lang var offset new_taints new_shape lval_env =
             tainted;
       }
 
+let is_entry_object (var : IL.name)
+    ((target, target_offset) : IL.name * T.offset list) : bool =
+  IL.equal_name target var && List.is_empty target_offset
+
 let add_through_pointees lang var offset new_taints new_shape lval_env =
   match NameMap.find_opt var lval_env.pointees with
   | None -> lval_env
   | Some targets ->
       List.fold_left
-        (fun lval_env (target, target_offset) ->
-          add_shape lang target (target_offset @ offset) new_taints new_shape
-            lval_env)
+        (fun lval_env ((target, target_offset) as pointee) ->
+          (* The variable's entry object is tracked in its own cell. *)
+          if is_entry_object var pointee then lval_env
+          else
+            add_shape lang target (target_offset @ offset) new_taints new_shape
+              lval_env)
         lval_env targets
 
 (* A write through [x] ([*x = ...], [x.f = ...]), as opposed to a rebinding
@@ -297,11 +305,24 @@ let set_pointee lang var (target : IL.lval) lval_env =
       { lval_env with pointees = NameMap.add var [ target ] lval_env.pointees }
   | None -> forget_pointees var lval_env
 
-let copy_pointees ~(src : IL.name) ~(dst : IL.name) lval_env =
-  match NameMap.find_opt src lval_env.pointees with
-  | Some targets ->
+let copy_pointees ~(srcs : IL.name list) ~(dst : IL.name) lval_env =
+  match
+    srcs
+    |> List.concat_map (fun src ->
+           Option.value ~default:[] (NameMap.find_opt src lval_env.pointees))
+    |> List.sort_uniq compare_target
+  with
+  | [] -> forget_pointees dst lval_env
+  | targets ->
       { lval_env with pointees = NameMap.add dst targets lval_env.pointees }
-  | None -> forget_pointees dst lval_env
+
+let seed_entry_object (var : IL.name) lval_env =
+  { lval_env with pointees = NameMap.add var [ (var, []) ] lval_env.pointees }
+
+let may_refer_to_entry_object lval_env (var : IL.name) : bool =
+  match NameMap.find_opt var lval_env.pointees with
+  | Some targets -> List.exists (is_entry_object var) targets
+  | None -> false
 
 let add_lval lang lval new_taints lval_env =
   add_lval_shape lang lval new_taints Bot lval_env

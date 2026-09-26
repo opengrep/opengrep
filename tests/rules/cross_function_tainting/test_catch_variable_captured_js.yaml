@@ -1,0 +1,13 @@
+rules:
+  - id: test-catch-variable-captured-js
+    message: A catch variable is a local of the function whose catch clause binds it
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

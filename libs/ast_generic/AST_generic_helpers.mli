@@ -188,3 +188,10 @@ val add_semicolon_to_last_def_and_convert_to_stmts :
 val ident_of_parameter_opt : AST_generic.parameter -> AST_generic.ident option
 
 val any_of_function_body : AST_generic.function_body -> AST_generic.any
+
+val is_elaborated_type : AST_generic.type_ -> bool
+(** Whether the type is a C or C++ elaborated type specifier: [struct S],
+    [union S], [class S]. *)
+
+val designated_type : AST_generic.type_ -> AST_generic.type_ option
+(** The type an elaborated type specifier designates. *)

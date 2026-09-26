@@ -393,6 +393,9 @@ and instr = { i : instr_kind; iorig : orig }
 and instr_kind =
   (* was called Set in CIL, but a bit ambiguous with Set module *)
   | Assign of lval * exp
+  (* [lval op= e], with the exp [Operator (op, [Fetch lval; e])]: in some
+   * languages the operation updates the object [lval] refers to in place. *)
+  | AugmentedAssign of lval * exp
   | AssignAnon of lval * anonymous_entity
   | Call of lval option * exp (* less: enforce lval? *) * exp argument list
   | CallSpecial of lval option * call_special wrap * exp argument list
@@ -530,14 +533,9 @@ type fun_cfg = {
   captures : captures;
   cfg : cfg;
   lambdas : lambdas_cfgs;
-  source_range : source_range option;
 }
 
 and lambdas_cfgs = fun_cfg NameMap.t
-
-(* The span of a function in its source file, inclusive, as (line, column)
- * pairs; the file as naming records it in a sid. *)
-and source_range = { file : string; first : int * int; last : int * int }
 
 (* an int representing the index of a node in the graph *)
 type nodei = Ograph_extended.nodei

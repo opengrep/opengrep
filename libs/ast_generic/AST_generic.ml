@@ -305,7 +305,12 @@ module SId : sig
   (* An IL temporary, counted per lowering. *)
   val temp : file:string -> int -> t
 
-  (* Injective within a file. *)
+  (* The binding of a local of a called function that the call at [line],
+     [col] of [file] creates: each call of a function creates its own. *)
+  val instance : t -> file:string -> line:int -> col:int -> t
+
+  (* Injective within a file for bindings, temporaries and sites; an instance
+     has the int of its local. *)
   val to_int : t -> int
 
   (* Identity and site, for logs. *)
@@ -323,6 +328,8 @@ end = struct
     | Binding of int
     | Temp of int
     | Site of int * int (* line, column *)
+    | Instance of string * identity * int * int
+        (* the local's file and identity, the call's line and column *)
   [@@deriving show, eq, ord, hash, sexp]
 
   type site = { name : string; line : int; col : int }
@@ -357,17 +364,28 @@ end = struct
   let no_site = { name = ""; line = 0; col = 0 }
   let temp ~file idx = { file; identity = Temp idx; site = no_site }
 
-  let to_int t =
-    match t.identity with
+  let instance local ~file ~line ~col =
+    {
+      file;
+      identity = Instance (local.file, local.identity, line, col);
+      site = local.site;
+    }
+
+  let rec int_of_identity (identity : identity) : int =
+    match identity with
     | Binding n -> n
     | Temp n -> -n
     | Site (line, col) -> (line * 100_000) + col
+    | Instance (_, local, _, _) -> int_of_identity local
+
+  let to_int t = int_of_identity t.identity
 
   let to_string t =
     match t.identity with
     | Temp n -> Printf.sprintf "#%d@%s" n t.file
     | Binding _
-    | Site _ ->
+    | Site _
+    | Instance _ ->
         if String.equal t.file "" && String.equal t.site.name "" then
           "<unresolved>"
         else
@@ -380,7 +398,8 @@ end = struct
     match t.identity with
     | Temp _ -> true
     | Binding _
-    | Site _ ->
+    | Site _
+    | Instance _ ->
         false
 
   let same_site a b =

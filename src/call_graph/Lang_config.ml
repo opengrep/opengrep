@@ -1187,3 +1187,34 @@ let hof_function_specs (lang : Lang.t) : (string list * int) list =
     | FunctionHOF { functions; callback_index; _ } ->
       Some (functions, callback_index)
     | MethodHOF _ | ReturningFunctionHOF _ -> None)
+
+(* [a || b] and [a && b] evaluate to one of their operands, not to a
+   boolean: ECMA 262 13.13, Python reference 6.11, Lua reference 3.4.5, and
+   Ruby's [||], [&&], [or] and [and]. *)
+let logical_operators_return_operand (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Js
+  | Lang.Ts
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3
+  | Lang.Ruby
+  | Lang.Lua ->
+      true
+  | _ -> false
+
+type augmented_assignment =
+  | Rebinds
+  | Updates_in_place_except of string list
+      (** the builtin immutable types, for which it builds a new object *)
+
+(* Python performs [x op= e] in place when the type of [x] supports it
+   (reference 7.2.1); elsewhere [x op= e] assigns [x op e] to [x]. *)
+let augmented_assignment (lang : Lang.t) : augmented_assignment =
+  match lang with
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3 ->
+      Updates_in_place_except
+        [ "int"; "float"; "complex"; "bool"; "str"; "bytes"; "tuple"; "frozenset" ]
+  | _ -> Rebinds

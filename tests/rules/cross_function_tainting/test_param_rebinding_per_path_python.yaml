@@ -1,0 +1,13 @@
+rules:
+  - id: test-param-rebinding-per-path-python
+    message: A write through a parameter reaches the caller when the parameter may still refer to the caller's object
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

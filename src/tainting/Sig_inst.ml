@@ -1137,6 +1137,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
             match inst_var.inst_lval lval with
             | Some _ -> delegate ()
             | None -> keep ())
+        | T.BLocal _ -> keep ()
         | T.BGlob _
         | T.BThis
         | T.BEnv _
@@ -1226,6 +1227,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     match lval.base with
     | T.BArg arg when bound_in_sig arg -> Some lval
     | T.BEnv x when captured_in_sig x -> Some lval
+    | T.BLocal _ -> Some lval
     | _ -> (
         match inst_var.inst_lval_to_name lval with
         | Some (var, offset, _tok) -> Some { T.base = T.BGlob var; offset }
@@ -1539,7 +1541,9 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
         | Some r -> Some r)
   in
   match tlval.base with
-  | BGlob gvar -> Some (gvar, tlval.offset, snd gvar.ident)
+  | BGlob gvar
+  | BLocal gvar ->
+      Some (gvar, tlval.offset, snd gvar.ident)
   | BCall _ -> None
   | BEnv x -> (
       match find_in_env env x with
@@ -1688,10 +1692,12 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
       lval_taints
   | BThis when not is_method_in_this_class -> lval_taints
   | BGlob _
+  | BLocal _
   | BThis
     when not (Taints.is_empty lval_taints) ->
       lval_taints
   | BGlob _
+  | BLocal _
   | BThis ->
       (* 'lval' is either a global variable or a field in the same class
        * as the caller of 'fun_exp', and no taints are found for 'lval':
@@ -1742,7 +1748,9 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
             | Ofld var :: offset -> Some (`Var var, offset)
             | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ -> None)
         | __else__ -> None)
-    | BGlob var -> Some (`Var var, offset)
+    | BGlob var
+    | BLocal var ->
+        Some (`Var var, offset)
   in
   let* base_taints, base_shape =
     match base with
@@ -1763,6 +1771,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
           | BEnv y -> Arg (T.Captured y, [ ref_lval.offset ])
           | BCall call -> Arg (T.Result call, [ ref_lval.offset ])
           | BGlob _
+          | BLocal _
           | BThis ->
               Bot
         in
@@ -1858,6 +1867,63 @@ let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
   | _ -> None
 
 
+(* The locals of the callee that closures leaving it refer to become
+ * variables of the caller, one per call site: the closures one call returns
+ * share them, and those of another call do not. *)
+let instantiate_locals (call : T.call_loc) (sig_ : Signature.t) : Signature.t =
+  let instance (lval : T.lval) : T.lval =
+    match lval.base with
+    | T.BLocal local ->
+        {
+          lval with
+          base =
+            T.BGlob
+              {
+                local with
+                sid =
+                  G.SId.instance local.sid ~file:call.file ~line:call.line
+                    ~col:call.col;
+              };
+        }
+    | T.BGlob _
+    | T.BThis
+    | T.BArg _
+    | T.BEnv _
+    | T.BCall _ ->
+        lval
+  in
+  let is_local (lval : T.lval) : bool =
+    match lval.base with
+    | T.BLocal _ -> true
+    | T.BGlob _
+    | T.BThis
+    | T.BArg _
+    | T.BEnv _
+    | T.BCall _ ->
+        false
+  in
+  let refers_to_local (eff : Effect.t) : bool =
+    (match eff with
+    | Effect.ToLval { lval; _ } -> is_local lval
+    | Effect.ToReturn _
+    | Effect.ToSinkInCall _
+    | Effect.ToSink _ ->
+        false)
+    || Shape_and_sig.exists_closure_ref is_local eff
+  in
+  if Effects.exists refers_to_local sig_.effects then
+    {
+      sig_ with
+      effects =
+        sig_.effects
+        |> Effects.map (fun eff ->
+               match Shape_and_sig.map_closure_refs instance eff with
+               | Effect.ToLval write ->
+                   Effect.ToLval { write with lval = instance write.lval }
+               | eff -> eff);
+    }
+  else sig_
+
 (* This function is consuming the taint signature of a function to determine
    a few things:
    1) What is the status of taint in the current environment, after the function
@@ -1876,6 +1942,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     ?(depth : int = 0)
     ?(recursive_cache : sig_inst_cache option)
     () : call_effects =
+  let taint_sig = instantiate_locals (T.call_loc_of_exp callee) taint_sig in
   (* Memoize callback instantiations; without it nested HOFs walk the call chain exponentially. *)
   let recursive_cache =
     match recursive_cache with
@@ -1917,7 +1984,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | T.BGlob _
     | T.BThis
     | T.BArg _
-    | T.BEnv _ ->
+    | T.BEnv _
+    | T.BLocal _ ->
     (* This function simply produces the corresponding taints to the
         given argument, within the body of the function.
     *)
@@ -1964,7 +2032,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
    * closure's environment, since [BArg]/[BThis] need actuals. *)
   let inst_lval_to_name (lval : T.lval) =
     match (lval.base, args) with
-    | (T.BGlob _ | T.BEnv _), _
+    | (T.BGlob _ | T.BEnv _ | T.BLocal _), _
     | (T.BArg _ | T.BThis), Some _ ->
         instantiate_lval_using_actual_exps ~lang ~max_offset ~env callee
           taint_sig.params (Option.value args ~default:[]) lval

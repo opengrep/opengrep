@@ -353,7 +353,9 @@ let pp_args args = String.concat ", " (List.map (pp_arg pp_exp) args)
 
 let pp_instr_kind ik =
   match ik with
-  | Assign (lv, e) -> Printf.sprintf "%s = %s;" (pp_lval lv) (pp_exp e)
+  | Assign (lv, e)
+  | AugmentedAssign (lv, e) ->
+      Printf.sprintf "%s = %s;" (pp_lval lv) (pp_exp e)
   | AssignAnon (lv, Lambda _) ->
       Printf.sprintf "%s = <lambda>;" (pp_lval lv)
   | AssignAnon (lv, AnonClass _) ->

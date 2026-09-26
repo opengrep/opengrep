@@ -131,6 +131,7 @@ type base =
   | BArg of arg
   | BEnv of IL.name
   | BCall of call
+  | BLocal of IL.name
 [@@deriving ord]
 
 type lval = { base : base; offset : offset list }
@@ -172,6 +173,7 @@ let show_base base =
   | BArg arg -> show_arg arg
   | BEnv name -> "env(" ^ fst name.ident ^ ")"
   | BCall call -> show_call call
+  | BLocal name -> "local(" ^ fst name.ident ^ ")"
 
 let show_lval { base; offset } = show_base base ^ show_offset_list offset
 

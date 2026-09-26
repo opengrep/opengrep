@@ -904,3 +904,15 @@ let any_of_function_body (fb : function_body) : any =
   | FBExpr e -> E e
   | FBDecl t -> Tk t
   | FBNothing -> Anys []
+
+(* A C or C++ elaborated type specifier: [struct S], [union S], [class S]. *)
+let is_elaborated_type (ty : type_) : bool =
+  match ty.t with
+  | OtherType ((("struct" | "union" | "class"), _), _) -> true
+  | _ -> false
+
+(* The type an elaborated type specifier designates. *)
+let designated_type (ty : type_) : type_ option =
+  match ty.t with
+  | OtherType (_, [ T designated ]) when is_elaborated_type ty -> Some designated
+  | _ -> None

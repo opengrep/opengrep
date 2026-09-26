@@ -1221,7 +1221,9 @@ let rec field_type (env : env) (receiver_type : type_) (fname : string) :
   | TyN (Id ((tname, _), _)) ->
       Option.bind (Hashtbl.find_opt env.field_types tname) (fun types ->
           Hashtbl.find_opt types fname)
-  | _ -> None
+  | _ ->
+      Option.bind (H.designated_type receiver_type) (fun designated ->
+          field_type env designated fname)
 
 let declare_class_members env lang (c : class_definition) : unit =
   if is_resolvable_name_ctx env lang then

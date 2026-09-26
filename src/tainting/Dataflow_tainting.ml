@@ -2833,7 +2833,8 @@ let new_with_intrafile env _result_lval _ty args constructor =
 let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
   let check_expr env = check_tainted_expr env in
   let check_instr = function
-    | Assign (lval, e) ->
+    | Assign (lval, e)
+    | AugmentedAssign (lval, e) ->
         let taints, shape, lval_env = check_expr env e in
         let taints =
           check_type_and_drop_taints_if_bool_or_number env taints type_of_expr e
@@ -3093,58 +3094,42 @@ let check_tainted_return env tok e : Taints.t * S.shape * Lval_env.t =
   record_effects env effects;
   (taints, shape, var_env')
 
-let vars_shared_with_closures (effects : Effects.t) : IL.NameSet.t =
-  let rec of_shape acc (shape : S.shape) =
-    match shape with
-    | Bot
-    | Arg _ ->
-        acc
-    | Obj obj ->
-        Shape_and_sig.Fields.fold
-          (fun _ (S.Cell (_, shape)) acc -> of_shape acc shape)
-          obj acc
-    | Fun (c, cs) ->
-        List.fold_left
-          (fun acc (closure : S.closure) ->
-            List.fold_left
-              (fun acc (_, entry) ->
-                match entry with
-                | S.Ref { base = T.BGlob v; _ } -> IL.NameSet.add v acc
-                | S.Ref _ -> acc
-                | S.Val (S.Cell (_, shape)) -> of_shape acc shape)
-              acc closure.env)
-          acc (c :: cs)
+(* The variables a function binds: its parameters, with the variables their
+ * patterns bind, and the variables whose binding occurrence is in its own
+ * body, outside its nested functions. *)
+let bindings (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
+  let params =
+    Fold_IL_params.fold
+      (fun acc id id_info _ ->
+        IL.NameSet.add (AST_to_IL.var_of_id_info id id_info) acc)
+      IL.NameSet.empty fun_cfg.params
   in
-  Effects.fold
-    (fun eff acc ->
-      match eff with
-      | Effect.ToReturn { data_shape; _ } -> of_shape acc data_shape
-      | Effect.ToLval { shape; _ } -> of_shape acc shape
-      | Effect.ToSinkInCall { args_taints; _ } ->
-          List.fold_left
-            (fun acc -> function
-              | IL.Unnamed (_, shape)
-              | IL.Named (_, (_, shape)) ->
-                  of_shape acc shape)
-            acc args_taints
-      | Effect.ToSink _ -> acc)
-    effects IL.NameSet.empty
+  let bound_at (node : IL.node) : IL.name list =
+    match node.n with
+    | NInstr instr -> Option.to_list (LV.lvar_of_instr_opt instr)
+    | NOther (DefStmt ({ name = G.EN (G.Id (id, id_info)); _ }, _)) ->
+        [ AST_to_IL.var_of_id_info id id_info ]
+    | _ -> []
+  in
+  CFG.reachable_nodes fun_cfg.cfg
+  |> Seq.fold_left
+       (fun acc (node : IL.node) ->
+         bound_at node
+         |> List.filter LV.is_binding_occurrence
+         |> List.fold_left (fun acc name -> IL.NameSet.add name acc) acc)
+       params
 
 (* A write to a variable declared inside the function cannot be observed
  * outside it; a lambda's writes to variables it captures stay, and so do
  * writes to a local that a closure leaving the function refers to. *)
 let drop_writes_to_own_vars (fun_cfg : IL.fun_cfg) (effects : Effects.t) :
     Effects.t =
-  match fun_cfg.source_range with
-  | None -> effects
-  | Some range ->
-      let shared = vars_shared_with_closures effects in
-      effects
-      |> Effects.filter (function
-           | Effect.ToLval { lval = { base = T.BGlob var; _ }; _ } ->
-               (not (IL_helpers.declared_in_range range var))
-               || IL.NameSet.mem var shared
-           | _ -> true)
+  let bound = bindings fun_cfg in
+  effects
+  |> Effects.filter (function
+       | Effect.ToLval { lval = { base = T.BGlob var; _ }; _ } ->
+           not (IL.NameSet.mem var bound)
+       | _ -> true)
 
 let vars_read_or_written ~(keep_read : IL.lval -> IL.name -> bool)
     (node : IL.node) : IL.name list =
@@ -3161,39 +3146,34 @@ let vars_read_or_written ~(keep_read : IL.lval -> IL.name -> bool)
   |> List.rev_append written
 
 let captured_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
-  match fun_cfg.source_range with
-  | None -> IL.NameSet.empty
-  | Some range ->
-      let cfgs =
-        fun_cfg :: List_.map snd (collect_all_lambdas_innermost_first fun_cfg)
-      in
-      let own_params =
-        cfgs
-        |> List.concat_map (fun (cfg : IL.fun_cfg) ->
-               List.filter_map IL_helpers.pname_of_param cfg.params)
-        |> IL.NameSet.of_list
-      in
-      let is_captured (name : IL.name) =
-        match !(name.id_info.id_resolved) with
-        | Some ((G.LocalVar | G.Parameter), _) ->
-            (not (IL.NameSet.mem name own_params))
-            && not (IL_helpers.declared_in_range range name)
-        | _ -> false
-      in
-      cfgs
-      |> List.fold_left
-           (fun acc (cfg : IL.fun_cfg) ->
-             LV.reachable_nodes cfg
-             |> Seq.fold_left
-                  (fun acc (node : IL.node) ->
-                    vars_read_or_written ~keep_read:(fun _ _ -> true) node
-                    |> List.fold_left
-                         (fun acc (name : IL.name) ->
-                           if is_captured name then IL.NameSet.add name acc
-                           else acc)
-                         acc)
-                  acc)
-           IL.NameSet.empty
+  let cfgs =
+    fun_cfg :: List_.map snd (collect_all_lambdas_innermost_first fun_cfg)
+  in
+  let bound =
+    cfgs
+    |> List.fold_left
+         (fun acc (cfg : IL.fun_cfg) -> IL.NameSet.union (bindings cfg) acc)
+         IL.NameSet.empty
+  in
+  let is_captured (name : IL.name) =
+    match !(name.id_info.id_resolved) with
+    | Some ((G.LocalVar | G.Parameter), _) -> not (IL.NameSet.mem name bound)
+    | _ -> false
+  in
+  cfgs
+  |> List.fold_left
+       (fun acc (cfg : IL.fun_cfg) ->
+         LV.reachable_nodes cfg
+         |> Seq.fold_left
+              (fun acc (node : IL.node) ->
+                vars_read_or_written ~keep_read:(fun _ _ -> true) node
+                |> List.fold_left
+                     (fun acc (name : IL.name) ->
+                       if is_captured name then IL.NameSet.add name acc
+                       else acc)
+                     acc)
+              acc)
+       IL.NameSet.empty
 
 let captured_of_fun_cfg (lang : Lang.t) (fun_cfg : IL.fun_cfg) :
     (IL.name * AST_generic.capture_mode) list =
@@ -3289,28 +3269,16 @@ let seed_global_vars (lang : Lang.t) (globals : IL.NameSet.t)
         env)
     globals env
 
-let rebound_vars (cfg : IL.cfg) : IL.NameSet.t =
-  CFG.NodeiSet.fold
-    (fun ni acc ->
-      match (cfg.graph#nodes#assoc ni).IL.n with
-      | NInstr instr -> (
-          match LV.lval_of_instr_opt instr with
-          | Some { base = Var name; rev_offset = [] } -> IL.NameSet.add name acc
-          | _ -> acc)
-      | _ -> acc)
-    cfg.reachable IL.NameSet.empty
+let has_value_semantics ~(is_value_type : G.type_ -> bool) (t : G.type_) :
+    bool =
+  AST_generic_helpers.is_elaborated_type t || is_value_type t
 
 (* The parameter holds a copy of the caller's value (a struct passed by
- * value), so nothing the callee does to it reaches the caller. *)
+ * value): only a write through data the copy shares reaches the caller. *)
 let param_is_copy ~(is_value_type : G.type_ -> bool) (p : IL.name_param) :
     bool =
   (not p.by_reference)
-  &&
-  match p.ptype with
-  | None -> false
-  | Some { t = G.OtherType ((("struct" | "union" | "class"), _), _); _ } ->
-      true
-  | Some t -> is_value_type t
+  && Option.fold ~none:false ~some:(has_value_semantics ~is_value_type) p.ptype
 
 let copied_params ~(is_value_type : G.type_ -> bool)
     (params : IL.param list) : IL.NameSet.t =
@@ -3327,54 +3295,121 @@ let copied_params ~(is_value_type : G.type_ -> bool)
          | _ -> acc)
        IL.NameSet.empty
 
-(* A change to a parameter as a whole reaches the caller unless the function
- * rebinds the parameter, which the caller does not see for a parameter
- * passed by value; in-place changes and field writes reach it. Nothing
- * reaches the caller from a parameter or receiver that holds a copy. *)
-let caller_sees_update (params : IL.param list) (rebound : IL.NameSet.t)
-    (copied : IL.NameSet.t) (lval : T.lval) : bool =
-  let own_param_with_name (name : string) =
-    List.find_opt
-      (fun (p : IL.param) ->
-        match IL_helpers.pname_of_param p with
-        | Some pname -> String.equal (fst pname.ident) name
-        | None -> false)
-      params
+(* Whether the parameter may still refer, in [env], to what the caller
+ * passed: one passed by reference always does. *)
+let param_refers_to_argument (env : Lval_env.t) (p : IL.param) : bool =
+  match p with
+  | IL.Param np
+  | IL.ParamKwd np
+  | IL.ParamRest np
+  | IL.ParamReceiver np
+  | IL.ParamPattern (np, _) ->
+      np.by_reference || Lval_env.may_refer_to_entry_object env np.pname
+  | IL.ParamFixme -> false
+
+let seed_entry_objects (params : IL.param list) (env : Lval_env.t) :
+    Lval_env.t =
+  params
+  |> List.fold_left
+       (fun env (p : IL.param) ->
+         match p with
+         | IL.Param np
+         | IL.ParamKwd np
+         | IL.ParamRest np
+         | IL.ParamPattern (np, _)
+           when not np.by_reference ->
+             Lval_env.seed_entry_object np.pname env
+         | _ -> env)
+       env
+
+(* The type of the value at [offset] inside a value of type [ty]: a field's
+ * declared type, which naming gives the field's name, or an element's type;
+ * [None] when it is not known. *)
+let type_at_offset (ty : G.type_ option) (offset : T.offset) : G.type_ option =
+  match offset with
+  | T.Ofld field -> !(field.id_info.id_type)
+  | T.Oslice _ -> ty
+  | T.Oint _
+  | T.Ostr _
+  | T.Oany -> (
+      match ty with
+      | Some { t = G.TyArray (_, element); _ } -> Some element
+      | _ -> None)
+
+(* Whether a value of type [ty] refers to data outside itself, which a copy
+ * of the value shares with the original: a pointer, a reference, a function,
+ * an array without a length, a type that is not a value type, and a type
+ * that is not known. *)
+let refers_to_other_data ~(is_value_type : G.type_ -> bool)
+    (ty : G.type_ option) : bool =
+  match ty with
+  | None -> true
+  | Some { t = G.TyArray ((_, Some _, _), _); _ } -> false
+  | Some
+      {
+        t = G.TyArray ((_, None, _), _) | G.TyPointer _ | G.TyRef _ | G.TyFun _;
+        _;
+      } ->
+      true
+  | Some ty -> not (has_value_semantics ~is_value_type ty)
+
+(* A write at [offset] inside a copy of a value of type [ty] reaches the
+ * original when a proper prefix of [offset] refers to other data. *)
+let write_reaches_original ~(is_value_type : G.type_ -> bool)
+    (ty : G.type_ option) (offset : T.offset list) : bool =
+  let rec through (ty : G.type_ option) (offset : T.offset list) : bool =
+    match offset with
+    | []
+    | [ _ ] ->
+        false
+    | first :: rest ->
+        let ty = type_at_offset ty first in
+        refers_to_other_data ~is_value_type ty || through ty rest
   in
-  let copied_param (p : IL.param) =
-    match IL_helpers.pname_of_param p with
-    | Some pname -> IL.NameSet.mem pname copied
-    | None -> false
+  through ty offset
+
+(* A write through a parameter reaches the caller when, at the exit, the
+ * parameter may still refer to what the caller passed; through a parameter
+ * or receiver that holds a copy, only a write through data the copy shares
+ * with the original does. *)
+let caller_sees_update ~(is_value_type : G.type_ -> bool)
+    (params : IL.param list) (exit_env : Lval_env.t) (copied : IL.NameSet.t)
+    (lval : T.lval) : bool =
+  let reaches_through (np : IL.name_param) =
+    (not (IL.NameSet.mem np.pname copied))
+    || write_reaches_original ~is_value_type np.ptype lval.offset
   in
-  match (lval.base, lval.offset) with
-  | T.BArg arg, _ when Option.fold ~none:false ~some:copied_param
-                         (own_param_with_name arg.name) ->
-      false
-  | T.BThis, _
-    when List.exists
-           (function
-             | IL.ParamReceiver np -> IL.NameSet.mem np.pname copied
-             | _ -> false)
-           params ->
-      false
-  | T.BArg arg, [] -> (
-      let own_param =
+  match lval.base with
+  | T.BArg arg -> (
+      match
         List.find_opt
           (fun (p : IL.param) ->
             match IL_helpers.pname_of_param p with
             | Some pname -> String.equal (fst pname.ident) arg.name
             | None -> false)
           params
-      in
-      match own_param with
-      | Some (IL.Param { pname; by_reference; _ }) ->
-          by_reference || not (IL.NameSet.mem pname rebound)
-      | Some p -> (
-          match IL_helpers.pname_of_param p with
-          | Some pname -> not (IL.NameSet.mem pname rebound)
-          | None -> true)
-      | None -> true)
-  | _ -> true
+      with
+      | Some
+          (( IL.Param np
+           | IL.ParamKwd np
+           | IL.ParamRest np
+           | IL.ParamReceiver np
+           | IL.ParamPattern (np, _) ) as p) ->
+          param_refers_to_argument exit_env p && reaches_through np
+      | Some IL.ParamFixme
+      | None ->
+          true)
+  | T.BThis ->
+      List.for_all
+        (function
+          | IL.ParamReceiver np -> reaches_through np
+          | _ -> true)
+        params
+  | T.BGlob _
+  | T.BEnv _
+  | T.BCall _
+  | T.BLocal _ ->
+      true
 
 (* The writes to the caller's objects that [var]'s value in [exit_var_ref]
  * shows, compared with [var] on entry. *)
@@ -3430,8 +3465,9 @@ let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
                         })
                  else None))
 
-let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
-    ~(rebound : IL.NameSet.t) ~(copied : IL.NameSet.t) enter_env exit_env :
+let effects_from_arg_updates_at_exit ~(lang : Lang.t)
+    ~(is_value_type : G.type_ -> bool) ~(params : IL.param list)
+    ~(copied : IL.NameSet.t) enter_env exit_env :
     Effect.t list =
   (* TOOD: We need to get a map of `lval` to `Taint.arg`, and if an extension
    * of `lval` has new taints, then we can compute its correspoding `Taint.arg`
@@ -3439,7 +3475,7 @@ let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
   exit_env |> Lval_env.seq_of_tainted
   |> Seq.map (fun (var, exit_var_ref) ->
          arg_updates_of_var ~lang
-           ~keep:(caller_sees_update params rebound copied)
+           ~keep:(caller_sees_update ~is_value_type params exit_env copied)
            enter_env var exit_var_ref)
   |> Seq.concat |> List.of_seq
 
@@ -3476,10 +3512,11 @@ let effect_has_closure_env (eff : Effect.t) : bool =
  * through its environment. A parameter becomes the parameter as the
  * caller passed it; a variable the function captures stays in the
  * function's own closure environment; a local, or a parameter that holds
- * a copy or is rebound, lives on as a variable shared by the closures
- * that captured it, with its value at the exit. *)
+ * a copy or may no longer refer to its argument, becomes a [BLocal]: one
+ * variable per call, shared by the closures that call returns, with its
+ * value at the exit. *)
 let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
-    ~(captured : (IL.name * AST_generic.capture_mode) list) ~(rebound : IL.NameSet.t)
+    ~(captured : (IL.name * AST_generic.capture_mode) list)
     ~(copied : IL.NameSet.t) (exit_env : Lval_env.t) (effects : Effects.t) :
     Effects.t =
   let param_args =
@@ -3495,25 +3532,15 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
            match (IL_helpers.pname_of_param p, sig_param) with
            | ( Some pname,
                (Signature_params.P name | Signature_params.PRest name) )
-             when not (IL.NameSet.mem pname rebound || IL.NameSet.mem pname copied)
-             ->
+             when param_refers_to_argument exit_env p
+                  && not (IL.NameSet.mem pname copied) ->
                Some (pname, { T.name; index })
            | _ -> None)
     |> List.filter_map Fun.id
   in
   let same (x : IL.name) (y : IL.name) = Int.equal (IL.compare_name x y) 0 in
-  let is_own_var (v : IL.name) =
-    List.exists
-      (fun p ->
-        match IL_helpers.pname_of_param p with
-        | Some pname -> same pname v
-        | None -> false)
-      fun_cfg.params
-    ||
-    match fun_cfg.source_range with
-    | Some range -> IL_helpers.declared_in_range range v
-    | None -> false
-  in
+  let bound = bindings fun_cfg in
+  let is_own_var (v : IL.name) = IL.NameSet.mem v bound in
   let escaped = ref IL.NameSet.empty in
   let convert_ref (lval : T.lval) : T.lval =
     match lval.base with
@@ -3523,55 +3550,19 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
         | None ->
             if List.exists (fun (x, _) -> same x v) captured then
               { lval with base = BEnv v }
-            else (
-              if is_own_var v then escaped := IL.NameSet.add v !escaped;
-              lval))
+            else if is_own_var v then (
+              escaped := IL.NameSet.add v !escaped;
+              { lval with base = BLocal v })
+            else lval)
     | BArg _
     | BThis
     | BEnv _
-    | BCall _ ->
+    | BCall _
+    | BLocal _ ->
         lval
   in
-  let rec convert_shape (shape : S.shape) : S.shape =
-    match shape with
-    | Bot
-    | Arg _ ->
-        shape
-    | Obj obj -> Obj (Shape_and_sig.Fields.map convert_cell obj)
-    | Fun (c, cs) ->
-        let c, cs =
-          Shape_and_sig.map_closures
-            (fun (closure : S.closure) ->
-              {
-                closure with
-                env =
-                  List_.map
-                    (fun (x, entry) ->
-                      match entry with
-                      | S.Ref lval -> (x, S.Ref (convert_ref lval))
-                      | S.Val cell -> (x, S.Val (convert_cell cell)))
-                    closure.env;
-              })
-            (c, cs)
-        in
-        Fun (c, cs)
-  and convert_cell (Cell (xtaint, shape)) = Cell (xtaint, convert_shape shape) in
-  let convert_arg = function
-    | IL.Unnamed (taints, shape) -> IL.Unnamed (taints, convert_shape shape)
-    | IL.Named (id, (taints, shape)) -> IL.Named (id, (taints, convert_shape shape))
-  in
   let effects =
-    effects
-    |> Effects.map (function
-         | Effect.ToReturn ret ->
-             Effect.ToReturn { ret with data_shape = convert_shape ret.data_shape }
-         | Effect.ToLval lval_write ->
-             Effect.ToLval
-               { lval_write with shape = convert_shape lval_write.shape }
-         | Effect.ToSinkInCall call ->
-             Effect.ToSinkInCall
-               { call with args_taints = List_.map convert_arg call.args_taints }
-         | Effect.ToSink _ as eff -> eff)
+    effects |> Effects.map (Shape_and_sig.map_closure_refs convert_ref)
   in
   let escaped_values =
     IL.NameSet.elements !escaped
@@ -3588,7 +3579,7 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
                              {
                                taints;
                                shape = Bot;
-                               lval = { base = BGlob v; offset };
+                               lval = { base = BLocal v; offset };
                                guards = Effect_guard.top;
                              })))
   in
@@ -3632,6 +3623,36 @@ let check_tainted_control_at_exit node env =
 (*****************************************************************************)
 (* Transfer *)
 (*****************************************************************************)
+
+(* The variables whose value [e] may evaluate to. *)
+let rec values_of_operands (lang : Lang.t) (e : IL.exp) : IL.name list =
+  match e.e with
+  | Fetch { base = Var src; rev_offset = [] } -> [ src ]
+  | Operator (((G.Or | G.And), _), args)
+    when Lang_config.logical_operators_return_operand lang ->
+      args
+      |> List.concat_map (fun arg -> values_of_operands lang (LV.exp_of_arg arg))
+  | _ -> []
+
+(* Whether [name op= e] leaves [name] referring to the same object. *)
+let augmented_assignment_in_place (lang : Lang.t) (params : IL.param list)
+    (name : IL.name) : bool =
+  match Lang_config.augmented_assignment lang with
+  | Lang_config.Rebinds -> false
+  | Lang_config.Updates_in_place_except immutable_types -> (
+      let declared_type =
+        params
+        |> List.find_map (function
+             | IL.Param np
+             | IL.ParamKwd np
+               when IL.equal_name np.pname name ->
+                 np.ptype
+             | _ -> None)
+      in
+      match Option.bind declared_type Class_table.name_of_type with
+      | Some (G.Id ((type_name, _), _)) ->
+          not (List.exists (String.equal type_name) immutable_types)
+      | _ -> true)
 
 let input_env ~lang ~enter_env ~(flow : F.cfg) mapping ni =
   let node = flow.graph#nodes#assoc ni in
@@ -4036,10 +4057,14 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
               CallSpecial (_, (IL.Ref, _), [ IL.Unnamed { e = Fetch target; _ } ])
             ) ->
               Lval_env.set_pointee env.taint_inst.lang name target out_lval_env
-          | ( Some { IL.base = IL.Var name; rev_offset = [] },
-              Assign (_, { e = Fetch { base = Var src; rev_offset = [] }; _ }) )
-            ->
-              Lval_env.copy_pointees ~src ~dst:name out_lval_env
+          | Some { IL.base = IL.Var name; rev_offset = [] }, Assign (_, e) ->
+              Lval_env.copy_pointees
+                ~srcs:(values_of_operands env.taint_inst.lang e)
+                ~dst:name out_lval_env
+          | Some { IL.base = IL.Var name; rev_offset = [] }, AugmentedAssign _
+            when augmented_assignment_in_place env.taint_inst.lang
+                   fun_cfg.params name ->
+              out_lval_env
           | Some { IL.base = IL.Var name; rev_offset = [] }, _ ->
               Lval_env.forget_pointees name out_lval_env
           | _ -> out_lval_env
@@ -4127,6 +4152,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
         | New _ ->
             true
         | Assign _
+        | AugmentedAssign _
         | AssignAnon _
         | FixmeInstr _ ->
             false)
@@ -4239,6 +4265,7 @@ and fixpoint_lambda taint_inst shared_tables func needed_vars lambda_name lambda
 and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
     ~enter_lval_env ~in_lambda ?signature_db ?builtin_signature_db fun_cfg =
   let flow = fun_cfg.cfg in
+  let enter_lval_env = seed_entry_objects fun_cfg.params enter_lval_env in
   let init_mapping = DataflowX.new_node_array flow Lval_env.empty_inout in
   let needed_vars =
     needed_vars
@@ -4338,18 +4365,18 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
         ~trans:(transfer env ~fun_cfg) ~flow
   in
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-  let rebound = rebound_vars fun_cfg.cfg in
   let copied =
     copied_params
       ~is_value_type:taint_inst.is_value_type fun_cfg.params
   in
   effects_from_arg_updates_at_exit ~lang:taint_inst.lang
-    ~params:fun_cfg.params ~rebound ~copied enter_lval_env exit_lval_env
+    ~is_value_type:taint_inst.is_value_type ~params:fun_cfg.params ~copied
+    enter_lval_env exit_lval_env
   |> record_effects env;
   let effects =
     if Effects.exists effect_has_closure_env !(env.effects_acc) then
       convert_escaping_closures ~fun_cfg
-        ~captured:(Lazy.force env.func.captured) ~rebound ~copied exit_lval_env
+        ~captured:(Lazy.force env.func.captured) ~copied exit_lval_env
         !(env.effects_acc)
     else !(env.effects_acc)
   in

@@ -413,9 +413,12 @@ let cond_partial_param_refs (params : IL.param list) (cond : IL.exp) :
 
 let rexps_of_instr x =
   match x.i with
-  | Assign (({ base = Var _; rev_offset = _ :: _ } as lval), exp) ->
+  | Assign (({ base = Var _; rev_offset = _ :: _ } as lval), exp)
+  | AugmentedAssign (({ base = Var _; rev_offset = _ :: _ } as lval), exp) ->
       [ { e = Fetch { lval with rev_offset = [] }; eorig = NoOrig }; exp ]
-  | Assign (_, exp) -> [ exp ]
+  | Assign (_, exp)
+  | AugmentedAssign (_, exp) ->
+      [ exp ]
   | AssignAnon _ -> []
   | Call (_, e1, args) -> e1 :: List_.map exp_of_arg args
   | New (_, _, _, args)
@@ -470,27 +473,16 @@ let rlvals_of_instr x =
 (* Public *)
 (*****************************************************************************)
 
-let source_range_of_locs (first : Tok.location) (last : Tok.location) :
-    IL.source_range =
-  {
-    file = Fpath.to_string (Fpath.normalize first.pos.file);
-    first = (first.pos.line, first.pos.column);
-    last = (last.pos.line, last.pos.column);
-  }
-
-let position_leq ((l1, c1) : int * int) ((l2, c2) : int * int) : bool =
-  l1 < l2 || (Int.equal l1 l2 && c1 <= c2)
-
-(* Whether [name] is declared inside [range]: its sid's site lies in the
- * span, or it is an IL temporary. A name with no site (unresolved, or made
- * by a converter) is outside. *)
-let declared_in_range (range : IL.source_range) (name : IL.name) : bool =
+(* A sid carries the site of the occurrence that declares its binding; an
+ * IL temporary is declared where the lowering assigns it. *)
+let is_binding_occurrence (name : IL.name) : bool =
   G.SId.is_temp name.sid
   ||
-  let _, file, line, col = G.SId.to_loc name.sid in
-  String.equal file range.file
-  && position_leq range.first (line, col)
-  && position_leq (line, col) range.last
+  match Tok.loc_of_tok (snd name.ident) with
+  | Ok (loc : Tok.location) ->
+      let _, _, line, col = G.SId.to_loc name.sid in
+      Int.equal line loc.pos.line && Int.equal col loc.pos.column
+  | Error _ -> false
 
 let is_pro_resolved_global name =
   match !(name.id_info.id_resolved) with
@@ -530,6 +522,7 @@ let is_dots_offset offset =
 let lval_of_instr_opt x =
   match x.i with
   | Assign (lval, _)
+  | AugmentedAssign (lval, _)
   | AssignAnon (lval, _)
   | Call (Some lval, _, _)
   | New (lval, _, _, _)

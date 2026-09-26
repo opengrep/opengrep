@@ -1,0 +1,13 @@
+rules:
+  - id: test-escaped-local-per-call-go
+    message: Each call of a function creates its own locals, which the closures it returns share
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

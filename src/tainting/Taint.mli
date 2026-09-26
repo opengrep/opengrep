@@ -83,6 +83,9 @@ type base =
   | BArg of arg  (** A formal parameter in a function/method definition. *)
   | BEnv of IL.name  (** A variable captured by a closure. *)
   | BCall of call  (** The result of calling a formal. *)
+  | BLocal of IL.name
+      (** A local variable of the function that a closure leaving the
+          function refers to; each call of the function creates its own. *)
 
 val show_base : base -> string
 val base_of_formal : formal -> base

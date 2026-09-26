@@ -1061,7 +1061,7 @@ and try_catch_else_finally env ~try_st ~catches ~opt_else ~opt_finally : stmts =
         let name = fresh_var env ctok in
         let todo_pattern = fixme_stmt ToDo (G.Ce exn) in
         let catch_stmt = stmt env catch_st in
-        (name, todo_pattern @ catch_stmt))
+        (name, todo_pattern @ catch_declarations exn @ catch_stmt))
       catches
   in
   let else_stmt =
@@ -1075,6 +1075,24 @@ and try_catch_else_finally env ~try_st ~catches ~opt_else ~opt_finally : stmts =
     | Some (_tok, finally_st) -> stmt env finally_st
   in
   [ mk_s (Try (try_stmt, catches_stmt_rev, else_stmt, finally_stmt)) ]
+
+(* The variables a catch clause binds, declared in the IL. *)
+and catch_declarations (exn : G.catch_exn) : stmts =
+  let ids =
+    match exn with
+    | G.CatchParam { pname = Some id; pinfo; _ } -> [ (id, pinfo) ]
+    | G.CatchPattern pat -> Visit_pattern_ids.visit (G.P pat)
+    | G.CatchParam { pname = None; _ }
+    | G.OtherCatch _ ->
+        []
+  in
+  ids
+  |> List_.map (fun ((id, id_info) : G.ident * G.id_info) ->
+         mk_s
+           (MiscStmt
+              (DefStmt
+                 ( { G.name = G.EN (G.Id (id, id_info)); attrs = []; tparams = None },
+                   G.VarDef { vinit = None; vtype = None; vtok = None } ))))
 
 (*****************************************************************************)
 (* Assign *)
@@ -2262,7 +2280,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           (Operator (op, [ Unnamed lvalexp; Unnamed exp ]))
           (related_tok (snd op))
       in
-      let instr = mk_s (Instr (mk_i (Assign (lval, opexp)) eorig)) in
+      let instr = mk_s (Instr (mk_i (AugmentedAssign (lval, opexp)) eorig)) in
       (ss_e2 @ ss_lv @ [instr], lvalexp)
   | G.LetPattern (pat, e) ->
       (let_pattern_stmts env ~eorig pat e, mk_unit (G.fake "()") NoOrig)
@@ -3735,6 +3753,11 @@ and for_var_or_expr_list env xs : stmts =
           | _ -> []))
     xs
 
+(* A declaration without an initial value keeps its binding in the IL. *)
+and declaration env (def : G.definition) (ty : G.type_) : stmts =
+  let ss, _ = type_ env ty in
+  ss @ [ mk_s (MiscStmt (DefStmt def)) ]
+
 (*****************************************************************************)
 (* Parameters *)
 (*****************************************************************************)
@@ -3764,6 +3787,30 @@ and parameter_is_by_reference (lang : Lang.t) (p : G.parameter_classic) : bool =
       | Some { t_attrs; _ } -> has_named_attr [ "inout" ] t_attrs
       | None -> false)
   | _ -> false
+
+(* The decorators' arguments, then the default values, in source order. *)
+and definition_time_stmts env (ent : G.entity) (fdef : G.function_definition) :
+    stmts =
+  if Lang_evaluation.evaluates_at_definition env.lang then
+    let decorators =
+      ent.attrs
+      |> List.concat_map (function
+           | G.NamedAttr (_, _, (_, args, _)) -> fst (arguments env args)
+           | G.OtherAttribute (_, anys) ->
+               anys
+               |> List.concat_map (function
+                    | G.E e -> fst (expr env e)
+                    | _ -> [])
+           | G.KeywordAttr _ -> [])
+    in
+    let default_values =
+      fdef.fparams |> Tok.unbracket
+      |> List.concat_map (function
+           | G.Param { pdefault = Some e; _ } -> fst (expr env e)
+           | _ -> [])
+    in
+    decorators @ default_values
+  else []
 
 and parameters env params : param list =
   params |> Tok.unbracket
@@ -4144,7 +4191,7 @@ and stmt_aux env st : stmts =
       let ss_lv, lv = lval_of_ent env ent in
       let ss2, () = type_opt env opt_ty in
       ss1 @ ss_lv @ ss2 @ [ mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.S st)))) ]
-  | G.DefStmt (ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ })
+  | G.DefStmt ((ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ }) as def)
     when env.lang =*= Lang.Cpp ->
       (* Handle C++ constructor calls like: User user(taintedInput) *)
       (match ty.t with
@@ -4176,18 +4223,15 @@ and stmt_aux env st : stmts =
               new_stmts
           | _ ->
               (* Not a constructor pattern, fall back to type analysis *)
-              let ss, _ = type_ env ty in
-              ss
+              declaration env def ty
           )
       | _ ->
           (* Not TyFun, fall back to type analysis *)
-          let ss, _ = type_ env ty in
-          ss
+          declaration env def ty
       )
-  | G.DefStmt (_ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ }) ->
+  | G.DefStmt ((_ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ }) as def) ->
       (* We want to analyze any expressions in 'ty'. *)
-      let ss, _ = type_ env ty in
-      ss
+      declaration env def ty
   | G.DefStmt ({ G.name = G.EDynamic lhs; _ }, G.FuncDef fdef) ->
       let ss_lambda, rhs = expr env (G.Lambda fdef |> G.e) in
       let ss_assign, _ = assign env ~g_expr:lhs lhs (snd fdef.fkind) rhs in
@@ -4196,6 +4240,7 @@ and stmt_aux env st : stmts =
       (* Translate nested function declarations as lambda assignments so that
        * the CFG builder extracts them into lambdas_cfgs, enabling the taint
        * engine to propagate closure-captured variables through them. *)
+      let ss_definition = definition_time_stmts env ent fdef in
       let ss_lv, lv = lval_of_ent env ent in
       let il_fdef =
         (* See NOTE about resetting control-flow labels for lambdas. *)
@@ -4206,7 +4251,8 @@ and stmt_aux env st : stmts =
                      rec_point_lvals = None }
           fdef
       in
-      ss_lv @ [ mk_s (Instr (mk_i (AssignAnon (lv, Lambda il_fdef)) (Related (G.S st)))) ]
+      ss_definition @ ss_lv
+      @ [ mk_s (Instr (mk_i (AssignAnon (lv, Lambda il_fdef)) (Related (G.S st)))) ]
   | G.DefStmt def -> [ mk_s (MiscStmt (DefStmt def)) ]
   | G.DirectiveStmt dir -> [ mk_s (MiscStmt (DirectiveStmt dir)) ]
   | G.Block xs ->

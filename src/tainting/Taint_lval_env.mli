@@ -49,8 +49,16 @@ val add_written_through :
 val set_pointee : Lang.t -> IL.name -> IL.lval -> env -> env
 (** The variable now holds the address of the l-value ([v = &x]). *)
 
-val copy_pointees : src:IL.name -> dst:IL.name -> env -> env
+val copy_pointees : srcs:IL.name list -> dst:IL.name -> env -> env
+(** The variable now holds one of the values of the sources. *)
+
 val forget_pointees : IL.name -> env -> env
+
+val seed_entry_object : IL.name -> env -> env
+(** The parameter refers to the object the caller passed. *)
+
+val may_refer_to_entry_object : env -> IL.name -> bool
+(** Whether the parameter may still refer to the object the caller passed. *)
 
 val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
 (** Assign a set of taints (but no specific shape) to an l-value. *)

@@ -402,7 +402,8 @@ let rec transfer :
 
         (* TODO: For now we only handle the simplest cases. *)
         match instr.i with
-        | Assign ({ base = Var var; rev_offset = [] }, exp) ->
+        | Assign ({ base = Var var; rev_offset = [] }, exp)
+        | AugmentedAssign ({ base = Var var; rev_offset = [] }, exp) ->
             (* var = exp *)
             let cexp = eval_or_sym_prop eval_env exp in
             update_env_with inp' var cexp

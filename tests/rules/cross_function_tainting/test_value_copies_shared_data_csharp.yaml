@@ -1,0 +1,13 @@
+rules:
+  - id: test-value-copies-shared-data-csharp
+    message: A copy of a struct shares the data its fields refer to
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
