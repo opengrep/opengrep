@@ -45,7 +45,7 @@ type class_scope = Class_table.class_scope = {
   role : role;
   members : Func_info.t list SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.placement) list;
+  parents : (parent * Linearisation.relation) list;
   class_side_parents : parent list;
   kind : kind;
   declaration : Lang_config.class_declaration;
@@ -176,7 +176,7 @@ module Defining_key = struct
   type t = {
     side : Class_parents.side;
     name : string;
-    classes : int list;
+    tiers : (int * int) list list;
   }
 
   let equal_side (left : Class_parents.side) (right : Class_parents.side) :
@@ -190,9 +190,13 @@ module Defining_key = struct
   let equal (left : t) (right : t) : bool =
     equal_side left.side right.side
     && String.equal left.name right.name
-    && List.equal Int.equal left.classes right.classes
+    && List.equal
+         (List.equal (fun ((left_class : int), (left_paths : int))
+                          ((right_class : int), (right_paths : int)) ->
+              Int.equal left_class right_class && Int.equal left_paths right_paths))
+         left.tiers right.tiers
 
-  let hash (key : t) : int = Hashtbl.hash (key.side, key.name, key.classes)
+  let hash (key : t) : int = Hashtbl.hash (key.side, key.name, key.tiers)
 end
 
 module Defining_tbl = Hashtbl.Make (Defining_key)
@@ -232,7 +236,7 @@ type t = {
   outside : t -> caller:Function_id.t option -> G.expr -> resolution;
   types : Type_state.t;
   declared_types : (G.SId.t * G.SId.t option, receiver_class) Hashtbl.t;
-  defining : (Class_table.cls * Func_info.t list) option Defining_tbl.t;
+  defining : (Class_table.cls, Func_info.t) Linearisation.selection Defining_tbl.t;
   overriding : Func_info.t list Member_tbl.t;
 }
 
@@ -496,7 +500,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     By_scope.add_to written_parents scope
       (List.map
          (fun (written : Class_parents.t) ->
-           (parent_of written.Class_parents.written, written.Class_parents.placement))
+           (parent_of written.Class_parents.written, written.Class_parents.relation))
          instance_side);
     By_scope.add_to written_class_side_parents scope
       (List.map
@@ -841,7 +845,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                           Scope_tbl.replace kinds impl (Class_kind G.Class);
                           add_parents impl impl_def;
                           By_scope.add_to written_parents own
-                            [ (Impl site, Linearisation.Appended) ];
+                            [ (Impl site, Linearisation.Implements) ];
                           impl
                     in
                     super#visit_definition
@@ -1173,15 +1177,6 @@ let own_members (t : t) (cls : Class_table.cls) (name : string) :
     Func_info.t list =
   List.filter t.compiled_with_file (Class_table.own_members cls name)
 
-let first_defining (t : t) (classes : Class_table.cls list) (name : string) :
-    (Class_table.cls * Func_info.t list) option =
-  List.find_map
-    (fun (cls : Class_table.cls) ->
-      match own_members t cls name with
-      | [] -> None
-      | defined -> Some (cls, defined))
-    classes
-
 let on_side (t : t) (side : Class_parents.side) (cls : Class_table.cls)
     (name : string) (func : Func_info.t) : bool =
   match (Lang_config.get t.lang).Lang_config.method_sets with
@@ -1196,71 +1191,56 @@ let own_members_on (t : t) (side : Class_parents.side) (cls : Class_table.cls)
     (name : string) : Func_info.t list =
   List.filter (on_side t side cls name) (own_members t cls name)
 
-let same_signature (t : t) (name : string) ~(nearer : Func_info.t)
-    ~(farther : Func_info.t) : bool =
-  let method_of (func : Func_info.t) : Structural_typing.method_ =
+let first_defining_on (t : t) (side : Class_parents.side)
+    (tiers : Class_table.cls Linearisation.tier list) (name : string) :
+    (Class_table.cls, Func_info.t) Linearisation.selection =
+  let key =
     {
-      Structural_typing.name;
-      entity = func.Func_info.entity;
-      fdef = func.Func_info.fdef;
+      Defining_key.side;
+      name;
+      tiers =
+        List.map
+          (fun (tier : Class_table.cls Linearisation.tier) ->
+            match tier with
+            | Linearisation.Candidates candidates ->
+                List.map
+                  (fun (candidate : Class_table.cls Linearisation.candidate) ->
+                    ( Class_table.index candidate.Linearisation.cls,
+                      candidate.Linearisation.paths ))
+                  candidates
+            | Linearisation.Unknown_classes -> [])
+          tiers;
     }
   in
-  Structural_typing.method_satisfies ~lang:t.lang
-    ~equal_type:(Class_table.equal_type t.classes)
-    ~required:(method_of farther) (method_of nearer)
-
-let visible_overloads (t : t) (side : Class_parents.side)
-    ~(nearer : Func_info.t list) (farther : Class_table.cls list)
-    (name : string) : Func_info.t list =
-  List.fold_left
-    (fun (visible : Func_info.t list) (cls : Class_table.cls) ->
-      visible
-      @ List.filter
-          (fun (inherited : Func_info.t) ->
-            not
-              (List.exists
-                 (fun (seen : Func_info.t) ->
-                   same_signature t name ~nearer:seen ~farther:inherited)
-                 visible))
-          (own_members_on t side cls name))
-    nearer farther
-
-let first_defining_on (t : t) (side : Class_parents.side)
-    (classes : Class_table.cls list) (name : string) :
-    (Class_table.cls * Func_info.t list) option =
-  let rec search (classes : Class_table.cls list) :
-      (Class_table.cls * Func_info.t list) option =
-    match classes with
-    | [] -> None
-    | cls :: farther -> (
-        match own_members_on t side cls name with
-        | [] -> search farther
-        | defined when Lang_config.overloads_by_type t.lang ->
-            Some (cls, visible_overloads t side ~nearer:defined farther name)
-        | defined -> Some (cls, defined))
-  in
-  let key =
-    { Defining_key.side; name; classes = List.map Class_table.index classes }
-  in
   match Defining_tbl.find_opt t.defining key with
-  | Some (found : (Class_table.cls * Func_info.t list) option) -> found
+  | Some (found : (Class_table.cls, Func_info.t) Linearisation.selection) ->
+      found
   | None ->
-      let found = search classes in
+      let found =
+        Class_table.select_member ~lang:t.lang
+          ~equal_type:(Class_table.equal_type t.classes)
+          tiers name
+          ~defines:(fun (cls : Class_table.cls) -> own_members_on t side cls name)
+      in
       Defining_tbl.replace t.defining key found;
       found
 
-let after (cls : Class_table.cls) (classes : Class_table.cls list) :
-    Class_table.cls list =
-  let rec drop (remaining : Class_table.cls list) : Class_table.cls list =
-    match remaining with
-    | [] -> []
-    | current :: rest ->
-        if Class_table.same current cls then rest else drop rest
-  in
-  drop classes
-
 let descendants (t : t) (cls : Class_table.cls) : Class_table.cls list =
   Class_table.descendants t.classes cls
+
+(* The tiers a lookup from [super] in a definition of [cls] reads: after
+   [cls] in the order of every class whose instances can run that
+   definition when the order follows the receiver, else the tiers of the
+   superclass. *)
+let super_tiers (t : t) (cls : Class_table.cls) :
+    Class_table.cls Linearisation.tier list list =
+  if Linearisation.follows_receiver (Lang_config.member_resolution t.lang) then
+    List.map
+      (fun (receiver : Class_table.cls) ->
+        Linearisation.after ~equal:Class_table.same cls
+          (order t receiver).Linearisation.tiers)
+      (cls :: descendants t cls)
+  else [ (order t cls).Linearisation.super_tiers ]
 
 let rec overridable (t : t) ~(visited : Class_table.cls list)
     (cls : Class_table.cls) (defined : Func_info.t list) (name : string) : bool
@@ -1277,15 +1257,17 @@ let rec overridable (t : t) ~(visited : Class_table.cls list)
          | Some answer -> answer
          | None -> (
              match
-               first_defining t
-                 (after cls (order t cls).Linearisation.order
-                 |> List.filter (fun (ancestor : Class_table.cls) ->
-                        not (List.exists (Class_table.same ancestor) visited)))
-                 name
+               first_defining_on t Class_parents.Instance_side
+                 (order t cls).Linearisation.super_tiers name
              with
-             | Some (ancestor, inherited) ->
+             | Linearisation.Selected (ancestor, inherited)
+               when not (List.exists (Class_table.same ancestor) visited) ->
                  overridable t ~visited:(cls :: visited) ancestor inherited name
-             | None -> false))
+             | Linearisation.Selected _
+             | Linearisation.Ambiguous
+             | Linearisation.Undefined
+             | Linearisation.Unknown ->
+                 false))
        defined
 
 let dispatches (t : t) (cls : Class_table.cls) (defined : Func_info.t list)
@@ -1307,43 +1289,46 @@ let root_resolution (t : t) (name : string) : resolution =
   | [] when top_level_defs_are_methods_of_object t.lang -> External
   | [] -> Defined []
 
-let extension_along (t : t) (classes : Class_table.cls list) (name : string) :
-    resolution =
+let extension_along (t : t) (tiers : Class_table.cls Linearisation.tier list)
+    (name : string) : resolution =
   match
-    List.find_map
-      (fun (cls : Class_table.cls) ->
-        match
-          List.filter (t.extension_visible name)
-            (Class_table.extensions cls name)
-        with
-        | [] -> None
-        | found -> Some found)
-      classes
+    Class_table.nearest tiers ~defines:(fun (cls : Class_table.cls) ->
+        List.filter (t.extension_visible name) (Class_table.extensions cls name))
   with
-  | Some found -> Defined found
-  | None -> (
+  | Linearisation.Selected (_, found) -> Defined found
+  | Linearisation.Ambiguous -> Defined []
+  | Linearisation.Undefined
+  | Linearisation.Unknown -> (
       match (Lang_config.get t.lang).Lang_config.receiver_parameter with
       | Lang_config.Declares_extension -> External
       | Lang_config.Declares_method -> Defined [])
 
-let instance_fields_along (classes : Class_table.cls list) (path : string list)
-    : Func_info.t list =
-  List.concat_map
-    (fun (ancestor : Class_table.cls) -> Class_table.instance_fields ancestor path)
-    classes
-  |> distinct_definitions
+let instance_fields_along (tiers : Class_table.cls Linearisation.tier list)
+    (path : string list) : Func_info.t list =
+  match
+    Class_table.nearest tiers ~defines:(fun (cls : Class_table.cls) ->
+        Class_table.instance_fields cls path)
+  with
+  | Linearisation.Selected (_, found) -> found
+  | Linearisation.Ambiguous
+  | Linearisation.Undefined
+  | Linearisation.Unknown ->
+      []
 
 let trait_impl_members (t : t) (cls : Class_table.cls) (name : string) :
     Func_info.t list =
-  (order t cls).Linearisation.order
+  Class_table.tier_classes (order t cls).Linearisation.tiers
   |> List.filter Class_table.is_trait_impl
   |> List.concat_map (fun (impl : Class_table.cls) ->
          match
            first_defining_on t Class_parents.Instance_side
-             (order t impl).Linearisation.order name
+             (order t impl).Linearisation.tiers name
          with
-         | Some (_, defined) -> defined
-         | None -> [])
+         | Linearisation.Selected (_, defined) -> defined
+         | Linearisation.Ambiguous
+         | Linearisation.Undefined
+         | Linearisation.Unknown ->
+             [])
   |> distinct_definitions
 
 let selected_on_instance (t : t) (cls : Class_table.cls)
@@ -1366,11 +1351,14 @@ let overrides (t : t) (cls : Class_table.cls) (name : string) :
           (fun (sub : Class_table.cls) ->
             match
               first_defining_on t Class_parents.Instance_side
-                (order t sub).Linearisation.order name
+                (order t sub).Linearisation.tiers name
             with
-            | Some (definer, defined) ->
+            | Linearisation.Selected (definer, defined) ->
                 selected_on_instance t sub definer defined name
-            | None -> [])
+            | Linearisation.Ambiguous
+            | Linearisation.Undefined
+            | Linearisation.Unknown ->
+                [])
           (descendants t cls)
         |> distinct_definitions
       in
@@ -1390,11 +1378,10 @@ let found_in_descendants (t : t) (cls : Class_table.cls) : bool =
    shadow whatever an ancestor the file does not hold defines. *)
 let select_on_instance (t : t) (cls : Class_table.cls) ~(dispatch : bool)
     (name : string) : resolution =
-  let linearisation = order t cls in
-  let classes = linearisation.Linearisation.order in
-  let fields = instance_fields_along classes [ name ] in
-  match first_defining_on t Class_parents.Instance_side classes name with
-  | Some (definer, defined) ->
+  let tiers = (order t cls).Linearisation.tiers in
+  let fields = instance_fields_along tiers [ name ] in
+  match first_defining_on t Class_parents.Instance_side tiers name with
+  | Linearisation.Selected (definer, defined) ->
       let defined = selected_on_instance t cls definer defined name in
       let overriding =
         if dispatch && dispatches t definer defined name then
@@ -1402,11 +1389,12 @@ let select_on_instance (t : t) (cls : Class_table.cls) ~(dispatch : bool)
         else []
       in
       Defined (distinct_definitions (defined @ overriding @ fields))
-  | None when not linearisation.Linearisation.complete -> (
+  | Linearisation.Ambiguous -> Defined fields
+  | Linearisation.Unknown -> (
       match fields with
       | [] -> External
       | _ :: _ -> Defined (distinct_definitions fields))
-  | None -> (
+  | Linearisation.Undefined -> (
       match
         if dispatch && found_in_descendants t cls then overrides t cls name
         else []
@@ -1418,26 +1406,32 @@ let select_on_instance (t : t) (cls : Class_table.cls) ~(dispatch : bool)
           | _ :: _ as found -> Defined (distinct_definitions found)
           | [] -> (
               match root_resolution t name with
-              | Defined _ -> extension_along t classes name
+              | Defined _ -> extension_along t tiers name
               | External -> External)))
 
 (* Along the order, each class's own class-side members, then the instance
    members of the modules that class extends, the last extended first. *)
 let select_on_class_side (t : t) (cls : Class_table.cls) (name : string) :
     resolution =
-  let linearisation = order t cls in
-  let rec along (classes : Class_table.cls list) : resolution =
-    match classes with
-    | [] ->
-        if linearisation.Linearisation.complete then root_resolution t name
-        else External
-    | current :: rest -> (
-        match own_members_on t Class_parents.Class_side current name with
-        | _ :: _ as defined -> Defined defined
-        | [] ->
-            extended (Class_table.class_side_parents t.classes current) rest)
+  let rec along (tiers : Class_table.cls Linearisation.tier list) : resolution =
+    match tiers with
+    | [] -> root_resolution t name
+    | Linearisation.Unknown_classes :: _ -> External
+    | (Linearisation.Candidates candidates as tier) :: rest -> (
+        match first_defining_on t Class_parents.Class_side [ tier ] name with
+        | Linearisation.Selected (_, defined) -> Defined defined
+        | Linearisation.Ambiguous -> Defined []
+        | Linearisation.Undefined
+        | Linearisation.Unknown ->
+            extended
+              (List.concat_map
+                 (fun (candidate : Class_table.cls Linearisation.candidate) ->
+                   Class_table.class_side_parents t.classes
+                     candidate.Linearisation.cls)
+                 candidates)
+              rest)
   and extended (parents : Class_table.cls option list)
-      (rest : Class_table.cls list) : resolution =
+      (rest : Class_table.cls Linearisation.tier list) : resolution =
     match parents with
     | [] -> along rest
     | None :: _ -> External
@@ -1445,14 +1439,15 @@ let select_on_class_side (t : t) (cls : Class_table.cls) (name : string) :
         let mixin_order = order t mixin in
         match
           first_defining_on t Class_parents.Instance_side
-            mixin_order.Linearisation.order name
+            mixin_order.Linearisation.tiers name
         with
-        | Some (_, defined) -> Defined defined
-        | None when mixin_order.Linearisation.complete -> extended others rest
-        | None -> External)
+        | Linearisation.Selected (_, defined) -> Defined defined
+        | Linearisation.Ambiguous -> Defined []
+        | Linearisation.Undefined -> extended others rest
+        | Linearisation.Unknown -> External)
   in
   let object_fields = Class_table.object_fields cls [ name ] in
-  match (along linearisation.Linearisation.order, object_fields) with
+  match (along (order t cls).Linearisation.tiers, object_fields) with
   | Defined defined, _ ->
       Defined (distinct_definitions (defined @ object_fields))
   | External, [] -> External
@@ -1474,9 +1469,19 @@ let member_type (t : t) (receiver : receiver_class)
   | Exact cls
   | Class_object cls
   | Object_of { path = []; held_class = Of_class cls; _ } ->
-      List.find_map lookup (order t cls).Linearisation.order
-  | Ancestors_of cls ->
-      List.find_map lookup (after cls (order t cls).Linearisation.order)
+      Class_table.find_along (order t cls).Linearisation.tiers lookup
+  | Ancestors_of cls -> (
+      match
+        List_.uniq_by (Option.equal Class_table.same)
+          (List.map
+             (fun (tiers : Class_table.cls Linearisation.tier list) ->
+               Class_table.find_along tiers lookup)
+             (super_tiers t cls))
+      with
+      | [ found ] -> found
+      | []
+      | _ :: _ :: _ ->
+          None)
   | Object_of _
   | External_class
   | Root
@@ -1487,6 +1492,17 @@ let field_type (t : t) (receiver : receiver_class) (field : string) :
     Class_table.cls option =
   member_type t receiver (fun (owner : Class_table.cls) ->
       Type_state.field t.types owner field)
+
+let joined_resolutions (resolutions : resolution list) : resolution =
+  List.fold_left
+    (fun (joined : resolution) (resolution : resolution) ->
+      match (joined, resolution) with
+      | External, _
+      | _, External ->
+          External
+      | Defined left, Defined right ->
+          Defined (distinct_definitions (left @ right)))
+    (Defined []) resolutions
 
 (* The functions a field path read from a receiver holds: a member for a
    single field, else the functions stored at that path of the object. *)
@@ -1504,20 +1520,19 @@ let rec resolve_path (t : t) (receiver : receiver_class) (path : string list) :
   | Class cls, [ name ] -> select_on_instance t cls ~dispatch:true name
   | Exact cls, [ name ] -> select_on_instance t cls ~dispatch:false name
   | (Class cls | Exact cls), _ ->
-      through_field (instance_fields_along (order t cls).Linearisation.order path)
+      through_field (instance_fields_along (order t cls).Linearisation.tiers path)
   | Class_object cls, [ name ] -> select_on_class_side t cls name
   | Class_object cls, _ -> Defined (Class_table.object_fields cls path)
-  | Ancestors_of cls, [ name ] -> (
-      let linearisation = order t cls in
-      match
-        first_defining_on t Class_parents.Instance_side
-          (after cls linearisation.Linearisation.order)
-          name
-      with
-      | Some (_, defined) -> Defined defined
-      | None when linearisation.Linearisation.complete ->
-          root_resolution t name
-      | None -> External)
+  | Ancestors_of cls, [ name ] ->
+      let continuing (tiers : Class_table.cls Linearisation.tier list) :
+          resolution =
+        match first_defining_on t Class_parents.Instance_side tiers name with
+        | Linearisation.Selected (_, defined) -> Defined defined
+        | Linearisation.Ambiguous -> Defined []
+        | Linearisation.Undefined -> root_resolution t name
+        | Linearisation.Unknown -> External
+      in
+      joined_resolutions (List.map continuing (super_tiers t cls))
   | Ancestors_of _, _ -> Defined []
   | Object_of held, _ -> (
       let fields =
@@ -1535,7 +1550,7 @@ let rec resolve_path (t : t) (receiver : receiver_class) (path : string list) :
           through_field
             (distinct_definitions
                (fields
-               @ instance_fields_along (order t cls).Linearisation.order path))
+               @ instance_fields_along (order t cls).Linearisation.tiers path))
       | _, _, (Of_class _ | Of_external_class | Of_unknown_class) ->
           Defined fields)
   | External_class, _ -> External
@@ -1883,28 +1898,22 @@ let rec receiver_chain (t : t) (e : G.expr) : G.expr * string list =
    the functions its binding holds (a constructor written with the class's
    name, a JavaScript function called with [new]) and its members with the
    language's constructor names. *)
-let constructors_along (t : t) (classes : Class_table.cls list)
-    ~(complete : bool) : resolution =
+let constructors_along (t : t) (tiers : Class_table.cls Linearisation.tier list)
+    : resolution =
   let constructor_names = (Lang_config.get t.lang).Lang_config.constructor_names in
   match
-    List.find_map
-      (fun (ancestor : Class_table.cls) ->
-        match
-          Class_table.bound_functions ancestor
-          @ List.concat_map (Class_table.own_members ancestor) constructor_names
-        with
-        | [] -> None
-        | found -> Some found)
-      classes
+    Class_table.nearest tiers ~defines:(fun (ancestor : Class_table.cls) ->
+        Class_table.bound_functions ancestor
+        @ List.concat_map (Class_table.own_members ancestor) constructor_names)
   with
-  | Some found -> Defined found
-  | None when complete -> Defined []
-  | None -> External
+  | Linearisation.Selected (_, found) -> Defined found
+  | Linearisation.Ambiguous
+  | Linearisation.Undefined ->
+      Defined []
+  | Linearisation.Unknown -> External
 
 let constructors_of_class (t : t) (cls : Class_table.cls) : resolution =
-  let linearisation = order t cls in
-  constructors_along t linearisation.Linearisation.order
-    ~complete:linearisation.Linearisation.complete
+  constructors_along t (order t cls).Linearisation.tiers
 
 let constructors (t : t) (scope : class_scope) : resolution =
   match Class_table.class_of_scope t.classes (scope_id_of scope) with
@@ -1920,17 +1929,6 @@ let constructs (t : t) (use : use) : bool =
   match use with
   | Called -> Lang_config.constructs_by_bare_call t.lang
   | Referenced -> (Lang_config.get t.lang).Lang_config.class_is_callable_value
-
-let joined_resolutions (resolutions : resolution list) : resolution =
-  List.fold_left
-    (fun (joined : resolution) (resolution : resolution) ->
-      match (joined, resolution) with
-      | External, _
-      | _, External ->
-          External
-      | Defined left, Defined right ->
-          Defined (distinct_definitions (left @ right)))
-    (Defined []) resolutions
 
 let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
     ~(visited : G.SId.t list) (name : G.name) : resolution =
@@ -1989,11 +1987,7 @@ and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
       resolve_expr t ~caller ~use ~visited indexed
   | G.IdSpecial (G.Super, _), None -> (
       match self_receiver t ~caller with
-      | Class cls ->
-          let linearisation = order t cls in
-          constructors_along t
-            (after cls linearisation.Linearisation.order)
-            ~complete:linearisation.Linearisation.complete
+      | Class cls -> constructors_along t (order t cls).Linearisation.super_tiers
       | External_class -> External
       | Exact _
       | Class_object _
@@ -2017,9 +2011,17 @@ and resolve_member_access (t : t) ~(receiver : G.expr) ~(member : string)
       match (Lazy.force root_class, prefix) with
       | Class_object cls, []
         when is_constructor_reference t member
-             && Option.is_none
-                  (first_defining_on t Class_parents.Class_side
-                     (order t cls).Linearisation.order member) ->
+             &&
+             match
+               first_defining_on t Class_parents.Class_side
+                 (order t cls).Linearisation.tiers member
+             with
+             | Linearisation.Selected _
+             | Linearisation.Ambiguous ->
+                 false
+             | Linearisation.Undefined
+             | Linearisation.Unknown ->
+                 true ->
           constructors_of_class t cls
       | root_receiver, _ -> resolve_path t root_receiver (prefix @ [ member ]))
 

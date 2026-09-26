@@ -41,7 +41,7 @@ type class_scope = {
   role : role;
   members : Func_info.t list SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.placement) list;
+  parents : (parent * Linearisation.relation) list;
   class_side_parents : parent list;
   kind : kind;
   declaration : Lang_config.class_declaration;
@@ -186,7 +186,7 @@ type cls = {
 }
 
 type entry = {
-  parents : (cls option * Linearisation.placement) list list;
+  parents : (cls option * Linearisation.relation) list list;
   class_side_parents : cls option list;
   order : cls Linearisation.linearisation;
   subclasses : cls list;
@@ -197,6 +197,7 @@ type position =
   | Type_position
 
 type t = {
+  lang : Lang.t;
   entries : entry array;
   classes : cls array;
   by_scope : cls Scope_tbl.t;
@@ -391,20 +392,19 @@ let same_type_by_class (class_of : G.name -> cls option)
               None))
   | _ -> None
 
+let method_of (name : string) (func : Func_info.t) : Structural_typing.method_ =
+  {
+    Structural_typing.name;
+    entity = func.Func_info.entity;
+    fdef = func.Func_info.fdef;
+  }
+
 let structural_methods (members : Func_info.t list SMap.t) :
     (Func_info.t * Structural_typing.method_) list =
   SMap.fold
     (fun (name : string) (funcs : Func_info.t list)
          (methods : (Func_info.t * Structural_typing.method_) list) ->
-      List.map
-        (fun (func : Func_info.t) ->
-          ( func,
-            {
-              Structural_typing.name;
-              entity = func.Func_info.entity;
-              fdef = func.Func_info.fdef;
-            } ))
-        funcs
+      List.map (fun (func : Func_info.t) -> (func, method_of name func)) funcs
       @ methods)
     members []
 
@@ -438,14 +438,55 @@ let satisfied_in_one_build ~(lang : Lang.t)
   in
   (not (List_.null interface)) && choose (List.map fst interface) options
 
-let members_along (classes : cls list) : Func_info.t list SMap.t =
+let overrides ~(lang : Lang.t) ~(equal_type : Structural_typing.equal_type)
+    (name : string) ~(nearer : Func_info.t) ~(farther : Func_info.t) : bool =
+  (not (Lang_config.overloads_by_type lang))
+  || Structural_typing.method_satisfies ~lang ~equal_type
+       ~required:(method_of name farther) (method_of name nearer)
+
+let select_member ~(lang : Lang.t) ~(equal_type : Structural_typing.equal_type)
+    (tiers : cls Linearisation.tier list) (name : string)
+    ~(defines : cls -> Func_info.t list) :
+    (cls, Func_info.t) Linearisation.selection =
+  Linearisation.select ~equal:same ~defines
+    ~overrides:(overrides ~lang ~equal_type name)
+    ~declared_only:(fun (func : Func_info.t) ->
+      not (Func_info.has_body func.Func_info.fdef))
+    ~accumulate:(Lang_config.overloads_by_type lang)
+    tiers
+
+let tier_classes (tiers : cls Linearisation.tier list) : cls list =
+  List.concat_map
+    (fun (tier : cls Linearisation.tier) ->
+      match tier with
+      | Linearisation.Candidates candidates ->
+          List.map
+            (fun (candidate : cls Linearisation.candidate) ->
+              candidate.Linearisation.cls)
+            candidates
+      | Linearisation.Unknown_classes -> [])
+    tiers
+
+let members_by_tiers ~(lang : Lang.t)
+    ~(equal_type : Structural_typing.equal_type)
+    (tiers : cls Linearisation.tier list) : Func_info.t list SMap.t =
   List.fold_left
-    (fun (members : Func_info.t list SMap.t) (cls : cls) ->
+    (fun (names : Func_info.t list SMap.t) (cls : cls) ->
       SMap.union
-        (fun (_ : string) (nearer : Func_info.t list) (_ : Func_info.t list) ->
-          Some nearer)
-        members (member_table cls))
-    SMap.empty classes
+        (fun (_ : string) (known : Func_info.t list) (_ : Func_info.t list) ->
+          Some known)
+        names (member_table cls))
+    SMap.empty (tier_classes tiers)
+  |> SMap.filter_map (fun (name : string) (_ : Func_info.t list) ->
+         match
+           select_member ~lang ~equal_type tiers name
+             ~defines:(fun (cls : cls) -> own_members cls name)
+         with
+         | Linearisation.Selected (_, defined) -> Some defined
+         | Linearisation.Ambiguous
+         | Linearisation.Undefined
+         | Linearisation.Unknown ->
+             None)
 
 let build ~(lang : Lang.t) ~(classes : class_scope list list)
     ~(compiled_together : Func_info.t list -> bool)
@@ -501,8 +542,8 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
         List.map
           (fun (scope : class_scope) ->
             List.map
-              (fun ((parent, placement) : parent * Linearisation.placement) ->
-                (linked scope parent, placement))
+              (fun ((parent, relation) : parent * Linearisation.relation) ->
+                (linked scope parent, relation))
               scope.parents)
           cls.scopes)
       classes
@@ -511,28 +552,26 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
     not (List.exists defined cls.scopes)
   in
   let linearisation_parents (cls : cls) : cls Linearisation.parent list list =
-    let written =
-      List.map
-        (List.map
-           (fun ((parent, placement) : cls option * Linearisation.placement) ->
-             match parent with
-             | Some parent -> Linearisation.Bound (placement, parent)
-             | None -> Linearisation.Unbound placement))
-        written_parents.(cls.id)
-    in
-    if external_class cls then
-      written @ [ [ Linearisation.Unbound Linearisation.Appended ] ]
-    else written
+    List.map
+      (List.map
+         (fun ((parent, relation) : cls option * Linearisation.relation) ->
+           match parent with
+           | Some parent -> Linearisation.Bound (relation, parent)
+           | None -> Linearisation.Unbound relation))
+      written_parents.(cls.id)
   in
   let linearise =
-    Linearisation.c3 ~equal:same ~hash ~parents:linearisation_parents
+    Linearisation.linearise
+      (Lang_config.member_resolution lang)
+      ~equal:same ~hash ~parents:linearisation_parents ~is_interface
+      ~defined_outside:external_class
   in
   let orders = Array.map linearise classes in
   let direct_subclasses = Array.make (Array.length classes) [] in
   Array.iter
     (fun (cls : cls) ->
       List.iter
-        (fun ((parent, _) : cls option * Linearisation.placement) ->
+        (fun ((parent, _) : cls option * Linearisation.relation) ->
           Option.iter
             (fun (parent : cls) ->
               direct_subclasses.(parent.id) <-
@@ -542,7 +581,10 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
     classes;
   (if Lang_config.interfaces_are_structural lang then
      let members_of (cls : cls) : Func_info.t list SMap.t =
-       members_along orders.(cls.id).Linearisation.order
+       members_by_tiers ~lang
+         ~equal_type:
+           (same_type_by_class (class_of_name_in by_scope definitions outside))
+         orders.(cls.id).Linearisation.tiers
      in
      let interfaces, candidates =
        List.partition is_interface (Array.to_list classes)
@@ -612,6 +654,7 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
       classes
   in
   {
+    lang;
     entries;
     classes;
     by_scope;
@@ -637,6 +680,27 @@ let name_of_class (t : t) (cls : cls) : G.name option =
 
 let equal_type (t : t) : Structural_typing.equal_type =
   same_type_by_class (class_of_name t ~position:Type_position ~context:None)
+
+let members (t : t) (cls : cls) : Func_info.t list SMap.t =
+  members_by_tiers ~lang:t.lang ~equal_type:(equal_type t)
+    (order t cls).Linearisation.tiers
+
+let nearest (type found) (tiers : cls Linearisation.tier list)
+    ~(defines : cls -> found list) : (cls, found) Linearisation.selection =
+  Linearisation.select ~equal:same ~defines
+    ~overrides:(fun ~nearer:_ ~farther:_ -> true)
+    ~declared_only:(fun (_ : found) -> false)
+    ~accumulate:false tiers
+
+let find_along (type found) (tiers : cls Linearisation.tier list)
+    (lookup : cls -> found option) : found option =
+  match nearest tiers ~defines:(fun (cls : cls) -> Option.to_list (lookup cls)) with
+  | Linearisation.Selected (_, [ found ]) -> Some found
+  | Linearisation.Selected _
+  | Linearisation.Ambiguous
+  | Linearisation.Undefined
+  | Linearisation.Unknown ->
+      None
 
 module Index_set = Set.Make (Int)
 

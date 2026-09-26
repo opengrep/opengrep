@@ -4,7 +4,7 @@ type side =
 
 type t = {
   written : AST_generic.type_;
-  placement : Linearisation.placement;
+  relation : Linearisation.relation;
   side : side;
 }
 

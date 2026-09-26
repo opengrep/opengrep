@@ -598,9 +598,7 @@ let attribute_of ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
       | Symbol_table.External ->
         let classes = Symbol_table.class_table table in
         if
-          Common.SMap.mem segment
-            (Class_table.members_along
-               (Class_table.order classes cls).Linearisation.order)
+          Common.SMap.mem segment (Class_table.members classes cls)
         then nested ()
         else defined_by_name ())
     | None -> defined_by_name ())

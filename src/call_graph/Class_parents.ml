@@ -6,24 +6,21 @@ type side =
 
 type t = {
   written : G.type_;
-  placement : Linearisation.placement;
+  relation : Linearisation.relation;
   side : side;
 }
 
 type mixin_calls = {
-  prepends : G.type_ list;
-  includes : G.type_ list;
+  inclusions : t list;
   extends : G.type_ list;
 }
 
-let appended (written : G.type_) : t =
-  { written; placement = Linearisation.Appended; side = Instance_side }
-
-let prepended (written : G.type_) : t =
-  { written; placement = Linearisation.Prepended; side = Instance_side }
+let instance_parent (relation : Linearisation.relation) (written : G.type_) : t
+    =
+  { written; relation; side = Instance_side }
 
 let class_side (written : G.type_) : t =
-  { written; placement = Linearisation.Appended; side = Class_side }
+  { written; relation = Linearisation.Included; side = Class_side }
 
 let type_of_expr (e : G.expr) : G.type_ = G.TyExpr e |> G.t
 
@@ -44,7 +41,7 @@ let embedded (body : G.stmt list) : t list =
          | G.Call
              ({ G.e = G.IdSpecial (G.Spread, _); _ }, (_, [ G.Arg embedded ], _))
            ->
-             Some (appended (type_of_expr embedded))
+             Some (instance_parent Linearisation.Embedded (type_of_expr embedded))
          | _ -> None)
 
 let mixes_in_by_call (lang : Lang.t) : bool =
@@ -62,7 +59,7 @@ let mixin_arguments (args : G.argument list) : G.type_ list =
       | _ -> None)
     args
 
-let no_mixin_calls : mixin_calls = { prepends = []; includes = []; extends = [] }
+let no_mixin_calls : mixin_calls = { inclusions = []; extends = [] }
 
 let mixin_calls (lang : Lang.t) (body : G.stmt list) : mixin_calls =
   if mixes_in_by_call lang then
@@ -73,10 +70,24 @@ let mixin_calls (lang : Lang.t) (body : G.stmt list) : mixin_calls =
            match e.G.e with
            | G.Call ({ G.e = G.N (G.Id (("prepend", _), _)); _ }, (_, args, _))
              ->
-               { calls with prepends = calls.prepends @ mixin_arguments args }
+               {
+                 calls with
+                 inclusions =
+                   calls.inclusions
+                   @ List.rev_map
+                       (instance_parent Linearisation.Prepended)
+                       (mixin_arguments args);
+               }
            | G.Call ({ G.e = G.N (G.Id (("include", _), _)); _ }, (_, args, _))
              ->
-               { calls with includes = calls.includes @ mixin_arguments args }
+               {
+                 calls with
+                 inclusions =
+                   calls.inclusions
+                   @ List.rev_map
+                       (instance_parent Linearisation.Included)
+                       (mixin_arguments args);
+               }
            | G.Call ({ G.e = G.N (G.Id (("extend", _), _)); _ }, (_, args, _))
              ->
                { calls with extends = calls.extends @ mixin_arguments args }
@@ -84,13 +95,9 @@ let mixin_calls (lang : Lang.t) (body : G.stmt list) : mixin_calls =
          no_mixin_calls
   else no_mixin_calls
 
-let of_body (lang : Lang.t) ~(mixins : G.type_ list) ~(extends : G.type_ list)
-    (body : G.stmt list) : t list =
+let of_body (lang : Lang.t) ~(written : t list) (body : G.stmt list) : t list =
   let calls = mixin_calls lang body in
-  List.rev_map prepended calls.prepends
-  @ List.rev_map appended (mixins @ calls.includes)
-  @ List.map appended extends
-  @ embedded body
+  written @ calls.inclusions @ embedded body
   @ List.rev_map class_side calls.extends
 
 let definition_body (def : G.definition_kind) : G.stmt list =
@@ -105,12 +112,22 @@ let definition_body (def : G.definition_kind) : G.stmt list =
 let of_definition (lang : Lang.t) (def : G.definition_kind) : t list =
   match def with
   | G.ClassDef cdef ->
-      of_body lang ~mixins:cdef.G.cmixins
-        ~extends:(List.map fst cdef.G.cextends @ cdef.G.cimplements)
+      of_body lang
+        ~written:
+          (List.map
+             (fun ((written : G.type_), (arguments : G.arguments option)) ->
+               instance_parent
+                 (Linearisation.Extends
+                    { constructed = Option.is_some arguments })
+                 written)
+             cdef.G.cextends
+          @ List.map (instance_parent Linearisation.Mixin) cdef.G.cmixins
+          @ List.map (instance_parent Linearisation.Implements)
+              cdef.G.cimplements)
         (definition_body def)
   | G.ModuleDef { G.mbody = G.ModuleStruct _ }
   | G.TypeDef { G.tbody = G.NewType { G.t = G.TyRecordAnon _; _ } } ->
-      of_body lang ~mixins:[] ~extends:[] (definition_body def)
+      of_body lang ~written:[] (definition_body def)
   | _ -> []
 
 type singleton_exposure =

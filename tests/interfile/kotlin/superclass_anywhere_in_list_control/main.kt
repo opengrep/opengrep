@@ -1,0 +1,22 @@
+package app
+
+fun sink(x: String) {}
+
+fun source(): String = System.getenv("SECRET")
+
+interface I {
+    fun handle(x: String)
+}
+
+open class Base {
+    open fun handle(x: String) {
+        // ruleid: superclass-anywhere-in-list-control
+        sink(x)
+    }
+}
+
+class C : Base(), I
+
+fun run() {
+    C().handle(source())
+}

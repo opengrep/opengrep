@@ -19,7 +19,7 @@ type class_scope = Class_table.class_scope = {
   role : role;
   members : Func_info.t list Common.SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.placement) list;
+  parents : (parent * Linearisation.relation) list;
   class_side_parents : parent list;
   kind : kind;
   declaration : Lang_config.class_declaration;

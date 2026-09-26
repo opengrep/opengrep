@@ -1,0 +1,12 @@
+rules:
+  - id: super-follows-receiver-mro-control
+    languages: [python]
+    message: taint reaches the definition the language selects
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

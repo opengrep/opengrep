@@ -90,12 +90,7 @@ let emit_dispatch_edges
     ~(class_table : Class_table.t)
     ~(graph : Call_graph.G.t) : int =
   let members (cls : Class_table.cls) : FA.func_info list Common.SMap.t =
-    Class_table.members_along
-      (Class_table.order class_table cls).Linearisation.order
-  in
-  let method_of (name : string) (func : FA.func_info)
-      : Structural_typing.method_ =
-    { Structural_typing.name; entity = func.FA.entity; fdef = func.FA.fdef }
+    Class_table.members class_table cls
   in
   let equal_type = Class_table.equal_type class_table in
   let emit_dispatch_edge (name : string) (c_methods : FA.func_info list)
@@ -104,7 +99,8 @@ let emit_dispatch_edges
       List.find_opt
         (fun (c_m : FA.func_info) ->
           Structural_typing.method_satisfies ~lang ~equal_type
-            ~required:(method_of name i_m) (method_of name c_m))
+            ~required:(Class_table.method_of name i_m)
+            (Class_table.method_of name c_m))
         c_methods
     with
     | None -> n

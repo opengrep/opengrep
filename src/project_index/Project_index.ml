@@ -902,9 +902,8 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     Hashtbl.fold
       (fun (_ : int) (scopes : Class_table.class_scope list)
            (classes : Class_table.class_scope list list) ->
-        (* The definitions of one class, each a local precedence sequence,
-           are merged in file path order: Ruby merges them in load order,
-           which is not known statically. *)
+        (* The definitions of one class are read in file path order: Ruby
+           reads them in load order, which is not known statically. *)
         List.sort Class_table.compare_scope scopes :: classes)
       members_of_group []
     |> List.sort
@@ -1642,13 +1641,6 @@ let build_project_call_graph (caps : < Cap.fork >)
     let compiled_together =
       Go_build_constraints.compiled_together pipeline_ctx.Pipeline.build_constraints
     in
-    let declared_only (func : FA.func_info) : bool =
-      match func.FA.fdef.G.fbody with
-      | G.FBDecl _
-      | G.FBNothing -> true
-      | G.FBStmt _
-      | G.FBExpr _ -> false
-    in
     List.concat_map
       (fun (cls : Class_table.cls) ->
         let ancestors =
@@ -1663,7 +1655,7 @@ let build_project_call_graph (caps : < Cap.fork >)
               (fun (ancestor : Class_table.cls) ->
                 List.concat_map
                   (fun (declared : FA.func_info) ->
-                    if declared_only declared then
+                    if not (Func_info.has_body declared.FA.fdef) then
                       List.map
                         (fun (overriding : FA.func_info) -> (overriding, declared))
                         (List.fold_left
@@ -1730,19 +1722,13 @@ let build_project_call_graph (caps : < Cap.fork >)
             (fun (cls : Class_table.cls) ->
               let own = Class_table.member_table cls in
               let inherited =
-                match
-                  (Class_table.order classes.Pipeline.class_table cls)
-                    .Linearisation.order
-                with
-                | _ :: (ancestors : Class_table.cls list) ->
-                  Common.SMap.fold
-                    (fun (member : string) (funcs : FA.func_info list)
-                         (inherited : FA.func_info list) ->
-                      if Common.SMap.mem member own then inherited
-                      else funcs @ inherited)
-                    (Class_table.members_along ancestors)
-                    []
-                | [] -> []
+                Common.SMap.fold
+                  (fun (member : string) (funcs : FA.func_info list)
+                       (inherited : FA.func_info list) ->
+                    if Common.SMap.mem member own then inherited
+                    else funcs @ inherited)
+                  (Class_table.members classes.Pipeline.class_table cls)
+                  []
               in
               match inherited with
               | [] -> None
@@ -1905,11 +1891,12 @@ let run_pipeline (caps : < Cap.fork >)
     build_project_call_graph caps ~cfg ~lang ~ncores ~entries:entries_pre_mro
       ~reexport_map ~go_packages all_files
   in
-  (* Inherited-method entry rows, derived from the same C3 linearisation
-     callee resolution reads, so the diagnostic dump matches what resolution
-     sees.  Only [collect] consumers use these rows; [collect_resolved]
-     discards them.  The derivation is one pass over the C3 output; consider
-     gating it to the [collect] path if it ever shows up in profiles. *)
+  (* Inherited-method entry rows, derived from the same member resolution
+     order callee resolution reads, so the diagnostic dump matches what
+     resolution sees.  Only [collect] consumers use these rows;
+     [collect_resolved] discards them.  The derivation is one pass over the
+     class table; consider gating it to the [collect] path if it ever shows
+     up in profiles. *)
   let inherited =
     timed "inherited method entries" @@ fun () ->
     List.concat_map (fun ((class_entry : entry), funcs) ->

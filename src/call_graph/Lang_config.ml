@@ -858,6 +858,53 @@ let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
       { of_every_class = []; of_declaration = none; user_defined_conversions = true }
   | _ -> unknown
 
+let member_resolution (lang : Lang.t) : Linearisation.strategy =
+  let single_inheritance (superclass : Linearisation.superclass)
+      ~(interface_bodies_inherited : bool) ~(mixins : Linearisation.mixins) :
+      Linearisation.strategy =
+    Linearisation.Single_inheritance
+      { superclass; interface_bodies_inherited; mixins }
+  in
+  match lang with
+  | Lang.Solidity -> Linearisation.C3 { bases_listed_most_base_first = true }
+  | Lang.Scala -> Linearisation.Scala_class_linearisation
+  | Lang.Ruby
+  | Lang.Crystal ->
+      Linearisation.Ruby_ancestor_chain
+  | Lang.Java ->
+      single_inheritance Linearisation.Written_as_extends
+        ~interface_bodies_inherited:true
+        ~mixins:Linearisation.Applied_in_the_chain
+  | Lang.Kotlin ->
+      single_inheritance Linearisation.Carrying_constructor_arguments
+        ~interface_bodies_inherited:true
+        ~mixins:Linearisation.Applied_in_the_chain
+  | Lang.Swift ->
+      single_inheritance Linearisation.Of_class_kind
+        ~interface_bodies_inherited:true
+        ~mixins:Linearisation.Applied_in_the_chain
+  | Lang.Csharp ->
+      single_inheritance Linearisation.Of_class_kind
+        ~interface_bodies_inherited:false
+        ~mixins:Linearisation.Applied_in_the_chain
+  | Lang.Apex
+  | Lang.Vb
+  | Lang.Dart
+  | Lang.Js
+  | Lang.Ts
+  | Lang.Vue
+  | Lang.Lua ->
+      single_inheritance Linearisation.Written_as_extends
+        ~interface_bodies_inherited:false
+        ~mixins:Linearisation.Applied_in_the_chain
+  | Lang.Php
+  | Lang.Hack ->
+      single_inheritance Linearisation.Written_as_extends
+        ~interface_bodies_inherited:false
+        ~mixins:Linearisation.Flattened_into_the_class
+  | Lang.Go -> Linearisation.Go_embedding_promotion
+  | _ -> Linearisation.C3 { bases_listed_most_base_first = false }
+
 let interfaces_are_structural (lang : Lang.t) : bool =
   match lang with
   | Lang.Go -> true

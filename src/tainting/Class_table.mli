@@ -21,7 +21,7 @@ type class_scope = {
   role : role;
   members : Func_info.t list Common.SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.placement) list;
+  parents : (parent * Linearisation.relation) list;
   class_side_parents : parent list;
   kind : kind;
   declaration : Lang_config.class_declaration;
@@ -102,7 +102,6 @@ val class_side_parents : t -> cls -> cls option list
 val distinct_definitions : Func_info.t list -> Func_info.t list
 val own_members : cls -> string -> Func_info.t list
 val member_table : cls -> Func_info.t list Common.SMap.t
-val members_along : cls list -> Func_info.t list Common.SMap.t
 val instance_fields : cls -> string list -> Func_info.t list
 val object_fields : cls -> string list -> Func_info.t list
 val extensions : cls -> string -> Func_info.t list
@@ -114,4 +113,23 @@ val is_interface : cls -> bool
 val is_trait_impl : cls -> bool
 val name_of_class : t -> cls -> AST_generic.name option
 val equal_type : t -> Structural_typing.equal_type
+val method_of : string -> Func_info.t -> Structural_typing.method_
+
+val select_member :
+  lang:Lang.t ->
+  equal_type:Structural_typing.equal_type ->
+  cls Linearisation.tier list ->
+  string ->
+  defines:(cls -> Func_info.t list) ->
+  (cls, Func_info.t) Linearisation.selection
+
+val members : t -> cls -> Func_info.t list Common.SMap.t
+val tier_classes : cls Linearisation.tier list -> cls list
+
+val nearest :
+  cls Linearisation.tier list ->
+  defines:(cls -> 'found list) ->
+  (cls, 'found) Linearisation.selection
+
+val find_along : cls Linearisation.tier list -> (cls -> 'found option) -> 'found option
 val descendants : t -> cls -> cls list

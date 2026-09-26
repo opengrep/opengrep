@@ -43,9 +43,9 @@ let method_name (func : FA.func_info) : string option =
 
 let along (table : Symbol_table.t) (cls : Class_table.cls)
     (lookup : Class_table.cls -> 'found option) : 'found option =
-  List.find_map lookup
+  Class_table.find_along
     (Class_table.order (Symbol_table.class_table table) cls)
-      .Linearisation.order
+      .Linearisation.tiers lookup
 
 let names_self_type (ty : G.type_) : bool =
   match (Ty_bare_name.inner_named_type ty).G.t with

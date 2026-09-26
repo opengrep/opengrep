@@ -1,0 +1,12 @@
+rules:
+  - id: field-promotion-by-depth-control
+    languages: [go]
+    message: taint reaches the definition the language selects
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
