@@ -111,7 +111,8 @@ module Overriding_tbl : Hashtbl.S with type key = Overriding_key.t
 
 type memo = {
   selections : selected Selection_tbl.t;
-  overriding : Func_info.t list Overriding_tbl.t;
+  overriding : definition list Overriding_tbl.t;
+  dispatched : (definition list * Func_info.t list) list Overriding_tbl.t;
 }
 
 val create_memo : unit -> memo
@@ -169,6 +170,7 @@ val delegations : t -> cls -> (cls option * cls option) list
 val requirements : cls -> string list
 val subclasses : t -> cls -> cls list
 val class_side_parents : t -> cls -> cls option list
+val distinct_by : ('item -> Func_info.t) -> 'item list -> 'item list
 val distinct_definitions : Func_info.t list -> Func_info.t list
 val own_members : cls -> string -> Func_info.t list
 val member_table : cls -> Func_info.t list Common.SMap.t

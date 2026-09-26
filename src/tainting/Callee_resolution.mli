@@ -34,6 +34,7 @@ type callee_use =
 
 type static_type =
   | Declared_class of Class_table.cls
+  | Parameterised_class of Class_table.cls
   | Builtin_type of Type.builtin_type
 
 type static_typing
@@ -51,11 +52,19 @@ val narrow_by_call :
   func_info list ->
   func_info list
 
+val callees_of_call :
+  lang:Lang.t ->
+  typing:static_typing ->
+  table:Symbol_table.t ->
+  AST_generic.argument list option ->
+  Symbol_table.selection ->
+  func_info list
+
 val table_typing :
   lang:Lang.t ->
   table:Symbol_table.t ->
   caller:Function_id.t option ->
-  resolve:(AST_generic.expr -> func_info list) ->
+  resolve:(AST_generic.expr -> Symbol_table.selection) ->
   static_typing
 
 module Callee_use_tbl :
@@ -95,7 +104,7 @@ val resolve_outside_file :
   caller_parent_path:IL.name option list ->
   use:Symbol_table.use ->
   AST_generic.expr ->
-  Symbol_table.resolution
+  Symbol_table.selection
 
 val resolve_construction_outside_file :
   table:Symbol_table.t ->

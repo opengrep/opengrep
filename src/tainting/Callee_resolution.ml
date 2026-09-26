@@ -62,7 +62,6 @@ let prefer_concrete (matches : func_info list) : func_info list =
 
 let narrow_by_arity ~(lang : Lang.t) (call_arity : int option)
     (matches : func_info list) : func_info list =
-  let matches = prefer_concrete matches in
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
      with an empty param list) against a positional-arg call.  A body-less
      decl WITH params is an interface/abstract declaration and stays
@@ -102,15 +101,16 @@ let use_binding (info : G.id_info) : G.SId.t option =
 
 type static_type =
   | Declared_class of Class_table.cls
+  | Parameterised_class of Class_table.cls
   | Builtin_type of Type.builtin_type
 
 let equal_static_type (left : static_type) (right : static_type) : bool =
   match (left, right) with
-  | Declared_class left, Declared_class right -> Class_table.same left right
+  | Declared_class left, Declared_class right
+  | Parameterised_class left, Parameterised_class right ->
+      Class_table.same left right
   | Builtin_type left, Builtin_type right -> Type.equal_builtin_type left right
-  | Declared_class _, Builtin_type _
-  | Builtin_type _, Declared_class _ ->
-      false
+  | (Declared_class _ | Parameterised_class _ | Builtin_type _), _ -> false
 
 type static_typing = {
   class_of_type :
@@ -135,6 +135,11 @@ let static_type_of_type ~(lang : Lang.t) ~(typing : static_typing)
           Option.map
             (fun (builtin : Type.builtin_type) -> Builtin_type builtin)
             (Type.builtin_type_of_type lang ty))
+  | G.TyApply
+      (({ G.t = G.TyN _ | G.TyExpr { G.e = G.N _; _ }; _ } as generic), _) ->
+      Option.map
+        (fun (cls : Class_table.cls) -> Parameterised_class cls)
+        (typing.class_of_type ~written_in generic)
   | _ -> None
 
 let static_type_of_argument ~(lang : Lang.t) ~(typing : static_typing)
@@ -193,6 +198,13 @@ let is_numeric (builtin : Type.builtin_type) : bool =
   | Type.OtherBuiltins _ ->
       false
 
+let rejection_only (decision : bool option) : bool option =
+  match decision with
+  | Some false -> decision
+  | Some true
+  | None ->
+      None
+
 let accepts
     ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
     (argument : static_type option) (parameter : static_type option) :
@@ -200,11 +212,14 @@ let accepts
   match (argument, parameter) with
   | Some (Declared_class argument), Some (Declared_class parameter) ->
       is_subclass argument parameter
+  | ( Some (Declared_class argument | Parameterised_class argument),
+      Some (Declared_class parameter | Parameterised_class parameter) ) ->
+      rejection_only (is_subclass argument parameter)
   | Some (Builtin_type argument), Some (Builtin_type parameter) ->
       if is_numeric argument && is_numeric parameter then None
       else Some (Type.equal_builtin_type argument parameter)
-  | Some (Declared_class _), Some (Builtin_type _)
-  | Some (Builtin_type _), Some (Declared_class _) ->
+  | Some (Declared_class _ | Parameterised_class _), Some (Builtin_type _)
+  | Some (Builtin_type _), Some (Declared_class _ | Parameterised_class _) ->
       Some false
   | None, _
   | _, None ->
@@ -239,6 +254,8 @@ let applies ~(typing : static_typing) (argument : static_type option)
   match (argument, parameter) with
   | Some (Declared_class cls), External_type path ->
       typing.accepts_external cls path
+  | Some (Parameterised_class cls), External_type path ->
+      rejection_only (typing.accepts_external cls path)
   | _, (Typed _ | External_type _ | Untyped) ->
       accepts ~is_subclass:typing.is_subclass argument
         (static_type_of_parameter parameter)
@@ -299,10 +316,11 @@ let most_specific
     overloads
 
 let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
-    (args : G.argument list) (candidates : func_info list) : func_info list =
+    (arguments : static_type option list Lazy.t) (candidates : func_info list) :
+    func_info list =
   if not (Lang_config.overloads_by_type lang) then candidates
   else
-    let arguments = argument_types ~lang ~typing args in
+    let arguments = Lazy.force arguments in
     List.filter_map
       (fun (f : func_info) ->
         let parameters = parameter_types ~lang ~typing arguments f in
@@ -318,15 +336,41 @@ let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
       candidates
     |> most_specific ~is_subclass:typing.is_subclass
 
-let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
-    (call_args : G.argument list option) (candidates : func_info list) :
-    func_info list =
+let narrow_by_arguments ~(lang : Lang.t) ~(typing : static_typing)
+    (call_args : G.argument list option)
+    (arguments : static_type option list Lazy.t) (candidates : func_info list)
+    : func_info list =
   let by_arity =
     narrow_by_arity ~lang (Option.map List.length call_args) candidates
   in
   match call_args with
-  | Some args -> narrow_by_argument_types ~lang ~typing args by_arity
+  | Some _ -> narrow_by_argument_types ~lang ~typing arguments by_arity
   | None -> by_arity
+
+let arguments_of_call ~(lang : Lang.t) ~(typing : static_typing)
+    (call_args : G.argument list option) : static_type option list Lazy.t =
+  lazy (argument_types ~lang ~typing (Option.value call_args ~default:[]))
+
+let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
+    (call_args : G.argument list option) (candidates : func_info list) :
+    func_info list =
+  narrow_by_arguments ~lang ~typing call_args
+    (arguments_of_call ~lang ~typing call_args)
+    (prefer_concrete candidates)
+
+let callees_of_call ~(lang : Lang.t) ~(typing : static_typing)
+    ~(table : Symbol_table.t) (call_args : G.argument list option)
+    (selection : Symbol_table.selection) : func_info list =
+  match selection.Symbol_table.resolution with
+  | Symbol_table.External -> []
+  | Symbol_table.Defined (selected : func_info list) ->
+      let arguments = arguments_of_call ~lang ~typing call_args in
+      (if Lang_config.overloads_by_type lang then
+         narrow_by_arguments ~lang ~typing call_args arguments selected
+       else selected)
+      |> Symbol_table.dispatch table selection
+      |> prefer_concrete
+      |> narrow_by_arguments ~lang ~typing call_args arguments
 
 let return_type ~(lang : Lang.t) ~(typing : static_typing)
     (funcs : func_info list) : static_type option =
@@ -343,18 +387,19 @@ let return_type ~(lang : Lang.t) ~(typing : static_typing)
   | [ (Some _ as common) ] -> common
   | _ -> None
 
-let type_of_call ~(lang : Lang.t) ~(resolve : G.expr -> func_info list)
-    ~(typing : static_typing) (e : G.expr) : static_type option =
+let type_of_call ~(lang : Lang.t) ~(table : Symbol_table.t)
+    ~(resolve : G.expr -> Symbol_table.selection) ~(typing : static_typing)
+    (e : G.expr) : static_type option =
   match e.G.e with
   | G.Call (callee, (_, args, _)) ->
       resolve callee
-      |> narrow_by_call ~lang ~typing (Some args)
+      |> callees_of_call ~lang ~typing ~table (Some args)
       |> return_type ~lang ~typing
   | _ -> None
 
 let table_typing ~(lang : Lang.t) ~(table : Symbol_table.t)
-    ~(caller : Function_id.t option) ~(resolve : G.expr -> func_info list) :
-    static_typing =
+    ~(caller : Function_id.t option)
+    ~(resolve : G.expr -> Symbol_table.selection) : static_typing =
   let rec typing =
     {
       class_of_type = Symbol_table.class_of_type_written_in table;
@@ -363,7 +408,7 @@ let table_typing ~(lang : Lang.t) ~(table : Symbol_table.t)
       accepts_external = Symbol_table.accepts_external table;
       caller;
       type_of_call =
-        (fun (e : G.expr) -> type_of_call ~lang ~resolve ~typing e);
+        (fun (e : G.expr) -> type_of_call ~lang ~table ~resolve ~typing e);
       this_type =
         lazy
           (Option.map
@@ -590,8 +635,9 @@ let attribute_of ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
     match Func_lookup.class_of_qn func_lookup class_qn with
     | Some (cls : Class_table.cls) -> (
       match
-        Symbol_table.resolve_member table ~caller:None
-          (Symbol_table.Class_object cls) segment
+        Symbol_table.dispatched table
+          (Symbol_table.resolve_member table ~caller:None
+             (Symbol_table.Class_object cls) segment)
       with
       | Symbol_table.Defined (_ :: _ as funcs) -> Some (Bound_functions funcs)
       | Symbol_table.Defined []
@@ -781,8 +827,9 @@ let member_of_member_classes ~(table : Symbol_table.t)
       Option.bind (Func_lookup.class_of_qn func_lookup class_qn)
         (fun (cls : Class_table.cls) ->
           match
-            Symbol_table.resolve_member table ~caller:None
-              (Symbol_table.Class_object cls) name
+            Symbol_table.dispatched table
+              (Symbol_table.resolve_member table ~caller:None
+                 (Symbol_table.Class_object cls) name)
           with
           | Symbol_table.Defined (_ :: _ as funcs) -> Some funcs
           | Symbol_table.Defined []
@@ -793,33 +840,37 @@ let member_of_member_classes ~(table : Symbol_table.t)
 let resolve_name_in_scope ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
     ~(caller_parent_path : IL.name option list) ~(construct : bool)
-    ~(unbound : bool) (name : string) : Symbol_table.resolution =
-  let of_self_class () : func_info list =
+    ~(unbound : bool) (name : string) : Symbol_table.selection =
+  let of_self_class () : Symbol_table.selection option =
     if unbound && Naming_AST.members_in_scope_in_methods lang then
-      match
+      let selection =
         Symbol_table.resolve_member table ~caller
           (Symbol_table.self_receiver table ~caller) name
-      with
-      | Symbol_table.Defined funcs -> funcs
-      | Symbol_table.External -> []
-    else []
+      in
+      match selection.Symbol_table.resolution with
+      | Symbol_table.Defined (_ :: _) -> Some selection
+      | Symbol_table.Defined []
+      | Symbol_table.External ->
+        None
+    else None
   in
   match of_self_class () with
-  | _ :: _ as funcs -> Symbol_table.Defined funcs
-  | [] -> (
+  | Some selection -> selection
+  | None ->
     let entries = entries_in_scope ~func_lookup ~caller_parent_path name in
-    match
-      (head_binding ~func_lookup ~caller_parent_path ~position:Term_position
-         name,
-       Func_lookup.functions_of_entries entries)
-    with
-    | Some ((Bound_class _ | Bound_object _) as target), _ ->
-      resolution_of_target ~table ~func_lookup ~construct (Some target)
-    | _, (_ :: _ as funcs) -> Symbol_table.Defined funcs
-    | (Some (Bound_module _ | Bound_functions _) | None), [] -> (
-      match member_of_member_classes ~table ~func_lookup name with
-      | _ :: _ as funcs -> Symbol_table.Defined funcs
-      | [] -> Symbol_table.External))
+    Symbol_table.static_selection
+      (match
+         (head_binding ~func_lookup ~caller_parent_path ~position:Term_position
+            name,
+          Func_lookup.functions_of_entries entries)
+       with
+       | Some ((Bound_class _ | Bound_object _) as target), _ ->
+         resolution_of_target ~table ~func_lookup ~construct (Some target)
+       | _, (_ :: _ as funcs) -> Symbol_table.Defined funcs
+       | (Some (Bound_module _ | Bound_functions _) | None), [] -> (
+         match member_of_member_classes ~table ~func_lookup name with
+         | _ :: _ as funcs -> Symbol_table.Defined funcs
+         | [] -> Symbol_table.External))
 
 let resolve_chain ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(position : name_position)
@@ -852,10 +903,26 @@ let defined_of_any (resolutions : Symbol_table.resolution list)
     Symbol_table.External
   | (funcs : func_info list) -> Symbol_table.Defined funcs
 
+let selected_by_any (selections : Symbol_table.selection list)
+    : Symbol_table.selection =
+  {
+    Symbol_table.resolution =
+      defined_of_any
+        (List.map
+           (fun (selection : Symbol_table.selection) ->
+             selection.Symbol_table.resolution)
+           selections);
+    dispatches =
+      List.concat_map
+        (fun (selection : Symbol_table.selection) ->
+          selection.Symbol_table.dispatches)
+        selections;
+  }
+
 let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
     ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
-    ~(visited : G.SId.t list) (e : G.expr) : Symbol_table.resolution =
+    ~(visited : G.SId.t list) (e : G.expr) : Symbol_table.selection =
   let construct = Symbol_table.constructs table use in
   match e.G.e with
   | G.N (G.Id ((name, _), info))
@@ -876,7 +943,7 @@ let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
       resolve_name_in_scope ~lang ~table ~func_lookup ~caller
         ~caller_parent_path ~construct ~unbound:false name
     | Local_root -> (
-      let follow (sid : G.SId.t) (value : G.expr) : Symbol_table.resolution =
+      let follow (sid : G.SId.t) (value : G.expr) : Symbol_table.selection =
         resolve_outside_file_from ~lang ~table ~func_lookup ~caller
           ~caller_parent_path ~use ~visited:(sid :: visited) value
       in
@@ -887,24 +954,26 @@ let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
           (Symbol_table.values_in_force table ~caller sid, !(info.G.id_svalue))
         with
         | (_ :: _ as assigned), _ ->
-          defined_of_any (List.map (follow sid) assigned)
+          selected_by_any (List.map (follow sid) assigned)
         | [], Some (G.Sym (value : G.expr)) -> follow sid value
-        | [], (Some _ | None) -> Symbol_table.External)
+        | [], (Some _ | None) ->
+          Symbol_table.static_selection Symbol_table.External)
       | Some _
-      | None -> Symbol_table.External))
+      | None -> Symbol_table.static_selection Symbol_table.External))
   | G.N (G.IdQualified _)
   | G.DotAccess _ ->
-    resolve_chain ~table ~func_lookup ~caller_parent_path
-      ~position:Term_position ~construct e
+    Symbol_table.static_selection
+      (resolve_chain ~table ~func_lookup ~caller_parent_path
+         ~position:Term_position ~construct e)
   | G.ArrayAccess (indexed, _) ->
     resolve_outside_file_from ~lang ~table ~func_lookup ~caller
       ~caller_parent_path ~use ~visited indexed
-  | _ -> Symbol_table.External
+  | _ -> Symbol_table.static_selection Symbol_table.External
 
 let resolve_outside_file ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
     ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
-    (e : G.expr) : Symbol_table.resolution =
+    (e : G.expr) : Symbol_table.selection =
   resolve_outside_file_from ~lang ~table ~func_lookup ~caller
     ~caller_parent_path ~use ~visited:[] e
 

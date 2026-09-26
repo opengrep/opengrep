@@ -559,8 +559,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ~caller:(fn_id_to_node caller_parent_path)
       ~resolve:(fun (callee : G.expr) ->
         Symbol_table.resolve_callee table
-          ~caller:(fn_id_to_node caller_parent_path) callee
-        |> defined)
+          ~caller:(fn_id_to_node caller_parent_path) callee)
   in
   let argument_types : Callee_resolution.argument_typer =
    fun ~caller_parent_path (args : G.argument list) ->
@@ -571,9 +570,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
    fun ~caller_parent_path ~call_args (callee : G.expr) ->
     Symbol_table.resolve_callee table
       ~caller:(fn_id_to_node caller_parent_path) callee
-    |> defined
-    |> Callee_resolution.narrow_by_call ~lang ~typing:(typing ~caller_parent_path)
-         call_args
+    |> Callee_resolution.callees_of_call ~lang
+         ~typing:(typing ~caller_parent_path) ~table call_args
     |> fn_ids_of
   in
   let resolve_callback : Callback_extraction.callback_resolver =
@@ -583,7 +581,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
         Symbol_table.resolve_qualified table name
     | Callback_extraction.Bound (e : G.expr)
     | Callback_extraction.Written (e : G.expr) ->
-        Symbol_table.resolve_reference table ~caller e
+        Symbol_table.dispatched table
+          (Symbol_table.resolve_reference table ~caller e)
   in
   let resolve_construction : Callee_resolution.construction_resolver =
    fun ~call_args (ty : G.type_) ->
@@ -597,6 +596,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
    fun ~caller_parent_path (receiver : G.expr) ->
     Symbol_table.resolve_reference table
       ~caller:(fn_id_to_node caller_parent_path) receiver
+    |> Symbol_table.dispatched table
     |> defined
     |> fn_ids_of
   in

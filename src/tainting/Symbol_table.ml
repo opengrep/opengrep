@@ -102,6 +102,20 @@ type resolution =
   | Defined of Func_info.t list
   | External
 
+type dispatch = {
+  receiver : Class_table.cls;
+  name : string;
+  overridden : Class_table.definition list;
+}
+
+type selection = {
+  resolution : resolution;
+  dispatches : dispatch list;
+}
+
+let static_selection (resolution : resolution) : selection =
+  { resolution; dispatches = [] }
+
 type receiver_role =
   | Method_of
   | Extension_of
@@ -239,7 +253,7 @@ type t = {
   by_node : Func_info.t Node_tbl.t;
   extension_visible : string -> Func_info.t -> bool;
   build_configuration : int;
-  outside : t -> caller:Function_id.t option -> G.expr -> resolution;
+  outside : t -> caller:Function_id.t option -> G.expr -> selection;
   types : Type_state.t;
   declared_types : (G.SId.t * G.SId.t option, receiver_class) Hashtbl.t;
   function_modules : string list Fdef_tbl.t;
@@ -1293,7 +1307,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     by_node;
     extension_visible = (fun (_ : string) (_ : Func_info.t) -> true);
     build_configuration = 0;
-    outside = (fun (_ : t) ~caller:_ (_ : G.expr) -> External);
+    outside = (fun (_ : t) ~caller:_ (_ : G.expr) -> static_selection External);
     types = Type_state.empty;
     declared_types = Hashtbl.create 64;
     function_modules;
@@ -1337,7 +1351,7 @@ let class_table (t : t) : Class_table.t = t.classes
 let with_project (t : t) (classes : Class_table.t)
     ~(extension_visible : string -> Func_info.t -> bool)
     ~(build_configuration : int)
-    ~(outside : t -> caller:Function_id.t option -> G.expr -> resolution) : t =
+    ~(outside : t -> caller:Function_id.t option -> G.expr -> selection) : t =
   {
     t with
     classes;
@@ -1648,26 +1662,30 @@ let instance_fields_along (tiers : Class_table.cls Linearisation.tier list)
   | Linearisation.Unknown ->
       []
 
+let overriding_key (t : t) (cls : Class_table.cls) (name : string) :
+    Class_table.Overriding_key.t =
+  {
+    Class_table.Overriding_key.build_configuration = t.build_configuration;
+    cls = Class_table.index cls;
+    name;
+  }
+
 let overrides (t : t) (cls : Class_table.cls) (name : string) :
-    Func_info.t list =
-  let key =
-    {
-      Class_table.Overriding_key.build_configuration = t.build_configuration;
-      cls = Class_table.index cls;
-      name;
-    }
-  in
+    Class_table.definition list =
+  let key = overriding_key t cls name in
   recorded t
     ~find:(fun (memo : Class_table.memo) ->
       Class_table.Overriding_tbl.find_opt memo.Class_table.overriding key)
-    ~record:(fun (memo : Class_table.memo) (found : Func_info.t list) ->
+    ~record:(fun (memo : Class_table.memo)
+                 (found : Class_table.definition list) ->
       Class_table.Overriding_tbl.replace memo.Class_table.overriding key found)
     (fun () ->
       List.concat_map
         (fun (sub : Class_table.cls) ->
           match
-            first_defining_on t Class_parents.Instance_side
-              (order t sub).Linearisation.tiers name
+            (first_defining_from t ~importing:[] Class_parents.Instance_side
+               (order t sub).Linearisation.tiers name)
+              .Class_table.definitions
           with
           | Linearisation.Selected (_, defined) -> defined
           | Linearisation.Ambiguous
@@ -1675,7 +1693,71 @@ let overrides (t : t) (cls : Class_table.cls) (name : string) :
           | Linearisation.Unknown ->
               [])
         (descendants t cls)
-      |> distinct_definitions)
+      |> Class_table.distinct_by (fun (definition : Class_table.definition) ->
+             definition.Class_table.func))
+
+let functions_of (definitions : Class_table.definition list) : Func_info.t list
+    =
+  List.map
+    (fun (definition : Class_table.definition) -> definition.Class_table.func)
+    definitions
+
+let same_function (func : Func_info.t) (definition : Class_table.definition) :
+    bool =
+  same_definition func definition.Class_table.func
+
+let overriding (t : t) (source : dispatch)
+    (overridden : Class_table.definition list) : Func_info.t list =
+  let key = overriding_key t source.receiver source.name in
+  let same_overridden (known : Class_table.definition list) : bool =
+    List.equal ( == ) known overridden
+  in
+  recorded t
+    ~find:(fun (memo : Class_table.memo) ->
+      Option.bind
+        (Class_table.Overriding_tbl.find_opt memo.Class_table.dispatched key)
+        (List.find_map
+           (fun ((known : Class_table.definition list),
+                 (found : Func_info.t list)) ->
+             if same_overridden known then Some found else None)))
+    ~record:(fun (memo : Class_table.memo) (found : Func_info.t list) ->
+      Class_table.Overriding_tbl.replace memo.Class_table.dispatched key
+        ((overridden, found)
+        :: Option.value ~default:[]
+             (Class_table.Overriding_tbl.find_opt memo.Class_table.dispatched
+                key)))
+    (fun () ->
+      functions_of
+        (List.filter
+           (fun (nearer : Class_table.definition) ->
+             List.exists
+               (fun (farther : Class_table.definition) ->
+                 Class_table.overrides ~lang:t.lang ~nearer ~farther)
+               overridden)
+           (overrides t source.receiver source.name)))
+
+let dispatch (t : t) (selection : selection) (selected : Func_info.t list) :
+    Func_info.t list =
+  distinct_definitions
+    (selected
+    @ List.concat_map
+        (fun (source : dispatch) ->
+          match
+            List.filter
+              (fun (definition : Class_table.definition) ->
+                List.exists
+                  (fun (func : Func_info.t) -> same_function func definition)
+                  selected)
+              source.overridden
+          with
+          | [] -> []
+          | overridden -> overriding t source overridden)
+        selection.dispatches)
+
+let dispatched (t : t) (selection : selection) : resolution =
+  match selection.resolution with
+  | Defined selected -> Defined (dispatch t selection selected)
+  | External -> External
 
 let found_in_descendants (t : t) (cls : Class_table.cls) : bool =
   Class_table.is_abstraction cls
@@ -1883,27 +1965,31 @@ let visible_tiers (t : t) ~(site : site) (receiver : Class_table.cls)
   | Linearisation.Cpp_member_lookup ->
       tiers
 
-let joined_resolutions (resolutions : resolution list) : resolution =
+let joined_selections (selections : selection list) : selection =
   List.fold_left
-    (fun (joined : resolution) (resolution : resolution) ->
-      match (joined, resolution) with
-      | External, _
-      | _, External ->
-          External
-      | Defined left, Defined right ->
-          Defined (distinct_definitions (left @ right)))
-    (Defined []) resolutions
+    (fun (joined : selection) (selection : selection) ->
+      {
+        resolution =
+          (match (joined.resolution, selection.resolution) with
+          | External, _
+          | _, External ->
+              External
+          | Defined left, Defined right ->
+              Defined (distinct_definitions (left @ right)));
+        dispatches = joined.dispatches @ selection.dispatches;
+      })
+    (static_selection (Defined [])) selections
 
 let rec select_on_instance (t : t) ~(site : site)
-    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : resolution =
+    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : selection =
   match delegated t ~site cls name with
-  | Some resolution -> resolution
+  | Some selection -> selection
   | None -> selected_on_instance t ~site cls ~dispatch name
 
 (* Kotlin 'I by e': a member of I the class does not declare is the member
    of the class of e. *)
 and delegated (t : t) ~(site : site) (cls : Class_table.cls)
-    (name : string) : resolution option =
+    (name : string) : selection option =
   match
     ( Class_table.delegations t.classes cls,
       own_members_on t ~importing:[] Class_parents.Instance_side cls name )
@@ -1928,7 +2014,7 @@ and delegated (t : t) ~(site : site) (cls : Class_table.cls)
                         Some
                           (select_on_instance t ~site target ~dispatch:true
                              name)
-                    | None -> Some External)
+                    | None -> Some (static_selection External))
                 | Linearisation.Ambiguous
                 | Linearisation.Undefined
                 | Linearisation.Unknown ->
@@ -1937,43 +2023,50 @@ and delegated (t : t) ~(site : site) (cls : Class_table.cls)
           delegations
       with
       | [] -> None
-      | found -> Some (joined_resolutions found))
+      | found -> Some (joined_selections found))
 
 (* The fields and root methods found are definitions of this file that
    shadow whatever an ancestor the file does not hold defines. *)
 and selected_on_instance (t : t) ~(site : site)
-    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : resolution =
+    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : selection =
   let tiers =
     visible_tiers t ~site cls (order t cls).Linearisation.tiers
   in
   let fields = instance_fields_along tiers [ name ] in
-  match first_defining_on t Class_parents.Instance_side tiers name with
-  | Linearisation.Selected (definer, defined) ->
-      let overriding =
-        if dispatch && dispatches t definer defined name then
-          overrides t cls name
-        else []
-      in
-      Defined (distinct_definitions (defined @ overriding @ fields))
-  | Linearisation.Ambiguous -> Defined fields
+  match
+    (first_defining_from t ~importing:[] Class_parents.Instance_side tiers name)
+      .Class_table.definitions
+  with
+  | Linearisation.Selected (definer, overridden) ->
+      let defined = functions_of overridden in
+      {
+        resolution = Defined (distinct_definitions (defined @ fields));
+        dispatches =
+          (if dispatch && dispatches t definer defined name then
+             [ { receiver = cls; name; overridden } ]
+           else []);
+      }
+  | Linearisation.Ambiguous -> static_selection (Defined fields)
   | Linearisation.Unknown -> (
       match fields with
-      | [] -> External
-      | _ :: _ -> Defined (distinct_definitions fields))
+      | [] -> static_selection External
+      | _ :: _ -> static_selection (Defined (distinct_definitions fields)))
   | Linearisation.Undefined -> (
       match
-        if dispatch && found_in_descendants t cls then overrides t cls name
+        if dispatch && found_in_descendants t cls then
+          functions_of (overrides t cls name)
         else []
       with
       | _ :: _ as inherited ->
-          Defined (distinct_definitions (fields @ inherited))
+          static_selection (Defined (distinct_definitions (fields @ inherited)))
       | [] -> (
           match fields @ root_members t name with
-          | _ :: _ as found -> Defined (distinct_definitions found)
+          | _ :: _ as found ->
+              static_selection (Defined (distinct_definitions found))
           | [] -> (
               match root_resolution t name with
-              | Defined _ -> extension_along t tiers name
-              | External -> External)))
+              | Defined _ -> static_selection (extension_along t tiers name)
+              | External -> static_selection External)))
 
 (* Along the order, each class's own class-side members, then the instance
    members of the modules that class extends, the last extended first. *)
@@ -2075,63 +2168,72 @@ let rec linked_members (t : t) ~(visited : G.SId.t list) (holder : G.SId.t)
 (* The functions a field path read from a receiver holds: a member for a
    single field, else the functions stored at that path of the object. *)
 let rec resolve_path (t : t) ~(site : site)
-    (receiver : receiver_class) (path : string list) : resolution =
-  let through_field (stored : Func_info.t list) : resolution =
+    (receiver : receiver_class) (path : string list) : selection =
+  let through_field (stored : Func_info.t list) : selection =
     match (stored, path) with
     | [], field :: (_ :: _ as rest) -> (
         match field_type t receiver field with
         | Some cls -> resolve_path t ~site (Class cls) rest
-        | None -> Defined [])
-    | _ -> Defined stored
+        | None -> static_selection (Defined []))
+    | _ -> static_selection (Defined stored)
   in
   match (receiver, path) with
   | Class cls, [ name ] -> select_on_instance t ~site cls ~dispatch:true name
   | Exact cls, [ name ] -> select_on_instance t ~site cls ~dispatch:false name
   | (Class cls | Exact cls), _ ->
       through_field (instance_fields_along (order t cls).Linearisation.tiers path)
-  | Class_object cls, [ name ] -> select_on_class_side t cls name
-  | Class_object cls, _ -> Defined (Class_table.object_fields cls path)
+  | Class_object cls, [ name ] ->
+      static_selection (select_on_class_side t cls name)
+  | Class_object cls, _ ->
+      static_selection (Defined (Class_table.object_fields cls path))
   | Ancestors_of cls, [ name ] ->
       let continuing (tiers : Class_table.cls Linearisation.tier list) :
-          resolution =
-        match first_defining_on t Class_parents.Instance_side tiers name with
-        | Linearisation.Selected (_, defined) -> Defined defined
-        | Linearisation.Ambiguous -> Defined []
-        | Linearisation.Undefined -> root_resolution t name
-        | Linearisation.Unknown -> External
+          selection =
+        static_selection
+          (match first_defining_on t Class_parents.Instance_side tiers name with
+          | Linearisation.Selected (_, defined) -> Defined defined
+          | Linearisation.Ambiguous -> Defined []
+          | Linearisation.Undefined -> root_resolution t name
+          | Linearisation.Unknown -> External)
       in
-      joined_resolutions (List.map continuing (super_tiers t cls))
-  | Ancestors_of _, _ -> Defined []
+      joined_selections (List.map continuing (super_tiers t cls))
+  | Ancestors_of _, _ -> static_selection (Defined [])
   | Object_of held, _ -> (
       let fields =
         By_binding.at_path t.function_fields held.holder (held.path @ path)
       in
       match (held.path, path, held.held_class) with
       | [], [ name ], Of_class cls -> (
-          match select_on_instance t ~site cls ~dispatch:true name with
+          let selection = select_on_instance t ~site cls ~dispatch:true name in
+          match selection.resolution with
           | Defined defined ->
-              Defined (distinct_definitions (fields @ defined))
-          | External -> fields_else_external fields)
+              {
+                selection with
+                resolution = Defined (distinct_definitions (fields @ defined));
+              }
+          | External -> static_selection (fields_else_external fields))
       | [], [ _ ], (Of_external_class | Of_unknown_class) ->
-          fields_else_external
-            (match fields with
-            | [] -> linked_members t ~visited:[ held.holder ] held.holder path
-            | _ :: _ -> fields)
+          static_selection
+            (fields_else_external
+               (match fields with
+               | [] ->
+                   linked_members t ~visited:[ held.holder ] held.holder path
+               | _ :: _ -> fields))
       | [], _, Of_class cls ->
           through_field
             (distinct_definitions
                (fields
                @ instance_fields_along (order t cls).Linearisation.tiers path))
       | _, _, (Of_class _ | Of_external_class | Of_unknown_class) ->
-          Defined fields)
-  | External_class, _ -> External
-  | Root, [ name ] -> root_resolution t name
+          static_selection (Defined fields))
+  | External_class, _ -> static_selection External
+  | Root, [ name ] -> static_selection (root_resolution t name)
   | Root, _
   | Unknown, _ ->
-      Defined []
+      static_selection (Defined [])
 
 let resolve_member (t : t) ~(caller : Function_id.t option)
-    (receiver : receiver_class) (name : string) : resolution =
+    (receiver : receiver_class) (name : string) : selection =
   resolve_path t ~site:{ from = caller; at = None } receiver [ name ]
 
 let self_type_of_caller (t : t) (caller : Function_id.t option) :
@@ -2250,32 +2352,26 @@ let method_class (t : t) (func : Func_info.t) : Class_table.cls option =
   | None ->
       None
 
-let with_overrides (t : t) (defined : Func_info.t list) : Func_info.t list =
-  let dispatched =
-    List.fold_left
-      (fun (groups : (Class_table.cls * string) list) (func : Func_info.t) ->
-        match (method_class t func, member_name func) with
-        | Some cls, Some name
-          when List.exists
-                 (fun (definition : Class_table.definition) ->
-                   same_definition func definition.Class_table.func)
-                 (Class_table.own_definitions t.classes cls name)
-               && dispatches t cls [ func ] name ->
-            if
-              List.exists
-                (fun ((seen : Class_table.cls), (seen_name : string)) ->
-                  Class_table.same seen cls && String.equal seen_name name)
-                groups
-            then groups
-            else (cls, name) :: groups
-        | _ -> groups)
-      [] defined
-  in
-  distinct_definitions
-    (defined
-    @ List.concat_map
-        (fun ((cls : Class_table.cls), (name : string)) -> overrides t cls name)
-        (List.rev dispatched))
+let with_overrides (t : t) (defined : Func_info.t list) : selection =
+  {
+    resolution = Defined defined;
+    dispatches =
+      List.filter_map
+        (fun (func : Func_info.t) ->
+          match (method_class t func, member_name func) with
+          | Some cls, Some name -> (
+              match
+                List.find_opt (same_function func)
+                  (Class_table.own_definitions t.classes cls name)
+              with
+              | Some definition when dispatches t cls [ func ] name ->
+                  Some { receiver = cls; name; overridden = [ definition ] }
+              | Some _
+              | None ->
+                  None)
+          | _ -> None)
+        defined;
+  }
 
 let external_or_outside (t : t) ~(context : scope_id option) (name : G.name) :
     receiver_class =
@@ -2504,7 +2600,7 @@ let position_of_member (e : G.expr) : int option =
   | _ -> None
 
 let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
-    ~(visited : G.SId.t list) (name : G.name) : resolution =
+    ~(visited : G.SId.t list) (name : G.name) : selection =
   let info = id_info_of_name name in
   match !(info.G.id_resolved) with
   | Some (G.TypeName, sid) -> (
@@ -2512,43 +2608,45 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
       | Some cls
         when constructs t use || Lang_config.is_callable_reference t.lang name
         ->
-          constructors_of_class t cls
+          static_selection (constructors_of_class t cls)
       | Some _
       | None ->
-          Defined [])
+          static_selection (Defined []))
   | Some ((G.Global | G.LocalVar | G.Parameter | G.EnclosedVar | G.Macro), sid)
     when names_class t.class_sites sid -> (
       match Class_table.class_of_binding t.classes sid with
-      | Some cls when constructs t use -> constructors_of_class t cls
+      | Some cls when constructs t use ->
+          static_selection (constructors_of_class t cls)
       | Some _
       | None ->
-          Defined [])
+          static_selection (Defined []))
   | Some ((G.Global | G.LocalVar | G.Parameter | G.EnclosedVar | G.Macro), sid)
     -> (
       match functions_of_binding t sid with
-      | _ :: _ as defined -> Defined (with_overrides t defined)
-      | [] when List.exists (G.SId.equal sid) visited -> Defined []
+      | _ :: _ as defined -> with_overrides t defined
+      | [] when List.exists (G.SId.equal sid) visited ->
+          static_selection (Defined [])
       | [] -> (
           match (values_in_force t ~caller sid, !(info.G.id_svalue)) with
           | (_ :: _ as assigned), _ ->
-              joined_resolutions
+              joined_selections
                 (List.map
                    (resolve_expr t ~caller ~use ~visited:(sid :: visited))
                    assigned)
           | [], Some (G.Sym value) ->
               resolve_expr t ~caller ~use ~visited:(sid :: visited) value
           | [], (Some _ | None) ->
-              Defined []))
-  | Some (G.EnumConstant, _) -> Defined []
+              static_selection (Defined [])))
+  | Some (G.EnumConstant, _) -> static_selection (Defined [])
   | Some ((G.ImportedEntity _ | G.ImportedModule _ | G.GlobalName _), _) ->
-      External
+      static_selection External
   | None when top_level_defs_are_methods_of_object t.lang ->
       resolve_member t ~caller (self_receiver t ~caller)
         (fst (last_ident_of_name name))
-  | None -> External
+  | None -> static_selection External
 
 and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
-    ~(visited : G.SId.t list) (e : G.expr) : resolution =
+    ~(visited : G.SId.t list) (e : G.expr) : selection =
   match (e.G.e, member_access t e) with
   | (G.N name | G.Ref (_, { G.e = G.N name; _ })), _ ->
       resolve_name t ~caller ~use ~visited name
@@ -2560,28 +2658,30 @@ and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
         ~root_class:(lazy (receiver_class t ~caller root))
   | G.ArrayAccess (indexed, _), None ->
       resolve_expr t ~caller ~use ~visited indexed
-  | G.IdSpecial (G.Super, _), None -> (
-      match self_receiver t ~caller with
-      | Class cls -> constructors_along t (order t cls).Linearisation.super_tiers
-      | External_class -> External
-      | Exact _
-      | Class_object _
-      | Ancestors_of _
-      | Object_of _
-      | Root
-      | Unknown ->
-          Defined [])
-  | _ -> Defined []
+  | G.IdSpecial (G.Super, _), None ->
+      static_selection
+        (match self_receiver t ~caller with
+        | Class cls ->
+            constructors_along t (order t cls).Linearisation.super_tiers
+        | External_class -> External
+        | Exact _
+        | Class_object _
+        | Ancestors_of _
+        | Object_of _
+        | Root
+        | Unknown ->
+            Defined [])
+  | _ -> static_selection (Defined [])
 
 and resolve_member_access (t : t) ~(site : site)
     ~(receiver : G.expr) ~(member : string)
-    ~(prefix : string list) ~(root_class : receiver_class Lazy.t) : resolution
+    ~(prefix : string list) ~(root_class : receiver_class Lazy.t) : selection
     =
   match
     Option.bind (unbound_chain_path receiver) (fun (path : string list) ->
         Path_tbl.find_opt t.qualified_functions (path @ [ member ]))
   with
-  | Some (_ :: _ as defined) -> Defined defined
+  | Some (_ :: _ as defined) -> static_selection (Defined defined)
   | Some []
   | None -> (
       match (Lazy.force root_class, prefix) with
@@ -2598,7 +2698,7 @@ and resolve_member_access (t : t) ~(site : site)
              | Linearisation.Undefined
              | Linearisation.Unknown ->
                  true ->
-          constructors_of_class t cls
+          static_selection (constructors_of_class t cls)
       | root_receiver, _ ->
           resolve_path t ~site root_receiver (prefix @ [ member ]))
 
@@ -2674,7 +2774,7 @@ and member_receiver (t : t) (receiver : receiver_class) (field : string) :
       Unknown
 
 and member_call (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
-    (receiver_class * string * resolution Lazy.t) option =
+    (receiver_class * string * selection Lazy.t) option =
   match (callee.G.e, member_access t callee) with
   | G.DotAccess _, Some (receiver, member) ->
       let root, prefix = receiver_chain t receiver in
@@ -2702,10 +2802,10 @@ and returned_by (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
   match declared with
   | Some cls -> Class cls
   | None -> (
-      match Lazy.force resolved with
+      match dispatched t (Lazy.force resolved) with
       | Defined (funcs : Func_info.t list) -> returned_by_functions t funcs
       | External -> (
-          match t.outside t ~caller callee with
+          match dispatched t (t.outside t ~caller callee) with
           | Defined (funcs : Func_info.t list) -> returned_by_functions t funcs
           | External -> Unknown))
 
@@ -2724,11 +2824,11 @@ and returned_by_functions (t : t) (funcs : Func_info.t list) : receiver_class =
       Unknown
 
 let resolve_callee (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    resolution =
+    selection =
   resolve_expr t ~caller ~use:Called ~visited:[] e
 
 let resolve_reference (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    resolution =
+    selection =
   resolve_expr t ~caller ~use:Referenced ~visited:[] e
 
 (* The constructors [new T(...)] reaches: those of the class [T] binds, or
@@ -2770,7 +2870,9 @@ let resolve_qualified (t : t) (name : G.name) : resolution =
       match List.rev path with
       | member :: (_ :: _ as class_path) -> (
           match classes_at t (List.rev class_path) with
-          | [ cls ] -> resolve_member t ~caller:None (Class_object cls) member
+          | [ cls ] ->
+              dispatched t
+                (resolve_member t ~caller:None (Class_object cls) member)
           | [] | _ :: _ :: _ -> External)
       | [ _ ]
       | [] ->
@@ -2854,20 +2956,20 @@ let class_of_function (t : t) (func : Func_info.t) : Class_table.cls option =
       None
 
 let or_outside (t : t) ~(caller : Function_id.t option) (e : G.expr)
-    (resolved : resolution) : resolution =
-  match resolved with
+    (resolved : selection) : selection =
+  match resolved.resolution with
   | Defined _ -> resolved
   | External -> t.outside t ~caller e
 
 let resolve_call (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    resolution =
+    selection =
   or_outside t ~caller e (resolve_callee t ~caller e)
 
 let class_of_member_call (t : t) ~(caller : Function_id.t option)
-    (callee : G.expr) : (Class_table.cls option * resolution Lazy.t) option =
+    (callee : G.expr) : (Class_table.cls option * selection Lazy.t) option =
   Option.map
     (fun ((receiver : receiver_class), (_ : string),
-          (resolved : resolution Lazy.t)) ->
+          (resolved : selection Lazy.t)) ->
       ( class_of_receiver receiver,
         lazy (or_outside t ~caller callee (Lazy.force resolved)) ))
     (member_call t ~caller callee)

@@ -257,22 +257,16 @@ let augment_return_types_from_bodies
 
 let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)
     ~(caller : Function_id.t option) (args : G.argument list)
-    (resolved : Symbol_table.resolution) : Symbol_table.resolution =
-  let defined (resolution : Symbol_table.resolution) : Func_info.t list =
-    match resolution with
-    | Symbol_table.Defined (funcs : Func_info.t list) -> funcs
-    | Symbol_table.External -> []
-  in
-  match resolved with
-  | Symbol_table.External -> resolved
-  | Symbol_table.Defined (funcs : Func_info.t list) ->
+    (resolved : Symbol_table.selection) : Symbol_table.resolution =
+  match resolved.Symbol_table.resolution with
+  | Symbol_table.External -> Symbol_table.External
+  | Symbol_table.Defined _ ->
     Symbol_table.Defined
-      (Callee_resolution.narrow_by_call ~lang
+      (Callee_resolution.callees_of_call ~lang
          ~typing:
            (Callee_resolution.table_typing ~lang ~table ~caller
-              ~resolve:(fun (callee : G.expr) ->
-                defined (Symbol_table.resolve_call table ~caller callee)))
-         (Some args) funcs)
+              ~resolve:(Symbol_table.resolve_call table ~caller))
+         ~table (Some args) resolved)
 
 let fold_calls_of_file ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)
@@ -668,7 +662,7 @@ let stamp_var_types_from_bodies ~(lang : Lang.t)
         match
           applicable_callees ~lang table ~caller args
             (match member_call with
-             | Some (_, (resolved : Symbol_table.resolution Lazy.t)) ->
+             | Some (_, (resolved : Symbol_table.selection Lazy.t)) ->
                Lazy.force resolved
              | None -> Symbol_table.resolve_call table ~caller callee)
         with

@@ -1,0 +1,13 @@
+rules:
+  - id: overload_parameterised_argument_java
+    message: an argument of a parameterised type selects the overloads whose parameter class it can be a subtype of
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

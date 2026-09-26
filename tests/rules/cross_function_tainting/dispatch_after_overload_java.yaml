@@ -1,0 +1,13 @@
+rules:
+  - id: dispatch_after_overload_java
+    message: a call reaches the overrides of the overload it selects, not the other overloads of a subclass
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

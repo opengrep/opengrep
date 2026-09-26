@@ -291,11 +291,16 @@ module Overriding_tbl = Hashtbl.Make (Overriding_key)
 
 type memo = {
   selections : selected Selection_tbl.t;
-  overriding : Func_info.t list Overriding_tbl.t;
+  overriding : definition list Overriding_tbl.t;
+  dispatched : (definition list * Func_info.t list) list Overriding_tbl.t;
 }
 
 let create_memo () : memo =
-  { selections = Selection_tbl.create 64; overriding = Overriding_tbl.create 64 }
+  {
+    selections = Selection_tbl.create 64;
+    overriding = Overriding_tbl.create 64;
+    dispatched = Overriding_tbl.create 64;
+  }
 
 type import_origin =
   | Imported_from of cls
@@ -333,16 +338,21 @@ let hash (cls : cls) : int = Hashtbl.hash cls.id
 let index (cls : cls) : int = cls.id
 let scopes (cls : cls) : class_scope list = cls.scopes
 
-let distinct_definitions (funcs : Func_info.t list) : Func_info.t list =
-  let seen : unit Fdef_tbl.t = Fdef_tbl.create (List.length funcs) in
+let distinct_by (type item) (func_of : item -> Func_info.t) (items : item list)
+    : item list =
+  let seen : unit Fdef_tbl.t = Fdef_tbl.create (List.length items) in
   List.rev
     (List.fold_left
-       (fun (kept : Func_info.t list) (func : Func_info.t) ->
-         if Fdef_tbl.mem seen func.Func_info.fdef then kept
+       (fun (kept : item list) (item : item) ->
+         let fdef = (func_of item).Func_info.fdef in
+         if Fdef_tbl.mem seen fdef then kept
          else (
-           Fdef_tbl.replace seen func.Func_info.fdef ();
-           func :: kept))
-       [] funcs)
+           Fdef_tbl.replace seen fdef ();
+           item :: kept))
+       [] items)
+
+let distinct_definitions (funcs : Func_info.t list) : Func_info.t list =
+  distinct_by Fun.id funcs
 
 let concat_scopes (cls : cls) (of_scope : class_scope -> Func_info.t list) :
     Func_info.t list =

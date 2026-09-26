@@ -71,6 +71,15 @@ type resolution =
   | Defined of Func_info.t list
   | External
 
+type dispatch
+
+type selection = {
+  resolution : resolution;
+  dispatches : dispatch list;
+}
+
+val static_selection : resolution -> selection
+
 type receiver_role =
   | Method_of
   | Extension_of
@@ -102,7 +111,7 @@ val with_project :
   Class_table.t ->
   extension_visible:(string -> Func_info.t -> bool) ->
   build_configuration:int ->
-  outside:(t -> caller:Function_id.t option -> AST_generic.expr -> resolution) ->
+  outside:(t -> caller:Function_id.t option -> AST_generic.expr -> selection) ->
   t
 
 val with_own_memo : t -> t
@@ -147,25 +156,28 @@ val receiver_class :
   t -> caller:Function_id.t option -> AST_generic.expr -> receiver_class
 
 val resolve_member :
-  t -> caller:Function_id.t option -> receiver_class -> string -> resolution
+  t -> caller:Function_id.t option -> receiver_class -> string -> selection
 
 val resolve_callee :
-  t -> caller:Function_id.t option -> AST_generic.expr -> resolution
+  t -> caller:Function_id.t option -> AST_generic.expr -> selection
 
 val resolve_reference :
-  t -> caller:Function_id.t option -> AST_generic.expr -> resolution
+  t -> caller:Function_id.t option -> AST_generic.expr -> selection
 
 val resolve_construction : t -> AST_generic.type_ -> resolution
 val resolve_qualified : t -> AST_generic.name -> resolution
 
 val resolve_call :
-  t -> caller:Function_id.t option -> AST_generic.expr -> resolution
+  t -> caller:Function_id.t option -> AST_generic.expr -> selection
 
 val class_of_member_call :
   t ->
   caller:Function_id.t option ->
   AST_generic.expr ->
-  (Class_table.cls option * resolution Lazy.t) option
+  (Class_table.cls option * selection Lazy.t) option
+
+val dispatch : t -> selection -> Func_info.t list -> Func_info.t list
+val dispatched : t -> selection -> resolution
 
 val values_in_force :
   t -> caller:Function_id.t option -> AST_generic.SId.t -> AST_generic.expr list

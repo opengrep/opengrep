@@ -554,16 +554,18 @@ let or_outside_file (resolved : Symbol_table.resolution)
 let resolve_in_project ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
-    (e : G.expr) : Symbol_table.resolution =
+    (e : G.expr) : Symbol_table.selection =
   let caller = FA.fn_id_to_node caller_parent_path in
   let resolved =
     match use with
     | Symbol_table.Called -> Symbol_table.resolve_callee table ~caller e
     | Symbol_table.Referenced -> Symbol_table.resolve_reference table ~caller e
   in
-  or_outside_file resolved (fun () ->
+  match resolved.Symbol_table.resolution with
+  | Symbol_table.Defined _ -> resolved
+  | Symbol_table.External ->
     Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup ~caller
-      ~caller_parent_path ~use e)
+      ~caller_parent_path ~use e
 
 let typing ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller_parent_path : IL.name option list)
@@ -572,8 +574,7 @@ let typing ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~caller:(FA.fn_id_to_node caller_parent_path)
     ~resolve:(fun (callee : G.expr) ->
       resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
-        ~use:Symbol_table.Called callee
-      |> defined_funcs)
+        ~use:Symbol_table.Called callee)
 
 let argument_types ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) : Callee_resolution.argument_typer =
@@ -587,10 +588,9 @@ let call_site_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
  fun ~caller_parent_path ~call_args (callee : G.expr) ->
   resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
     ~use:Symbol_table.Called callee
-  |> defined_funcs
-  |> Callee_resolution.narrow_by_call ~lang
+  |> Callee_resolution.callees_of_call ~lang
        ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
-       call_args
+       ~table call_args
   |> fn_ids_of
 
 let callback_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
@@ -601,13 +601,15 @@ let callback_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
   match reference with
   | Callback_extraction.Written ({ G.e = G.N (name : G.name); _ } as e) ->
     or_outside_file (Symbol_table.resolve_qualified table name) (fun () ->
-      Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup
-        ~caller:(FA.fn_id_to_node caller_parent_path) ~caller_parent_path
-        ~use:Symbol_table.Referenced e)
+      Symbol_table.dispatched table
+        (Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup
+           ~caller:(FA.fn_id_to_node caller_parent_path) ~caller_parent_path
+           ~use:Symbol_table.Referenced e))
   | Callback_extraction.Bound (e : G.expr)
   | Callback_extraction.Written (e : G.expr) ->
-    resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
-      ~use:Symbol_table.Referenced e
+    Symbol_table.dispatched table
+      (resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
+         ~use:Symbol_table.Referenced e)
 
 let construction_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t)
@@ -628,6 +630,7 @@ let invocation_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
  fun ~caller_parent_path (receiver : G.expr) ->
   resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
     ~use:Symbol_table.Referenced receiver
+  |> Symbol_table.dispatched table
   |> defined_funcs
   |> fn_ids_of
 
@@ -638,7 +641,7 @@ let project_table (ctx : ctx) ~(classes : project_classes)
     func_lookup_of ctx ~class_of_qn:classes.class_of_qn file_scope fi
   in
   let outside (table : Symbol_table.t) ~(caller : Function_id.t option)
-      (e : G.expr) : Symbol_table.resolution =
+      (e : G.expr) : Symbol_table.selection =
     let caller_parent_path =
       match Option.bind caller (Symbol_table.function_of_node table) with
       | Some (func : Func_info.t) -> func.Func_info.fn_id
