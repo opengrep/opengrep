@@ -1,0 +1,15 @@
+rules:
+  - id: trace_flag_set_by_closure_python
+    message: a command-line argument reaches the command of a child process
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: $PARSER.parse_args(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: subprocess.run($CMD, ...)
+          - focus-metavariable: $CMD

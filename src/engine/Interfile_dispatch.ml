@@ -423,6 +423,7 @@ let init_file
         track_control = false;
         preds = empty_preds;
         handle_effects = (fun _fn_name effects -> effects);
+        merge = Taint.Keep_best;
         recursive = false;
         is_value_type;
         java_props_cache = Hashtbl.create 0;
@@ -751,6 +752,7 @@ let extract_and_check_function
     (fid : Function_id.t)
     (info : Match_tainting_mode.fun_info)
     ~(detect_findings : bool)
+    ~(replay : Match_tainting_mode.replay option)
     (db : Shape_and_sig.signature_database)
     : Shape_and_sig.signature_database * PM.t list =
   match taint_inst_of_info rs fid info with
@@ -766,7 +768,7 @@ let extract_and_check_function
         ~glob_env
         ~lang:rs.lang ~db ~match_on:rs.match_on
         ~taint_inst:fn_taint_inst ~shared_tables:rs.shared_tables
-        ~detect_findings
+        ~detect_findings ~replay
         info
     in
     if not (List_.null findings) then
@@ -791,8 +793,43 @@ let topo_order_of (rs : rule_state) : Function_id.t list =
 let initial_sig_db (_rs : rule_state) : Shape_and_sig.signature_database =
   Builtin_models.init_signature_database None
 
+let replay_of_rule (rs : rule_state) (db : Shape_and_sig.signature_database) :
+    Match_tainting_mode.replay =
+  Match_tainting_mode.mk_replay ~lang:rs.lang
+    ~cfg_of:(fun (fid : Function_id.t) ->
+      FunctionMap.find_opt fid rs.info_map
+      |> Option.map (fun (info : Match_tainting_mode.fun_info) ->
+             info.Match_tainting_mode.cfg))
+    ~shared_tables:rs.shared_tables
+    ~retain_signature:(fun (tables : Taint_shared_tables.t)
+                           (fid : Function_id.t)
+                           (db : Shape_and_sig.signature_database) ->
+      match FunctionMap.find_opt fid rs.info_map with
+      | None -> db
+      | Some info -> (
+          match info.Match_tainting_mode.fdef.G.fbody with
+          | G.FBDecl _
+          | G.FBNothing ->
+              db
+          | _ -> (
+              match taint_inst_of_info rs fid info with
+              | None -> db
+              | Some fn_taint_inst ->
+                  let taint_inst = Match_tainting_mode.retaining fn_taint_inst in
+                  let db', fresh =
+                    Match_tainting_mode.extract_signatures
+                      ?builtin_signature_db:rs.builtin_signature_db
+                      ~lang:rs.lang ~db ~taint_inst ~shared_tables:tables info
+                  in
+                  Sig_fixpoint.store ~merge:taint_inst.Taint_rule_inst.merge
+                    ~max_shape_depth:(Taint_shape.max_poly_offset rs.lang)
+                    fid fresh db')))
+    (Some db)
+
 let topo_fold ~(detect_findings : bool) (rs : rule_state)
-    : Shape_and_sig.signature_database * PM.t list =
+    : Shape_and_sig.signature_database
+      * PM.t list
+      * Match_tainting_mode.replay option =
   let initial_db = initial_sig_db rs in
   (* A function's own signatures replace its db entry ([Sig_fixpoint.store]). *)
   let extract_replace (fid : Function_id.t)
@@ -820,7 +857,8 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
                0 fresh)
             (if fn_taint_inst.Taint_rule_inst.recursive then ", recursive"
              else ""));
-      Sig_fixpoint.store ~max_shape_depth:(Taint_shape.max_poly_offset rs.lang)
+      Sig_fixpoint.store ~merge:fn_taint_inst.Taint_rule_inst.merge
+        ~max_shape_depth:(Taint_shape.max_poly_offset rs.lang)
         fid fresh db'
   in
   (* Phase 1: SCC signature fixpoint, no finding emission. *)
@@ -858,6 +896,9 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
   (* Phase 2: single match-emission pass over the converged DB.  Every
      function's callees already have their final signatures, so order is
      irrelevant and the DB is not threaded. *)
+  let replay =
+    if detect_findings then Some (replay_of_rule rs converged_db) else None
+  in
   let emit (matches_acc : PM.t list) (fid : Function_id.t) : PM.t list =
     match FunctionMap.find_opt fid rs.info_map with
     | None -> matches_acc
@@ -890,7 +931,7 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
                away without an A/B on a large corpus. *)
             let _db, findings =
               extract_and_check_function rs fid info ~detect_findings:true
-                converged_db
+                ~replay converged_db
             in
             let findings =
               List.filter
@@ -905,7 +946,7 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
     timed (Printf.sprintf "rule %s: evaluation (finding emission)" rule_id_str)
     @@ fun () -> List.fold_left emit [] rs.topo_order
   in
-  (converged_db, matches)
+  (converged_db, matches, replay)
 
 (* Consumed by tools/opengrep-interfile-graph (not built by [make core]). *)
 let extract_signatures (rs : rule_state)
@@ -914,7 +955,7 @@ let extract_signatures (rs : rule_state)
       m "interfile dispatch: extracting signatures for rule %s (%d functions)"
         (Rule_ID.to_string (fst rs.rule.R.id))
         (List.length rs.topo_order));
-  let final_db, _no_findings =
+  let final_db, _no_findings, _no_replay =
     topo_fold ~detect_findings:false rs
   in
   final_db
@@ -969,14 +1010,19 @@ let rec rebase_call_trace (rebase : Fpath.t -> Fpath.t option)
 
 let rebase_trace (rebase : Fpath.t -> Fpath.t option) (trace : Taint_trace.t)
     : Taint_trace.t =
-  List_.map
-    (fun (item : Taint_trace.item) ->
-      {
-        Taint_trace.source_trace = rebase_call_trace rebase item.source_trace;
-        tokens = List_.map (rebase_tok rebase) item.Taint_trace.tokens;
-        sink_trace = rebase_call_trace rebase item.Taint_trace.sink_trace;
-      })
-    trace
+  {
+    Taint_trace.origin = List_.map (rebase_tok rebase) trace.Taint_trace.origin;
+    items =
+      List_.map
+        (fun (item : Taint_trace.item) ->
+          {
+            Taint_trace.source_trace =
+              rebase_call_trace rebase item.source_trace;
+            tokens = List_.map (rebase_tok rebase) item.Taint_trace.tokens;
+            sink_trace = rebase_call_trace rebase item.Taint_trace.sink_trace;
+          })
+        trace.Taint_trace.items;
+  }
 
 let rebase_pm (scanning_roots : Scanning_root.directory list)
     (target_root_map : path_with_root FpathMap.t) (pm : PM.t)
@@ -1029,20 +1075,21 @@ let rebase_pm (scanning_roots : Scanning_root.directory list)
   { pm with PM.path; range_loc; taint_trace; tokens }
 
 let run_rule (rs : rule_state) : PM.t list =
-  let effects_to_matches =
+  let effects_to_matches ~(frame : Match_tainting_mode.frame option) =
     Match_tainting_mode.pms_of_effects ~lang:rs.lang ~match_on:rs.match_on
+      ~frame
   in
   (* glob_effects for target files (need no signatures). *)
   let glob_matches =
     FpathMap.fold
       (fun (file_path : Fpath.t) (fe : file_env) (acc : PM.t list) ->
          if is_target_file rs.target_root_map file_path then
-           List.rev_append (effects_to_matches fe.glob_effects) acc
+           List.rev_append (effects_to_matches ~frame:None fe.glob_effects) acc
          else acc)
       rs.file_envs []
   in
   (* Topo fold: sig_db grows monotonically, callees precede callers. *)
-  let final_db, topo_matches =
+  let final_db, topo_matches, replay =
     topo_fold ~detect_findings:true rs
   in
   (* Per-file epilogue (class-init + top-level) for target files.  Skip a
@@ -1142,8 +1189,26 @@ let run_rule (rs : rule_state) : PM.t list =
                    (IL.NameMap.cardinal fun_cfg.lambdas)
                    method_lambdas);
            incr epilogue_files;
-           List.rev_append (effects_to_matches class_init_effects)
-             (List.rev_append (effects_to_matches top_effects) acc))
+           let top_frame =
+             replay
+             |> Option.map (fun (replay : Match_tainting_mode.replay) ->
+                    {
+                      Match_tainting_mode.replay;
+                      frame_cfg = snd top_cfg;
+                      rerun =
+                        Some
+                          (fun (retained : Shape_and_sig.signature_database option)
+                             ->
+                            Match_tainting_mode.check_top_level_prebuilt
+                              (Match_tainting_mode.retaining fe.taint_inst)
+                              replay.Match_tainting_mode.retain_tables top_cfg
+                              ?signature_db:retained
+                              ?builtin_signature_db:rs.builtin_signature_db ());
+                    })
+           in
+           List.rev_append (effects_to_matches ~frame:None class_init_effects)
+             (List.rev_append (effects_to_matches ~frame:top_frame top_effects)
+                acc))
       rs.file_envs []
   in
   Log_interfile_timing.Log.info (fun m ->
@@ -1158,6 +1223,7 @@ let run_rule (rs : rule_state) : PM.t list =
   |> List_.map (rebase_pm rs.scanning_roots rs.target_root_map)
   |> PM.uniq
   |> PM.no_submatches
+  |> Match_tainting_mode.force_traces
 
 (* Parallel when ncores>1 and >1 item, else serial; failures go to [on_exn],
    which runs inside the worker domain, so it must not touch shared state.

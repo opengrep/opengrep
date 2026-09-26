@@ -105,16 +105,9 @@ let message_interpolation : (string * string) list =
 
 let interfile_fixtures_root : Fpath.t = Fpath.v "tests/interfile/python"
 
-let dedup_scan (caps : Scan_subcommand.caps) ~(case : string) ~(rule : string)
-    ~(targets : string list) (args : string list) :
-    Semgrep_output_v1_t.cli_match list =
-  let fixture (name : string) : Testutil_files.t =
-    Testutil_files.File
-      (name, read_fixture ~root:interfile_fixtures_root (case ^ "/" ^ name))
-  in
-  Testutil_git.with_git_repo
-    (List_.map fixture (rule :: targets))
-    (fun (_cwd : Fpath.t) ->
+let json_scan (caps : Scan_subcommand.caps) ~(files : Testutil_files.t list)
+    ~(rule : string) (args : string list) : Semgrep_output_v1_t.cli_match list =
+  Testutil_git.with_git_repo files (fun (_cwd : Fpath.t) ->
       let (), stdout_output =
         Testo.with_capture stdout (fun () ->
             without_settings (fun () ->
@@ -130,6 +123,15 @@ let dedup_scan (caps : Scan_subcommand.caps) ~(case : string) ~(rule : string)
             |> ignore)
       in
       (Semgrep_output_v1_j.cli_output_of_string stdout_output).results)
+
+let dedup_scan (caps : Scan_subcommand.caps) ~(case : string) ~(rule : string)
+    ~(targets : string list) (args : string list) :
+    Semgrep_output_v1_t.cli_match list =
+  let fixture (name : string) : Testutil_files.t =
+    Testutil_files.File
+      (name, read_fixture ~root:interfile_fixtures_root (case ^ "/" ^ name))
+  in
+  json_scan caps ~files:(List_.map fixture (rule :: targets)) ~rule args
 
 let two_sources_scan (caps : Scan_subcommand.caps) ~(rule : string)
     (args : string list) : Semgrep_output_v1_t.cli_match list =
@@ -235,6 +237,111 @@ let test_source_sink_ids_are_distinct (caps : Scan_subcommand.caps) () =
     (List.for_all
        (fun (f : string) -> List.exists (String.equal f) source_sink_ids)
        sink_ids)
+
+let trace_fixtures_root : Fpath.t = Fpath.v "tests/rules/cross_function_tainting"
+
+let trace_scan (caps : Scan_subcommand.caps) ~(case : string)
+    (args : string list) : Semgrep_output_v1_t.cli_match list =
+  let fixture (name : string) : Testutil_files.t =
+    Testutil_files.File (name, read_fixture ~root:trace_fixtures_root name)
+  in
+  json_scan caps
+    ~files:[ fixture (case ^ ".yaml"); fixture (case ^ ".py") ]
+    ~rule:(case ^ ".yaml") ("--dataflow-traces" :: args)
+
+let rec call_trace_lines (trace : Semgrep_output_v1_t.match_call_trace) :
+    int list =
+  match trace with
+  | Semgrep_output_v1_t.CliLoc ((loc : Semgrep_output_v1_t.location), _) ->
+      [ loc.start.line ]
+  | Semgrep_output_v1_t.CliCall
+      (((loc : Semgrep_output_v1_t.location), _), vars, inner) ->
+      (loc.start.line
+      :: List_.map
+           (fun (var : Semgrep_output_v1_t.match_intermediate_var) ->
+             var.location.start.line)
+           vars)
+      @ call_trace_lines inner
+
+let lines_text (lines : int list) : string =
+  lines |> List_.map string_of_int |> String.concat " "
+
+let trace_text (m : Semgrep_output_v1_t.cli_match) : string =
+  match m.extra.dataflow_trace with
+  | None -> "no trace"
+  | Some { taint_source; intermediate_vars; taint_sink } ->
+      String.concat " | "
+        [
+          lines_text (Option.fold ~none:[] ~some:call_trace_lines taint_source);
+          lines_text
+            (List_.map
+               (fun (var : Semgrep_output_v1_t.match_intermediate_var) ->
+                 var.location.start.line)
+               (Option.value intermediate_vars ~default:[]));
+          lines_text (Option.fold ~none:[] ~some:call_trace_lines taint_sink);
+        ]
+
+let trace_modes : (string * string list) list =
+  [ ("intrafile", []); ("interfile", [ "--taint-interfile" ]) ]
+
+let trace_cases : (string * string * string) list =
+  [
+    ( "trace_flag_in_callee_python",
+      "the path through the branch that sets the flag the sink branch tests \
+       false",
+      "21 | 21 | 22 5 11 16" );
+    ( "trace_flag_in_callee_other_order_python",
+      "the path the analysis keeps when it is already feasible",
+      "21 | 21 | 22 5 11 16" );
+    ( "trace_flag_python",
+      "the path through the branch that sets the flag the sink branch tests \
+       false, in the function of the source",
+      "6 | 6 12 13 | 18" );
+    ( "trace_flag_longer_then_branch_python",
+      "the shorter path the analysis keeps when it is already feasible",
+      "6 | 6 14 | 19" );
+    ( "trace_condition_repeated_in_callee_python",
+      "the path through the branch whose condition the sink branch tests \
+       again",
+      "19 | 19 | 20 5 9 14" );
+    ( "trace_condition_on_parameter_python",
+      "the path through the branch whose condition on a parameter the sink \
+       branch tests again",
+      "18 | 18 | 19 5 9 14" );
+    ( "trace_flag_set_by_closure_python",
+      "the path whose flag a closure it calls sets",
+      "6 | 6 17 | 21" );
+    ( "trace_flag_set_by_callee_through_global_python",
+      "the path whose flag a function it calls sets through a global",
+      "14 | 14 20 | 24" );
+  ]
+
+let test_displayed_trace (caps : Scan_subcommand.caps) ~(case : string)
+    ~(expected : string) (args : string list) () =
+  Alcotest.(check (list string))
+    "the lines of the displayed trace" [ expected ]
+    (trace_scan caps ~case args |> List_.map trace_text)
+
+let test_dispatched_trace_not_mixed (caps : Scan_subcommand.caps)
+    (args : string list) () =
+  let findings =
+    trace_scan caps ~case:"trace_flag_in_dispatched_callee_python" args
+  in
+  Alcotest.(check int) "one finding" 1 (List.length findings);
+  Alcotest.(check bool)
+    "the finding has a trace, and a trace through the branch that sets the \
+     flag does not reach the call in the branch the flag excludes"
+    true
+    (List.for_all
+       (fun (m : Semgrep_output_v1_t.cli_match) ->
+         match m.extra.dataflow_trace with
+         | None -> false
+         | Some { taint_sink; _ } ->
+             let lines =
+               Option.fold ~none:[] ~some:call_trace_lines taint_sink
+             in
+             not (List.mem 22 lines && List.mem 34 lines))
+       findings)
 
 (*****************************************************************************)
 (* Entry point *)
@@ -730,6 +837,23 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~targets:[ "dedup_two_sinks/two_sinks.py" ]
            ~format_args:[ "--sarif" ] ~extra_args:source_sink_args);
     ]
+    @ (trace_modes
+      |> List.concat_map (fun ((mode, args) : string * string list) ->
+             (trace_cases
+             |> List_.map
+                  (fun ((case, description, expected) : string * string * string) ->
+                    t
+                      (Printf.sprintf "findings: %s trace shows %s" mode
+                         description)
+                      (test_displayed_trace caps ~case ~expected args)))
+             @ [
+                 t
+                   (Printf.sprintf
+                      "findings: %s trace through a dispatched callee follows \
+                       the branch the flag selects"
+                      mode)
+                   (test_dispatched_trace_not_mixed caps args);
+               ]))
     @ (aliengrep_cases
       |> List.map (fun ((rule : string), (target : string)) ->
              generic_engine_test caps ~engine:"aliengrep" ~rule ~target))

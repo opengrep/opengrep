@@ -99,6 +99,7 @@ type t = {
        * then we avoid adding control taint-variables to environment. *)
   preds : spec_predicates;
   handle_effects : effects_handler;  (** Callback to report effects. *)
+  merge : Taint.trace_merge;
   recursive : bool;
       (** The function belongs to a recursive component of the call graph,
           direct or mutual recursion. The calls it instantiates compose

@@ -22,6 +22,8 @@ type tokens
 type nodes
 
 type call_site = {
+  callee_exp : IL.exp;
+  callee_fid : Function_id.t option;
   actual_args : IL.exp IL.argument list option;
   callee_params : Signature_params.params;
   callee_params_il : IL.param list;
@@ -29,6 +31,8 @@ type call_site = {
   can_freeze : bool;
   subst : [ `Effect | `Nested_sig ];
 }
+
+type trace_merge = Keep_best | Keep_both
 
 (** A call trace to a source or sink match.
   * E.g. Call('foo()', PM('sink(x)')) tells us that by calling `foo(a)` we reach
@@ -235,34 +239,51 @@ val through :
 val same_trace : taint -> taint -> bool
 
 val merge_items :
+  merge:trace_merge ->
   kept:Effect_guard.t * taint * unit call_trace ->
   other:Effect_guard.t * taint * unit call_trace ->
   taint
 
+type step =
+  | Token of tainted_token
+  | Callee of {
+      site : call_site;
+      join_tok : tainted_token option;
+      steps : step list;
+    }
+
 type 'a flat_call_trace =
   | Flat_PM of Core_match.t * 'a
-  | Flat_call of AST_generic.expr * tainted_tokens * 'a flat_call_trace
+  | Flat_call of {
+      callee : AST_generic.expr;
+      site : call_site;
+      tokens : tainted_tokens;
+      steps : step list;
+      inner : 'a flat_call_trace;
+    }
 
 type resolved = {
   resolved_orig : orig option;
   resolved_tokens : tainted_tokens;
+  resolved_steps : step list;
   resolved_sink_trace : unit call_trace option;
+  refuted_by_guard : bool;
 }
 
-val resolve_taint :
-  valid:(call_site list -> Effect_guard.t -> bool) -> taint -> resolved
+val taint_resolutions :
+  valid:(call_site list -> Effect_guard.t -> bool) -> taint -> resolved Seq.t
 
-val resolve_source_trace :
+val source_trace_resolutions :
   valid:(call_site list -> Effect_guard.t -> bool) ->
-  call_site list ->
   Rule.taint_source call_trace ->
-  Rule.taint_source flat_call_trace
+  (Rule.taint_source flat_call_trace * bool) Seq.t
 
-val resolve_sink_trace :
+val sink_trace_resolutions :
   valid:(call_site list -> Effect_guard.t -> bool) ->
-  call_site list ->
   unit call_trace ->
-  unit flat_call_trace
+  (unit flat_call_trace * bool) Seq.t
+
+val first_resolution : 'a Seq.t -> 'a
 
 val trace_of_pm : Core_match.t * 'a -> 'a call_trace
 val pm_of_trace : 'a call_trace -> Core_match.t * 'a
@@ -273,7 +294,8 @@ val pm_of_trace : 'a call_trace -> Core_match.t * 'a
    Since this only acts on the children of a taint, the type remains
    the same.
 *)
-val map_preconditions : (taint list -> taint list) -> taint -> taint option
+val map_preconditions :
+  merge:trace_merge -> (taint list -> taint list) -> taint -> taint option
 val show_lval : lval -> string
 val show_taint : taint -> string
 val compare_lval : lval -> lval -> int
@@ -316,25 +338,26 @@ module Taint_set : sig
 
   val compare : t -> t -> int
   val singleton : taint -> t
-  val add : guarded_taint -> t -> t
-  val union : t -> t -> t
+  val add : merge:trace_merge -> guarded_taint -> t -> t
+  val union : merge:trace_merge -> t -> t -> t
   val diff : t -> t -> t
-  val map : (guarded_taint -> guarded_taint) -> t -> t
-  val bind : t -> (guarded_taint -> t) -> t
+  val map : merge:trace_merge -> (guarded_taint -> guarded_taint) -> t -> t
+  val bind : merge:trace_merge -> t -> (guarded_taint -> t) -> t
   val iter : (guarded_taint -> unit) -> t -> unit
   val fold : (guarded_taint -> 'a -> 'a) -> t -> 'a -> 'a
   val filter : (guarded_taint -> bool) -> t -> t
-  val of_list : guarded_taint list -> t
+  val of_list : merge:trace_merge -> guarded_taint list -> t
   val to_seq : t -> guarded_taint Seq.t
   val elements : t -> guarded_taint list
 
-  val add_taint : taint -> t -> t
+  val add_taint : merge:trace_merge -> taint -> t -> t
   (** Add a bare taint with [Effect_guard.top] guard. *)
 
-  val add_taint_with_guard : taint -> Effect_guard.t -> t -> t
+  val add_taint_with_guard :
+    merge:trace_merge -> taint -> Effect_guard.t -> t -> t
   (** Add a taint paired with the given guard. *)
 
-  val of_taint_list : taint list -> t
+  val of_taint_list : merge:trace_merge -> taint list -> t
   (** Lift a list of bare taints, each with [Effect_guard.top]. *)
 
   val to_taint_list : t -> taint list
@@ -347,7 +370,7 @@ module Taint_set : sig
   (** The disjunction of every guarded taint's guard: the condition under which at
       least one taint in the set is live. [empty] yields [Effect_guard.top]. *)
 
-  val map_taint : (taint -> taint) -> t -> t
+  val map_taint : merge:trace_merge -> (taint -> taint) -> t -> t
   (** Map the inner taint of every guarded taint, leaving guards untouched.
       [f] MAY change taint identity: the set detects it and rebuilds
       itself with correct keys, fusing guards of identity-colliding
@@ -363,7 +386,10 @@ val solve_precondition :
 val taints_satisfy_requires : taint list -> Rule.precondition -> bool
 
 val taints_of_pms :
-  incoming:taints -> (Core_match.t * Rule.taint_source) list -> taints
+  merge:trace_merge ->
+  incoming:taints ->
+  (Core_match.t * Rule.taint_source) list ->
+  taints
 
 val show_taints : ?truncate_guards:bool -> taints -> string
 

@@ -25,7 +25,7 @@ val equal_with_guards : t -> t -> bool
 val compare : t -> t -> int
 val show : t -> string
 
-val union : t -> t -> t
+val union : merge:Taint.trace_merge -> t -> t -> t
 (** Merge xtaints at JOIN nodes of the CFG. *)
 
 val is_tainted : [> `Tainted of Taint.taints ] -> bool

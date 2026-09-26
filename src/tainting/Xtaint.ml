@@ -61,10 +61,10 @@ let show = function
   | `None -> "0"
   | `Clean -> "C"
 
-let union xt1 xt2 =
+let union ~(merge : Taint.trace_merge) xt1 xt2 =
   match (xt1, xt2) with
   | `Tainted taints1, `Tainted taints2 ->
-      `Tainted (Taints.union taints1 taints2)
+      `Tainted (Taints.union ~merge taints1 taints2)
   | `Tainted taints, (`None | `Clean)
   | (`None | `Clean), `Tainted taints ->
       `Tainted taints

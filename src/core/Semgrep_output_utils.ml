@@ -179,12 +179,21 @@ let sort_metavars (metavars : (string * metavar_value) list) =
 let sort_extra (extra : core_match_extra) =
   { extra with metavars = sort_metavars extra.metavars }
 
-let sort_core_matches (matches : core_match list) : core_match list =
+let sort_core_matches_with matches =
   let matches =
     matches
-    |> List_.map (fun (x : core_match) -> { x with extra = sort_extra x.extra })
+    |> List_.map (fun ((x : core_match), attached) ->
+           ({ x with extra = sort_extra x.extra }, attached))
   in
-  List.stable_sort compare_match matches
+  List.stable_sort
+    (fun ((x : core_match), _) ((y : core_match), _) -> compare_match x y)
+    matches
+
+let sort_core_matches (matches : core_match list) : core_match list =
+  matches
+  |> List_.map (fun (x : core_match) -> (x, ()))
+  |> sort_core_matches_with
+  |> List_.map fst
 
 (*
    Order by:

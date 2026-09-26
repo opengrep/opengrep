@@ -9,6 +9,18 @@ val union : AST_generic.svalue -> AST_generic.svalue -> AST_generic.svalue
 *)
 
 val fixpoint : Lang.t -> IL.fun_cfg -> mapping
+
+val union_env :
+  AST_generic.svalue Dataflow_var_env.t ->
+  AST_generic.svalue Dataflow_var_env.t ->
+  AST_generic.svalue Dataflow_var_env.t
+
+val node_transfer :
+  Lang.t ->
+  IL.fun_cfg ->
+  AST_generic.svalue Dataflow_var_env.t ->
+  IL.node ->
+  AST_generic.svalue Dataflow_var_env.t
 (** Flow-sensitive constant-propagation.
  * !Note that this assumes Naming_AST.resolve has been called before!
 *)

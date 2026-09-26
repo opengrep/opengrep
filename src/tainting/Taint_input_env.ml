@@ -42,7 +42,10 @@ let check_var_def (taint_inst : Taint_rule_inst.t)
   in
   let out_env = end_mapping.(cfg.exit).Dataflow_core.out_env in
   let lval : IL.lval = { base = Var name; rev_offset = [] } in
-  let xtaint = Taint_lval_env.find_lval_xtaint taint_inst.lang out_env lval in
+  let xtaint =
+    Taint_lval_env.find_lval_xtaint taint_inst.lang ~merge:taint_inst.merge
+      out_env lval
+  in
   (xtaint, effects)
 
 let add_to_env_aux (taint_inst : Taint_rule_inst.t)
@@ -56,7 +59,7 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t)
         which are not within the normal control flow of a code.
         We can safely say there's no incoming taints to these sources.
     *)
-    |> T.taints_of_pms ~incoming:T.Taint_set.empty
+    |> T.taints_of_pms ~merge:taint_inst.merge ~incoming:T.Taint_set.empty
   in
   let expr_taints, expr_effects =
     match opt_expr with
@@ -65,21 +68,23 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t)
         (Xtaint.to_taints xtaint, effects)
     | None -> (T.Taint_set.empty, Effects.empty)
   in
-  let taints = id_taints |> T.Taint_set.union expr_taints in
+  let taints = id_taints |> T.Taint_set.union ~merge:taint_inst.merge expr_taints in
   let taints =
     Dataflow_tainting.drop_taints_if_bool_or_number taint_inst.options taints
       var_type
   in
   let env =
     env
-    |> Taint_lval_env.add_lval taint_inst.lang (IL_helpers.lval_of_var var)
+    |> Taint_lval_env.add_lval taint_inst.lang ~merge:taint_inst.merge
+         (IL_helpers.lval_of_var var)
          taints
   in
   (env, expr_effects)
 
-let add_to_env taint_inst shared_tables (env, effects) id id_info opt_expr =
+let add_to_env (taint_inst : Taint_rule_inst.t) shared_tables (env, effects) id
+    id_info opt_expr =
   let env, new_effects = add_to_env_aux taint_inst shared_tables env id id_info opt_expr in
-  (env, Effects.union new_effects effects)
+  (env, Effects.union ~merge:taint_inst.merge new_effects effects)
 
 let mk_fun_input_env taint_inst shared_tables ?(glob_env = Taint_lval_env.empty)
     (fparams : IL.param list) =

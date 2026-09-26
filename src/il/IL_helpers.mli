@@ -138,3 +138,6 @@ val wrap_and : IL.exp list -> IL.exp
 
 val wrap_or : IL.exp list -> IL.exp
 (** Smart n-ary [Or]; dual to [wrap_and]. *)
+
+val equalities_inconsistent : (IL.exp * bool) list -> bool
+val literals_consistent : (IL.exp * bool) list -> bool

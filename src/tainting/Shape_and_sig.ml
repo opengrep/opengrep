@@ -571,7 +571,7 @@ and Effect : sig
       so an [Effects] set holds one element per guard-less effect identity
       and fuses guards on insertion (see [fuse_guards]). *)
 
-  val fuse_guards : t -> t -> t
+  val fuse_guards : merge:Taint.trace_merge -> t -> t -> t
   (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with every
       guard-bearing payload fused disjunctively: the effect-level guard, the
       per-item [ToSink] guards, and the guards of the guarded taints inside the [Taints.t]
@@ -888,7 +888,7 @@ end = struct
 
   (* Precondition: [compare e1 e2 = 0], so both are the same constructor.
    * The fused effect applies iff either input would, hence the [Or]. *)
-  let fuse_guards e1 e2 =
+  let fuse_guards ~(merge : T.trace_merge) e1 e2 =
     match (e1, e2) with
     | ToSink tts1, ToSink tts2 ->
         (* [compare e1 e2 = 0] gives pairwise identity-equal items in the same
@@ -900,16 +900,22 @@ end = struct
             (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
               let side1_guard = Effect_guard.compose_and tts1.guards i1.guard in
               let side2_guard = Effect_guard.compose_and tts2.guards i2.guard in
+              let same_traces =
+                T.same_trace i1.taint i2.taint
+                && phys_equal i1.sink_trace i2.sink_trace
+              in
               let taint =
-                if
-                  Effect_guard.equal side1_guard side2_guard
-                  || T.same_trace i1.taint i2.taint
-                     && phys_equal i1.sink_trace i2.sink_trace
-                then i1.taint
-                else
-                  T.merge_items
-                    ~kept:(side1_guard, i1.taint, i1.sink_trace)
-                    ~other:(side2_guard, i2.taint, i2.sink_trace)
+                match merge with
+                | T.Keep_best
+                  when Effect_guard.equal side1_guard side2_guard || same_traces
+                  ->
+                    i1.taint
+                | T.Keep_both when same_traces -> i1.taint
+                | T.Keep_best
+                | T.Keep_both ->
+                    T.merge_items ~merge
+                      ~kept:(side1_guard, i1.taint, i1.sink_trace)
+                      ~other:(side2_guard, i2.taint, i2.sink_trace)
               in
               { i1 with taint; guard = Effect_guard.compose_or i1.guard i2.guard })
             items1 items2
@@ -924,14 +930,14 @@ end = struct
          * guard fusion. *)
         ToReturn
           { ttr1 with
-            data_taints = Taints.union ttr1.data_taints ttr2.data_taints;
+            data_taints = Taints.union ~merge ttr1.data_taints ttr2.data_taints;
             control_taints =
-              Taints.union ttr1.control_taints ttr2.control_taints;
+              Taints.union ~merge ttr1.control_taints ttr2.control_taints;
             guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
     | ToLval ttl1, ToLval ttl2 ->
         ToLval
           { ttl1 with
-            taints = Taints.union ttl1.taints ttl2.taints;
+            taints = Taints.union ~merge ttl1.taints ttl2.taints;
             guards = Effect_guard.compose_or ttl1.guards ttl2.guards }
     | ToSinkInCall c1, ToSinkInCall c2 ->
         let fuse_arg (a1 : (Taints.t * Shape.shape) IL.argument)
@@ -942,9 +948,9 @@ end = struct
            * guard-blind [Signature] equality. *)
           match (a1, a2) with
           | IL.Unnamed (t1, s1), IL.Unnamed (t2, _) ->
-              IL.Unnamed (Taints.union t1 t2, s1)
+              IL.Unnamed (Taints.union ~merge t1 t2, s1)
           | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, _)) ->
-              IL.Named (id1, (Taints.union t1 t2, s1))
+              IL.Named (id1, (Taints.union ~merge t1 t2, s1))
           | (IL.Unnamed _ | IL.Named _), _ ->
               a1 (* unreachable: identity-equal args have equal shape *)
         in
@@ -1001,9 +1007,14 @@ and Effects : sig
       would stop with the narrower guard and drop effects the refined guard
       keeps. Use this for stability checks. *)
 
+  val add : merge:Taint.trace_merge -> elt -> t -> t
+  val union : merge:Taint.trace_merge -> t -> t -> t
+  val of_list : merge:Taint.trace_merge -> elt list -> t
+  val map : merge:Taint.trace_merge -> (elt -> elt) -> t -> t
+  val filter_map : merge:Taint.trace_merge -> (elt -> elt option) -> t -> t
   val show : ?truncate_guards:bool -> t -> string
-  val add_list : Effect.t list -> t -> t
-  val union_list : t list -> t
+  val add_list : merge:Taint.trace_merge -> Effect.t list -> t -> t
+  val union_list : merge:Taint.trace_merge -> t list -> t
 end = struct
   include Set.Make (struct
     type t = Effect.t
@@ -1024,26 +1035,33 @@ end = struct
    * point; it compares every guard-bearing payload, not just the
    * effect-level guard — a refinement of only an item guard or a guarded taint's guard must
    * not be discarded. *)
-  let add eff set =
+  let add ~(merge : T.trace_merge) eff set =
     match find_opt eff set with
     | None -> add eff set
-    | Some existing ->
-        let fused = Effect.fuse_guards existing eff in
-        if Effect.guards_equal fused existing then set
-        else add fused (remove existing set)
+    | Some existing -> (
+        let fused = Effect.fuse_guards ~merge existing eff in
+        match merge with
+        | T.Keep_best when Effect.guards_equal fused existing -> set
+        | T.Keep_best
+        | T.Keep_both ->
+            add fused (remove existing set))
 
-  let union s1 s2 =
+  let union ~(merge : T.trace_merge) s1 s2 =
     (* Fold the smaller set into the larger one. *)
-    if cardinal s1 >= cardinal s2 then fold add s2 s1 else fold add s1 s2
+    if cardinal s1 >= cardinal s2 then fold (add ~merge) s2 s1
+    else fold (add ~merge) s1 s2
 
-  let of_list elts = List.fold_left (fun set e -> add e set) empty elts
-  let map f s = fold (fun e acc -> add (f e) acc) s empty
+  let of_list ~(merge : T.trace_merge) elts =
+    List.fold_left (fun set e -> add ~merge e set) empty elts
 
-  let filter_map f s =
+  let map ~(merge : T.trace_merge) f s =
+    fold (fun e acc -> add ~merge (f e) acc) s empty
+
+  let filter_map ~(merge : T.trace_merge) f s =
     fold
       (fun e acc ->
         match f e with
-        | Some e' -> add e' acc
+        | Some e' -> add ~merge e' acc
         | None -> acc)
       s empty
 
@@ -1060,8 +1078,11 @@ end = struct
     |> List_.map (Effect.show ~truncate_guards)
     |> String.concat "; "
 
-  let add_list elts t = List.fold_left (fun set e -> add e set) t elts
-  let union_list ts = List.fold_left union empty ts
+  let add_list ~(merge : T.trace_merge) elts t =
+    List.fold_left (fun set e -> add ~merge e set) t elts
+
+  let union_list ~(merge : T.trace_merge) ts =
+    List.fold_left (union ~merge) empty ts
 end
 
 (** A (polymorphic) taint signature: simply a set of results for a function.

@@ -19,17 +19,51 @@ val build_info_map :
    [taint_focus_on] / [taint_match_on] rule options. *)
 val match_on_of_xconf : Match_env.xconfig -> [ `Sink | `Source ]
 
+type replay = {
+  replay_lang : Lang.t;
+  cfg_of : Function_id.t -> IL.fun_cfg option;
+  index_of : IL.fun_cfg -> Path_feasibility.index;
+  retained_db :
+    Function_id.t list -> Shape_and_sig.signature_database option;
+  retain_tables : Taint_shared_tables.t;
+}
+
+type frame = {
+  replay : replay;
+  frame_cfg : IL.fun_cfg;
+  rerun :
+    (Shape_and_sig.signature_database option -> Shape_and_sig.Effects.t) option;
+}
+
+val retaining : Taint_rule_inst.t -> Taint_rule_inst.t
+
+val mk_replay :
+  lang:Lang.t ->
+  cfg_of:(Function_id.t -> IL.fun_cfg option) ->
+  shared_tables:Taint_shared_tables.t ->
+  retain_signature:
+    (Taint_shared_tables.t ->
+    Function_id.t ->
+    Shape_and_sig.signature_database ->
+    Shape_and_sig.signature_database) ->
+  Shape_and_sig.signature_database option ->
+  replay
+
 val pms_of_effect :
   lang:Lang.t ->
   match_on:[ `Sink | `Source ] ->
+  frame:frame option ->
   Shape_and_sig.Effect.t ->
   Core_match.t list
 
 val pms_of_effects :
   lang:Lang.t ->
   match_on:[ `Sink | `Source ] ->
+  frame:frame option ->
   Shape_and_sig.Effects.t ->
   Core_match.t list
+
+val force_traces : Core_match.t list -> Core_match.t list
 
 val get_arity :
   AST_generic.parameter list ->
@@ -60,6 +94,7 @@ val extract_and_check :
   taint_inst:Taint_rule_inst.t ->
   shared_tables:Taint_shared_tables.t ->
   detect_findings:bool ->
+  replay:replay option ->
   fun_info ->
   Shape_and_sig.signature_database * Core_match.t list
 (** Shared signature-extraction + finding-detection logic. *)

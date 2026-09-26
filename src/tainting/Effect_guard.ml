@@ -373,52 +373,6 @@ let compare_clause (c1 : clause) (c2 : clause) : int =
 let compare_cond (c1 : cond) (c2 : cond) : int =
   List.compare compare_clause c1 c2
 
-(* [Some (e, lit)] when [atom] is [e == lit] with exactly one constant
- * operand; used by the clause-consistency check. *)
-let eq_parts (atom : IL.exp) : (IL.exp * G.literal) option =
-  match atom.e with
-  | IL.Operator ((G.Eq, _), [ IL.Unnamed a; IL.Unnamed b ]) -> (
-      match (a.e, b.e) with
-      | IL.Literal _, IL.Literal _ -> None
-      | IL.Literal la, _ -> Some (b, la)
-      | _, IL.Literal lb -> Some (a, lb)
-      | _ -> None)
-  | _ -> None
-
-(* Distinct constants of the same type cannot both equal the same value;
- * across types we make no judgement (e.g. [1 == 1.0] holds in Python).
- * String contents are compared as lexed, which under-determines the
- * runtime value when escapes are involved ('\n' vs a literal newline can
- * be the same string), so a backslash-bearing string yields no
- * judgement; escape-free contents denote their runtime value in every
- * supported language. *)
-let distinct_same_type_constants (l1 : G.literal) (l2 : G.literal) : bool =
-  match (l1, l2) with
-  | G.Int (i1, _), G.Int (i2, _) -> not (Option.equal Int64.equal i1 i2)
-  | G.String (_, (s1, _), _), G.String (_, (s2, _), _) ->
-      (not (String.contains s1 '\\'))
-      && (not (String.contains s2 '\\'))
-      && not (String.equal s1 s2)
-  | G.Bool (b1, _), G.Bool (b2, _) -> not (Bool.equal b1 b2)
-  | _ -> false
-
-let equalities_inconsistent (lits : (IL.exp * bool) list) : bool =
-  let eqs =
-    lits
-    |> List.filter_map (fun (atom, negated) ->
-           if negated then None else eq_parts atom)
-  in
-  let rec pairwise = function
-    | (e1, v1) :: rest ->
-        List.exists
-          (fun (e2, v2) ->
-            IL_helpers.equal_exp e1 e2 && distinct_same_type_constants v1 v2)
-          rest
-        || pairwise rest
-    | [] -> false
-  in
-  pairwise eqs
-
 (* A clause is unsatisfiable when it contains the same atom positive and
  * negated, or two positive equalities binding the same (canonical)
  * expression to distinct same-type constants — e.g. [x == 1 && x == 2],
@@ -438,20 +392,8 @@ let clause_inconsistent (c : clause) : bool =
     adjacent c
   in
   complementary
-  || equalities_inconsistent
+  || IL_helpers.equalities_inconsistent
        (c |> List.map (fun l -> (l.atom.node, l.negated)))
-
-let literals_consistent (lits : (IL.exp * bool) list) : bool =
-  let rec complementary = function
-    | (a1, n1) :: rest ->
-        List.exists
-          (fun (a2, n2) ->
-            (not (Bool.equal n1 n2)) && IL_helpers.equal_exp a1 a2)
-          rest
-        || complementary rest
-    | [] -> false
-  in
-  not (complementary lits || equalities_inconsistent lits)
 
 let raw_clauses (c : cond) : (IL.exp * bool) list list =
   c |> List.map (List.map (fun l -> (l.atom.node, l.negated)))

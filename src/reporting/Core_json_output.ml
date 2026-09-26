@@ -110,13 +110,16 @@ let rec leaf_of_call_trace (trace : Out.match_call_trace) :
 let leaf_source (trace : Out.match_call_trace) : Out.match_call_trace =
   Out.CliLoc (leaf_of_call_trace trace)
 
+let content_of_loc (loc : Out.location) : string =
+  OutUtils.content_of_file_at_range (loc.start, loc.end_) loc.path
+
 (* This is a port of the original pysemgrep cli_unique_key. This used to be in the CLI,
    but has since been moved to core.
 *)
 let core_unique_key ~(taint_interfile : bool)
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     (rule_options : Core_match.rule_id_options Rule_ID.Map.t)
-    (c : Out.core_match) : key =
+    ~(origin : Tok.t list) (c : Out.core_match) : key =
   let name = Rule_ID.to_string c.check_id in
   let path =
     match c.extra.historical_info with
@@ -143,11 +146,16 @@ let core_unique_key ~(taint_interfile : bool)
     c.extra.message,
     (if not source_in_key then None
      else
-       match c.extra.dataflow_trace with
-       | None -> None
-       | Some { taint_source = Some src; _ } ->
-           Some (Semgrep_output_v1_j.string_of_match_call_trace (leaf_source src))
-       | Some _ -> None)
+       let source =
+         match c.extra.dataflow_trace with
+         | Some { taint_source = Some src; _ } -> Some (leaf_source src)
+         | Some { taint_source = None; _ }
+         | None ->
+             OutUtils.tokens_to_single_loc origin
+             |> Option.map (fun (loc : Out.location) ->
+                    Out.CliLoc (loc, content_of_loc loc))
+       in
+       Option.map Semgrep_output_v1_j.string_of_match_call_trace source)
     (* NOTE: previously, we considered self.match.extra.validation_state
        here, but since in some cases (e.g., with `anywhere`) we generate
        many matches in certain cases, we want to consider secrets
@@ -191,13 +199,16 @@ let dedup_and_sort
     ?(taint_interfile = false)
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     (rule_options: Core_match.rule_id_options Rule_ID.Map.t)
-    (xs : Out.core_match list) : Out.core_match list =
+    (xs : (Out.core_match * Tok.t list) list) : Out.core_match list =
   (* Whether we prefer to report match x over match y.
      This is currently only used for Secrets findings, which prefer a
      finding with a confirmed validation status.
   *)
   let should_report_instead ((x : Out.core_match), (y : Out.core_match)) =
     match (x, y) with
+    | { Out.extra = { dataflow_trace = Some _; _ }; _ },
+      { Out.extra = { dataflow_trace = None; _ }; _ } ->
+        true
     | { Out.extra = { validation_state = None; _ }; _ }, _ -> false
     | _, { Out.extra = { validation_state = None; _ }; _ } -> true
     | { Out.extra = { validation_state = Some `Confirmed_valid; _ }; _ }, _ -> (
@@ -208,15 +219,16 @@ let dedup_and_sort
     | _ -> false
   in
   let seen = Hashtbl.create 101 in
-  xs |> OutUtils.sort_core_matches
+  xs |> OutUtils.sort_core_matches_with
   (* This deduplication logic used to live in Pysemgrep, which would assume that
      the matches had already been sorted via sort_core_matches.
      If you run through this deduplication logic without that assumption, you'll
      keep undesirable matches, such as those with less metavariables.
   *)
-  |> List.iter (fun x ->
+  |> List.iter (fun ((x : Out.core_match), (origin : Tok.t list)) ->
          let key =
-           core_unique_key ~taint_interfile ~interfile_dedup_by rule_options x
+           core_unique_key ~taint_interfile ~interfile_dedup_by rule_options
+             ~origin x
          in
          match Hashtbl.find_opt seen key with
          | None -> Hashtbl.add seen key x
@@ -296,9 +308,6 @@ let metavars startp_of_match_range (s, mval) =
  * directly from semgrep-core (to avoid some boilerplate code in
  * pysemgrep).
  *)
-let content_of_loc (loc : Out.location) : string =
-  OutUtils.content_of_file_at_range (loc.start, loc.end_) loc.path
-
 let token_to_intermediate_var token : Out.match_intermediate_var option =
   match token with
   (* HACK: This is just for clojure... to avoid polluting text / json / sarif
@@ -337,7 +346,7 @@ let rec taint_call_trace (trace : Taint_trace.call_trace) :
         (Out.CliCall ((loc, content_of_loc loc), intermediate_vars, call_trace))
 
 let taint_trace_to_dataflow_trace (traces : Taint_trace.item list) :
-    Out.match_dataflow_trace =
+    Out.match_dataflow_trace option =
   (* Here, we ignore all but the first taint trace, for source or sink.
      This is because we added support for multiple sources/sinks in a single
      trace, but only internally to semgrep-core. Externally, our CLI dataflow
@@ -349,18 +358,21 @@ let taint_trace_to_dataflow_trace (traces : Taint_trace.item list) :
      findings. It's possible that this could change the dataflow trace of
      an existing finding though.
   *)
-  let source_call_trace, tokens, sink_call_trace =
-    match traces with
-    | [] -> raise Common.Impossible
-    | { Taint_trace.source_trace; tokens; sink_trace } :: _ ->
-        (source_trace, tokens, sink_trace)
-  in
-  Out.
-    {
-      taint_source = taint_call_trace source_call_trace;
-      intermediate_vars = Some (tokens_to_intermediate_vars tokens);
-      taint_sink = taint_call_trace sink_call_trace;
-    }
+  match traces with
+  | [] -> None
+  | { Taint_trace.source_trace; tokens; sink_trace } :: _ ->
+      Some
+        Out.
+          {
+            taint_source = taint_call_trace source_trace;
+            intermediate_vars = Some (tokens_to_intermediate_vars tokens);
+            taint_sink = taint_call_trace sink_trace;
+          }
+
+let origin_of_match (pm : Core_match.t) : Tok.t list =
+  match pm.taint_trace with
+  | None -> []
+  | Some (lazy trace) -> trace.Taint_trace.origin
 
 let unsafe_match_to_match ?(inline = false)
     ({ pm = x; is_ignored; autofix_edit } : Core_result.processed_match) :
@@ -368,10 +380,8 @@ let unsafe_match_to_match ?(inline = false)
   let min_loc, max_loc = x.range_loc in
   let startp, endp = OutUtils.position_range min_loc max_loc in
   let dataflow_trace =
-    Option.map
-      (function
-        | (lazy trace) -> taint_trace_to_dataflow_trace trace)
-      x.taint_trace
+    Option.bind x.taint_trace (fun (lazy (trace : Taint_trace.t)) ->
+        taint_trace_to_dataflow_trace trace.items)
   in
   let metavars = x.env |> List_.map (metavars startp) in
   let bindings =  Metavar_replacement.(of_bindings x.env) in
@@ -621,7 +631,11 @@ let core_output_of_matches_and_errors ?(inline = false)
     ?(interfile_dedup_by = Core_match.Sink) (res : Core_result.t) :
     Out.core_output =
   let matches, new_errs =
-    Result_.partition (match_to_match ~inline) res.processed_matches
+    res.processed_matches
+    |> Result_.partition (fun (m : Core_result.processed_match) ->
+           match_to_match ~inline m
+           |> Result.map (fun (core_match : Out.core_match) ->
+                  (core_match, origin_of_match m.pm)))
   in
   let errs = new_errs @ res.errors in
   {
@@ -668,4 +682,4 @@ let core_output_of_matches_and_errors ?(inline = false)
 
 let test_core_unique_key c =
   core_unique_key ~taint_interfile:false ~interfile_dedup_by:Core_match.Sink
-    Rule_ID.Map.empty c
+    Rule_ID.Map.empty ~origin:[] c

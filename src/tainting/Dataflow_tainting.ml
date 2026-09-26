@@ -148,8 +148,8 @@ let propagate_through_indexes env =
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
-let add_taints_from_shape shape =
-  Taints.union (Shape.gather_all_taints_in_shape shape)
+let add_taints_from_shape ~(merge : T.trace_merge) shape =
+  Taints.union ~merge (Shape.gather_all_taints_in_shape ~merge shape)
 
 let map_check_expr env check_expr xs =
   let rev_taints_and_shapes, lval_env =
@@ -169,7 +169,7 @@ let union_map_taints_and_vars env check xs =
          (fun (taints_acc, lval_env) x ->
            let taints, shape, lval_env = check { env with lval_env } x in
            let taints_acc =
-             taints_acc |> Taints.union taints |> add_taints_from_shape shape
+             taints_acc |> Taints.union ~merge:env.taint_inst.merge taints |> add_taints_from_shape ~merge:env.taint_inst.merge shape
            in
            (taints_acc, lval_env))
          (Taints.empty, env.lval_env)
@@ -260,15 +260,15 @@ let taints_of_matches env ~incoming sources =
   let data_taints =
     data_sources
     |> List_.map (fun x -> (x.TM.spec_pm, x.spec))
-    |> T.taints_of_pms ~incoming
+    |> T.taints_of_pms ~merge:env.taint_inst.merge ~incoming
   in
   let control_incoming = Lval_env.get_control_taints env.lval_env in
   let control_taints =
     control_sources
     |> List_.map (fun x -> (x.TM.spec_pm, x.spec))
-    |> T.taints_of_pms ~incoming:control_incoming
+    |> T.taints_of_pms ~merge:env.taint_inst.merge ~incoming:control_incoming
   in
-  let lval_env = Lval_env.add_control_taints env.lval_env control_taints in
+  let lval_env = Lval_env.add_control_taints ~merge:env.taint_inst.merge env.lval_env control_taints in
   (data_taints, lval_env)
 
 let record_effects env new_effects =
@@ -318,10 +318,10 @@ let record_effects env new_effects =
     let new_effects =
       new_effects
       |> List_.map
-           (Shape.truncate_effect
+           (Shape.truncate_effect ~merge:env.taint_inst.merge
               ~max_depth:(Shape.max_poly_offset env.taint_inst.lang))
     in
-    env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
+    env.effects_acc := Effects.add_list ~merge:env.taint_inst.merge new_effects !(env.effects_acc)
 
 (* Field write on the enclosing receiver: record [BThis] so it composes
    into this function's signature. *)
@@ -338,7 +338,7 @@ let record_this_field_write env taints shape offset guards =
 let add_this_field_to_lval_env env lval_env offset taints shape =
   match offset with
   | T.Ofld field :: rest ->
-      Lval_env.add_shape env.taint_inst.lang field rest taints shape lval_env
+      Lval_env.add_shape ~merge:env.taint_inst.merge env.taint_inst.lang field rest taints shape lval_env
   | _ -> lval_env
 
 (* Own formal parameters are bound in the sig being computed; anything
@@ -704,7 +704,7 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
 let effects_of_tainted_sinks env taints sinks : Effect.t list =
   let taints =
     let control_taints = Lval_env.get_control_taints env.lval_env in
-    taints |> Taints.union control_taints
+    taints |> Taints.union ~merge:env.taint_inst.merge control_taints
   in
   if Taints.is_empty taints then []
   else
@@ -777,8 +777,8 @@ let effects_of_tainted_return env ~(several_results : bool) taints shape
                let t = T.lift_taint (T.reverse_trace b.taint) in
                match groups with
                | (guard, group) :: rest when Effect_guard.equal guard b.guard ->
-                   (guard, Taints.add t group) :: rest
-               | _ -> (b.guard, Taints.add t Taints.empty) :: groups)
+                   (guard, Taints.add ~merge:env.taint_inst.merge t group) :: rest
+               | _ -> (b.guard, Taints.add ~merge:env.taint_inst.merge t Taints.empty) :: groups)
              []
         |> List_.map (fun (guard, group) ->
                Effect.ToReturn
@@ -838,7 +838,8 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
       []
 
 (* The result of the calls [effects_of_call_func_arg] records. *)
-let result_of_call_func_arg ~(lang : Lang.t) fun_exp fun_shape :
+let result_of_call_func_arg ~(lang : Lang.t) ~(merge : T.trace_merge) fun_exp
+    fun_shape :
     Taints.t * S.shape =
   match fun_shape with
   | S.Arg (fun_arg, arg_offsets) ->
@@ -849,12 +850,12 @@ let result_of_call_func_arg ~(lang : Lang.t) fun_exp fun_shape :
              let call =
                { T.callee = fun_arg; callee_offset = arg_offset; loc }
              in
-             ( Taints.union
+             ( Taints.union ~merge
                  (Taints.singleton
                     (T.taint_of_orig
                        (T.Var { base = T.BCall call; offset = [] })))
                  taints,
-               Shape.unify_shape ~lang (S.Arg (T.Result call, [ [] ])) shape ))
+               Shape.unify_shape ~merge ~lang (S.Arg (T.Result call, [ [] ])) shape ))
            (Taints.empty, S.Bot)
   | __else__ -> (Taints.empty, S.Bot)
 
@@ -1038,7 +1039,7 @@ let closure_set_of_definitions (env : env)
     (found : (Function_id.t * Signature.t) list) : S.shape =
   List.fold_left
     (fun (shape : S.shape) (((_, sig_) as definition) : Function_id.t * Signature.t) ->
-      Shape.unify_shape ~lang:env.taint_inst.lang shape
+      Shape.unify_shape ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang shape
         (Shape_and_sig.closure_of_definition definition (closure_env env sig_)))
     S.Bot found
 
@@ -1155,7 +1156,7 @@ let check_orig_if_sink env ?filter_sinks orig taints shape =
    * `sink` could potentially access "tainted". So we must take into account
    * all taints reachable through its shape.
    *)
-  let taints = taints |> add_taints_from_shape shape in
+  let taints = taints |> add_taints_from_shape ~merge:env.taint_inst.merge shape in
   let sinks = orig_is_best_sink env orig in
   let sinks =
     match filter_sinks with
@@ -1189,7 +1190,7 @@ let reads_element_property env (lval : IL.lval) : bool =
       Lang_config.is_element_property env.taint_inst.lang (fst field.ident)
   | _ -> false
 
-let fix_poly_taint_with_field lang lval xtaint =
+let fix_poly_taint_with_field lang ~(merge : T.trace_merge) lval xtaint =
   match xtaint with
   | `Sanitized
   | `Clean
@@ -1199,7 +1200,7 @@ let fix_poly_taint_with_field lang lval xtaint =
       match lval.rev_offset with
       | o :: _ ->
           let o = T.offset_of_IL lang o in
-          let taints = Shape.fix_poly_taint_with_offset ~lang [ o ] taints in
+          let taints = Shape.fix_poly_taint_with_offset ~merge ~lang [ o ] taints in
           `Tainted taints
       | [] -> xtaint)
 
@@ -1256,7 +1257,7 @@ let handle_taint_propagators env thing taints shape =
    * TODO: To support that, we may need to introduce taint variables that we can
    *       later substitute, like we do for labels.
    *)
-  let taints = taints |> add_taints_from_shape shape in
+  let taints = taints |> add_taints_from_shape ~merge:env.taint_inst.merge shape in
   let lval_env = env.lval_env in
   let propagators =
     let any =
@@ -1317,12 +1318,12 @@ let handle_taint_propagators env thing taints shape =
               | None -> taints
               | Some label ->
                   (* Relabeling changes taint identity, so re-key the set. *)
-                  Taints.map_taint
+                  Taints.map_taint ~merge:env.taint_inst.merge
                     (propagate_taint_to_label
                        prop.spec.prop.propagator_replace_labels label)
                     taints
             in
-            Lval_env.propagate_to env.taint_inst.lang prop.spec.var new_taints
+            Lval_env.propagate_to ~merge:env.taint_inst.merge env.taint_inst.lang prop.spec.var new_taints
               lval_env
         | Some false
         | None ->
@@ -1352,7 +1353,7 @@ let handle_taint_propagators env thing taints shape =
             | `Lval lval ->
                 if Option.is_some opt_propagated then
                   lval_env
-                  |> Lval_env.add_lval env.taint_inst.lang lval
+                  |> Lval_env.add_lval ~merge:env.taint_inst.merge env.taint_inst.lang lval
                        taints_from_prop
                 else
                   (* If we did not find any taint to be propagated, it could
@@ -1364,7 +1365,7 @@ let handle_taint_propagators env thing taints shape =
                 lval_env
           else lval_env
         in
-        (Taints.union taints_in_acc taints_from_prop, lval_env))
+        (Taints.union ~merge:env.taint_inst.merge taints_in_acc taints_from_prop, lval_env))
       (Taints.empty, lval_env) propagate_tos
   in
   (taints_propagated, lval_env)
@@ -1395,13 +1396,13 @@ let find_lval_taint_sources env incoming_taints lval =
     by_side_effect_no_pms |> taints_of_pms { env with lval_env }
   in
   let taints_to_add_to_env =
-    by_side_effect_only_taints |> Taints.union by_side_effect_yes_taints
+    by_side_effect_only_taints |> Taints.union ~merge:env.taint_inst.merge by_side_effect_yes_taints
   in
   let lval_env =
-    lval_env |> Lval_env.add_lval env.taint_inst.lang lval taints_to_add_to_env
+    lval_env |> Lval_env.add_lval ~merge:env.taint_inst.merge env.taint_inst.lang lval taints_to_add_to_env
   in
   let taints_to_return =
-    Taints.union by_side_effect_no_taints by_side_effect_yes_taints
+    Taints.union ~merge:env.taint_inst.merge by_side_effect_no_taints by_side_effect_yes_taints
   in
   (taints_to_return, lval_env)
 
@@ -1411,7 +1412,7 @@ let rec check_tainted_lval env (lval : IL.lval) :
     check_tainted_lval_aux env lval
   in
   let taints_from_env = Xtaint.to_taints lval_in_env in
-  let taints = Taints.union new_taints taints_from_env in
+  let taints = Taints.union ~merge:env.taint_inst.merge new_taints taints_from_env in
   let taints =
     check_type_and_drop_taints_if_bool_or_number env taints type_of_lval lval
   in
@@ -1483,7 +1484,7 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
                 ( Taints.empty,
                     Bot,
                     env.lval_env
-                    |> Lval_env.add_lval env.taint_inst.lang (mk_prop_lval ())
+                    |> Lval_env.add_lval ~merge:env.taint_inst.merge env.taint_inst.lang (mk_prop_lval ())
                          all_args_taints )
             else Some (Taints.empty, Bot, env.lval_env)
         | __else__ -> None
@@ -1562,7 +1563,7 @@ and check_tainted_lval_aux env (lval : IL.lval) :
         | (`Clean | `None | `Tainted _) as sub_xtaint when reads_element_property env lval
           -> (
             match
-              Shape.find_in_shape_poly
+              Shape.find_in_shape_poly ~merge:env.taint_inst.merge
                 ~max:(Shape.max_poly_offset env.taint_inst.lang)
                 ~lang:env.taint_inst.lang
                 ~taints:(Xtaint.to_taints sub_xtaint)
@@ -1575,7 +1576,7 @@ and check_tainted_lval_aux env (lval : IL.lval) :
             let xtaint', shape =
               (* THINK: Should we just use 'Sig.find_in_shape' directly here ?
                        We have the 'sub_shape' available. *)
-              match Lval_env.find_lval env.taint_inst.lang lval_env lval with
+              match Lval_env.find_lval ~merge:env.taint_inst.merge env.taint_inst.lang lval_env lval with
               | None -> (`None, S.Bot)
               | Some (Cell (xtaint', shape)) -> (xtaint', shape)
             in
@@ -1594,13 +1595,14 @@ and check_tainted_lval_aux env (lval : IL.lval) :
                    * where `obj.y` is tainted but `obj.x` is not tainted, we will not
                    * produce a finding.
                    *)
-                  fix_poly_taint_with_field env.taint_inst.lang lval sub_xtaint
+                  fix_poly_taint_with_field env.taint_inst.lang
+                    ~merge:env.taint_inst.merge lval sub_xtaint
             in
             (xtaint', shape)
       in
       let taints_from_env = Xtaint.to_taints lval_in_env in
       (* Find taint sources matching lval. *)
-      let current_taints = Taints.union sub_new_taints taints_from_env in
+      let current_taints = Taints.union ~merge:env.taint_inst.merge sub_new_taints taints_from_env in
       let taints_from_sources, lval_env =
         find_lval_taint_sources { env with lval_env } current_taints lval
       in
@@ -1616,15 +1618,15 @@ and check_tainted_lval_aux env (lval : IL.lval) :
           taints_from_sources
         else
           sub_new_taints
-          |> Taints.union taints_from_sources
-          |> Taints.union taints_from_offset
+          |> Taints.union ~merge:env.taint_inst.merge taints_from_sources
+          |> Taints.union ~merge:env.taint_inst.merge taints_from_offset
       in
       let taints_propagated, lval_env =
         handle_taint_propagators { env with lval_env } (`Lval lval)
-          (taints_incoming |> Taints.union taints_from_env)
+          (taints_incoming |> Taints.union ~merge:env.taint_inst.merge taints_from_env)
           lval_shape
       in
-      let new_taints = taints_incoming |> Taints.union taints_propagated in
+      let new_taints = taints_incoming |> Taints.union ~merge:env.taint_inst.merge taints_propagated in
       let sinks =
         lval_is_sink env lval
         (* For sub-lvals we require sinks to be exact matches. Why? Let's say
@@ -1635,7 +1637,7 @@ and check_tainted_lval_aux env (lval : IL.lval) :
         |> List.filter TM.is_exact
         |> List_.map TM.sink_of_match
       in
-      let all_taints = Taints.union taints_from_env new_taints in
+      let all_taints = Taints.union ~merge:env.taint_inst.merge taints_from_env new_taints in
       let effects =
         effects_of_tainted_sinks { env with lval_env } all_taints sinks
       in
@@ -1670,7 +1672,7 @@ and check_tainted_lval_offset env offset =
       let taints, shape, lval_env = check_tainted_expr env e in
       let taints =
         if propagate_through_indexes env then
-          taints |> add_taints_from_shape shape
+          taints |> add_taints_from_shape ~merge:env.taint_inst.merge shape
         else (* Taints from the index should be ignored. *)
           Taints.empty
       in
@@ -1692,7 +1694,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
         (Taints.empty, S.Bot, env.lval_env)
     | FixmeExp (_, _, Some e) ->
         let taints, shape, lval_env = check env e in
-        let taints = taints |> add_taints_from_shape shape in
+        let taints = taints |> add_taints_from_shape ~merge:env.taint_inst.merge shape in
         (taints, S.Bot, lval_env)
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
         let taints_and_shapes, lval_env = map_check_expr env check es in
@@ -1707,7 +1709,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
         in
         let all_args_taints =
           all_args_taints
-          |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
+          |> Taints.union ~merge:env.taint_inst.merge (Shape.gather_all_taints_in_args_taints ~merge:env.taint_inst.merge args_taints)
         in
         let all_args_taints =
           if env.taint_inst.options.taint_only_propagate_through_assignments
@@ -1788,14 +1790,14 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                      let e_taints, e_shape, lval_env =
                        check { env with lval_env } e
                      in
-                     let taints_acc = taints_acc |> Taints.union e_taints in
+                     let taints_acc = taints_acc |> Taints.union ~merge:env.taint_inst.merge e_taints in
                      let taints_acc =
                        match e_shape with
                        | S.Obj _ -> taints_acc
                        | S.Bot
                        | S.Arg _
                        | S.Fun _ ->
-                           taints_acc |> add_taints_from_shape e_shape
+                           taints_acc |> add_taints_from_shape ~merge:env.taint_inst.merge e_shape
                      in
                      ((lval_env, taints_acc), `Spread e_shape)
                  | Entry (ke, ve) ->
@@ -1803,8 +1805,8 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                        check { env with lval_env } ke
                      in
                      let taints_acc =
-                       taints_acc |> Taints.union ke_taints
-                       |> add_taints_from_shape ke_shape
+                       taints_acc |> Taints.union ~merge:env.taint_inst.merge ke_taints
+                       |> add_taints_from_shape ~merge:env.taint_inst.merge ke_shape
                      in
                      let ve_taints, ve_shape, lval_env =
                        check { env with lval_env } ve
@@ -1813,7 +1815,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                (env.lval_env, Taints.empty)
         in
         let record_shape =
-          Shape.record_or_dict_like_obj ~lang:env.taint_inst.lang
+          Shape.record_or_dict_like_obj ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang
             taints_and_shapes
         in
         (taints, record_shape, lval_env)
@@ -1866,12 +1868,12 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
               orig_is_best_source env exp.eorig
               |> taints_of_matches { env with lval_env } ~incoming:taints_exp
             in
-            let taints = taints_exp |> Taints.union taints_sources in
+            let taints = taints_exp |> Taints.union ~merge:env.taint_inst.merge taints_sources in
             let taints_propagated, lval_env =
               handle_taint_propagators { env with lval_env } (`Exp exp) taints
                 shape
             in
-            let taints = Taints.union taints taints_propagated in
+            let taints = Taints.union ~merge:env.taint_inst.merge taints taints_propagated in
             (taints, shape, lval_env)
       in
       check_orig_if_sink env exp.eorig taints shape;
@@ -1904,7 +1906,8 @@ and check_function_call_arguments env args =
            | Named (id, _) -> (new_acc, Named (id, (taints, shape))))
          ([], env.lval_env)
   in
-  let all_args_taints = List.fold_left Taints.union Taints.empty rev_taints in
+  let all_args_taints = List.fold_left (Taints.union ~merge:env.taint_inst.merge) Taints.empty
+      rev_taints in
   (args_taints, all_args_taints, lval_env)
 
 let check_tainted_var env (var : IL.name) : Taints.t * S.shape * Lval_env.t =
@@ -1946,15 +1949,16 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                     (IL.str_of_name callee_name));
               Some
                 (List.concat_map
-                   (fun ((_, callee_sig) : Function_id.t * Signature.t) ->
-                     Sig_inst.instantiate_function_signature
+                   (fun ((callee_fid, callee_sig) : Function_id.t * Signature.t) ->
+                     Sig_inst.instantiate_function_signature ~merge:env.taint_inst.merge
                        ~lang:env.taint_inst.lang
                        ~atoms:env.shared_tables.guard_atoms
                        ~propagate_through_functions:
                          (propagate_through_functions env)
                        ~max_offset:(poly_offset_bound env callee)
                        ~outer_params:env.func.il_params
-                       env.lval_env callee_sig ~callee ~args:None args_taints
+                       env.lval_env callee_sig ~callee
+                       ~callee_fid:(Some callee_fid) ~args:None args_taints
                        ~lookup_sig:(fun exp _depth ->
                          let arity = List.length args_taints in
                          lookup_signature env exp arity)
@@ -2030,9 +2034,9 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                   (Effect_guard.compose_and rebound_guards inner_guards)
                   taints
               in
-              ( Taints.union taints taints_acc,
-                Shape.unify_shape ~lang:env.taint_inst.lang shape shape_acc,
-                Lval_env.add_control_taints lval_env control_taints )
+              ( Taints.union ~merge:env.taint_inst.merge taints taints_acc,
+                Shape.unify_shape ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang shape shape_acc,
+                Lval_env.add_control_taints ~merge:env.taint_inst.merge lval_env control_taints )
           | ToLval { taints; shape; var; offset; guards } ->
               if not (is_own_param env var) then
                 record_effects env
@@ -2052,7 +2056,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               ( taints_acc,
                 shape_acc,
                 lval_env
-                |> Lval_env.add_written_through env.taint_inst.lang var offset
+                |> Lval_env.add_written_through ~merge:env.taint_inst.merge env.taint_inst.lang var offset
                      taints shape )
           | ToLvalThis { taints; shape; offset; guards } ->
               let guards = Effect_guard.compose_and rebound_guards guards in
@@ -2105,7 +2109,7 @@ let first_result env ~(results : IL.call_results) ~(several_results : bool)
   match results with
   | First_result when several_results -> (
       match
-        Shape.find_in_shape_poly
+        Shape.find_in_shape_poly ~merge:env.taint_inst.merge
           ~max:(Shape.max_poly_offset env.taint_inst.lang)
           ~lang:env.taint_inst.lang ~taints [ T.Oint 0 ] shape
       with
@@ -2154,7 +2158,7 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
       let from_shape =
         let* lval_to_check = lval_to_check in
         match
-          Lval_env.find_lval env.taint_inst.lang env.lval_env lval_to_check
+          Lval_env.find_lval ~merge:env.taint_inst.merge env.taint_inst.lang env.lval_env lval_to_check
         with
         | Some (S.Cell (_, S.Fun (c, cs))) ->
             Log.debug (fun m ->
@@ -2163,7 +2167,7 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
             Some
               (List_.map
                  (fun (closure : S.closure) ->
-                   (closure.sig_, Some closure.env))
+                   (closure.sig_, Some closure.env, Some closure.def))
                  (c :: cs))
         | _ -> None
       in
@@ -2174,8 +2178,8 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
           | _ :: _ as found ->
               Some
                 (List_.map
-                   (fun ((_, fun_sig) : Function_id.t * Signature.t) ->
-                     (fun_sig, None))
+                   (fun ((fid, fun_sig) : Function_id.t * Signature.t) ->
+                     (fun_sig, None, Some fid))
                    found)
           | [] -> (
               (* Sym-prop fallback: if the variable's [id_svalue] resolves
@@ -2214,8 +2218,8 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
                       | found ->
                           Some
                             (List_.map
-                               (fun ((_, fun_sig) : Function_id.t * Signature.t) ->
-                                 (fun_sig, None))
+                               (fun ((fid, fun_sig) : Function_id.t * Signature.t) ->
+                                 (fun_sig, None, Some fid))
                                found))
                   | _ -> None)
               | _ -> None))
@@ -2226,18 +2230,18 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
       (* Callback lookup in both modes; effects-explosion hazard contained by [Sig_inst.preserve_effect]. *)
       let call_effects =
         members
-        |> List.concat_map (fun (fun_sig, fun_env) ->
+        |> List.concat_map (fun (fun_sig, fun_env, callee_fid) ->
                Log.debug (fun m ->
                    m "SIG_FOUND: %s -> %s"
                      (Display_IL.string_of_exp fun_exp)
                      (Signature.show fun_sig));
-               Sig_inst.instantiate_function_signature
+               Sig_inst.instantiate_function_signature ~merge:env.taint_inst.merge
                  ~lang:env.taint_inst.lang
                  ~atoms:env.shared_tables.guard_atoms
                  ~propagate_through_functions:(propagate_through_functions env)
                  ~max_offset:(poly_offset_bound env fun_exp)
                  ~outer_params:env.func.il_params ?env:fun_env env.lval_env
-                 fun_sig ~callee:fun_exp ~args:(Some args) args_taints
+                 fun_sig ~callee:fun_exp ~callee_fid ~args:(Some args) args_taints
                  ~lookup_sig:(lookup_signature env) ())
       in
       Log.debug (fun m ->
@@ -2334,13 +2338,13 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
                     * join of the returned values, so a Clean field of one
                     * does not hide the whole taint of another. *)
                    let (S.Cell (xtaint, shape)) =
-                     Shape.unify_cell ~lang:env.taint_inst.lang
+                     Shape.unify_cell ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang
                        (S.Cell (Xtaint.of_taints taints, shape))
                        (S.Cell (Xtaint.of_taints taints_acc, shape_acc))
                    in
                    ( Xtaint.to_taints xtaint,
                      shape,
-                     Lval_env.add_control_taints lval_env control_taints )
+                     Lval_env.add_control_taints ~merge:env.taint_inst.merge lval_env control_taints )
                | ToLval { taints; shape; var; offset; guards } ->
                    if not (is_own_param env var) then
                      record_effects env
@@ -2356,7 +2360,7 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
                    ( taints_acc,
                      shape_acc,
                      lval_env
-                     |> Lval_env.add_written_through env.taint_inst.lang var offset
+                     |> Lval_env.add_written_through ~merge:env.taint_inst.merge env.taint_inst.lang var offset
                           taints shape )
                | ToLvalThis { taints; shape; offset; guards } ->
                    record_this_field_write env taints shape offset guards;
@@ -2395,7 +2399,7 @@ let check_function_call_callee ~(arity : int) env e =
       let taints, shape, `Sub (sub_taints, sub_shape), lval_env =
         check_tainted_lval env lval
       in
-      let obj_taints = sub_taints |> add_taints_from_shape sub_shape in
+      let obj_taints = sub_taints |> add_taints_from_shape ~merge:env.taint_inst.merge sub_shape in
       Log.debug (fun m ->
           m "METHOD_CALL_CALLEE: obj_taints=%s, sub_taints=%s, returning taints=%s"
             (T.show_taints obj_taints)
@@ -2415,7 +2419,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
   in
   let all_args_taints =
     all_args_taints
-    |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
+    |> Taints.union ~merge:env.taint_inst.merge (Shape.gather_all_taints_in_args_taints ~merge:env.taint_inst.merge args_taints)
   in
   let arity = List.length args in
   let e_obj, e_taints, e_shape, lval_env =
@@ -2474,7 +2478,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
           | IL.Unnamed ({ e = Fetch lval; _ } as lambda_exp) ->
               (* Single Fetch argument - check if it's a lambda by looking at its shape *)
               (match
-                 Lval_env.find_lval env.taint_inst.lang env.lval_env lval
+                 Lval_env.find_lval ~merge:env.taint_inst.merge env.taint_inst.lang env.lval_env lval
                with
               | Some (S.Cell (_, shape)) ->
                   (match shape with
@@ -2499,7 +2503,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
         | Fetch lval ->
             (* Check the shape of this lval to see if it has a Fun signature *)
             (match
-               Lval_env.find_lval env.taint_inst.lang env.lval_env lval
+               Lval_env.find_lval ~merge:env.taint_inst.merge env.taint_inst.lang env.lval_env lval
              with
             | Some (S.Cell (var_taints, S.Fun (c, cs))) ->
                 (* The variable has a Fun shape. Instantiate it directly instead of
@@ -2513,7 +2517,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                   (match lambda_exp.e with
                   | Fetch lval ->
                       (match
-                         Lval_env.find_lval env.taint_inst.lang env.lval_env
+                         Lval_env.find_lval ~merge:env.taint_inst.merge env.taint_inst.lang env.lval_env
                            lval
                        with
                       | Some (S.Cell (_, shape)) -> shape
@@ -2526,7 +2530,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                 let call_effects =
                   c :: cs
                   |> List.concat_map (fun (closure : S.closure) ->
-                         Sig_inst.instantiate_function_signature
+                         Sig_inst.instantiate_function_signature ~merge:env.taint_inst.merge
                            ~lang:env.taint_inst.lang
                            ~atoms:env.shared_tables.guard_atoms
                            ~propagate_through_functions:
@@ -2534,6 +2538,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                            ~max_offset:(poly_offset_bound env inner_e)
                            ~outer_params:env.func.il_params ~env:closure.env
                            env.lval_env closure.sig_ ~callee:inner_e
+                           ~callee_fid:(Some closure.def)
                            ~args:(Some [ lambda_arg ]) args_taints
                            ~lookup_sig:(lookup_signature env) ())
                 in
@@ -2549,13 +2554,13 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                               record_effects env sink_effects;
                               (taints_acc, shape_acc, lval_env)
                           | ToReturn { data_taints; data_shape; _ } ->
-                              (Taints.union taints_acc data_taints,
-                               Shape.unify_shape ~lang:env.taint_inst.lang
+                              (Taints.union ~merge:env.taint_inst.merge taints_acc data_taints,
+                               Shape.unify_shape ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang
                                  data_shape shape_acc,
                                lval_env)
                           | ToLval { taints; shape; var = lval_name; offset; _ } ->
                               let lval_env =
-                                Lval_env.add_shape env.taint_inst.lang lval_name
+                                Lval_env.add_shape ~merge:env.taint_inst.merge env.taint_inst.lang lval_name
                                   offset taints shape lval_env
                               in
                               (taints_acc, shape_acc, lval_env)
@@ -2650,7 +2655,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                 match lval_opt with
                 | Some lval -> (
                     match
-                      Lval_env.find_lval env.taint_inst.lang lval_env lval
+                      Lval_env.find_lval ~merge:env.taint_inst.merge env.taint_inst.lang lval_env lval
                     with
                     | Some (S.Cell (_, s)) when
                       (match s with
@@ -2696,7 +2701,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                 (* HACK: Java: If we encounter `obj.setX(arg)` we interpret it as
                  * `obj.x = arg`, if we encounter `obj.getX()` we interpret it as
                  * `obj.x`. *)
-                let call_taints = Taints.union call_taints getter_taints in
+                let call_taints = Taints.union ~merge:env.taint_inst.merge call_taints getter_taints in
                 (call_taints, Bot, lval_env)
             | None ->
                 (* We have no taint signature and it's neither a get/set method. *)
@@ -2741,7 +2746,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                     | ( `Obj (_, (S.Arg _ as shape)),
                         Fetch { rev_offset = { o = Dot fld; _ } :: _; _ } ) -> (
                         match
-                          Shape.find_in_shape_poly
+                          Shape.find_in_shape_poly ~merge:env.taint_inst.merge
                             ~max:(Shape.max_poly_offset env.taint_inst.lang)
                             ~lang:env.taint_inst.lang ~taints:Taints.empty
                             [ T.Ofld fld ] shape
@@ -2759,7 +2764,8 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                    * we still need to propagate taints normally. *)
                   if callee_is_callback then
                     let taints, shape =
-                      result_of_call_func_arg ~lang:env.taint_inst.lang e
+                      result_of_call_func_arg ~lang:env.taint_inst.lang
+                        ~merge:env.taint_inst.merge e
                         callee_shape
                     in
                     (taints, shape, lval_env)
@@ -2768,19 +2774,20 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                     let call_taints =
                       match e_obj with
                       | `Fun -> call_taints
-                      | `Obj (obj_taints, _) -> call_taints |> Taints.union obj_taints
+                      | `Obj (obj_taints, _) -> call_taints |> Taints.union ~merge:env.taint_inst.merge obj_taints
                     in
                     let result_taints, result_shape =
-                      result_of_call_func_arg ~lang:env.taint_inst.lang e
+                      result_of_call_func_arg ~lang:env.taint_inst.lang
+                        ~merge:env.taint_inst.merge e
                         callee_shape
                     in
-                    (Taints.union result_taints call_taints, result_shape, lval_env)))))
+                    (Taints.union ~merge:env.taint_inst.merge result_taints call_taints, result_shape, lval_env)))))
   in
   (* We add the taint of the function itselt (i.e., 'e_taints') too. *)
   let all_call_taints =
     if env.taint_inst.options.taint_only_propagate_through_assignments then
       call_taints
-    else Taints.union e_taints call_taints
+    else Taints.union ~merge:env.taint_inst.merge e_taints call_taints
   in
   let all_call_taints =
     check_type_and_drop_taints_if_bool_or_number env all_call_taints
@@ -2795,7 +2802,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
   let lval_env =
     match lval_opt with
     | Some result_lval ->
-        Lval_env.add_lval env.taint_inst.lang result_lval all_call_taints
+        Lval_env.add_lval ~merge:env.taint_inst.merge env.taint_inst.lang result_lval all_call_taints
           lval_env
     | None -> lval_env
   in
@@ -2809,7 +2816,7 @@ let new_without_signature env args_taints all_args_taints lval_env =
       Taints.empty
     else
       all_args_taints
-      |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
+      |> Taints.union ~merge:env.taint_inst.merge (Shape.gather_all_taints_in_args_taints ~merge:env.taint_inst.merge args_taints)
   in
   let shape =
     match
@@ -2823,7 +2830,7 @@ let new_without_signature env args_taints all_args_taints lval_env =
            | IL.Unnamed _ -> None)
     with
     | [] -> S.Bot
-    | fields -> Shape.record_or_dict_like_obj ~lang:env.taint_inst.lang fields
+    | fields -> Shape.record_or_dict_like_obj ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang fields
   in
   (all_args_taints, shape, lval_env)
 
@@ -2921,7 +2928,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           in
           let all_args_taints =
             all_args_taints
-            |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
+            |> Taints.union ~merge:env.taint_inst.merge (Shape.gather_all_taints_in_args_taints ~merge:env.taint_inst.merge args_taints)
           in
           let arity = List.length args in
           let e_obj, e_taints, e_shape, lval_env =
@@ -2966,7 +2973,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                     (* HACK: Java: If we encounter `obj.setX(arg)` we interpret it as
                      * `obj.x = arg`, if we encounter `obj.getX()` we interpret it as
                      * `obj.x`. *)
-                    let call_taints = Taints.union call_taints getter_taints in
+                    let call_taints = Taints.union ~merge:env.taint_inst.merge call_taints getter_taints in
                     (call_taints, Bot, lval_env)
                 | None ->
                     (* We have no taint signature and it's neither a get/set method. *)
@@ -2990,7 +2997,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                         match e_obj with
                         | `Fun -> call_taints
                         | `Obj (obj_taints, _) ->
-                            call_taints |> Taints.union obj_taints
+                            call_taints |> Taints.union ~merge:env.taint_inst.merge obj_taints
                       in
                       (call_taints, Bot, lval_env)))
           in
@@ -2998,7 +3005,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           let all_call_taints =
             if env.taint_inst.options.taint_only_propagate_through_assignments
             then call_taints
-            else Taints.union e_taints call_taints
+            else Taints.union ~merge:env.taint_inst.merge e_taints call_taints
           in
           let all_call_taints =
             check_type_and_drop_taints_if_bool_or_number env all_call_taints
@@ -3034,7 +3041,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           when not env.taint_inst.options.taint_only_propagate_through_assignments
           -> (
             match
-              Shape.find_in_shape_poly
+              Shape.find_in_shape_poly ~merge:env.taint_inst.merge
                 ~max:(Shape.max_poly_offset env.taint_inst.lang)
                 ~lang:env.taint_inst.lang ~taints [ T.Oany ] shape
             with
@@ -3047,7 +3054,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
         in
         let all_args_taints =
           all_args_taints
-          |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
+          |> Taints.union ~merge:env.taint_inst.merge (Shape.gather_all_taints_in_args_taints ~merge:env.taint_inst.merge args_taints)
         in
         let all_args_taints =
           if env.taint_inst.options.taint_only_propagate_through_assignments
@@ -3079,12 +3086,12 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
         orig_is_best_source env instr.iorig
         |> taints_of_matches { env with lval_env } ~incoming:taints_instr
       in
-      let taints = Taints.union taints_instr taint_sources in
+      let taints = Taints.union ~merge:env.taint_inst.merge taints_instr taint_sources in
       let taints_propagated, lval_env =
         handle_taint_propagators { env with lval_env } (`Ins instr) taints
           rhs_shape
       in
-      let taints = Taints.union taints taints_propagated in
+      let taints = Taints.union ~merge:env.taint_inst.merge taints taints_propagated in
       check_orig_if_sink env instr.iorig taints rhs_shape;
       let taints =
         match LV.lval_of_instr_opt instr with
@@ -3212,7 +3219,7 @@ let captured_of_fun_cfg (lang : Lang.t) (fun_cfg : IL.fun_cfg) :
 
 (* While a signature is built, a captured variable stands for the value the
  * closure's environment gives it when the signature is applied. *)
-let seed_captured_vars (lang : Lang.t)
+let seed_captured_vars (lang : Lang.t) ~(merge : T.trace_merge)
     (captured : (IL.name * AST_generic.capture_mode) list) (env : Lval_env.t) :
     Lval_env.t =
   match captured with
@@ -3225,7 +3232,7 @@ let seed_captured_vars (lang : Lang.t)
       in
       List.fold_left
         (fun env ((name : IL.name), _) ->
-          Lval_env.add_lval_shape lang
+          Lval_env.add_lval_shape ~merge lang
             { base = Var name; rev_offset = [] }
             (Taints.singleton
                (T.taint_of_orig (T.Var { base = T.BEnv name; offset = [] })))
@@ -3277,11 +3284,12 @@ let global_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
 
 (* While a signature is built, a global stands for the value it has when
  * the signature is applied. *)
-let seed_global_vars (lang : Lang.t) (globals : IL.NameSet.t)
+let seed_global_vars (lang : Lang.t) ~(merge : T.trace_merge)
+    (globals : IL.NameSet.t)
     (env : Lval_env.t) : Lval_env.t =
   IL.NameSet.fold
     (fun (name : IL.name) env ->
-      Lval_env.add_lval lang
+      Lval_env.add_lval ~merge lang
         { base = Var name; rev_offset = [] }
         (Taints.singleton
            (T.taint_of_orig (T.Var { base = T.BGlob name; offset = [] })))
@@ -3432,7 +3440,8 @@ let caller_sees_update ~(is_value_type : G.type_ -> bool)
 
 (* The writes to the caller's objects that [var]'s value in [exit_var_ref]
  * shows, compared with [var] on entry. *)
-let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
+let arg_updates_of_var ~(lang : Lang.t) ~(merge : T.trace_merge)
+    ~(keep : T.lval -> bool) enter_env
     (var : IL.name) exit_var_ref : Effect.t Seq.t =
   match Lval_env.find_var enter_env var with
   | None -> Seq.empty
@@ -3459,7 +3468,7 @@ let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
                  if not (keep lval) then None
                  else
                  let enter_taints_at_offset =
-                   match Shape.find_in_cell ~lang offset enter_cell with
+                   match Shape.find_in_cell ~merge ~lang offset enter_cell with
                    | `Found (Cell (xtaint, _)) -> Xtaint.to_taints xtaint
                    | `Not_found (carried, _, _) -> carried
                    | `Clean -> Taints.empty
@@ -3484,7 +3493,7 @@ let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
                         })
                  else None))
 
-let effects_from_arg_updates_at_exit ~(lang : Lang.t)
+let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(merge : T.trace_merge)
     ~(is_value_type : G.type_ -> bool) ~(params : IL.param list)
     ~(copied : IL.NameSet.t) enter_env exit_env :
     Effect.t list =
@@ -3493,7 +3502,7 @@ let effects_from_arg_updates_at_exit ~(lang : Lang.t)
    * extension and generate a `ToLval` effect too. *)
   exit_env |> Lval_env.seq_of_tainted
   |> Seq.map (fun (var, exit_var_ref) ->
-         arg_updates_of_var ~lang
+         arg_updates_of_var ~lang ~merge
            ~keep:(caller_sees_update ~is_value_type params exit_env copied)
            enter_env var exit_var_ref)
   |> Seq.concat |> List.of_seq
@@ -3534,7 +3543,7 @@ let effect_has_closure_env (eff : Effect.t) : bool =
  * a copy or may no longer refer to its argument, becomes a [BLocal]: one
  * variable per call, shared by the closures that call returns, with its
  * value at the exit. *)
-let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
+let convert_escaping_closures ~(merge : T.trace_merge) ~(fun_cfg : IL.fun_cfg)
     ~(captured : (IL.name * AST_generic.capture_mode) list)
     ~(copied : IL.NameSet.t) (exit_env : Lval_env.t) (effects : Effects.t) :
     Effects.t =
@@ -3581,7 +3590,7 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
         lval
   in
   let effects =
-    effects |> Effects.map (Shape_and_sig.map_closure_refs convert_ref)
+    effects |> Effects.map ~merge (Shape_and_sig.map_closure_refs convert_ref)
   in
   let escaped_values =
     IL.NameSet.elements !escaped
@@ -3602,14 +3611,16 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
                                guards = Effect_guard.top;
                              })))
   in
-  Effects.add_list escaped_values effects
+  Effects.add_list ~merge escaped_values effects
 
-let effects_before_param_rebinding ~(lang : Lang.t) enter_env current_env
+let effects_before_param_rebinding ~(lang : Lang.t) ~(merge : T.trace_merge)
+    enter_env current_env
     (var : IL.name) : Effect.t list =
   match Lval_env.find_var current_env var with
   | None -> []
   | Some var_ref ->
-      arg_updates_of_var ~lang ~keep:(fun _ -> true) enter_env var var_ref
+      arg_updates_of_var ~lang ~merge ~keep:(fun _ -> true) enter_env var
+        var_ref
       |> List.of_seq
 
 let check_tainted_control_at_exit node env =
@@ -3673,7 +3684,8 @@ let augmented_assignment_in_place (lang : Lang.t) (params : IL.param list)
           not (List.exists (String.equal type_name) immutable_types)
       | _ -> true)
 
-let input_env ~lang ~enter_env ~(flow : F.cfg) mapping ni =
+let input_env ~lang ~(merge : T.trace_merge) ~enter_env ~(flow : F.cfg) mapping
+    ni =
   let node = flow.graph#nodes#assoc ni in
   match node.F.n with
   | Enter -> enter_env
@@ -3685,7 +3697,7 @@ let input_env ~lang ~enter_env ~(flow : F.cfg) mapping ni =
       match pred_envs with
       | [] -> Lval_env.empty
       | [ penv ] -> penv
-      | penv1 :: penvs -> List.fold_left (Lval_env.union ~lang) penv1 penvs)
+      | penv1 :: penvs -> List.fold_left (Lval_env.union ~merge ~lang) penv1 penvs)
 
 (* Walk a [ParamPattern]'s inner pattern and enumerate each leaf
  * together with its offset path from the enclosing implicit binder.
@@ -3871,7 +3883,7 @@ let mk_lambda_in_env env lcfg =
              check_tainted_var { env with lval_env } var
            in
            lval_env
-           |> Lval_env.add_lval_shape env.taint_inst.lang (LV.lval_of_var var)
+           |> Lval_env.add_lval_shape ~merge:env.taint_inst.merge env.taint_inst.lang (LV.lval_of_var var)
                 taints shape)
          base_env
   in
@@ -3915,9 +3927,9 @@ let mk_lambda_in_env env lcfg =
                           T.(taint_of_orig (Var leaf_taint_lval))
                         in
                         let leaf_taints =
-                          T.Taint_set.add_taint leaf_taint source_taints
+                          T.Taint_set.add_taint ~merge:env.taint_inst.merge leaf_taint source_taints
                         in
-                        Lval_env.add_lval_shape env.taint_inst.lang leaf_lval
+                        Lval_env.add_lval_shape ~merge:env.taint_inst.merge env.taint_inst.lang leaf_lval
                           leaf_taints leaf_shape lval_env)
                       lval_env
                in
@@ -3981,7 +3993,8 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
   let flow = fun_cfg.cfg in
   (* DataflowX.display_mapping flow mapping show_tainted; *)
   let in' : Lval_env.t =
-    input_env ~lang:enter_env.taint_inst.lang ~enter_env:enter_env.lval_env
+    input_env ~lang:enter_env.taint_inst.lang ~merge:enter_env.taint_inst.merge
+      ~enter_env:enter_env.lval_env
       ~flow mapping ni
   in
   let node = flow.graph#nodes#assoc ni in
@@ -4024,7 +4037,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
                 (* Instruction returns tainted data, add taints to lval.
                  * See [Taint_lval_env] for details. *)
                 lval_env'
-                |> Lval_env.add_lval_shape env.taint_inst.lang lval taints
+                |> Lval_env.add_lval_shape ~merge:env.taint_inst.merge env.taint_inst.lang lval taints
                      shape
               else
                 (* The RHS returns no taint, but taint could propagate by
@@ -4067,6 +4080,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
                    | _ -> false)
                  fun_cfg.params ->
             effects_before_param_rebinding ~lang:env.taint_inst.lang
+              ~merge:env.taint_inst.merge
               enter_env.lval_env in' name
             |> record_effects env
         | _ -> ());
@@ -4140,7 +4154,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
   let effects_lambdas, out' =
     do_lambdas { env with lval_env = out' } fun_cfg.lambdas node
   in
-  env.effects_acc := Effects.union effects_lambdas !(env.effects_acc);
+  env.effects_acc := Effects.union ~merge:env.taint_inst.merge effects_lambdas !(env.effects_acc);
   let env_at_exit = { env with lval_env = out' } in
   check_tainted_control_at_exit node env_at_exit;
   Log.debug (fun m ->
@@ -4196,7 +4210,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
              ?builtin_signature_db:env.builtin_signature_db ())
     |> List_.split
   in
-  let effects = Effects.union_list effects_lambdas in
+  let effects = Effects.union_list ~merge:env.taint_inst.merge effects_lambdas in
   (* Restamp the lambda's upflowed effects with the enclosing function's
    * currently-active guards — the guards in scope at the node where the
    * lambda is being evaluated. Paired with [mk_lambda_in_env]'s
@@ -4211,7 +4225,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
     if Effect_guard.Set.is_empty active then effects
     else
       let g = Effect_guard.conjoin (Effect_guard.Set.elements active) in
-      Effects.map (Effect.add_guards g) effects
+      Effects.map ~merge:env.taint_inst.merge (Effect.add_guards g) effects
   in
   let out_env =
     if node_is_call then
@@ -4225,7 +4239,7 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
        * We assume that these lambdas are being evaluated and that their side-effects
        * should affect the subsequent statements.
        *)
-      Lval_env.union_list ~lang:env.taint_inst.lang ~default:env.lval_env
+      Lval_env.union_list ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang ~default:env.lval_env
         out_envs_lambdas
     else
       (* If lambdas are not part of a call, we don't make their side-effects visible.
@@ -4346,7 +4360,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
         env.did_self_recurse := false;
         let end_mapping =
           DataflowX.fixpoint ~eq_env:Lval_env.equal
-            ~join:(Lval_env.union ~lang:taint_inst.lang) ~init:init_mapping
+            ~join:(Lval_env.union ~merge:taint_inst.merge ~lang:taint_inst.lang) ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -4380,7 +4394,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
       run_to_sig_fixpoint 0
     else
       DataflowX.fixpoint ~eq_env:Lval_env.equal
-        ~join:(Lval_env.union ~lang:taint_inst.lang) ~init:init_mapping
+        ~join:(Lval_env.union ~merge:taint_inst.merge ~lang:taint_inst.lang) ~init:init_mapping
         ~trans:(transfer env ~fun_cfg) ~flow
   in
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
@@ -4388,13 +4402,13 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
     copied_params
       ~is_value_type:taint_inst.is_value_type fun_cfg.params
   in
-  effects_from_arg_updates_at_exit ~lang:taint_inst.lang
+  effects_from_arg_updates_at_exit ~lang:taint_inst.lang ~merge:taint_inst.merge
     ~is_value_type:taint_inst.is_value_type ~params:fun_cfg.params ~copied
     enter_lval_env exit_lval_env
   |> record_effects env;
   let effects =
     if Effects.exists effect_has_closure_env !(env.effects_acc) then
-      convert_escaping_closures ~fun_cfg
+      convert_escaping_closures ~merge:taint_inst.merge ~fun_cfg
         ~captured:(Lazy.force env.func.captured) ~copied exit_lval_env
         !(env.effects_acc)
     else !(env.effects_acc)
@@ -4440,7 +4454,7 @@ and (fixpoint :
                       shared_tables.Taint_shared_tables.constructor_envs
                       storage_key
                   in
-                  Lval_env.union ~lang:taint_inst.lang in_env
+                  Lval_env.union ~merge:taint_inst.merge ~lang:taint_inst.lang in_env
                     class_instance_vars
                 with
                 | Not_found -> in_env)
@@ -4660,7 +4674,7 @@ and (fixpoint :
                                   (* Give the parameter an Arg shape so it can be used in HOF *)
                                   let param_shape = S.Arg (T.Param taint_arg, [ [] ]) in
                                   let env =
-                                    Lval_env.add_lval_shape taint_inst.lang
+                                    Lval_env.add_lval_shape ~merge:taint_inst.merge taint_inst.lang
                                       il_lval taint_set param_shape env
                                   in
                                   (* Destructuring ParamPattern: also seed
@@ -4699,7 +4713,7 @@ and (fixpoint :
                                                  Taint.Taint_set.singleton
                                                    leaf_taint
                                                in
-                                               Lval_env.add_lval_shape
+                                               Lval_env.add_lval_shape ~merge:taint_inst.merge
                                                  taint_inst.lang leaf_lval
                                                  leaf_taints leaf_shape env)
                                              env
@@ -4715,9 +4729,10 @@ and (fixpoint :
                    in
                    let lambda_captured = captured_of_fun_cfg taint_inst.lang lambda_cfg in
                    let combined_env =
-                     Lval_env.union ~lang:taint_inst.lang enhanced_in_env
+                     Lval_env.union ~merge:taint_inst.merge ~lang:taint_inst.lang enhanced_in_env
                        param_assumptions
-                     |> seed_captured_vars taint_inst.lang lambda_captured
+                     |> seed_captured_vars taint_inst.lang ~merge:taint_inst.merge
+                          lambda_captured
                    in
                    (* Run fixpoint on lambda to get its effects *)
                    let lambda_best_matches =

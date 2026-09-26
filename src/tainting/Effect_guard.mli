@@ -49,7 +49,6 @@ val map_atoms :
   lang:Lang.t -> atoms -> IL.name list -> (IL.exp -> IL.exp) -> cond -> cond
 val eval : cond -> bool option
 val raw_clauses : cond -> (IL.exp * bool) list list
-val literals_consistent : (IL.exp * bool) list -> bool
 val top : t
 val is_top : t -> bool
 val equal : t -> t -> bool

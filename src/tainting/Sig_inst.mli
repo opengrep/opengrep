@@ -50,8 +50,14 @@ type sig_inst_cache
 val guard_valid_under :
   lang:Lang.t -> Effect_guard.t -> Taint.call_site list -> Effect_guard.t -> bool
 
+val literals_at_call_site :
+  Taint.call_site -> (IL.exp * bool) list -> (IL.exp * bool) list
+
+val actuals_of_params : Taint.call_site -> (IL.name * IL.exp) list
+
 val instantiate_function_signature :
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   atoms:Effect_guard.atoms ->
   propagate_through_functions:bool ->
   ?max_offset:int ->
@@ -60,6 +66,7 @@ val instantiate_function_signature :
   Taint_lval_env.t ->
   Shape_and_sig.Signature.t ->
   callee:IL.exp ->
+  callee_fid:Function_id.t option ->
   args:IL.exp IL.argument list option (** actual arguments *) ->
   (Taint.Taint_set.t * Shape_and_sig.Shape.shape) IL.argument list ->
   ?lookup_sig:

@@ -742,3 +742,61 @@ let wrap_or (es : IL.exp list) : IL.exp =
       | _ when has_complement_pair es ->
           lit_bool ~eorig:(List.hd es).eorig true
       | _ -> binary_fold_op G.Or es)
+
+(* [Some (e, lit)] when [atom] is [e == lit] with exactly one constant
+ * operand; used by the clause-consistency check. *)
+let eq_parts (atom : exp) : (exp * G.literal) option =
+  match atom.e with
+  | Operator ((G.Eq, _), [ Unnamed a; Unnamed b ]) -> (
+      match (a.e, b.e) with
+      | Literal _, Literal _ -> None
+      | Literal la, _ -> Some (b, la)
+      | _, Literal lb -> Some (a, lb)
+      | _ -> None)
+  | _ -> None
+
+(* Distinct constants of the same type cannot both equal the same value;
+ * across types we make no judgement (e.g. [1 == 1.0] holds in Python).
+ * String contents are compared as lexed, which under-determines the
+ * runtime value when escapes are involved ('\n' vs a literal newline can
+ * be the same string), so a backslash-bearing string yields no
+ * judgement; escape-free contents denote their runtime value in every
+ * supported language. *)
+let distinct_same_type_constants (l1 : G.literal) (l2 : G.literal) : bool =
+  match (l1, l2) with
+  | G.Int (i1, _), G.Int (i2, _) -> not (Option.equal Int64.equal i1 i2)
+  | G.String (_, (s1, _), _), G.String (_, (s2, _), _) ->
+      (not (String.contains s1 '\\'))
+      && (not (String.contains s2 '\\'))
+      && not (String.equal s1 s2)
+  | G.Bool (b1, _), G.Bool (b2, _) -> not (Bool.equal b1 b2)
+  | _ -> false
+
+let equalities_inconsistent (lits : (exp * bool) list) : bool =
+  let eqs =
+    lits
+    |> List.filter_map (fun (atom, negated) ->
+           if negated then None else eq_parts atom)
+  in
+  let rec pairwise = function
+    | (e1, v1) :: rest ->
+        List.exists
+          (fun (e2, v2) ->
+            equal_exp e1 e2 && distinct_same_type_constants v1 v2)
+          rest
+        || pairwise rest
+    | [] -> false
+  in
+  pairwise eqs
+
+let literals_consistent (lits : (exp * bool) list) : bool =
+  let rec complementary = function
+    | (a1, n1) :: rest ->
+        List.exists
+          (fun (a2, n2) ->
+            (not (Bool.equal n1 n2)) && equal_exp a1 a2)
+          rest
+        || complementary rest
+    | [] -> false
+  in
+  not (complementary lits || equalities_inconsistent lits)

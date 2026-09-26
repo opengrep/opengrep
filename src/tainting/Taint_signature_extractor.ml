@@ -91,7 +91,7 @@ let extract_method_properties (fdef : G.function_definition) :
 
 (* Convert AST method properties to taint assumptions using AST_to_IL *)
 let mk_method_property_assumptions (properties : G.expr list)
-    (lang : Lang.t) : Taint_lval_env.t =
+    (lang : Lang.t) ~(merge : Taint.trace_merge) : Taint_lval_env.t =
   properties
   |> List.fold_left
        (fun taint_env prop_expr ->
@@ -124,13 +124,14 @@ let mk_method_property_assumptions (properties : G.expr list)
          in
          let generic_taint = Taint.(taint_of_orig (Var taint_lval)) in
          let taint_set = Taint.Taint_set.singleton generic_taint in
-         Taint_lval_env.add_lval lang il_lval taint_set taint_env)
+         Taint_lval_env.add_lval lang ~merge il_lval taint_set taint_env)
        Taint_lval_env.empty
 
 (** Helper to add a parameter with Arg shape to the environment *)
-let add_param_to_env lang il_lval taint_set taint_arg env =
+let add_param_to_env lang ~(merge : Taint.trace_merge) il_lval taint_set
+    taint_arg env =
   let param_shape = Shape.Arg (Taint.Param taint_arg, [ [] ]) in
-  Taint_lval_env.add_lval_shape lang il_lval taint_set param_shape env
+  Taint_lval_env.add_lval_shape lang ~merge il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
  * module-dependency cycle; this file already depends on
@@ -173,14 +174,18 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                      |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
                             (tm.Taint_spec_match.spec_pm, tm.spec))
                    in
-                   Taint.taints_of_pms ~incoming:Taint.Taint_set.empty
-                     pms_with_specs
+                   Taint.taints_of_pms ~merge:taint_inst.TRI.merge
+                     ~incoming:Taint.Taint_set.empty pms_with_specs
                  else Taint.Taint_set.empty
                in
-               let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
+               let taint_set =
+                 Taint.Taint_set.union ~merge:taint_inst.TRI.merge
+                   (Taint.Taint_set.singleton generic_taint) source_taints
+               in
                (* Give the parameter an Arg shape so it can be used in HOF *)
                let new_env =
-                 add_param_to_env taint_inst.TRI.lang il_lval taint_set
+                 add_param_to_env taint_inst.TRI.lang ~merge:taint_inst.TRI.merge
+                   il_lval taint_set
                    taint_arg env
                in
                (* For destructuring [ParamPattern], additionally seed each
@@ -241,16 +246,19 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                                            tm.spec ))
                                 in
                                 Taint.taints_of_pms
+                                  ~merge:taint_inst.TRI.merge
                                   ~incoming:Taint.Taint_set.empty
                                   pms_with_specs
                               else Taint.Taint_set.empty
                             in
                             let leaf_taints =
-                              Taint.Taint_set.add_taint leaf_taint
+                              Taint.Taint_set.add_taint
+                                ~merge:taint_inst.TRI.merge leaf_taint
                                 source_taints
                             in
                             Taint_lval_env.add_lval_shape taint_inst.TRI.lang
-                              leaf_lval leaf_taints leaf_shape env)
+                              ~merge:taint_inst.TRI.merge leaf_lval leaf_taints
+                              leaf_shape env)
                           new_env
                  | _ -> new_env
                in
@@ -266,8 +274,8 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                in
                let taint_set = Taint.Taint_set.singleton generic_taint in
                let new_env =
-                 Taint_lval_env.add_lval taint_inst.TRI.lang il_lval taint_set
-                   env
+                 Taint_lval_env.add_lval taint_inst.TRI.lang
+                   ~merge:taint_inst.TRI.merge il_lval taint_set env
                in
                (* Don't increment i — receiver is not a call-site argument *)
                (i, new_env)
@@ -287,11 +295,14 @@ let extract_signature (taint_inst : TRI.t)
   let combined_env =
     (match in_env with
     | Some env ->
-        Taint_lval_env.union ~lang:taint_inst.lang env param_assumptions
+        Taint_lval_env.union ~lang:taint_inst.lang ~merge:taint_inst.merge env
+          param_assumptions
     | None -> param_assumptions)
     |> Dataflow_tainting.seed_global_vars taint_inst.lang
+         ~merge:taint_inst.merge
          (Dataflow_tainting.global_vars func_cfg)
-    |> Dataflow_tainting.seed_captured_vars taint_inst.lang captured
+    |> Dataflow_tainting.seed_captured_vars taint_inst.lang
+         ~merge:taint_inst.merge captured
   in
   let fixpoint_effects, mapping =
     Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env:combined_env ?name
@@ -348,7 +359,7 @@ let extract_signature (taint_inst : TRI.t)
                        (taints_items, combined_precondition);
                    }
                  in
-                 Effects.add (Effect.ToSink updated_sink_info) acc
+                 Effects.add ~merge:taint_inst.merge (Effect.ToSink updated_sink_info) acc
                else
                  (* All-resolved-source findings are already reported here;
                     propagating them into the signature only duplicates at callers. *)
@@ -362,7 +373,7 @@ let extract_signature (taint_inst : TRI.t)
                      taints_items
                  in
                  if all_resolved then acc
-                 else Effects.add eff acc
+                 else Effects.add ~merge:taint_inst.merge eff acc
           | Effect.ToReturn return_info ->
               (* Retain return effects that carry any meaningful taint information.
                *
@@ -393,7 +404,7 @@ let extract_signature (taint_inst : TRI.t)
                 let filtered_return_info =
                   { return_info with data_taints = filtered_data_taints }
                 in
-                Effects.add (Effect.ToReturn filtered_return_info) acc
+                Effects.add ~merge:taint_inst.merge (Effect.ToReturn filtered_return_info) acc
               else acc
            | Effect.ToLval { taints; shape; lval = _; guards = _ } ->
                (* Keep ToLval effects - they represent legitimate data flow patterns
@@ -408,9 +419,9 @@ let extract_signature (taint_inst : TRI.t)
                         | Taint.Control -> true (* Real control taint *))
                in
                if has_relevant_taint || Taint_shape.shape_has_relevant_content shape
-               then Effects.add eff acc
+               then Effects.add ~merge:taint_inst.merge eff acc
                else acc (* Skip only effects with no relevant taint *)
-           | Effect.ToSinkInCall _ -> Effects.add eff acc)
+           | Effect.ToSinkInCall _ -> Effects.add ~merge:taint_inst.merge eff acc)
          Effects.empty
   in
   let signature =
@@ -441,7 +452,9 @@ let extract_signature_with_file_context
   let in_env =
     match method_properties with
     | [] -> Taint_lval_env.empty
-    | props -> mk_method_property_assumptions props taint_inst.lang
+    | props ->
+        mk_method_property_assumptions props taint_inst.lang
+          ~merge:taint_inst.merge
   in
   let { signature; _ } =
     extract_signature taint_inst shared_tables ~in_env ~name

@@ -23,7 +23,12 @@ val compose_offset :
     [base] is kept as-is; only extensions are guarded. *)
 
 val fix_poly_taint_with_offset :
-  ?max:int -> lang:Lang.t -> Taint.offset list -> Taint.taints -> Taint.taints
+  ?max:int ->
+  lang:Lang.t ->
+  merge:Taint.trace_merge ->
+  Taint.offset list ->
+  Taint.taints ->
+  Taint.taints
 (** Fix taints with an offset. It just attaches the offset to each polymorphic
     taint variable (see 'Taint.Var') in the set.
 
@@ -36,6 +41,7 @@ val tuple_like_obj : (Taint.taints * shape) list -> shape
 (* THINK: Replace polymorphic variant with a parameterized IL.field_or_entry ? *)
 val record_or_dict_like_obj :
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   [< `Entry of IL.exp * Taint.taints * shape
   | `Field of IL.name * Taint.taints * shape
   | `Spread of shape ]
@@ -45,24 +51,29 @@ val record_or_dict_like_obj :
 (** Constructs an 'Obj' shape from a list of taints and shapes associated with
     a record/dict expression. *)
 
-val unify_cell : lang:Lang.t -> cell -> cell -> cell
+val unify_cell : lang:Lang.t -> merge:Taint.trace_merge -> cell -> cell -> cell
 (** Unify two 'cell's into one. *)
 
-val unify_shape : lang:Lang.t -> shape -> shape -> shape
+val unify_shape :
+  lang:Lang.t -> merge:Taint.trace_merge -> shape -> shape -> shape
 (** Unify two 'shapes's into one. *)
 
-val gather_all_taints_in_cell : cell -> Taint.taints
+val gather_all_taints_in_cell : merge:Taint.trace_merge -> cell -> Taint.taints
 (** Gather and union all taints reachable through a cell. *)
 
-val gather_all_taints_in_shape : shape -> Taint.taints
+val gather_all_taints_in_shape :
+  merge:Taint.trace_merge -> shape -> Taint.taints
 (** Gather and union all taints reachable through a shape. *)
 
 val gather_all_taints_in_args_taints :
-  (Taint.taints * shape) IL.argument list -> Taint.taints
+  merge:Taint.trace_merge ->
+  (Taint.taints * shape) IL.argument list ->
+  Taint.taints
 
 val find_in_cell :
   ?max:int ->
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   Taint.offset list ->
   cell ->
   [ `Found of cell
@@ -100,6 +111,7 @@ val find_in_cell :
 val find_in_cell_poly :
   ?max:int ->
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   Taint.offset list ->
   cell ->
   (Taint.taints * shape) option
@@ -118,6 +130,7 @@ val find_in_cell_poly :
 val find_in_shape_poly :
   ?max:int ->
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   taints:Taint.taints ->
   Taint.offset list ->
   shape ->
@@ -133,6 +146,7 @@ val update_offset_in_cell :
 
 val update_offset_and_unify :
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   Taint.taints ->
   shape ->
   Taint.offset list ->
@@ -146,7 +160,7 @@ val update_offset_and_unify :
 val clean_cell : Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
 
-val truncate_shape : max_depth:int -> shape -> shape
+val truncate_shape : merge:Taint.trace_merge -> max_depth:int -> shape -> shape
 (** Widen a shape to at most [max_depth] levels of ['Obj'] nesting. Subtrees
  * below the cutoff collapse into the cutoff cell's taints (so their taints
  * remain reachable, with less offset precision); ['Clean] markers below the
@@ -155,12 +169,18 @@ val truncate_shape : max_depth:int -> shape -> shape
  * fixpoint in the shape domain. *)
 
 val truncate_effect :
-  max_depth:int -> Shape_and_sig.Effect.t -> Shape_and_sig.Effect.t
+  merge:Taint.trace_merge ->
+  max_depth:int ->
+  Shape_and_sig.Effect.t ->
+  Shape_and_sig.Effect.t
 (** [truncate_shape] applied to every shape in one effect (a ['ToReturn']
  * data shape, or ['ToSinkInCall'] argument shapes). *)
 
 val truncate_signature :
-  max_depth:int -> Shape_and_sig.Signature.t -> Shape_and_sig.Signature.t
+  merge:Taint.trace_merge ->
+  max_depth:int ->
+  Shape_and_sig.Signature.t ->
+  Shape_and_sig.Signature.t
 (** [truncate_effect] applied to every effect of a signature. *)
 
 val enum_in_cell : cell -> (Taint.offset list * Taint.taints) Seq.t

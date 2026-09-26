@@ -26,7 +26,7 @@ let make_args_taints ((taints, shape) : Taint.taints * Shape.shape)
 
 let whole_value_taint_set (lval : Taint.lval) : Taint.taints =
   Taint.(
-    Taint_set.union
+    Taint_set.union ~merge:Keep_best
       (Taint_set.singleton (taint_of_orig (Var lval)))
       (Taint_set.singleton (taint_of_orig (Shape_var lval))))
 
@@ -120,7 +120,7 @@ let add_hof_returning_function_signatures db method_names
       params_il = synthetic_params_il params;
       captured = [];
       effects =
-        Effects.of_list
+        Effects.of_list ~merge:Taint.Keep_best
           (hof_effect
           :: hof_return_effects result ~input:this_taint_set ~callee
                ~arg:callback ~arg_offset:[] ~guards:Effect_guard.top);
@@ -215,7 +215,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.of_list (hof_effect :: return_effects);
+      effects = Effects.of_list ~merge:Taint.Keep_best (hof_effect :: return_effects);
     }
   in
 
@@ -282,7 +282,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.of_list (hof_effect :: return_effects);
+      effects = Effects.of_list ~merge:Taint.Keep_best (hof_effect :: return_effects);
     }
   in
 
@@ -428,7 +428,7 @@ let add_function_hof_signatures_clojure ~(lang : Lang.t)
           Signature.params;
           params_il = synthetic_params_il params;
       captured = [];
-          effects = Effects.of_list effects;
+          effects = Effects.of_list ~merge:Taint.Keep_best effects;
         }
       in
       add_builtin_signature acc_db function_name
@@ -523,7 +523,7 @@ let add_arg_taints_this_signatures db method_names arity
           (Fields.singleton Taint.Oany
              (Shape.Cell (`Tainted stored_taints, stored_shape)))
       in
-      Effects.of_list
+      Effects.of_list ~merge:Taint.Keep_best
         [
           to_lval;
           return_effect (value_at Taint.Receiver []);

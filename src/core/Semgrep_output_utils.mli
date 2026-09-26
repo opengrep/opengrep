@@ -36,6 +36,10 @@ val tokens_to_single_loc : Tok.t list -> Semgrep_output_v1_t.location option
 val sort_core_matches :
   Semgrep_output_v1_t.core_match list -> Semgrep_output_v1_t.core_match list
 
+val sort_core_matches_with :
+  (Semgrep_output_v1_t.core_match * 'a) list ->
+  (Semgrep_output_v1_t.core_match * 'a) list
+
 val compare_cli_matches :
   Semgrep_output_v1_t.cli_match ->
   Semgrep_output_v1_t.cli_match ->

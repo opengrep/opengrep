@@ -2,6 +2,10 @@ let src = Logs.Src.create "semgrep.tainting"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
+let trace_src = Logs.Src.create "semgrep.taint_trace"
+
+module Trace_log = (val Logs.src_log trace_src : Logs.LOG)
+
 (*****************************************************************************)
 (* Debugging tags, select with SEMGREP_LOG_TAGS *)
 (*****************************************************************************)

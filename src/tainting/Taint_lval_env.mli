@@ -29,19 +29,47 @@ val normalize_lval : Lang.t -> IL.lval -> (IL.name * Taint.offset list) option
     offsets are language-sensitive (JS/TS integer-vs-string keys). *)
 
 val add_shape :
-  Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> shape -> env -> env
+  Lang.t ->
+  merge:Taint.trace_merge ->
+  IL.name ->
+  Taint.offset list ->
+  Taint.taints ->
+  shape ->
+  env ->
+  env
 
-val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
+val add_lval_shape :
+  Lang.t ->
+  merge:Taint.trace_merge ->
+  IL.lval ->
+  Taint.taints ->
+  shape ->
+  env ->
+  env
 (** Add taints & shape to an l-value.
 
     Adding taints to x.a_1. ... .a_N will NOT taint the prefixes
     x.a_1. ... .a_i (i < N) (unless they become tainted separately).
  *)
 
-val add : Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> env -> env
+val add :
+  Lang.t ->
+  merge:Taint.trace_merge ->
+  IL.name ->
+  Taint.offset list ->
+  Taint.taints ->
+  env ->
+  env
 
 val add_written_through :
-  Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> shape -> env -> env
+  Lang.t ->
+  merge:Taint.trace_merge ->
+  IL.name ->
+  Taint.offset list ->
+  Taint.taints ->
+  shape ->
+  env ->
+  env
 (** Like [add_shape], and also on the l-values the variable points to (see
     [set_pointee]): a callee's write to the parameter the variable was passed
     to. *)
@@ -60,20 +88,29 @@ val seed_entry_object : IL.name -> env -> env
 val may_refer_to_entry_object : env -> IL.name -> bool
 (** Whether the parameter may still refer to the object the caller passed. *)
 
-val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
+val add_lval :
+  Lang.t -> merge:Taint.trace_merge -> IL.lval -> Taint.taints -> env -> env
 (** Assign a set of taints (but no specific shape) to an l-value. *)
 
 (* THINK: Perhaps keep propagators outside of this environment? *)
-val propagate_to : Lang.t -> Dataflow_var_env.var -> Taint.taints -> env -> env
+val propagate_to :
+  Lang.t ->
+  merge:Taint.trace_merge ->
+  Dataflow_var_env.var ->
+  Taint.taints ->
+  env ->
+  env
 
 val find_var : env -> IL.name -> cell option
 (** Find the 'cell' of a variable. *)
 
-val find_lval : Lang.t -> env -> IL.lval -> cell option
+val find_lval :
+  Lang.t -> merge:Taint.trace_merge -> env -> IL.lval -> cell option
 (** Find the 'cell' of an l-value. *)
 
 val find_poly :
   lang:Lang.t ->
+  merge:Taint.trace_merge ->
   env -> IL.name -> Taint.offset list -> (Taint.taints * shape) option
 (** Find the taints and shape associated to a variable (name) and an offset.
     If an offset is not being explicitly recorded, then it returns the
@@ -104,10 +141,16 @@ val find_poly :
         Some ({'t.u}, Bot)
   *)
 
-val find_lval_poly : Lang.t -> env -> IL.lval -> (Taint.taints * shape) option
+val find_lval_poly :
+  Lang.t ->
+  merge:Taint.trace_merge ->
+  env ->
+  IL.lval ->
+  (Taint.taints * shape) option
 (** Same as 'find_poly' for l-values. *)
 
-val find_lval_xtaint : Lang.t -> env -> IL.lval -> Xtaint.t
+val find_lval_xtaint :
+  Lang.t -> merge:Taint.trace_merge -> env -> IL.lval -> Xtaint.t
 (** Look up an l-value on the environemnt and return whether it's tainted, clean,
     or we hold no info about it. It does not check sub-lvalues, e.g. if we record
     that 'x.a' is tainted but had no explicit info about 'x.a.b', checking for
@@ -129,7 +172,7 @@ val clean : Lang.t -> env -> IL.lval -> env
  *)
 
 val filter_tainted : (IL.name -> bool) -> env -> env
-val add_control_taints : env -> Taint.taints -> env
+val add_control_taints : merge:Taint.trace_merge -> env -> Taint.taints -> env
 val get_control_taints : env -> Taint.taints
 
 val active_guards : env -> Effect_guard.Set.t
@@ -166,7 +209,7 @@ val mark_dead : env -> env
 (** Mark the env as unreachable. Set at a branch whose condition folds
     to a constant that contradicts the branch direction. *)
 
-val union : lang:Lang.t -> env -> env -> env
+val union : lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
 (** Compute the environment for the join of two branches.
 
      If an lvalue x.a_1. ... .a_N was clean in one branch, we still consider it
@@ -175,7 +218,8 @@ val union : lang:Lang.t -> env -> env -> env
      branch, then x.a_1. ... . a_N may no longer be clean, but we assume the
      best case scenario to reduce FPs. *)
 
-val union_list : lang:Lang.t -> ?default:env -> env list -> env
+val union_list :
+  lang:Lang.t -> merge:Taint.trace_merge -> ?default:env -> env list -> env
 val equal : env -> env -> bool
 
 val equal_by_lval : Lang.t -> env -> env -> IL.lval -> bool
