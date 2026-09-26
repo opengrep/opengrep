@@ -22,6 +22,19 @@ type t = {
   fdef : G.function_definition;
 }
 
+let is_hidden (func : t) : bool =
+  match func.entity with
+  | Some { G.name = G.EN (G.Id (_, info)); _ }
+  | Some
+      {
+        G.name = G.EN (G.IdQualified { G.name_info = info; _ });
+        _;
+      } ->
+      IdFlags.is_hidden !(info.G.id_flags)
+  | Some { G.name = (G.EDynamic _ | G.EPattern _ | G.OtherEntity _); _ }
+  | None ->
+      false
+
 let entity_qualifier (func : t) : string option =
   Option.bind func.entity (fun (entity : G.entity) ->
       Option.bind

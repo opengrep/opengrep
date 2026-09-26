@@ -56,6 +56,124 @@ let vars_to_pattern (l, xs, r) =
   let ys = xs |> List_.map (fun (id, ptype) -> var_to_pattern (id, ptype)) in
   PatTuple (l, ys, r)
 
+(* Accessors can be separate declarations in the CST. Give them property-specific
+ * names so different getters or setters do not share a function identity. *)
+let name_accessors stmts =
+  let accessor_kind attrs =
+    List.find_map
+      (function
+        | KeywordAttr ((Getter | Setter) as kind, _) -> Some kind
+        | _ -> None)
+      attrs
+  in
+  let receiver_of_params (_, params, _) =
+    match params with
+    | (ParamReceiver _ as receiver) :: _ -> Some receiver
+    | _ -> None
+  in
+  let receiver_of_property attrs =
+    List.find_map
+      (function
+        | OtherAttribute (("KotlinPropertyReceiver", tok), [ T receiver_type ])
+          ->
+            Some
+              (ParamReceiver
+                 {
+                   pname = Some ("this", tok);
+                   ptype = Some receiver_type;
+                   pdefault = None;
+                   pattrs = [];
+                   pinfo = empty_id_info ();
+                 })
+        | _ -> None)
+      attrs
+  in
+  let is_property_receiver_attr = function
+    | OtherAttribute (("KotlinPropertyReceiver", _), _) -> true
+    | _ -> false
+  in
+  let add_receiver receiver ((l, params, r) as fparams) =
+    match (receiver, receiver_of_params fparams) with
+    | Some (ParamReceiver receiver), None ->
+        let receiver =
+          ParamReceiver { receiver with pinfo = empty_id_info () }
+        in
+        (l, receiver :: params, r)
+    | Some _, None ->
+        raise Impossible
+    | _ -> fparams
+  in
+  let add_property_type kind property_type fdef =
+    match (kind, property_type) with
+    | Getter, Some property_type when Option.is_none fdef.frettype ->
+        { fdef with frettype = Some property_type }
+    | Setter, Some property_type ->
+        let rec annotate_value = function
+          | Param ({ ptype = None; _ } as value) :: rest ->
+              Param { value with ptype = Some property_type } :: rest
+          | param :: rest -> param :: annotate_value rest
+          | [] -> []
+        in
+        let l, params, r = fdef.fparams in
+        { fdef with fparams = (l, annotate_value params, r) }
+    | (Getter | Setter), None
+    | _, _ ->
+        fdef
+  in
+  let rec aux property = function
+    | [] -> []
+    | ( {
+          s =
+            DefStmt
+              (ent, VarDef ({ vtype = property_type; _ } as property_def));
+          _;
+        } as st )
+      :: rest -> (
+        match ent.name with
+        | EN (Id ((name, _), _)) ->
+            let receiver = receiver_of_property ent.attrs in
+            let ent =
+              {
+                ent with
+                attrs =
+                  List.filter
+                    (fun attr -> not (is_property_receiver_attr attr))
+                    ent.attrs;
+              }
+            in
+            let st = { st with s = DefStmt (ent, VarDef property_def) } in
+            st :: aux (Some (name, property_type, receiver)) rest
+        | _ -> st :: aux None rest)
+    | ({ s = DefStmt (ent, FuncDef fdef); _ } as st) :: rest ->
+        (match accessor_kind ent.attrs with
+        | Some kind ->
+            let st, property =
+              match (property, ent.name) with
+              | ( Some (property_name, property_type, receiver),
+                  EN (Id ((name, tok), _)) ) ->
+                  let fdef = add_property_type kind property_type fdef in
+                  let fdef =
+                    { fdef with fparams = add_receiver receiver fdef.fparams }
+                  in
+                  let receiver =
+                    match receiver_of_params fdef.fparams with
+                    | Some _ as receiver -> receiver
+                    | None -> receiver
+                  in
+                  let ent =
+                    basic_entity ~hidden:true ~attrs:ent.attrs
+                      (name ^ "_" ^ property_name, tok)
+                  in
+                  ( { st with s = DefStmt (ent, FuncDef fdef) },
+                    Some (property_name, property_type, receiver) )
+              | _ -> (st, property)
+            in
+            st :: aux property rest
+        | None -> st :: aux None rest)
+    | st :: rest -> st :: aux None rest
+  in
+  aux None stmts
+
 (* The scope-function desugaring below injects 'it = receiver' into the lambda
  * body. The receiver must be a physically fresh copy: reusing the node that
  * already sits in the call gives it two parents, and chained scope calls then
@@ -773,13 +891,12 @@ and class_declaration  (env : env) (x : CST.class_declaration) :
       (ent, cdef)
 
 and class_member_declaration (env : env) (x : CST.class_member_declaration) :
-    field =
+    field list =
   match x with
   | `Choice_decl y -> (
       match y with
       | `Decl x ->
-          let d = declaration ~is_method:true env x in
-          d |> G.fld
+          declaration ~is_method:true env x |> List_.map G.fld
       | `Comp_obj (v1, v2, v3, v4, v5, v6) ->
           let v1 = modifiers_opt env v1 in
           let v2 = token env v2 (* "companion" *) in
@@ -813,11 +930,11 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
               cbody = v6;
             }
           in
-          (ent, ClassDef cdef) |> G.fld
+          [ (ent, ClassDef cdef) |> G.fld ]
       | `Anon_init (v1, v2) ->
           let _v1 = token env v1 (* "init" *) in
           let v2 = block env v2 in
-          F v2
+          [ F v2 ]
       | `Seco_cons (v1, v2, v3, v4, v5) ->
           let v1 = modifiers_opt env v1 in
           let v2 = str env v2 (* "constructor" *) in
@@ -839,19 +956,22 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
           let def =
             { fkind = (Method, snd v2); fparams; frettype = None; fbody }
           in
-          (ent, FuncDef def) |> G.fld)
+          [ (ent, FuncDef def) |> G.fld ])
   | `Ellips x ->
       let x = token env x in
-      G.field_ellipsis x
+      [ G.field_ellipsis x ]
 
 and class_member_declarations (env : env) (xs : CST.class_member_declarations) :
     field list =
-  List_.map
+  List.concat_map
     (fun (v1, v2) ->
       let v1 = class_member_declaration env v1 in
       let _v2 = semi env v2 (* pattern [\r\n]+ *) in
       v1)
     xs
+  |> List_.map (fun (F st) -> st)
+  |> name_accessors
+  |> List_.map (fun st -> F st)
 
 and class_parameter (env : env) (x : CST.class_parameter) : G.parameter =
   match x with
@@ -928,7 +1048,7 @@ and constructor_invocation (env : env) ((v1, v2) : CST.constructor_invocation) =
 and control_structure_body (env : env) (x : CST.control_structure_body) : stmt =
   match x with
   | `Blk x -> block env x
-  | `Stmt x -> statement env x
+  | `Stmt x -> statement env x |> G.stmt1
 
 and anon_opt_rece_type_opt_DOT_cc9388e (env : env)
     (opt : CST.anon_opt_rece_type_opt_DOT_cc9388e) =
@@ -957,35 +1077,18 @@ and receiver_type (env : env) ((v1, v2) : CST.receiver_type) =
   in
   (v1, v2)
 
-and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definition =
+and declaration ?(is_method = false) (env : env) (x : CST.declaration) :
+    definition list =
   match x with
   (* TODO: ugly, this was put here but really it should be attached
    * to a Prop_decl. This was put at the declaration level because
    * of grammar ambiguity related to ASI. See grammar.js for more info.
    *)
-  | `Getter x ->
-      let mods, tget, _fun_optTODO = getter env x in
-      let ent =
-        {
-          name = OtherEntity (("Getter", tget), []);
-          attrs = mods;
-          tparams = None;
-        }
-      in
-      (ent, OtherDef (("Getter", tget), []))
-  | `Setter x ->
-      let mods, tset, _fun_optTODO = setter env x in
-      let ent =
-        {
-          name = OtherEntity (("Setter", tset), []);
-          attrs = mods;
-          tparams = None;
-        }
-      in
-      (ent, OtherDef (("Setter", tset), []))
+  | `Getter x -> [ getter ~is_method env x ]
+  | `Setter x -> [ setter ~is_method env x ]
   | `Class_decl x ->
       let ent, cdef = class_declaration env x in
-      (ent, ClassDef cdef)
+      [ (ent, ClassDef cdef) ]
   | `Obj_decl (v1, v2, v3, v4, v5) ->
       let v1 = modifiers_opt env v1 in
       let v2 = token env v2 (* "object" *) in
@@ -1014,7 +1117,7 @@ and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definiti
           cbody = v5;
         }
       in
-      (ent, ClassDef cdef)
+      [ (ent, ClassDef cdef) ]
   | `Func_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
       let v1 = modifiers_opt env v1 in
       let v2 = token env v2 (* "fun" *) in
@@ -1065,13 +1168,22 @@ and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definiti
         { fkind; fparams = v6; frettype = v7; fbody = v9 }
       in
       let def_kind = FuncDef func_def in
-      (entity, def_kind)
+      [ (entity, def_kind) ]
   | `Prop_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
       let v1 = modifiers_opt env v1 in
-      let v2 = KeywordAttr (anon_choice_val_2833752 env v2) in
+      let property_kind = anon_choice_val_2833752 env v2 in
+      let v2 = KeywordAttr property_kind in
       let v3 = Option.map (type_parameters env) v3 in
-      (* TODO: distribute the name to all variable decls? *)
-      let _v4TODO = anon_opt_rece_type_opt_DOT_cc9388e env v4 in
+      let receiver_type = anon_opt_rece_type_opt_DOT_cc9388e env v4 in
+      let receiver_attrs =
+        match receiver_type with
+        | None -> []
+        | Some (_, receiver_type) ->
+            [
+              OtherAttribute
+                (("KotlinPropertyReceiver", snd property_kind), [ T receiver_type ]);
+            ]
+      in
       let entname, typopt = lambda_parameter_for_property env v5 in
       let _v6TODO =
         match v6 with
@@ -1094,24 +1206,24 @@ and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definiti
         | Some tok -> (* ";" *) Some (token env tok)
         | None -> None
       in
-      let _v9TODO =
+      let accessors =
         match v9 with
-        | `Opt_getter opt -> (
-            match opt with
-            | Some x ->
-                let x = getter env x in
-                Some (Either.Left x)
-            | None -> None)
-        | `Opt_setter opt -> (
-            match opt with
-            | Some x ->
-                let x = setter env x in
-                Some (Either.Right x)
-            | None -> None)
+        | `Opt_getter opt ->
+            Option.to_list
+              (Option.map
+                 (getter ~is_method ?property_type:typopt ?receiver_type env)
+                 opt)
+        | `Opt_setter opt ->
+            Option.to_list
+              (Option.map
+                 (setter ~is_method ?property_type:typopt ?receiver_type env)
+                 opt)
       in
       let vdef = { vinit; vtype = typopt; vtok } in
-      let ent = { name = entname; attrs = v2 :: v1; tparams = v3 } in
-      (ent, VarDef vdef)
+      let ent =
+        { name = entname; attrs = receiver_attrs @ (v2 :: v1); tparams = v3 }
+      in
+      (ent, VarDef vdef) :: accessors
   | `Type_alias (v0, v1, v2, v3, v4, v5) ->
       let attrs = modifiers_opt env v0 in
       let _kwd = token env v1 (* "typealias" *) in
@@ -1121,7 +1233,7 @@ and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definiti
       let t = type_ env v5 in
       let ent = basic_entity ~attrs ?tparams id in
       let tdef = { tbody = AliasType t } in
-      (ent, TypeDef tdef)
+      [ (ent, TypeDef tdef) ]
 
 and delegation_specifier (env : env) (x : CST.delegation_specifier) :
     class_parent =
@@ -1370,14 +1482,15 @@ and function_value_parameters (env : env)
   let r = token env v4 (* ")" *) in
   (l, params, r)
 
-and getter (env : env) ((v0, v1, v2) : CST.getter) =
+and getter ~is_method ?property_type ?receiver_type (env : env)
+    ((v0, v1, v2) : CST.getter) : definition =
   let mods = modifiers_opt env v0 in
   let tget = token env v1 (* "get" *) in
-  let fun_opt =
+  let fparams, frettype, fbody =
     match v2 with
     | Some (v1, v2, v3, v4) ->
-        let _v1 = token env v1 (* "(" *) in
-        let _v2 = token env v2 (* ")" *) in
+        let l = token env v1 (* "(" *) in
+        let r = token env v2 (* ")" *) in
         let v3 =
           match v3 with
           | Some (v1, v2) ->
@@ -1387,10 +1500,34 @@ and getter (env : env) ((v0, v1, v2) : CST.getter) =
           | None -> None
         in
         let v4 = function_body env v4 in
-        Some (v3, v4)
-    | None -> None
+        let frettype =
+          match v3 with
+          | Some _ -> v3
+          | None -> property_type
+        in
+        ((l, [], r), frettype, v4)
+    | None -> (fb [], property_type, G.FBDecl G.sc)
   in
-  (mods, tget, fun_opt)
+  let fparams =
+    match receiver_type with
+    | None -> fparams
+    | Some (_, receiver_type) ->
+        let l, params, r = fparams in
+        let receiver =
+          G.ParamReceiver
+            {
+              G.pname = Some ("this", tget);
+              ptype = Some receiver_type;
+              pdefault = None;
+              pattrs = [];
+              pinfo = empty_id_info ();
+            }
+        in
+        (l, receiver :: params, r)
+  in
+  let ent = basic_entity ("get", tget) ~attrs:(G.attr Getter tget :: mods) in
+  let fkind = if is_method then (Method, tget) else (Function, tget) in
+  (ent, FuncDef { fkind; fparams; frettype; fbody })
 
 and indexing_suffix (env : env) ((v1, v2, v3, v4) : CST.indexing_suffix) =
   let v1 = token env v1 (* "[" *) in
@@ -1978,15 +2115,23 @@ and property_delegate (env : env) ((v1, v2) : CST.property_delegate) =
   let v2 = expression env v2 in
   Some v2
 
-and setter (env : env) ((v0, v1, v2) : CST.setter) =
+and setter ~is_method ?property_type ?receiver_type (env : env)
+    ((v0, v1, v2) : CST.setter) : definition =
   let mods = modifiers_opt env v0 in
   let tset = token env v1 (* "set" *) in
-  let fun_opt =
+  let fparams, frettype, fbody =
     match v2 with
     | Some (v1, v2, v3, v4, v5) ->
-        let _v1 = token env v1 (* "(" *) in
+        let l = token env v1 (* "(" *) in
         let v2 = parameter_with_optional_type env v2 in
-        let _v3 = token env v3 (* ")" *) in
+        let v2 =
+          match (v2.ptype, property_type) with
+          | None, Some property_type -> { v2 with ptype = Some property_type }
+          | Some _, _
+          | None, None ->
+              v2
+        in
+        let r = token env v3 (* ")" *) in
         let v4 =
           match v4 with
           | Some (v1, v2) ->
@@ -1996,10 +2141,29 @@ and setter (env : env) ((v0, v1, v2) : CST.setter) =
           | None -> None
         in
         let v5 = function_body env v5 in
-        Some (v2, v4, v5)
-    | None -> None
+        ((l, [ Param v2 ], r), v4, v5)
+    | None -> (fb [], None, G.FBDecl G.sc)
   in
-  (mods, tset, fun_opt)
+  let fparams =
+    match receiver_type with
+    | None -> fparams
+    | Some (_, receiver_type) ->
+        let l, params, r = fparams in
+        let receiver =
+          G.ParamReceiver
+            {
+              G.pname = Some ("this", tset);
+              ptype = Some receiver_type;
+              pdefault = None;
+              pattrs = [];
+              pinfo = empty_id_info ();
+            }
+        in
+        (l, receiver :: params, r)
+  in
+  let ent = basic_entity ("set", tset) ~attrs:(G.attr Setter tset :: mods) in
+  let fkind = if is_method then (Method, tset) else (Function, tset) in
+  (ent, FuncDef { fkind; fparams; frettype; fbody })
 
 and simple_user_type (env : env) ((v1, v2) : CST.simple_user_type) :
     ident * type_arguments option =
@@ -2013,11 +2177,10 @@ and simple_user_type (env : env) ((v1, v2) : CST.simple_user_type) :
   in
   (v1, v2)
 
-and statement (env : env) (x : CST.statement) : stmt =
+and statement (env : env) (x : CST.statement) : stmt list =
   match x with
   | `Decl x ->
-      let dec = declaration env x in
-      DefStmt dec |> G.s
+      declaration env x |> List_.map (fun dec -> DefStmt dec |> G.s)
   | `Rep_choice_label_choice_assign (_v1, v2) ->
       (*TODO let v1 =
         List.map (fun x ->
@@ -2038,7 +2201,7 @@ and statement (env : env) (x : CST.statement) : stmt =
             let v1 = expression env x in
             G.exprstmt v1
       in
-      v2
+      [ v2 ]
   | `Part_class_decl (v1, v2, v3, v4, v5, v6, v7) ->
       let tparams =
         match v1 with
@@ -2072,12 +2235,12 @@ and statement (env : env) (x : CST.statement) : stmt =
         { ckind; cextends; cimplements = []; cmixins = []; cparams; cbody }
       in
       let def = (ent, ClassDef cdef) in
-      DefStmt def |> G.s
+      [ DefStmt def |> G.s ]
 
 and statements (env : env) ((v1, v2, v3) : CST.statements) =
   let v1 = statement env v1 in
   let v2 =
-    List_.map
+    List.concat_map
       (fun (v1, v2) ->
         let _v1 = semi env v1 (* pattern [\r\n]+ *) in
         let v2 = statement env v2 in
@@ -2091,7 +2254,7 @@ and statements (env : env) ((v1, v2, v3) : CST.statements) =
         ()
     | None -> ()
   in
-  v1 :: v2
+  name_accessors (v1 @ v2)
 
 and string_literal (env : env) (v1, v2, v3) : expr =
   let l = token env v1 in
@@ -2527,14 +2690,14 @@ let source_file (env : env) (x : CST.source_file) : any =
       in
       let v4 = List.concat_map (import_list env) v4 in
       let v5 =
-        List_.map
+        List.concat_map
           (fun (v1, v2) ->
             let v1 = statement env v1 in
             let _v2 = semi env v2 (* pattern [\r\n]+ *) in
             v1)
           v5
       in
-      let xs = merge_class_declarations v5 in
+      let xs = merge_class_declarations (name_accessors v5) in
       let dirs = v3 @ v4 |> List_.map (fun d -> DirectiveStmt d |> G.s) in
       Pr (dirs @ xs)
   | `Semg_exp (_v1, v2) ->

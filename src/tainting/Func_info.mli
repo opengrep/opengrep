@@ -14,6 +14,10 @@ type t = {
   fdef : AST_generic.function_definition;
 }
 
+(* Synthetic definitions stay in the analysis graph, but must not become
+   source-level call bindings. *)
+val is_hidden : t -> bool
+
 val entity_qualifier : t -> string option
 
 val as_method : fn_id -> (IL.name * IL.name) option
