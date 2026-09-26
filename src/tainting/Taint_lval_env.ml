@@ -149,6 +149,22 @@ let union ~lang ~(merge : T.trace_merge) le1 le2 =
             le1.pointees le2.pointees;
       }
 
+let union_at_loop_head ~lang ~(merge : T.trace_merge) previous computed =
+  let joined = union ~lang ~merge previous computed in
+  let tainted =
+    NameMap.fold
+      (fun var cell tainted ->
+        match NameMap.find_opt var previous.tainted with
+        | Some previous_cell when phys_equal previous_cell cell -> tainted
+        | Some _
+        | None ->
+            let folded = Shape.fold_cell ~lang ~merge cell in
+            if phys_equal folded cell then tainted
+            else NameMap.add var folded tainted)
+      joined.tainted joined.tainted
+  in
+  if phys_equal tainted joined.tainted then joined else { joined with tainted }
+
 let union_list ~lang ~(merge : T.trace_merge) ?(default = empty) les =
   List.fold_left (union ~lang ~merge) default les
 
@@ -246,8 +262,9 @@ let add_shape lang ~(merge : T.trace_merge) var offset new_taints new_shape
         tainted =
           NameMap.update var
             (fun opt_var_ref ->
-              Shape.update_offset_and_unify ~lang ~merge new_taints new_shape offset
-                opt_var_ref)
+              Shape.update_offset_and_unify ~lang ~merge
+                ~write:(T.call_loc_of_tok (snd var.ident))
+                new_taints new_shape offset opt_var_ref)
             tainted;
       }
 
@@ -421,7 +438,11 @@ let clean lang lval_env lval =
           NameMap.update var
             (function
               | None -> None
-              | Some var_ref -> Some (Shape.clean_cell offsets var_ref))
+              | Some var_ref ->
+                  Some
+                    (Shape.clean_cell
+                       ~write:(T.call_loc_of_tok (snd var.ident))
+                       offsets var_ref))
             lval_env.tainted;
       }
 

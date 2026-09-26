@@ -47,6 +47,19 @@ module Fields = Map.Make (struct
     | Oint _, (Ofld _ | Ostr _) -> 1
 end)
 
+(** The program point that creates an object: a record or list literal, or
+    the call whose result it is ([Built_at]), or a write through an l-value
+    whose prefix held no object, at that many offsets below the variable
+    ([Written_at]). *)
+type site = Built_at of T.call_loc | Written_at of T.call_loc * int
+[@@deriving eq, ord]
+
+module Sites = Set.Make (struct
+  type t = site
+
+  let compare = compare_site
+end)
+
 (** A shape approximates an object or data structure, and tracks the taint
  * associated with its fields and indexes.
  *
@@ -84,12 +97,20 @@ end)
 module rec Shape : sig
   type shape =
     | Bot  (** _|_, don't know or don't care *)
-    | Obj of obj
+    | Obj of { sites : Sites.t; summary : bool; fields : obj }
         (** An "object" or struct-like thing.
 
             Tuples or lists are also represented by 'Obj' shapes! We just treat
             constant indexes as if they were fields, and use 'Oany' to capture
-            the non-constant indexes. *)
+            the non-constant indexes.
+
+            [sites] are the sites that create the objects it stands for.
+            [summary] is set when a [Rec] may refer to it: it also stands for
+            the objects of its sites that were nested inside it. *)
+    | Rec of int
+        (** A back reference to the [n]th enclosing ['Obj'] (0 is the
+            nearest one): the shape is a regular tree, and a read through
+            [Rec n] continues in that object. *)
     | Arg of Taint.formal * Taint.offset list list
         (** Represents the yet-unknown shape of a function/method parameter
             or of a variable captured by a closure,
@@ -205,7 +226,12 @@ module rec Shape : sig
 end = struct
   type shape =
     | Bot
-    | Obj of obj
+    | Obj of {
+        sites : (Sites.t[@equal Sites.equal]);
+        summary : bool;
+        fields : obj;
+      }
+    | Rec of int
     | Arg of T.formal * T.offset list list
     | Fun of closure * closure list
   and closure = {
@@ -253,83 +279,79 @@ end = struct
     in
     equal_closure c1 c2 && List.equal equal_closure cs1 cs2
 
-  (* Depth-limited equality to prevent infinite recursion and force convergence
-   * for pathological patterns like obj[key] = [obj[key], item] that create
-   * unbounded recursive structures. If both shapes exceed MAX_SHAPE_DEPTH,
-   * we consider them equal (widening approximation). *)
-  let rec equal_cell_depth depth cell1 cell2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
-    else
-      let (Cell (taints1, shape1)) = cell1 in
-      let (Cell (taints2, shape2)) = cell2 in
-      Xtaint.equal taints1 taints2 && equal_shape_depth depth shape1 shape2
+  let equal_obj_node ~(equal_fields : obj -> obj -> bool) (sites1 : Sites.t)
+      (summary1 : bool) (fields1 : obj) (sites2 : Sites.t) (summary2 : bool)
+      (fields2 : obj) : bool =
+    Sites.equal sites1 sites2 && Bool.equal summary1 summary2
+    && equal_fields fields1 fields2
 
-  and equal_shape_depth depth shape1 shape2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
-    else
-      match (shape1, shape2) with
-      | Bot, Bot -> true
-      | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
-      | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
-          T.equal_formal formal1 formal2
-          && Int.equal
-               (List.compare (List.compare T.compare_offset)
-                  offsets1 offsets2)
-               0
-      | Fun (c1, cs1), Fun (c2, cs2) ->
-          equal_closures_by Signature.equal
-            (equal_cell_depth (depth + 1))
-            (c1, cs1) (c2, cs2)
-      | Bot, _
-      | Obj _, _
-      | Arg _, _
-      | Fun _, _ ->
-          false
+  let rec equal_cell cell1 cell2 =
+    phys_equal cell1 cell2
+    ||
+    let (Cell (taints1, shape1)) = cell1 in
+    let (Cell (taints2, shape2)) = cell2 in
+    Xtaint.equal taints1 taints2 && equal_shape shape1 shape2
 
-  and equal_obj_depth depth obj1 obj2 =
-    Fields.equal (equal_cell_depth depth) obj1 obj2
+  and equal_shape shape1 shape2 =
+    match (shape1, shape2) with
+    | Bot, Bot -> true
+    | ( Obj { sites = sites1; summary = summary1; fields = fields1 },
+        Obj { sites = sites2; summary = summary2; fields = fields2 } ) ->
+        equal_obj_node ~equal_fields:equal_obj sites1 summary1 fields1 sites2
+          summary2 fields2
+    | Rec n1, Rec n2 -> Int.equal n1 n2
+    | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
+        T.equal_formal formal1 formal2
+        && Int.equal
+             (List.compare (List.compare T.compare_offset) offsets1 offsets2)
+             0
+    | Fun (c1, cs1), Fun (c2, cs2) ->
+        equal_closures_by Signature.equal equal_cell (c1, cs1) (c2, cs2)
+    | Bot, _
+    | Obj _, _
+    | Rec _, _
+    | Arg _, _
+    | Fun _, _ ->
+        false
 
-  (* Public API uses depth 0 *)
-  let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
+  and equal_obj obj1 obj2 = Fields.equal equal_cell obj1 obj2
 
   (* Guard-aware twin of the chain above; structure identical, but cell
    * taints compare via [Xtaint.equal_with_guards] and [Fun] shapes via
    * [Signature.equal_with_guards]. *)
-  let rec equal_cell_with_guards_depth depth cell1 cell2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
-    else
-      let (Cell (taints1, shape1)) = cell1 in
-      let (Cell (taints2, shape2)) = cell2 in
-      Xtaint.equal_with_guards taints1 taints2
-      && equal_shape_with_guards_depth depth shape1 shape2
+  let rec equal_cell_with_guards cell1 cell2 =
+    phys_equal cell1 cell2
+    ||
+    let (Cell (taints1, shape1)) = cell1 in
+    let (Cell (taints2, shape2)) = cell2 in
+    Xtaint.equal_with_guards taints1 taints2
+    && equal_shape_with_guards shape1 shape2
 
-  and equal_shape_with_guards_depth depth shape1 shape2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
-    else
-      match (shape1, shape2) with
-      | Bot, Bot -> true
-      | Obj obj1, Obj obj2 -> equal_obj_with_guards_depth (depth + 1) obj1 obj2
-      | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
-          T.equal_formal formal1 formal2
-          && Int.equal
-               (List.compare (List.compare T.compare_offset)
-                  offsets1 offsets2)
-               0
-      | Fun (c1, cs1), Fun (c2, cs2) ->
-          equal_closures_by Signature.equal_with_guards
-            (equal_cell_with_guards_depth (depth + 1))
-            (c1, cs1) (c2, cs2)
-      | Bot, _
-      | Obj _, _
-      | Arg _, _
-      | Fun _, _ ->
-          false
+  and equal_shape_with_guards shape1 shape2 =
+    match (shape1, shape2) with
+    | Bot, Bot -> true
+    | ( Obj { sites = sites1; summary = summary1; fields = fields1 },
+        Obj { sites = sites2; summary = summary2; fields = fields2 } ) ->
+        equal_obj_node ~equal_fields:equal_obj_with_guards sites1 summary1
+          fields1 sites2 summary2 fields2
+    | Rec n1, Rec n2 -> Int.equal n1 n2
+    | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
+        T.equal_formal formal1 formal2
+        && Int.equal
+             (List.compare (List.compare T.compare_offset) offsets1 offsets2)
+             0
+    | Fun (c1, cs1), Fun (c2, cs2) ->
+        equal_closures_by Signature.equal_with_guards equal_cell_with_guards
+          (c1, cs1) (c2, cs2)
+    | Bot, _
+    | Obj _, _
+    | Rec _, _
+    | Arg _, _
+    | Fun _, _ ->
+        false
 
-  and equal_obj_with_guards_depth depth obj1 obj2 =
-    Fields.equal (equal_cell_with_guards_depth depth) obj1 obj2
-
-  let equal_cell_with_guards cell1 cell2 =
-    equal_cell_with_guards_depth 0 cell1 cell2
+  and equal_obj_with_guards obj1 obj2 =
+    Fields.equal equal_cell_with_guards obj1 obj2
 
   let equal_env env1 env2 = equal_env_by equal_cell env1 env2
 
@@ -347,7 +369,15 @@ end = struct
   and compare_shape shape1 shape2 =
     match (shape1, shape2) with
     | Bot, Bot -> 0
-    | Obj obj1, Obj obj2 -> compare_obj obj1 obj2
+    | ( Obj { sites = sites1; summary = summary1; fields = fields1 },
+        Obj { sites = sites2; summary = summary2; fields = fields2 } ) -> (
+        match Sites.compare sites1 sites2 with
+        | 0 -> (
+            match Bool.compare summary1 summary2 with
+            | 0 -> compare_obj fields1 fields2
+            | other -> other)
+        | other -> other)
+    | Rec n1, Rec n2 -> Int.compare n1 n2
     | Arg (formal1, offsets1), Arg (formal2, offsets2) -> (
         match T.compare_formal formal1 formal2 with
         | 0 -> List.compare (List.compare T.compare_offset) offsets1 offsets2
@@ -356,13 +386,15 @@ end = struct
         match compare_closure c1 c2 with
         | 0 -> List.compare compare_closure cs1 cs2
         | other -> other)
-    | Bot, (Obj _ | Arg _ | Fun _)
-    | Obj _, (Arg _ | Fun _)
+    | Bot, (Obj _ | Rec _ | Arg _ | Fun _)
+    | Obj _, (Rec _ | Arg _ | Fun _)
+    | Rec _, (Arg _ | Fun _)
     | Arg _, Fun _ ->
         -1
     | Obj _, Bot
-    | Arg _, (Bot | Obj _)
-    | Fun _, (Bot | Obj _ | Arg _) ->
+    | Rec _, (Bot | Obj _)
+    | Arg _, (Bot | Obj _ | Rec _)
+    | Fun _, (Bot | Obj _ | Rec _ | Arg _) ->
         1
 
   and compare_obj obj1 obj2 = Fields.compare compare_cell obj1 obj2
@@ -398,7 +430,8 @@ end = struct
 
   and show_shape = function
     | Bot -> "_|_"
-    | Obj obj -> spf "obj {|%s|}" (show_obj obj)
+    | Obj { fields; _ } -> spf "obj {|%s|}" (show_obj fields)
+    | Rec n -> spf "rec<%d>" n
     | Arg (arg, []) ->
         (* No offsets recorded — should not arise from normal
            construction. *)
@@ -850,6 +883,7 @@ end = struct
     match shape with
     | Shape.Bot -> ""
     | Shape.Obj _
+    | Shape.Rec _
     | Shape.Arg _
     | Shape.Fun _ ->
         " & " ^ Shape.show_shape shape
@@ -1273,9 +1307,11 @@ let map_closure_refs (f : T.lval -> T.lval) (eff : Effect.t) : Effect.t =
   let rec map_shape (shape : Shape.shape) : Shape.shape =
     match shape with
     | Shape.Bot
+    | Shape.Rec _
     | Shape.Arg _ ->
         shape
-    | Shape.Obj obj -> Shape.Obj (Fields.map map_cell obj)
+    | Shape.Obj ({ fields; _ } as node) ->
+        Shape.Obj { node with fields = Fields.map map_cell fields }
     | Shape.Fun (c, cs) ->
         let c, cs =
           map_closures
@@ -1316,10 +1352,11 @@ let exists_closure_ref (p : T.lval -> bool) (eff : Effect.t) : bool =
   let rec in_shape (shape : Shape.shape) : bool =
     match shape with
     | Shape.Bot
+    | Shape.Rec _
     | Shape.Arg _ ->
         false
-    | Shape.Obj obj ->
-        Fields.exists (fun _ (Shape.Cell (_, shape)) -> in_shape shape) obj
+    | Shape.Obj { fields; _ } ->
+        Fields.exists (fun _ (Shape.Cell (_, shape)) -> in_shape shape) fields
     | Shape.Fun (c, cs) ->
         List.exists
           (fun (closure : Shape.closure) ->

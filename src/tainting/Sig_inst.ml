@@ -1201,16 +1201,19 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
    * where a function's own partial signature is visible during
    * re-extraction; that is bounded by
    * [Limits_semgrep.taint_MAX_SELF_SIG_PASSES]. *)
+  let call_site = T.call_loc_of_exp inst_trace.site.callee_exp in
   let rec walk_shape (sh : shape) : shape =
     match sh with
     | Bot -> Bot
-    | Obj obj ->
+    | Rec _ -> sh
+    | Obj ({ fields = obj; _ } as node) ->
         let obj =
           obj
           |> Fields.filter_map (fun _o cell ->
-                 Shape.update_offset_in_cell ~f:walk_xtaint [] cell)
+                 Shape.update_offset_in_cell ~write:call_site ~f:walk_xtaint []
+                   cell)
         in
-        if Fields.is_empty obj then Bot else Obj obj
+        if Fields.is_empty obj then Bot else Obj { node with fields = obj }
     | Arg (arg, offsets) when bound_formal_in_sig arg -> Arg (arg, offsets)
     | Arg (arg, offsets) ->
         let resolve_offset off =
@@ -1367,17 +1370,21 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
  * are refined via [substitute_in_sig]. *)
 let instantiate_shape ~lang inst_var inst_trace shape =
   let inst_taints = instantiate_taints inst_var inst_trace in
+  let call_site = T.call_loc_of_exp inst_trace.site.callee_exp in
+  let sites = Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at call_site) in
   let rec inst_shape = function
     | Bot -> Bot
-    | Obj obj ->
+    | Rec _ as shape -> shape
+    | Obj { fields = obj; summary; _ } ->
         let obj =
           obj
           |> Fields.filter_map (fun _o cell ->
                  (* This is essentially a recursive call to 'instantiate_shape'!
                   * We rely on 'update_offset_in_cell' to maintain INVARIANT(cell). *)
-                 Shape.update_offset_in_cell ~f:inst_xtaint [] cell)
+                 Shape.update_offset_in_cell ~write:call_site ~f:inst_xtaint []
+                   cell)
         in
-        if Fields.is_empty obj then Bot else Obj obj
+        if Fields.is_empty obj then Bot else Obj { sites; summary; fields = obj }
     | Arg (arg, offsets) ->
         (* For each alternative offset, resolve to the caller's actual
          * shape; unify the results so the dispatcher sees every
@@ -1742,16 +1749,22 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
        * return it as a type variable. *)
       Taints.singleton (T.taint_of_orig (Var lval))
 
-let combine_rest_args_taint ~(merge : T.trace_merge)
+let combine_rest_args_taint ~(merge : T.trace_merge) ~(site : T.call_loc)
     (ts : (Taints.t * shape) list) : Taints.t * shape =
   let taints =
     List.fold_left (Taints.union ~merge) Taints.empty (List.map fst ts)
   in
   let shape =
-    Obj (Fields.of_list
-           (List.mapi
-              (fun i (t, s) -> Taint.Oint i, Cell (Xtaint.of_taints t, s))
-              ts))
+    Obj
+      {
+        sites = Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at site);
+        summary = false;
+        fields =
+          Fields.of_list
+            (List.mapi
+               (fun i (t, s) -> (Taint.Oint i, Cell (Xtaint.of_taints t, s)))
+               ts);
+      }
   in
   (taints, shape) 
 
@@ -1798,7 +1811,8 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(merge : T.trace_merge)
         find_pos_in_actual_args
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
-          ~combine_rest_args:(combine_rest_args_taint ~merge)
+          ~combine_rest_args:
+            (combine_rest_args_taint ~merge ~site:(T.call_loc_of_exp fun_exp))
           args_taints fparams pos
     | `Var var ->
         let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in

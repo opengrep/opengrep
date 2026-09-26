@@ -1698,7 +1698,9 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
         (taints, S.Bot, lval_env)
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
         let taints_and_shapes, lval_env = map_check_expr env check es in
-        let tuple_shape = Shape.tuple_like_obj taints_and_shapes in
+        let tuple_shape =
+          Shape.tuple_like_obj ~site:(T.call_loc_of_exp exp) taints_and_shapes
+        in
         (Taints.empty, tuple_shape, lval_env)
     | Composite ((CSet | Constructor _ | Regexp), (_, es, _)) ->
         let taints, lval_env = union_map_taints_and_vars env check es in
@@ -1795,6 +1797,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                        match e_shape with
                        | S.Obj _ -> taints_acc
                        | S.Bot
+                       | S.Rec _
                        | S.Arg _
                        | S.Fun _ ->
                            taints_acc |> add_taints_from_shape ~merge:env.taint_inst.merge e_shape
@@ -1816,7 +1819,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
         in
         let record_shape =
           Shape.record_or_dict_like_obj ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang
-            taints_and_shapes
+            ~site:(T.call_loc_of_exp exp) taints_and_shapes
         in
         (taints, record_shape, lval_env)
     | Cast (_, e) -> check env e
@@ -2810,7 +2813,8 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
 
 (* An object built without a known constructor carries the taints of all its
  * arguments, and each named argument is the field of that name. *)
-let new_without_signature env args_taints all_args_taints lval_env =
+let new_without_signature env ~(site : T.call_loc) args_taints all_args_taints
+    lval_env =
   let all_args_taints =
     if env.taint_inst.options.taint_only_propagate_through_assignments then
       Taints.empty
@@ -2830,7 +2834,9 @@ let new_without_signature env args_taints all_args_taints lval_env =
            | IL.Unnamed _ -> None)
     with
     | [] -> S.Bot
-    | fields -> Shape.record_or_dict_like_obj ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang fields
+    | fields ->
+        Shape.record_or_dict_like_obj ~merge:env.taint_inst.merge
+          ~lang:env.taint_inst.lang ~site fields
   in
   (all_args_taints, shape, lval_env)
 
@@ -2854,7 +2860,9 @@ let new_with_intrafile env _result_lval _ty args constructor =
   in
   match call_result with
   | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
-  | None -> new_without_signature env args_taints all_args_taints lval_env
+  | None ->
+      new_without_signature env ~site:(T.call_loc_of_exp constructor)
+        args_taints all_args_taints lval_env
 
 let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
   let check_expr env = check_tainted_expr env in
@@ -3025,13 +3033,15 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           with
           | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
           | None ->
-              new_without_signature env args_taints all_args_taints lval_env)
+              new_without_signature env ~site:(T.call_loc_of_exp constructor)
+                args_taints all_args_taints lval_env)
     | New (_lval, _ty, None, args) ->
         (* 'New' without reference to constructor *)
         let args_taints, all_args_taints, lval_env =
           check_function_call_arguments env args
         in
-        new_without_signature env args_taints all_args_taints lval_env
+        new_without_signature env ~site:(T.call_loc_of_orig instr.iorig)
+          args_taints all_args_taints lval_env
     | CallSpecial (_, (IL.ForeachNext, _), ([ _ ] as args)) -> (
         let args_taints, _all_args_taints, lval_env =
           check_function_call_arguments env args
@@ -3512,12 +3522,13 @@ let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(merge : T.trace_merge)
 let rec shape_has_closure_env (shape : S.shape) : bool =
   match shape with
   | Bot
+  | Rec _
   | Arg _ ->
       false
-  | Obj obj ->
+  | Obj { fields; _ } ->
       Shape_and_sig.Fields.exists
         (fun _ (S.Cell (_, shape)) -> shape_has_closure_env shape)
-        obj
+        fields
   | Fun (c, cs) ->
       List.exists
         (fun (closure : S.closure) -> not (List_.null closure.env))
@@ -4007,6 +4018,13 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let lval_env' =
           match opt_lval with
           | Some lval ->
+              let lval_env' =
+                match lval with
+                | { IL.base = IL.Var _; rev_offset = [] }
+                  when Shape.taints_and_shape_are_relevant taints shape ->
+                    Lval_env.clean env.taint_inst.lang lval_env' lval
+                | _ -> lval_env'
+              in
               (* We call `check_tainted_lval` here because the assigned `lval`
                * itself could be annotated as a source of taint. *)
               let taints, lval_shape, _sub, lval_env' =
@@ -4360,7 +4378,9 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
         env.did_self_recurse := false;
         let end_mapping =
           DataflowX.fixpoint ~eq_env:Lval_env.equal
-            ~join:(Lval_env.union ~merge:taint_inst.merge ~lang:taint_inst.lang) ~init:init_mapping
+            ~join:
+              (Lval_env.union_at_loop_head ~merge:taint_inst.merge
+                 ~lang:taint_inst.lang) ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -4394,7 +4414,9 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
       run_to_sig_fixpoint 0
     else
       DataflowX.fixpoint ~eq_env:Lval_env.equal
-        ~join:(Lval_env.union ~merge:taint_inst.merge ~lang:taint_inst.lang) ~init:init_mapping
+        ~join:
+          (Lval_env.union_at_loop_head ~merge:taint_inst.merge
+             ~lang:taint_inst.lang) ~init:init_mapping
         ~trans:(transfer env ~fun_cfg) ~flow
   in
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in

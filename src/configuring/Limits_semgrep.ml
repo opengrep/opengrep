@@ -63,12 +63,6 @@ let taint_MAX_TAINT_SET_SIZE = 25
 let taint_MAX_POLY_OFFSET = 4
 let taint_MAX_POLY_OFFSET_FLAT = 1
 
-(** Maximum depth for shape equality comparison to prevent infinite recursion
- * in pathological patterns like obj[key] = [obj[key], item] that create
- * unbounded recursive structures. When both shapes exceed this depth, we
- * consider them equal (widening approximation) to force fixpoint convergence. *)
-let taint_MAX_SHAPE_DEPTH = 50
-
 (** Maximum nesting of [Fun] shapes stored in a signature database (see
  * [Taint_shape.bound_fun_shape]).
  *

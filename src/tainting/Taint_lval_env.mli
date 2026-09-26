@@ -218,6 +218,11 @@ val union : lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
      branch, then x.a_1. ... . a_N may no longer be clean, but we assume the
      best case scenario to reduce FPs. *)
 
+val union_at_loop_head :
+  lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
+(** [union] of the previous and the computed environment of a loop head,
+    with each variable's shape folded ([Taint_shape.fold_cell]). *)
+
 val union_list :
   lang:Lang.t -> merge:Taint.trace_merge -> ?default:env -> env list -> env
 val equal : env -> env -> bool

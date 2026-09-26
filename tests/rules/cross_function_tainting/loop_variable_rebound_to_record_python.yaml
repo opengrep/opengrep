@@ -1,0 +1,15 @@
+rules:
+  - id: loop_variable_rebound_to_record_python
+    message: a path from the command line reaches a file opened in a function whose loop rebinds its variable to a record that holds the old value
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: sys.argv
+    pattern-sinks:
+      - patterns:
+          - pattern: open($PATH, ...)
+          - focus-metavariable: $PATH

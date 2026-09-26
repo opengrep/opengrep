@@ -1,0 +1,15 @@
+rules:
+  - id: recursive_record_of_lists_python
+    message: an environment value reaches a request through a recursive function that nests lists in a record
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: os.environ.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern: requests.get($URL, ...)
+          - focus-metavariable: $URL

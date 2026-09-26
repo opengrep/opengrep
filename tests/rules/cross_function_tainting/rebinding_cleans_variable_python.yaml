@@ -1,0 +1,15 @@
+rules:
+  - id: rebinding_cleans_variable_python
+    message: a path from the command line reaches a file opened through a variable
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: sys.argv
+    pattern-sinks:
+      - patterns:
+          - pattern: open($PATH, ...)
+          - focus-metavariable: $PATH

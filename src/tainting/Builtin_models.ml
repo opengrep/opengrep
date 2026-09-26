@@ -324,7 +324,12 @@ let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~c
       element_at (Taint.Param impl_arg) [ Oint data_index ]
     in
     let tainted_cell = Shape.Cell (`Tainted element_taints, element_shape) in
-    Shape.Obj (Fields.singleton (Taint.Oint taint_arg_index) tainted_cell)
+    Shape.Obj
+      {
+        sites = Shape_and_sig.Sites.empty;
+        summary = false;
+        fields = Fields.singleton (Taint.Oint taint_arg_index) tainted_cell;
+      }
   in
   let args_taints =
     [ IL.Unnamed (Taint.Taint_set.empty, callback_obj) ]
@@ -520,8 +525,13 @@ let add_arg_taints_this_signatures db method_names arity
       let stored_taints, stored_shape = stored in
       let stored_element =
         Shape.Obj
-          (Fields.singleton Taint.Oany
-             (Shape.Cell (`Tainted stored_taints, stored_shape)))
+          {
+            sites = Shape_and_sig.Sites.empty;
+            summary = false;
+            fields =
+              Fields.singleton Taint.Oany
+                (Shape.Cell (`Tainted stored_taints, stored_shape));
+          }
       in
       Effects.of_list ~merge:Taint.Keep_best
         [

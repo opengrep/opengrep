@@ -272,13 +272,24 @@ let base_of_formal = function
   | Captured name -> BEnv name
   | Result call -> BCall call
 
+let call_loc_of_location (loc : Tok.location) : call_loc =
+  { file = Fpath.to_string loc.pos.file; line = loc.pos.line; col = loc.pos.column }
+
+let no_call_loc : call_loc = { file = ""; line = 0; col = 0 }
+
+let call_loc_of_orig (orig : IL.orig) : call_loc =
+  match AST_generic_helpers.range_of_any_opt (IL.any_of_orig orig) with
+  | Some (loc, _) -> call_loc_of_location loc
+  | None -> no_call_loc
+
 (* The location of a call, from its callee expression. Calls with no
  * location share one. *)
-let call_loc_of_exp (callee : IL.exp) : call_loc =
-  match AST_generic_helpers.range_of_any_opt (IL.any_of_orig callee.eorig) with
-  | Some (loc, _) ->
-      { file = Fpath.to_string loc.Tok.pos.file; line = loc.pos.line; col = loc.pos.column }
-  | None -> { file = ""; line = 0; col = 0 }
+let call_loc_of_exp (callee : IL.exp) : call_loc = call_loc_of_orig callee.eorig
+
+let call_loc_of_tok (tok : Tok.t) : call_loc =
+  match Tok.loc_of_tok tok with
+  | Ok loc -> call_loc_of_location loc
+  | Error _ -> no_call_loc
 
 (*****************************************************************************)
 (* Taint *)

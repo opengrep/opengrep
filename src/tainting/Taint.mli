@@ -97,6 +97,11 @@ val base_of_formal : formal -> base
 val call_loc_of_exp : IL.exp -> call_loc
 (** The location of a call, from its callee expression. *)
 
+val call_loc_of_orig : IL.orig -> call_loc
+
+val call_loc_of_tok : Tok.t -> call_loc
+(** The location of a token; a fake token has the empty location. *)
+
 val compare_offset : offset -> offset -> int
 val equal_offset : offset -> offset -> bool
 val show_offset : offset -> string

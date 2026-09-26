@@ -68,12 +68,14 @@ let debug_offset offset =
  *   no taint here; does NOT count as content.
  * - [Bot] — nothing. *)
 let rec shape_has_relevant_content = function
-  | Bot -> false
+  | Bot
+  | Rec _ ->
+      false
   | Arg _
   | Fun _ ->
       true
-  | Obj obj ->
-      Fields.exists (fun _ cell -> cell_has_relevant_content cell) obj
+  | Obj { fields; _ } ->
+      Fields.exists (fun _ cell -> cell_has_relevant_content cell) fields
 
 and cell_has_relevant_content (Cell (xtaint, shape)) =
   Xtaint.is_tainted xtaint || shape_has_relevant_content shape
@@ -279,8 +281,170 @@ let find_in_arg ?max ~lang ~(merge : T.trace_merge) ~taints offset arg
     Some (Cell (Xtaint.of_taints taints, Arg (arg, extended)))
 
 (*********************************************************)
+(* Back references *)
+(*********************************************************)
+
+let obj_or_bot ~(sites : Shape_and_sig.Sites.t) ~(summary : bool) (fields : obj)
+    : shape =
+  if Fields.is_empty fields then Bot else Obj { sites; summary; fields }
+
+let written_obj ~(write : T.call_loc) ~(depth : int) : shape =
+  Obj
+    {
+      sites = Shape_and_sig.Sites.singleton (Shape_and_sig.Written_at (write, depth));
+      summary = false;
+      fields = Fields.empty;
+    }
+
+let is_summary (shape : shape) : bool =
+  match shape with
+  | Obj { summary; _ } -> summary
+  | Bot
+  | Rec _
+  | Arg _
+  | Fun _ ->
+      false
+
+let map_fields (f : cell -> cell) (fields : obj) : obj =
+  Fields.fold
+    (fun o cell acc ->
+      let cell' = f cell in
+      if phys_equal cell' cell then acc else Fields.add o cell' acc)
+    fields fields
+
+let map_cell_shape (f : shape -> shape) (Cell (xtaint, shape) as cell : cell) :
+    cell =
+  let shape' = f shape in
+  if phys_equal shape' shape then cell else Cell (xtaint, shape')
+
+(* [shape] with each back reference that leaves it replaced by [outer j
+ * depth], where [j] counts the objects enclosing [shape] that the reference
+ * skips and [depth] the objects of [shape] around the reference. *)
+let rebind_free ~(outer : int -> int -> shape) (shape : shape) : shape =
+  let rec rebind (depth : int) (shape : shape) : shape =
+    match shape with
+    | Rec n when n >= depth -> outer (n - depth) depth
+    | Bot
+    | Rec _
+    | Arg _
+    | Fun _ ->
+        shape
+    | Obj ({ fields; _ } as node) ->
+        let fields' = map_fields (map_cell_shape (rebind (depth + 1))) fields in
+        if phys_equal fields' fields then shape
+        else Obj { node with fields = fields' }
+  in
+  rebind 0 shape
+
+(* [shape], placed [levels] objects deeper than the objects it was found
+ * under. *)
+let shift_free ~(levels : int) (shape : shape) : shape =
+  rebind_free ~outer:(fun j depth -> Rec (depth + j + levels)) shape
+
+(* [shape], found under [enclosing] (nearest first), with each back
+ * reference that leaves it replaced by the object it refers to, itself
+ * closed: a regular tree unrolled once, which no longer depends on its
+ * position. Only a summary is referred to. *)
+let rec close_shape (enclosing : shape list) (shape : shape) : shape =
+  if not (List.exists is_summary enclosing) then shape
+  else
+    let targets =
+      enclosing
+      |> List.mapi (fun i target ->
+             lazy (close_shape (List.drop (i + 1) enclosing) target))
+      |> Array.of_list
+    in
+    rebind_free ~outer:(fun j _depth -> Lazy.force targets.(j)) shape
+
+let close_cell (enclosing : shape list) (cell : cell) : cell =
+  map_cell_shape (close_shape enclosing) cell
+
+(*********************************************************)
 (* Unification (merging shapes) *)
 (*********************************************************)
+
+(* One side of a unification: the objects that enclose the position, nearest
+ * first, and whether its back references count the levels of the result,
+ * which stops once a back reference of this side was followed. *)
+type side = { enclosing : shape list; aligned : bool }
+
+(* [levels] holds, for each object enclosing the result's position, the
+ * objects of both sides it joins. After a back reference was followed
+ * ([unrolled]), a pair of objects met again, one of them a summary, is a
+ * cycle of the result. *)
+type join = {
+  left : side;
+  right : side;
+  levels : (shape option * shape option) list;
+  unrolled : bool;
+}
+
+let closed_join : join =
+  {
+    left = { enclosing = []; aligned = true };
+    right = { enclosing = []; aligned = true };
+    levels = [];
+    unrolled = false;
+  }
+
+let flip (join : join) : join =
+  {
+    left = join.right;
+    right = join.left;
+    levels = List.map (fun (l, r) -> (r, l)) join.levels;
+    unrolled = join.unrolled;
+  }
+
+let enter (join : join) (left : shape option) (right : shape option) : join =
+  let push (side : side) (node : shape option) : side =
+    match node with
+    | Some node -> { side with enclosing = node :: side.enclosing }
+    | None -> side
+  in
+  {
+    join with
+    left = push join.left left;
+    right = push join.right right;
+    levels = (left, right) :: join.levels;
+  }
+
+let both_aligned (join : join) : bool = join.left.aligned && join.right.aligned
+
+let follow (side : side) (n : int) : (shape * side) option =
+  match List.nth_opt side.enclosing n with
+  | Some target ->
+      Some (target, { enclosing = List.drop (n + 1) side.enclosing; aligned = false })
+  | None -> None
+
+(* [shape] of the side that [pick] selects from a level, moved to the
+ * result's position: a back reference refers to the nearest level that joins
+ * its object, or else to a closed copy of that object. *)
+let relocate (join : join) ~(pick : shape option * shape option -> shape option)
+    (side : side) (shape : shape) : shape =
+  if side.aligned then shape
+  else
+    rebind_free
+      ~outer:(fun j depth ->
+        match List.nth_opt side.enclosing j with
+        | None -> Rec (depth + j)
+        | Some target -> (
+            match
+              List.find_index
+                (fun level ->
+                  match pick level with
+                  | Some node -> phys_equal node target
+                  | None -> false)
+                join.levels
+            with
+            | Some m -> Rec (depth + m)
+            | None -> close_shape (List.drop (j + 1) side.enclosing) target))
+      shape
+
+let relocate_left (join : join) (shape : shape) : shape =
+  relocate join ~pick:fst join.left shape
+
+let relocate_right (join : join) (shape : shape) : shape =
+  relocate join ~pick:snd join.right shape
 
 (* [cell] with every 'Clean' leaf, at any depth, given the taint a read of
  * the leaf gives on the other path: [leaf], the taint of that path's whole
@@ -302,7 +466,7 @@ let rec replace_clean_leaves ~lang ~(merge : T.trace_merge) ~offset ~carry ~leaf
         let taints = fix_poly_taint_with_offset ~lang ~merge offset leaf in
         if Taints.is_empty taints then None
         else Some (Cell (`Tainted taints, Bot))
-  | _, Obj obj -> (
+  | _, Obj ({ fields = obj; _ } as node) -> (
       let carry =
         match xtaint with
         | `Tainted taints -> taints
@@ -326,19 +490,26 @@ let rec replace_clean_leaves ~lang ~(merge : T.trace_merge) ~offset ~carry ~leaf
         match (xtaint, Fields.is_empty obj') with
         | (`None | `Clean), true -> None
         | `Tainted _, true -> Some (Cell (xtaint, Bot))
-        | _, false -> Some (Cell (xtaint, Obj obj')))
-  | _, (Bot | Arg _ | Fun _) -> Some cell
+        | _, false -> Some (Cell (xtaint, Obj { node with fields = obj' })))
+  | _, (Bot | Rec _ | Arg _ | Fun _) -> Some cell
 
-let rec unify_cell ~lang ~(merge : T.trace_merge) cell1 cell2 =
+let rec unify_cell_in ~lang ~(merge : T.trace_merge) (join : join) cell1 cell2 =
+  if phys_equal cell1 cell2 && both_aligned join then cell1
+  else
   let (Cell (xtaint1, shape1)) = cell1 in
   let (Cell (xtaint2, shape2)) = cell2 in
   (* TODO: Apply 'Flag_semgrep.max_taint_set_size' here too ? *)
   let xtaint = Xtaint.union ~merge xtaint1 xtaint2 in
   let carry = Xtaint.to_taints xtaint in
   let shape =
-    unify_shape ~lang ~merge
-      (taint_untracked_fields ~lang ~merge ~carry ~other:cell2 shape1)
-      (taint_untracked_fields ~lang ~merge ~carry ~other:cell1 shape2)
+    unify_shape_in ~lang ~merge join
+      ~process1:(fun join ~other shape ->
+        taint_untracked_fields ~lang ~merge join ~carry ~other_xtaint:xtaint2
+          ~other shape)
+      ~process2:(fun join ~other shape ->
+        taint_untracked_fields ~lang ~merge (flip join) ~carry
+          ~other_xtaint:xtaint1 ~other shape)
+      shape1 shape2
   in
   match (xtaint, shape) with
   (* Restore INVARIANT(cell).2: 'Xtaint.union' gives 'Clean ∪ None = Clean'
@@ -347,9 +518,9 @@ let rec unify_cell ~lang ~(merge : T.trace_merge) cell1 cell2 =
    * 'Cell(Clean, Obj _)'. The 'Clean' claim only held on one side, and a
    * join must not hide the taint recorded under the other side's shape
    * ('find_in_cell_w_carry' stops at a 'Clean' cell). *)
-  | `Clean, (Obj _ | Arg _ | Fun _) -> Cell (`None, shape)
+  | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) -> Cell (`None, shape)
   | ( (`Clean | `None | `Tainted _),
-      (Bot | Obj _ | Arg _ | Fun _) ) ->
+      (Bot | Obj _ | Rec _ | Arg _ | Fun _) ) ->
       Cell (xtaint, shape)
 
 (* [shape] as it must be seen at a join whose other side is [other].
@@ -373,11 +544,10 @@ let rec unify_cell ~lang ~(merge : T.trace_merge) cell1 cell2 =
  *
  * A literal records its untainted fields as 'Clean', and so does a
  * sanitizer. A field that [other] tracks is left to 'unify_obj'. *)
-and taint_untracked_fields ~lang ~(merge : T.trace_merge) ~carry
-    ~other:(Cell (xtaint, other_shape))
-    shape =
+and taint_untracked_fields ~lang ~(merge : T.trace_merge) (join : join) ~carry
+    ~other_xtaint:(xtaint : Xtaint.t) ~other:(other_shape : shape) shape =
   match shape with
-  | Obj obj ->
+  | Obj ({ fields = obj; _ } as node) ->
       let whole =
         match xtaint with
         | `Tainted taints -> Some taints
@@ -385,10 +555,19 @@ and taint_untracked_fields ~lang ~(merge : T.trace_merge) ~carry
         | `Clean ->
             None
       in
+      let other_node =
+        match other_shape with
+        | Obj _ -> Some other_shape
+        | Bot
+        | Rec _
+        | Arg _
+        | Fun _ ->
+            None
+      in
       let read_on_other o =
         match (other_shape, xtaint) with
-        | Obj other_obj, _ when Fields.mem o other_obj -> `Tracked
-        | Obj other_obj, _ -> (
+        | Obj { fields = other_obj; _ }, _ when Fields.mem o other_obj -> `Tracked
+        | Obj { fields = other_obj; _ }, _ -> (
             match Fields.find_opt T.Oany other_obj with
             | Some any_cell -> `Cell any_cell
             | None -> `Whole)
@@ -397,39 +576,70 @@ and taint_untracked_fields ~lang ~(merge : T.trace_merge) ~carry
             | Some cell -> `Cell cell
             | None -> `Whole)
         | Arg _, (`None | `Clean)
-        | (Bot | Fun _), _ ->
+        | (Bot | Rec _ | Fun _), _ ->
             `Whole
       in
-      let obj =
-        Fields.filter_map
-          (fun o field ->
-            match (read_on_other o, whole) with
-            | `Tracked, _
-            | `Whole, None ->
-                Some field
-            | `Cell cell, _ -> Some (unify_cell ~lang ~merge cell field)
-            | `Whole, Some leaf ->
-                replace_clean_leaves ~lang ~merge ~offset:[ o ] ~carry ~leaf field)
-          obj
+      let obj' =
+        Fields.fold
+          (fun o field acc ->
+            match
+              match (read_on_other o, whole) with
+              | `Tracked, _
+              | `Whole, None ->
+                  Some field
+              | `Cell cell, _ ->
+                  Some
+                    (unify_cell_in ~lang ~merge
+                       (flip (enter join (Some shape) other_node))
+                       cell field)
+              | `Whole, Some leaf ->
+                  replace_clean_leaves ~lang ~merge ~offset:[ o ] ~carry ~leaf
+                    field
+            with
+            | Some field' when phys_equal field' field -> acc
+            | Some field' -> Fields.add o field' acc
+            | None -> Fields.remove o acc)
+          obj obj
       in
-      if Fields.is_empty obj then Bot else Obj obj
+      if phys_equal obj' obj then shape
+      else obj_or_bot ~sites:node.sites ~summary:node.summary obj'
+  | Rec n -> (
+      match (xtaint, follow join.left n) with
+      | `Tainted leaf, Some (target, side) -> (
+          let closed = close_shape side.enclosing target in
+          match
+            replace_clean_leaves ~lang ~merge ~offset:[] ~carry ~leaf
+              (Cell (`None, closed))
+          with
+          | Some (Cell (_, replaced)) when phys_equal replaced closed -> shape
+          | Some (Cell (_, replaced)) -> replaced
+          | None -> Bot)
+      | (`None | `Clean), _
+      | `Tainted _, None ->
+          shape)
   | Bot
   | Arg _
   | Fun _ ->
       shape
 
-and unify_shape ~lang ~(merge : T.trace_merge) shape1 shape2 =
+(* [process1] and [process2] give an object of one side as the join with the
+ * [other] side's shape must see it ('taint_untracked_fields'); a level
+ * records the objects before that, so an object met again through a back
+ * reference is recognised. *)
+and unify_shape_in ~lang ~(merge : T.trace_merge) (join : join)
+    ~(process1 : join -> other:shape -> shape -> shape)
+    ~(process2 : join -> other:shape -> shape -> shape) shape1 shape2 =
+  if phys_equal shape1 shape2 && both_aligned join then shape1
+  else
   match (shape1, shape2) with
-  | Bot, shape
-  | shape, Bot ->
+  | Bot, shape ->
       (* 'Bot' acts like a do-not-care. *)
-      shape
-  | Obj obj1, Obj obj2 -> Obj (unify_obj ~lang ~merge obj1 obj2)
+      relocate_right join (process2 join ~other:shape1 shape)
+  | shape, Bot -> relocate_left join (process1 join ~other:shape2 shape)
+  | Rec n1, Rec n2 when both_aligned join && Int.equal n1 n2 -> shape1
   | Fun (c1, cs1), Fun (c2, cs2) ->
-      if phys_equal shape1 shape2 then shape1
-      else
-        let c, cs = unify_closure_sets ~lang ~merge (c1, cs1) (c2, cs2) in
-        Fun (c, cs)
+      let c, cs = unify_closure_sets ~lang ~merge (c1, cs1) (c2, cs2) in
+      Fun (c, cs)
   | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_formal arg1 arg2 ->
       (* Same parameter — set-union the alternative offsets so a value
        * bound to different offsets across branches retains every
@@ -454,12 +664,59 @@ and unify_shape ~lang ~(merge : T.trace_merge) shape1 shape2 =
             (T.show_formal arg1) (T.show_formal arg2));
       shape1
   (* 'Arg' acts like a shape variable. *)
-  | Arg _, (Obj _ as obj)
-  | (Obj _ as obj), Arg _ ->
-      obj
+  | Arg _, ((Obj _ | Rec _) as obj) ->
+      relocate_right join (process2 join ~other:shape1 obj)
+  | ((Obj _ | Rec _) as obj), Arg _ ->
+      relocate_left join (process1 join ~other:shape2 obj)
   | Arg _, (Fun _ as func)
   | (Fun _ as func), Arg _ ->
       func
+  | Rec n, _ -> (
+      match follow join.left n with
+      | Some (target, left) ->
+          unify_shape_in ~lang ~merge
+            { join with left; unrolled = true }
+            ~process1 ~process2 target shape2
+      | None -> shape1)
+  | _, Rec n -> (
+      match follow join.right n with
+      | Some (target, right) ->
+          unify_shape_in ~lang ~merge
+            { join with right; unrolled = true }
+            ~process1 ~process2 shape1 target
+      | None -> shape2)
+  | Obj _, Obj _ -> (
+      let cycle =
+        if join.unrolled && (is_summary shape1 || is_summary shape2) then
+          List.find_index
+            (fun level ->
+              match level with
+              | Some node1, Some node2 ->
+                  phys_equal node1 shape1 && phys_equal node2 shape2
+              | _ -> false)
+            join.levels
+        else None
+      in
+      match cycle with
+      | Some m -> Rec m
+      | None -> (
+          match
+            ( process1 join ~other:shape2 shape1,
+              process2 join ~other:shape1 shape2 )
+          with
+          | ( Obj { sites = sites1; summary = summary1; fields = obj1 },
+              Obj { sites = sites2; summary = summary2; fields = obj2 } ) ->
+              Obj
+                {
+                  sites = Shape_and_sig.Sites.union sites1 sites2;
+                  summary = summary1 || summary2;
+                  fields =
+                    unify_obj_in ~lang ~merge
+                      (enter join (Some shape1) (Some shape2))
+                      obj1 obj2;
+                }
+          | Bot, shape -> relocate_right join shape
+          | shape, _ -> relocate_left join shape))
   | Obj _, Fun _
   | Fun _, Obj _ ->
       (* This could be caused by bugs in Semgrep, or by an if-then-else in a
@@ -469,11 +726,21 @@ and unify_shape ~lang ~(merge : T.trace_merge) shape1 shape2 =
           m "Trying to unify incompatible shapes: %s ~ %s" (show_shape shape1)
             (show_shape shape2));
       (* Not sure what to do here, so we just pick one arbitrary shape. *)
-      shape1
+      relocate_left join (process1 join ~other:shape2 shape1)
 
-and unify_obj ~lang ~(merge : T.trace_merge) obj1 obj2 =
+and unify_obj_in ~lang ~(merge : T.trace_merge) (join : join) obj1 obj2 =
   (* THINK: Apply taint_MAX_OBJ_FIELDS limit ? *)
-  Fields.union (fun _ x y -> Some (unify_cell ~lang ~merge x y)) obj1 obj2
+  if both_aligned join then
+    Fields.union (fun _ x y -> Some (unify_cell_in ~lang ~merge join x y)) obj1 obj2
+  else
+    Fields.merge
+      (fun _ x y ->
+        match (x, y) with
+        | Some x, Some y -> Some (unify_cell_in ~lang ~merge join x y)
+        | Some x, None -> Some (map_cell_shape (relocate_left join) x)
+        | None, Some y -> Some (map_cell_shape (relocate_right join) y)
+        | None, None -> None)
+      obj1 obj2
 
 and unify_closure ~lang ~(merge : T.trace_merge) (c1 : closure)
     (c2 : closure) : closure =
@@ -516,11 +783,23 @@ and unify_env ~lang ~(merge : T.trace_merge) (env1 : env) (env2 : env) : env =
   List.map2
     (fun ((x, entry1) as binding1) (_, entry2) ->
       match (entry1, entry2) with
-      | Val cell1, Val cell2 -> (x, Val (unify_cell ~lang ~merge cell1 cell2))
+      | Val cell1, Val cell2 ->
+          (x, Val (unify_cell_in ~lang ~merge closed_join cell1 cell2))
       | Ref _, _
       | Val _, Ref _ ->
           binding1)
     env1 env2
+
+let unify_cell ~lang ~(merge : T.trace_merge) cell1 cell2 =
+  unify_cell_in ~lang ~merge closed_join cell1 cell2
+
+let unify_shape ~lang ~(merge : T.trace_merge) shape1 shape2 =
+  let keep (_ : join) ~other:(_ : shape) (shape : shape) : shape = shape in
+  unify_shape_in ~lang ~merge closed_join ~process1:keep ~process2:keep shape1
+    shape2
+
+let unify_obj ~lang ~(merge : T.trace_merge) obj1 obj2 =
+  unify_obj_in ~lang ~merge closed_join obj1 obj2
 
 (*********************************************************)
 (* Object shapes *)
@@ -543,7 +822,7 @@ let add_field_to_obj_check_invariant obj offset taints shape =
       Fields.add offset (Cell (`Clean, Bot)) obj
   | xtaint, shape -> Fields.add offset (Cell (xtaint, shape)) obj
 
-let tuple_like_obj taints_and_shapes : shape =
+let tuple_like_obj ~(site : T.call_loc) taints_and_shapes : shape =
   let _index, obj =
     taints_and_shapes
     |> List.fold_left
@@ -555,10 +834,12 @@ let tuple_like_obj taints_and_shapes : shape =
          (0, Fields.empty)
   in
   (* See INVARIANT(cell) *)
-  if Fields.is_empty obj then Bot else Obj obj
+  obj_or_bot
+    ~sites:(Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at site))
+    ~summary:false obj
 
-let record_or_dict_like_obj ~lang ~(merge : T.trace_merge) taints_and_shapes :
-    shape =
+let record_or_dict_like_obj ~lang ~(merge : T.trace_merge) ~(site : T.call_loc)
+    taints_and_shapes : shape =
   let obj =
     taints_and_shapes
     |> List.fold_left
@@ -580,8 +861,11 @@ let record_or_dict_like_obj ~lang ~(merge : T.trace_merge) taints_and_shapes :
                add_field_to_obj_check_invariant obj offset taints shape
            | `Spread shape -> (
                match shape with
-               | Obj obj' -> unify_obj ~lang ~merge obj obj'
+               | Obj { fields = obj'; _ } ->
+                   unify_obj ~lang ~merge obj
+                     (map_fields (close_cell [ shape ]) obj')
                | Bot
+               | Rec _
                | Arg _
                | Fun _ ->
                    Log.err (fun m ->
@@ -593,7 +877,9 @@ let record_or_dict_like_obj ~lang ~(merge : T.trace_merge) taints_and_shapes :
          Fields.empty
   in
   (* See INVARIANT(cell) *)
-  if Fields.is_empty obj then Bot else Obj obj
+  obj_or_bot
+    ~sites:(Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at site))
+    ~summary:false obj
 
 (*********************************************************)
 (* Collect/union all taints *)
@@ -612,8 +898,10 @@ let rec gather_all_taints_in_cell_acc ~(merge : T.trace_merge) acc cell =
         shape
 
 and gather_all_taints_in_shape_acc ~(merge : T.trace_merge) acc = function
-  | Bot -> acc
-  | Obj obj -> gather_all_taints_in_obj_acc ~merge acc obj
+  | Bot
+  | Rec _ ->
+      acc
+  | Obj { fields; _ } -> gather_all_taints_in_obj_acc ~merge acc fields
   | Arg (arg, offsets) ->
       (* One [Shape_var] per alternative offset. *)
       List.fold_left
@@ -663,11 +951,8 @@ let gather_all_taints_in_args_taints ~(merge : T.trace_merge)
  * A self-recursive tree-builder (a function that wraps its own recursive
  * result in a fresh container) has no fixpoint in the shape domain: each
  * SCC round of the interfile fold nests its return shape one level deeper,
- * and branch unification can double the node count per round.
- * [Limits_semgrep.taint_MAX_SHAPE_DEPTH] only widens the *equality* test,
- * which stops the iteration after near-depth-50 shapes have already been
- * built and instantiated — far past any practical cost. This truncates
- * where the cost is incurred, when a signature is stored.
+ * and branch unification can double the node count per round. This
+ * truncates where the cost is incurred, when a signature is stored.
  *
  * Subtrees below the cutoff collapse into the cutoff cell's xtaint via
  * [gather_all_taints_in_cell]: fields below the cutoff then inherit the
@@ -683,32 +968,36 @@ let gather_all_taints_in_args_taints ~(merge : T.trace_merge)
  * Returns [None] when the truncated cell carries no information
  * ([`None]/[Bot]), so obj entries can be dropped and INVARIANT(cell) is
  * preserved. *)
-let rec truncate_cell ~(merge : T.trace_merge) ~budget cell : cell option =
+let rec truncate_cell ~(merge : T.trace_merge) ~budget
+    ~(enclosing : shape list) cell : cell option =
   let (Cell (xtaint, shape)) = cell in
   match shape with
   | Bot
+  | Rec _
   | Arg _
   | Fun _ ->
       Some cell
-  | Obj obj ->
+  | Obj ({ fields = obj; _ } as node) ->
       if budget <= 0 then (
-        let deep = gather_all_taints_in_cell ~merge cell in
+        let deep = gather_all_taints_in_cell ~merge (close_cell enclosing cell) in
         if Taints.is_empty deep then None
         else Some (Cell (`Tainted deep, Bot)))
       else
         let obj' =
           Fields.filter_map
-            (fun _o inner -> truncate_cell ~merge ~budget:(budget - 1) inner)
+            (fun _o inner ->
+              truncate_cell ~merge ~budget:(budget - 1)
+                ~enclosing:(shape :: enclosing) inner)
             obj
         in
-        let shape' = if Fields.is_empty obj' then Bot else Obj obj' in
+        let shape' = obj_or_bot ~sites:node.sites ~summary:node.summary obj' in
         (match (xtaint, shape') with
         (* Restore INVARIANT(cell).1 *)
         | `None, Bot -> None
         (* Restore INVARIANT(cell).2, see 'unify_cell'. *)
-        | `Clean, (Obj _ | Arg _ | Fun _) -> Some (Cell (`None, shape'))
+        | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) -> Some (Cell (`None, shape'))
         | ( (`Clean | `None | `Tainted _),
-            (Bot | Obj _ | Arg _ | Fun _) ) ->
+            (Bot | Obj _ | Rec _ | Arg _ | Fun _) ) ->
             Some (Cell (xtaint, shape')))
 
 (* Fast path for [truncate_shape]: [record_effects] truncates every effect
@@ -721,14 +1010,15 @@ let rec cell_depth_exceeds ~budget (Cell (_xtaint, shape)) =
 and shape_depth_exceeds ~budget shape =
   match shape with
   | Bot
+  | Rec _
   | Arg _
   | Fun _ ->
       false
-  | Obj obj ->
+  | Obj { fields; _ } ->
       budget <= 0
       || Fields.exists
            (fun _o cell -> cell_depth_exceeds ~budget:(budget - 1) cell)
-           obj
+           fields
 
 (* Widen [shape] to at most [max_depth] levels of [Obj] nesting;
  * see [truncate_cell]. *)
@@ -737,18 +1027,21 @@ let truncate_shape ~(merge : T.trace_merge) ~max_depth shape =
   else
     match shape with
     | Bot
+    | Rec _
     | Arg _
     | Fun _ ->
         shape
-    | Obj obj ->
+    | Obj ({ fields = obj; _ } as node) ->
         if not (shape_depth_exceeds ~budget:max_depth shape) then shape
         else
           let obj' =
             Fields.filter_map
-              (fun _o cell -> truncate_cell ~merge ~budget:(max_depth - 1) cell)
+              (fun _o cell ->
+                truncate_cell ~merge ~budget:(max_depth - 1) ~enclosing:[ shape ]
+                  cell)
               obj
           in
-          if Fields.is_empty obj' then Bot else Obj obj'
+          obj_or_bot ~sites:node.sites ~summary:node.summary obj'
 
 (* Widen the shapes an effect stores: [Obj] nesting by [truncate_shape],
  * [Fun] nesting by [bound_fun_shape]. Identity-preserving: returns [eff] itself
@@ -789,6 +1082,7 @@ let rec map_effect_shapes ~(widen : shape -> shape)
 and bound_fun_shape ~(merge : T.trace_merge) ~levels (shape : shape) : shape =
   match shape with
   | Bot
+  | Rec _
   | Arg _ ->
       shape
   | Fun (c, cs) ->
@@ -821,7 +1115,7 @@ and bound_fun_shape ~(merge : T.trace_merge) ~levels (shape : shape) : shape =
         in
         let c', cs' = Shape_and_sig.map_closures bound_closure (c, cs) in
         if phys_equal c' c && phys_equal cs' cs then shape else Fun (c', cs')
-  | Obj obj ->
+  | Obj ({ fields = obj; _ } as node) ->
       let changed = ref false in
       let obj' =
         Fields.map
@@ -833,7 +1127,7 @@ and bound_fun_shape ~(merge : T.trace_merge) ~levels (shape : shape) : shape =
               Cell (xtaint, inner')))
           obj
       in
-      if !changed then Obj obj' else shape
+      if !changed then Obj { node with fields = obj' } else shape
 
 let truncate_effect ~(merge : T.trace_merge) ~max_depth
     (eff : Shape_and_sig.Effect.t) :
@@ -876,11 +1170,11 @@ let cell_read_of_find_result ?max ~lang ~(merge : T.trace_merge) res :
       if Taints.is_empty taints then None
       else Some (Cell (`Tainted taints, Bot))
 
-let rec find_in_cell_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints offset
-    cell =
+let rec find_in_cell_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints
+    ~(enclosing : shape list) offset cell =
   let (Cell (xtaint, shape)) = cell in
   match offset with
-  | [] -> `Found cell
+  | [] -> `Found (close_cell enclosing cell)
   | _ :: _ -> (
       match xtaint with
       | `Clean ->
@@ -888,17 +1182,27 @@ let rec find_in_cell_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints offset
             Log.err (fun m ->
                 m "BUG: Taint_shape.find_in_cell: INVARIANT(cell).2 is broken");
           `Clean
-      | `None -> find_in_shape_w_carry ?max ~lang ~merge ~taints offset shape
+      | `None ->
+          find_in_shape_w_carry ?max ~lang ~merge ~taints ~enclosing offset shape
       | `Tainted taints ->
-          find_in_shape_w_carry ?max ~lang ~merge ~taints offset shape)
+          find_in_shape_w_carry ?max ~lang ~merge ~taints ~enclosing offset shape)
 
-and find_in_shape_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints offset
-    shape =
-  let not_found = `Not_found (taints, shape, offset) in
+and find_in_shape_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints
+    ~(enclosing : shape list) offset shape =
+  let not_found () = `Not_found (taints, close_shape enclosing shape, offset) in
   match shape with
   (* offset <> [] *)
-  | Bot -> not_found
-  | Obj obj -> find_in_obj_w_carry ?max ~lang ~merge ~taints offset obj
+  | Bot -> not_found ()
+  | Obj { fields = obj; _ } ->
+      find_in_obj_w_carry ?max ~lang ~merge ~taints ~enclosing ~self:shape
+        offset obj
+  | Rec n -> (
+      match List.nth_opt enclosing n with
+      | Some target ->
+          find_in_shape_w_carry ?max ~lang ~merge ~taints
+            ~enclosing:(List.drop (n + 1) enclosing)
+            offset target
+      | None -> not_found ())
   | Arg (arg, base_offsets) -> (
       match find_in_arg ?max ~lang ~merge ~taints offset arg base_offsets with
       | Some cell -> `Found cell
@@ -906,22 +1210,25 @@ and find_in_shape_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints offset
           Log.debug (fun m ->
               m "Could not find offset %s in polymorphic shape %s"
                 (debug_offset offset) (show_shape shape));
-          not_found)
+          not_found ())
   | Fun _ ->
       (* This is an error, we just don't want to crash here. *)
       Log.err (fun m ->
           m "Could not find offset %s in function shape %s"
             (debug_offset offset) (show_shape shape));
-      not_found
+      not_found ()
 
 and find_in_obj_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints
-    (offset : T.offset list) obj =
-  let not_found = `Not_found (taints, Obj obj, offset) in
+    ~(enclosing : shape list) ~(self : shape) (offset : T.offset list) obj =
+  let not_found () =
+    `Not_found (taints, close_shape enclosing self, offset)
+  in
+  let enclosing = self :: enclosing in
   (* offset <> [] *)
   match offset with
   | [] ->
       Log.err (fun m -> m "BUG: Taint_shape.fix_xtaint_obj: empty offset");
-      not_found
+      not_found ()
   | o :: offset -> (
       match o with
       | Oany (* arbitrary index [*] *) -> (
@@ -932,14 +1239,15 @@ and find_in_obj_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints
                 match
                   ( acc,
                     cell_read_of_find_result ?max ~lang ~merge
-                      (find_in_cell_w_carry ?max ~lang ~merge ~taints offset cell) )
+                      (find_in_cell_w_carry ?max ~lang ~merge ~taints
+                         ~enclosing offset cell) )
                 with
                 | acc, None -> acc
                 | None, (Some _ as found) -> found
                 | Some cell1, Some cell2 -> Some (unify_cell ~lang ~merge cell1 cell2))
               obj None
           with
-          | None -> not_found
+          | None -> not_found ()
           | Some cell -> `Found cell)
       | Oslice n -> (
           (* Read the trailing-rest from index [n]. Filter [Fields] to
@@ -970,21 +1278,23 @@ and find_in_obj_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints
                     match
                       ( acc,
                         cell_read_of_find_result ?max ~lang ~merge
-                          (find_in_cell_w_carry ?max ~lang ~merge ~taints recur_offset
-                             cell) )
+                          (find_in_cell_w_carry ?max ~lang ~merge ~taints
+                             ~enclosing recur_offset cell) )
                     with
                     | acc, None -> acc
                     | None, (Some _ as found) -> found
                     | Some c1, Some c2 -> Some (unify_cell ~lang ~merge c1 c2)))
               obj None
           with
-          | None -> not_found
+          | None -> not_found ()
           | Some cell -> `Found cell)
       | Ofld _
       | Oint _
       | Ostr _ -> (
           match Fields.find_opt o obj with
-          | Some o_cell -> find_in_cell_w_carry ?max ~lang ~merge ~taints offset o_cell
+          | Some o_cell ->
+              find_in_cell_w_carry ?max ~lang ~merge ~taints ~enclosing offset
+                o_cell
           | None -> (
               (* Per INVARIANT(obj) in [Shape_and_sig], an [Oany] entry
                * carries the taint and shape of any field that is not
@@ -995,12 +1305,14 @@ and find_in_obj_w_carry ?max ~lang ~(merge : T.trace_merge) ~taints
                * entry (see [update_offset_in_obj]), so tracked entries
                * are already up to date. *)
               match Fields.find_opt T.Oany obj with
-              | None -> not_found
+              | None -> not_found ()
               | Some any_cell ->
-                  find_in_cell_w_carry ?max ~lang ~merge ~taints offset any_cell)))
+                  find_in_cell_w_carry ?max ~lang ~merge ~taints ~enclosing
+                    offset any_cell)))
 
 let find_in_cell ?max ~lang ~(merge : T.trace_merge) offset cell =
-  find_in_cell_w_carry ?max ~lang ~merge ~taints:Taints.empty offset cell
+  find_in_cell_w_carry ?max ~lang ~merge ~taints:Taints.empty ~enclosing:[]
+    offset cell
 
 let option_of_find_result ?max ~lang ~(merge : T.trace_merge) res =
   match res with
@@ -1019,7 +1331,7 @@ let find_in_shape_poly ?max ~lang ~(merge : T.trace_merge) ~taints offset shape 
   match offset with
   | [] -> Some (taints, shape)
   | _ :: _ ->
-      find_in_shape_w_carry ?max ~lang ~merge ~taints offset shape
+      find_in_shape_w_carry ?max ~lang ~merge ~taints ~enclosing:[] offset shape
       |> option_of_find_result ?max ~lang ~merge
 
 (*********************************************************)
@@ -1027,12 +1339,15 @@ let find_in_shape_poly ?max ~lang ~(merge : T.trace_merge) ~taints offset shape 
 (*********************************************************)
 
 (* Finds an 'offset' within a 'cell' and updates it via 'f'. *)
-let rec update_offset_in_cell ~f offset cell =
+let rec update_offset_in_cell_at ~(write : T.call_loc) ~(depth : int)
+    ~(enclosing : shape list) ~f offset cell =
   let xtaint, shape =
     match (cell, offset) with
-    | Cell (xtaint, shape), [] -> f xtaint shape
+    | Cell (xtaint, shape), [] -> f xtaint (close_shape enclosing shape)
     | Cell (xtaint, shape), _ :: _ ->
-        let shape = update_offset_in_shape ~f offset shape in
+        let shape =
+          update_offset_in_shape ~write ~depth ~enclosing ~f offset shape
+        in
         (xtaint, shape)
   in
   match (xtaint, shape) with
@@ -1040,25 +1355,35 @@ let rec update_offset_in_cell ~f offset cell =
   | `None, Bot -> None
   | `Tainted taints, Bot when Taints.is_empty taints -> None
   (* Restore INVARIANT(cell).2 *)
-  | `Clean, (Obj _ | Arg _ | Fun _) ->
+  | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) ->
       (* If we are tainting an offset of this cell, the cell cannot be
          considered clean anymore. *)
       Some (Cell (`None, shape))
   | `Clean, Bot
-  | `None, (Obj _ | Arg _ | Fun _)
-  | `Tainted _, (Bot | Obj _ | Arg _ | Fun _) ->
+  | `None, (Obj _ | Rec _ | Arg _ | Fun _)
+  | `Tainted _, (Bot | Obj _ | Rec _ | Arg _ | Fun _) ->
       Some (Cell (xtaint, shape))
 
-and update_offset_in_shape ~f offset shape =
+and update_offset_in_shape ~(write : T.call_loc) ~(depth : int)
+    ~(enclosing : shape list) ~f offset shape =
   match shape with
   | Bot
   | Arg _ ->
-      let shape = Obj Fields.empty in
-      update_offset_in_shape ~f offset shape
-  | Obj obj -> (
-      match update_offset_in_obj ~f offset obj with
+      let shape = written_obj ~write ~depth in
+      update_offset_in_shape ~write ~depth ~enclosing ~f offset shape
+  | Rec n -> (
+      match List.nth_opt enclosing n with
+      | Some target ->
+          update_offset_in_shape ~write ~depth ~enclosing ~f offset
+            (shift_free ~levels:(n + 1) target)
+      | None -> shape)
+  | Obj ({ fields = obj; _ } as node) -> (
+      match
+        update_offset_in_obj ~write ~depth ~enclosing:(shape :: enclosing) ~f
+          offset obj
+      with
       | None -> Bot
-      | Some obj -> Obj obj)
+      | Some obj -> Obj { node with fields = obj })
   | Fun _ ->
       (* This is an error, we just don't want to crash here. *)
       Log.err (fun m ->
@@ -1066,7 +1391,11 @@ and update_offset_in_shape ~f offset shape =
             (debug_offset offset) (show_shape shape));
       shape
 
-and update_offset_in_obj ~f offset obj =
+and update_offset_in_obj ~(write : T.call_loc) ~(depth : int)
+    ~(enclosing : shape list) ~f offset obj =
+  let update_offset_in_cell =
+    update_offset_in_cell_at ~write ~depth:(depth + 1) ~enclosing ~f
+  in
   let obj' =
     match offset with
     | [] ->
@@ -1078,7 +1407,7 @@ and update_offset_in_obj ~f offset obj =
         match o with
         | Oany (* arbitrary index [*] *) ->
             (* consider all fields/indexes *)
-            Fields.filter_map (fun _o' -> update_offset_in_cell ~f offset) obj
+            Fields.filter_map (fun _o' -> update_offset_in_cell offset) obj
         | Oslice n ->
             (* Update the trailing-rest from index [n]. For each entry
              * intersecting [n, infinity), apply the update with the
@@ -1087,11 +1416,11 @@ and update_offset_in_obj ~f offset obj =
             Fields.filter_map
               (fun key cell ->
                 match key with
-                | Oint k when k >= n -> update_offset_in_cell ~f offset cell
-                | Oslice m when m >= n -> update_offset_in_cell ~f offset cell
+                | Oint k when k >= n -> update_offset_in_cell offset cell
+                | Oslice m when m >= n -> update_offset_in_cell offset cell
                 | Oslice m ->
                     (* m < n by case order; n - m > 0 *)
-                    update_offset_in_cell ~f (T.Oslice (n - m) :: offset) cell
+                    update_offset_in_cell (T.Oslice (n - m) :: offset) cell
                 | Oint _
                 | Ofld _
                 | Ostr _
@@ -1104,16 +1433,19 @@ and update_offset_in_obj ~f offset obj =
             obj
             |> Fields.update o (fun opt_cell ->
                    let* cell = opt_cell in
-                   update_offset_in_cell ~f offset cell))
+                   update_offset_in_cell offset cell))
   in
   if Fields.is_empty obj' then None else Some obj'
+
+let update_offset_in_cell ~(write : T.call_loc) ~f offset cell =
+  update_offset_in_cell_at ~write ~depth:0 ~enclosing:[] ~f offset cell
 
 (*********************************************************)
 (* Updating an offset *)
 (*********************************************************)
 
-let update_offset_and_unify ~lang ~(merge : T.trace_merge) new_taints new_shape
-    offset opt_cell =
+let update_offset_and_unify ~lang ~(merge : T.trace_merge) ~(write : T.call_loc)
+    new_taints new_shape offset opt_cell =
   if taints_and_shape_are_relevant new_taints new_shape then
     let new_xtaint =
       (* THINK: Maybe Dataflow_tainting 'check_xyz' should be returning 'Xtaint.t'? *)
@@ -1144,7 +1476,7 @@ let update_offset_and_unify ~lang ~(merge : T.trace_merge) new_taints new_shape
                    | _ -> 0));
             (xtaint, shape))
     in
-    update_offset_in_cell ~f:add_new_taints offset cell
+    update_offset_in_cell ~write ~f:add_new_taints offset cell
   else
     (* To maintain INVARIANT(cell) we cannot return 'cell_none_bot'! *)
     opt_cell
@@ -1154,7 +1486,8 @@ let update_offset_and_unify ~lang ~(merge : T.trace_merge) new_taints new_shape
 (*********************************************************)
 
 (* TODO: Reformulate in terms of 'update_offset_in_cell' *)
-let rec clean_cell (offset : T.offset list) cell =
+let rec clean_cell_at ~(write : T.call_loc) ~(depth : int)
+    ~(enclosing : shape list) (offset : T.offset list) cell =
   let (Cell (xtaint, shape)) = cell in
   match offset with
   | [] ->
@@ -1172,16 +1505,29 @@ let rec clean_cell (offset : T.offset list) cell =
        * `a` itself is being sanitized; otherwise `sink(a)` could be reported. *)
       Cell (`Clean, Bot)
   | _ :: _ ->
-      let shape = clean_shape offset shape in
+      let shape = clean_shape ~write ~depth ~enclosing offset shape in
       Cell (xtaint, shape)
 
-and clean_shape offset shape =
+and clean_shape ~(write : T.call_loc) ~(depth : int) ~(enclosing : shape list)
+    offset shape =
   match shape with
   | Bot
   | Arg _ ->
-      let shape = Obj Fields.empty in
-      clean_shape offset shape
-  | Obj obj -> Obj (clean_obj offset obj)
+      let shape = written_obj ~write ~depth in
+      clean_shape ~write ~depth ~enclosing offset shape
+  (* A summary stands for several objects and the clean reaches one of
+   * them, so the others keep their taint. *)
+  | Rec _
+  | Obj { summary = true; _ } ->
+      shape
+  | Obj ({ fields; _ } as node) ->
+      Obj
+        {
+          node with
+          fields =
+            clean_obj ~write ~depth ~enclosing:(shape :: enclosing) offset
+              fields;
+        }
   | Fun _ ->
       (* This is an error, we just don't want to crash here. *)
       Log.err (fun m ->
@@ -1189,7 +1535,9 @@ and clean_shape offset shape =
             (debug_offset offset) (show_shape shape));
       shape
 
-and clean_obj offset obj =
+and clean_obj ~(write : T.call_loc) ~(depth : int) ~(enclosing : shape list)
+    offset obj =
+  let clean_cell = clean_cell_at ~write ~depth:(depth + 1) ~enclosing in
   match offset with
   | [] ->
       Log.err (fun m -> m "clean_obj: Impossible happened: empty offset");
@@ -1200,6 +1548,205 @@ and clean_obj offset obj =
       | Oany -> Fields.map (clean_cell offset) obj
       | o ->
           Fields.update o (Option.map (fun cell -> clean_cell offset cell)) obj)
+
+let clean_cell ~(write : T.call_loc) (offset : T.offset list) cell =
+  clean_cell_at ~write ~depth:0 ~enclosing:[] offset cell
+
+(*********************************************************)
+(* Folding objects nested in an object of the same site *)
+(*********************************************************)
+
+(* The first object, in pre-order, that shares a site with an object
+ * enclosing it: the offsets that lead to it and the number of objects
+ * between the two. *)
+let rec nested_same_site ~(ancestors : Shape_and_sig.Sites.t list)
+    (rev_path : T.offset list) (shape : shape) : (T.offset list * int) option =
+  match shape with
+  | Obj { sites; fields; _ } -> (
+      match
+        List.find_index
+          (fun enclosing_sites ->
+            not (Shape_and_sig.Sites.disjoint sites enclosing_sites))
+          ancestors
+      with
+      | Some k -> Some (List.rev rev_path, k)
+      | None ->
+          Fields.to_seq fields
+          |> Seq.find_map (fun (o, Cell (_, field)) ->
+                 nested_same_site ~ancestors:(sites :: ancestors) (o :: rev_path)
+                   field))
+  | Bot
+  | Rec _
+  | Arg _
+  | Fun _ ->
+      None
+
+let rec replace_by_back_reference ~(k : int) (path : T.offset list)
+    (shape : shape) : shape =
+  match (shape, path) with
+  | Obj ({ fields; _ } as node), o :: rest ->
+      let fields =
+        Fields.update o
+          (Option.map
+             (map_cell_shape (fun field ->
+                  match rest with
+                  | [] -> Rec k
+                  | _ :: _ -> replace_by_back_reference ~k rest field)))
+          fields
+      in
+      Obj { node with fields }
+  | (Bot | Rec _ | Arg _ | Fun _), _
+  | Obj _, [] ->
+      shape
+
+let rec shape_at (path : T.offset list) (shape : shape) : shape option =
+  match (shape, path) with
+  | _, [] -> Some shape
+  | Obj { fields; _ }, o :: rest -> (
+      match Fields.find_opt o fields with
+      | Some (Cell (_, field)) -> shape_at rest field
+      | None -> None)
+  | (Bot | Rec _ | Arg _ | Fun _), _ :: _ -> None
+
+let rec objects_along (path : T.offset list) (shape : shape) : shape list =
+  match (shape, path) with
+  | Obj { fields; _ }, o :: (_ :: _ as rest) -> (
+      match Fields.find_opt o fields with
+      | Some (Cell (_, field)) -> shape :: objects_along rest field
+      | None -> [ shape ])
+  | _ -> [ shape ]
+
+(* The fields of an object [k] objects below an outer object (with [between]
+ * the objects in between, nearest to the outer object last), moved up to be
+ * fields of the outer object: a back reference in them to that object or to
+ * the outer object refers to the outer object, one to an object in between
+ * is replaced by a copy of that object, and one above the outer object skips
+ * the objects in between. *)
+let moved_fields ~(k : int) ~(between : shape array) (fields : obj) : obj =
+  let rec move ~(first : int) ~(depth_in_outer : int) (shape : shape) : shape =
+    rebind_free
+      ~outer:(fun j depth ->
+        let target = first + j in
+        let levels = depth_in_outer + depth in
+        if target < 0 || Int.equal target k then Rec (levels - 1)
+        else if target < k then
+          move ~first:(target + 1) ~depth_in_outer:levels between.(target)
+        else Rec (levels + (target - k - 1)))
+      shape
+  in
+  map_fields (map_cell_shape (move ~first:(-1) ~depth_in_outer:1)) fields
+
+(* Merges the object [nested] at [path] below [outer], [k] objects below it
+ * and sharing a site with it, into [outer]: [nested] becomes a back reference
+ * to [outer], and its fields are joined into those of [outer]. [above] are
+ * the objects enclosing [outer], nearest first. A field of [outer] that holds
+ * a back reference to [outer] on one side and an object on the other refers
+ * to [outer] after the join, and [outer] also takes that object's sites and
+ * fields. *)
+let merge_into_outer ~lang ~(merge : T.trace_merge) ~(above : shape list)
+    ~(path : T.offset list) ~(k : int) (outer : shape) (nested : shape) : shape
+    =
+  match (outer, nested) with
+  | ( Obj { sites = outer_sites; fields = outer_fields; _ },
+      Obj { sites = nested_sites; fields = nested_fields; _ } ) ->
+      let sites = Shape_and_sig.Sites.union outer_sites nested_sites in
+      let replaced =
+        match replace_by_back_reference ~k path outer with
+        | Obj node -> Obj { node with sites; summary = true }
+        | (Bot | Rec _ | Arg _ | Fun _) as shape -> shape
+      in
+      let between = Array.of_list (List.rev (objects_along path replaced)) in
+      let fields_of_replaced =
+        match replaced with
+        | Obj { fields; _ } -> fields
+        | Bot
+        | Rec _
+        | Arg _
+        | Fun _ ->
+            outer_fields
+      in
+      let enclosing = replaced :: above in
+      let side = { enclosing; aligned = true } in
+      let join =
+        {
+          left = side;
+          right = side;
+          levels = List.map (fun node -> (Some node, Some node)) enclosing;
+          unrolled = false;
+        }
+      in
+      let back_reference (xtaint1 : Xtaint.t) (xtaint2 : Xtaint.t) : cell =
+        match Xtaint.union ~merge xtaint1 xtaint2 with
+        | `Clean -> Cell (`None, Rec 0)
+        | (`None | `Tainted _) as xtaint -> Cell (xtaint, Rec 0)
+      in
+      let rec absorb (sites : Shape_and_sig.Sites.t) (fields : obj)
+          (contributions : obj list) : Shape_and_sig.Sites.t * obj =
+        match contributions with
+        | [] -> (sites, fields)
+        | contribution :: rest ->
+            let sites, fields, more =
+              Fields.fold
+                (fun o cell (sites, fields, more) ->
+                  match (Fields.find_opt o fields, cell) with
+                  | None, _ -> (sites, Fields.add o cell fields, more)
+                  | ( Some (Cell (xtaint1, Rec 0)),
+                      Cell (xtaint2, Obj { sites = absorbed_sites; fields = absorbed; _ }) )
+                  | ( Some (Cell (xtaint1, Obj { sites = absorbed_sites; fields = absorbed; _ })),
+                      Cell (xtaint2, Rec 0) ) ->
+                      ( Shape_and_sig.Sites.union sites absorbed_sites,
+                        Fields.add o (back_reference xtaint1 xtaint2) fields,
+                        moved_fields ~k:0 ~between:[||] absorbed :: more )
+                  | Some existing, _ ->
+                      ( sites,
+                        Fields.add o
+                          (unify_cell_in ~lang ~merge join existing cell)
+                          fields,
+                        more ))
+                contribution (sites, fields, [])
+            in
+            absorb sites fields (List.rev_append more rest)
+      in
+      let sites, fields =
+        absorb sites fields_of_replaced
+          [ moved_fields ~k ~between nested_fields ]
+      in
+      Obj { sites; summary = true; fields }
+  | _ -> outer
+
+let fold_nested ~lang ~(merge : T.trace_merge) ~(path : T.offset list)
+    ~(k : int) (shape : shape) : shape =
+  let outer_index = List.length path - 1 - k in
+  let rec at ~(above : shape list) (index : int) (path : T.offset list)
+      (shape : shape) : shape =
+    match (shape, path) with
+    | Obj ({ fields; _ } as node), o :: rest when index < outer_index ->
+        let fields =
+          Fields.update o
+            (Option.map
+               (map_cell_shape (at ~above:(shape :: above) (index + 1) rest)))
+            fields
+        in
+        Obj { node with fields }
+    | Obj _, _ :: _ -> (
+        match shape_at path shape with
+        | Some nested -> merge_into_outer ~lang ~merge ~above ~path ~k shape nested
+        | None -> shape)
+    | _ -> shape
+  in
+  at ~above:[] 0 path shape
+
+(* Merges each object nested in an enclosing object of one of its sites into
+ * that object, until no path holds two objects that share a site. A function
+ * has finitely many sites, so a folded shape has bounded depth. *)
+let rec fold_shape ~lang ~(merge : T.trace_merge) (shape : shape) : shape =
+  match nested_same_site ~ancestors:[] [] shape with
+  | None -> shape
+  | Some (path, k) ->
+      fold_shape ~lang ~merge (fold_nested ~lang ~merge ~path ~k shape)
+
+let fold_cell ~lang ~(merge : T.trace_merge) (cell : cell) : cell =
+  map_cell_shape (fold_shape ~lang ~merge) cell
 
 (*********************************************************)
 (* Enumerate tainted offsets *)
@@ -1217,8 +1764,10 @@ let rec enum_in_cell cell : (T.offset list * Taints.t) Seq.t =
   Seq.append x (enum_in_shape shape)
 
 and enum_in_shape = function
-  | Bot -> Seq.empty
-  | Obj obj -> enum_in_obj obj
+  | Bot
+  | Rec _ ->
+      Seq.empty
+  | Obj { fields; _ } -> enum_in_obj fields
   | Arg _ ->
       (* TODO: First need to record taint shapes in 'ToLval'.  *)
       Seq.empty

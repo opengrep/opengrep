@@ -1,0 +1,13 @@
+rules:
+  - id: back_reference_joined_with_tainted_value_python
+    message: a tainted value joined into the field of a record that a loop links to itself reaches the sink through that field
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

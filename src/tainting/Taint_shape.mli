@@ -34,7 +34,7 @@ val fix_poly_taint_with_offset :
 
     FEATURE(field-sensitivity) *)
 
-val tuple_like_obj : (Taint.taints * shape) list -> shape
+val tuple_like_obj : site:Taint.call_loc -> (Taint.taints * shape) list -> shape
 (** Constructs a 0-indexed tuple-like 'obj' from a list of pairs, taints and shape,
  * for each element in the tuple.  *)
 
@@ -42,6 +42,7 @@ val tuple_like_obj : (Taint.taints * shape) list -> shape
 val record_or_dict_like_obj :
   lang:Lang.t ->
   merge:Taint.trace_merge ->
+  site:Taint.call_loc ->
   [< `Entry of IL.exp * Taint.taints * shape
   | `Field of IL.name * Taint.taints * shape
   | `Spread of shape ]
@@ -139,6 +140,7 @@ val find_in_shape_poly :
     are the "base taints" in case the offset cannot be found. *)
 
 val update_offset_in_cell :
+  write:Taint.call_loc ->
   f:(Xtaint.t -> shape -> Xtaint.t * shape) ->
   Taint.offset list ->
   cell ->
@@ -147,6 +149,7 @@ val update_offset_in_cell :
 val update_offset_and_unify :
   lang:Lang.t ->
   merge:Taint.trace_merge ->
+  write:Taint.call_loc ->
   Taint.taints ->
   shape ->
   Taint.offset list ->
@@ -157,8 +160,13 @@ val update_offset_and_unify :
  * is given (i.e. 'None'), it creates a fresh one. If 'taints' are empty
  * and 'shape' is 'Bot', it just returns the given 'cell' (or 'None'). *)
 
-val clean_cell : Taint.offset list -> cell -> cell
+val clean_cell : write:Taint.call_loc -> Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
+
+val fold_cell : lang:Lang.t -> merge:Taint.trace_merge -> cell -> cell
+(** [cell] with every object nested in an enclosing object that shares one of
+    its sites merged into that object, which becomes a summary the nested
+    position refers back to ([Rec]). For a join at a loop head. *)
 
 val truncate_shape : merge:Taint.trace_merge -> max_depth:int -> shape -> shape
 (** Widen a shape to at most [max_depth] levels of ['Obj'] nesting. Subtrees

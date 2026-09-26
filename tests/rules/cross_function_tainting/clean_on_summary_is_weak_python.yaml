@@ -1,0 +1,13 @@
+rules:
+  - id: clean_on_summary_is_weak_python
+    message: a clean of a field of an object that stands for a chain of records built in a loop leaves the field of the other records tainted
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
