@@ -675,8 +675,8 @@ let flatten_same_op (op : G.operator) (es : IL.exp list) : IL.exp list =
 
 (* Order-preserving dedup by [equal_exp]. Used to keep [wrap_and]/[wrap_or]
  * from growing their operand list with duplicates across fixpoint iterations:
- * [wrap_or [X; X]] becomes [X], so the lattice on guards reaches a fixed point
- * on its own rather than relying on [taint_MAX_VISITS_PER_NODE] to bail.
+ * [wrap_or [X; X]] becomes [X], so an iteration that adds an operand already
+ * present leaves the guard unchanged.
  * [equal_exp] short-circuits on physical identity, so deduping the shared-DAG
  * conds from [Sig_inst] does not unfold them. *)
 let dedup_exps (es : IL.exp list) : IL.exp list =

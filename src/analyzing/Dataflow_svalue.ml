@@ -512,22 +512,11 @@ and do_lambdas lang lambdas in_env node =
 
 and fixpoint_with_env lang enter_env fun_cfg =
   let flow = fun_cfg.cfg in
-  let mapping, timeout =
-    DataflowX.fixpoint ~timeout:Limits_semgrep.svalue_prop_FIXPOINT_TIMEOUT
-      ~eq_env:(Var_env.eq_env Eval.eq)
-      ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
-      ~trans:(transfer ~lang ~enter_env ~fun_cfg)
-        (* svalue is a forward analysis! *)
-      ~forward:true ~flow
-  in
-  (match timeout with
-  | `Timeout ->
-      Log.warn (fun m -> m "Fixpoint timeout while performing svalue-propagation")
-  | `Capped ->
-      Log.debug (fun m ->
-          m "Fixpoint visit cap reached while performing svalue-propagation")
-  | `Ok -> ());
-  mapping
+  DataflowX.fixpoint ~eq_env:(Var_env.eq_env Eval.eq) ~join:union_env
+    ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
+    ~trans:(transfer ~lang ~enter_env ~fun_cfg)
+      (* svalue is a forward analysis! *)
+    ~flow
 
 (*****************************************************************************)
 (* Entry point *)

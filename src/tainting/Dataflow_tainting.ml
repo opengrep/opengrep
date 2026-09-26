@@ -151,25 +151,6 @@ let propagate_through_indexes env =
 let add_taints_from_shape shape =
   Taints.union (Shape.gather_all_taints_in_shape shape)
 
-let log_timeout_warning (taint_inst : Taint_rule_inst.t) opt_name timeout =
-  match timeout with
-  | `Ok -> ()
-  | `Capped ->
-      Log.debug (fun m ->
-          m "Fixpoint visit cap reached [rule: %s file: %s func: %s]"
-            (Rule_ID.to_string taint_inst.rule_id)
-            !!(taint_inst.file)
-            (Option.map IL.str_of_name opt_name ||| "???"))
-  | `Timeout ->
-      (* nosemgrep: no-logs-in-library *)
-      Logs.warn (fun m ->
-          m
-            "Fixpoint timeout while performing taint analysis [rule: %s file: \
-             %s func: %s]"
-            (Rule_ID.to_string taint_inst.rule_id)
-            !!(taint_inst.file)
-            (Option.map IL.str_of_name opt_name ||| "???"))
-
 let map_check_expr env check_expr xs =
   let rev_taints_and_shapes, lval_env =
     xs
@@ -4300,18 +4281,6 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
                (succs |> List.map string_of_int |> String.concat ", ")))
   ;
   *)
-  let base_timeout =
-    Common.(
-      taint_inst.options.taint_fixpoint_timeout
-      ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
-  in
-  (* Interfile runs many more functions per fixpoint; scale the timeout up to avoid false timeouts. *)
-  let interfile_timeout_multiplier = 20.0 in
-  let timeout =
-    if taint_inst.options.taint_intrafile then
-      base_timeout *. interfile_timeout_multiplier
-    else base_timeout
-  in
   (* The inner [DataflowX.fixpoint] converges on per-node [lval_env]
    * stability, but not on [effects_acc] — the latter is function-global
    * monotonic state that grows as the body records taint effects. Direct
@@ -4328,27 +4297,27 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   let needs_self_sig_fixpoint =
     match taint_inst.lang with Lang.Clojure -> true | _ -> false
   in
-  let end_mapping, timeout_status =
+  let end_mapping =
     if needs_self_sig_fixpoint then
       let rec run_to_sig_fixpoint passes =
         let prev_effects = !(env.effects_acc) in
         env.did_self_recurse := false;
-        let end_mapping, status =
-          DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
-            ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
+        let end_mapping =
+          DataflowX.fixpoint ~eq_env:Lval_env.equal
+            ~join:(Lval_env.union ~lang:taint_inst.lang) ~init:init_mapping
+            ~trans:(transfer env ~fun_cfg) ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
          * comparison) when neither short-circuits. [equal_with_guards], not
          * [equal]: a pass that only fuses a new disjunct into an existing
          * effect's guard must count as growth, or the loop would stop with
          * the narrower guard and drop effects the refined guard keeps. *)
-        if not !(env.did_self_recurse) then (end_mapping, status)
+        if not !(env.did_self_recurse) then end_mapping
         else if passes >= Limits_semgrep.taint_MAX_SELF_SIG_PASSES then (
           (* Hit the pass cap while still self-recursing. If the effects also
            * stopped growing this pass it is a clean fixpoint; otherwise the
            * result under-approximates (possible false negatives), so surface
-           * it rather than truncating silently — the inner fixpoint timeout
-           * is reported the same way by [log_timeout_warning]. *)
+           * it rather than truncating silently. *)
           if not (Effects.equal_with_guards prev_effects !(env.effects_acc))
           then
             (* nosemgrep: no-logs-in-library *)
@@ -4361,17 +4330,17 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
                   (Rule_ID.to_string taint_inst.rule_id)
                   !!(taint_inst.file)
                   (Option.map IL.str_of_name env.func.name ||| "???"));
-          (end_mapping, status))
+          end_mapping)
         else if Effects.equal_with_guards prev_effects !(env.effects_acc) then
-          (end_mapping, status)
+          end_mapping
         else run_to_sig_fixpoint (passes + 1)
       in
       run_to_sig_fixpoint 0
     else
-      DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
-        ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
+      DataflowX.fixpoint ~eq_env:Lval_env.equal
+        ~join:(Lval_env.union ~lang:taint_inst.lang) ~init:init_mapping
+        ~trans:(transfer env ~fun_cfg) ~flow
   in
-  log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
   let rebound = rebound_vars fun_cfg.cfg in
   let copied =

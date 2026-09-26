@@ -42,13 +42,12 @@ end
 module Make (F : Flow) : sig
   (* main entry point *)
   val fixpoint :
-    timeout:float ->
     eq_env:('env -> 'env -> bool) ->
+    join:('env -> 'env -> 'env) ->
     init:'env mapping ->
     trans:'env transfn ->
     flow:F.flow ->
-    forward:bool ->
-    'env mapping * [ `Ok | `Timeout | `Capped ]
+    'env mapping
 
   val new_node_array : F.flow -> 'a -> 'a array
 

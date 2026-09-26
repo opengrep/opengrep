@@ -197,8 +197,8 @@ let remove_some_lval_from_tainted_set tainted =
    * By using using `find_first_opt` we try to find the one with the lowest sid,
    * which hopefully isn't needed anymore... (unless it's inside a loop...).
    * This could perhaps (?) break monotonicity and cause divergence of the fixpoint,
-   * but the Limits_semgrep.taint_FIXPOINT_TIMEOUT seconds timeout would take care
-   * of that. *)
+   * but a loop head joins each new environment with its previous one, so its
+   * values still only grow. *)
   tainted
   (* auxiliary _tmp variables get fake tokens *)
   |> NameMap.find_first_opt (fun var -> Tok.is_fake (snd var.ident))

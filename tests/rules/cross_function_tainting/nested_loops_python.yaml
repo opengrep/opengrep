@@ -1,0 +1,13 @@
+rules:
+  - id: nested_loops_python
+    message: taint that needs several passes of an outer loop, each through two inner loops, reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

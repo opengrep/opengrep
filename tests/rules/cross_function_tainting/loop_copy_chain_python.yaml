@@ -1,0 +1,13 @@
+rules:
+  - id: loop_copy_chain_python
+    message: taint that needs five passes of one loop to reach the first variable of a copy chain reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

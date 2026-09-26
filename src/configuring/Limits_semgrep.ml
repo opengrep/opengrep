@@ -1,24 +1,6 @@
 (*****************************************************************************)
-(* Dataflow analysis *)
-(*****************************************************************************)
-
-(* Minimum number of fixpoint iterations to run before checking for timeouts,
- * see 'svalue_prop_FIXPOINT_TIMEOUT' and 'taint_FIXPOINT_TIMEOUT' below. It
- * appears that when Semgrep is allocating too much memory, perhaps due to the
- * GC having to do heavy work, we start to get fixpoint timeouts on functions
- * that should perfectly run within the timeout. But if we just bump the timeouts
- * then that makes perf worse and in some cases even leads to more rule timeouts. *)
-let dataflow_FIXPOINT_MIN_ITERS = 100
-
-(*****************************************************************************)
 (* Const/sym ("svalue") propagation *)
 (*****************************************************************************)
-
-(* TODO: Report these timeouts as errors in 'Report.match_result' *)
-(* Timeout in seconds.
- * So e.g. the perf of svalue-prop does not prevent rules from running on a file.
- * Note that 'Time_limit.set_timeout' cannot be nested. *)
-let svalue_prop_FIXPOINT_TIMEOUT = 0.15
 
 (* Bounds the number of times that we will follow an 'id_svalue' during
  * a cycle check. See 'Dataflow_svalue.no_cycles_in_svalue'. *)
@@ -41,18 +23,11 @@ let svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK = 1000
  * of the data structures involved may help too.
  *)
 
-(* TODO: Report these timeouts as errors in 'Report.match_result' *)
-(* Timeout in seconds.
- * So e.g. we limit the amount of time that Pro will spend inferring taint signatures.
- * Note that 'Time_limit.set_timeout' cannot be nested. *)
-let taint_FIXPOINT_TIMEOUT = 0.2
-
 (* Maximum call chain depth followed by interfile taint when neither the
  * scan nor the rule sets one; negative is unbounded. *)
 let taint_INTERFILE_DEPTH = 3
-(* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
- * is visted more often than this the assumption is that it is a cycle and so the
- * fixpoint stops *)
+(* The depth at which a callback's signature stops being instantiated
+ * recursively. *)
 let taint_MAX_VISITS_PER_NODE = 4
 
 (** Bounds the number of variables we can track. *)

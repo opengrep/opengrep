@@ -36,7 +36,6 @@ type ('node, 'edge) t = {
   weak_topological_order : nodei array;
   order_index : int array;
   loop_header : int array;
-  max_loop_depth : int;
 }
 
 type ('node, 'edge) cfg = ('node, 'edge) t
@@ -97,25 +96,19 @@ let make (graph : _ Ograph_extended.ograph_mutable) entry exit : _ t =
     (partition, (num, stack))
   in
   let _, (_, _, wto) = visit entry (0, [], []) in
-  let rec flatten (header : int) (depth : int)
-      (acc : (nodei * int * int) list) (element : wto_element) :
-      (nodei * int * int) list =
+  let rec flatten (header : int) (acc : (nodei * int) list)
+      (element : wto_element) : (nodei * int) list =
     match element with
-    | Vertex ni -> (ni, header, depth) :: acc
+    | Vertex ni -> (ni, header) :: acc
     | Component (head, nested) ->
-        List.fold_left
-          (flatten head (depth + 1))
-          ((head, head, depth + 1) :: acc)
-          nested
+        List.fold_left (flatten head) ((head, head) :: acc) nested
   in
-  let placed = List.rev (List.fold_left (flatten (-1) 0) [] wto) in
-  let weak_topological_order =
-    Array.of_list (List.map (fun (ni, _, _) -> ni) placed)
-  in
+  let placed = List.rev (List.fold_left (flatten (-1)) [] wto) in
+  let weak_topological_order = Array.of_list (List.map fst placed) in
   let order_index = Array.make (max_nodei + 1) (-1) in
   let loop_header = Array.make (max_nodei + 1) (-1) in
   List.iteri
-    (fun i (ni, header, _) ->
+    (fun i (ni, header) ->
       order_index.(ni) <- i;
       loop_header.(ni) <- header)
     placed;
@@ -127,8 +120,6 @@ let make (graph : _ Ograph_extended.ograph_mutable) entry exit : _ t =
     weak_topological_order;
     order_index;
     loop_header;
-    max_loop_depth =
-      List.fold_left (fun acc (_, _, depth) -> Int.max acc depth) 0 placed;
   }
 
 let reachable_nodes cfg =
