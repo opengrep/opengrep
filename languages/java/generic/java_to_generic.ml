@@ -430,7 +430,7 @@ and new_class_or_anon tnew typ (gargs : G.argument list G.bracket) body_opt :
         G.AnonClass
           {
             G.ckind = (G.Class, tnew);
-            cextends = [ (typ, None) ];
+            cextends = [ G.class_parent typ None ];
             cimplements = [];
             cmixins = [];
             cparams = fb [];
@@ -442,7 +442,7 @@ and new_class_or_anon tnew typ (gargs : G.argument list G.bracket) body_opt :
 
 and class_parent v : G.class_parent =
   let v = ref_type v in
-  (v, None)
+  G.class_parent v None
 
 and expr_or_type = function
   | Left e -> G.E (expr e)

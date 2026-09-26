@@ -138,35 +138,38 @@ let selection_expression_selector (env : env)
   | `QMARKDASHGT tok -> (* "?->" *) token env tok
   | `DASHGT tok -> (* "->" *) token env tok
 
-let trait_alias_clause (env : env) ((v1, v2, v3) : CST.trait_alias_clause) =
-  let v1 =
-    (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *) token env v1
-  in
+let trait_alias_clause (env : env) ((v1, v2, v3) : CST.trait_alias_clause) :
+    G.member_import =
+  let v1 = (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *) str env v1 in
   let v2 = (* "as" *) token env v2 in
-  let v3 =
+  let attrs, alias =
     match v3 with
     | `Visi_modi_opt_id (v1, v2) ->
         let v1 = visibility_modifier env v1 in
         let v2 =
-          match v2 with
-          | Some tok ->
-              (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *)
-              token env tok
-          | None -> todo env ()
+          (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *)
+          Option.map (str env) v2
         in
-        todo env (v1, v2)
+        ([ v1 ], v2)
     | `Opt_visi_modi_id (v1, v2) ->
-        let v1 =
-          match v1 with
-          | Some x -> visibility_modifier env x
-          | None -> todo env ()
-        in
+        let v1 = Option.map (visibility_modifier env) v1 in
         let v2 =
-          (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *) token env v2
+          (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *) str env v2
         in
-        todo env (v1, v2)
+        (Option.to_list v1, Some v2)
   in
-  todo env (v1, v2, v3)
+  {
+    G.mi_tok = v2;
+    mi_source = None;
+    mi_members =
+      [
+        ( v1,
+          Option.map (fun (alias : G.ident) -> (alias, G.empty_id_info ())) alias
+        );
+      ];
+    mi_excluded = [];
+    mi_attrs = attrs;
+  }
 
 let xhp_category_declaration (env : env)
     ((v1, v2, v3, v4) : CST.xhp_category_declaration) =
@@ -367,21 +370,25 @@ let rec type_constant_ (env : env) ((v1, v2, v3) : CST.type_constant_) :
 let trait_select_clause (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.trait_select_clause) =
   let v1 = qualified_identifier env v1 in
-  let v2 = (* "::" *) token env v2 in
-  let v3 =
-    (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *) token env v3
-  in
+  let _v2 = (* "::" *) token env v2 in
+  let v3 = (* pattern [a-zA-Z_\x80-\xff][a-zA-Z0-9_\x80-\xff]* *) str env v3 in
   let v4 = (* "insteadof" *) token env v4 in
   let v5 = qualified_identifier env v5 in
   let v6 =
     List_.map
       (fun (v1, v2) ->
-        let v1 = (* "," *) token env v1 in
+        let _v1 = (* "," *) token env v1 in
         let v2 = qualified_identifier env v2 in
-        todo env (v1, v2))
+        v2)
       v6
   in
-  todo env (v1, v2, v3, v4, v5, v6)
+  {
+    G.mi_tok = v4;
+    mi_source = Some (H2.name_of_ids v1);
+    mi_members = [ (v3, None) ];
+    mi_excluded = List_.map H2.name_of_ids (v5 :: v6);
+    mi_attrs = [];
+  }
 
 let xhp_close (env : env) ((v1, v2, v3) : CST.xhp_close) =
   let v1 = (* "</" *) token env v1 in
@@ -1133,18 +1140,18 @@ and declaration (env : env) (x : CST.declaration) =
         | Some x -> where_clause env x
         | None -> []
       in
-      let v11 = member_declarations env v11 in
+      let v11, traits = member_declarations env v11 in
       let def : G.class_definition =
         {
           ckind = (G.Class, v5);
           cextends = v8;
           cimplements = v9;
-          cmixins = v10;
+          cmixins = traits;
           cparams = fb [];
           cbody = v11;
         }
       in
-      let attrs = v1 @ v2 @ v3 @ v4 in
+      let attrs = v1 @ v2 @ v3 @ v4 @ v10 in
       G.DefStmt (basic_typed_entity id attrs type_params, G.ClassDef def)
   | `Inte_decl (v1, v2, v3, v4, v5, v6, v7) ->
       let v1 =
@@ -1165,18 +1172,18 @@ and declaration (env : env) (x : CST.declaration) =
         | Some x -> where_clause env x
         | None -> []
       in
-      let v7 = member_declarations env v7 in
+      let v7, traits = member_declarations env v7 in
       let def : G.class_definition =
         {
           ckind = (G.Interface, v2);
           cextends = v5;
           cimplements = [];
-          cmixins = v6;
+          cmixins = traits;
           cparams = fb [];
           cbody = v7;
         }
       in
-      let attrs = v1 in
+      let attrs = v1 @ v6 in
       G.DefStmt (basic_typed_entity id attrs type_params, G.ClassDef def)
   | `Trait_decl (v1, v2, v3, v4, v5, v6, v7) ->
       let v1 =
@@ -1197,18 +1204,18 @@ and declaration (env : env) (x : CST.declaration) =
         | Some x -> where_clause env x
         | None -> []
       in
-      let v7 = member_declarations env v7 in
+      let v7, traits = member_declarations env v7 in
       let def : G.class_definition =
         {
           ckind = (G.Trait, v2);
           cextends = [];
           cimplements = v5;
-          cmixins = v6;
+          cmixins = traits;
           cparams = fb [];
           cbody = v7;
         }
       in
-      let attrs = v1 in
+      let attrs = v1 @ v6 in
       G.DefStmt (basic_typed_entity id attrs type_params, G.ClassDef def)
   | `Alias_decl (v1, v2, v3, v4, v5, v6, v7, v8) ->
       let v1 =
@@ -1690,7 +1697,7 @@ and extends_clause (env : env) ((v1, v2, v3) : CST.extends_clause) :
         v2)
       v3
   in
-  v2 :: v3 |> List_.map (fun ty -> (ty, None))
+  v2 :: v3 |> List_.map (fun ty -> G.class_parent ty None)
 
 and field_initializer (env : env) ((v1, v2, v3) : CST.field_initializer) =
   let v1 =
@@ -1772,36 +1779,42 @@ and implements_clause (env : env) ((v1, v2, v3) : CST.implements_clause) =
   in
   v2 :: v3
 
-and member_declarations (env : env) ((v1, v2, v3) : CST.member_declarations) =
+and member_declarations (env : env) ((v1, v2, v3) : CST.member_declarations) :
+    G.field list G.bracket * G.type_ list =
   let v1 = (* "{" *) token env v1 in
   let v2 =
     List_.map
       (fun x ->
         match x with
-        | `Class_const_decl x -> class_const_declaration env x
-        | `Meth_decl x -> [ G.F (method_declaration env x |> G.s) ]
-        | `Prop_decl x -> property_declaration env x
-        | `Type_const_decl x -> [ G.F (type_const_declaration env x) ]
-        (* TODO: Add Trait use support *)
-        | `Trait_use_clause _xTODO ->
-            [ (*  G.FieldStmt (trait_use_clause env x |> G.s) *) ]
+        | `Class_const_decl x -> (class_const_declaration env x, [])
+        | `Meth_decl x -> ([ G.F (method_declaration env x |> G.s) ], [])
+        | `Prop_decl x -> (property_declaration env x, [])
+        | `Type_const_decl x -> ([ G.F (type_const_declaration env x) ], [])
+        | `Trait_use_clause x ->
+            let traits, imports = trait_use_clause env x in
+            ( List_.map
+                (fun (import : G.member_import) ->
+                  G.F (G.DirectiveStmt (G.d (G.MemberImport import)) |> G.s))
+                imports,
+              traits )
         | `Requ_imples_clause x ->
-            [ G.F (require_implements_clause env x |> G.s) ]
+            ([ G.F (require_implements_clause env x |> G.s) ], [])
         | `Requ_extends_clause x ->
-            [ G.F (require_extends_clause env x |> G.s) ]
-        | `Xhp_attr_decl x -> xhp_attribute_declaration env x
+            ([ G.F (require_extends_clause env x |> G.s) ], [])
+        | `Xhp_attr_decl x -> (xhp_attribute_declaration env x, [])
         | `Xhp_chil_decl _xTODO ->
             (* TODO: Figure out what this even is *)
-            [ (* G.FieldStmt (xhp_children_declaration env x |> G.s) *) ]
-        | `Xhp_cate_decl x -> [ G.F (xhp_category_declaration env x |> G.s) ]
+            ([ (* G.FieldStmt (xhp_children_declaration env x |> G.s) *) ], [])
+        | `Xhp_cate_decl x ->
+            ([ G.F (xhp_category_declaration env x |> G.s) ], [])
         | `Ellips tok ->
             let tok = token env tok in
             (* "..." *)
-            [ G.field_ellipsis tok ])
+            ([ G.field_ellipsis tok ], []))
       v2
   in
   let v3 = (* "}" *) token env v3 in
-  (v1, List_.flatten v2, v3)
+  ((v1, List.concat_map fst v2, v3), List.concat_map snd v2)
 
 and method_declaration (env : env) ((v1, v2, v3, v4) : CST.method_declaration) =
   let v1 =
@@ -2443,8 +2456,9 @@ and switch_default (env : env) ((v1, v2, v3) : CST.switch_default) =
   (* Q: Again. Is it appropriate to use Block here? *)
   G.CasesAndBody ([ G.Default v1 ], G.Block (Tok.unsafe_fake_bracket v3) |> G.s)
 
-and _trait_use_clause (env : env) ((v1, v2, v3, v4) : CST.trait_use_clause) =
-  let v1 = (* "use" *) token env v1 in
+and trait_use_clause (env : env) ((v1, v2, v3, v4) : CST.trait_use_clause) :
+    G.type_ list * G.member_import list =
+  let _v1 = (* "use" *) token env v1 in
   let v2 = type_ env v2 in
   let v3 =
     List_.map
@@ -2457,7 +2471,7 @@ and _trait_use_clause (env : env) ((v1, v2, v3, v4) : CST.trait_use_clause) =
   let v4 =
     match v4 with
     | `LCURL_rep_choice_trait_select_clause_SEMI_RCURL (v1, v2, v3) ->
-        let v1 = (* "{" *) token env v1 in
+        let _v1 = (* "{" *) token env v1 in
         let v2 =
           List_.map
             (fun (v1, v2) ->
@@ -2466,15 +2480,17 @@ and _trait_use_clause (env : env) ((v1, v2, v3, v4) : CST.trait_use_clause) =
                 | `Trait_select_clause x -> trait_select_clause env x
                 | `Trait_alias_clause x -> trait_alias_clause env x
               in
-              let v2 = (* ";" *) token env v2 in
-              todo env (v1, v2))
+              let _v2 = (* ";" *) token env v2 in
+              v1)
             v2
         in
-        let v3 = (* "}" *) token env v3 in
-        todo env (v1, v2, v3)
-    | `SEMI tok -> (* ";" *) token env tok
+        let _v3 = (* "}" *) token env v3 in
+        v2
+    | `SEMI tok ->
+        let _tok = (* ";" *) token env tok in
+        []
   in
-  todo env (v1, v2, v3, v4)
+  (v2 :: v3, v4)
 
 and type_ (env : env) (x : CST.type_) : G.type_ =
   match x with
@@ -2797,18 +2813,22 @@ and where_clause (env : env) ((v1, v2) : CST.where_clause) =
   (* TODO: I don't really know what this language feature is.... *)
   (* TODO: This is really wrong, because it also needs to be part of a FuncDef *)
   (* Q: Should this become a cmixins? *)
-  let twhere = (* "where" *) token env v1 in
+  let _twhere = (* "where" *) token env v1 in
   let v2 =
     List_.map
       (fun (v1, v2) ->
-        let frst, snd, thrd = where_constraint env v1 in
+        let frst, ((_, operator_tok) as operator), thrd =
+          where_constraint env v1
+        in
         let _v2 =
           match v2 with
           | Some tok -> (* "," *) Some (token env tok)
           | None -> None
         in
-        G.OtherType (("Where", twhere), [ G.T frst; G.TodoK snd; G.T thrd ])
-        |> G.t)
+        G.NamedAttr
+          ( operator_tok,
+            H2.name_of_id operator,
+            Tok.unsafe_fake_bracket [ G.ArgType frst; G.ArgType thrd ] ))
       v2
   in
   v2

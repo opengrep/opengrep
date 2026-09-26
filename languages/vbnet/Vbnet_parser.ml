@@ -2459,12 +2459,12 @@ and inherits_statement : G.class_parent list parser = fun __n -> (
   let* _ = optional (token ":") in
   let* _inherits = token "INHERITS" in
   let* typ = type_ in
-  let typ = (typ, None) in
+  let typ = G.class_parent typ None in
   let* typs = list_of
     begin
       let* _ = token "," in
       let* typ = type_ in
-      pure (typ, None)
+      pure (G.class_parent typ None)
     end
   in
   pure (typ :: typs)

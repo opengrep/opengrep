@@ -583,7 +583,7 @@ let is_value_class ~(lang : Lang.t) (cls : Class_table.cls) : bool =
       | Class_table.Class_kind G.Struct -> true
       | Class_table.Class_kind G.Class ->
         Object_initialization.classes_are_value_types lang
-      | Class_table.Class_kind (G.Interface | G.Trait | G.Object)
+      | Class_table.Class_kind (G.Interface | G.Trait | G.Object | G.Extension _)
       | Class_table.Module_kind -> false)
     (Class_table.scopes cls)
 

@@ -2050,7 +2050,11 @@ class ['self] resolve_visitor env lang =
           set_resolved env id_info resolved;
           add_import alias resolved env.names
       | _ -> ());
-      super#visit_directive venv x
+      match x.d with
+      | MemberImport _ ->
+          Common.save_excursion_unsafe env.in_type true (fun () ->
+              super#visit_directive venv x)
+      | _ -> super#visit_directive venv x
 
     method! visit_catch venv x =
       let _t, exn, _st = x in

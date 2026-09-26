@@ -2876,7 +2876,7 @@ let base_list (env : env) (x : CST.base_list) : G.class_parent list =
             v2)
           v3
       in
-      v2 :: v3 |> List_.map (fun t -> (t, None))
+      v2 :: v3 |> List_.map (fun t -> G.class_parent t None)
   | `COLON_prim_cons_base_type_opt_COMMA_type_rep_COMMA_type (v1, v2, v3) ->
       let _v1 = token env v1 (* ":" *) in
       let (v2_type, v2_args) = v2 in
@@ -2893,10 +2893,10 @@ let base_list (env : env) (x : CST.base_list) : G.class_parent list =
                   type_pattern env v2)
                 others
             in
-            (first :: others) |> List_.map (fun t -> (t, None))
+            (first :: others) |> List_.map (fun t -> G.class_parent t None)
         | None -> []
       in
-      (base_type, Some base_args) :: rest
+      G.class_parent base_type (Some base_args) :: rest
 
 (* Like [base_list] but for records, where the parents are [type_name]s
  * rather than [type_pattern]s. The first parent may carry primary
@@ -2913,7 +2913,7 @@ let record_base (env : env) (x : CST.record_base) : G.class_parent list =
             type_name env v2)
           v3
       in
-      v2 :: v3 |> List_.map (fun t -> (t, None))
+      v2 :: v3 |> List_.map (fun t -> G.class_parent t None)
   | `COLON_prim_cons_base_type_opt_COMMA_type_name_rep_COMMA_type_name
       (v1, v2, v3) ->
       let _v1 = token env v1 (* ":" *) in
@@ -2931,10 +2931,10 @@ let record_base (env : env) (x : CST.record_base) : G.class_parent list =
                   type_name env v2)
                 others
             in
-            (first :: others) |> List_.map (fun t -> (t, None))
+            (first :: others) |> List_.map (fun t -> G.class_parent t None)
         | None -> []
       in
-      (base_type, Some base_args) :: rest
+      G.class_parent base_type (Some base_args) :: rest
 
 let accessor_list (env : env) ((v1, v2, v3) : CST.accessor_list) =
   let v1 = token env v1 (* "{" *) in

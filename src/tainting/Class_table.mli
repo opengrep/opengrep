@@ -16,13 +16,29 @@ type parent =
   | Unbound of AST_generic.type_
   | Impl of Function_id.t
 
+type parent_clause = {
+  parent : parent;
+  relation : Linearisation.relation;
+  written : AST_generic.type_ option;
+  arguments : AST_generic.arguments option;
+  delegate : AST_generic.expr option;
+}
+
+type member_import = {
+  source : parent option;
+  members : (string * string) list;
+}
+
 type class_scope = {
   binding : AST_generic.SId.t;
   role : role;
   members : Func_info.t list Common.SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.relation) list;
+  parents : parent_clause list;
   class_side_parents : parent list;
+  member_imports : member_import list;
+  type_members : (string * parent) list;
+  requirements : string list;
   kind : kind;
   declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
@@ -48,11 +64,14 @@ val definition_scope : AST_generic.SId.t -> scope_id
 val binding_of_id_info : AST_generic.id_info -> AST_generic.SId.t option
 val id_info_of_name : AST_generic.name -> AST_generic.id_info
 val name_of_type : AST_generic.type_ -> AST_generic.name option
+val parent_of_type : AST_generic.type_ -> parent
 val written_path : AST_generic.expr -> (AST_generic.name * string list) option
 val path_of_type : AST_generic.type_ -> (AST_generic.name * string list) option
 val qualified_path : AST_generic.name -> string list
 val site_of_name : AST_generic.name -> AST_generic.SId.t option
 val definition_binding : AST_generic.name -> AST_generic.SId.t option
+
+val is_dereference_trait : Lang.t -> AST_generic.type_ -> bool
 
 type cls
 type t
@@ -97,6 +116,16 @@ val class_of_path :
   cls option
 val order : t -> cls -> cls Linearisation.linearisation
 val parents : t -> cls -> cls option list
+val parent_clauses : t -> cls -> (cls option * parent_clause) list
+
+type import_origin =
+  | Imported_from of cls
+  | Imported_from_mixins
+  | Imported_from_unknown
+
+val imports : t -> cls -> string -> (import_origin * string) list
+val delegations : t -> cls -> (cls option * cls option) list
+val requirements : cls -> string list
 val subclasses : t -> cls -> cls list
 val class_side_parents : t -> cls -> cls option list
 val distinct_definitions : Func_info.t list -> Func_info.t list
@@ -110,10 +139,19 @@ val exposes : cls -> string -> bool
 val is_abstraction : cls -> bool
 val declarations : cls -> Lang_config.class_declaration list
 val is_interface : cls -> bool
+val is_trait : cls -> bool
 val is_trait_impl : cls -> bool
 val name_of_class : t -> cls -> AST_generic.name option
 val equal_type : t -> Structural_typing.equal_type
 val method_of : string -> Func_info.t -> Structural_typing.method_
+
+val overrides :
+  lang:Lang.t ->
+  equal_type:Structural_typing.equal_type ->
+  string ->
+  nearer:Func_info.t ->
+  farther:Func_info.t ->
+  bool
 
 val select_member :
   lang:Lang.t ->

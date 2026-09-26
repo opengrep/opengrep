@@ -36,13 +36,29 @@ type parent =
   | Unbound of G.type_
   | Impl of Function_id.t
 
+type parent_clause = {
+  parent : parent;
+  relation : Linearisation.relation;
+  written : G.type_ option;
+  arguments : G.arguments option;
+  delegate : G.expr option;
+}
+
+type member_import = {
+  source : parent option;
+  members : (string * string) list;
+}
+
 type class_scope = {
   binding : G.SId.t;
   role : role;
   members : Func_info.t list SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.relation) list;
+  parents : parent_clause list;
   class_side_parents : parent list;
+  member_imports : member_import list;
+  type_members : (string * parent) list;
+  requirements : string list;
   kind : kind;
   declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
@@ -104,6 +120,23 @@ let name_of_type (ty : G.type_) : G.name option =
   | G.TyRef (_, { G.t = G.TyN name; _ })
   | G.TyExpr { G.e = G.N name; _ } ->
       Some name
+  | _ -> None
+
+let parent_of_type (ty : G.type_) : parent =
+  match
+    Option.bind (name_of_type ty) (fun (name : G.name) ->
+        binding_of_id_info (id_info_of_name name))
+  with
+  | Some parent -> Bound parent
+  | None -> Unbound ty
+
+(* The class a delegate expression holds: the declared type of the name it
+   reads. *)
+let delegate_type (e : G.expr) : parent option =
+  match e.G.e with
+  | G.N name ->
+      Option.map parent_of_type
+        (Ty_bare_name.instance_or_declared_type (id_info_of_name name))
   | _ -> None
 
 let rec written_path (e : G.expr) : (G.name * string list) option =
@@ -185,8 +218,15 @@ type cls = {
   scopes : class_scope list;
 }
 
+type import_origin =
+  | Imported_from of cls
+  | Imported_from_mixins
+  | Imported_from_unknown
+
 type entry = {
-  parents : (cls option * Linearisation.relation) list list;
+  parents : (cls option * parent_clause) list list;
+  imports : (string * (import_origin * string)) list;
+  delegations : (cls option * cls option) list;
   class_side_parents : cls option list;
   order : cls Linearisation.linearisation;
   subclasses : cls list;
@@ -266,7 +306,7 @@ let is_abstraction (cls : cls) : bool =
     (fun (scope : class_scope) ->
       match scope.kind with
       | Class_kind (G.Interface | G.Trait) -> true
-      | Class_kind (G.Class | G.Struct | G.Object)
+      | Class_kind (G.Class | G.Struct | G.Object | G.Extension _)
       | Module_kind ->
           false)
     cls.scopes
@@ -279,7 +319,17 @@ let is_interface (cls : cls) : bool =
     (fun (scope : class_scope) ->
       match scope.kind with
       | Class_kind G.Interface -> true
-      | Class_kind (G.Class | G.Struct | G.Object | G.Trait)
+      | Class_kind (G.Class | G.Struct | G.Object | G.Trait | G.Extension _)
+      | Module_kind ->
+          false)
+    cls.scopes
+
+let is_trait (cls : cls) : bool =
+  List.exists
+    (fun (scope : class_scope) ->
+      match scope.kind with
+      | Class_kind G.Trait -> true
+      | Class_kind (G.Class | G.Struct | G.Object | G.Interface | G.Extension _)
       | Module_kind ->
           false)
     cls.scopes
@@ -305,6 +355,22 @@ let class_side_parents (t : t) (cls : cls) : cls option list =
 
 let parents (t : t) (cls : cls) : cls option list =
   List.concat_map (List.map fst) (entry t cls).parents
+
+let parent_clauses (t : t) (cls : cls) : (cls option * parent_clause) list =
+  List.concat (entry t cls).parents
+
+let delegations (t : t) (cls : cls) : (cls option * cls option) list =
+  (entry t cls).delegations
+
+let requirements (cls : cls) : string list =
+  List.concat_map (fun (scope : class_scope) -> scope.requirements) cls.scopes
+
+let imports (t : t) (cls : cls) (name : string) : (import_origin * string) list
+    =
+  List.filter_map
+    (fun ((seen_as : string), (imported : import_origin * string)) ->
+      if String.equal seen_as name then Some imported else None)
+    (entry t cls).imports
 
 let classes (t : t) : cls list = Array.to_list t.classes
 
@@ -452,20 +518,17 @@ let select_member ~(lang : Lang.t) ~(equal_type : Structural_typing.equal_type)
     ~overrides:(overrides ~lang ~equal_type name)
     ~declared_only:(fun (func : Func_info.t) ->
       not (Func_info.has_body func.Func_info.fdef))
-    ~accumulate:(Lang_config.overloads_by_type lang)
+    ~shared:(fun (func : Func_info.t) ->
+      Receiver.is_static func.Func_info.entity)
+    ~accumulate:
+      (Lang_config.overloads_by_type lang
+      && not
+           (Linearisation.hides_inherited_overloads
+              (Lang_config.member_resolution lang)))
     tiers
 
 let tier_classes (tiers : cls Linearisation.tier list) : cls list =
-  List.concat_map
-    (fun (tier : cls Linearisation.tier) ->
-      match tier with
-      | Linearisation.Candidates candidates ->
-          List.map
-            (fun (candidate : cls Linearisation.candidate) ->
-              candidate.Linearisation.cls)
-            candidates
-      | Linearisation.Unknown_classes -> [])
-    tiers
+  List.concat_map Linearisation.tier_classes tiers
 
 let members_by_tiers ~(lang : Lang.t)
     ~(equal_type : Structural_typing.equal_type)
@@ -487,6 +550,23 @@ let members_by_tiers ~(lang : Lang.t)
          | Linearisation.Undefined
          | Linearisation.Unknown ->
              None)
+
+(* The written path of a trait, as its import resolves it or as it is
+   written, is one of the language's dereference traits. *)
+let is_dereference_trait (lang : Lang.t) (written : G.type_) : bool =
+  match (Lang_config.dereference lang, name_of_type written) with
+  | Some dereference, Some name ->
+      let path =
+        match !((id_info_of_name name).G.id_resolved) with
+        | Some (G.ImportedEntity canonical, _) -> canonical
+        | Some _
+        | None ->
+            qualified_path name
+      in
+      List.exists (List.equal String.equal path) dereference.Lang_config.traits
+  | None, _
+  | _, None ->
+      false
 
 let build ~(lang : Lang.t) ~(classes : class_scope list list)
     ~(compiled_together : Func_info.t list -> bool)
@@ -542,8 +622,8 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
         List.map
           (fun (scope : class_scope) ->
             List.map
-              (fun ((parent, relation) : parent * Linearisation.relation) ->
-                (linked scope parent, relation))
+              (fun (clause : parent_clause) ->
+                (linked scope clause.parent, clause))
               scope.parents)
           cls.scopes)
       classes
@@ -554,24 +634,62 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
   let linearisation_parents (cls : cls) : cls Linearisation.parent list list =
     List.map
       (List.map
-         (fun ((parent, relation) : cls option * Linearisation.relation) ->
+         (fun ((parent, clause) : cls option * parent_clause) ->
            match parent with
-           | Some parent -> Linearisation.Bound (relation, parent)
-           | None -> Linearisation.Unbound relation))
+           | Some parent -> Linearisation.Bound (clause.relation, parent)
+           | None -> Linearisation.Unbound clause.relation))
       written_parents.(cls.id)
+  in
+  let linked_type_members =
+    Array.map
+      (fun (cls : cls) ->
+        List.concat_map
+          (fun (scope : class_scope) ->
+            List.map
+              (fun ((name : string), (member : parent)) ->
+                (name, linked scope member))
+              scope.type_members)
+          cls.scopes)
+      classes
+  in
+  let dereferences (cls : cls) : cls option =
+    match Lang_config.dereference lang with
+    | None -> None
+    | Some dereference ->
+        let dereferencing (clause : parent_clause) : bool =
+          Option.fold ~none:false
+            ~some:(is_dereference_trait lang)
+            clause.written
+        in
+        List.find_map
+          (fun ((impl, clause) : cls option * parent_clause) ->
+            match (impl, clause.relation) with
+            | Some impl, Linearisation.Implements
+              when List.exists
+                     (fun ((_ : cls option), (trait : parent_clause)) ->
+                       dereferencing trait)
+                     (List.concat written_parents.(impl.id)) ->
+                List.find_map
+                  (fun ((name : string), (target : cls option)) ->
+                    if String.equal name dereference.Lang_config.target then
+                      target
+                    else None)
+                  linked_type_members.(impl.id)
+            | _ -> None)
+          (List.concat written_parents.(cls.id))
   in
   let linearise =
     Linearisation.linearise
       (Lang_config.member_resolution lang)
       ~equal:same ~hash ~parents:linearisation_parents ~is_interface
-      ~defined_outside:external_class
+      ~defined_outside:external_class ~dereferences
   in
   let orders = Array.map linearise classes in
   let direct_subclasses = Array.make (Array.length classes) [] in
   Array.iter
     (fun (cls : cls) ->
       List.iter
-        (fun ((parent, _) : cls option * Linearisation.relation) ->
+        (fun ((parent, _) : cls option * parent_clause) ->
           Option.iter
             (fun (parent : cls) ->
               direct_subclasses.(parent.id) <-
@@ -643,6 +761,37 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
       (fun (cls : cls) ->
         {
           parents = written_parents.(cls.id);
+          imports =
+            List.concat_map
+              (fun (scope : class_scope) ->
+                List.concat_map
+                  (fun (import : member_import) ->
+                    let origin =
+                      match import.source with
+                      | None -> Imported_from_mixins
+                      | Some source -> (
+                          match linked scope source with
+                          | Some found -> Imported_from found
+                          | None -> Imported_from_unknown)
+                    in
+                    List.map
+                      (fun ((imported : string), (seen_as : string)) ->
+                        (seen_as, (origin, imported)))
+                      import.members)
+                  scope.member_imports)
+              cls.scopes;
+          delegations =
+            List.concat_map
+              (fun (scope : class_scope) ->
+                List.filter_map
+                  (fun (clause : parent_clause) ->
+                    Option.map
+                      (fun (delegate : G.expr) ->
+                        ( linked scope clause.parent,
+                          Option.bind (delegate_type delegate) (linked scope) ))
+                      clause.delegate)
+                  scope.parents)
+              cls.scopes;
           class_side_parents =
             List.concat_map
               (fun (scope : class_scope) ->
@@ -690,6 +839,7 @@ let nearest (type found) (tiers : cls Linearisation.tier list)
   Linearisation.select ~equal:same ~defines
     ~overrides:(fun ~nearer:_ ~farther:_ -> true)
     ~declared_only:(fun (_ : found) -> false)
+    ~shared:(fun (_ : found) -> false)
     ~accumulate:false tiers
 
 let find_along (type found) (tiers : cls Linearisation.tier list)

@@ -1686,7 +1686,7 @@ and map_inheritance_specifiers (env : env)
         v2)
       v2
   in
-  v1 :: v2 |> List_.map (fun t -> (t, None))
+  v1 :: v2 |> List_.map (fun t -> G.class_parent t None)
 
 and map_interpolation (env : env) ((v1, v2, v3) : CST.interpolation) =
   let _lp = (* "\\(" *) token env v1 in
@@ -2037,12 +2037,8 @@ and map_modifierless_class_declaration (env : env) (attrs : G.attribute list)
       let tparams = Option.map (map_type_parameters env) v3 in
 
       let entity = { G.name; attrs; tparams } in
-      (* Extensions basically allow you to reopen an existing class. They don't
-       * really fit in perfectly to the existing class kinds that we have in the
-       * generic AST, but an ordinary class is probably the closest.
-       *
-       * https://docs.swift.org/swift-book/LanguageGuide/Extensions.html *)
-      construct_class_def env v1 v4 entity v5 v6 map_class_body
+      construct_class_def env ~kind:(G.Extension None) v1 v4 entity v5 v6
+        map_class_body
   | `Opt_indi_enum_simple_id_opt_type_params_opt_COLON_inhe_specis_opt_type_consts_enum_class_body
       (v1, v2, v3, v4, v5, v6, v7) ->
       let v2 = (* "enum" *) token env v2 in

@@ -590,8 +590,8 @@ let attribute_of ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
     match Func_lookup.class_of_qn func_lookup class_qn with
     | Some (cls : Class_table.cls) -> (
       match
-        Symbol_table.resolve_member table (Symbol_table.Class_object cls)
-          segment
+        Symbol_table.resolve_member table ~caller:None
+          (Symbol_table.Class_object cls) segment
       with
       | Symbol_table.Defined (_ :: _ as funcs) -> Some (Bound_functions funcs)
       | Symbol_table.Defined []
@@ -781,8 +781,8 @@ let member_of_member_classes ~(table : Symbol_table.t)
       Option.bind (Func_lookup.class_of_qn func_lookup class_qn)
         (fun (cls : Class_table.cls) ->
           match
-            Symbol_table.resolve_member table (Symbol_table.Class_object cls)
-              name
+            Symbol_table.resolve_member table ~caller:None
+              (Symbol_table.Class_object cls) name
           with
           | Symbol_table.Defined (_ :: _ as funcs) -> Some funcs
           | Symbol_table.Defined []
@@ -797,7 +797,7 @@ let resolve_name_in_scope ~(lang : Lang.t) ~(table : Symbol_table.t)
   let of_self_class () : func_info list =
     if unbound && Naming_AST.members_in_scope_in_methods lang then
       match
-        Symbol_table.resolve_member table
+        Symbol_table.resolve_member table ~caller
           (Symbol_table.self_receiver table ~caller) name
       with
       | Symbol_table.Defined funcs -> funcs

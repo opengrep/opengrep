@@ -326,7 +326,7 @@ and class_definition (v1, v2, v3) =
           ClassDef
             {
               G.ckind = (G.Class, v1);
-              cextends = List_.map (fun x -> (type_ x, None)) extends;
+              cextends = List_.map (fun x -> G.class_parent (type_ x) None) extends;
               cimplements = list type_ instancesof;
               cbody = bracket (list (fun x -> G.F (stmt x))) stmts;
               cparams = fb [];

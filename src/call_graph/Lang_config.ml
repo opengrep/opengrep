@@ -903,7 +903,97 @@ let member_resolution (lang : Lang.t) : Linearisation.strategy =
         ~interface_bodies_inherited:false
         ~mixins:Linearisation.Flattened_into_the_class
   | Lang.Go -> Linearisation.Go_embedding_promotion
+  | Lang.Cpp -> Linearisation.Cpp_member_lookup
+  | Lang.Rust -> Linearisation.Rust_method_probing
   | _ -> Linearisation.C3 { bases_listed_most_base_first = false }
+
+type dereference = {
+  traits : string list list;
+  target : string;
+}
+
+(* Rust: a method call on a value whose type implements one of [traits]
+   continues the method search in the type bound to [target] in that impl. *)
+let dereference (lang : Lang.t) : dereference option =
+  match lang with
+  | Lang.Rust ->
+      Some
+        {
+          traits = [ [ "std"; "ops"; "Deref" ]; [ "core"; "ops"; "Deref" ] ];
+          target = "Target";
+        }
+  | _ -> None
+
+(* Rust 2021: the traits the standard prelude brings into every module. *)
+let prelude_traits (lang : Lang.t) : string list list =
+  match lang with
+  | Lang.Rust ->
+      [
+        [ "std"; "marker"; "Copy" ];
+        [ "std"; "marker"; "Send" ];
+        [ "std"; "marker"; "Sized" ];
+        [ "std"; "marker"; "Sync" ];
+        [ "std"; "marker"; "Unpin" ];
+        [ "std"; "ops"; "Drop" ];
+        [ "std"; "ops"; "Fn" ];
+        [ "std"; "ops"; "FnMut" ];
+        [ "std"; "ops"; "FnOnce" ];
+        [ "std"; "borrow"; "ToOwned" ];
+        [ "std"; "clone"; "Clone" ];
+        [ "std"; "cmp"; "PartialEq" ];
+        [ "std"; "cmp"; "PartialOrd" ];
+        [ "std"; "cmp"; "Eq" ];
+        [ "std"; "cmp"; "Ord" ];
+        [ "std"; "convert"; "AsRef" ];
+        [ "std"; "convert"; "AsMut" ];
+        [ "std"; "convert"; "Into" ];
+        [ "std"; "convert"; "From" ];
+        [ "std"; "convert"; "TryFrom" ];
+        [ "std"; "convert"; "TryInto" ];
+        [ "std"; "default"; "Default" ];
+        [ "std"; "iter"; "Iterator" ];
+        [ "std"; "iter"; "Extend" ];
+        [ "std"; "iter"; "IntoIterator" ];
+        [ "std"; "iter"; "DoubleEndedIterator" ];
+        [ "std"; "iter"; "ExactSizeIterator" ];
+        [ "std"; "iter"; "FromIterator" ];
+        [ "std"; "string"; "ToString" ];
+      ]
+  | _ -> []
+
+(* Rust: the module path a use path written in [module_path] denotes: from
+   the crate root after [crate], from the module after [self], from its
+   parent after [super], else from the module. *)
+let use_path_from (lang : Lang.t) ~(module_path : string list)
+    (path : string list) : string list =
+  match (lang, path) with
+  | Lang.Rust, "crate" :: rest -> rest
+  | Lang.Rust, "self" :: rest -> module_path @ rest
+  | Lang.Rust, "super" :: rest -> (
+      match List.rev module_path with
+      | _ :: parent -> List.rev parent @ rest
+      | [] -> rest)
+  | _ -> module_path @ path
+
+type metatable = {
+  set_metatable : string;
+  index_key : string;
+}
+
+(* Lua: [set_metatable (t, m)] gives [t] the metatable [m] and returns [t];
+   a key missing from [t] is read from the table in [m]'s [index_key]
+   field. *)
+let metatable (lang : Lang.t) : metatable option =
+  match lang with
+  | Lang.Lua -> Some { set_metatable = "setmetatable"; index_key = "__index" }
+  | _ -> None
+
+(* Swift: a member a protocol extension declares that is not a requirement
+   of the protocol is dispatched statically. *)
+let extension_members_dispatch_statically (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Swift -> true
+  | _ -> false
 
 let interfaces_are_structural (lang : Lang.t) : bool =
   match lang with

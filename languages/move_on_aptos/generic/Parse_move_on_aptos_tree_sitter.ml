@@ -185,17 +185,23 @@ let map_constraints (env : env) ((v1, v2, v3) : CST.constraints) : G.type_ list
   in
   v2 :: v3
 
-let map_abilities (env : env) ((v0, v1, v2) : CST.abilities) : G.type_ list =
+let map_abilities (env : env) ((v0, v1, v2) : CST.abilities) :
+    G.attribute list =
   let v0 = (* "has" *) token env v0 in
   let v1 = map_ability env v1 in
   let v2 =
     v2
     |> List_.map (fun (v1, v2) ->
-           let v1 = (* "," *) token env v1 in
+           let _v1 = (* "," *) token env v1 in
            let v2 = map_ability env v2 in
            v2)
   in
   v1 :: v2
+  |> List_.map (fun (ability : G.type_) ->
+         G.NamedAttr
+           ( v0,
+             G.Id (("has", v0), G.empty_id_info ()),
+             Tok.unsafe_fake_bracket [ G.ArgType ability ] ))
 
 let map_number (env : env) (x : CST.number) =
   match x with
@@ -1038,8 +1044,10 @@ let map_struct_signature (env : env) attrs ((v1, v2, v3) : CST.struct_signature)
   let abilities =
     v3 |> Option.map (map_abilities env) |> Option.value ~default:[]
   in
-  let struct_ent = G.basic_entity ?tparams:type_params ~attrs name in
-  (struct_, abilities, struct_ent)
+  let struct_ent =
+    G.basic_entity ?tparams:type_params ~attrs:(attrs @ abilities) name
+  in
+  (struct_, struct_ent)
 
 let map_struct_body (env : env) ((v1, v2, v3, v4) : CST.struct_body) =
   let lb = (* "{" *) token env v1 in
@@ -1175,7 +1183,7 @@ let map_spec_target_signature_opt (env : env)
 let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
   match x with
   | `Struct_sign_choice_struct_body (v1, v2) ->
-      let struct_, abilities, struct_ent = map_struct_signature env attrs v1 in
+      let struct_, struct_ent = map_struct_signature env attrs v1 in
       let body =
         match v2 with
         | `Struct_body x -> map_struct_body env x
@@ -1185,7 +1193,7 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
         {
           ckind = (G.Struct, struct_);
           cextends = [];
-          cimplements = abilities;
+          cimplements = [];
           cmixins = [];
           cparams = fb [];
           cbody = body;
@@ -1195,18 +1203,17 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
   | `Struct_struct_def_name_struct_body_opt_abilis_SEMI (v1, v2, v3, v4, v5) ->
       let struct_ = (* "struct" *) token env v1 in
       let name, tparams = map_struct_def_name env v2 in
-      let struct_ent = G.basic_entity name ?tparams in
-
       let body = map_struct_body env v3 in
       let abilities =
         v4 |> Option.map (map_abilities env) |> Option.value ~default:[]
       in
+      let struct_ent = G.basic_entity name ~attrs:(attrs @ abilities) ?tparams in
       let v5 = (* ";" *) token env v5 in
       let struct_def =
         {
           ckind = (G.Struct, struct_);
           cextends = [];
-          cimplements = abilities;
+          cimplements = [];
           cmixins = [];
           cparams = fb [];
           cbody = body;
@@ -1216,12 +1223,11 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
   | `Struct_struct_def_name_anon_fields_opt_abilis_SEMI (v1, v2, v3, v4, v5) ->
       let struct_ = (* "struct" *) token env v1 in
       let name, tparams = map_struct_def_name env v2 in
-      let struct_ent = G.basic_entity name ?tparams in
-
       let lp, body, rp = map_anon_fields env v3 in
       let abilities =
         v4 |> Option.map (map_abilities env) |> Option.value ~default:[]
       in
+      let struct_ent = G.basic_entity name ~attrs:(attrs @ abilities) ?tparams in
       let v5 = (* ";" *) token env v5 in
 
       let body =
@@ -1240,7 +1246,7 @@ let map_struct_decl (env : env) attrs (x : CST.struct_decl) : G.stmt =
         {
           ckind = (G.Struct, struct_);
           cextends = [];
-          cimplements = abilities;
+          cimplements = [];
           cmixins = [];
           cparams = fb [];
           cbody = (lp, body, rp);
@@ -1302,26 +1308,15 @@ let map_enum_signature (env : env) attrs ((v1, v2, v3) : CST.enum_signature) =
   let abilities =
     v3 |> Option.map (map_abilities env) |> Option.value ~default:[]
   in
-  let ent = G.basic_entity ?tparams ~attrs name in
-  (enum_, abilities, ent)
-
-let inject_enum_abilities (env : env) (abilities : G.type_ list)
-    (ent : G.entity) =
-  let ability_attr =
-    G.NamedAttr
-      ( sc,
-        G.Id (("has", sc), G.empty_id_info ()),
-        (sc, abilities |> List_.map (fun x -> G.ArgType x), sc) )
-  in
-  { ent with G.attrs = ent.G.attrs @ [ ability_attr ] }
+  let ent = G.basic_entity ?tparams ~attrs:(attrs @ abilities) name in
+  (enum_, ent)
 
 let map_enum_decl (env : env) attrs (x : CST.enum_decl) =
   match x with
   | `Enum_sign_enum_body (v1, v2) ->
-      let _, abilities, ent = map_enum_signature env attrs v1 in
+      let _, ent = map_enum_signature env attrs v1 in
       let lb, variants, rb = map_enum_body env v2 in
 
-      let ent = inject_enum_abilities env abilities ent in
       let def = G.TypeDef { G.tbody = G.OrType variants } in
       G.DefStmt (ent, def) |> G.s
   | `Enum_struct_def_name_enum_body_opt_abilis_SEMI (v1, v2, v3, v4, v5) ->
@@ -1333,8 +1328,7 @@ let map_enum_decl (env : env) attrs (x : CST.enum_decl) =
       in
       let v5 = (* ";" *) token env v5 in
 
-      let ent = G.basic_entity ?tparams ~attrs name in
-      let ent = inject_enum_abilities env abilities ent in
+      let ent = G.basic_entity ?tparams ~attrs:(attrs @ abilities) name in
       let def = G.TypeDef { G.tbody = G.OrType variants } in
       G.DefStmt (ent, def) |> G.s
 
@@ -2592,12 +2586,12 @@ let map_source_file (env : env) (x : CST.source_file) =
           let fn_def, ent = map_function_signature env attrs x in
           G.Partial (G.PartialDef (ent, G.FuncDef fn_def))
       | `Struct_sign x ->
-          let struct_, abilities, ent = map_struct_signature env attrs x in
+          let struct_, ent = map_struct_signature env attrs x in
           let struct_def =
             {
               ckind = (G.Struct, struct_);
               cextends = [];
-              cimplements = abilities;
+              cimplements = [];
               cmixins = [];
               cparams = fb [];
               cbody = (sc, [], sc);
@@ -2605,10 +2599,8 @@ let map_source_file (env : env) (x : CST.source_file) =
           in
           G.Partial (G.PartialDef (ent, G.ClassDef struct_def))
       | `Enum_sign x ->
-          let enum_, abilities, ent = map_enum_signature env attrs x in
+          let enum_, ent = map_enum_signature env attrs x in
           let enum_def = { tbody = G.OrType [ G.OrEllipsis sc ] } in
-          (* inject abilities into entity *)
-          let ent = inject_enum_abilities env abilities ent in
           (* Workaround: Def, Partial Def don't work *)
           G.S (G.DefStmt (ent, G.TypeDef enum_def) |> G.s))
 

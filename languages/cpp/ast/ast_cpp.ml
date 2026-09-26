@@ -840,6 +840,8 @@ and class_definition_bis = {
   c_kind : class_key wrap;
   (* c++ext: *)
   c_inherit : base_clause list;
+  (* 'final' after the class name *)
+  c_specifiers : modifier list;
   c_members : class_member sequencable list brace (* new scope *);
 }
 

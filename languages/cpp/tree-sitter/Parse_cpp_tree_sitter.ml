@@ -2358,8 +2358,8 @@ and map_class_declaration_item (env : env)
           ( v1,
             {
               c_kind = cwrap;
-              c_inherit =
-                v3 |> List_.map (fun clause -> { clause with i_virtual = v2 });
+              c_inherit = v3;
+              c_specifiers = Option.to_list v2;
               c_members = v4;
             } )
         in

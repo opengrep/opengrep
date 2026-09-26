@@ -1,0 +1,12 @@
+rules:
+  - id: metatable-index-chain-control
+    languages: [lua]
+    message: taint reaches the definition the language selects
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

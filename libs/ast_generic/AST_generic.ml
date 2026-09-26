@@ -2115,8 +2115,7 @@ and class_definition = {
   cbody : field list bracket;
 }
 
-(* invariant: this must remain a simple enum; Map_AST relies on it.
- * for EnumClass/AnnotationClass/etc. see keyword_attribute.
+(* for EnumClass/AnnotationClass/etc. see keyword_attribute.
  *)
 and class_kind =
   | Class (* or Struct for C/Solidity *)
@@ -2126,14 +2125,22 @@ and class_kind =
   | Trait
   (* Kotlin/Scala/OCaml *)
   | Object
+  (* 'extension': members added to a type defined elsewhere; Dart
+   * 'extension E on T' carries T, a Swift extension's entity is the type *)
+  | Extension of type_ option
 
 (* A parent can have arguments in Scala/Java/Kotlin (because constructors
  * can be defined in the class header via cparams and then this class
  * header can call its parent constructor using those cparams).
  * alt: keep just 'type_' and add constructor calls in cbody.
- * TODO: also can have visibility modifier in C++ or virtual
  *)
-and class_parent = type_ * arguments option
+and class_parent = {
+  cp_type : type_;
+  cp_args : arguments option;
+  (* Kotlin 'I by e': the members of I the class does not declare forward
+   * to the value of e *)
+  cp_delegate : expr option;
+}
 
 (* ------------------------------------------------------------------------- *)
 (* Enum entry  *)
@@ -2225,11 +2232,27 @@ and directive_kind =
   | PackageEnd of tok
   | Pragma of ident * any list
   | BuildConstraint of tok * build_constraint
+  (* In a class body: C++ 'using B::m;' (a using-declaration), PHP and Hack
+   * 'A::m insteadof B;' and '[A::]m as [modifier] [n];' (trait adaptations).
+   *)
+  | MemberImport of member_import
   (* e.g., Dynamic include in C, Extern "C" in C++/Rust, Undef in C++/Ruby,
    * Export/Reexport in Javascript, Using in Solidity
    * TODO: Declare, move OE_UseStrict here for JS?
    *)
   | OtherDirective of todo_kind * any list
+
+and member_import = {
+  mi_tok : tok;
+  (* the class or trait whose members are brought into the class; None for
+   * PHP 'm as protected;' *)
+  mi_source : name option;
+  mi_members : (ident * alias option) list;
+  (* PHP 'insteadof': the traits whose member of that name is excluded *)
+  mi_excluded : name list;
+  (* PHP 'as protected': the visibility of the imported member *)
+  mi_attrs : attribute list;
+}
 
 and build_constraint =
   | BuildTag of ident
@@ -2415,6 +2438,10 @@ let d dkind = { d = dkind; d_attrs = [] }
 
 (* types *)
 let t tkind = { t = tkind; t_attrs = [] }
+
+(* class parents *)
+let class_parent (ty : type_) (args : arguments option) : class_parent =
+  { cp_type = ty; cp_args = args; cp_delegate = None }
 
 (* patterns *)
 (* less: nothing yet, but at some point we may want to use a record

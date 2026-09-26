@@ -74,5 +74,6 @@ let normalize_import_opt is_pattern i =
   | PackageEnd _
   | Pragma _
   | BuildConstraint _
+  | MemberImport _
   | OtherDirective _ ->
       None

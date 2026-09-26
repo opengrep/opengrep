@@ -3534,9 +3534,19 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let ident = ident env v3 in
       (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
       let _type_paramsTODO = Option.map (map_type_parameters env) v4 in
-      let _trait_boundsTODO =
+      let supertraits =
         match v5 with
-        | Some x -> map_trait_bounds env x
+        | Some x ->
+            List.filter_map
+              (fun (bound : trait_bound) ->
+                match bound with
+                | TraitBoundType ty
+                | TraitBoundHigherRanked (_, ty) ->
+                    Some (G.class_parent ty None)
+                | TraitBoundLifetime _
+                | TraitBoundRemoved _ ->
+                    None)
+              (map_trait_bounds env x)
         | None -> []
       in
       let _where_clauseTODO = Option.map (fun x -> map_where_clause env x) v6 in
@@ -3544,7 +3554,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let class_def =
         {
           G.ckind = (G.Trait, trait);
-          G.cextends = [];
+          G.cextends = supertraits;
           G.cimplements = [];
           G.cmixins = [];
           G.cparams = fb [];

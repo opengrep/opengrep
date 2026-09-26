@@ -1,5 +1,8 @@
 type relation =
-  | Extends of { constructed : bool }
+  | Extends of {
+      constructed : bool;
+      virtual_base : bool;
+    }
   | Implements
   | Mixin
   | Embedded
@@ -29,6 +32,8 @@ type strategy =
       mixins : mixins;
     }
   | Go_embedding_promotion
+  | Cpp_member_lookup
+  | Rust_method_probing
 
 type 'c candidate = {
   cls : 'c;
@@ -36,8 +41,17 @@ type 'c candidate = {
   paths : int;
 }
 
+type 'c base =
+  | Base of {
+      cls : 'c;
+      virtual_base : bool;
+      bases : 'c base list;
+    }
+  | Unknown_base
+
 type 'c tier =
   | Candidates of 'c candidate list
+  | Base_subobjects of 'c base list
   | Unknown_classes
 
 type 'c linearisation = {
@@ -54,6 +68,8 @@ type ('c, 'a) selection =
   | Unknown
 
 val follows_receiver : strategy -> bool
+val hides_inherited_overloads : strategy -> bool
+val tier_classes : 'c tier -> 'c list
 val after : equal:('c -> 'c -> bool) -> 'c -> 'c tier list -> 'c tier list
 
 val select :
@@ -61,6 +77,7 @@ val select :
   defines:('c -> 'a list) ->
   overrides:(nearer:'a -> farther:'a -> bool) ->
   declared_only:('a -> bool) ->
+  shared:('a -> bool) ->
   accumulate:bool ->
   'c tier list ->
   ('c, 'a) selection
@@ -72,5 +89,6 @@ val linearise :
   parents:('c -> 'c parent list list) ->
   is_interface:('c -> bool) ->
   defined_outside:('c -> bool) ->
+  dereferences:('c -> 'c option) ->
   'c ->
   'c linearisation

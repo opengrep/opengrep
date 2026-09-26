@@ -328,7 +328,7 @@ let entity_of_pattern ?(attrs = []) (pat : G.pattern) : G.entity =
 let expr_to_type e = TyExpr e |> G.t
 
 (* TODO: recognize foo(args)? like in Kotlin/Java *)
-let expr_to_class_parent e : class_parent = (expr_to_type e, None)
+let expr_to_class_parent e : class_parent = G.class_parent (expr_to_type e) None
 
 (* See also exprstmt, and stmt_to_expr in AST_generic.ml *)
 

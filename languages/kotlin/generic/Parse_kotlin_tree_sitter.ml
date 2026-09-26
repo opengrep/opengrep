@@ -1131,7 +1131,7 @@ and delegation_specifier (env : env) (x : CST.delegation_specifier) :
   match x with
   | `Cons_invo x ->
       let n, args = constructor_invocation env x in
-      (TyN n |> G.t, Some args)
+      G.class_parent (TyN n |> G.t) (Some args)
   | `Expl_dele (v1, v2, v3) ->
       let v1 =
         match v1 with
@@ -1140,14 +1140,13 @@ and delegation_specifier (env : env) (x : CST.delegation_specifier) :
             TyN n |> G.t
         | `Func_type x -> function_type env x
       in
-      let v2 = token env v2 (* "by" *) in
+      let _v2 = token env v2 (* "by" *) in
       let v3 = expression env v3 in
-      ( OtherType (("ByDelagation", v2), [ G.T v1 ]) |> G.t,
-        Some (fb [ G.Arg v3 ]) )
+      { cp_type = v1; cp_args = None; cp_delegate = Some v3 }
   | `User_type x ->
       let n = user_type env x in
-      (TyN n |> G.t, None)
-  | `Func_type x -> (function_type env x, None)
+      G.class_parent (TyN n |> G.t) None
+  | `Func_type x -> G.class_parent (function_type env x) None
 
 and delegation_specifiers (env : env) ((v1, v2) : CST.delegation_specifiers) :
     class_parent list =

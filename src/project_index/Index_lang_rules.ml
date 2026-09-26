@@ -221,8 +221,8 @@ let python_namedtuple_dunders =
   ["__init__"; "__new__"; "__iter__"; "__hash__"; "__replace__"]
 
 let is_namedtuple_subclass (cdef : G.class_definition) : bool =
-  List.exists (fun (ty, _) ->
-    match ty.G.t with
+  List.exists (fun (parent : G.class_parent) ->
+    match parent.G.cp_type.G.t with
     | G.TyN name -> Ty_bare_name.bare_name_of_name name = Some "NamedTuple"
     | _ -> false
   ) cdef.G.cextends

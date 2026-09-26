@@ -508,7 +508,7 @@ and v_expr e : G.expr =
       let v1 = v_tok v1 and v2 = v_template_definition v2 in
       match v2 with
       | {
-       cextends = [ (tp, args) ];
+       cextends = [ { cp_type = tp; cp_args = args; cp_delegate = None } ];
        cparams = _, [], _;
        cmixins = [];
        cbody = _, [], _;
@@ -1192,9 +1192,9 @@ and v_template_parents { cextends = v_cextends; cwith = v_cwith } =
         let v2 = v_list v_arguments v2 in
         let parent =
           match v2 with
-          | [] -> (v1, None)
-          | [ args ] -> (v1, Some args)
-          | args :: _otherargsTODO -> (v1, Some args)
+          | [] -> G.class_parent v1 None
+          | [ args ] -> G.class_parent v1 (Some args)
+          | args :: _otherargsTODO -> G.class_parent v1 (Some args)
         in
         [ parent ]
   in

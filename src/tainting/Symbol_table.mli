@@ -14,13 +14,29 @@ type parent = Class_table.parent =
   | Unbound of AST_generic.type_
   | Impl of Function_id.t
 
+type parent_clause = Class_table.parent_clause = {
+  parent : parent;
+  relation : Linearisation.relation;
+  written : AST_generic.type_ option;
+  arguments : AST_generic.arguments option;
+  delegate : AST_generic.expr option;
+}
+
+type member_import = Class_table.member_import = {
+  source : parent option;
+  members : (string * string) list;
+}
+
 type class_scope = Class_table.class_scope = {
   binding : AST_generic.SId.t;
   role : role;
   members : Func_info.t list Common.SMap.t;
   fields : Func_info.t list Field_path_map.t;
-  parents : (parent * Linearisation.relation) list;
+  parents : parent_clause list;
   class_side_parents : parent list;
+  member_imports : member_import list;
+  type_members : (string * parent) list;
+  requirements : string list;
   kind : kind;
   declaration : Lang_config.class_declaration;
   singleton_exposure : Class_parents.singleton_exposure;
@@ -128,7 +144,8 @@ val self_receiver : t -> caller:Function_id.t option -> receiver_class
 val receiver_class :
   t -> caller:Function_id.t option -> AST_generic.expr -> receiver_class
 
-val resolve_member : t -> receiver_class -> string -> resolution
+val resolve_member :
+  t -> caller:Function_id.t option -> receiver_class -> string -> resolution
 
 val resolve_callee :
   t -> caller:Function_id.t option -> AST_generic.expr -> resolution

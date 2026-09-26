@@ -766,6 +766,7 @@ and class_def
       c_extends;
       c_implements;
       c_uses;
+      c_trait_rules;
       c_enum_type;
       c_attrs;
       c_constants;
@@ -780,6 +781,9 @@ and class_def
   let extends = option class_parent c_extends in
   let implements = list class_name c_implements in
   let uses = list class_name c_uses in
+  let trait_rules =
+    list (trait_rule ~class_name:c_name ~extends:c_extends) c_trait_rules
+  in
 
   let _enum = option (enum_type tok) c_enum_type in
 
@@ -813,14 +817,57 @@ and class_def
       cimplements = implements;
       cmixins = uses;
       cparams = fb [];
-      cbody = (t1, fields |> List_.map (fun def -> G.fld def), t2);
+      cbody =
+        (t1, trait_rules @ (fields |> List_.map (fun def -> G.fld def)), t2);
     }
   in
   (ent, def)
 
+(* A rule's source written 'self' or 'static' is the class itself, and
+   'parent' is its superclass. *)
+and trait_rule ~(class_name : ident) ~(extends : class_name option)
+    (rule : trait_rule) : G.field =
+  let trait_name (name : name) : G.name =
+    match (name.n_parts, extends) with
+    | [ (part, tok) ], _
+      when String.equal part (Ast_php.special "self")
+           || String.equal part (Ast_php.special "static") ->
+        G.Id ((fst class_name, tok), G.empty_id_info ~case_insensitive:true ())
+    | [ (part, _) ], Some (Hint parent)
+      when String.equal part (Ast_php.special "parent") ->
+        name_of_qualified_ident ~case_insensitive:true parent
+    | _ -> name_of_qualified_ident ~case_insensitive:true name
+  in
+  let import =
+    match rule with
+    | InsteadOf (source, member, tok, excluded) ->
+        {
+          G.mi_tok = tok;
+          mi_source = Some (trait_name source);
+          mi_members = [ (ident member, None) ];
+          mi_excluded = List_.map trait_name excluded;
+          mi_attrs = [];
+        }
+    | As (source, member, tok, modifiers, alias) ->
+        {
+          G.mi_tok = tok;
+          mi_source = Option.map trait_name source;
+          mi_members =
+            [
+              ( ident member,
+                Option.map
+                  (fun (alias : ident) -> (ident alias, G.empty_id_info ()))
+                  alias );
+            ];
+          mi_excluded = [];
+          mi_attrs = list modifier_to_attr modifiers;
+        }
+  in
+  G.F (G.DirectiveStmt (G.d (G.MemberImport import)) |> G.s)
+
 and class_parent x : G.class_parent =
   let x = class_name x in
-  (x, None)
+  G.class_parent x None
 
 and class_kind (x, t) =
   match x with

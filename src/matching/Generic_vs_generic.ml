@@ -3738,17 +3738,28 @@ and m_list__m_class_parent (xsa : G.class_parent list)
          *)
         m_list_with_dots m_class_parent_basic
           (function
-            | { G.t = G.TyEllipsis _; _ }, None -> true
+            | {
+                G.cp_type = { G.t = G.TyEllipsis _; _ };
+                cp_args = None;
+                cp_delegate = None;
+              } ->
+                true
             (* dots: '...', this is very Python Specific I think *)
-            | { G.t = G.TyExpr { e = G.Ellipsis _i; _ }; _ }, None -> true
+            | {
+                G.cp_type = { G.t = G.TyExpr { e = G.Ellipsis _i; _ }; _ };
+                cp_args = None;
+                cp_delegate = None;
+              } ->
+                true
             | _ -> false)
             (* less-is-ok: it's ok to not specify all the parents I think *)
           ~less_is_ok:true xsa xsb)
 
-and m_class_parent_basic (a1, a2) (b1, b2) =
-  let* () = m_type_ a1 b1 in
+and m_class_parent_basic a b =
+  let* () = m_type_ a.G.cp_type b.B.cp_type in
   (* less: m_option_none_can_match_some? *)
-  let* () = m_option m_arguments a2 b2 in
+  let* () = m_option m_arguments a.G.cp_args b.B.cp_args in
+  let* () = m_option m_expr a.G.cp_delegate b.B.cp_delegate in
   return ()
 
 (* ------------------------------------------------------------------------- *)
@@ -3791,13 +3802,17 @@ and m_class_kind_bis a b =
   | G.Struct, B.Struct
   | G.Interface, B.Interface
   | G.Trait, B.Trait
-  | G.Object, B.Object ->
+  | G.Object, B.Object
+  (* an extension adds members to a class: a class pattern matches it *)
+  | G.Class, B.Extension _ ->
       return ()
+  | G.Extension a1, B.Extension b1 -> m_option_none_can_match_some m_type_ a1 b1
   | G.Class, _
   | G.Struct, _
   | G.Interface, _
   | G.Trait, _
-  | G.Object, _ ->
+  | G.Object, _
+  | G.Extension _, _ ->
       fail ()
 
 (* ------------------------------------------------------------------------- *)
@@ -3861,6 +3876,7 @@ and m_directive a b =
   | G.PackageEnd _
   | G.Pragma _
   | G.BuildConstraint _
+  | G.MemberImport _
   | G.OtherDirective _ ->
       fail ()
 
@@ -4012,9 +4028,11 @@ and m_directive_basic a b =
   | G.PackageEnd a1, B.PackageEnd b1 -> m_tok a1 b1
   | G.Pragma (a1, a2), B.Pragma (b1, b2) ->
       m_ident a1 b1 >>= fun () -> (m_list m_any) a2 b2
+  | G.MemberImport a1, B.MemberImport b1 -> m_member_import a1 b1
   | G.OtherDirective (a1, a2), B.OtherDirective (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
   | G.ImportFrom _, _
+  | G.MemberImport _, _
   | G.ImportAs _, _
   | G.OtherDirective _, _
   | G.Pragma _, _
@@ -4023,6 +4041,21 @@ and m_directive_basic a b =
   | G.PackageEnd _, _
   | G.BuildConstraint _, _ ->
       fail ()
+
+and m_member_import a b =
+  let* () = m_tok a.G.mi_tok b.B.mi_tok in
+  let* () = m_option m_name a.G.mi_source b.B.mi_source in
+  let* () =
+    m_list_in_any_order ~less_is_ok:true
+      (fun (a1, a2) (b1, b2) ->
+        let* () = m_ident a1 b1 in
+        (m_option_none_can_match_some m_ident_and_id_info) a2 b2)
+      a.G.mi_members b.B.mi_members
+  in
+  let* () =
+    m_list_in_any_order ~less_is_ok:true m_name a.G.mi_excluded b.B.mi_excluded
+  in
+  m_list_in_any_order ~less_is_ok:true m_attribute a.G.mi_attrs b.B.mi_attrs
 
 and m_normalized_imports a b =
   (* equivalence: *)

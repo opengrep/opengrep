@@ -1308,7 +1308,8 @@ conversion_declarator:
 class_specifier: class_head "{" optl(member_specification) "}"
      { let (kind, nameopt, baseopt) = $1 in
        nameopt, { c_kind = kind;
-                  c_inherit = baseopt; c_members = ($2, $3, $4) } }
+                  c_inherit = baseopt; c_specifiers = [];
+                  c_members = ($2, $3, $4) } }
 
 (* todo in grammar they allow anon class with base_clause, weird.
  * bugfix_c++: in c++ grammar they put identifier but when we do template
@@ -1354,6 +1355,10 @@ base_specifier:
  (* pfffonly? tree-sitter-cpp allows final or override but not virtual *)
  | Tvirtual access_specifier class_name
      { { i_name = $3; i_virtual = Some (Virtual $1); i_access = Some $2 } }
+ | access_specifier Tvirtual class_name
+     { { i_name = $3; i_virtual = Some (Virtual $2); i_access = Some $1 } }
+ | Tvirtual class_name
+     { { i_name = $2; i_virtual = Some (Virtual $1); i_access = None } }
 
 (* TODO? specialisation | ident { $1 }, do heuristic so can remove rule2 *)
 class_name:

@@ -429,6 +429,7 @@ and class_def = {
   c_extends : class_name option;
   c_implements : class_name list;
   c_uses : class_name list; (* traits *)
+  c_trait_rules : trait_rule list;
   (* If this class is an enum, what is the underlying type (and
    * constraint) of the enum? *)
   c_enum_type : enum_type option;
@@ -441,6 +442,16 @@ and class_def = {
 }
 
 and class_kind = Class | Interface | Trait | Enum
+
+(* 'A::m insteadof B, C;' and '[A::]m as [modifier] [n];' *)
+and trait_rule =
+  | InsteadOf of name * ident * tok (* insteadof *) * name list
+  | As of
+      name option
+      * ident
+      * tok (* as *)
+      * modifier list
+      * ident option
 and xhp_field = class_var * bool
 
 (* PHP 8.4 property hooks *)

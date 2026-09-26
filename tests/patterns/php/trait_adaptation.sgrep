@@ -1,0 +1,1 @@
+class $C { use T1, T2 { T2::handle as quiet; } }

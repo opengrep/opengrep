@@ -1472,10 +1472,18 @@ and vof_class_definition
   let bnds = bnd :: bnds in
   OCaml.VDict bnds
 
-and vof_class_parent (v1, v2) =
-  let v1 = vof_type_ v1 in
-  let v2 = OCaml.vof_option vof_arguments v2 in
-  OCaml.VTuple [ v1; v2 ]
+and vof_class_parent { cp_type; cp_args; cp_delegate } =
+  let bnds = [] in
+  let arg = OCaml.vof_option vof_expr cp_delegate in
+  let bnd = ("cp_delegate", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_option vof_arguments cp_args in
+  let bnd = ("cp_args", arg) in
+  let bnds = bnd :: bnds in
+  let arg = vof_type_ cp_type in
+  let bnd = ("cp_type", arg) in
+  let bnds = bnd :: bnds in
+  OCaml.VDict bnds
 
 and vof_class_kind x = vof_wrap vof_class_kind_bis x
 
@@ -1485,6 +1493,9 @@ and vof_class_kind_bis = function
   | Interface -> OCaml.VSum ("Interface", [])
   | Trait -> OCaml.VSum ("Trait", [])
   | Object -> OCaml.VSum ("Object", [])
+  | Extension v1 ->
+      let v1 = OCaml.vof_option vof_type_ v1 in
+      OCaml.VSum ("Extension", [ v1 ])
 
 and vof_ident_and_id_info (v1, v2) =
   let v1 = vof_ident v1 in
@@ -1530,9 +1541,32 @@ and vof_directive_kind = function
       let t = vof_tok t in
       let v1 = vof_build_constraint v1 in
       OCaml.VSum ("BuildConstraint", [ t; v1 ])
+  | MemberImport v1 ->
+      let v1 = vof_member_import v1 in
+      OCaml.VSum ("MemberImport", [ v1 ])
   | OtherDirective (v1, v2) ->
       let v1 = vof_todo_kind v1 and v2 = OCaml.vof_list vof_any v2 in
       OCaml.VSum ("OtherDirective", [ v1; v2 ])
+
+and vof_member_import { mi_tok; mi_source; mi_members; mi_excluded; mi_attrs }
+    =
+  let bnds = [] in
+  let arg = OCaml.vof_list vof_attribute mi_attrs in
+  let bnd = ("mi_attrs", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_list vof_name mi_excluded in
+  let bnd = ("mi_excluded", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_list vof_alias mi_members in
+  let bnd = ("mi_members", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_option vof_name mi_source in
+  let bnd = ("mi_source", arg) in
+  let bnds = bnd :: bnds in
+  let arg = vof_tok mi_tok in
+  let bnd = ("mi_tok", arg) in
+  let bnds = bnd :: bnds in
+  OCaml.VDict bnds
 
 and vof_build_constraint = function
   | BuildTag v1 ->

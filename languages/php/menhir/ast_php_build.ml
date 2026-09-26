@@ -834,6 +834,7 @@ and class_def env c =
       | None -> None
       | Some (_, x) -> Some (hint_type env x));
     A.c_uses = List_.fold_right (class_traits env) body [];
+    A.c_trait_rules = List_.fold_right (class_trait_rules env) body [];
     A.c_implements =
       (match c.c_implements with
       | None -> []
@@ -875,6 +876,39 @@ and class_traits env x acc =
   match x with
   | UseTrait (_, l, _) -> List_.map (hint_type env) (comma_list l) @ acc
   | _ -> acc
+
+and class_trait_rules env x acc =
+  match x with
+  | UseTrait (_, _, Either_.Right (_, rules, _)) ->
+      List_.map (trait_rule env) rules @ acc
+  | _ -> acc
+
+and trait_name env (x : class_name) : A.name option =
+  match x with
+  | Hint (name, _) -> Some (name_hint_type env name)
+  | _ -> None
+
+and trait_rule env x =
+  match x with
+  | InsteadOf (source, _, member, tok, excluded, _) ->
+      A.InsteadOf
+        ( name_hint_type env source,
+          ident env member,
+          tok,
+          List_.filter_map (trait_name env) (comma_list excluded) )
+  | As (member, tok, modifiers, alias, _) ->
+      let source, member =
+        match member with
+        | Either_.Left member -> (None, ident env member)
+        | Either_.Right (source, _, member) ->
+            (Some (name_hint_type env source), ident env member)
+      in
+      A.As
+        ( source,
+          member,
+          tok,
+          List_.map (modifier env) modifiers,
+          Option.map (ident env) alias )
 
 and class_constants env st acc =
   match st with

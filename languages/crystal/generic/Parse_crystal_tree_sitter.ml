@@ -319,7 +319,7 @@ and map_statement (env : env) (x : CST.statement) : G.stmt =
       let cextends =
         match parent with
         | None -> []
-        | Some (_lt, ty) -> [ (map_type_name env ty, None) ]
+        | Some (_lt, ty) -> [ G.class_parent (map_type_name env ty) None ]
       in
       let body = Option.value ~default:[] (Option.map (map_statements env) body) in
       let cbody = fb (List_.map (fun st -> G.F st) body) in

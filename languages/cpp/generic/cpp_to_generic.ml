@@ -356,7 +356,13 @@ and map_typeC env x : G.type_ =
             let t = G.OtherType ((Tok.content_of_tok tk, tk), []) |> G.t in
             (ent, t)
         | Some n ->
-            let ent = { G.name = G.EN n; attrs = []; tparams = None } in
+            let ent =
+              {
+                G.name = G.EN n;
+                attrs = List_.map (map_modifier env) vdef.c_specifiers;
+                tparams = None;
+              }
+            in
             let t =
               G.OtherType ((Tok.content_of_tok tk, tk), [ G.T (G.TyN n |> G.t) ])
               |> G.t
@@ -1913,7 +1919,12 @@ and map_class_definition env (v1, v2) : G.name option * G.class_definition =
   (v1, v2)
 
 and map_class_definition_bis env
-    { c_kind = v_c_kind; c_inherit = v_c_inherit; c_members = v_c_members } :
+    {
+      c_kind = v_c_kind;
+      c_inherit = v_c_inherit;
+      c_specifiers = _;
+      c_members = v_c_members;
+    } :
     G.class_definition =
   let l, v_c_members, r =
     map_brace env
@@ -1946,12 +1957,23 @@ and map_class_key env (k, t) =
 and map_base_clause env
     { i_name = v_i_name; i_virtual = v_i_virtual; i_access = v_i_access } :
     G.class_parent =
-  let _v_i_accessTODO =
+  let v_i_access =
     map_of_option (map_wrap env (map_access_spec env)) v_i_access
   in
-  let _v_i_virtualTODO = map_of_option (map_modifier env) v_i_virtual in
+  let v_i_virtual = map_of_option (map_modifier env) v_i_virtual in
   let v_i_name = map_a_class_name env v_i_name in
-  (G.TyN v_i_name |> G.t, None)
+  G.class_parent
+    {
+      G.t = G.TyN v_i_name;
+      t_attrs =
+        Option.to_list v_i_virtual
+        @ Option.to_list
+            (Option.map
+               (fun ((access : G.keyword_attribute), (tok : G.tok)) ->
+                 G.attr access tok)
+               v_i_access);
+    }
+    None
 
 and map_class_member env x : (G.field, G.attribute) Either.t list =
   match x with
@@ -1966,6 +1988,24 @@ and map_class_member env x : (G.field, G.attribute) Either.t list =
       let e = G.N v1 |> G.e in
       let st = G.ExprStmt (e, v2) |> G.s in
       [ Left (G.F st) ]
+  | F (UsingDecl (v1, UsingName v2, v3) as decl) -> (
+      let v2 = map_name env v2 in
+      match List.rev (H.dotted_ident_of_name v2) with
+      | member :: (_ :: _ as source) ->
+          let v1 = map_tok env v1 and _v3 = map_sc env v3 in
+          let import =
+            {
+              G.mi_tok = v1;
+              mi_source = Some (H.name_of_ids (List.rev source));
+              mi_members = [ (member, None) ];
+              mi_excluded = [];
+              mi_attrs = [];
+            }
+          in
+          [ Left (G.F (G.DirectiveStmt (G.d (G.MemberImport import)) |> G.s)) ]
+      | [ _ ]
+      | [] ->
+          map_decl env decl |> List_.map (fun st -> Left (G.F st)))
   | F v1 ->
       let v1 = map_decl env v1 in
       v1 |> List_.map (fun st -> Left (G.F st))

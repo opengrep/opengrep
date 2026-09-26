@@ -351,8 +351,18 @@ let map_label (env : env) ((v1, v2) : CST.label) : G.ident =
   (* identifier *)
   v2
 
+let ability_attributes (has : Tok.t) (abilities : G.type_ list) :
+    G.attribute list =
+  List_.map
+    (fun (ability : G.type_) ->
+      G.NamedAttr
+        ( has,
+          G.Id (("has", has), G.empty_id_info ()),
+          Tok.unsafe_fake_bracket [ G.ArgType ability ] ))
+    abilities
+
 let map_ability_decls (env : env) ((v1, v2, v3) : CST.ability_decls) :
-    G.type_ list =
+    G.attribute list =
   let v1 = (* "has" *) token env v1 in
   let ability_list =
     List_.map
@@ -367,10 +377,10 @@ let map_ability_decls (env : env) ((v1, v2, v3) : CST.ability_decls) :
     | Some x -> ability_list @ [ map_ability env x ]
     | None -> ability_list
   in
-  abilites
+  ability_attributes v1 abilites
 
 let map_postfix_ability_decls (env : env)
-    ((v1, v2, v3, v4) : CST.postfix_ability_decls) : G.type_ list =
+    ((v1, v2, v3, v4) : CST.postfix_ability_decls) : G.attribute list =
   let v1 = (* "has" *) token env v1 in
   let ability_list =
     List_.map
@@ -386,7 +396,7 @@ let map_postfix_ability_decls (env : env)
     | None -> ability_list
   in
   let v4 = (* ";" *) token env v4 in
-  abilites
+  ability_attributes v1 abilites
 
 let map_identifier_or_metavariable (env : env)
     (x : CST.identifier_or_metavariable) =
@@ -759,9 +769,9 @@ let map_struct_signature (env : env) attrs
       | Some params -> params
       | None -> (G.fake "", [], G.fake "")
     in
-    G.basic_entity ~tparams:type_params ~attrs name
+    G.basic_entity ~tparams:type_params ~attrs:(attrs @ abilities) name
   in
-  (struct_, abilities, struct_ent)
+  (struct_, struct_ent)
 
 let map_spec_apply_pattern (env : env) ((v1, v2, v3) : CST.spec_apply_pattern) =
   let pub_int =
@@ -1114,7 +1124,7 @@ let map_annotation_expr (env : env) (x : CST.annotation_expr) : G.expr =
        G.Assign (rhs, v2, lhs) |> G.e*)
 
 let map_struct_item (env : env) (x : CST.struct_item) : G.stmt =
-  let struct_, all_abilities, struct_ent, fields =
+  let struct_, struct_ent, fields =
     match x with
     | `Native_struct_defi (v1, v2, v3, v4) ->
         let public_attrs =
@@ -1123,33 +1133,35 @@ let map_struct_item (env : env) (x : CST.struct_item) : G.stmt =
           | None -> []
         in
         let native_attrs = (* "native" *) [ G.attr G.Extern (token env v2) ] in
-        let struct_, abilities, struct_ent =
+        let struct_, struct_ent =
           map_struct_signature env (native_attrs @ public_attrs) v3
         in
         let v4 = (* ";" *) token env v4 in
-        (struct_, abilities, struct_ent, (sc, [], sc))
+        (struct_, struct_ent, (sc, [], sc))
     | `Struct_defi (v1, v2, v3, v4) ->
         let public_attrs =
           match v1 with
           | Some tok -> (* "public" *) [ G.attr G.Public (token env tok) ]
           | None -> []
         in
-        let struct_, abilities, struct_ent =
+        let struct_, struct_ent =
           map_struct_signature env public_attrs v2
         in
         let fields = map_datatype_fields env v3 in
-        let all_abilities =
+        let postfix_abilities =
           match v4 with
-          | Some x -> abilities @ map_postfix_ability_decls env x
-          | None -> abilities
+          | Some x -> map_postfix_ability_decls env x
+          | None -> []
         in
-        (struct_, all_abilities, struct_ent, fields)
+        ( struct_,
+          { struct_ent with G.attrs = struct_ent.G.attrs @ postfix_abilities },
+          fields )
   in
   let struct_def =
     {
       ckind = (G.Struct, struct_);
       cextends = [];
-      cimplements = all_abilities;
+      cimplements = [];
       cmixins = [];
       cparams = fb [];
       cbody = fields;
@@ -2777,8 +2789,7 @@ let map_enum_item (env : env) (x : CST.enum_item) =
       in
       let name, type_params, abilites = map_enum_signature env v2 in
       let all_variants = map_enum_variants env v3 in
-      let _all_abilities =
-        (*todo deal with abilities*)
+      let all_abilities =
         match v4 with
         | Some x -> abilites @ map_postfix_ability_decls env x
         | None -> abilites
@@ -2787,7 +2798,7 @@ let map_enum_item (env : env) (x : CST.enum_item) =
       let ent =
         {
           G.name = G.EN (G.Id (name, G.empty_id_info ()));
-          G.attrs;
+          G.attrs = attrs @ all_abilities;
           G.tparams = type_params;
         }
       in
@@ -2875,12 +2886,12 @@ let map_source_file (env : env) (x : CST.source_file) =
           let fn_def, ent = map_function_signature env [] None x in
           G.Partial (G.PartialDef (ent, G.FuncDef fn_def))
       | `Struct_sign x ->
-          let struct_, abilities, ent = map_struct_signature env [] x in
+          let struct_, ent = map_struct_signature env [] x in
           let struct_def =
             {
               ckind = (G.Struct, struct_);
               cextends = [];
-              cimplements = abilities;
+              cimplements = [];
               cmixins = [];
               cparams = fb [];
               cbody = (sc, [], sc);
@@ -2892,7 +2903,7 @@ let map_source_file (env : env) (x : CST.source_file) =
           let ent =
             {
               G.name = G.EN (G.Id (name, G.empty_id_info ()));
-              G.attrs = [];
+              G.attrs = abilites;
               G.tparams = type_params;
             }
           in

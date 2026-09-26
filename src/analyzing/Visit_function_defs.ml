@@ -259,12 +259,20 @@ let class_scope_of_definition (ent : G.entity) (def_kind : G.definition_kind)
     in
     (match self_ty with
      | Some { G.t = G.TyN (G.Id _ as name); _ }
+     | Some
+         {
+           G.t =
+             G.TyN
+               (G.IdQualified
+                  { G.name_middle = None; name_top = None; _ } as name);
+           _;
+         }
      | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as name); _ }; _ } ->
        let new_ent = { ent with G.name = G.EN name } in
        let fk = Tok.unsafe_fake_tok "impl" in
        let cdef = G.ClassDef {
          G.ckind = (G.Class, fk);
-         cextends = List.map (fun (ty : G.type_) -> (ty, None)) trait_tys;
+         cextends = List.map (fun (ty : G.type_) -> G.class_parent ty None) trait_tys;
          cimplements = []; cmixins = [];
          cparams = (fk, [], fk);
          cbody = (fk, List.map (fun stmt -> G.F stmt) stmts, fk);

@@ -8,6 +8,8 @@ type t = {
   written : G.type_;
   relation : Linearisation.relation;
   side : side;
+  arguments : G.arguments option;
+  delegate : G.expr option;
 }
 
 type mixin_calls = {
@@ -17,10 +19,32 @@ type mixin_calls = {
 
 let instance_parent (relation : Linearisation.relation) (written : G.type_) : t
     =
-  { written; relation; side = Instance_side }
+  { written; relation; side = Instance_side; arguments = None; delegate = None }
 
 let class_side (written : G.type_) : t =
-  { written; relation = Linearisation.Included; side = Class_side }
+  {
+    written;
+    relation = Linearisation.Included;
+    side = Class_side;
+    arguments = None;
+    delegate = None;
+  }
+
+let extended (parent : G.class_parent) : t =
+  {
+    written = parent.G.cp_type;
+    relation =
+      Linearisation.Extends
+        {
+          constructed = Option.is_some parent.G.cp_args;
+          virtual_base =
+            AST_generic_helpers.has_keyword_attr G.Virtual
+              parent.G.cp_type.G.t_attrs;
+        };
+    side = Instance_side;
+    arguments = parent.G.cp_args;
+    delegate = parent.G.cp_delegate;
+  }
 
 let type_of_expr (e : G.expr) : G.type_ = G.TyExpr e |> G.t
 
@@ -109,18 +133,39 @@ let definition_body (def : G.definition_kind) : G.stmt list =
       body_of_fields fields
   | _ -> []
 
+let member_imports (def : G.definition_kind) : G.member_import list =
+  List.filter_map
+    (fun (stmt : G.stmt) ->
+      match stmt.G.s with
+      | G.DirectiveStmt { G.d = G.MemberImport import; _ } -> Some import
+      | _ -> None)
+    (definition_body def)
+
+let type_members (def : G.definition_kind) : (string * G.type_) list =
+  List.filter_map
+    (fun (stmt : G.stmt) ->
+      match stmt.G.s with
+      | G.DefStmt
+          ( { G.name = G.EN (G.Id ((name, _), _)); _ },
+            G.TypeDef { G.tbody = G.AliasType aliased } ) ->
+          Some (name, aliased)
+      | _ -> None)
+    (definition_body def)
+
+let declared_members (def : G.definition_kind) : string list =
+  List.filter_map
+    (fun (stmt : G.stmt) ->
+      match stmt.G.s with
+      | G.DefStmt ({ G.name = G.EN (G.Id ((name, _), _)); _ }, _) -> Some name
+      | _ -> None)
+    (definition_body def)
+
 let of_definition (lang : Lang.t) (def : G.definition_kind) : t list =
   match def with
   | G.ClassDef cdef ->
       of_body lang
         ~written:
-          (List.map
-             (fun ((written : G.type_), (arguments : G.arguments option)) ->
-               instance_parent
-                 (Linearisation.Extends
-                    { constructed = Option.is_some arguments })
-                 written)
-             cdef.G.cextends
+          (List.map extended cdef.G.cextends
           @ List.map (instance_parent Linearisation.Mixin) cdef.G.cmixins
           @ List.map (instance_parent Linearisation.Implements)
               cdef.G.cimplements)
@@ -181,13 +226,19 @@ let has_keyword_attribute (keyword : string) (ent : G.entity) : bool =
       | _ -> false)
     ent.G.attrs
 
+(* The type an extension adds members to, when the extension carries it
+   (Dart 'extension E on T'); a Swift extension's entity is the type. *)
+let extended_type (def : G.definition_kind) : G.type_ option =
+  match def with
+  | G.ClassDef { G.ckind = G.Extension extended, _; _ } -> extended
+  | _ -> None
+
 let reopens (lang : Lang.t) (ent : G.entity) (def : G.definition_kind) : bool =
   match (lang, def) with
   | (Lang.Ruby | Lang.Crystal), (G.ClassDef _ | G.ModuleDef _)
   | (Lang.C | Lang.Cpp), G.ClassDef _ ->
       true
-  | Lang.Swift, G.ClassDef { G.ckind = _, keyword; _ } ->
-      String.equal (Tok.content_of_tok keyword) "extension"
+  | _, G.ClassDef { G.ckind = G.Extension _, _; _ } -> true
   | Lang.Csharp, G.ClassDef _ -> has_keyword_attribute "partial" ent
   | _ -> false
 
@@ -196,3 +247,91 @@ let exposes (exposure : singleton_exposure) (name : string) : bool =
   | No_singleton_exposure -> false
   | Every_method_is_a_singleton -> true
   | Named_singleton_methods names -> List.exists (String.equal name) names
+
+type metatable_fact =
+  | Metatable_set of {
+      holder : G.name;
+      metatable : G.expr;
+    }
+  | Index_assigned of {
+      table : G.name;
+      index : G.expr;
+    }
+
+let index_field (metatable : Lang_config.metatable) (fields : G.expr list) :
+    G.expr list =
+  List.filter_map
+    (fun (field : G.expr) ->
+      match field.G.e with
+      | G.Assign ({ G.e = G.N (G.Id ((key, _), _)); _ }, _, index)
+        when String.equal key metatable.Lang_config.index_key ->
+          Some index
+      | _ -> None)
+    fields
+
+let metatable_facts (metatable : Lang_config.metatable) (program : G.program) :
+    metatable_fact list =
+  let setting (e : G.expr) : (G.expr * G.expr) option =
+    match e.G.e with
+    | G.Call
+        ( { G.e = G.N (G.Id ((callee, _), info)); _ },
+          (_, [ G.Arg target; G.Arg table ], _) )
+      when String.equal callee metatable.Lang_config.set_metatable
+           && Option.is_none !(info.G.id_resolved) ->
+        Some (target, table)
+    | _ -> None
+  in
+  (* The iter visitor returns unit: its callbacks gather the facts here. *)
+  let facts = ref [] in
+  let add (fact : metatable_fact) : unit = facts := fact :: !facts in
+  let visitor =
+    object
+      inherit [_] G.iter_no_id_info as super
+
+      method! visit_expr env e =
+        (match e.G.e with
+        | G.Assign ({ G.e = G.N holder; _ }, _, value) ->
+            Option.iter
+              (fun ((_ : G.expr), (table : G.expr)) ->
+                add (Metatable_set { holder; metatable = table }))
+              (setting value)
+        | G.Assign
+            ( {
+                G.e =
+                  G.DotAccess
+                    ({ G.e = G.N table; _ }, _, G.FN (G.Id ((key, _), _)));
+                _;
+              },
+              _,
+              index )
+          when String.equal key metatable.Lang_config.index_key ->
+            add (Index_assigned { table; index })
+        | _ -> (
+            match setting e with
+            | Some ({ G.e = G.N holder; _ }, table) ->
+                add (Metatable_set { holder; metatable = table })
+            | Some _
+            | None ->
+                ()));
+        super#visit_expr env e
+
+      method! visit_definition env ((ent, def) as definition) =
+        (match (ent.G.name, def) with
+        | G.EN holder, G.VarDef { G.vinit = Some value; _ } -> (
+            Option.iter
+              (fun ((_ : G.expr), (table : G.expr)) ->
+                add (Metatable_set { holder; metatable = table }))
+              (setting value);
+            match value.G.e with
+            | G.Container (G.Dict, (_, fields, _)) ->
+                List.iter
+                  (fun (index : G.expr) ->
+                    add (Index_assigned { table = holder; index }))
+                  (index_field metatable fields)
+            | _ -> ())
+        | _ -> ());
+        super#visit_definition env definition
+    end
+  in
+  visitor#visit_program () program;
+  List.rev !facts

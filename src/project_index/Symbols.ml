@@ -281,7 +281,9 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                  Lang_config.companion_object_has_own_name lang)
               with
               | G.Object, true -> true
-              | (G.Object | G.Class | G.Struct | G.Interface | G.Trait), _ ->
+              | ( ( G.Object | G.Class | G.Struct | G.Interface | G.Trait
+                  | G.Extension _ ),
+                  _ ) ->
                   false
             in
             let qn_name = if is_companion then name ^ "$" else name in
@@ -313,8 +315,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                             ~defining_class_id:(Some class_id)
                             ~entity:None :: !entries
             ) (cfg.Index_lang_rules.class_body_synth_methods cdef);
-            List.iter (fun (parent_ty, _args) ->
-              match parent_ty.G.t with
+            List.iter (fun (parent : G.class_parent) ->
+              match parent.G.cp_type.G.t with
               | G.TyExpr expr ->
                 (match cfg.Index_lang_rules.inner_class_from_call expr with
                  | None -> ()

@@ -519,7 +519,7 @@ and type_parent env v : G.class_parent =
   | G.Arg e -> H.expr_to_class_parent e
   (* less: could raise an error *)
   | G.ArgKwd (id, e) ->
-      (G.OtherType (("ArgKwdParent", snd id), [ G.I id; G.E e ]) |> G.t, None)
+      G.class_parent (G.OtherType (("ArgKwdParent", snd id), [ G.I id; G.E e ]) |> G.t) None
   (* see argument code *)
   | _ -> raise Impossible
 

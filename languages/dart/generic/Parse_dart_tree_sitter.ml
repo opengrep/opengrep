@@ -3004,7 +3004,7 @@ let map_mixin_application ~class_tok (env : env)
   (* Semantically equivalent to an empty class using a mixin. See
      https://medium.com/flutter-community/dart-what-are-mixins-3a72344011f3
   *)
-  let cextends = [ (map_type_not_void env v1, None) ] in
+  let cextends = [ G.class_parent (map_type_not_void env v1) None ] in
   let cmixins = map_mixins env v2 in
   let cimplements =
     match v3 with
@@ -3022,7 +3022,7 @@ let map_mixin_application ~class_tok (env : env)
     }
 
 let map_superclass (env : env) (x : CST.superclass) :
-    (type_ * arguments option) list * type_ list =
+    class_parent list * type_ list =
   match x with
   | `Extends_type_not_void_opt_mixins (v1, v2, v3) ->
       let _v1 = (* "extends" *) token env v1 in
@@ -3036,7 +3036,7 @@ let map_superclass (env : env) (x : CST.superclass) :
         | Some x -> map_mixins env x
         | None -> []
       in
-      ([ (v2, None) ], v3)
+      ([ G.class_parent v2 None ], v3)
   | `Mixins x -> ([], map_mixins env x)
 
 let map_enum_declaration ~attrs (env : env)
@@ -3736,24 +3736,31 @@ let map_extension_declaration ~attrs (env : env) (x : CST.extension_declaration)
     : stmt =
   match x with
   | `Exte_opt_id_opt_type_params_on_type_exte_body (v1, v2, v3, v4, v5, v6) ->
-      let _v1 = (* "extension" *) token env v1 in
-      let attrs = [ G.Anys (List_.map (fun attr -> G.At attr) attrs) ] in
-      let v2 =
+      let v1 = (* "extension" *) token env v1 in
+      let tparams = Option.map (map_type_parameters env) v3 in
+      let ent =
         match v2 with
-        | Some tok -> [ G.I ((* pattern [a-zA-Z_$][\w$]* *) str env tok) ]
-        | None -> []
-      in
-      let v3 =
-        match v3 with
-        | Some x ->
-            let _, xs, _ = map_type_parameters env x in
-            [ G.Anys (xs |> List_.map (fun tp -> G.Tp tp)) ]
-        | None -> []
+        | Some tok ->
+            G.basic_entity ~attrs ?tparams
+              ((* pattern [a-zA-Z_$][\w$]* *) str env tok)
+        | None ->
+            { G.name = G.OtherEntity (("AnonExtension", v1), []); attrs; tparams }
       in
       let _v4 = (* "on" *) token env v4 in
-      let v5 = [ G.T (map_type_ env v5) ] in
-      let v6 = [ G.Ss (map_extension_body env v6) ] in
-      G.OtherStmt (OS_Extension, attrs @ v2 @ v3 @ v5 @ v6) |> G.s
+      let v5 = map_type_ env v5 in
+      let v6 = map_extension_body env v6 in
+      G.DefStmt
+        ( ent,
+          G.ClassDef
+            {
+              ckind = (G.Extension (Some v5), v1);
+              cextends = [];
+              cimplements = [];
+              cmixins = [];
+              cparams = fb [];
+              cbody = fb (List_.map (fun (stmt : stmt) -> G.F stmt) v6);
+            } )
+      |> G.s
 
 let map_class_definition ~attrs (env : env) (x : CST.class_definition) : stmt =
   match x with

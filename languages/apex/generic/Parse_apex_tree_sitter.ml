@@ -2091,7 +2091,7 @@ and interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interface_
   let v5 =
     match v5 with
     | Some x -> extends_interfaces env x
-                |> List.map (fun x -> (x, None))
+                |> List.map (fun x -> G.class_parent x None)
     | None -> []
   in
   let lb, v6, rb = interface_body env v6 in
@@ -2873,7 +2873,7 @@ and subquery (env : env) ((v1, v2, v3) : CST.subquery) : raw =
 and superclass (env : env) ((v1, v2) : CST.superclass) : G.class_parent list =
   let _v1 = (* ""extends *) token env v1 in
   let v2 = type_ env v2 in
-  [v2, None]
+  [ G.class_parent v2 None ]
 
 (* NEW *)
 and switch_block (env : env) ((v1, v2, v3) : CST.switch_block) : case_and_body list =

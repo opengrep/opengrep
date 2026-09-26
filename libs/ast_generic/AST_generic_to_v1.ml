@@ -1281,14 +1281,15 @@ and map_class_definition
     cparams = v_cparams;
   }
 
-and map_class_parent (v1, v2) =
-  let v1 = map_type_ v1 in
-  let v2 = map_of_option map_arguments v2 in
+and map_class_parent { cp_type; cp_args; cp_delegate = _ } =
+  let v1 = map_type_ cp_type in
+  let v2 = map_of_option map_arguments cp_args in
   (v1, v2)
 
 and map_class_kind = function
   | Class
-  | Struct ->
+  | Struct
+  | Extension _ ->
       `Class
   | Interface -> `Interface
   | Trait -> `Trait
@@ -1328,6 +1329,8 @@ and map_directive_kind = function
   | BuildConstraint (t, v1) ->
       let v1 = map_build_constraint t v1 in
       `OtherDirective (("BuildConstraint", map_tok t), [ v1 ])
+  | MemberImport v1 ->
+      `OtherDirective (("MemberImport", map_tok v1.mi_tok), map_member_import v1)
   | OtherDirective (v1, v2) ->
       let v1 = map_todo_kind v1 in
       let v2 = map_of_list map_any v2 in
@@ -1344,6 +1347,24 @@ and map_build_constraint (t : tok) (condition : build_constraint) : B.any =
   | BuildNot v1 -> operator "BuildNot" [ v1 ]
   | BuildAnd (v1, v2) -> operator "BuildAnd" [ v1; v2 ]
   | BuildOr (v1, v2) -> operator "BuildOr" [ v1; v2 ]
+
+and map_member_import
+    { mi_tok = _; mi_source; mi_members; mi_excluded; mi_attrs } : B.any list =
+  let source_type (source : name) : B.any = `T (map_type_ (TyN source |> G.t)) in
+  [
+    `Anys (map_of_list source_type (Option.to_list mi_source));
+    `Anys
+      (map_of_list
+         (fun ((member : ident), (alias : alias option)) ->
+           `Anys
+             (`I (map_ident member)
+             :: map_of_list
+                  (fun ((alias : ident), (_ : id_info)) -> `I (map_ident alias))
+                  (Option.to_list alias)))
+         mi_members);
+    `Anys (map_of_list source_type mi_excluded);
+    `Anys (map_of_list (fun (attr : attribute) -> `At (map_attribute attr)) mi_attrs);
+  ]
 
 and map_ident_and_id_info (v1, v2) =
   let v1 = map_ident v1 in

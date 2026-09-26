@@ -676,7 +676,7 @@ and parent = function
   | Left e ->
       let e = expr e in
       H.expr_to_class_parent e
-  | Right t -> (type_ t, None)
+  | Right t -> G.class_parent (type_ t) None
 
 and class_ { c_extends; c_implements; c_body; c_kind; c_attrs } =
   let cextends = list parent c_extends in

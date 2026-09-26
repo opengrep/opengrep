@@ -1,0 +1,12 @@
+rules:
+  - id: member-import-from-unknown-trait
+    languages: [php]
+    message: taint reaches the definition the language selects
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
