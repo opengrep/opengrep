@@ -80,9 +80,10 @@ def wrapper_ignores_callback(callback, data):
     return app_callback_only(unknown_sanitizer, data)
 
 def test_wrong_arg_index_no_fp():
-    # ok: test-hof-callback-taint
     # Without fix: ToSinkInCall preserved with arg index 0 → resolves
     # `propagates` as callback → FP.  With fix: dropped → correct.
+    # an unknown callee's result carries its arguments' taint
+    # ruleid: test-hof-callback-taint
     return sink(wrapper_ignores_callback(propagates, source()))
 
 # === All-resolved ToSink dedup test ===

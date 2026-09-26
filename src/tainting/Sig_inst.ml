@@ -1866,7 +1866,7 @@ let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
       input into the function body, from the calling context?
 *)
 let rec instantiate_function_signature ~(lang : Lang.t)
-    ~(atoms : Effect_guard.atoms)
+    ~(atoms : Effect_guard.atoms) ~(propagate_through_functions : bool)
     ?(max_offset : int = Shape.max_poly_offset lang)
     ?(outer_params : IL.param list option) ?(env : env option) lval_env
     (taint_sig : Signature.t) ~callee ~(args : _ option)
@@ -2516,7 +2516,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           | Some cached -> cached
           | None ->
               let result =
-                instantiate_function_signature ~lang ~atoms ~max_offset
+                instantiate_function_signature ~lang ~atoms
+                  ~propagate_through_functions ~max_offset
                   ?outer_params ~env:closure.env lval_env closure.sig_
                   ~callee:fun_exp
                   ~args:callback_actual_args args_taints ?lookup_sig
@@ -2533,6 +2534,32 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                   cached_result = result;
                 };
               result
+        in
+        let unknown_callee_result : call_effects =
+          let data_taints =
+            args_taints
+            |> List.fold_left
+                 (fun acc (arg : (Taints.t * shape) IL.argument) ->
+                   match arg with
+                   | IL.Unnamed (taints, _)
+                   | IL.Named (_, (taints, _)) ->
+                       Taints.union taints acc)
+                 (Shape.gather_all_taints_in_args_taints args_taints)
+          in
+          if (not propagate_through_functions) || Taints.is_empty data_taints
+          then []
+          else
+            [
+              ToReturn
+                {
+                  data_taints;
+                  data_shape = Bot;
+                  several_results = false;
+                  control_taints = Taints.empty;
+                  return_tok = Tok.unsafe_fake_tok "unknown_callee";
+                  guards = Effect_guard.top;
+                };
+            ]
         in
         under_out_guards
         (match fun_closure_opt with
@@ -2557,7 +2584,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
             (* No signature found for callback (parameter during signature
              * extraction). Preserve the ToSinkInCall effect, but update arg
              * to refer to the enclosing function's parameter. When
-             * [rebind_arg_to_outer] set: one effect per outer offset, else [enclosing_param_of_exp], DROP on [None]. *)
+             * [rebind_arg_to_outer] set: one effect per outer offset, else [enclosing_param_of_exp]; on [None], the call's result carries its arguments' taints, as for any unknown callee. *)
             (match param_actual with
              | Some actual -> (
                  match actual with
@@ -2604,7 +2631,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     (Display_IL.string_of_exp callee)
                                     (Display_IL.string_of_exp fun_exp)
                                     (Display_IL.string_of_exp exp));
-                              [])))
+                              unknown_callee_result)))
              | None -> (
                  match (fun_formal, rebind_arg_to_outer) with
                  | (Receiver | Captured _ | Result _), Some (outer_arg, outer_offsets) ->
@@ -2616,7 +2643,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                 arg_offset;
                                 args_taints;
                                 guards = Effect_guard.top; })
-                 | (Receiver | Captured _ | Result _), None -> []
+                 | (Receiver | Captured _ | Result _), None -> unknown_callee_result
                  | Param _, _ ->
                      [ ToSinkInCall
                          { callee = fun_exp;

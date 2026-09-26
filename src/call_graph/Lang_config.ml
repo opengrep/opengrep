@@ -1,10 +1,16 @@
 (* Per-language taint/call-graph settings (HOF configs, constructor patterns). *)
 
+type hof_result =
+  | Input_elements
+  | Callback_results
+  | Nothing
+
 type hof_kind =
   | MethodHOF of {
       methods : string list;
       arity : int;
       taint_arg_index : int;
+      result : hof_result;
     }
   | FunctionHOF of {
       functions : string list;
@@ -12,9 +18,11 @@ type hof_kind =
       callback_index : int;
       data_index : int;
       taint_arg_index : int;
+      result : hof_result;
     }
   | ReturningFunctionHOF of {
       methods : string list;
+      result : hof_result;
     }
 
 (* What a collection method does with its argument, or what it returns. *)
@@ -90,6 +98,7 @@ type t = {
   class_accessor_methods : string list;
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
+  implicit_capture_mode : AST_generic.capture_mode;
 }
 
 let empty = {
@@ -107,11 +116,13 @@ let empty = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let python = {
   hof_configs = [
-    FunctionHOF { functions = ["map"; "filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
+    FunctionHOF { functions = ["map"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0; result = Callback_results };
+    FunctionHOF { functions = ["filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0; result = Input_elements };
   ];
   collection_configs = [
     ArgIsElement { methods = ["append"; "add"]; arity = 1; taint_arg_index = 0; returns_this = false };
@@ -135,18 +146,20 @@ let python = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let ruby = {
   hof_configs = [
+    MethodHOF { methods = ["map"; "flat_map"; "collect"]; arity = 1; taint_arg_index = 0; result = Callback_results };
     MethodHOF {
-      methods = ["map"; "each"; "select"; "filter"; "flat_map"; "collect"; "find"; "detect"];
+      methods = ["each"; "select"; "filter"; "find"; "detect"];
       arity = 1;
       taint_arg_index = 0;
+      result = Input_elements;
     };
-    ReturningFunctionHOF {
-      methods = ["map"; "each"; "select"; "filter"; "flat_map"; "collect"; "find"; "detect"];
-    };
+    ReturningFunctionHOF { methods = ["map"; "flat_map"; "collect"]; result = Callback_results };
+    ReturningFunctionHOF { methods = ["each"; "select"; "filter"; "find"; "detect"]; result = Input_elements };
   ];
   collection_configs = [
     ArgIsElement { methods = ["push"; "append"; "unshift"; "prepend"]; arity = 1; taint_arg_index = 0; returns_this = true };
@@ -171,18 +184,17 @@ let ruby = {
   class_accessor_methods = ["class"];
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let crystal = { ruby with reflection = Lang_reflection.of_lang Lang.Crystal }
 
 let javascript = {
   hof_configs = [
-    MethodHOF {
-      methods = ["map"; "flatMap"; "filter"; "forEach"; "find"; "findIndex"; "some"; "every"];
-      arity = 1;
-      taint_arg_index = 0;
-    };
-    MethodHOF { methods = ["reduce"; "reduceRight"]; arity = 2; taint_arg_index = 1 };
+    MethodHOF { methods = ["map"; "flatMap"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"; "find"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["forEach"; "findIndex"; "some"; "every"]; arity = 1; taint_arg_index = 0; result = Nothing };
+    MethodHOF { methods = ["reduce"; "reduceRight"]; arity = 2; taint_arg_index = 1; result = Callback_results };
   ];
   collection_configs = [
     ArgIsElement { methods = ["set"]; arity = 2; taint_arg_index = 1; returns_this = true };
@@ -207,6 +219,7 @@ let javascript = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let typescript = {
@@ -216,7 +229,9 @@ let typescript = {
 
 let java = {
   hof_configs = [
-    MethodHOF { methods = ["map"; "filter"; "forEach"; "flatMap"]; arity = 1; taint_arg_index = 0 };
+    MethodHOF { methods = ["map"; "flatMap"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["forEach"]; arity = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [
     ArgIsElement { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
@@ -241,20 +256,17 @@ let java = {
   invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let kotlin = {
   hof_configs = [
-    MethodHOF {
-      methods = ["map"; "filter"; "forEach"; "flatMap"; "find"; "any"; "all"];
-      arity = 0;
-      taint_arg_index = 0;
-    };
-    MethodHOF {
-      methods = ["map"; "filter"; "forEach"; "flatMap"; "find"; "any"; "all"];
-      arity = 1;
-      taint_arg_index = 0;
-    };
+    MethodHOF { methods = ["map"; "flatMap"]; arity = 0; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"; "find"]; arity = 0; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["forEach"; "any"; "all"]; arity = 0; taint_arg_index = 0; result = Nothing };
+    MethodHOF { methods = ["map"; "flatMap"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"; "find"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["forEach"; "any"; "all"]; arity = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [
     ArgIsElement { methods = ["add"; "addFirst"; "addLast"]; arity = 1; taint_arg_index = 0; returns_this = false };
@@ -277,15 +289,14 @@ let kotlin = {
   invoke_methods = ["invoke"];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let scala = {
   hof_configs = [
-    MethodHOF {
-      methods = ["map"; "filter"; "foreach"; "flatMap"; "find"; "exists"; "forall"];
-      arity = 1;
-      taint_arg_index = 0;
-    };
+    MethodHOF { methods = ["map"; "flatMap"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"; "find"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["foreach"; "exists"; "forall"]; arity = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [
     ArgIsElement { methods = ["append"; "prepend"; "addOne"; "add"]; arity = 1; taint_arg_index = 0; returns_this = true };
@@ -306,15 +317,14 @@ let scala = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let csharp = {
   hof_configs = [
-    MethodHOF {
-      methods = ["Select"; "Where"; "ForEach"; "SelectMany"; "First"; "Any"; "All"];
-      arity = 1;
-      taint_arg_index = 0;
-    };
+    MethodHOF { methods = ["Select"; "SelectMany"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["Where"; "First"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["ForEach"; "Any"; "All"]; arity = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [
     ArgIsElement { methods = ["Add"; "Push"; "Enqueue"]; arity = 1; taint_arg_index = 0; returns_this = false };
@@ -336,6 +346,7 @@ let csharp = {
   invoke_methods = ["Invoke"];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let go = {
@@ -358,15 +369,14 @@ let go = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let rust = {
   hof_configs = [
-    MethodHOF {
-      methods = ["map"; "for_each"; "filter"; "flat_map"; "find"; "any"; "all"];
-      arity = 1;
-      taint_arg_index = 0;
-    };
+    MethodHOF { methods = ["map"; "flat_map"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"; "find"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["for_each"; "any"; "all"]; arity = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [
     ArgIsElement { methods = ["push"; "push_front"; "push_back"]; arity = 1; taint_arg_index = 0; returns_this = false };
@@ -387,15 +397,14 @@ let rust = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let swift = {
   hof_configs = [
-    MethodHOF {
-      methods = ["map"; "filter"; "forEach"; "flatMap"; "compactMap"; "first"; "contains"];
-      arity = 1;
-      taint_arg_index = 0;
-    };
+    MethodHOF { methods = ["map"; "flatMap"; "compactMap"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["filter"; "first"]; arity = 1; taint_arg_index = 0; result = Input_elements };
+    MethodHOF { methods = ["forEach"; "contains"]; arity = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [
     ArgIsElement { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = false };
@@ -417,12 +426,14 @@ let swift = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let php = {
   hof_configs = [
-    FunctionHOF { functions = ["array_map"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
-    FunctionHOF { functions = ["array_filter"; "array_walk"]; arity = 2; callback_index = 1; data_index = 0; taint_arg_index = 0 };
+    FunctionHOF { functions = ["array_map"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0; result = Callback_results };
+    FunctionHOF { functions = ["array_filter"]; arity = 2; callback_index = 1; data_index = 0; taint_arg_index = 0; result = Input_elements };
+    FunctionHOF { functions = ["array_walk"]; arity = 2; callback_index = 1; data_index = 0; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [];
   constructor_names = ["__construct"];
@@ -437,12 +448,13 @@ let php = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let cpp = {
   hof_configs = [
-    FunctionHOF { functions = ["for_each"]; arity = 3; callback_index = 2; data_index = 0; taint_arg_index = 0 };
-    FunctionHOF { functions = ["transform"]; arity = 4; callback_index = 3; data_index = 0; taint_arg_index = 0 };
+    FunctionHOF { functions = ["for_each"]; arity = 3; callback_index = 2; data_index = 0; taint_arg_index = 0; result = Nothing };
+    FunctionHOF { functions = ["transform"]; arity = 4; callback_index = 3; data_index = 0; taint_arg_index = 0; result = Callback_results };
   ];
   collection_configs = [];
   constructor_names = [];
@@ -457,6 +469,7 @@ let cpp = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let c = {
@@ -480,6 +493,7 @@ let ocaml_lang = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let lua = {
@@ -497,19 +511,22 @@ let lua = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let dart = {
   hof_configs = [
+    MethodHOF { methods = ["map"; "expand"]; arity = 1; taint_arg_index = 0; result = Callback_results };
+    MethodHOF { methods = ["where"; "firstWhere"; "lastWhere"]; arity = 1; taint_arg_index = 0; result = Input_elements };
     MethodHOF {
-      methods = ["map"; "where"; "forEach"; "expand"; "firstWhere";
-                 "lastWhere"; "any"; "every"; "removeWhere"; "retainWhere"];
+      methods = ["forEach"; "any"; "every"; "removeWhere"; "retainWhere"];
       arity = 1;
       taint_arg_index = 0;
+      result = Nothing;
     };
     (* reduce(combine) - combine(value, element), the element (arg 1) comes
        from the collection *)
-    MethodHOF { methods = ["reduce"]; arity = 1; taint_arg_index = 1 };
+    MethodHOF { methods = ["reduce"]; arity = 1; taint_arg_index = 1; result = Callback_results };
   ];
   collection_configs = [
     (* List.add, Set.add, List.addAll, Map.addEntries - item taints this *)
@@ -543,16 +560,34 @@ let dart = {
   invoke_methods = ["call"];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let elixir = {
   hof_configs = [
     FunctionHOF {
-      functions = ["Enum.map"; "Enum.each"; "Enum.filter"; "Enum.flat_map"; "Enum.find"];
+      functions = ["Enum.map"; "Enum.flat_map"];
       arity = 2;
       callback_index = 1;
       data_index = 0;
       taint_arg_index = 0;
+      result = Callback_results;
+    };
+    FunctionHOF {
+      functions = ["Enum.filter"; "Enum.find"];
+      arity = 2;
+      callback_index = 1;
+      data_index = 0;
+      taint_arg_index = 0;
+      result = Input_elements;
+    };
+    FunctionHOF {
+      functions = ["Enum.each"];
+      arity = 2;
+      callback_index = 1;
+      data_index = 0;
+      taint_arg_index = 0;
+      result = Nothing;
     };
   ];
   collection_configs = [];
@@ -568,11 +603,14 @@ let elixir = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let julia = {
   hof_configs = [
-    FunctionHOF { functions = ["map"; "foreach"; "filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
+    FunctionHOF { functions = ["map"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0; result = Callback_results };
+    FunctionHOF { functions = ["filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0; result = Input_elements };
+    FunctionHOF { functions = ["foreach"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0; result = Nothing };
   ];
   collection_configs = [];
   constructor_names = [];
@@ -587,22 +625,35 @@ let julia = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let clojure = {
   hof_configs = [
     FunctionHOF {
-      functions = ["map"; "filter"; "keep"; "remove"; "some"; "every?";
-                   "mapv"; "filterv"; "mapcat"];
+      functions = ["map"; "keep"; "some"; "mapv"; "mapcat"];
       arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0;
+      result = Callback_results;
+    };
+    FunctionHOF {
+      functions = ["filter"; "remove"; "filterv"];
+      arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0;
+      result = Input_elements;
+    };
+    FunctionHOF {
+      functions = ["every?"];
+      arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0;
+      result = Nothing;
     };
     FunctionHOF {
       functions = ["reduce"];
       arity = 3; callback_index = 0; data_index = 2; taint_arg_index = 1;
+      result = Callback_results;
     };
     FunctionHOF {
       functions = ["reduce"];
       arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 1;
+      result = Callback_results;
     };
   ];
   collection_configs = [];
@@ -618,6 +669,7 @@ let clojure = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let apex = {
@@ -635,6 +687,7 @@ let apex = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_value;
 }
 
 let vb = {
@@ -652,12 +705,26 @@ let vb = {
   invoke_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
 
 let r = {
   empty with
   reflection = Lang_reflection.of_lang Lang.R;
+  implicit_capture_mode = AST_generic.Capture_by_reference;
 }
+
+let bash = { empty with implicit_capture_mode = AST_generic.Capture_by_reference }
+
+let jsonnet = { empty with implicit_capture_mode = AST_generic.Capture_by_value }
+
+let lisp = { empty with implicit_capture_mode = AST_generic.Capture_by_reference }
+
+let move = { empty with implicit_capture_mode = AST_generic.Capture_by_value }
+
+let cairo = { empty with implicit_capture_mode = AST_generic.Capture_by_value }
+
+let vue = { empty with implicit_capture_mode = AST_generic.Capture_by_reference }
 
 let get (lang : Lang.t) : t =
   match lang with
@@ -687,7 +754,29 @@ let get (lang : Lang.t) : t =
   | Lang.Apex -> apex
   | Lang.Vb -> vb
   | Lang.R -> r
-  | _ -> empty
+  | Lang.Bash
+  | Lang.Dockerfile ->
+      bash
+  | Lang.Jsonnet -> jsonnet
+  | Lang.Lisp
+  | Lang.Scheme ->
+      lisp
+  | Lang.Move_on_sui
+  | Lang.Move_on_aptos ->
+      move
+  | Lang.Cairo -> cairo
+  | Lang.Vue -> vue
+  | Lang.Circom
+  | Lang.Html
+  | Lang.Json
+  | Lang.Promql
+  | Lang.Protobuf
+  | Lang.Ql
+  | Lang.Solidity
+  | Lang.Terraform
+  | Lang.Xml
+  | Lang.Yaml ->
+      empty
 
 let is_element_property (lang : Lang.t) (name : string) : bool =
   (get lang).collection_configs

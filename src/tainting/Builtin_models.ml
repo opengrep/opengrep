@@ -42,6 +42,43 @@ let element_at (formal : Taint.formal) (offset : Taint.offset list) :
     Taint.taints * Shape.shape =
   value_at formal (offset @ [ Taint.Oany ])
 
+let callback_callee () : IL.exp =
+  {
+    IL.e = IL.Fetch { base = IL.Var (make_callback_var ()); rev_offset = [] };
+    eorig = NoOrig;
+  }
+
+let hof_return_effects (result : Lang_config.hof_result)
+    ~(input : Taint.taints) ~(callee : IL.exp) ~(arg : Taint.formal)
+    ~(arg_offset : Taint.offset list) ~(guards : Effect_guard.t) :
+    Effect.t list =
+  let returns ((data_taints, data_shape) : Taint.taints * Shape.shape) =
+    [
+      Effect.ToReturn
+        {
+          data_taints;
+          data_shape;
+          several_results = false;
+          control_taints = Taint.Taint_set.empty;
+          return_tok = Tok.unsafe_fake_tok "builtin_hof";
+          guards;
+        };
+    ]
+  in
+  match result with
+  | Lang_config.Input_elements -> returns (input, Shape.Bot)
+  | Lang_config.Callback_results ->
+      returns
+        (value_at
+           (Taint.Result
+              {
+                Taint.callee = arg;
+                callee_offset = arg_offset;
+                loc = Taint.call_loc_of_exp callee;
+              })
+           [])
+  | Lang_config.Nothing -> []
+
 (** Helper function to add HOF signatures that return a function. This is for
     languages like Ruby where arr.map() returns a function that takes a
     callback.
@@ -50,9 +87,10 @@ let element_at (formal : Taint.formal) (offset : Taint.offset list) :
     @param method_names List of method names to add signatures for
     @param taint_arg_index
       Which callback argument receives the taint (default 0). *)
-let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
-    () =
-  let callback_var = make_callback_var () in
+let add_hof_returning_function_signatures db method_names
+    ~(result : Lang_config.hof_result) ?(taint_arg_index = 0) () =
+  let callee = callback_callee () in
+  let callback = Taint.Param { Taint.name = "callback"; index = 0 } in
 
   (* Create a taint from BThis to pass to the callback *)
   let this_taint_set =
@@ -66,12 +104,8 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   let hof_effect =
     Effect.ToSinkInCall
       {
-        callee =
-          {
-            IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
-            eorig = NoOrig;
-          };
-        arg = Taint.Param { Taint.name = "callback"; index = 0 };
+        callee;
+        arg = callback;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -85,7 +119,11 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.singleton hof_effect;
+      effects =
+        Effects.of_list
+          (hof_effect
+          :: hof_return_effects result ~input:this_taint_set ~callee
+               ~arg:callback ~arg_offset:[] ~guards:Effect_guard.top);
     }
   in
 
@@ -140,9 +178,9 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
       Which callback argument receives the taint (default 0) *)
 let add_function_hof_signatures db function_names arity ?(callback_index = 0)
     ?(data_index = 1) ?(params = [ Signature_params.P "callback"; Signature_params.Other ])
-    ?(taint_arg_index = 0) () =
-  let callback_arg = { Taint.name = "callback"; index = callback_index } in
-  let callback_var = make_callback_var () in
+    ?(taint_arg_index = 0) ~(result : Lang_config.hof_result) () =
+  let callback = Taint.Param { Taint.name = "callback"; index = callback_index } in
+  let callee = callback_callee () in
 
   (* Create a taint from the data parameter to pass to the callback *)
   let data_arg = { Taint.name = "data"; index = data_index } in
@@ -156,30 +194,20 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
   let hof_effect =
     Effect.ToSinkInCall
       {
-        callee =
-          {
-            IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
-            eorig = NoOrig;
-          };
-        arg = Taint.Param callback_arg;
+        callee;
+        arg = callback;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
       }
   in
 
-  (* Also add a ToReturn effect to propagate data taint to the return value.
-     This is essential for chained HOFs like map(f, filter(g, data)). *)
-  let return_effect =
-    Effect.ToReturn
-      {
-        data_taints = data_taint_set;
-        data_shape = Shape.Bot;
-        several_results = false;
-        control_taints = Taint.Taint_set.empty;
-        return_tok = Tok.unsafe_fake_tok "builtin_hof";
-        guards = Effect_guard.top;
-      }
+  (* Also add a ToReturn effect for what the result holds: the data
+     argument's elements or the callback's results. This is essential for
+     chained HOFs like map(f, filter(g, data)). *)
+  let return_effects =
+    hof_return_effects result ~input:data_taint_set ~callee ~arg:callback
+      ~arg_offset:[] ~guards:Effect_guard.top
   in
 
   let hof_sig =
@@ -187,7 +215,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.of_list [ hof_effect; return_effect ];
+      effects = Effects.of_list (hof_effect :: return_effects);
     }
   in
 
@@ -217,9 +245,9 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
 *)
 let add_hof_signatures db method_names arity ?(callback_index = 0)
     ?(params = [ Signature_params.P "callback" ]) ?(method_name_transform = fun x -> x)
-    ?(taint_arg_index = 0) () =
-  let callback_arg = { Taint.name = "callback"; index = callback_index } in
-  let callback_var = make_callback_var () in
+    ?(taint_arg_index = 0) ~(result : Lang_config.hof_result) () =
+  let callback = Taint.Param { Taint.name = "callback"; index = callback_index } in
+  let callee = callback_callee () in
 
   (* Create a taint from BThis to pass to the callback *)
   let this_taint_set =
@@ -232,31 +260,21 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
   let hof_effect =
     Effect.ToSinkInCall
       {
-        callee =
-          {
-            IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
-            eorig = NoOrig;
-          };
-        arg = Taint.Param callback_arg;
+        callee;
+        arg = callback;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
       }
   in
 
-  (* Also add a ToReturn effect to propagate this taint to the return value.
-     This is essential for chained HOFs like arr.map(...).filter(...) where
-     the result of map needs to carry taint for filter to propagate. *)
-  let return_effect =
-    Effect.ToReturn
-      {
-        data_taints = this_taint_set;
-        data_shape = Shape.Bot;
-        several_results = false;
-        control_taints = Taint.Taint_set.empty;
-        return_tok = Tok.unsafe_fake_tok "builtin_hof";
-        guards = Effect_guard.top;
-      }
+  (* Also add a ToReturn effect for what the result holds: the receiver's
+     elements or the callback's results. This is essential for chained HOFs
+     like arr.map(...).filter(...) where the result of map needs to carry
+     taint for filter to propagate. *)
+  let return_effects =
+    hof_return_effects result ~input:this_taint_set ~callee ~arg:callback
+      ~arg_offset:[] ~guards:Effect_guard.top
   in
 
   let hof_sig =
@@ -264,7 +282,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.of_list [ hof_effect; return_effect ];
+      effects = Effects.of_list (hof_effect :: return_effects);
     }
   in
 
@@ -292,9 +310,9 @@ let make_params arity callback_index =
     to [cb(CList[x, y])] — so we emit a single-element [args_taints] whose
     sole shape is an [Obj] with the per-position taints indexed. *)
 let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~callback_index
-    ~data_index ~taint_arg_index =
+    ~data_index ~taint_arg_index ~(result : Lang_config.hof_result) =
   let impl_arg = { Taint.name = "impl"; index = 0 } in
-  let callback_var = make_callback_var () in
+  let callee = callback_callee () in
   let data_taint_set =
     whole_value_taint_set
       { Taint.base = BArg impl_arg; offset = [ Oint data_index ] }
@@ -358,29 +376,16 @@ let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~c
   let hof_effect =
     Effect.ToSinkInCall
       {
-        callee =
-          {
-            IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
-            eorig = NoOrig;
-          };
+        callee;
         arg = Taint.Param impl_arg;
         arg_offset = [ Oint callback_index ];
         args_taints;
         guards;
       }
   in
-  let return_effect =
-    Effect.ToReturn
-      {
-        data_taints = data_taint_set;
-        data_shape = Shape.Bot;
-        several_results = false;
-        control_taints = Taint.Taint_set.empty;
-        return_tok = Tok.unsafe_fake_tok "builtin_hof";
-        guards;
-      }
-  in
-  [ hof_effect; return_effect ]
+  hof_effect
+  :: hof_return_effects result ~input:data_taint_set ~callee
+       ~arg:(Taint.Param impl_arg) ~arg_offset:[ Oint callback_index ] ~guards
 
 (** Group [FunctionHOF] configs by function name. A single Clojure
     function name (e.g. [reduce]) can appear in several [FunctionHOF]
@@ -412,9 +417,9 @@ let add_function_hof_signatures_clojure ~(lang : Lang.t)
         overloads
         |> List.concat_map (function
              | Lang_config.FunctionHOF
-                 { arity; callback_index; data_index; taint_arg_index; _ } ->
+                 { arity; callback_index; data_index; taint_arg_index; result; _ } ->
                  clojure_hof_effects ~lang ~atoms ~arity ~callback_index ~data_index
-                   ~taint_arg_index
+                   ~taint_arg_index ~result
              | _ -> [])
       in
       let params = [ Signature_params.P "impl" ] in
@@ -449,17 +454,17 @@ let create_builtin_models ~(atoms : Effect_guard.atoms) (lang : Lang.t) :
   List.fold_left
     (fun acc_db hof_config ->
       match hof_config with
-      | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
-          add_hof_signatures acc_db methods arity ~taint_arg_index ()
+      | Lang_config.MethodHOF { methods; arity; taint_arg_index; result } ->
+          add_hof_signatures acc_db methods arity ~taint_arg_index ~result ()
       | Lang_config.FunctionHOF
-          { functions; arity; callback_index; data_index; taint_arg_index } ->
+          { functions; arity; callback_index; data_index; taint_arg_index; result } ->
           if is_clojure then acc_db
           else
             let params = make_params arity callback_index in
             add_function_hof_signatures acc_db functions arity ~callback_index
-              ~data_index ~params ~taint_arg_index ()
-      | Lang_config.ReturningFunctionHOF { methods } ->
-          add_hof_returning_function_signatures acc_db methods ())
+              ~data_index ~params ~taint_arg_index ~result ()
+      | Lang_config.ReturningFunctionHOF { methods; result } ->
+          add_hof_returning_function_signatures acc_db methods ~result ())
     db config.hof_configs
 
 (* ========================================================================== *)

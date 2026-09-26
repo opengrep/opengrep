@@ -1,0 +1,14 @@
+rules:
+  - id: test-unknown-callback-safe-functions-js
+    message: with taint_assume_safe_functions, an unknown callback's result is clean, as a direct unknown call's is
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+      taint_assume_safe_functions: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

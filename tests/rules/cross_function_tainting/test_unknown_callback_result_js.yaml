@@ -1,0 +1,13 @@
+rules:
+  - id: test-unknown-callback-result-js
+    message: the result of calling a callback with no signature carries its arguments
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

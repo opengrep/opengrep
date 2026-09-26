@@ -11,13 +11,15 @@ rules:
       undefined — fun_sig_opt = None and the obligation's callee does
       NOT bind to any BArg of `wrapper`.
 
-      The fix returns []; the buggy old behaviour preserved the
+      The fix drops the obligation, and the call's result carries its
+      arguments' taint, as the result of any unknown callee does; the
+      buggy old behaviour preserved the
       effect with the inner function's arg index (= 0), which when
       re-keyed against `wrapper`'s params aliased to `callback`
       (param 0).  At the outer site `wrapper(propagates, source())`,
       this phantom alias makes the engine believe `callback(source())`
-      reaches the sink, producing a false positive on the
-      `# ok:` line below.
+      reaches the sink.  The finding on the `# ruleid:` line in main.py
+      comes from `data` reaching the result of `unknown_sanitizer`.
 
       The intrafile variant of this test (apply defined in same file)
       is in tests/rules/cross_function_tainting/.  This is the

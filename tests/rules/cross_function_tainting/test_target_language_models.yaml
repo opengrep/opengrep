@@ -1,0 +1,12 @@
+rules:
+  - id: test-target-language-models
+    message: a rule with several languages analyses each target with the models of the target's language
+    languages: [python, javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

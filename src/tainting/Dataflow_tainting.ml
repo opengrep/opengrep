@@ -181,16 +181,6 @@ let union_map_taints_and_vars env check xs =
   in
   (taints, lval_env)
 
-let gather_all_taints_in_args_taints args_taints =
-  args_taints
-  |> List.fold_left
-       (fun acc arg ->
-         match arg with
-         | Named (_, (_, shape))
-         | Unnamed (_, shape) ->
-             Shape.gather_all_taints_in_shape shape |> Taints.union acc)
-       Taints.empty
-
 let any_is_best_sanitizer env any =
   env.taint_inst.preds.is_sanitizer any
   |> List.filter (fun (m : R.taint_sanitizer TM.t) ->
@@ -1717,7 +1707,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
         in
         let all_args_taints =
           all_args_taints
-          |> Taints.union (gather_all_taints_in_args_taints args_taints)
+          |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
         in
         let all_args_taints =
           if env.taint_inst.options.taint_only_propagate_through_assignments
@@ -1960,6 +1950,8 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                      Sig_inst.instantiate_function_signature
                        ~lang:env.taint_inst.lang
                        ~atoms:env.shared_tables.guard_atoms
+                       ~propagate_through_functions:
+                         (propagate_through_functions env)
                        ~max_offset:(poly_offset_bound env callee)
                        ~outer_params:env.func.il_params
                        env.lval_env callee_sig ~callee ~args:None args_taints
@@ -2227,6 +2219,7 @@ let check_function_call env fun_exp args
                Sig_inst.instantiate_function_signature
                  ~lang:env.taint_inst.lang
                  ~atoms:env.shared_tables.guard_atoms
+                 ~propagate_through_functions:(propagate_through_functions env)
                  ~max_offset:(poly_offset_bound env fun_exp)
                  ~outer_params:env.func.il_params ?env:fun_env env.lval_env
                  fun_sig ~callee:fun_exp ~args:(Some args) args_taints
@@ -2403,7 +2396,7 @@ let call_with_intrafile lval_opt e env args instr =
   in
   let all_args_taints =
     all_args_taints
-    |> Taints.union (gather_all_taints_in_args_taints args_taints)
+    |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
   in
   let arity = List.length args in
   let e_obj, e_taints, e_shape, lval_env =
@@ -2517,6 +2510,8 @@ let call_with_intrafile lval_opt e env args instr =
                          Sig_inst.instantiate_function_signature
                            ~lang:env.taint_inst.lang
                            ~atoms:env.shared_tables.guard_atoms
+                           ~propagate_through_functions:
+                             (propagate_through_functions env)
                            ~max_offset:(poly_offset_bound env inner_e)
                            ~outer_params:env.func.il_params ~env:closure.env
                            env.lval_env closure.sig_ ~callee:inner_e
@@ -2795,7 +2790,7 @@ let new_without_signature env args_taints all_args_taints lval_env =
       Taints.empty
     else
       all_args_taints
-      |> Taints.union (gather_all_taints_in_args_taints args_taints)
+      |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
   in
   let shape =
     match
@@ -2906,7 +2901,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           in
           let all_args_taints =
             all_args_taints
-            |> Taints.union (gather_all_taints_in_args_taints args_taints)
+            |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
           in
           let arity = List.length args in
           let e_obj, e_taints, e_shape, lval_env =
@@ -3032,7 +3027,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
         in
         let all_args_taints =
           all_args_taints
-          |> Taints.union (gather_all_taints_in_args_taints args_taints)
+          |> Taints.union (Shape.gather_all_taints_in_args_taints args_taints)
         in
         let all_args_taints =
           if env.taint_inst.options.taint_only_propagate_through_assignments
@@ -3200,11 +3195,12 @@ let captured_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
                   acc)
            IL.NameSet.empty
 
-let captured_of_fun_cfg (fun_cfg : IL.fun_cfg) :
+let captured_of_fun_cfg (lang : Lang.t) (fun_cfg : IL.fun_cfg) :
     (IL.name * AST_generic.capture_mode) list =
   let listed = fun_cfg.captures.clist in
   let implicit_mode =
-    Option.value fun_cfg.captures.cdefault ~default:G.Capture_by_reference
+    Option.value fun_cfg.captures.cdefault
+      ~default:(Lang_config.get lang).implicit_capture_mode
   in
   listed
   @ (captured_vars fun_cfg |> IL.NameSet.elements
@@ -4447,7 +4443,7 @@ and (fixpoint :
       sig_params = Signature_params.of_IL_params fun_cfg.params;
       il_params = fun_cfg.params;
       param_sids = mk_param_sids fun_cfg.params;
-      captured = lazy (captured_of_fun_cfg fun_cfg);
+      captured = lazy (captured_of_fun_cfg taint_inst.lang fun_cfg);
       best_matches;
       used_lambdas;
     }
@@ -4671,7 +4667,7 @@ and (fixpoint :
                      in
                      env
                    in
-                   let lambda_captured = captured_of_fun_cfg lambda_cfg in
+                   let lambda_captured = captured_of_fun_cfg taint_inst.lang lambda_cfg in
                    let combined_env =
                      Lval_env.union ~lang:taint_inst.lang enhanced_in_env
                        param_assumptions

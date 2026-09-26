@@ -1595,12 +1595,14 @@ and expression (env : env) (x : CST.expression) : G.expr =
           let v4 = (* "==>" *) token env v4 in
           let v5 =
             match v5 with
-            | `Exp x -> G.FBExpr (expression env x)
+            | `Exp x ->
+                G.FBStmt
+                  (G.Return (v4, Some (expression env x), G.sc) |> G.s)
             | `Comp_stmt x -> G.FBStmt (compound_statement env x)
           in
           let def : G.function_definition =
             {
-              fkind = (G.LambdaKind, v4);
+              fkind = (G.Arrow, v4);
               (* Q: Is the arrow the token here? Arrow vs LambdaKind? *)
               fparams;
               frettype = return_type;
@@ -1668,7 +1670,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               fkind = (G.LambdaKind, v2);
               fparams = v3;
               frettype = v4;
-              fcaptures = { cdefault = None; clist };
+              fcaptures = { cdefault = Some G.Capture_by_value; clist };
               fbody = G.FBStmt v6;
             }
           in

@@ -16,14 +16,15 @@ def wrapper(callback, data):
 
 
 def test_no_fp():
-    # ok: hof-unresolvable-callback-interfile
     # Without the A1 fix: wrapper's signature carries a phantom
     # ToSinkInCall on its `callback` param.  Calling it here with
     # callback=propagates would substitute propagates for the
     # callback alias, and the engine would conclude
     # `propagates(source())` → `sink(propagates(source()))` → FP.
     # With the fix: the effect is dropped at wrapper, no phantom
-    # taint, no finding here.
+    # taint.
+    # an unknown callee's result carries its arguments' taint
+    # ruleid: hof-unresolvable-callback-interfile
     return sink(wrapper(propagates, source()))
 
 

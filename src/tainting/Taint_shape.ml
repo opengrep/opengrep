@@ -631,6 +631,17 @@ and gather_all_taints_in_obj_acc acc obj =
 let gather_all_taints_in_cell = gather_all_taints_in_cell_acc Taints.empty
 let gather_all_taints_in_shape = gather_all_taints_in_shape_acc Taints.empty
 
+let gather_all_taints_in_args_taints
+    (args_taints : (Taint.taints * shape) IL.argument list) : Taint.taints =
+  args_taints
+  |> List.fold_left
+       (fun acc arg ->
+         match arg with
+         | IL.Named (_, (_, shape))
+         | IL.Unnamed (_, shape) ->
+             gather_all_taints_in_shape shape |> Taints.union acc)
+       Taints.empty
+
 (*********************************************************)
 (* Depth widening (shape truncation) *)
 (*********************************************************)

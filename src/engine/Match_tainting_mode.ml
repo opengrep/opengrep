@@ -28,14 +28,6 @@ module ME = Matching_explanation
 module OutJ = Semgrep_output_v1_t
 module Labels = Set.Make (String)
 
-module LangOrd = struct
-  type t = Lang.t
-
-  let compare = Stdlib.compare
-end
-
-module LangMap = Map.Make (LangOrd)
-module LangSet = Set.Make (LangOrd)
 module Log = Log_tainting.Log
 module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
@@ -986,54 +978,41 @@ let check_rules ~match_hook
     Formula_cache.mk_specialized_formula_cache rules
   in
 
-  (* Collect all languages that have rules with taint_intrafile enabled *)
-  let langs_needing_call_graph =
-    rules
-    |> List.fold_left
-         (fun acc rule ->
-           let xconf_rule =
-             Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
-           in
-           if xconf_rule.config.taint_intrafile then
-             match Xlang.to_lang rule.R.target_analyzer with
-             | Ok lang -> LangSet.add lang acc
-             | Error _ -> acc
-           else acc)
-         LangSet.empty
+  (* The target's language, when a rule has taint_intrafile enabled *)
+  let lang_needing_call_graph =
+    if
+      rules
+      |> List.exists (fun (rule : R.taint_rule) ->
+             (Match_env.adjust_xconfig_with_rule_options xconf rule.R.options)
+               .config
+               .taint_intrafile)
+    then Result.to_option (Xlang.to_lang xtarget.xlang)
+    else None
   in
 
-  (* Pre-compute call graph and builtin db for each language that needs it.
+  (* Pre-compute call graph and builtin db for the target's language.
      The call graph depends on the AST structure and language, so we compute
-     it once per language and share across rules that need it. *)
-  let ast_call_graph_by_lang =
-    LangSet.fold
-      (fun lang acc ->
-        let ast, _skipped_tokens = lazy_force xtarget.lazy_ast_and_errors in
-        Object_initialization.(
-          stamp_id_types (detect_object_initialization ast lang) ast);
-        let call_graph =
-          Graph_from_AST.build_call_graph ~lang ast
-        in
-        (* Absolutify to match abs_call_tok tokens in Dataflow_tainting. *)
-        let call_graph =
-          match xtarget.project_root with
-          | Some root -> Call_graph.make_paths_absolute root call_graph
-          | None -> call_graph
-        in
-        LangMap.add lang call_graph acc)
-      langs_needing_call_graph LangMap.empty
+     it once and share it across rules that need it. *)
+  let ast_call_graph =
+    lang_needing_call_graph
+    |> Option.map (fun (lang : Lang.t) ->
+           let ast, _skipped_tokens = lazy_force xtarget.lazy_ast_and_errors in
+           Object_initialization.(
+             stamp_id_types (detect_object_initialization ast lang) ast);
+           let call_graph =
+             Graph_from_AST.build_call_graph ~lang ast
+           in
+           (* Absolutify to match abs_call_tok tokens in Dataflow_tainting. *)
+           match xtarget.project_root with
+           | Some root -> Call_graph.make_paths_absolute root call_graph
+           | None -> call_graph)
   in
 
   let guard_atoms = Effect_guard.create_atoms () in
 
-  let builtin_db_by_lang =
-    LangSet.fold
-      (fun lang acc ->
-        let builtin_db =
-          Builtin_models.create_all_builtin_models ~atoms:guard_atoms lang
-        in
-        LangMap.add lang builtin_db acc)
-      langs_needing_call_graph LangMap.empty
+  let builtin_db =
+    lang_needing_call_graph
+    |> Option.map (Builtin_models.create_all_builtin_models ~atoms:guard_atoms)
   in
 
   let results =
@@ -1044,12 +1023,7 @@ let check_rules ~match_hook
            in
            (* Only pass call graph and builtin db if taint_intrafile is enabled for this rule *)
            let rule_local_ast_call_graph, rule_builtin_signature_db =
-             if xconf.config.taint_intrafile then
-               match Xlang.to_lang rule.R.target_analyzer with
-               | Ok lang ->
-                   ( LangMap.find_opt lang ast_call_graph_by_lang,
-                     LangMap.find_opt lang builtin_db_by_lang )
-               | Error _ -> (None, None)
+             if xconf.config.taint_intrafile then (ast_call_graph, builtin_db)
              else (None, None)
            in
            per_rule_boilerplate_fn

@@ -53,6 +53,7 @@ val guard_valid_under :
 val instantiate_function_signature :
   lang:Lang.t ->
   atoms:Effect_guard.atoms ->
+  propagate_through_functions:bool ->
   ?max_offset:int ->
   ?outer_params:IL.param list ->
   ?env:Shape_and_sig.Shape.env ->

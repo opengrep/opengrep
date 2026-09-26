@@ -57,6 +57,9 @@ val gather_all_taints_in_cell : cell -> Taint.taints
 val gather_all_taints_in_shape : shape -> Taint.taints
 (** Gather and union all taints reachable through a shape. *)
 
+val gather_all_taints_in_args_taints :
+  (Taint.taints * shape) IL.argument list -> Taint.taints
+
 val find_in_cell :
   ?max:int ->
   lang:Lang.t ->

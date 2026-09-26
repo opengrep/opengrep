@@ -69,7 +69,6 @@ module G = AST_generic
 
 type atom_facts = {
   fetch_bases : (IL.name * bool) list;
-  value : bool option;
   always_frozen : bool;
   freezing_names : IL.name list;
 }
@@ -107,11 +106,7 @@ type t = {
  * dataflow fixpoint rebuild structurally-equal atoms as separate physical
  * trees; interning them to one canonical node makes comparison short-circuit
  * on [phys_equal] and lets the fixpoint stabilise without re-walking the
- * shared DAG. The table is domain-local (one per domain, no cross-domain
- * races) and strong: it must be cleared at each task boundary with
- * [reset_intern], because rules run on a domain in sequence (see
- * [Match_tainting_mode]) and a stale canonical from a previous rule's atoms
- * would persist otherwise. *)
+ * shared DAG. *)
 (* One-level structural hash: combines the node's own constructor (and leaf
  * data) with the children's stored hashes. [node]'s children are the
  * already-interned [kid_hashes]' nodes, in [fold_map_children] order
@@ -159,11 +154,6 @@ type atoms = {
   mutable next_id : int;
 }
 
-(* The table grows monotonically until the per-target [reset_intern] in
- * [Match_tainting_mode.check_rules]: the atom-size cap bounds each
- * entry, not the entry count, which is bounded only by the distinct
- * atoms the target's analysis creates. Accepted: atoms are small and
- * a target's atom population is proportional to its conds. *)
 let create_atoms () : atoms = { table = ICondTbl.create 1024; next_id = 0 }
 
 (* Canonicalise [e] bottom-up: children are interned first, so a node's table
@@ -322,7 +312,7 @@ let facts_of (h : hcond) : atom_facts =
   | Some facts -> facts
   | None -> invalid_arg "Effect_guard.facts_of: node never formed as an atom"
 
-let as_atom ~(lang : Lang.t) (h : hcond) : hcond =
+let as_atom (h : hcond) : hcond =
   (match h.facts with
   | Some _ -> ()
   | None ->
@@ -331,7 +321,6 @@ let as_atom ~(lang : Lang.t) (h : hcond) : hcond =
         Some
           {
             fetch_bases = fetch_bases_of h.node;
-            value = eval_atom ~lang h.node;
             always_frozen;
             freezing_names;
           });
@@ -468,28 +457,10 @@ let raw_clauses (c : cond) : (IL.exp * bool) list list =
   c |> List.map (List.map (fun l -> (l.atom.node, l.negated)))
 
 (* Sort, dedup, and consistency-check a conjunction of literals.
- * [None] means the clause is unsatisfiable and must be dropped.
- * Constant boolean atoms decide their literal outright — substitution
- * ([map_atoms]) can ground an atom to a boolean literal: a satisfied
- * literal leaves the conjunction, a falsified one kills the clause, so a
- * dead clause is folded here instead of surviving normalisation (where
- * it would consume clause budget and bypass the [cond_is_bot] →
- * [Drop_effect] fast path until match time). *)
+ * [None] means the clause is unsatisfiable and must be dropped. *)
 let mk_clause (lits : literal list) : clause option =
-  let falsified (l : literal) : bool =
-    Option.equal Bool.equal (facts_of l.atom).value (Some l.negated)
-  in
-  let satisfied (l : literal) : bool =
-    Option.equal Bool.equal (facts_of l.atom).value (Some (not l.negated))
-  in
-  if List.exists falsified lits then None
-  else
-    let c =
-      lits
-      |> List.filter (fun l -> not (satisfied l))
-      |> List.sort_uniq compare_literal
-    in
-    if clause_inconsistent c then None else Some c
+  let c = List.sort_uniq compare_literal lits in
+  if clause_inconsistent c then None else Some c
 
 (* Sort and dedup clauses; collapse to [top] when a clause is true ([])
  * or two singleton clauses are complementary ([A] or [!A] is a
@@ -576,7 +547,8 @@ let and_cond (c1 : cond) (c2 : cond) : cond =
  * (negation-normal form on the fly: [!(a && b)] = [!a || !b]). N-ary
  * [And]/[Or] operator calls are folded over all unnamed operands, so e.g.
  * a Python [a or b or c] chain contributes one clause per disjunct
- * instead of one opaque atom. Leaves: boolean literals fold; an atom
+ * instead of one opaque atom. Leaves: a leaf that constant propagation
+ * decides at this occurrence folds, as a boolean literal does; an atom
  * larger than [taint_MAX_GUARD_COND_NODES] distinct nodes is dropped
  * (true / not contributing a literal — a sound weakening of its clause);
  * anything else becomes an interned literal. *)
@@ -605,18 +577,18 @@ let rec dnf_of ~(lang : Lang.t) (atoms : atoms) ~(negated : bool) (e : IL.exp) :
       let combine = if negated then and_cond else or_cond in
       let unit_ = if negated then cond_true else cond_false in
       List.fold_left (fun acc a -> combine acc (dnf_of ~lang atoms ~negated a)) unit_ exps
-  | _ ->
-      if IL_helpers.is_lit_bool (not negated) e then cond_true
-      else if IL_helpers.is_lit_bool negated e then cond_false
-      else
-        let atom, distinct_nodes = intern_counted atoms e in
-        if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
-          cond_true
-        else
-          match mk_clause [ { atom = as_atom ~lang atom; negated } ] with
-          | None -> cond_false
-          | Some [] -> cond_true
-          | Some clause -> [ clause ]
+  | _ -> (
+      match eval_atom ~lang e with
+      | Some b -> if Bool.equal b negated then cond_false else cond_true
+      | None ->
+          let atom, distinct_nodes = intern_counted atoms e in
+          if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
+            cond_true
+          else
+            match mk_clause [ { atom = as_atom atom; negated } ] with
+            | None -> cond_false
+            | Some [] -> cond_true
+            | Some clause -> [ clause ])
 
 let of_exp ~(lang : Lang.t) (atoms : atoms) (e : IL.exp) : cond =
   dnf_of ~lang atoms ~negated:false e
@@ -657,27 +629,25 @@ let atoms_of_cond (c : cond) : IL.exp list =
  * map, not a re-conversion. *)
 let map_atoms ~(lang : Lang.t) (atoms : atoms) (substituted : IL.name list)
     (f : IL.exp -> IL.exp) (c : cond) : cond =
-  let map_literal (l : literal) : bool * literal option =
-    if not (reads_any substituted l.atom) then (false, Some l)
+  let map_literal (l : literal) : bool * (literal, bool) Either.t =
+    if not (reads_any substituted l.atom) then (false, Either.Left l)
     else
       let e = f l.atom.node in
-      if IL_helpers.is_lit_bool (not l.negated) e then
-        (* literal true: contributes nothing to the clause *)
-        (true, None)
-      else if IL_helpers.is_lit_bool l.negated e then
-        (* literal false: kills the clause *)
-        ( true,
-          Some
-            {
-              atom = as_atom ~lang (fst (intern_counted atoms e));
-              negated = l.negated;
-            }
-        )
-      else
-        let atom, distinct_nodes = intern_counted atoms e in
-        if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
-          (true, None)
-        else (atom != l.atom, Some { atom = as_atom ~lang atom; negated = l.negated })
+      match eval_atom ~lang e with
+      | Some b ->
+          if Bool.equal b l.negated then
+            (* literal false: kills the clause *)
+            (true, Either.Right false)
+          else
+            (* literal true: contributes nothing to the clause *)
+            (true, Either.Right true)
+      | None ->
+          let atom, distinct_nodes = intern_counted atoms e in
+          if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
+            (true, Either.Right true)
+          else
+            ( atom != l.atom,
+              Either.Left { atom = as_atom atom; negated = l.negated } )
   in
   let rewritten, clauses =
     List.fold_left_map
@@ -688,38 +658,21 @@ let map_atoms ~(lang : Lang.t) (atoms : atoms) (substituted : IL.name list)
               (rewritten || changed, l'))
             rewritten clause
         in
-        (rewritten, List.filter_map Fun.id lits))
+        let kept, decided = List.partition_map Fun.id lits in
+        (rewritten, if List.for_all Fun.id decided then Some kept else None))
       false c
   in
   if not rewritten then c
-  else clauses |> List.filter_map mk_clause |> mk_cond |> cap_clauses
+  else
+    clauses |> List.filter_map Fun.id |> List.filter_map mk_clause |> mk_cond
+    |> cap_clauses
 
 (* Three-valued evaluation: [Some b] when decided, [None] when some atom
  * is undecided in a way that leaves the verdict open. *)
 let eval (c : cond) : bool option =
-  let clause_value clause =
-    List.fold_left
-      (fun acc l ->
-        match acc with
-        | Some false -> Some false
-        | _ -> (
-            match (facts_of l.atom).value with
-            | Some b ->
-                let v = if l.negated then not b else b in
-                if v then acc else Some false
-            | None -> None))
-      (Some true) clause
-  in
-  List.fold_left
-    (fun acc clause ->
-      match acc with
-      | Some true -> Some true
-      | _ -> (
-          match clause_value clause with
-          | Some true -> Some true
-          | Some false -> acc
-          | None -> None))
-    (Some false) c
+  if cond_is_top c then Some true
+  else if cond_is_bot c then Some false
+  else None
 
 (*****************************************************************************)
 (* Guards *)

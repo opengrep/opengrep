@@ -1,0 +1,13 @@
+rules:
+  - id: test-builtin-hof-result-python
+    message: the result of a builtin higher order function holds what the function returns
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

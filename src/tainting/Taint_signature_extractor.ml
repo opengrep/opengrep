@@ -283,7 +283,7 @@ let extract_signature (taint_inst : TRI.t)
     (func_cfg : IL.fun_cfg) : extraction_result =
   let params = Signature_params.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
-  let captured = Dataflow_tainting.captured_of_fun_cfg func_cfg in
+  let captured = Dataflow_tainting.captured_of_fun_cfg taint_inst.lang func_cfg in
   let combined_env =
     (match in_env with
     | Some env ->

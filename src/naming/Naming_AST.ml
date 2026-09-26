@@ -1629,16 +1629,17 @@ class ['self] resolve_visitor env lang =
        * (no need to declarare prototype and forward decls as in C).
        *)
       let new_params = params_of_parameters env x.fparams in
-      (* A PHP function or closure body sees no enclosing local; a method
+      (* A PHP or Hack function or closure body sees no enclosing local; a method
          body sees its class's scope, for the class constants; an arrow
          function sees everything. *)
       let hidden_blocks =
         let enclosing = List.length !(env.names.blocks) in
         match (lang, fst x.fkind) with
-        | Lang.Php, (Function | LambdaKind | BlockCases) -> Some enclosing
-        | Lang.Php, Method -> Some (max 0 (enclosing - 1))
+        | (Lang.Php | Lang.Hack), (Function | LambdaKind | BlockCases) ->
+            Some enclosing
+        | (Lang.Php | Lang.Hack), Method -> Some (max 0 (enclosing - 1))
         | (Lang.Ruby | Lang.Crystal), Method -> Some enclosing
-        | Lang.Php, Arrow
+        | (Lang.Php | Lang.Hack), Arrow
         | _ ->
             !(env.hidden_blocks)
       in
