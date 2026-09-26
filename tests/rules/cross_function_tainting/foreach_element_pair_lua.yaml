@@ -1,0 +1,13 @@
+rules:
+  - id: foreach_element_pair_lua
+    message: a loop over a collection reads an element of the collection, and each part of the element keeps its own taint
+    languages:
+      - lua
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

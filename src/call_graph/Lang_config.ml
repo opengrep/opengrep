@@ -17,17 +17,34 @@ type hof_kind =
       methods : string list;
     }
 
+(* What a collection method does with its argument, or what it returns. *)
 type collection_model_kind =
-  | ArgTaintsThis of {
+  | ArgIsElement of {
       methods : string list;
       arity : int;
       taint_arg_index : int;
       returns_this : bool;
     }
-  | ThisTaintsReturn of {
+  | ArgElementsAreElements of {
+      methods : string list;
+      arity : int;
+      taint_arg_index : int;
+      returns_this : bool;
+    }
+  | ReturnsElement of {
       methods : string list;
       arity : int;
     }
+  | ReturnsWholeValue of {
+      methods : string list;
+      arity : int;
+    }
+  | ReturnsSameElements of {
+      methods : string list;
+      arity : int;
+    }
+  | ElementProperty of { properties : string list }
+      (* A property whose read gives an element of the receiver. *)
 
 type construction_form =
   | Bare_call
@@ -97,13 +114,14 @@ let python = {
     FunctionHOF { functions = ["map"; "filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["append"; "add"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ArgTaintsThis { methods = ["extend"; "update"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ThisTaintsReturn { methods = ["pop"]; arity = 0 };
-    ThisTaintsReturn { methods = ["get"; "pop"; "setdefault"]; arity = 1 };
-    ThisTaintsReturn { methods = ["get"; "pop"; "setdefault"]; arity = 2 };
-    ThisTaintsReturn { methods = ["copy"; "keys"; "values"; "items"]; arity = 0 };
+    ArgIsElement { methods = ["append"; "add"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgElementsAreElements { methods = ["extend"; "update"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ReturnsElement { methods = ["pop"]; arity = 0 };
+    ReturnsElement { methods = ["get"; "pop"; "setdefault"]; arity = 1 };
+    ReturnsElement { methods = ["get"; "pop"; "setdefault"]; arity = 2 };
+    ReturnsSameElements { methods = ["copy"; "values"]; arity = 0 };
+    ReturnsWholeValue { methods = ["keys"; "items"]; arity = 0 };
   ];
   constructor_names = ["__init__"];
   construction = Bare_call;
@@ -131,13 +149,14 @@ let ruby = {
     };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["push"; "append"; "unshift"; "prepend"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    ArgTaintsThis { methods = ["merge!"; "update"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    ThisTaintsReturn { methods = ["pop"; "shift"; "first"; "last"]; arity = 0 };
-    ThisTaintsReturn { methods = ["fetch"; "dig"; "slice"]; arity = 1 };
-    ThisTaintsReturn { methods = ["fetch"; "dig"]; arity = 2 };
-    ThisTaintsReturn { methods = ["to_s"; "join"; "flatten"]; arity = 0 };
-    ThisTaintsReturn { methods = ["join"]; arity = 1 };
+    ArgIsElement { methods = ["push"; "append"; "unshift"; "prepend"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ArgElementsAreElements { methods = ["merge!"; "update"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ReturnsElement { methods = ["pop"; "shift"; "first"; "last"]; arity = 0 };
+    ReturnsElement { methods = ["fetch"; "dig"]; arity = 1 };
+    ReturnsWholeValue { methods = ["slice"]; arity = 1 };
+    ReturnsElement { methods = ["fetch"; "dig"]; arity = 2 };
+    ReturnsWholeValue { methods = ["to_s"; "join"; "flatten"]; arity = 0 };
+    ReturnsWholeValue { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["initialize"];
   construction = New_method "new";
@@ -166,14 +185,15 @@ let javascript = {
     MethodHOF { methods = ["reduce"; "reduceRight"]; arity = 2; taint_arg_index = 1 };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["set"]; arity = 2; taint_arg_index = 1; returns_this = true };
-    ArgTaintsThis { methods = ["push"; "unshift"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["add"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    ThisTaintsReturn { methods = ["get"]; arity = 1 };
-    ThisTaintsReturn { methods = ["pop"; "shift"]; arity = 0 };
-    ThisTaintsReturn { methods = ["at"]; arity = 1 };
-    ThisTaintsReturn { methods = ["toString"; "valueOf"; "join"]; arity = 0 };
-    ThisTaintsReturn { methods = ["join"]; arity = 1 };
+    ArgIsElement { methods = ["set"]; arity = 2; taint_arg_index = 1; returns_this = true };
+    ArgIsElement { methods = ["push"; "unshift"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["add"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ReturnsElement { methods = ["get"]; arity = 1 };
+    ReturnsElement { methods = ["pop"; "shift"]; arity = 0 };
+    ReturnsElement { methods = ["at"]; arity = 1 };
+    ReturnsSameElements { methods = ["valueOf"]; arity = 0 };
+    ReturnsWholeValue { methods = ["toString"; "join"]; arity = 0 };
+    ReturnsWholeValue { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["constructor"];
   construction = New_keyword;
@@ -199,14 +219,15 @@ let java = {
     MethodHOF { methods = ["map"; "filter"; "forEach"; "flatMap"]; arity = 1; taint_arg_index = 0 };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ArgTaintsThis { methods = ["add"; "addFirst"; "addLast"; "push"; "offer"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["add"; "set"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = true };
-    ThisTaintsReturn { methods = ["get"; "getFirst"; "getLast"; "peek"; "poll"; "pop"; "remove"]; arity = 1 };
-    ThisTaintsReturn { methods = ["toString"; "getFirst"; "getLast"; "peek"; "poll"; "pop"]; arity = 0 };
-    ThisTaintsReturn { methods = ["next"]; arity = 0 };
+    ArgIsElement { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgIsElement { methods = ["add"; "addFirst"; "addLast"; "push"; "offer"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["add"; "set"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgIsElement { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ArgIsElement { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = true };
+    ReturnsElement { methods = ["get"; "getFirst"; "getLast"; "peek"; "poll"; "pop"; "remove"]; arity = 1 };
+    ReturnsElement { methods = ["getFirst"; "getLast"; "peek"; "poll"; "pop"]; arity = 0 };
+    ReturnsWholeValue { methods = ["toString"]; arity = 0 };
+    ReturnsElement { methods = ["next"]; arity = 0 };
   ];
   constructor_names = ["<init>"];
   construction = New_keyword;
@@ -236,13 +257,13 @@ let kotlin = {
     };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["add"; "addFirst"; "addLast"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    ThisTaintsReturn { methods = ["get"; "getOrNull"]; arity = 1 };
-    ThisTaintsReturn { methods = ["getOrDefault"]; arity = 2 };
-    ThisTaintsReturn { methods = ["first"; "last"; "removeFirst"; "removeLast"]; arity = 0 };
-    ThisTaintsReturn { methods = ["toString"]; arity = 0 };
+    ArgIsElement { methods = ["add"; "addFirst"; "addLast"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgIsElement { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ReturnsElement { methods = ["get"; "getOrNull"]; arity = 1 };
+    ReturnsElement { methods = ["getOrDefault"]; arity = 2 };
+    ReturnsElement { methods = ["first"; "last"; "removeFirst"; "removeLast"]; arity = 0 };
+    ReturnsWholeValue { methods = ["toString"]; arity = 0 };
   ];
   constructor_names = ["<init>"; "init"; "constructor"];
   construction = Bare_call;
@@ -267,11 +288,11 @@ let scala = {
     };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["append"; "prepend"; "addOne"; "add"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    ArgTaintsThis { methods = ["put"; "update"; "addOne"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ThisTaintsReturn { methods = ["head"; "last"]; arity = 0 };
-    ThisTaintsReturn { methods = ["apply"; "get"; "getOrElse"]; arity = 1 };
-    ThisTaintsReturn { methods = ["mkString"; "toString"]; arity = 0 };
+    ArgIsElement { methods = ["append"; "prepend"; "addOne"; "add"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ArgIsElement { methods = ["put"; "update"; "addOne"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ElementProperty { properties = ["head"; "last"] };
+    ReturnsElement { methods = ["apply"; "get"; "getOrElse"]; arity = 1 };
+    ReturnsWholeValue { methods = ["mkString"; "toString"]; arity = 0 };
   ];
   constructor_names = ["<init>"];
   construction = Bare_call;
@@ -296,12 +317,12 @@ let csharp = {
     };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["Add"; "Push"; "Enqueue"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["Insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ArgTaintsThis { methods = ["Add"; "TryAdd"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ThisTaintsReturn { methods = ["Pop"; "Dequeue"; "Peek"]; arity = 0 };
-    ThisTaintsReturn { methods = ["ElementAt"; "GetValueOrDefault"]; arity = 1 };
-    ThisTaintsReturn { methods = ["ToString"]; arity = 0 };
+    ArgIsElement { methods = ["Add"; "Push"; "Enqueue"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["Insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgIsElement { methods = ["Add"; "TryAdd"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ReturnsElement { methods = ["Pop"; "Dequeue"; "Peek"]; arity = 0 };
+    ReturnsElement { methods = ["ElementAt"; "GetValueOrDefault"]; arity = 1 };
+    ReturnsWholeValue { methods = ["ToString"]; arity = 0 };
   ];
   constructor_names = [".ctor"];
   construction = New_keyword;
@@ -322,8 +343,8 @@ let go = {
      Auto-detection handles a function reference passed as an argument. *)
   hof_configs = [];
   collection_configs = [
-    ArgTaintsThis { methods = ["Store"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ThisTaintsReturn { methods = ["Load"]; arity = 1 };
+    ArgIsElement { methods = ["Store"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ReturnsWholeValue { methods = ["Load"]; arity = 1 };
   ];
   constructor_names = [];
   construction = Bare_call;
@@ -348,11 +369,11 @@ let rust = {
     };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["push"; "push_front"; "push_back"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    ThisTaintsReturn { methods = ["pop"; "pop_front"; "pop_back"]; arity = 0 };
-    ThisTaintsReturn { methods = ["get"; "get_mut"; "remove"]; arity = 1 };
-    ThisTaintsReturn { methods = ["into_iter"; "iter"; "iter_mut"]; arity = 0 };
+    ArgIsElement { methods = ["push"; "push_front"; "push_back"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ReturnsElement { methods = ["pop"; "pop_front"; "pop_back"]; arity = 0 };
+    ReturnsElement { methods = ["get"; "get_mut"; "remove"]; arity = 1 };
+    ReturnsSameElements { methods = ["into_iter"; "iter"; "iter_mut"]; arity = 0 };
   ];
   constructor_names = [];
   construction = Bare_call;
@@ -377,11 +398,12 @@ let swift = {
     };
   ];
   collection_configs = [
-    ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["updateValue"]; arity = 2; taint_arg_index = 0; returns_this = false };
-    ThisTaintsReturn { methods = ["popLast"; "removeFirst"; "removeLast"; "first"; "last"]; arity = 0 };
-    ThisTaintsReturn { methods = ["remove"]; arity = 1 };
+    ArgIsElement { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["insert"]; arity = 2; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["updateValue"]; arity = 2; taint_arg_index = 0; returns_this = false };
+    ReturnsElement { methods = ["popLast"; "removeFirst"; "removeLast"]; arity = 0 };
+    ElementProperty { properties = ["first"; "last"] };
+    ReturnsElement { methods = ["remove"]; arity = 1 };
   ];
   constructor_names = ["init"];
   construction = Bare_call;
@@ -491,14 +513,20 @@ let dart = {
   ];
   collection_configs = [
     (* List.add, Set.add, List.addAll, Map.addEntries - item taints this *)
-    ArgTaintsThis { methods = ["add"; "addAll"; "addEntries"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["add"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgElementsAreElements { methods = ["addAll"; "addEntries"]; arity = 1; taint_arg_index = 0; returns_this = false };
     (* List.insert(index, item) - item taints this *)
-    ArgTaintsThis { methods = ["insert"; "insertAll"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgIsElement { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    ArgElementsAreElements { methods = ["insertAll"]; arity = 2; taint_arg_index = 1; returns_this = false };
     (* StringBuffer.write/writeln/writeAll - str taints this *)
-    ArgTaintsThis { methods = ["write"; "writeln"; "writeAll"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgIsElement { methods = ["write"; "writeln"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgElementsAreElements { methods = ["writeAll"]; arity = 1; taint_arg_index = 0; returns_this = false };
     (* accessors - this taints return *)
-    ThisTaintsReturn { methods = ["removeLast"; "toString"; "join"; "toList"; "toSet"]; arity = 0 };
-    ThisTaintsReturn { methods = ["removeAt"; "elementAt"; "remove"; "join"]; arity = 1 };
+    ReturnsElement { methods = ["removeLast"]; arity = 0 };
+    ReturnsWholeValue { methods = ["toString"; "join"]; arity = 0 };
+    ReturnsSameElements { methods = ["toList"; "toSet"]; arity = 0 };
+    ReturnsElement { methods = ["removeAt"; "elementAt"]; arity = 1 };
+    ReturnsWholeValue { methods = ["remove"; "join"]; arity = 1 };
   ];
   (* Dart constructors are class-named (User.User), which is_constructor
      covers via the class-name equality check *)
@@ -660,6 +688,18 @@ let get (lang : Lang.t) : t =
   | Lang.Vb -> vb
   | Lang.R -> r
   | _ -> empty
+
+let is_element_property (lang : Lang.t) (name : string) : bool =
+  (get lang).collection_configs
+  |> List.exists (function
+       | ElementProperty { properties } ->
+           List.exists (String.equal name) properties
+       | ArgIsElement _
+       | ArgElementsAreElements _
+       | ReturnsElement _
+       | ReturnsWholeValue _
+       | ReturnsSameElements _ ->
+           false)
 
 let uses_new_keyword (lang : Lang.t) : bool =
   match (get lang).construction with

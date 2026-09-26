@@ -282,9 +282,9 @@ let add_lval_shape lang lval new_taints new_shape lval_env =
 let add lang var offset new_taints lval_env =
   add_shape lang var offset new_taints Bot lval_env
 
-let add_written_through lang var offset new_taints lval_env =
-  add lang var offset new_taints lval_env
-  |> add_through_pointees lang var offset new_taints Bot
+let add_written_through lang var offset new_taints new_shape lval_env =
+  add_shape lang var offset new_taints new_shape lval_env
+  |> add_through_pointees lang var offset new_taints new_shape
 
 let forget_pointees var lval_env =
   if NameMap.mem var lval_env.pointees then

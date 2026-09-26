@@ -605,14 +605,16 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       | { G.s =
             G.Return
               (_,
-               Some { G.e =
-                        G.Container
-                          (G.Tuple,
-                           (_,
-                            { G.e = G.N (G.Id (((name : string), _), _)); _ }
-                            :: _,
-                            _));
-                      _ },
+               Some
+                 ( { G.e = G.N (G.Id (((name : string), _), _)); _ }
+                 | { G.e =
+                       G.Container
+                         (G.Tuple,
+                          (_,
+                           { G.e = G.N (G.Id (((name : string), _), _)); _ }
+                           :: _,
+                           _));
+                     _ } ),
                _);
           _ } :: _ ->
         let qn = qualified_name_of ~module_path:qn_module_path [] name in

@@ -39,6 +39,7 @@ type call_effect =
   | ToReturn of Effect.taints_to_return
   | ToLval of {
       taints : Taint.taints;
+      shape : Shape_and_sig.Shape.shape;
       var : IL.name;
       offset : Taint.offset list;
       guards : Effect_guard.t;
@@ -46,6 +47,7 @@ type call_effect =
   (* Field write on enclosing receiver; kept [BThis] so it composes into the caller's own sig. *)
   | ToLvalThis of {
       taints : Taint.taints;
+      shape : Shape_and_sig.Shape.shape;
       offset : Taint.offset list;
       guards : Effect_guard.t;
     }
@@ -62,12 +64,14 @@ type call_effects = call_effect list
 let show_call_effect = function
   | ToSink tts -> Effect.show_taints_to_sink tts
   | ToReturn ttr -> Effect.show_taints_to_return ttr
-  | ToLval { taints; var; offset; guards } ->
-      Printf.sprintf "%s%s ----> %s%s" (T.show_taints taints)
+  | ToLval { taints; shape; var; offset; guards } ->
+      Printf.sprintf "%s%s%s ----> %s%s" (T.show_taints taints)
+        (Effect.show_written_shape shape)
         (Effect_guard.show_in_brackets guards) (IL.str_of_name var)
         (T.show_offset_list offset)
-  | ToLvalThis { taints; offset; guards } ->
-      Printf.sprintf "%s%s ----> this%s" (T.show_taints taints)
+  | ToLvalThis { taints; shape; offset; guards } ->
+      Printf.sprintf "%s%s%s ----> this%s" (T.show_taints taints)
+        (Effect.show_written_shape shape)
         (Effect_guard.show_in_brackets guards) (T.show_offset_list offset)
   | ToSinkInCall { callee; arg; _ } ->
       Printf.sprintf "ToSinkInCall(%s, %s)" (Display_IL.string_of_exp callee)
@@ -1078,6 +1082,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
   let rec bound_formal_in_sig (formal : T.formal) : bool =
     match formal with
     | Param arg -> bound_in_sig arg
+    | Receiver -> false
     | Captured x -> captured_in_sig x
     | Result call -> bound_formal_in_sig call.callee
   in
@@ -1250,7 +1255,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
                return_tok;
                guards = walk_guard guards;
              })
-    | Effect.ToLval { taints; lval; guards } -> (
+    | Effect.ToLval { taints; shape; lval; guards } -> (
         match walk_lval lval with
         | None -> None
         | Some lval ->
@@ -1258,6 +1263,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
               (Effect.ToLval
                  {
                    taints = walk_taints taints;
+                   shape = walk_shape shape;
                    lval;
                    guards = walk_guard guards;
                  }))
@@ -2158,39 +2164,48 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                 guards = out_guards;
               };
           ]
-    | Effect.ToLval { taints; lval = dst_sig_lval; guards = _ } ->
+    | Effect.ToLval { taints; shape; lval = dst_sig_lval; guards = _ } ->
         (* Taints 'taints' go into an argument of the call, by side-effect.
          * Right now this is mainly used to track taint going into specific
          * fields of the callee object, like `this.x = "tainted"`. *)
+        let lval_inst_var =
+          {
+            inst_var with
+            (* Note that control taints do not propagate to l-values. *)
+            inst_ctrl = (fun _ -> Taints.empty);
+          }
+        in
+        let lval_inst_trace tainted_tok =
+          {
+            inst_trace with
+            fix_token_trace_for_var =
+              add_lval_update_to_token_trace ~callee tainted_tok;
+          }
+        in
         let inst_taints tainted_tok =
-          taints
-          |> instantiate_taints
-               { inst_lval = lval_to_taints;
-                 (* Note that control taints do not propagate to l-values. *)
-                 inst_ctrl = (fun _ -> Taints.empty);
-                 inst_lval_to_name;
-                 f_params = taint_sig.params;
-                 f_params_il = taint_sig.params_il;
-                 f_resolve_arg = resolve_arg;
-                 inst_guard;
-                 guard_atoms = atoms;
-                 lang; }
-               { site;
-                 add_call_to_trace_for_src =
-                   add_call_to_trace_if_callee_has_eorig ~callee;
-                 fix_token_trace_for_var =
-                   add_lval_update_to_token_trace ~callee tainted_tok; }
+          instantiate_taints lval_inst_var (lval_inst_trace tainted_tok) taints
+        in
+        let inst_shape tainted_tok =
+          instantiate_shape ~lang lval_inst_var (lval_inst_trace tainted_tok)
+            shape
         in
         if
           (match dst_sig_lval.base with T.BThis -> true | _ -> false)
           && callee_on_enclosing_this callee
         then
           (* keep [BThis] so it composes into the caller's sig *)
-          let taints = inst_taints (Tok.unsafe_fake_tok "this") in
-          if Taints.is_empty taints then []
+          let tainted_tok = Tok.unsafe_fake_tok "this" in
+          let taints = inst_taints tainted_tok in
+          let shape = inst_shape tainted_tok in
+          if not (Shape.taints_and_shape_are_relevant taints shape) then []
           else
             [ ToLvalThis
-                { taints; offset = dst_sig_lval.offset; guards = out_guards } ]
+                {
+                  taints;
+                  shape;
+                  offset = dst_sig_lval.offset;
+                  guards = out_guards;
+                } ]
         else
           let+ dst_var, dst_offset, tainted_tok =
             match (dst_sig_lval.base, args) with
@@ -2205,10 +2220,17 @@ let rec instantiate_function_signature ~(lang : Lang.t)
             | _ -> inst_lval_to_name dst_sig_lval
           in
           let taints = inst_taints tainted_tok in
-          if Taints.is_empty taints then []
+          let shape = inst_shape tainted_tok in
+          if not (Shape.taints_and_shape_are_relevant taints shape) then []
           else
             [ ToLval
-                { taints; var = dst_var; offset = dst_offset; guards = out_guards }
+                {
+                  taints;
+                  shape;
+                  var = dst_var;
+                  offset = dst_offset;
+                  guards = out_guards;
+                }
             ]
     | Effect.ToSinkInCall
         {
@@ -2266,6 +2288,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         in
         let fun_closure_opt =
           match fun_formal with
+          | Receiver
           | Captured _
           | Result _ -> (
               match lval_to_taints fun_lval with
@@ -2584,7 +2607,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                               [])))
              | None -> (
                  match (fun_formal, rebind_arg_to_outer) with
-                 | (Captured _ | Result _), Some (outer_arg, outer_offsets) ->
+                 | (Receiver | Captured _ | Result _), Some (outer_arg, outer_offsets) ->
                      outer_offsets
                      |> List.map (fun arg_offset ->
                             ToSinkInCall
@@ -2593,7 +2616,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                 arg_offset;
                                 args_taints;
                                 guards = Effect_guard.top; })
-                 | (Captured _ | Result _), None -> []
+                 | (Receiver | Captured _ | Result _), None -> []
                  | Param _, _ ->
                      [ ToSinkInCall
                          { callee = fun_exp;

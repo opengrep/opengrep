@@ -1,0 +1,13 @@
+rules:
+  - id: composite_return_field_python
+    message: a read of one field of a returned tuple or dict carries only that field's taint
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

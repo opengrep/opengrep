@@ -499,6 +499,7 @@ and Effect : sig
 
   type taints_to_lval = {
     taints : Taint.taints;
+    shape : Shape.shape;  (** The shape of the value written to [lval]. *)
     lval : Taint.lval;
     guards : Effect_guard.t;
         (** See note on [taints_to_sink.guards]. *)
@@ -583,6 +584,9 @@ and Effect : sig
 
   val show : ?truncate_guards:bool -> t -> string
 
+  val show_written_shape : Shape.shape -> string
+  (** The shape a [ToLval] writes, as printed: nothing for [Bot]. *)
+
   val add_guards : Effect_guard.t -> t -> t
   (** [add_guards g eff] returns [eff] with [g] composed via [And] into its
       [guards] field. [Effect_guard.top] returns [eff] unchanged. Used by the
@@ -635,6 +639,7 @@ end = struct
 
   type taints_to_lval = {
     taints : T.taints;
+    shape : Shape.shape;
     lval : T.lval;
     guards : Effect_guard.t;
   }
@@ -722,10 +727,13 @@ end = struct
     | other -> other
 
   let compare_taints_to_lval
-      { taints = ts1; lval = lv1; guards = _ }
-      { taints = ts2; lval = lv2; guards = _ } =
+      { taints = ts1; shape = shape1; lval = lv1; guards = _ }
+      { taints = ts2; shape = shape2; lval = lv2; guards = _ } =
     match Taints.compare ts1 ts2 with
-    | 0 -> T.compare_lval lv1 lv2
+    | 0 -> (
+        match Shape.compare_shape shape1 shape2 with
+        | 0 -> T.compare_lval lv1 lv2
+        | other -> other)
     | other -> other
 
   let compare_arg (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
@@ -838,11 +846,20 @@ end = struct
   let show_args_taints ?(truncate_guards = true) (args : _ IL.argument list) =
     spf "(%s)" (List_.map (show_arg ~truncate_guards) args |> String.concat ", ")
 
+  let show_written_shape (shape : Shape.shape) : string =
+    match shape with
+    | Shape.Bot -> ""
+    | Shape.Obj _
+    | Shape.Arg _
+    | Shape.Fun _ ->
+        " & " ^ Shape.show_shape shape
+
   let show ?(truncate_guards = true) = function
     | ToSink tts -> show_taints_to_sink ~truncate_guards tts
     | ToReturn ttr -> show_taints_to_return ~truncate_guards ttr
-    | ToLval { taints; lval; guards; _ } ->
-        Printf.sprintf "%s%s ----> %s" (T.show_taints ~truncate_guards taints)
+    | ToLval { taints; shape; lval; guards } ->
+        Printf.sprintf "%s%s%s ----> %s" (T.show_taints ~truncate_guards taints)
+          (show_written_shape shape)
           (Effect_guard.show_in_brackets ~truncate_guards guards) (T.show_lval lval)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
         Printf.sprintf "'call<%s>%s%s" (T.show_formal arg)

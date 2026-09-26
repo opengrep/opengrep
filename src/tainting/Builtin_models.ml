@@ -18,10 +18,29 @@ let synthetic_params_il (params : Signature_params.params) : IL.param list =
   List_.map (fun _ -> IL.ParamFixme) params
 
 (** Helper to create args_taints list with taint at specified index *)
-let make_args_taints taint_set taint_arg_index =
+let make_args_taints ((taints, shape) : Taint.taints * Shape.shape)
+    taint_arg_index =
   List.init (taint_arg_index + 1) (fun idx ->
-      if idx = taint_arg_index then IL.Unnamed (taint_set, Shape.Bot)
+      if idx = taint_arg_index then IL.Unnamed (taints, shape)
       else IL.Unnamed (Taint.Taint_set.empty, Shape.Bot))
+
+let whole_value_taint_set (lval : Taint.lval) : Taint.taints =
+  Taint.(
+    Taint_set.union
+      (Taint_set.singleton (taint_of_orig (Var lval)))
+      (Taint_set.singleton (taint_of_orig (Shape_var lval))))
+
+(* The value [formal] supplies at [offset]: its taints and its shape. *)
+let value_at (formal : Taint.formal) (offset : Taint.offset list) :
+    Taint.taints * Shape.shape =
+  let lval = { Taint.base = Taint.base_of_formal formal; offset } in
+  ( Taint.Taint_set.singleton (Taint.taint_of_orig (Var lval)),
+    Shape.Arg (formal, [ offset ]) )
+
+(* Any element of the collection [formal] supplies at [offset]. *)
+let element_at (formal : Taint.formal) (offset : Taint.offset list) :
+    Taint.taints * Shape.shape =
+  value_at formal (offset @ [ Taint.Oany ])
 
 (** Helper function to add HOF signatures that return a function. This is for
     languages like Ruby where arr.map() returns a function that takes a
@@ -36,11 +55,12 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   let callback_var = make_callback_var () in
 
   (* Create a taint from BThis to pass to the callback *)
-  let this_taint =
-    Taint.(taint_of_orig (Var { base = BThis; offset = [] }))
+  let this_taint_set =
+    whole_value_taint_set { Taint.base = BThis; offset = [] }
   in
-  let this_taint_set = Taint.Taint_set.singleton this_taint in
-  let args_taints = make_args_taints this_taint_set taint_arg_index in
+  let args_taints =
+    make_args_taints (element_at Taint.Receiver []) taint_arg_index
+  in
 
   (* The effect when the returned function is called with a callback *)
   let hof_effect =
@@ -126,11 +146,12 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
 
   (* Create a taint from the data parameter to pass to the callback *)
   let data_arg = { Taint.name = "data"; index = data_index } in
-  let data_param_taint =
-    Taint.(taint_of_orig (Var { base = BArg data_arg; offset = [] }))
+  let data_taint_set =
+    whole_value_taint_set { Taint.base = BArg data_arg; offset = [] }
   in
-  let data_taint_set = Taint.Taint_set.singleton data_param_taint in
-  let args_taints = make_args_taints data_taint_set taint_arg_index in
+  let args_taints =
+    make_args_taints (element_at (Taint.Param data_arg) []) taint_arg_index
+  in
 
   let hof_effect =
     Effect.ToSinkInCall
@@ -201,11 +222,12 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
   let callback_var = make_callback_var () in
 
   (* Create a taint from BThis to pass to the callback *)
-  let this_taint =
-    Taint.(taint_of_orig (Var { base = BThis; offset = [] }))
+  let this_taint_set =
+    whole_value_taint_set { Taint.base = BThis; offset = [] }
   in
-  let this_taint_set = Taint.Taint_set.singleton this_taint in
-  let args_taints = make_args_taints this_taint_set taint_arg_index in
+  let args_taints =
+    make_args_taints (element_at Taint.Receiver []) taint_arg_index
+  in
 
   let hof_effect =
     Effect.ToSinkInCall
@@ -273,14 +295,17 @@ let clojure_hof_effects ~(lang : Lang.t) ~(atoms : Effect_guard.atoms) ~arity ~c
     ~data_index ~taint_arg_index =
   let impl_arg = { Taint.name = "impl"; index = 0 } in
   let callback_var = make_callback_var () in
-  let data_param_taint =
-    Taint.(taint_of_orig (Var { base = BArg impl_arg; offset = [ Oint data_index ] }))
+  let data_taint_set =
+    whole_value_taint_set
+      { Taint.base = BArg impl_arg; offset = [ Oint data_index ] }
   in
-  let data_taint_set = Taint.Taint_set.singleton data_param_taint in
   (* Packed callback args: a single Obj-shaped CList whose [taint_arg_index]
    * slot carries the data taint. *)
   let callback_obj =
-    let tainted_cell = Shape.Cell (`Tainted data_taint_set, Shape.Bot) in
+    let element_taints, element_shape =
+      element_at (Taint.Param impl_arg) [ Oint data_index ]
+    in
+    let tainted_cell = Shape.Cell (`Tainted element_taints, element_shape) in
     Shape.Obj (Fields.singleton (Taint.Oint taint_arg_index) tainted_cell)
   in
   let args_taints =
@@ -441,31 +466,27 @@ let create_builtin_models ~(atoms : Effect_guard.atoms) (lang : Lang.t) :
 (* Primitive helpers for building taint sets and effects *)
 (* ========================================================================== *)
 
-let this_taint_set () =
-  let taint = Taint.(taint_of_orig (Var { base = BThis; offset = [] })) in
-  Taint.Taint_set.singleton taint
+let this_taint_set () = whole_value_taint_set { Taint.base = BThis; offset = [] }
 
-let arg_taint_set index =
-  let arg = { Taint.name = "value"; index } in
-  let taint = Taint.(taint_of_orig (Var { base = BArg arg; offset = [] })) in
-  Taint.Taint_set.singleton taint
+let value_arg index = { Taint.name = "value"; index }
 
-let return_effect taint_set =
+let return_effect ((taints, shape) : Taint.taints * Shape.shape) =
   Effect.ToReturn
     {
-      data_taints = taint_set;
-      data_shape = Shape.Bot;
+      data_taints = taints;
+      data_shape = shape;
       several_results = false;
       control_taints = Taint.Taint_set.empty;
       return_tok = Tok.unsafe_fake_tok "builtin";
       guards = Effect_guard.top;
     }
 
-let to_lval_this taint_set =
+let to_lval_this_element ((taints, shape) : Taint.taints * Shape.shape) =
   Effect.ToLval
     {
-      taints = taint_set;
-      lval = { Taint.base = BThis; offset = [] };
+      taints;
+      shape;
+      lval = { Taint.base = BThis; offset = [ Oany ] };
       guards = Effect_guard.top;
     }
 
@@ -482,26 +503,35 @@ let add_method_signatures db method_names arity effects =
 (* Collection model signature builders *)
 
 (** Add signatures where an argument taints 'this' (e.g., put, add, append) *)
-let add_arg_taints_this_signatures db method_names arity ~taint_arg_index
-    ?(returns_this = false) () =
-  let to_lval = to_lval_this (arg_taint_set taint_arg_index) in
+let add_arg_taints_this_signatures db method_names arity
+    ~(stored : Taint.taints * Shape.shape) ?(returns_this = false) () =
+  let to_lval = to_lval_this_element stored in
   let effects =
     if returns_this then
       (* The return value is 'this' after being tainted by the arg. We include
        * both 'this' (for any pre-existing taint) and the arg (for the new taint)
        * because both effects are instantiated from the pre-call env, before
        * ToLval has a chance to update 'this'. *)
-      let ret_taints =
-        Taint.Taint_set.union (this_taint_set ()) (arg_taint_set taint_arg_index)
+      let stored_taints, stored_shape = stored in
+      let stored_element =
+        Shape.Obj
+          (Fields.singleton Taint.Oany
+             (Shape.Cell (`Tainted stored_taints, stored_shape)))
       in
-      Effects.of_list [ to_lval; return_effect ret_taints ]
+      Effects.of_list
+        [
+          to_lval;
+          return_effect (value_at Taint.Receiver []);
+          return_effect (Taint.Taint_set.empty, stored_element);
+        ]
     else Effects.singleton to_lval
   in
   add_method_signatures db method_names arity effects
 
 (** Add signatures where 'this' taints the return value (e.g., get, toString) *)
-let add_this_taints_return_signatures db method_names arity =
-  let effects = Effects.singleton (return_effect (this_taint_set ())) in
+let add_this_taints_return_signatures db method_names arity
+    (returned : Taint.taints * Shape.shape) =
+  let effects = Effects.singleton (return_effect returned) in
   add_method_signatures db method_names arity effects
 
 (** Add collection models to a builtin signature database *)
@@ -510,11 +540,25 @@ let add_collection_models db (lang : Lang.t) : builtin_signature_database =
   List.fold_left
     (fun acc_db coll_config ->
       match coll_config with
-      | Lang_config.ArgTaintsThis { methods; arity; taint_arg_index; returns_this } ->
-          add_arg_taints_this_signatures acc_db methods arity ~taint_arg_index
+      | Lang_config.ArgIsElement { methods; arity; taint_arg_index; returns_this } ->
+          add_arg_taints_this_signatures acc_db methods arity
+            ~stored:(value_at (Taint.Param (value_arg taint_arg_index)) [])
             ~returns_this ()
-      | Lang_config.ThisTaintsReturn { methods; arity } ->
-          add_this_taints_return_signatures acc_db methods arity)
+      | Lang_config.ArgElementsAreElements
+          { methods; arity; taint_arg_index; returns_this } ->
+          add_arg_taints_this_signatures acc_db methods arity
+            ~stored:(element_at (Taint.Param (value_arg taint_arg_index)) [])
+            ~returns_this ()
+      | Lang_config.ReturnsElement { methods; arity } ->
+          add_this_taints_return_signatures acc_db methods arity
+            (element_at Taint.Receiver [])
+      | Lang_config.ReturnsWholeValue { methods; arity } ->
+          add_this_taints_return_signatures acc_db methods arity
+            (this_taint_set (), Shape.Bot)
+      | Lang_config.ReturnsSameElements { methods; arity } ->
+          add_this_taints_return_signatures acc_db methods arity
+            (value_at Taint.Receiver [])
+      | Lang_config.ElementProperty _ -> acc_db)
     db config.collection_configs
 
 (** Create a builtin signature database with all built-in models (HOFs + collections) *)

@@ -498,18 +498,13 @@ let typescript : t = { default with
   package_directive_is_namespace = true;
 }
 
-let php_strip_field_sigil (field : string) : string =
-  if String.length field > 0 && field.[0] = '$'
-  then String.sub field 1 (String.length field - 1)
-  else field
-
 let namespace_decl_or_global (ast : G.program) : string option =
   Some (Option.value (extract_package_decl ast) ~default:"")
 
 let php : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
-  strip_field_sigil = php_strip_field_sigil;
+  strip_field_sigil = Lang.property_name_of_variable Lang.Php;
   ctor_param_promotion = true;
   (* PHP [namespace App\Svc;] parses to [Package]/[PackageEnd]. *)
   package_directive_is_namespace = true;

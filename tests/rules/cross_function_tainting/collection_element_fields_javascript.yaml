@@ -1,0 +1,13 @@
+rules:
+  - id: collection_element_fields_javascript
+    message: an element read back from a collection keeps the fields of the object that was added
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

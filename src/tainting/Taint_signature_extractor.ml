@@ -395,7 +395,7 @@ let extract_signature (taint_inst : TRI.t)
                 in
                 Effects.add (Effect.ToReturn filtered_return_info) acc
               else acc
-           | Effect.ToLval { taints; lval = _; guards = _ } ->
+           | Effect.ToLval { taints; shape; lval = _; guards = _ } ->
                (* Keep ToLval effects - they represent legitimate data flow patterns
                 * that become important when parameters receive real source taint *)
                let has_relevant_taint =
@@ -407,7 +407,8 @@ let extract_signature (taint_inst : TRI.t)
                         | Taint.Shape_var _ -> false
                         | Taint.Control -> true (* Real control taint *))
                in
-               if has_relevant_taint then Effects.add eff acc
+               if has_relevant_taint || Taint_shape.shape_has_relevant_content shape
+               then Effects.add eff acc
                else acc (* Skip only effects with no relevant taint *)
            | Effect.ToSinkInCall _ -> Effects.add eff acc)
          Effects.empty

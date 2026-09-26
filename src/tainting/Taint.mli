@@ -65,9 +65,10 @@ type offset =
 type call_loc = { file : string; line : int; col : int } [@@deriving eq, ord]
 
 (** A value supplied when a signature is applied: by the call for a
-    parameter, by the closure's environment for a captured variable, by
-    the function it calls for the result of calling a formal. *)
-type formal = Param of arg | Captured of IL.name | Result of call
+    parameter and for the receiver, by the closure's environment for a
+    captured variable, by the function it calls for the result of calling a
+    formal. *)
+type formal = Param of arg | Receiver | Captured of IL.name | Result of call
 
 and call = { callee : formal; callee_offset : offset list; loc : call_loc }
 (** A call, at [loc], of the function held at [callee_offset] in [callee]. *)

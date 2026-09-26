@@ -15,6 +15,7 @@ type call_effect =
   | ToReturn of Shape_and_sig.Effect.taints_to_return
   | ToLval of {
       taints : Taint.taints;
+      shape : Shape_and_sig.Shape.shape;
       var : IL.name;
       offset : Taint.offset list;
       guards : Effect_guard.t;
@@ -25,6 +26,7 @@ type call_effect =
     }
   | ToLvalThis of {
       taints : Taint.taints;
+      shape : Shape_and_sig.Shape.shape;
       offset : Taint.offset list;
       guards : Effect_guard.t;
           (** Field write on enclosing receiver; kept [BThis] so it composes

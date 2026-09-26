@@ -2,6 +2,9 @@
 
 open Shape_and_sig.Shape
 
+val shape_has_relevant_content : shape -> bool
+(** [true] iff [shape] holds a tainted cell, an [Arg] or a [Fun]. *)
+
 val taints_and_shape_are_relevant : Taint.taints -> shape -> bool
 (** [true] iff the union of [taints] and [gather_all_taints_in_shape shape]
  * is non-empty, or if [shape] contains a cleaned offset. *)

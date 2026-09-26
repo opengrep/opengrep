@@ -228,10 +228,7 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
              * 'o@i', the call `o.getX()` would have taints '{o@i, o@i.x}'
              * when it should only have taints '{o@i.x}'. *)
             Taints.empty
-         | _, Oany ->
-            (* Cannot handle this offset. *)
-            taints
-         | __any__, ((Ofld _ | Ostr _ | Oint _ | Oslice _) as o) ->
+         | __any__, ((Ofld _ | Ostr _ | Oint _ | Oslice _ | Oany) as o) ->
             (* Not a method call (to the best of our knowledge) or
              * an unresolved Java `getX` method. *)
              taints
@@ -843,6 +840,15 @@ let truncate_signature ~max_depth (s : Signature.t) : Signature.t =
 (* Find an offset *)
 (*********************************************************)
 
+let cell_read_of_find_result ?max ~lang res : cell option =
+  match res with
+  | `Found cell -> Some cell
+  | `Clean -> None
+  | `Not_found (taints, _shape, offset) ->
+      let taints = fix_poly_taint_with_offset ?max ~lang offset taints in
+      if Taints.is_empty taints then None
+      else Some (Cell (`Tainted taints, Bot))
+
 let rec find_in_cell_w_carry ?max ~lang ~taints offset cell =
   let (Cell (xtaint, shape)) = cell in
   match offset with
@@ -893,13 +899,14 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
           match
             Fields.fold
               (fun _ cell acc ->
-                match (acc, find_in_cell_w_carry ?max ~lang ~taints offset cell) with
-                | None, (`Not_found _ | `Clean) -> None
-                | Some cell, (`Not_found _ | `Clean)
-                | None, `Found cell ->
-                    Some cell
-                | Some cell1, `Found cell2 ->
-                    Some (unify_cell ~lang cell1 cell2))
+                match
+                  ( acc,
+                    cell_read_of_find_result ?max ~lang
+                      (find_in_cell_w_carry ?max ~lang ~taints offset cell) )
+                with
+                | acc, None -> acc
+                | None, (Some _ as found) -> found
+                | Some cell1, Some cell2 -> Some (unify_cell ~lang cell1 cell2))
               obj None
           with
           | None -> not_found
@@ -931,13 +938,14 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
                 | None -> acc
                 | Some recur_offset -> (
                     match
-                      (acc, find_in_cell_w_carry ?max ~lang ~taints recur_offset cell)
+                      ( acc,
+                        cell_read_of_find_result ?max ~lang
+                          (find_in_cell_w_carry ?max ~lang ~taints recur_offset
+                             cell) )
                     with
-                    | None, (`Not_found _ | `Clean) -> None
-                    | Some cell, (`Not_found _ | `Clean)
-                    | None, `Found cell ->
-                        Some cell
-                    | Some c1, `Found c2 -> Some (unify_cell ~lang c1 c2)))
+                    | acc, None -> acc
+                    | None, (Some _ as found) -> found
+                    | Some c1, Some c2 -> Some (unify_cell ~lang c1 c2)))
               obj None
           with
           | None -> not_found

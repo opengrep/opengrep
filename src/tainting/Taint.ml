@@ -115,6 +115,7 @@ type call_loc = { file : string; line : int; col : int } [@@deriving eq, ord]
 
 type formal =
   | Param of arg
+  | Receiver
   | Captured of
       (IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
   | Result of call
@@ -155,6 +156,7 @@ let show_offset_list offset =
 
 let rec show_formal = function
   | Param arg -> show_arg arg
+  | Receiver -> "this"
   | Captured name -> "env(" ^ fst name.ident ^ ")"
   | Result call -> show_call call
 
@@ -264,6 +266,7 @@ let lval_of_arg arg = { base = BArg arg; offset = [] }
 
 let base_of_formal = function
   | Param arg -> BArg arg
+  | Receiver -> BThis
   | Captured name -> BEnv name
   | Result call -> BCall call
 

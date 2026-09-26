@@ -1,0 +1,13 @@
+rules:
+  - id: lua_call_results
+    message: a call gives one value for each target, in the order of its results
+    languages:
+      - lua
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -54,27 +54,52 @@ let deoptionalize l =
   in
   deopt [] l
 
-let mk_vars xs ys =
-  let rec aux xs ys =
-    match (xs, ys) with
-    | [], [] -> []
-    | x :: xs, [] -> (x, G.VarDef G.empty_var) :: aux xs ys
-    | x :: xs, y :: ys ->
-        (x, G.VarDef { G.vinit = Some y; vtype = None; vtok = G.no_sc })
-        :: aux xs ys
-    | [], _y :: _ys -> []
+(* Lua adjusts a list of expressions to its targets: every expression gives
+ * one value, except a call in last position, which gives the values of the
+ * targets left, in order (reference manual 3.4.12). Each target group is its
+ * first target and the targets after it. *)
+let adjust_to_targets targets (exprs : G.expr list) =
+  let rec aux targets exprs =
+    match (targets, exprs) with
+    | [], _ -> []
+    | _ :: _, [] -> List_.map (fun target -> ((target, []), None)) targets
+    | first :: rest, [ ({ G.e = G.Call _; _ } as e) ] ->
+        [ ((first, rest), Some e) ]
+    | first :: rest, e :: exprs -> ((first, []), Some e) :: aux rest exprs
   in
-  aux xs ys
+  aux targets exprs
 
-let mk_assigns xs ys equal =
-  let rec aux xs ys =
-    match (xs, ys) with
-    | [], [] -> []
-    | _x :: _xs, [] -> []
-    | x :: xs, y :: ys -> (G.Assign (x, equal, y) |> G.e) :: aux xs ys
-    | [], _y :: _ys -> []
+let mk_vars (entities : G.entity list) (exprs : G.expr list) : G.definition list
+    =
+  let pattern_of_entity (entity : G.entity) : G.pattern option =
+    match entity.name with
+    | G.EN (G.Id (id, id_info)) -> Some (G.PatId (id, id_info))
+    | _ -> None
   in
-  aux xs ys
+  adjust_to_targets entities exprs
+  |> List_.map (fun (((first : G.entity), rest), init) ->
+         let var =
+           match init with
+           | None -> G.empty_var
+           | Some e -> { G.vinit = Some e; vtype = None; vtok = G.no_sc }
+         in
+         match rest with
+         | [] -> (first, G.VarDef var)
+         | _ :: _ ->
+             let pats = List.filter_map pattern_of_entity (first :: rest) in
+             ( { first with name = G.EPattern (G.PatTuple (fb pats)) },
+               G.VarDef var ))
+
+let mk_assigns (lvals : G.expr list) (exprs : G.expr list) (equal : G.tok) :
+    G.expr list =
+  adjust_to_targets lvals exprs
+  |> List.filter_map (fun ((first, rest), init) ->
+         match (init, rest) with
+         | None, _ -> None
+         | Some e, [] -> Some (G.Assign (first, equal, e) |> G.e)
+         | Some e, _ :: _ ->
+             let lhs = G.Container (G.Tuple, fb (first :: rest)) |> G.e in
+             Some (G.Assign (lhs, equal, e) |> G.e))
 
 let identifier (env : env) (tok : CST.identifier) : G.ident = str env tok
 
@@ -211,8 +236,9 @@ let rec map_expression_list (env : env)
 
 and map_expression_tuple (env : env)
     ((v1, v2) : CST.anon_exp_rep_COMMA_exp_0bb260c) : G.expr =
-  let v1 = map_expression_list env (v1, v2) in
-  G.Container (G.Tuple, Tok.unsafe_fake_bracket v1) |> G.e
+  match map_expression_list env (v1, v2) with
+  | [ e ] -> e
+  | es -> G.Container (G.Tuple, Tok.unsafe_fake_bracket es) |> G.e
 
 and map_anon_arguments (env : env)
     ((v1, v2) : CST.anon_exp_rep_COMMA_exp_0bb260c) : G.argument list =

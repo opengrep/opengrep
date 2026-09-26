@@ -1,0 +1,13 @@
+rules:
+  - id: promoted_property_php
+    message: a promoted constructor parameter is the property of that name, which a second method reads
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

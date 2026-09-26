@@ -1,5 +1,5 @@
 function redirectToBoard(bsn) {
 //ruleid: test
-    redirect_to({ id: bsn }.values);
+    redirect_to(Object.values({ id: bsn }));
 
 }

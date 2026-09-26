@@ -133,6 +133,10 @@ val is_js : t -> bool
 val is_c_cpp : t -> bool
 
 val is_caseless : t -> bool
+
+(* The property a variable of that name declares: PHP and Hack write the
+ * variable '$x' and the member access '$this->x'. *)
+val property_name_of_variable : t -> string -> string
 val lang_map : (string, t) Hashtbl.t
 
 (* Association from a valid name for a language to its unique internal ID. *)

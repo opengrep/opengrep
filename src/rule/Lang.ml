@@ -104,6 +104,14 @@ let is_caseless lang =
   | Vb -> true
   | _ -> false
 
+let property_name_of_variable (lang : t) (name : string) : string =
+  match lang with
+  | Php
+  | Hack
+    when String.starts_with ~prefix:"$" name ->
+      String.sub name 1 (String.length name - 1)
+  | _ -> name
+
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)

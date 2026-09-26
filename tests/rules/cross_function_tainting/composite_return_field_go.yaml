@@ -1,0 +1,13 @@
+rules:
+  - id: composite_return_field_go
+    message: a read of one field of a returned struct carries only that field's taint
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

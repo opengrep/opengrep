@@ -1,0 +1,13 @@
+rules:
+  - id: composite_return_field_java
+    message: a read of one field of a returned array or object carries only that field's taint
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

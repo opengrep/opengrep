@@ -1477,16 +1477,10 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
        * interpolated strings, but we do not have an use for it yet during
        * semantic analysis, so in the IL we just unwrap the expression. *)
       expr env e
-  | G.New (tok, ty, _cons_id_info, args) ->
-      (* HACK: Fall-through case where we don't know to what variable the allocated
-       * object is being assigned to. See HACK(new), we expect to intercept `New`
-       * already in 'stmt_aux'.
-       *)
-      let lval = fresh_lval env tok in
-      let ss_args, args = arguments env (Tok.unbracket args) in
-      let ss_ty, t = type_ env ty in
-      let instr = mk_s (Instr (mk_i (New (lval, t, None, args)) eorig)) in
-      (ss_args @ ss_ty @ [instr], mk_e (Fetch lval) NoOrig)
+  | G.New (tok, ty, cons_id_info, args) ->
+      let obj = fresh_var env tok in
+      let lval, ss = class_construction env obj g_expr ty cons_id_info args in
+      (ss, mk_e (Fetch lval) NoOrig)
   | G.Call ({ e = G.IdSpecial spec; _ }, args) -> (
       let tok = snd spec in
       let ss_args, args = arguments env (Tok.unbracket args) in
@@ -4405,7 +4399,14 @@ and stmt_aux env st : stmts =
 
 and for_each env tok (pat, tok2, e) st : stmts =
   let cont_label_s, break_label_s, st_env = break_continue_labels env tok in
-  let ss, e' = expr env e in
+  let iterated =
+    match e.G.e with
+    | G.Call ({ e = G.IdSpecial (G.ForOf, _); _ }, (_, [ G.Arg iterable ], _))
+      ->
+        iterable
+    | _ -> e
+  in
+  let ss, e' = expr env iterated in
   let st = stmt st_env st in
   let next_lval = fresh_lval env tok2 in
   let hasnext_lval = fresh_lval env tok2 in
@@ -4719,6 +4720,32 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
                  { pname = block; pdefault = None; by_reference = false; ptype = None } ])
   else None
 
+(* A constructor parameter with a visibility or readonly modifier declares the
+ * property of its name and assigns it the argument before the body runs. *)
+and promoted_property_assignments env (params : G.parameters) : stmts =
+  let promotes (attr : G.attribute) : bool =
+    match attr with
+    | G.KeywordAttr ((G.Public | G.Private | G.Protected | G.Const), _) -> true
+    | _ -> false
+  in
+  Tok.unbracket params
+  |> List.filter_map (function
+       | G.Param { pname = Some ((s, tok) as id); pinfo; pattrs; _ }
+         when List.exists promotes pattrs ->
+           let property = Lang.property_name_of_variable env.lang s in
+           let field = var_of_id_info (property, tok) (G.empty_id_info ()) in
+           let this_field =
+             {
+               base = VarSpecial (This, tok);
+               rev_offset = [ { o = Dot field; oorig = NoOrig } ];
+             }
+           in
+           let argument =
+             mk_e (Fetch (lval_of_base (Var (var_of_id_info id pinfo)))) NoOrig
+           in
+           Some (mk_s (Instr (mk_i (Assign (this_field, argument)) NoOrig)))
+       | _ -> None)
+
 and function_definition env fdef : function_definition =
   let fparams = parameters env fdef.G.fparams in
   let fparams, env =
@@ -4752,7 +4779,11 @@ and function_definition env fdef : function_definition =
    * falsely match enclosing-sink ranges via
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
-  let fbody = rec_point_label_stmts @ fbody in
+  let fbody =
+    rec_point_label_stmts
+    @ promoted_property_assignments env fdef.G.fparams
+    @ fbody
+  in
   let fcaptures =
     {
       cdefault = fdef.fcaptures.cdefault;

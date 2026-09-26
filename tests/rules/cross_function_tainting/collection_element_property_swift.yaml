@@ -1,0 +1,13 @@
+rules:
+  - id: collection_element_property_swift
+    message: first and last read an element of an array, which keeps its own taint and fields
+    languages:
+      - swift
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

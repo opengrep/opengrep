@@ -354,20 +354,20 @@ let record_effects env new_effects =
 
 (* Field write on the enclosing receiver: record [BThis] so it composes
    into this function's signature. *)
-let record_this_field_write env taints offset guards =
+let record_this_field_write env taints shape offset guards =
   record_effects env
     [ Effect.ToLval
-        { taints; lval = { base = Taint.BThis; offset }; guards } ]
+        { taints; shape; lval = { base = Taint.BThis; offset }; guards } ]
 
 (* Also reflect a this-field write in the local [lval_env], mirroring the
    sibling [ToLval] arm, so a later read of the same field in THIS function
    sees it. [this.x…] normalizes to the field [x] as a var (see
    [normalize_lval]); not representable when the offset does not start with a
    field (an index/slice base), in which case the env is unchanged. *)
-let add_this_field_to_lval_env env lval_env offset taints =
+let add_this_field_to_lval_env env lval_env offset taints shape =
   match offset with
   | T.Ofld field :: rest ->
-      Lval_env.add env.taint_inst.lang field rest taints lval_env
+      Lval_env.add_shape env.taint_inst.lang field rest taints shape lval_env
   | _ -> lval_env
 
 (* Own formal parameters are bound in the sig being computed; anything
@@ -1212,6 +1212,12 @@ let check_orig_if_sink env ?filter_sinks orig taints shape =
   let effects = effects_of_tainted_sinks env taints sinks in
   record_effects env effects
 
+let reads_element_property env (lval : IL.lval) : bool =
+  match lval.rev_offset with
+  | { o = Dot field; _ } :: _ ->
+      Lang_config.is_element_property env.taint_inst.lang (fst field.ident)
+  | _ -> false
+
 let fix_poly_taint_with_field lang lval xtaint =
   match xtaint with
   | `Sanitized
@@ -1582,6 +1588,18 @@ and check_tainted_lval_aux env (lval : IL.lval) :
         | `Sanitized ->
             (* See NOTE [lval/sanitized] *)
             (`Sanitized, S.Bot)
+        | (`Clean | `None | `Tainted _) as sub_xtaint when reads_element_property env lval
+          -> (
+            match
+              Shape.find_in_shape_poly
+                ~max:(Shape.max_poly_offset env.taint_inst.lang)
+                ~lang:env.taint_inst.lang
+                ~taints:(Xtaint.to_taints sub_xtaint)
+                [ T.Oany ] sub_shape
+            with
+            | Some (taints, shape) ->
+                ((Xtaint.of_taints taints :> Xtaint.t_or_sanitized), shape)
+            | None -> (`Clean, S.Bot))
         | (`Clean | `None | `Tainted _) as sub_xtaint ->
             let xtaint', shape =
               (* THINK: Should we just use 'Sig.find_in_shape' directly here ?
@@ -1678,9 +1696,10 @@ and check_tainted_lval_offset env offset =
       (* THINK: Allow fields to be taint sources, sanitizers, or sinks ??? *)
       (Taints.empty, env.lval_env)
   | Index e ->
-      let taints, _shape, lval_env = check_tainted_expr env e in
+      let taints, shape, lval_env = check_tainted_expr env e in
       let taints =
-        if propagate_through_indexes env then taints
+        if propagate_through_indexes env then
+          taints |> add_taints_from_shape shape
         else (* Taints from the index should be ignored. *)
           Taints.empty
       in
@@ -1707,14 +1726,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
         let taints_and_shapes, lval_env = map_check_expr env check es in
         let tuple_shape = Shape.tuple_like_obj taints_and_shapes in
-        let all_taints =
-          taints_and_shapes
-          |> List.fold_left
-               (fun acc (taints, shape) ->
-                 acc |> Taints.union taints |> add_taints_from_shape shape)
-               Taints.empty
-        in
-        (all_taints, tuple_shape, lval_env)
+        (Taints.empty, tuple_shape, lval_env)
     | Composite ((CSet | Constructor _ | Regexp), (_, es, _)) ->
         let taints, lval_env = union_map_taints_and_vars env check es in
         (taints, S.Bot, lval_env)
@@ -1800,18 +1812,19 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                      let e_taints, e_shape, lval_env =
                        check { env with lval_env } e
                      in
-                     let taints_acc =
-                       taints_acc |> Taints.union e_taints
-                       |> add_taints_from_shape e_shape
-                     in
                      ((lval_env, taints_acc), `Field (id, e_taints, e_shape))
                  | Spread e ->
                      let e_taints, e_shape, lval_env =
                        check { env with lval_env } e
                      in
+                     let taints_acc = taints_acc |> Taints.union e_taints in
                      let taints_acc =
-                       taints_acc |> Taints.union e_taints
-                       |> add_taints_from_shape e_shape
+                       match e_shape with
+                       | S.Obj _ -> taints_acc
+                       | S.Bot
+                       | S.Arg _
+                       | S.Fun _ ->
+                           taints_acc |> add_taints_from_shape e_shape
                      in
                      ((lval_env, taints_acc), `Spread e_shape)
                  | Entry (ke, ve) ->
@@ -1824,12 +1837,6 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                      in
                      let ve_taints, ve_shape, lval_env =
                        check { env with lval_env } ve
-                     in
-                     let taints_acc =
-                       taints_acc
-                       |> Taints.union
-                            ve_taints (* ← Now includes value taints! *)
-                       |> add_taints_from_shape ve_shape
                      in
                      ((lval_env, taints_acc), `Entry (ke, ve_taints, ve_shape)))
                (env.lval_env, Taints.empty)
@@ -2053,11 +2060,12 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               ( Taints.union taints taints_acc,
                 Shape.unify_shape ~lang:env.taint_inst.lang shape shape_acc,
                 Lval_env.add_control_taints lval_env control_taints )
-          | ToLval { taints; var; offset; guards } ->
+          | ToLval { taints; shape; var; offset; guards } ->
               if not (is_own_param env var) then
                 record_effects env
                   [ Effect.ToLval
                       { taints;
+                        shape;
                         lval = { base = base_of_free_var env var; offset };
                         guards } ];
               (* As in the main [ToLval] arm: the written taints carry the
@@ -2071,16 +2079,17 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               ( taints_acc,
                 shape_acc,
                 lval_env
-                |> Lval_env.add_written_through env.taint_inst.lang var offset taints )
-          | ToLvalThis { taints; offset; guards } ->
+                |> Lval_env.add_written_through env.taint_inst.lang var offset
+                     taints shape )
+          | ToLvalThis { taints; shape; offset; guards } ->
               let guards = Effect_guard.compose_and rebound_guards guards in
-              record_this_field_write env taints offset guards;
+              record_this_field_write env taints shape offset guards;
               (* Mirror the sibling [ToLval] arm: conjoin the guard, then also
                  reflect the write in the local [lval_env]. *)
               let taints = Taints.conjoin_guard guards taints in
               ( taints_acc,
                 shape_acc,
-                add_this_field_to_lval_env env lval_env offset taints )
+                add_this_field_to_lval_env env lval_env offset taints shape )
           | ToSinkInCall
               {
                 callee;
@@ -2339,11 +2348,12 @@ let check_function_call env fun_exp args
                    ( Xtaint.to_taints xtaint,
                      shape,
                      Lval_env.add_control_taints lval_env control_taints )
-               | ToLval { taints; var; offset; guards } ->
+               | ToLval { taints; shape; var; offset; guards } ->
                    if not (is_own_param env var) then
                      record_effects env
                        [ Effect.ToLval
                            { taints;
+                             shape;
                              lval = { base = base_of_free_var env var; offset };
                              guards } ];
                    (* The written taints carry the (possibly deferred) guard
@@ -2354,14 +2364,14 @@ let check_function_call env fun_exp args
                      shape_acc,
                      lval_env
                      |> Lval_env.add_written_through env.taint_inst.lang var offset
-                          taints )
-               | ToLvalThis { taints; offset; guards } ->
-                   record_this_field_write env taints offset guards;
+                          taints shape )
+               | ToLvalThis { taints; shape; offset; guards } ->
+                   record_this_field_write env taints shape offset guards;
                    (* Mirror the sibling [ToLval] arm's local write. *)
                    let taints = Taints.conjoin_guard guards taints in
                    ( taints_acc,
                      shape_acc,
-                     add_this_field_to_lval_env env lval_env offset taints )
+                     add_this_field_to_lval_env env lval_env offset taints shape )
                | ToSinkInCall
                    {
                      callee;
@@ -2548,20 +2558,21 @@ let call_with_intrafile lval_opt e env args instr =
                                Shape.unify_shape ~lang:env.taint_inst.lang
                                  data_shape shape_acc,
                                lval_env)
-                          | ToLval { taints; var = lval_name; offset; _ } ->
+                          | ToLval { taints; shape; var = lval_name; offset; _ } ->
                               let lval_env =
-                                Lval_env.add env.taint_inst.lang lval_name
-                                  offset taints lval_env
+                                Lval_env.add_shape env.taint_inst.lang lval_name
+                                  offset taints shape lval_env
                               in
                               (taints_acc, shape_acc, lval_env)
-                          | ToLvalThis { taints; offset; guards } ->
-                              record_this_field_write env taints offset guards;
+                          | ToLvalThis { taints; shape; offset; guards } ->
+                              record_this_field_write env taints shape offset
+                                guards;
                               (* Mirror the sibling [ToLval] arm's local write
                                  (no guard conjoin here, as in the sibling). *)
                               ( taints_acc,
                                 shape_acc,
                                 add_this_field_to_lval_env env lval_env offset
-                                  taints )
+                                  taints shape )
                           | ToSinkInCall
                               {
                                 callee;
@@ -2856,7 +2867,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
            match lval.base with
            | VarSpecial (Self, _)
            | VarSpecial (This, _)
-             when not (Taints.is_empty taints) ->
+             when Shape.taints_and_shape_are_relevant taints shape ->
                let offset =
                  T.offset_of_rev_IL_offset env.taint_inst.lang
                    ~rev_offset:lval.rev_offset
@@ -2867,6 +2878,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                    Effect.ToLval
                      {
                        taints;
+                       shape;
                        lval = taint_lval;
                        guards = Effect_guard.top;
                      };
@@ -3017,6 +3029,22 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
           check_function_call_arguments env args
         in
         new_without_signature env args_taints all_args_taints lval_env
+    | CallSpecial (_, (IL.ForeachNext, _), ([ _ ] as args)) -> (
+        let args_taints, _all_args_taints, lval_env =
+          check_function_call_arguments env args
+        in
+        match args_taints with
+        | [ (IL.Unnamed (taints, shape) | IL.Named (_, (taints, shape))) ]
+          when not env.taint_inst.options.taint_only_propagate_through_assignments
+          -> (
+            match
+              Shape.find_in_shape_poly
+                ~max:(Shape.max_poly_offset env.taint_inst.lang)
+                ~lang:env.taint_inst.lang ~taints [ T.Oany ] shape
+            with
+            | Some (taints, shape) -> (taints, shape, lval_env)
+            | None -> (Taints.empty, Bot, lval_env))
+        | _ -> (Taints.empty, Bot, lval_env))
     | CallSpecial (_, (op, _), args) ->
         let args_taints, all_args_taints, lval_env =
           check_function_call_arguments env args
@@ -3115,6 +3143,7 @@ let vars_shared_with_closures (effects : Effects.t) : IL.NameSet.t =
     (fun eff acc ->
       match eff with
       | Effect.ToReturn { data_shape; _ } -> of_shape acc data_shape
+      | Effect.ToLval { shape; _ } -> of_shape acc shape
       | Effect.ToSinkInCall { args_taints; _ } ->
           List.fold_left
             (fun acc -> function
@@ -3122,9 +3151,7 @@ let vars_shared_with_closures (effects : Effects.t) : IL.NameSet.t =
               | IL.Named (_, (_, shape)) ->
                   of_shape acc shape)
             acc args_taints
-      | Effect.ToSink _
-      | Effect.ToLval _ ->
-          acc)
+      | Effect.ToSink _ -> acc)
     effects IL.NameSet.empty
 
 (* A write to a variable declared inside the function cannot be observed
@@ -3142,6 +3169,20 @@ let drop_writes_to_own_vars (fun_cfg : IL.fun_cfg) (effects : Effects.t) :
                (not (IL_helpers.declared_in_range range var))
                || IL.NameSet.mem var shared
            | _ -> true)
+
+let vars_read_or_written ~(keep_read : IL.lval -> IL.name -> bool)
+    (node : IL.node) : IL.name list =
+  let written =
+    match node.n with
+    | NInstr instr -> Option.to_list (LV.lvar_of_instr_opt instr)
+    | _ -> []
+  in
+  LV.rlvals_of_node node.n
+  |> List.filter_map (fun (lval : IL.lval) ->
+         match lval.base with
+         | Var name when keep_read lval name -> Some name
+         | _ -> None)
+  |> List.rev_append written
 
 let captured_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
   match fun_cfg.source_range with
@@ -3169,13 +3210,11 @@ let captured_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
              LV.reachable_nodes cfg
              |> Seq.fold_left
                   (fun acc (node : IL.node) ->
-                    LV.rlvals_of_node node.n
+                    vars_read_or_written ~keep_read:(fun _ _ -> true) node
                     |> List.fold_left
-                         (fun acc (lval : IL.lval) ->
-                           match lval.base with
-                           | Var name when is_captured name ->
-                               IL.NameSet.add name acc
-                           | _ -> acc)
+                         (fun acc (name : IL.name) ->
+                           if is_captured name then IL.NameSet.add name acc
+                           else acc)
                          acc)
                   acc)
            IL.NameSet.empty
@@ -3239,13 +3278,11 @@ let global_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
   LV.reachable_nodes fun_cfg
   |> Seq.fold_left
        (fun acc (node : IL.node) ->
-         let written, callee =
+         let callee =
            match node.n with
-           | NInstr ({ i = Call (_, { e = Fetch callee; _ }, _); _ } as instr)
-             ->
-               (Option.to_list (LV.lvar_of_instr_opt instr), Some callee)
-           | NInstr instr -> (Option.to_list (LV.lvar_of_instr_opt instr), None)
-           | _ -> ([], None)
+           | NInstr { i = Call (_, { e = Fetch callee; _ }, _); _ } ->
+               Some callee
+           | _ -> None
          in
          let is_callee (lval : IL.lval) =
            match callee with
@@ -3255,13 +3292,10 @@ let global_vars (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
            | None ->
                false
          in
-         LV.rlvals_of_node node.n
-         |> List.filter_map (fun (lval : IL.lval) ->
-                match lval.base with
-                | Var name when (not (is_callee lval)) && may_vary name ->
-                    Some name
-                | _ -> None)
-         |> List.rev_append written
+         vars_read_or_written
+           ~keep_read:(fun (lval : IL.lval) (name : IL.name) ->
+             (not (is_callee lval)) && may_vary name)
+           node
          |> List.fold_left add_if_global acc)
        IL.NameSet.empty
 
@@ -3408,6 +3442,7 @@ let arg_updates_of_var ~(lang : Lang.t) ~(keep : T.lval -> bool) enter_env
                      (Effect.ToLval
                         {
                           taints = new_taints;
+                          shape = Bot;
                           lval;
                           (* The write may have happened under a branch
                            * guard; recover it from the guards the
@@ -3450,6 +3485,7 @@ let rec shape_has_closure_env (shape : S.shape) : bool =
 let effect_has_closure_env (eff : Effect.t) : bool =
   match eff with
   | Effect.ToReturn { data_shape; _ } -> shape_has_closure_env data_shape
+  | Effect.ToLval { shape; _ } -> shape_has_closure_env shape
   | Effect.ToSinkInCall { args_taints; _ } ->
       List.exists
         (function
@@ -3457,9 +3493,7 @@ let effect_has_closure_env (eff : Effect.t) : bool =
           | IL.Named (_, (_, shape)) ->
               shape_has_closure_env shape)
         args_taints
-  | Effect.ToSink _
-  | Effect.ToLval _ ->
-      false
+  | Effect.ToSink _ -> false
 
 (* A closure that leaves the function refers to the function's variables
  * through its environment. A parameter becomes the parameter as the
@@ -3554,10 +3588,13 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
     |> Effects.map (function
          | Effect.ToReturn ret ->
              Effect.ToReturn { ret with data_shape = convert_shape ret.data_shape }
+         | Effect.ToLval lval_write ->
+             Effect.ToLval
+               { lval_write with shape = convert_shape lval_write.shape }
          | Effect.ToSinkInCall call ->
              Effect.ToSinkInCall
                { call with args_taints = List_.map convert_arg call.args_taints }
-         | (Effect.ToSink _ | Effect.ToLval _) as eff -> eff)
+         | Effect.ToSink _ as eff -> eff)
   in
   let escaped_values =
     IL.NameSet.elements !escaped
@@ -3573,6 +3610,7 @@ let convert_escaping_closures ~(fun_cfg : IL.fun_cfg)
                           (Effect.ToLval
                              {
                                taints;
+                               shape = Bot;
                                lval = { base = BGlob v; offset };
                                guards = Effect_guard.top;
                              })))
