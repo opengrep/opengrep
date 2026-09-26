@@ -1869,7 +1869,9 @@ and map_lambda_capture env = function
       let _v1 = map_tok env v1 in
       Left G.Capture_by_reference
   | CaptureOther v1 ->
-      let capture cmode cname cinit = Some { G.cmode; cname; cinit } in
+      let capture cmode cname cinit =
+        Some { G.cmode; cname; cinit; cattrs = [] }
+      in
       Right
         (match (map_expr env v1).G.e with
         | G.N (G.Id (id, id_info)) -> capture G.Capture_by_value (id, id_info) None

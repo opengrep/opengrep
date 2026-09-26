@@ -304,7 +304,9 @@ and expr e =
       let t = mk_array (v3 + List.length v2) in
       match v4 with
       | None -> G.New (v0, t, G.empty_id_info (), fb v2)
-      | Some e -> G.New (v0, t, G.empty_id_info (), fb (G.Arg e :: v2)))
+      | Some e ->
+          let init = H.array_initializer_argument v0 e in
+          G.New (v0, t, G.empty_id_info (), fb (v2 @ [ init ])))
   (* x.new Y(...) {...}; we keep the qualifier and a real 'new' subexpression
    * so the construction itself stays structured and analyzable. *)
   | NewQualifiedClass (v0, _tok1, tok2, v2, v3, v4) ->
@@ -883,7 +885,7 @@ let partial = function
       let v1 = catch v1 in
       G.PartialCatch v1
 
-let any = function
+let pattern_any = function
   | AMod v1 ->
       let v1 = modifier v1 in
       G.At v1
@@ -923,3 +925,25 @@ let any = function
   | AProgram v1 ->
       let v1 = program v1 in
       G.Pr v1
+
+(* A pattern written without a return type matches methods and
+ * constructors alike, so a pattern carries no [Ctor]. *)
+let any (x : Ast_java.any) : G.any =
+  let visitor =
+    object
+      inherit [_] G.map as super
+
+      method! visit_entity env ent =
+        let ent = super#visit_entity env ent in
+        {
+          ent with
+          G.attrs =
+            List.filter
+              (function
+                | G.KeywordAttr (G.Ctor, _) -> false
+                | _ -> true)
+              ent.G.attrs;
+        }
+    end
+  in
+  visitor#visit_any () (pattern_any x)

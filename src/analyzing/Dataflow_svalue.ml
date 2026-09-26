@@ -134,8 +134,10 @@ let rec is_symbolic_expr expr =
   | G.Call (e, (_, args, _)) ->
       is_symbolic_expr e && List.for_all is_symbolic_arg args
   | G.New (_, _, _, args) ->
-      let args = Tok.unbracket args in
+      let args, init = H.construction_arguments (Tok.unbracket args) in
       List.for_all is_symbolic_arg args
+      && List.for_all is_symbolic_expr
+           (Option.fold ~none:[] ~some:H.exprs_of_construction_initializer init)
   | G.Record (_, fields, _) -> List.for_all is_symbolic_field fields
   (* Sequence containers: allow propagation of literal list/tuple/array/set
    * expressions as symbolic values. Clojure's calling convention wraps every

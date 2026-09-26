@@ -1481,6 +1481,18 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let obj = fresh_var env tok in
       let lval, ss = class_construction env obj g_expr ty cons_id_info args in
       (ss, mk_e (Fetch lval) NoOrig)
+  | G.Call (callee, (l, args, r))
+    when Option.is_some (snd (H.construction_arguments args)) ->
+      let lval = fresh_lval env l in
+      let ss =
+        initialised_construction env lval g_expr args
+          (fun (args : G.argument list) ->
+            let ss, e =
+              expr env { g_expr with e = G.Call (callee, (l, args, r)) }
+            in
+            ss @ [ mk_s (Instr (mk_i (Assign (lval, e)) eorig)) ])
+      in
+      (ss, mk_e (Fetch lval) NoOrig)
   | G.Call ({ e = G.IdSpecial spec; _ }, args) -> (
       let tok = snd spec in
       let ss_args, args = arguments env (Tok.unbracket args) in
@@ -2489,60 +2501,6 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.OtherExpr (("PipelineCall", _tk), [ G.E inner ])
     when env.lang =*= Lang.Elixir || env.lang =*= Lang.Php ->
       expr env inner
-  (* [new T(args) { X = v, ... }]: the construction, then a field write per
-   * [X = v] entry; other entries (a collection's elements) are passed to the
-   * construction as arguments. *)
-  | G.OtherExpr (("ObjectInitializer", tok), G.E construction :: entries) ->
-      let field_init (entry : G.any) : (G.ident * G.expr) option =
-        match entry with
-        | G.E
-            {
-              e =
-                ( G.AssignOp ({ e = G.N (G.Id (id, _)); _ }, _, v)
-                | G.Assign ({ e = G.N (G.Id (id, _)); _ }, _, v) );
-              _;
-            } ->
-            Some (id, v)
-        | _ -> None
-      in
-      let field_inits = List.filter_map field_init entries in
-      let elements =
-        entries
-        |> List.filter_map (fun (entry : G.any) ->
-               match (field_init entry, entry) with
-               | None, G.E e -> Some (G.Arg e)
-               | _ -> None)
-      in
-      let construction =
-        match (elements, construction.e) with
-        | [], _ -> construction
-        | _, G.New (t, ty, info, (l, args, r)) ->
-            { construction with e = G.New (t, ty, info, (l, args @ elements, r)) }
-        | _, G.Call (f, (l, args, r)) ->
-            { construction with e = G.Call (f, (l, args @ elements, r)) }
-        | _ -> construction
-      in
-      let ss_obj, obj = expr env construction in
-      let lval = fresh_lval env tok in
-      let assign_obj = mk_s (Instr (mk_i (Assign (lval, obj)) eorig)) in
-      let ss_fields =
-        field_inits
-        |> List.concat_map (fun ((id : G.ident), (v : G.expr)) ->
-               let ss_v, v = expr env v in
-               let field : name =
-                 {
-                   ident = id;
-                   sid = G.SId.unsafe_default;
-                   id_info = G.empty_id_info ();
-                 }
-               in
-               let field_lval =
-                 { lval with rev_offset = [ { o = Dot field; oorig = NoOrig } ] }
-               in
-               ss_v
-               @ [ mk_s (Instr (mk_i (Assign (field_lval, v)) (related_tok (snd id)))) ])
-      in
-      (ss_obj @ [ assign_obj ] @ ss_fields, mk_e (Fetch lval) NoOrig)
   (* The idea here is that this is like a block, and we only
    * really care about the last expression. *)
   (* TODO: What if a statement creeps in? E.g. an If, `fn`..?
@@ -4060,26 +4018,83 @@ and class_construction env obj origin_exp ty cons_id_info args :
      analysis knows that the reciever when calling `T` is the variable
      `obj`. It's kinda hacky but works for now. *)
   let lval = lval_of_base (Var obj) in
-  let ss1, args' = arguments env (Tok.unbracket args) in
-  let opt_cons =
-    let* cons = mk_class_constructor_name ty cons_id_info in
-    let cons' = var_of_name cons in
-    let cons_exp =
-      mk_e
-        (Fetch { lval with rev_offset = [ { o = Dot cons'; oorig = NoOrig } ] })
-        (SameAs (G.N cons |> G.e))
-      (* THINK: ^^^^^ We need to construct a `SameAs` eorig here because Pro
-       * looks at the eorig, but maybe it shouldn't? *)
+  let construct (args : G.argument list) : stmts =
+    let ss1, args' = arguments env args in
+    let opt_cons =
+      let* cons = mk_class_constructor_name ty cons_id_info in
+      let cons' = var_of_name cons in
+      let cons_exp =
+        mk_e
+          (Fetch
+             { lval with rev_offset = [ { o = Dot cons'; oorig = NoOrig } ] })
+          (SameAs (G.N cons |> G.e))
+        (* THINK: ^^^^^ We need to construct a `SameAs` eorig here because Pro
+         * looks at the eorig, but maybe it shouldn't? *)
+      in
+      Some cons_exp
     in
-    Some cons_exp
-  in
-  let ss2, ty = type_ env ty in
-  ( lval,
+    let ss2, ty = type_ env ty in
     ss1 @ ss2
     @ [
         mk_s
           (Instr (mk_i (New (lval, ty, opt_cons, args')) (SameAs origin_exp)));
-      ] )
+      ]
+  in
+  ( lval,
+    initialised_construction env lval origin_exp (Tok.unbracket args)
+      construct )
+
+(* The statements that build [lval] from a construction's arguments and
+ * its initialiser; [construct] lowers the construction from the arguments
+ * it passes to the constructor. *)
+and initialised_construction env (lval : lval) (origin_exp : G.expr)
+    (args : G.argument list) (construct : G.argument list -> stmts) : stmts =
+  match H.construction_arguments args with
+  | args, None -> construct args
+  (* An array's value is its elements; the dimensions are evaluated for
+   * their statements. *)
+  | dims, Some (H.Array_initializer container) ->
+      let ss_dims, _ = arguments env dims in
+      let ss_e, e = expr env container in
+      ss_dims @ ss_e
+      @ [ mk_s (Instr (mk_i (Assign (lval, e)) (SameAs origin_exp))) ]
+  (* [new T(args) { X = v, ... }]: the construction, then a field write per
+   * [X = v] entry; other entries (a collection's elements) are passed to the
+   * construction as arguments. *)
+  | args, Some (H.Object_initializer entries) ->
+      let field_init (entry : G.expr) : (G.ident * G.expr) option =
+        match entry.e with
+        | G.AssignOp ({ e = G.N (G.Id (id, _)); _ }, _, v)
+        | G.Assign ({ e = G.N (G.Id (id, _)); _ }, _, v) ->
+            Some (id, v)
+        | _ -> None
+      in
+      let field_inits = List.filter_map field_init entries in
+      let elements =
+        entries
+        |> List.filter_map (fun (entry : G.expr) ->
+               match field_init entry with
+               | None -> Some (G.Arg entry)
+               | Some _ -> None)
+      in
+      let ss_fields =
+        field_inits
+        |> List.concat_map (fun ((id : G.ident), (v : G.expr)) ->
+               let ss_v, v = expr env v in
+               let field : name =
+                 {
+                   ident = id;
+                   sid = G.SId.unsafe_default;
+                   id_info = G.empty_id_info ();
+                 }
+               in
+               let field_lval =
+                 { lval with rev_offset = [ { o = Dot field; oorig = NoOrig } ] }
+               in
+               ss_v
+               @ [ mk_s (Instr (mk_i (Assign (field_lval, v)) (related_tok (snd id)))) ])
+      in
+      construct (args @ elements) @ ss_fields
 
 and stmt_aux env st : stmts =
   match st.G.s with

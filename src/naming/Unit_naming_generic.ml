@@ -584,6 +584,13 @@ let tests parse_program =
           let ast = parse_program file in
           Naming_AST.resolve Lang.Kotlin ast;
           check_resolutions ast "x" [ "LocalVar" ]);
+      t "lua repeat until condition sees the body" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/lua/repeat_until.lua")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Lua ast;
+          check_resolutions ast "x" [ "LocalVar" ]);
       t "elixir parenthesised sequence is not a scope" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/elixir/parenthesised.ex")

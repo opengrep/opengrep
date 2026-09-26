@@ -1302,12 +1302,13 @@ and vof_captures { cdefault; clist } =
       ("clist", OCaml.vof_list vof_capture clist);
     ]
 
-and vof_capture { cmode; cname; cinit } =
+and vof_capture { cmode; cname; cinit; cattrs } =
   OCaml.VDict
     [
       ("cmode", vof_capture_mode cmode);
       ("cname", vof_ident_and_id_info cname);
       ("cinit", OCaml.vof_option vof_expr cinit);
+      ("cattrs", OCaml.vof_list vof_attribute cattrs);
     ]
 
 and vof_capture_mode = function

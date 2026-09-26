@@ -1912,6 +1912,8 @@ and capture = {
   cname : ident * id_info;
   (* C++ and Swift [y = e]: a variable of the closure, set at creation *)
   cinit : expr option;
+  (* Swift [weak x] and [unowned x]: the ownership modifier of the entry *)
+  cattrs : attribute list;
 }
 
 and capture_mode = Capture_by_reference | Capture_by_value

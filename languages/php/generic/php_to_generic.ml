@@ -527,6 +527,7 @@ and expr e : G.expr =
                             else G.Capture_by_value);
                          cname = (var v, G.empty_id_info ());
                          cinit = None;
+                         cattrs = [];
                        });
             }
           in

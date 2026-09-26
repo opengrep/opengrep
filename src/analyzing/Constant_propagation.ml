@@ -111,6 +111,25 @@ let has_modifier (m : string) (attrs : attribute list) : bool =
            String.equal (String.lowercase_ascii s) m
        | _ -> false)
 
+(* An access modifier as the front ends keep it: the keywords, C#'s
+ * [internal], VB's [Friend] and Apex's [global]. *)
+let is_access_modifier (attr : attribute) : bool =
+  match attr with
+  | KeywordAttr ((Public | Protected | Private), _) -> true
+  | _ ->
+      List.exists
+        (fun (m : string) -> has_modifier m [ attr ])
+        [ "internal"; "friend"; "global" ]
+
+(* Whether a class member declared without an access modifier is private. *)
+let member_access_is_private_by_default (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Csharp
+  | Lang.Vb
+  | Lang.Apex ->
+      true
+  | _else_ -> false
+
 let is_static (attrs : attribute list) : bool = H.has_keyword_attr Static attrs
 
 (* Assigned only while the object or the class is being constructed, as the
@@ -127,18 +146,14 @@ let private_to_class (lang : Lang.t) (class_attrs : attribute list)
   match lang with
   | Lang.Java
   | Lang.Kotlin
-  | Lang.Solidity ->
-      List.exists is_private attrs
+  | Lang.Solidity
   | Lang.Csharp
   | Lang.Vb
   | Lang.Apex ->
       (not (has_modifier "partial" class_attrs))
       && (List.exists is_private attrs
-         || not
-              (H.has_keyword_attr Public attrs
-              || H.has_keyword_attr Protected attrs
-              || has_modifier "internal" attrs
-              || has_modifier "friend" attrs))
+         || (member_access_is_private_by_default lang
+            && not (List.exists is_access_modifier attrs)))
   | Lang.Js
   | Lang.Ts ->
       String.starts_with ~prefix:"#" name
@@ -275,6 +290,19 @@ class ['self] stats_of_prog_visitor =
         Hashtbl.add h var stat;
         stat
   in
+  let record_write (env : stats) (lhs : expr) : lr_stats list =
+    (match lhs.e with
+    | DotAccess ({ e = IdSpecial ((This | Self), _); _ }, _, _) -> ()
+    | DotAccess (_, _, FN (Id ((fname, _), _))) ->
+        Hashtbl.replace env.fields_written_elsewhere fname ()
+    | _ -> ());
+    lvars_in_lhs lhs
+    |> List_.map (fun (id, sid) ->
+           let var = (H.str_of_ident id, sid) in
+           let stat = get_stat_or_create var env.var_stats in
+           incr stat.lvalue;
+           stat)
+  in
   object (_self : 'self)
     inherit [_] Iter_with_context.iter_with_context as super
 
@@ -326,17 +354,9 @@ class ['self] stats_of_prog_visitor =
       (match x.e with
       | Assign (* v = ... *) (lhs, _, _e2)
       | AssignOp (* v += ... *) (lhs, _, _e2) ->
-          (match lhs.e with
-          | DotAccess ({ e = IdSpecial ((This | Self), _); _ }, _, _) -> ()
-          | DotAccess (_, _, FN (Id ((fname, _), _))) ->
-              Hashtbl.replace env.fields_written_elsewhere fname ()
-          | _ -> ());
           (* TODO: What if there is an asignment inside the `lhs` ? *)
-          lvars_in_lhs lhs
-          |> List.iter (fun (id, sid) ->
-                 let var = (H.str_of_ident id, sid) in
-                 let stat = get_stat_or_create var env.var_stats in
-                 incr stat.lvalue;
+          record_write env lhs
+          |> List.iter (fun stat ->
                  match x.e with
                  | AssignOp _ -> incr stat.rvalue
                  | _ -> ())
@@ -361,6 +381,14 @@ class ['self] stats_of_prog_visitor =
           let var = (H.str_of_ident id, sid) in
           let stat = get_stat_or_create var env.var_stats in
           incr stat.lvalue
+      | Call (_, (_, args, _))
+      | New (_, _, _, (_, args, _)) ->
+          args
+          |> List.iter (function
+               | Arg { e = Ref (_, e); _ }
+               | ArgKwd (_, { e = Ref (_, e); _ }) ->
+                   ignore (record_write env e : lr_stats list)
+               | _ -> ())
       | N (Id (id, { id_resolved = { contents = Some (_kind, sid) }; _ }))
         when not ctx.in_lvalue ->
           let var = (H.str_of_ident id, sid) in

@@ -504,6 +504,7 @@ let anonymous_function_use_clause (env : env)
       G.cmode = G.Capture_by_value;
       cname = (str env tok, G.empty_id_info ());
       cinit = None;
+      cattrs = [];
     }
   in
   capture v3 :: List_.map (fun (_comma, tok) -> capture tok) v4

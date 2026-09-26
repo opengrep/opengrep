@@ -1082,7 +1082,7 @@ and argument (env : env) (x : CST.argument) : G.argument =
   match x with
   | `Opt_name_colon_opt_choice_ref_choice_exp (v1, v2, v3) -> (
       let v1 = Option.map (name_colon env) v1 in
-      let _v2TODO =
+      let v2 =
         match v2 with
         | Some x -> (
             match x with
@@ -1096,6 +1096,11 @@ and argument (env : env) (x : CST.argument) : G.argument =
         | `Exp x -> expression env x
         | `Decl_exp x -> declaration_expression env x
       in
+      let v3 =
+        match v2 with
+        | Some tok -> G.Ref (tok, v3) |> G.e
+        | None -> v3
+      in
       match v1 with
       | None -> G.Arg v3
       | Some id -> G.ArgKwd (id, v3))
@@ -1104,15 +1109,13 @@ and argument (env : env) (x : CST.argument) : G.argument =
       G.Arg (N (H2.name_of_id id) |> G.e)
 
 (* [new T(args) { X = v, ... }]: the construction with its initializer. *)
-and object_initializer (env : env) (construction : expr)
-    (init : CST.initializer_expression option) : expr =
+and object_initializer (env : env) ((l, args, r) : G.arguments)
+    (init : CST.initializer_expression option) : G.arguments =
   match init with
-  | None -> construction
+  | None -> (l, args, r)
   | Some x ->
-      let l, entries, _r = initializer_expression env x in
-      G.OtherExpr
-        (("ObjectInitializer", l), G.E construction :: List_.map (fun e -> G.E e) entries)
-      |> G.e
+      let init = H2.object_initializer_argument (initializer_expression env x) in
+      (l, args @ [ init ], r)
 
 and initializer_expression (env : env)
     ((v1, v2, v3, v4) : CST.initializer_expression) : expr list G.bracket =
@@ -1121,6 +1124,15 @@ and initializer_expression (env : env)
   let _v3 = Option.map (token env) v3 (* "," *) in
   let v4 = token env v4 (* "}" *) in
   (v1, v2, v4)
+
+(* [new T[] { a, b }]: the arguments of an array creation. *)
+and array_initializer (env : env) (init : CST.initializer_expression option) :
+    G.arguments =
+  match init with
+  | None -> fb []
+  | Some x ->
+      let ((l, _, r) as init) = initializer_expression env x in
+      (l, [ H2.array_initializer_argument l (Container (Tuple, init) |> G.e) ], r)
 
 and switch_expression_arm (env : env)
     ((v1, v2, v3, v4) : CST.switch_expression_arm) =
@@ -1385,8 +1397,7 @@ and expression_statement_expression (env : env)
         | Some x -> argument_list env x
         | None -> fb []
       in
-      let construction = New (v1, v2, empty_id_info (), v3) |> G.e in
-      object_initializer env construction v4
+      New (v1, v2, empty_id_info (), object_initializer env v3 v4) |> G.e
   | `Paren_exp x -> parenthesized_expression env x
 
 and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
@@ -1446,14 +1457,8 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
   | `Array_crea_exp (v1, v2, v3) ->
       let v1 = token env v1 (* "new" *) in
       let v2 = array_type env v2 in
-      let v3 =
-        match v3 with
-        | Some x -> initializer_expression env x
-        | None -> fb []
-      in
-      let lb, _, rb = v3 in
-      let args = (lb, [ Arg (G.Container (G.Tuple, v3) |> G.e) ], rb) in
-      New (v1, v2, empty_id_info (), args) |> G.e
+      let v3 = array_initializer env v3 in
+      New (v1, v2, empty_id_info (), v3) |> G.e
   | `As_exp (v1, v2, v3) ->
       let v1 = expression env v1 in
       let v2 = token env v2 (* "as" *) in
@@ -1509,7 +1514,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
       let v2 = argument_list env v2 in
       (* old: was New *)
       let e = G.OtherExpr (("NewNoType", v1), []) |> G.e in
-      object_initializer env (Call (e, v2) |> G.e) v3
+      Call (e, object_initializer env v2 v3) |> G.e
   | `Impl_stack_alloc_array_crea_exp (v1, v2, v4, v5) ->
       let _v1 = token env v1 (* "stackalloc" *) in
       let _v2 = token env v2 (* "[" *) in
@@ -1602,14 +1607,8 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
   | `Stack_alloc_array_crea_exp (v1, v2, v3) ->
       let v1 = token env v1 (* "stackalloc" *) in
       let v2 = array_type env v2 in
-      let v3 =
-        match v3 with
-        | Some x -> initializer_expression env x
-        | None -> fb []
-      in
-      let lb, _, rb = v3 in
-      let args = (lb, [ Arg (G.Container (G.Tuple, v3) |> G.e) ], rb) in
-      New (v1, v2, empty_id_info (), args) |> G.e
+      let v3 = array_initializer env v3 in
+      New (v1, v2, empty_id_info (), v3) |> G.e
   | `Switch_exp (v1, v2, v3, v4, _vTODO, v5) ->
       let v1 = expression env v1 in
       let v2 = token env v2 (* "switch" *) in

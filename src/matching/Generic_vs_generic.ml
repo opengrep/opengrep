@@ -2442,16 +2442,6 @@ and m_attribute a b =
       fail ()
 
 and m_attributes a b =
-  (* [Ctor] is what a front end concludes about a definition (in Java, a
-   * method written without a return type), not something a pattern asks
-   * for: a pattern without a return type matches any method. *)
-  let a =
-    List.filter
-      (function
-        | G.KeywordAttr (G.Ctor, _) -> false
-        | _ -> true)
-      a
-  in
   if_config
     (fun x -> x.decorators_order_matters)
     ~then_:
@@ -3380,12 +3370,38 @@ and m_function_kind a b =
 and m_function_definition a b =
   Trace_matching.(if on then print_function_definition_pair a b);
   match (a, b) with
-  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4; fcaptures = _ },
-      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4; fcaptures = _ } )
+  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4; fcaptures = a5 },
+      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4; fcaptures = b5 } )
     ->
       m_parameters a1 b1 >>= fun () ->
       (m_option_none_can_match_some m_type_) a2 b2 >>= fun () ->
+      m_captures a5 b5 >>= fun () ->
       m_function_body a3 b3 >>= fun () -> m_wrap m_function_kind a4 b4
+
+and m_captures a b =
+  match (a, b) with
+  | ( { G.cdefault = a1; clist = a2 }, { B.cdefault = b1; clist = b2 } ) -> (
+      m_option_none_can_match_some m_capture_mode a1 b1 >>= fun () ->
+      match a2 with
+      | [] -> return ()
+      | _ :: _ -> m_list_in_any_order ~less_is_ok:false m_capture a2 b2)
+
+and m_capture a b =
+  match (a, b) with
+  | ( { G.cmode = a1; cname = a2; cinit = a3; cattrs = a4 },
+      { B.cmode = b1; cname = b2; cinit = b3; cattrs = b4 } ) ->
+      m_capture_mode a1 b1 >>= fun () ->
+      m_ident_and_id_info a2 b2 >>= fun () ->
+      m_option m_expr a3 b3 >>= fun () -> m_attributes a4 b4
+
+and m_capture_mode a b =
+  match (a, b) with
+  | G.Capture_by_reference, B.Capture_by_reference
+  | G.Capture_by_value, B.Capture_by_value ->
+      return ()
+  | G.Capture_by_reference, _
+  | G.Capture_by_value, _ ->
+      fail ()
 
 and m_function_body a b =
   match (a, b) with

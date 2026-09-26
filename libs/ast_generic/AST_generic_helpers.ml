@@ -397,6 +397,48 @@ let argument_to_expr arg =
   | OtherArg _ ->
       raise NotAnExpr
 
+type construction_initializer =
+  | Object_initializer of expr list
+  | Array_initializer of expr
+
+let object_initializer_tag = "ObjectInitializer"
+let array_initializer_tag = "ArrayInitializer"
+
+let object_initializer_argument ((l, entries, r) : expr list bracket) :
+    argument =
+  OtherArg
+    ( (object_initializer_tag, l),
+      [ E (Container (Tuple, (l, entries, r)) |> G.e) ] )
+
+let array_initializer_argument (tok : tok) (container : expr) : argument =
+  OtherArg ((array_initializer_tag, tok), [ E container ])
+
+let construction_initializer_of_argument (arg : argument) :
+    construction_initializer option =
+  match arg with
+  | OtherArg ((tag, _), [ E { e = Container (_, (_, entries, _)); _ } ])
+    when String.equal tag object_initializer_tag ->
+      Some (Object_initializer entries)
+  | OtherArg ((tag, _), [ E container ])
+    when String.equal tag array_initializer_tag ->
+      Some (Array_initializer container)
+  | _ -> None
+
+let exprs_of_construction_initializer (init : construction_initializer) :
+    expr list =
+  match init with
+  | Object_initializer entries -> entries
+  | Array_initializer container -> [ container ]
+
+let construction_arguments (args : argument list) :
+    argument list * construction_initializer option =
+  List.fold_right
+    (fun (arg : argument) (args, init) ->
+      match construction_initializer_of_argument arg with
+      | Some _ as found -> (args, found)
+      | None -> (arg :: args, init))
+    args ([], None)
+
 (* used in controlflow_build and semgrep *)
 let vardef_to_assign (ent, def) =
   let name_or_expr = entity_name_to_expr ent.name None in

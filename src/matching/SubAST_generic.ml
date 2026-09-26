@@ -106,7 +106,8 @@ let subexprs_of_stmt_kind = function
 let subexprs_of_stmt st = subexprs_of_stmt_kind st.s
 
 let subexprs_of_args args =
-  args |> Tok.unbracket
+  let args, init = H.construction_arguments (Tok.unbracket args) in
+  (args
   |> List_.filter_map (function
        | Arg e
        | ArgKwd (_, e)
@@ -114,7 +115,8 @@ let subexprs_of_args args =
            Some e
        | ArgType _
        | OtherArg _ ->
-           None)
+           None))
+  @ Option.fold ~none:[] ~some:H.exprs_of_construction_initializer init
 
 (* used for deep expression matching *)
 let subexprs_of_expr with_symbolic_propagation e =

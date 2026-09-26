@@ -58,7 +58,7 @@ class CompositeReturnField {
         String[] t = pair(source(), "x");
         // ruleid: composite_return_field_java
         sink(t[0]);
-        // todook: composite_return_field_java
+        // ok: composite_return_field_java
         sink(t[1]);
     }
 
@@ -74,7 +74,7 @@ class CompositeReturnField {
         String[] t = new String[] {source(), "x"};
         // ruleid: composite_return_field_java
         sink(t[0]);
-        // todook: composite_return_field_java
+        // ok: composite_return_field_java
         sink(t[1]);
     }
 }

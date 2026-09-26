@@ -384,7 +384,10 @@ let extract_calls ~(lang : Lang.t)
           (* Use the class-name token to match class_construction's eorig. *)
           let calls =
             match
-              resolve_construction ~call_args:args_list ty
+              resolve_construction
+                ~call_args:
+                  (fst (AST_generic_helpers.construction_arguments args_list))
+                ty
             with
             | _ :: _ as fn_ids ->
               (* [AST_to_IL.mk_class_constructor_name] threads this exact

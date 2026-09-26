@@ -316,6 +316,13 @@ let has_block_scope (lang : Lang.t) =
   (* The rest do. *)
   | _else_ -> true
 
+let loop_condition_in_body_scope (lang : Lang.t) =
+  match lang with
+  | Kotlin
+  | Lua ->
+      true
+  | _else_ -> false
+
 (*****************************************************************************)
 (* Environment *)
 (*****************************************************************************)
@@ -2546,8 +2553,9 @@ class ['self] resolve_visitor env lang =
               with_new_block_scope env.names (fun () ->
                   self#visit_stmt venv s2))
             s2_opt
-      (* Kotlin: the condition of do-while sees the body's declarations. *)
-      | DoWhile (tok, body, cond) when lang =*= Lang.Kotlin ->
+      (* Where the loop condition is in the body's scope, it sees the
+       * body's declarations. *)
+      | DoWhile (tok, body, cond) when loop_condition_in_body_scope lang ->
           self#visit_tok venv tok;
           with_new_block_scope env.names (fun () ->
               (match body.s with
@@ -2583,7 +2591,6 @@ class ['self] resolve_visitor env lang =
                    | CaseEllipsis _ as case_and_body ->
                        self#visit_case_and_body venv case_and_body))
       (* But is there any point in doing that? Probably yes. *)
-      (* Commented out: docker constant propagation test fails... *)
       | Block (_, stmts, _) when has_block_scope lang ->
           with_new_block_scope env.names (fun () ->
               hoist_definitions env stmts;

@@ -1168,19 +1168,28 @@ and map_capture_list (env : env) ((v1, v2, v3, v4) : CST.capture_list) :
       v3
   in
   let _rb = (* "]" *) token env v4 in
-  List.filter_map Fun.id (v2 :: v3)
+  v2 :: v3
 
 (* [self] captures the object, not a variable; an entry of a capture list
  * holds the value at creation, [weak] and [unowned] only change how the
  * object is retained. *)
 and map_capture_list_item (env : env) (x : CST.capture_list_item) :
-    G.capture option =
+    G.capture =
+  let capture (id : G.ident) (cinit : G.expr option)
+      (cattrs : G.attribute list) : G.capture =
+    {
+      G.cmode = G.Capture_by_value;
+      cname = (id, G.empty_id_info ());
+      cinit;
+      cattrs;
+    }
+  in
   match x with
-  | `Self_exp tok ->
-      let _self = (* "self" *) token env tok in
-      None
+  | `Self_exp tok -> (* "self" *) capture (str env tok) None []
   | `Opt_owne_modi_simple_id_opt_equal_sign_exp (v1, v2_tok, v3) ->
-      let _ownership = Option.map (map_ownership_modifier env) v1 in
+      let cattrs =
+        Option.map (map_ownership_modifier env) v1 |> Option.to_list
+      in
       let id = map_simple_identifier env v2_tok in
       let cinit =
         match v3 with
@@ -1189,8 +1198,7 @@ and map_capture_list_item (env : env) (x : CST.capture_list_item) :
             Some (map_expression env v2)
         | None -> None
       in
-      Some
-        { G.cmode = G.Capture_by_value; cname = (id, G.empty_id_info ()); cinit }
+      capture id cinit cattrs
 
 and map_catch_block (env : env) ((v1, v2, v3, v4) : CST.catch_block) =
   let catch_tok = (* catch_keyword *) token env v1 in

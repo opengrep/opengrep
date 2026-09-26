@@ -1,0 +1,13 @@
+rules:
+  - id: array_literal_element_csharp
+    message: a read of one element of an array literal carries only that element's taint
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
