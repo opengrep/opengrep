@@ -14,8 +14,8 @@ let build
   in
   let own_class_by_qn : entry Common.SMap.t =
     List.fold_left
-      (fun (by_qn : entry Common.SMap.t) (ci : entry) ->
-        Common.SMap.add (Names.Class_qn.to_string (Scope_binding.class_qn_of_entry ci)) ci by_qn)
+      (fun (by_qn : entry Common.SMap.t) (entry : entry) ->
+        Common.SMap.add (Names.Class_qn.to_string (Scope_binding.class_qn_of_entry entry)) entry by_qn)
       Common.SMap.empty own_classes
   in
   let type_bindings =
@@ -25,8 +25,8 @@ let build
         Names.Class_qn.is_empty owner)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
-          (fun (ci : entry) ->
-            [ Some (Scope_binding.class_il_name_of ci) ])
+          (fun (entry : entry) ->
+            [ Some (Scope_binding.class_il_name_of entry) ])
           (Common.SMap.find_opt (Names.Class_qn.to_string owner)
              own_class_by_qn))
       own_classes

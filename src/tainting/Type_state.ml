@@ -1,6 +1,6 @@
 module G = AST_generic
 
-type key = Class_table.cls
+type cls = Class_table.cls
 
 module Member_map = Map.Make (struct
   type t = int * string
@@ -23,14 +23,14 @@ end)
 module Site_set = Set.Make (G.SId)
 
 type t = {
-  module_singletons : key Module_qn_map.t;
-  method_returns : key Member_map.t;
-  method_return_tuples : key option list Member_map.t;
-  fields : key Member_map.t;
-  field_elements : key Member_map.t;
-  function_returns : key Node_map.t;
-  function_return_tuples : key option list Node_map.t;
-  value_type_sites : Site_set.t;
+  module_singletons : cls Module_qn_map.t;
+  method_returns : cls Member_map.t;
+  method_return_tuples : cls option list Member_map.t;
+  fields : cls Member_map.t;
+  field_elements : cls Member_map.t;
+  function_returns : cls Node_map.t;
+  function_return_tuples : cls option list Node_map.t;
+  value_type_annotations : Site_set.t;
 }
 
 let empty : t =
@@ -42,46 +42,46 @@ let empty : t =
     field_elements = Member_map.empty;
     function_returns = Node_map.empty;
     function_return_tuples = Node_map.empty;
-    value_type_sites = Site_set.empty;
+    value_type_annotations = Site_set.empty;
   }
 
-let member_key (cls : key) (member : string) : int * string =
+let member_key (cls : cls) (member : string) : int * string =
   (Class_table.index cls, member)
 
-let set_module_singleton (t : t) (qn : Names.Module_qn.t) (cls : key) : t =
+let set_module_singleton (t : t) (qn : Names.Module_qn.t) (cls : cls) : t =
   { t with module_singletons = Module_qn_map.add qn cls t.module_singletons }
 
-let get_module_singleton (t : t) (qn : Names.Module_qn.t) : key option =
+let get_module_singleton (t : t) (qn : Names.Module_qn.t) : cls option =
   Module_qn_map.find_opt qn t.module_singletons
 
-let set_method_return (t : t) (cls : key) (meth : string) (ret : key) : t =
+let set_method_return (t : t) (cls : cls) (meth : string) (ret : cls) : t =
   {
     t with
     method_returns = Member_map.add (member_key cls meth) ret t.method_returns;
   }
 
-let method_return (t : t) (cls : key) (meth : string) : key option =
+let method_return (t : t) (cls : cls) (meth : string) : cls option =
   Member_map.find_opt (member_key cls meth) t.method_returns
 
-let set_method_return_tuple (t : t) (cls : key) (meth : string)
-    (elements : key option list) : t =
+let set_method_return_tuple (t : t) (cls : cls) (meth : string)
+    (elements : cls option list) : t =
   {
     t with
     method_return_tuples =
       Member_map.add (member_key cls meth) elements t.method_return_tuples;
   }
 
-let method_return_tuple (t : t) (cls : key) (meth : string) :
-    key option list option =
+let method_return_tuple (t : t) (cls : cls) (meth : string) :
+    cls option list option =
   Member_map.find_opt (member_key cls meth) t.method_return_tuples
 
-let set_field (t : t) (cls : key) (field_name : string) (ty : key) : t =
+let set_field (t : t) (cls : cls) (field_name : string) (ty : cls) : t =
   { t with fields = Member_map.add (member_key cls field_name) ty t.fields }
 
-let field (t : t) (cls : key) (field_name : string) : key option =
+let field (t : t) (cls : cls) (field_name : string) : cls option =
   Member_map.find_opt (member_key cls field_name) t.fields
 
-let set_field_element (t : t) (cls : key) (field_name : string) (element : key)
+let set_field_element (t : t) (cls : cls) (field_name : string) (element : cls)
     : t =
   {
     t with
@@ -89,32 +89,32 @@ let set_field_element (t : t) (cls : key) (field_name : string) (element : key)
       Member_map.add (member_key cls field_name) element t.field_elements;
   }
 
-let field_element (t : t) (cls : key) (field_name : string) : key option =
+let field_element (t : t) (cls : cls) (field_name : string) : cls option =
   Member_map.find_opt (member_key cls field_name) t.field_elements
 
-let set_function_return (t : t) (node : Function_id.t) (ret : key) : t =
+let set_function_return (t : t) (node : Function_id.t) (ret : cls) : t =
   { t with function_returns = Node_map.add node ret t.function_returns }
 
-let function_return (t : t) (node : Function_id.t) : key option =
+let function_return (t : t) (node : Function_id.t) : cls option =
   Node_map.find_opt node t.function_returns
 
 let set_function_return_tuple (t : t) (node : Function_id.t)
-    (elements : key option list) : t =
+    (elements : cls option list) : t =
   {
     t with
     function_return_tuples = Node_map.add node elements t.function_return_tuples;
   }
 
 let function_return_tuple (t : t) (node : Function_id.t) :
-    key option list option =
+    cls option list option =
   Node_map.find_opt node t.function_return_tuples
 
-let add_value_type_site (t : t) (site : G.SId.t) : t =
-  { t with value_type_sites = Site_set.add site t.value_type_sites }
+let add_value_type_annotation (t : t) (site : G.SId.t) : t =
+  { t with value_type_annotations = Site_set.add site t.value_type_annotations }
 
 let is_value_type (t : t) (ty : G.type_) : bool =
   match Option.bind (Class_table.name_of_type ty) Class_table.site_of_name with
-  | Some (site : G.SId.t) -> Site_set.mem site t.value_type_sites
+  | Some (site : G.SId.t) -> Site_set.mem site t.value_type_annotations
   | None -> false
 
 let equal (left : t) (right : t) : bool =
@@ -130,4 +130,4 @@ let equal (left : t) (right : t) : bool =
        right.function_returns
   && Node_map.equal same_elements left.function_return_tuples
        right.function_return_tuples
-  && Site_set.equal left.value_type_sites right.value_type_sites
+  && Site_set.equal left.value_type_annotations right.value_type_annotations

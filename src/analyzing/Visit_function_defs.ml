@@ -284,7 +284,7 @@ let class_scope_of_definition (ent : G.entity) (def_kind : G.definition_kind)
 (* Languages whose class header is the primary constructor: its parameters
    are the header's, and its body runs the property initialisers and the
    initialiser blocks of the class body in source order. *)
-let class_header_is_constructor (lang : Lang.t) : bool =
+let has_primary_constructor (lang : Lang.t) : bool =
   match lang with
   | Lang.Kotlin
   | Lang.Scala ->
@@ -337,7 +337,7 @@ let property_initialisation ((id, tok) as ident : G.ident)
       this_tok )
   |> G.s
 
-let runs_in_initialiser (stmt : G.stmt) : bool =
+let runs_in_primary_constructor (stmt : G.stmt) : bool =
   match stmt.G.s with
   | G.DefStmt (_, (G.VarDef _ | G.FieldDefColon _)) -> true
   | G.DefStmt _
@@ -351,7 +351,7 @@ let initialised_class_name (ent : G.entity) (cdef : G.class_definition) :
   | G.EN (class_name : G.name), G.Class -> Some class_name
   | _ -> None
 
-let class_initialiser (ent : G.entity) (cdef : G.class_definition) :
+let primary_constructor (ent : G.entity) (cdef : G.class_definition) :
     (G.entity * G.function_definition) option =
   match initialised_class_name ent cdef with
   | Some (class_name : G.name) ->
@@ -380,7 +380,7 @@ let class_initialiser (ent : G.entity) (cdef : G.class_definition) :
                          | G.FieldDefColon { G.vinit = Some _; _ }) );
                    _ } as stmt) ->
                 [ stmt; property_initialisation ident info ]
-            | G.F stmt when runs_in_initialiser stmt -> [ stmt ]
+            | G.F stmt when runs_in_primary_constructor stmt -> [ stmt ]
             | G.F _ -> [])
           fields
       in
@@ -427,8 +427,8 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
           Common.save_excursion_unsafe current_class newv (fun () ->
               super#visit_definition f def;
               match def_kind with
-              | G.ClassDef cdef when class_header_is_constructor lang -> (
-                  match class_initialiser ent cdef with
+              | G.ClassDef cdef when has_primary_constructor lang -> (
+                  match primary_constructor ent cdef with
                   | Some (ctor_ent, ctor_fdef) ->
                       let class_il = Option.bind !current_class g_name_to_il_name in
                       let visitor_parent_path, _ =

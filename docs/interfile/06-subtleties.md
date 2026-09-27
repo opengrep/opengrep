@@ -68,7 +68,7 @@ see "no taint propagation" instead of falling back to conservative
 propagation (A1).
 
 A call to the declaration reaches the implementations through its
-`id_callee_definition` stamp, which lists every override and
+`id_callee_definition` annotation, which lists every override and
 implementation the project graph selects for the receiver; the engine
 instantiates each of them.  The `Dispatch` edges keep the
 implementations in the relevant subgraph and order them before the

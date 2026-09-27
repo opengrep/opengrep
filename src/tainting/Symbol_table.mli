@@ -4,7 +4,7 @@ type kind = Class_table.kind =
   | Class_kind of AST_generic.class_kind
   | Module_kind
 
-type role = Class_table.role =
+type declaration_kind = Class_table.declaration_kind =
   | Definition of Function_id.t
   | Singleton_object
   | Trait_impl of Function_id.t
@@ -16,7 +16,7 @@ type parent = Class_table.parent =
 
 type parent_clause = Class_table.parent_clause = {
   parent : parent;
-  relation : Linearisation.relation;
+  relation : Member_lookup.relation;
   written : AST_generic.type_ option;
   arguments : AST_generic.arguments option;
   delegate : AST_generic.expr option;
@@ -29,7 +29,7 @@ type member_import = Class_table.member_import = {
 
 type class_scope = Class_table.class_scope = {
   binding : AST_generic.SId.t;
-  role : role;
+  declaration_kind : declaration_kind;
   members : Func_info.t list Common.SMap.t;
   fields : Func_info.t list Field_path_map.t;
   parents : parent_clause list;
@@ -39,22 +39,22 @@ type class_scope = Class_table.class_scope = {
   requirements : string list;
   kind : kind;
   declaration : Lang_config.class_declaration;
-  singleton_exposure : Class_parents.singleton_exposure;
-  bound_functions : Func_info.t list;
+  module_functions : Class_parents.module_functions;
+  constructor_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
   extensions : Func_info.t list Common.SMap.t;
   reopens : bool;
 }
 
-type held_class =
+type referent_class =
   | Of_class of Class_table.cls
   | Of_external_class
   | Of_unknown_class
 
-type held_object = {
-  holder : AST_generic.SId.t;
+type referent = {
+  variable : AST_generic.SId.t;
   path : string list;
-  held_class : held_class;
+  referent_class : referent_class;
 }
 
 type receiver_class =
@@ -62,9 +62,9 @@ type receiver_class =
   | Exact of Class_table.cls
   | Class_object of Class_table.cls
   | Ancestors_of of Class_table.cls
-  | Object_of of held_object
+  | Object_of of referent
   | External_class
-  | Root
+  | Top_level_object
   | Unknown
 
 type resolution =
@@ -73,14 +73,14 @@ type resolution =
 
 type dispatch
 
-type selection = {
+type lookup_result = {
   resolution : resolution;
   dispatches : dispatch list;
 }
 
-val static_selection : resolution -> selection
+val static_selection : resolution -> lookup_result
 
-type receiver_role =
+type receiver_relation =
   | Method_of
   | Extension_of
 
@@ -97,7 +97,7 @@ val defined_here : t -> class_scope -> bool
 val owner : t -> class_scope -> class_scope option
 
 val unbound_receivers :
-  t -> (receiver_role * AST_generic.name * Func_info.t list) list
+  t -> (receiver_relation * AST_generic.name * Func_info.t list) list
 
 type use =
   | Called
@@ -111,7 +111,7 @@ val with_project :
   Class_table.t ->
   extension_visible:(string -> Func_info.t -> bool) ->
   build_configuration:int ->
-  outside:(t -> caller:Function_id.t option -> AST_generic.expr -> selection) ->
+  cross_file_resolver:(t -> caller:Function_id.t option -> AST_generic.expr -> lookup_result) ->
   t
 
 val with_own_memo : t -> t
@@ -156,28 +156,28 @@ val receiver_class :
   t -> caller:Function_id.t option -> AST_generic.expr -> receiver_class
 
 val resolve_member :
-  t -> caller:Function_id.t option -> receiver_class -> string -> selection
+  t -> caller:Function_id.t option -> receiver_class -> string -> lookup_result
 
 val resolve_callee :
-  t -> caller:Function_id.t option -> AST_generic.expr -> selection
+  t -> caller:Function_id.t option -> AST_generic.expr -> lookup_result
 
 val resolve_reference :
-  t -> caller:Function_id.t option -> AST_generic.expr -> selection
+  t -> caller:Function_id.t option -> AST_generic.expr -> lookup_result
 
 val resolve_construction : t -> AST_generic.type_ -> resolution
 val resolve_qualified : t -> AST_generic.name -> resolution
 
 val resolve_call :
-  t -> caller:Function_id.t option -> AST_generic.expr -> selection
+  t -> caller:Function_id.t option -> AST_generic.expr -> lookup_result
 
 val class_of_member_call :
   t ->
   caller:Function_id.t option ->
   AST_generic.expr ->
-  (Class_table.cls option * selection Lazy.t) option
+  (Class_table.cls option * lookup_result Lazy.t) option
 
-val dispatch : t -> selection -> Func_info.t list -> Func_info.t list
-val dispatched : t -> selection -> resolution
+val dispatch : t -> lookup_result -> Func_info.t list -> Func_info.t list
+val dispatched : t -> lookup_result -> resolution
 
-val values_in_force :
+val reaching_values :
   t -> caller:Function_id.t option -> AST_generic.SId.t -> AST_generic.expr list

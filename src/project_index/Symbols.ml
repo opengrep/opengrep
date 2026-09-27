@@ -662,24 +662,24 @@ let dataclass_wrapper_synth_entries ~(cfg : Index_lang_rules.t)
     ~(wrappers : (string, dataclass_wrapper) Hashtbl.t)
     (entries : entry list) : entry list =
   let ensure_set = methods_by_class entries in
-  List.fold_left (fun acc (ci : entry) ->
-    match (ci.kind, ci.entity) with
+  List.fold_left (fun acc (entry : entry) ->
+    match (entry.kind, entry.entity) with
     | (K_class | K_companion), Some (ent : G.entity) -> (
       match List.find_map (fun dec -> Hashtbl.find_opt wrappers dec)
               (entity_decorator_names ent) with
       | None -> acc
       | Some wrapper ->
-        let owned = ensure_set ci.id in
+        let owned = ensure_set entry.id in
         List.fold_left (fun acc dunder ->
           if Hashtbl.mem owned dunder then acc
           else begin
             Hashtbl.replace owned dunder ();
-            let m_id = synth_function_id ci.id dunder in
+            let m_id = synth_function_id entry.id dunder in
             { id = m_id; name = dunder;
-              qn = Names.Def_qn.concat ci.qn dunder;
+              qn = Names.Def_qn.concat entry.qn dunder;
               kind = K_method;
-              file = ci.file; range = ci.range;
-              defining_class_id = Some ci.id; entity = None }
+              file = entry.file; range = entry.range;
+              defining_class_id = Some entry.id; entity = None }
             :: acc
           end
         ) acc (cfg.Index_lang_rules.wrapper_dunders wrapper))

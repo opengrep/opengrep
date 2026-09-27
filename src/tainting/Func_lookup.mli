@@ -62,7 +62,7 @@ val create :
   ?alias_to_module_qn : alias_index ->
   ?own_modules : Names.Module_qn.t list ->
   ?companions : companion_index ->
-  ?member_classes : Names.Class_qn.t list ->
+  ?classes_with_members_in_scope : Names.Class_qn.t list ->
   module_attributes : module_attributes ->
   class_of_qn : (Names.Class_qn.t -> Class_table.cls option) ->
   is_import : (AST_generic.SId.t -> bool) ->
@@ -86,7 +86,7 @@ val is_known_module : t -> Names.Module_qn.t -> bool
 
 val is_import : t -> AST_generic.SId.t -> bool
 
-val member_classes : t -> Names.Class_qn.t list
+val classes_with_members_in_scope : t -> Names.Class_qn.t list
 
 val definition : t -> string -> module_attribute option
 

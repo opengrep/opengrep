@@ -18,7 +18,7 @@ val recursive_members :
     functions, or one function that calls itself. *)
 
 val store :
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   ?max_shape_depth:int ->
   Function_id.t ->
   Shape_and_sig.extended_sig list ->

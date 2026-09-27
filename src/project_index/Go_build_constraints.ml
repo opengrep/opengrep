@@ -83,7 +83,7 @@ let os_satisfies ~(goos : string) (tag : string) : bool =
   || (String.equal tag "solaris" && String.equal goos "illumos")
   || (String.equal tag "darwin" && String.equal goos "ios")
 
-let world_value ~(goos : string) ~(goarch : string) (tag : string) :
+let value_in_build_context ~(goos : string) ~(goarch : string) (tag : string) :
     bool option =
   if is_known known_os tag then Some (os_satisfies ~goos tag)
   else if is_known known_arch tag then Some (String.equal tag goarch)
@@ -164,7 +164,7 @@ let satisfiable (e : expr) : bool =
   in
   search [] (List_.uniq_by String.equal (tags_of e))
 
-let all_of (combine : expr -> expr -> expr) (parts : expr list) : expr option =
+let reduce (combine : expr -> expr -> expr) (parts : expr list) : expr option =
   match parts with
   | [] -> None
   | first :: rest -> Some (List.fold_left combine first rest)
@@ -198,17 +198,17 @@ let file_name_constraint (name : string) : expr option =
 let is_test_file_name (name : string) : bool =
   String.ends_with ~suffix:"_test.go" name
 
-type normal_form = (expr * int array) list
+type cofactors = (expr * int array) list
 
 let all_arches : int = (1 lsl List.length known_arch) - 1
 
-let normal_form (e : expr) : normal_form =
+let cofactors_of (e : expr) : cofactors =
   let per_os =
     List.map
       (fun (goos : string) ->
         List.filter_map
           (fun ((arch_index : int), (goarch : string)) ->
-            match simplify (assign (world_value ~goos ~goarch) e) with
+            match simplify (assign (value_in_build_context ~goos ~goarch) e) with
             | Const false -> None
             | residual -> Some (residual, arch_index))
           (List.mapi (fun (index : int) (goarch : string) -> (index, goarch)) known_arch))
@@ -226,34 +226,34 @@ let normal_form (e : expr) : normal_form =
                    0)
                 per_os) ))
 
-let conjoin (left : normal_form) (right : normal_form) : normal_form =
+let conjoin (left : cofactors) (right : cofactors) : cofactors =
   List.concat_map
-    (fun ((left_residual : expr), (left_worlds : int array)) ->
+    (fun ((left_residual : expr), (left_contexts : int array)) ->
       List.filter_map
-        (fun ((right_residual : expr), (right_worlds : int array)) ->
-          let worlds = Array.map2 ( land ) left_worlds right_worlds in
-          if Array.for_all (Int.equal 0) worlds then None
+        (fun ((right_residual : expr), (right_contexts : int array)) ->
+          let contexts = Array.map2 ( land ) left_contexts right_contexts in
+          if Array.for_all (Int.equal 0) contexts then None
           else
             match simplify (And (left_residual, right_residual)) with
             | Const false -> None
-            | residual -> Some (residual, worlds))
+            | residual -> Some (residual, contexts))
         right)
     left
 
 type file =
   | Unconstrained
   | Constrained of {
-      normal_form : normal_form;
+      cofactors : cofactors;
       test_directory : string option;
     }
 
-let equal_normal_form (left : normal_form) (right : normal_form) : bool =
+let equal_cofactors (left : cofactors) (right : cofactors) : bool =
   List.equal
-    (fun ((left_residual : expr), (left_worlds : int array))
-         ((right_residual : expr), (right_worlds : int array)) ->
+    (fun ((left_residual : expr), (left_contexts : int array))
+         ((right_residual : expr), (right_contexts : int array)) ->
       equal_expr left_residual right_residual
-      && Int.equal (Array.length left_worlds) (Array.length right_worlds)
-      && Array.for_all2 Int.equal left_worlds right_worlds)
+      && Int.equal (Array.length left_contexts) (Array.length right_contexts)
+      && Array.for_all2 Int.equal left_contexts right_contexts)
     left right
 
 let equal_file (left : file) (right : file) : bool =
@@ -261,7 +261,7 @@ let equal_file (left : file) (right : file) : bool =
   | Unconstrained, Unconstrained -> true
   | Constrained left, Constrained right ->
       Option.equal String.equal left.test_directory right.test_directory
-      && equal_normal_form left.normal_form right.normal_form
+      && equal_cofactors left.cofactors right.cofactors
   | (Unconstrained | Constrained _), _ -> false
 
 module File_tbl = Hashtbl.Make (struct
@@ -302,7 +302,7 @@ let file_of ((path : Fpath.t), (program : G.program)) : file =
     else None
   in
   match
-    ( all_of
+    ( reduce
         (fun (left : expr) (right : expr) -> And (left, right))
         (written_constraints program
         @ Option.to_list (file_name_constraint name)),
@@ -312,7 +312,7 @@ let file_of ((path : Fpath.t), (program : G.program)) : file =
   | written, _ ->
       Constrained
         {
-          normal_form = normal_form (Option.value written ~default:(Const true));
+          cofactors = cofactors_of (Option.value written ~default:(Const true));
           test_directory;
         }
 
@@ -350,7 +350,7 @@ let build_configuration (t : t) (path : Fpath.t) : int =
        t.configuration_of_file)
     ~default:0
 
-let entry (t : t) (path : Fpath.t) : file =
+let file_constraint (t : t) (path : Fpath.t) : file =
   t.configurations.(build_configuration t path)
 
 let test_directory_of (file : file) : string option =
@@ -358,17 +358,17 @@ let test_directory_of (file : file) : string option =
   | Unconstrained -> None
   | Constrained { test_directory; _ } -> test_directory
 
-let jointly (files : file list) : bool =
+let satisfiable_together (files : file list) : bool =
   List.length
     (List_.uniq_by String.equal (List.filter_map test_directory_of files))
   <= 1
   && List.exists
        (fun ((residual : expr), (_ : int array)) -> satisfiable residual)
        (List.fold_left
-          (fun (combined : normal_form) (file : file) ->
+          (fun (combined : cofactors) (file : file) ->
             match file with
             | Unconstrained -> combined
-            | Constrained { normal_form; _ } -> conjoin combined normal_form)
+            | Constrained { cofactors; _ } -> conjoin combined cofactors)
           [ (Const true, Array.make (List.length known_os) all_arches) ]
           files)
 
@@ -377,13 +377,13 @@ let visible (source : file) (target : file) : bool =
   | Unconstrained, Unconstrained -> true
   | _ -> (
       match test_directory_of target with
-      | None -> jointly [ source; target ]
+      | None -> satisfiable_together [ source; target ]
       | Some directory ->
           Option.equal String.equal (test_directory_of source) (Some directory)
-          && jointly [ source; target ])
+          && satisfiable_together [ source; target ])
 
 let file_visible_from (t : t) (source : Fpath.t) (target : Fpath.t) : bool =
-  visible (entry t source) (entry t target)
+  visible (file_constraint t source) (file_constraint t target)
 
 let compiled_in (t : t) (build_configuration : int) (func : Func_info.t) :
     bool =
@@ -391,12 +391,12 @@ let compiled_in (t : t) (build_configuration : int) (func : Func_info.t) :
   ||
   match Func_info.def_file_opt func with
   | Some (path : Fpath.t) ->
-      visible t.configurations.(build_configuration) (entry t path)
+      visible t.configurations.(build_configuration) (file_constraint t path)
   | None -> true
 
 let files_compiled_together (t : t) (files : Fpath.t list) : bool =
   SMap.is_empty t.configuration_of_file
-  || jointly (List.map (entry t) (List_.uniq_by Fpath.equal files))
+  || satisfiable_together (List.map (file_constraint t) (List_.uniq_by Fpath.equal files))
 
 let compiled_together (t : t) (funcs : Func_info.t list) : bool =
   files_compiled_together t (List.filter_map Func_info.def_file_opt funcs)

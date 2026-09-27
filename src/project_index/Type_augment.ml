@@ -41,13 +41,13 @@ let method_name (func : FA.func_info) : string option =
   Option.map (fun ((_ : IL.name), (meth : IL.name)) -> fst meth.IL.ident)
     (Func_info.as_method func.FA.fn_id)
 
-let along (table : Symbol_table.t) (cls : Class_table.cls)
+let nearest_in_lookup_order (table : Symbol_table.t) (cls : Class_table.cls)
     (lookup : Class_table.cls -> 'found option) : 'found option =
-  Class_table.find_along
+  Class_table.find_nearest
     (Class_table.order (Symbol_table.class_table table) cls)
-      .Linearisation.tiers lookup
+      .Member_lookup.levels lookup
 
-let names_self_type (ty : G.type_) : bool =
+let is_self_type (ty : G.type_) : bool =
   match (Ty_bare_name.inner_named_type ty).G.t with
   | G.TyN (G.Id ((("this" | "Self" | "self"), _), info)) ->
       Option.is_none (Class_table.binding_of_id_info info)
@@ -55,7 +55,7 @@ let names_self_type (ty : G.type_) : bool =
 
 let declared_class (table : Symbol_table.t) ~(owner : Class_table.cls option)
     (ty : G.type_) : Class_table.cls option =
-  if names_self_type ty then owner
+  if is_self_type ty then owner
   else
     Symbol_table.class_of_declared_type table ~context:None
       (Ty_bare_name.inner_named_type ty)
@@ -85,17 +85,20 @@ let populate_returns_from_decls ~(table_of_file : table_of_file)
       in
       match ret.G.t with
       | G.TyTuple (_, (elements : G.type_ list), _) ->
-        let keys = List.map (declared_class table ~owner) elements in
+        let element_classes =
+          List.map (declared_class table ~owner) elements
+        in
         in_owner
           (fun state cls meth ->
-            Type_state.set_method_return_tuple state cls meth keys)
-          (Type_state.set_function_return_tuple state node keys)
+            Type_state.set_method_return_tuple state cls meth element_classes)
+          (Type_state.set_function_return_tuple state node element_classes)
       | _ -> (
         match declared_class table ~owner ret with
-        | Some (key : Class_table.cls) ->
+        | Some (return_class : Class_table.cls) ->
           in_owner
-            (fun state cls meth -> Type_state.set_method_return state cls meth key)
-            (Type_state.set_function_return state node key)
+            (fun state cls meth ->
+              Type_state.set_method_return state cls meth return_class)
+            (Type_state.set_function_return state node return_class)
         | None -> state))
     | _ -> state
   ) state all_funcs
@@ -113,8 +116,8 @@ let build_fields_by_class_index
       : Type_state.t =
     let state =
       match declared_class table ~owner:(Some cls) vtype with
-      | Some (key : Class_table.cls) ->
-        Type_state.set_field state cls field_name key
+      | Some (field_class : Class_table.cls) ->
+        Type_state.set_field state cls field_name field_class
       | None -> state
     in
     match
@@ -257,7 +260,7 @@ let augment_return_types_from_bodies
 
 let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)
     ~(caller : Function_id.t option) (args : G.argument list)
-    (resolved : Symbol_table.selection) : Symbol_table.resolution =
+    (resolved : Symbol_table.lookup_result) : Symbol_table.resolution =
   match resolved.Symbol_table.resolution with
   | Symbol_table.External -> Symbol_table.External
   | Symbol_table.Defined _ ->
@@ -432,7 +435,7 @@ let build_module_singleton_types
       ) state (module_level_assigns_of_file fi)
   ) state file_infos
 
-let stamped_name (table : Symbol_table.t) (cls : Class_table.cls)
+let name_of_class (table : Symbol_table.t) (cls : Class_table.cls)
     : G.name option =
   Class_table.name_of_class (Symbol_table.class_table table) cls
 
@@ -461,7 +464,7 @@ let augment_fields_from_self_assignments
         let already_known (field : string) (state : Type_state.t) : bool =
           Option.is_some (Type_state.field state cls field)
         in
-        let set_new (field : string) (ty : Class_table.cls)
+        let set_if_absent (field : string) (ty : Class_table.cls)
             (state : Type_state.t) : Type_state.t =
           if already_known field state then state
           else Type_state.set_field state cls field ty
@@ -516,7 +519,7 @@ let augment_fields_from_self_assignments
               | G.Param { G.pname = Some (pn, _); ptype = Some pty; _ }
               | G.ParamReceiver { G.pname = Some (pn, _); ptype = Some pty; _ } ->
                 (match declared_class table ~owner:(Some cls) pty with
-                 | Some (ty : Class_table.cls) -> set_new (strip pn) ty state
+                 | Some (ty : Class_table.cls) -> set_if_absent (strip pn) ty state
                  | None -> state)
               | _ -> state
             ) state params
@@ -535,7 +538,7 @@ let augment_fields_from_self_assignments
               parameter. *)
            let param_facts =
              Hashtbl.fold (fun pname (ty : Class_table.cls) acc ->
-               match stamped_name table ty with
+               match name_of_class table ty with
                | Some (name : G.name) ->
                  (G.Id ((pname, Tok.unsafe_fake_tok pname), G.empty_id_info ()),
                   name) :: acc
@@ -563,14 +566,14 @@ let augment_fields_from_self_assignments
                    | _ -> Symbol_table.class_of_expr table ~caller:(Some node) rhs
                  in
                  (match rhs_ty with
-                  | Some (ty : Class_table.cls) -> set_new field_name ty state
+                  | Some (ty : Class_table.cls) -> set_if_absent field_name ty state
                   | None -> state)
                | _ -> state) state body_stmt))
       | _ -> state)
     | _ -> state
   ) type_state all_funcs
 
-let is_value_class ~(lang : Lang.t) (cls : Class_table.cls) : bool =
+let is_value_type ~(lang : Lang.t) (cls : Class_table.cls) : bool =
   List.exists
     (fun (scope : Class_table.class_scope) ->
       match scope.Class_table.kind with
@@ -581,7 +584,7 @@ let is_value_class ~(lang : Lang.t) (cls : Class_table.cls) : bool =
       | Class_table.Module_kind -> false)
     (Class_table.scopes cls)
 
-let add_value_type_sites ~(lang : Lang.t) ~(table_of_file : table_of_file)
+let add_value_type_annotations ~(lang : Lang.t) ~(table_of_file : table_of_file)
     (state : Type_state.t) (all_funcs : FA.func_info list) : Type_state.t =
   List.fold_left (fun state (func : FA.func_info) ->
     match table_of_func ~table_of_file ~type_state:state func with
@@ -597,8 +600,8 @@ let add_value_type_sites ~(lang : Lang.t) ~(table_of_file : table_of_file)
               Class_table.site_of_name name )
           with
           | Some (cls : Class_table.cls), Some (site : G.SId.t)
-            when is_value_class ~lang cls ->
-            Type_state.add_value_type_site state site
+            when is_value_type ~lang cls ->
+            Type_state.add_value_type_annotation state site
           | _ -> state)
         | _ -> state)
         state (Tok.unbracket func.FA.fdef.G.fparams)
@@ -626,7 +629,7 @@ let stamp_var_types_from_bodies ~(lang : Lang.t)
            Ty_bare_name.qualified_class_name_of_ty)
     in
     let with_class (lhs : G.name) (cls : Class_table.cls) acc =
-      match stamped_name table cls with
+      match name_of_class table cls with
       | Some (name : G.name) -> (lhs, name) :: acc
       | None -> acc
     in
@@ -652,7 +655,7 @@ let stamp_var_types_from_bodies ~(lang : Lang.t)
         match (callee.G.e, member_call) with
         | G.DotAccess (_, _, G.FN (G.Id ((mname, _), _))),
           Some (Some (cls : Class_table.cls), _) ->
-            along table cls (fun (owner : Class_table.cls) ->
+            nearest_in_lookup_order table cls (fun (owner : Class_table.cls) ->
               Type_state.method_return_tuple type_state owner mname)
         | _ -> None
       in
@@ -662,7 +665,7 @@ let stamp_var_types_from_bodies ~(lang : Lang.t)
         match
           applicable_callees ~lang table ~caller args
             (match member_call with
-             | Some (_, (resolved : Symbol_table.selection Lazy.t)) ->
+             | Some (_, (resolved : Symbol_table.lookup_result Lazy.t)) ->
                Lazy.force resolved
              | None -> Symbol_table.resolve_call table ~caller callee)
         with
@@ -715,7 +718,7 @@ let stamp_var_types_from_bodies ~(lang : Lang.t)
         match range_expr.G.e with
         | G.DotAccess (obj, _, G.FN (G.Id ((field, _), _))) ->
           Option.bind (class_of obj) (fun (cls : Class_table.cls) ->
-            along table cls (fun (owner : Class_table.cls) ->
+            nearest_in_lookup_order table cls (fun (owner : Class_table.cls) ->
               Type_state.field_element type_state owner field))
         | _ -> None
       in

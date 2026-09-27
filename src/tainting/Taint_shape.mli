@@ -25,7 +25,7 @@ val compose_offset :
 val fix_poly_taint_with_offset :
   ?max:int ->
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   Taint.offset list ->
   Taint.taints ->
   Taint.taints
@@ -41,7 +41,7 @@ val tuple_like_obj : site:Taint.call_loc -> (Taint.taints * shape) list -> shape
 (* THINK: Replace polymorphic variant with a parameterized IL.field_or_entry ? *)
 val record_or_dict_like_obj :
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   site:Taint.call_loc ->
   [< `Entry of IL.exp * Taint.taints * shape
   | `Field of IL.name * Taint.taints * shape
@@ -54,29 +54,29 @@ val record_or_dict_like_obj :
 
 val closures_of_fun : closure -> closure list -> closure * closure list
 
-val unify_cell : lang:Lang.t -> merge:Taint.trace_merge -> cell -> cell -> cell
+val unify_cell : lang:Lang.t -> traces:Taint.kept_traces -> cell -> cell -> cell
 (** Unify two 'cell's into one. *)
 
 val unify_shape :
-  lang:Lang.t -> merge:Taint.trace_merge -> shape -> shape -> shape
+  lang:Lang.t -> traces:Taint.kept_traces -> shape -> shape -> shape
 (** Unify two 'shapes's into one. *)
 
-val gather_all_taints_in_cell : merge:Taint.trace_merge -> cell -> Taint.taints
+val gather_all_taints_in_cell : traces:Taint.kept_traces -> cell -> Taint.taints
 (** Gather and union all taints reachable through a cell. *)
 
 val gather_all_taints_in_shape :
-  merge:Taint.trace_merge -> shape -> Taint.taints
+  traces:Taint.kept_traces -> shape -> Taint.taints
 (** Gather and union all taints reachable through a shape. *)
 
 val gather_all_taints_in_args_taints :
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   (Taint.taints * shape) IL.argument list ->
   Taint.taints
 
 val find_in_cell :
   ?max:int ->
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   Taint.offset list ->
   cell ->
   [ `Found of cell
@@ -114,7 +114,7 @@ val find_in_cell :
 val find_in_cell_poly :
   ?max:int ->
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   Taint.offset list ->
   cell ->
   (Taint.taints * shape) option
@@ -133,7 +133,7 @@ val find_in_cell_poly :
 val find_in_shape_poly :
   ?max:int ->
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   taints:Taint.taints ->
   Taint.offset list ->
   shape ->
@@ -150,7 +150,7 @@ val update_offset_in_cell :
 
 val update_offset_and_unify :
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   write:Taint.call_loc ->
   Taint.taints ->
   shape ->
@@ -166,11 +166,13 @@ val clean_cell : write:Taint.call_loc -> Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
 
 val join_folded_by_site :
-  lang:Lang.t -> merge:Taint.trace_merge -> cell option -> cell -> cell
+  lang:Lang.t -> traces:Taint.kept_traces -> cell option -> cell -> cell
 (** The join of a variable's previous and computed cells at a loop head,
-    folded by allocation site; one form per partition of their objects. *)
+    folded by allocation site: objects that share a site along a path are
+    merged, and the result depends only on the partition of their
+    objects. *)
 
-val truncate_shape : merge:Taint.trace_merge -> max_depth:int -> shape -> shape
+val truncate_shape : traces:Taint.kept_traces -> max_depth:int -> shape -> shape
 (** Widen a shape to at most [max_depth] levels of ['Obj'] nesting. Subtrees
  * below the cutoff collapse into the cutoff cell's taints (so their taints
  * remain reachable, with less offset precision); ['Clean] markers below the
@@ -179,7 +181,7 @@ val truncate_shape : merge:Taint.trace_merge -> max_depth:int -> shape -> shape
  * fixpoint in the shape domain. *)
 
 val truncate_effect :
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   max_depth:int ->
   Shape_and_sig.Effect.t ->
   Shape_and_sig.Effect.t
@@ -187,7 +189,7 @@ val truncate_effect :
  * data shape, or ['ToSinkInCall'] argument shapes). *)
 
 val truncate_signature :
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   max_depth:int ->
   Shape_and_sig.Signature.t ->
   Shape_and_sig.Signature.t

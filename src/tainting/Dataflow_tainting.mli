@@ -51,7 +51,7 @@ val captured_of_fun_cfg :
 
 val seed_captured_vars :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   (IL.name * AST_generic.capture_mode) list ->
   Taint_lval_env.t ->
   Taint_lval_env.t
@@ -60,7 +60,7 @@ val global_vars : IL.fun_cfg -> IL.NameSet.t
 
 val seed_global_vars :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   IL.NameSet.t ->
   Taint_lval_env.t ->
   Taint_lval_env.t

@@ -152,7 +152,7 @@ type scope_info = {
   member : bool;
   (* a local the function scope declares when it opens, before the
      assignment that binds it is reached *)
-  placeholder : bool;
+  hoisted : bool;
 }
 
 type namespace =
@@ -231,7 +231,7 @@ let add_ident_global_scope id resolved scopes =
 (* for JS 'var' *)
 let _add_ident_function_scope _id _resolved _scopes = raise Todo
 let untyped_ent name =
-  { entname = name; enttype = None; member = false; placeholder = false }
+  { entname = name; enttype = None; member = false; hoisted = false }
 
 let rec find_in_scope_where (ns : namespace) (s : string)
     (p : scope_info -> bool) (xs : scope) : scope_info option =
@@ -441,12 +441,13 @@ let split_blocks (env : env) : scope list * scope list =
 (* the block scopes a lookup may see, innermost first *)
 let visible_blocks env = fst (split_blocks env)
 
-(* Behind a function body's gate (see [hidden_blocks]), the names the body
-   still sees, searched in the hidden enclosing scopes first, then in the file
-   scope: PHP's functions and constants (no [$] sigil), since a function
-   declared inside a function is global once declared; Ruby's globals ([$]
-   sigil) and constants (capitalised), which are visible everywhere. *)
-let visible_behind_gate (lang : Lang.t) (s : string) : bool =
+(* The names visible in a function body across its scope boundary (see
+   [hidden_blocks]), searched in the hidden enclosing scopes first, then in
+   the file scope: PHP's functions and constants (no [$] sigil), since a
+   function declared inside a function is global once declared; Ruby's
+   globals ([$] sigil) and constants (capitalised), which are visible
+   everywhere. *)
+let visible_across_function_scope (lang : Lang.t) (s : string) : bool =
   match lang with
   | Lang.Php -> not (String.starts_with ~prefix:"$" s)
   | Lang.Ruby
@@ -480,7 +481,7 @@ let members_in_scope_in_methods (lang : Lang.t) : bool =
 
 (* The members a class declares are resolved. In JS, TS and PHP a method
  * reaches them only through [this]. *)
-let members_resolved (lang : Lang.t) : bool =
+let members_in_scope_unqualified (lang : Lang.t) : bool =
   members_in_scope_in_methods lang
   ||
   match lang with
@@ -493,8 +494,8 @@ let members_resolved (lang : Lang.t) : bool =
 
 (* accessors *)
 
-(* The scopes a lookup of the name [s] sees, innermost first. *)
-let scopes_seen ~(in_lvalue : bool) (ns : namespace) (s : string) (env : env) :
+(* The scopes a lookup of the name [s] searches, innermost first. *)
+let lookup_scopes ~(in_lvalue : bool) (ns : namespace) (s : string) (env : env) :
     scope list =
   let scopes = env.names in
   let with_namespace (file : scope list) : scope list =
@@ -517,22 +518,23 @@ let scopes_seen ~(in_lvalue : bool) (ns : namespace) (s : string) (env : env) :
         | Lang.Ruby
         | Lang.Crystal ->
             (* just look current scope! no access to nested scopes or global:
-             * a function body sees its own locals, what a [global] directive
-             * or a closure [use] planted in it, and the names
-             * [visible_behind_gate] lets through, searched in the hidden
-             * enclosing scopes first, then in the file scope (a PHP function
-             * declared inside a function is global once declared; Ruby
-             * constants and globals are visible everywhere), not the file's
-             * variables; an arrow function sees the scopes enclosing it, the
-             * file's variables included when no function body is in
-             * between *)
-            (* A Ruby [def] body is such a gate too; its blocks are not. *)
-            let visible, gated = split_blocks env in
+             * a function body's names resolve to its own locals, what a
+             * [global] directive or a closure [use] planted in it, and the
+             * names [visible_across_function_scope] accepts, searched in the
+             * hidden enclosing scopes first, then in the file scope (a PHP
+             * function declared inside a function is global once declared;
+             * Ruby constants and globals are visible everywhere), not the
+             * file's variables; an arrow function's names resolve in the
+             * scopes enclosing it, the file's variables included when no
+             * function body is in between *)
+            (* A Ruby [def] body is such a scope boundary too; its blocks are
+               not. *)
+            let visible, hidden = split_blocks env in
             let enclosing, file_scope =
               if
                 Option.is_none !(env.hidden_blocks)
-                || visible_behind_gate env.lang s
-              then (gated, [ !(scopes.global) ])
+                || visible_across_function_scope env.lang s
+              then (hidden, [ !(scopes.global) ])
               else ([], [])
             in
             visible @ enclosing
@@ -546,7 +548,7 @@ let lookup_namespace_opt ~(class_attr : bool) (ns : namespace) ((s, _) : ident)
   (* without [this], a member is reachable only where the language says so *)
   let members = class_attr || members_in_scope_in_methods env.lang in
   lookup_namespace ~members ~class_attr ns s
-    (scopes_seen ~in_lvalue:!(env.in_lvalue) ns s env)
+    (lookup_scopes ~in_lvalue:!(env.in_lvalue) ns s env)
 
 let lookup_scope_opt ?(class_attr = false) id env =
   lookup_namespace_opt ~class_attr VarName id env
@@ -585,7 +587,7 @@ let lookup_type_scope_opt ((s, _) : ident) (env : env) : scope_info option =
   let members = nested_types_in_scope_in_methods env.lang || in_class env in
   let ns = type_namespace env.lang in
   lookup_namespace ~members ~class_attr:false ns s
-    (scopes_seen ~in_lvalue:false ns s env)
+    (lookup_scopes ~in_lvalue:false ns s env)
 
 (* The bare name of a field or method identifies a member of the receiver,
  * never a binding in scope, so it takes no identity from a same-named binding. It
@@ -674,7 +676,7 @@ let lookup_for_implicit_assign_opt id env =
       let file_scope =
         if
           Option.is_none !(env.hidden_blocks)
-          || visible_behind_gate env.lang s
+          || visible_across_function_scope env.lang s
         then [ !(env.names.global) ]
         else []
       in
@@ -798,11 +800,11 @@ let is_resolvable_name_ctx env lang =
   | AtToplevel
   | InFunction ->
       true
-  | InClass -> members_resolved lang
+  | InClass -> members_in_scope_unqualified lang
 
 (* A constructor is written with the name of its class, and that name denotes
    the class. *)
-let constructor_named_after_class (lang : Lang.t) : bool =
+let constructor_has_class_identifier (lang : Lang.t) : bool =
   match lang with
   | Lang.Java
   | Lang.Apex
@@ -825,7 +827,7 @@ let resolved_name_kind env lang =
   | InFunction -> LocalVar
   | InClass ->
       (* alt: use a different scope.class? *)
-      if members_resolved lang then EnclosedVar else raise Impossible
+      if members_in_scope_unqualified lang then EnclosedVar else raise Impossible
 
 (* !also set the id_info of the parameter as a side effect! *)
 let params_of_parameters env params : scope =
@@ -839,7 +841,7 @@ let params_of_parameters env params : scope =
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved =
              { entname = (Parameter, sid); enttype = typ; member = false;
-               placeholder = false }
+               hoisted = false }
            in
            set_resolved env id_info resolved;
            Some (var_key id, resolved)
@@ -854,7 +856,7 @@ let params_of_parameters env params : scope =
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved =
              { entname = (Parameter, sid); enttype = typ; member = false;
-               placeholder = false }
+               hoisted = false }
            in
            set_resolved env id_info resolved;
            Some (var_key id, resolved)
@@ -875,7 +877,7 @@ let params_of_parameters env params : scope =
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved =
              { entname = (Parameter, sid); enttype = typ; member = false;
-               placeholder = false }
+               hoisted = false }
            in
            set_resolved env id_info resolved;
            Some (var_key id, resolved)
@@ -1025,10 +1027,10 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
         match rebound with
         | None -> (
             (* the local the scope declared when it opened, see
-               [predeclare_locals] *)
+               [hoist_locals] *)
             match
               find_in_scope_where VarName (H.str_of_ident id)
-                (fun (entry : scope_info) -> entry.placeholder)
+                (fun (entry : scope_info) -> entry.hoisted)
                 (match (global, namespace) with
                 | true, _ -> !(env.names.global)
                 | false, Some ns -> !ns
@@ -1067,7 +1069,7 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
       entname = (name_kind, sid);
       enttype = resolved_type;
       member = in_class env;
-      placeholder = false;
+      hoisted = false;
     }
   in
   add_ident_to_its_scope id resolved env.names;
@@ -1089,7 +1091,7 @@ let declare_func env lang (id : ident) id_info (frettype : type_ option) =
         in
         let resolved =
           { entname; enttype = frettype; member = in_class env;
-            placeholder = false }
+            hoisted = false }
         in
         add_func_ident_current_scope id resolved env.names;
         resolved
@@ -1113,7 +1115,7 @@ let bind_definition (env : env) (kind : resolved_name_kind) ~(member : bool)
     match same_site_entry env VarName id scope with
     | Some resolved ->
         (* The definition is reached after its hoist: from here on a use
-           sees this definition, the latest one of the name. *)
+           resolves to this definition, the latest one of the name. *)
         add_to_scope id resolved env.names;
         if file_scope_in_order env then
           add_ident_global_scope id resolved env.names;
@@ -1140,7 +1142,7 @@ let bind_definition (env : env) (kind : resolved_name_kind) ~(member : bool)
         in
         let sid = SId.of_tok ~binding ~file:env.file (snd id) in
         let resolved =
-          { entname = (kind, sid); enttype; member; placeholder = false }
+          { entname = (kind, sid); enttype; member; hoisted = false }
         in
         add_to_scope id resolved env.names;
         resolved
@@ -1152,7 +1154,6 @@ let bind_value_definition env lang (id : ident) (id_info : id_info) : unit =
     (bind_definition env (resolved_name_kind env lang) ~member:(in_class env)
        ~keeps_type:true id)
 
-(* The binding a function definition gives its name. *)
 (* A method declared with a receiver (Go [func (t T) M()], a Rust method
    taking [self]) belongs to its receiver type's methods and binds nothing in
    the enclosing scope. *)
@@ -1161,6 +1162,7 @@ let declared_with_receiver (fdef : function_definition) : bool =
   | ParamReceiver _ :: _ -> true
   | _ -> false
 
+(* The binding a function definition gives its name. *)
 let bind_function_definition env lang (id : ident) (id_info : id_info)
     (fdef : function_definition) : unit =
   let frettype = fdef.frettype in
@@ -1168,7 +1170,7 @@ let bind_function_definition env lang (id : ident) (id_info : id_info)
   | _ when declared_with_receiver fdef && not (in_class env) -> ()
   | Some (class_name, class_binding)
     when in_class env
-         && constructor_named_after_class lang
+         && constructor_has_class_identifier lang
          && String.equal (H.str_of_ident id) class_name ->
       id_info.id_resolved := Some class_binding
   | Some _
@@ -1336,7 +1338,7 @@ let declare_type (env : env) ~(member : bool) (id : ident) : scope_info =
           SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id)
         in
         let resolved =
-          { entname = (TypeName, sid); enttype = None; member; placeholder = false }
+          { entname = (TypeName, sid); enttype = None; member; hoisted = false }
         in
         add_to_scope (type_key id) resolved;
         resolved
@@ -1379,32 +1381,32 @@ let free_names_are_globals (lang : Lang.t) : bool =
   | Lang.Lua -> true
   | _ -> false
 
-let rec lvalue_leaves (e : expr) : ident list =
+let rec bound_variables_of_lvalue (e : expr) : ident list =
   match e.e with
   | N (Id (id, _)) -> [ id ]
   | Container ((Tuple | List | Array), (_, es, _)) ->
-      List.concat_map lvalue_leaves es
+      List.concat_map bound_variables_of_lvalue es
   | Call ({ e = IdSpecial (Spread, _); _ }, (_, [ Arg e ], _))
   | Cast (_, _, e) ->
-      lvalue_leaves e
+      bound_variables_of_lvalue e
   | _ -> []
 
-let rec pattern_leaves (p : pattern) : ident list =
+let rec bound_variables_of_pattern (p : pattern) : ident list =
   match p with
   | PatId (id, _) -> [ id ]
-  | PatAs (p, (id, _)) -> id :: pattern_leaves p
+  | PatAs (p, (id, _)) -> id :: bound_variables_of_pattern p
   | PatTyped (p, _)
   | PatWhen (p, _) ->
-      pattern_leaves p
+      bound_variables_of_pattern p
   | PatTuple (_, ps, _)
   | PatList (_, ps, _)
   | PatConstructor (_, ps) ->
-      List.concat_map pattern_leaves ps
+      List.concat_map bound_variables_of_pattern ps
   | PatRecord (_, fields, _) ->
-      List.concat_map (fun (_, p) -> pattern_leaves p) fields
+      List.concat_map (fun (_, p) -> bound_variables_of_pattern p) fields
   | PatKeyVal (p1, p2)
   | PatDisj (p1, p2) ->
-      pattern_leaves p1 @ pattern_leaves p2
+      bound_variables_of_pattern p1 @ bound_variables_of_pattern p2
   | PatLiteral _
   | PatWildcard _
   | PatType _
@@ -1450,12 +1452,12 @@ let locals_bound_in (lang : Lang.t) (stmts : stmt list) :
             add [ id ]
         | EPattern pat, VarDef _
           when function_scoped || H.has_keyword_attr Var ent.attrs ->
-            add (pattern_leaves pat)
+            add (bound_variables_of_pattern pat)
         | EN (Id (id, _)), UseOuterDecl _
         | EN (Id (id, _)), ClassDef _ ->
             exclude [ id ]
         | EN (Id (id, _)), (VarDef _ | FuncDef _) when globals -> exclude [ id ]
-        | EPattern pat, VarDef _ when globals -> exclude (pattern_leaves pat)
+        | EPattern pat, VarDef _ when globals -> exclude (bound_variables_of_pattern pat)
         | _ -> ());
         super#visit_definition () definition
 
@@ -1464,21 +1466,21 @@ let locals_bound_in (lang : Lang.t) (stmts : stmt list) :
           match e.e with
           | Assign (lhs, _, _)
           | AssignOp (lhs, _, _) ->
-              add (lvalue_leaves lhs);
+              add (bound_variables_of_lvalue lhs);
               super#visit_expr () e
           | LetPattern (pat, _) ->
-              add (pattern_leaves pat);
+              add (bound_variables_of_pattern pat);
               super#visit_expr () e
           | _ -> super#visit_expr () e
 
       method! visit_stmt () (st : stmt) =
         (if function_scoped then
            match st.s with
-           | For (_, ForEach (pat, _, _), _) -> add (pattern_leaves pat)
+           | For (_, ForEach (pat, _, _), _) -> add (bound_variables_of_pattern pat)
            | OtherStmt (OS_Delete, anys) ->
                anys
                |> List.iter (function
-                    | E e -> add (lvalue_leaves e)
+                    | E e -> add (bound_variables_of_lvalue e)
                     | _ -> ())
            | DirectiveStmt { d = ImportFrom (_, _, names); _ } ->
                names
@@ -1491,7 +1493,7 @@ let locals_bound_in (lang : Lang.t) (stmts : stmt list) :
            | _ -> ());
         (if globals then
            match st.s with
-           | For (_, ForEach (pat, _, _), _) -> exclude (pattern_leaves pat)
+           | For (_, ForEach (pat, _, _), _) -> exclude (bound_variables_of_pattern pat)
            | For (_, ForClassic (inits, _, _), _) ->
                inits
                |> List.iter (function
@@ -1504,7 +1506,7 @@ let locals_bound_in (lang : Lang.t) (stmts : stmt list) :
       method! visit_case () (c : case) =
         (if function_scoped then
            match c with
-           | Case (_, pat) -> add (pattern_leaves pat)
+           | Case (_, pat) -> add (bound_variables_of_pattern pat)
            | _ -> ());
         super#visit_case () c
 
@@ -1512,7 +1514,7 @@ let locals_bound_in (lang : Lang.t) (stmts : stmt list) :
         (if function_scoped then
            match exn with
            | CatchParam { pname = Some id; _ } -> add [ id ]
-           | CatchPattern pat -> add (pattern_leaves pat)
+           | CatchPattern pat -> add (bound_variables_of_pattern pat)
            | _ -> ());
         super#visit_catch () c
     end
@@ -1521,10 +1523,10 @@ let locals_bound_in (lang : Lang.t) (stmts : stmt list) :
   (List.rev !bound, !excluded)
 
 (* The locals a scope binds are declared when the scope opens, as
-   placeholders the binding occurrence then takes over. In Lua the file
+   hoisted bindings the binding occurrence then takes over. In Lua the file
    scope also declares, when it opens, the globals assigned anywhere in the
    file. *)
-let predeclare_locals (env : env) (stmts : stmt list) : unit =
+let hoist_locals (env : env) (stmts : stmt list) : unit =
   if
     locals_are_function_scoped env.lang
     || hoisted_var_declarations env.lang
@@ -1546,11 +1548,11 @@ let predeclare_locals (env : env) (stmts : stmt list) : unit =
                  entname = (resolved_name_kind env env.lang, sid);
                  enttype = None;
                  member = false;
-                 placeholder = true;
+                 hoisted = true;
                }
                env.names)
 
-let namespaces_hold_definitions (lang : Lang.t) : bool =
+let definitions_bound_in_namespace (lang : Lang.t) : bool =
   match lang with
   | Lang.Php
   | Lang.Hack ->
@@ -1558,7 +1560,7 @@ let namespaces_hold_definitions (lang : Lang.t) : bool =
   | _ -> false
 
 let enter_namespace (env : env) (directive : directive_kind) : unit =
-  if namespaces_hold_definitions env.lang then
+  if definitions_bound_in_namespace env.lang then
     match directive with
     | Package (_, []) | PackageEnd _ -> env.namespace := None
     | Package (_, path) ->
@@ -1578,8 +1580,8 @@ let enter_namespace (env : env) (directive : directive_kind) : unit =
     | _ -> ()
 
 (* The definitions a scope makes are bound when the scope opens, so that a
-   use before a definition sees it. A nested scope (a function, class or
-   module body, a block with a scope of its own) binds its own definitions
+   use before a definition resolves to it. A nested scope (a function, class
+   or module body, a block with a scope of its own) binds its own definitions
    when it opens. *)
 let hoist_definitions (env : env) (stmts : stmt list) : unit =
   let visitor =
@@ -1694,7 +1696,7 @@ class ['self] resolve_visitor env lang =
               match x.fbody with
               | FBStmt { s = Block (_, stmts, _); _ } ->
                   hoist_definitions env stmts;
-                  predeclare_locals env stmts;
+                  hoist_locals env stmts;
                   super#visit_function_definition venv
                     { x with fbody = FBNothing };
                   List.iter (self#visit_stmt venv) stmts
@@ -2288,7 +2290,7 @@ class ['self] resolve_visitor env lang =
         when (match lookup_for_implicit_assign_opt id env with
              | None -> true
              | Some (entry : scope_info) ->
-                 entry.placeholder || assignment_binds_here env id)
+                 entry.hoisted || assignment_binds_here env id)
              && assign_implicitly_declares lang
              && is_resolvable_name_ctx env lang ->
           (* Need to visit the RHS first so that type is populated *)
@@ -2436,7 +2438,7 @@ class ['self] resolve_visitor env lang =
                with
                | Some ty ->
                    id_info.id_flags := IdFlags.set_data_field !(id_info.id_flags);
-                   (* On an offset a function type marks a method. *)
+                   (* On a field access, a function type marks a method. *)
                    (match ty.t with
                    | TyFun _ -> ()
                    | _ ->
@@ -2556,8 +2558,8 @@ class ['self] resolve_visitor env lang =
               with_new_block_scope env.names (fun () ->
                   self#visit_stmt venv s2))
             s2_opt
-      (* Where the loop condition is in the body's scope, it sees the
-       * body's declarations. *)
+      (* Where the loop condition is in the body's scope, the body's
+       * declarations are visible in it. *)
       | DoWhile (tok, body, cond) when loop_condition_in_body_scope lang ->
           self#visit_tok venv tok;
           with_new_block_scope env.names (fun () ->
@@ -2620,7 +2622,7 @@ let resolve lang prog =
   hoist_definitions env prog;
   env.namespace := None;
   if hoisted_var_declarations lang || free_names_are_globals lang then
-    predeclare_locals env prog;
+    hoist_locals env prog;
   visitor#visit_program () prog;
   ()
 [@@profiling]

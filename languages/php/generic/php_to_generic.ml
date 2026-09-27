@@ -767,7 +767,7 @@ and class_def
       c_extends;
       c_implements;
       c_uses;
-      c_trait_rules;
+      c_trait_adaptations;
       c_enum_type;
       c_attrs;
       c_constants;
@@ -782,8 +782,8 @@ and class_def
   let extends = option class_parent c_extends in
   let implements = list class_name c_implements in
   let uses = list class_name c_uses in
-  let trait_rules =
-    list (trait_rule ~class_name:c_name ~extends:c_extends) c_trait_rules
+  let trait_adaptations =
+    list (trait_adaptation ~class_name:c_name ~extends:c_extends) c_trait_adaptations
   in
 
   let _enum = option (enum_type tok) c_enum_type in
@@ -819,15 +819,15 @@ and class_def
       cmixins = uses;
       cparams = fb [];
       cbody =
-        (t1, trait_rules @ (fields |> List_.map (fun def -> G.fld def)), t2);
+        (t1, trait_adaptations @ (fields |> List_.map (fun def -> G.fld def)), t2);
     }
   in
   (ent, def)
 
-(* A rule's source written 'self' or 'static' is the class itself, and
+(* An adaptation's source written 'self' or 'static' is the class itself, and
    'parent' is its superclass. *)
-and trait_rule ~(class_name : ident) ~(extends : class_name option)
-    (rule : trait_rule) : G.field =
+and trait_adaptation ~(class_name : ident) ~(extends : class_name option)
+    (adaptation : trait_adaptation) : G.field =
   let trait_name (name : name) : G.name =
     match (name.n_parts, extends) with
     | [ (part, tok) ], _
@@ -840,7 +840,7 @@ and trait_rule ~(class_name : ident) ~(extends : class_name option)
     | _ -> name_of_qualified_ident ~case_insensitive:true name
   in
   let import =
-    match rule with
+    match adaptation with
     | InsteadOf (source, member, tok, excluded) ->
         {
           G.mi_tok = tok;

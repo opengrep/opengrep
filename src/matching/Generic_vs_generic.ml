@@ -3175,7 +3175,7 @@ and m_definition a b =
       let* () = m_entity a1 b1 in
       match (a2, b2) with
       | G.ClassDef a_class, B.ClassDef b_class
-        when record_kind_left_open a1 b1 ->
+        when pattern_omits_record_kind a1 b1 ->
           m_class_definition { a_class with ckind = b_class.ckind } b_class
       | _ ->
           let* () = m_definition_kind a2 b2 in
@@ -3183,7 +3183,7 @@ and m_definition a b =
 
 (* A record whose kind is stated by an attribute: a record pattern that
  * does not state the kind matches a record of either kind. *)
-and record_kind_left_open (a : G.entity) (b : G.entity) : bool =
+and pattern_omits_record_kind (a : G.entity) (b : G.entity) : bool =
   let is_record (ent : G.entity) =
     List.exists
       (function

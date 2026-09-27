@@ -72,8 +72,8 @@ type receiver_parameter =
   | Declares_method
   | Declares_extension
 
-type several_results =
-  | No_several_results
+type multiple_results =
+  | No_multiple_results
   | Declared_result_types
   | Returned_expression_list
 
@@ -104,8 +104,8 @@ type t = {
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
   implicit_capture_mode : AST_generic.capture_mode;
-  (* Go: a function declares several result types (specification, "Return statements"); Lua: a return lists several expressions (reference manual 3.4.12). *)
-  several_results : several_results;
+  (* Go: a function declares multiple result types (specification, "Return statements"); Lua: a return lists multiple expressions (reference manual 3.4.12). *)
+  multiple_results : multiple_results;
 }
 
 let empty = {
@@ -124,7 +124,7 @@ let empty = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let python = {
@@ -155,7 +155,7 @@ let python = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let ruby = {
@@ -194,7 +194,7 @@ let ruby = {
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let crystal = { ruby with reflection = Lang_reflection.of_lang Lang.Crystal }
@@ -230,7 +230,7 @@ let javascript = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let typescript = {
@@ -268,7 +268,7 @@ let java = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let kotlin = {
@@ -302,7 +302,7 @@ let kotlin = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let scala = {
@@ -331,7 +331,7 @@ let scala = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let csharp = {
@@ -361,7 +361,7 @@ let csharp = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let go = {
@@ -385,7 +385,7 @@ let go = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = Declared_result_types;
+  multiple_results = Declared_result_types;
 }
 
 let rust = {
@@ -414,7 +414,7 @@ let rust = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let swift = {
@@ -444,7 +444,7 @@ let swift = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let php = {
@@ -467,7 +467,7 @@ let php = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let cpp = {
@@ -489,7 +489,7 @@ let cpp = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let c = {
@@ -514,7 +514,7 @@ let ocaml_lang = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let lua = {
@@ -533,7 +533,7 @@ let lua = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = Returned_expression_list;
+  multiple_results = Returned_expression_list;
 }
 
 let dart = {
@@ -583,7 +583,7 @@ let dart = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let elixir = {
@@ -627,7 +627,7 @@ let elixir = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let julia = {
@@ -650,7 +650,7 @@ let julia = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let clojure = {
@@ -695,7 +695,7 @@ let clojure = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let apex = {
@@ -714,7 +714,7 @@ let apex = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_value;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let vb = {
@@ -733,7 +733,7 @@ let vb = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   implicit_capture_mode = AST_generic.Capture_by_reference;
-  several_results = No_several_results;
+  multiple_results = No_multiple_results;
 }
 
 let r = {
@@ -975,35 +975,35 @@ let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
       { of_every_class = []; of_declaration = none; user_defined_conversions = true }
   | _ -> unknown
 
-let member_resolution (lang : Lang.t) : Linearisation.strategy =
-  let single_inheritance (superclass : Linearisation.superclass)
-      ~(interface_bodies_inherited : bool) ~(mixins : Linearisation.mixins) :
-      Linearisation.strategy =
-    Linearisation.Single_inheritance
+let member_lookup (lang : Lang.t) : Member_lookup.strategy =
+  let single_inheritance (superclass : Member_lookup.superclass)
+      ~(interface_bodies_inherited : bool) ~(mixins : Member_lookup.mixins) :
+      Member_lookup.strategy =
+    Member_lookup.Single_inheritance
       { superclass; interface_bodies_inherited; mixins }
   in
   match lang with
-  | Lang.Solidity -> Linearisation.C3 { bases_listed_most_base_first = true }
-  | Lang.Scala -> Linearisation.Scala_class_linearisation
+  | Lang.Solidity -> Member_lookup.C3 { bases_listed_most_base_first = true }
+  | Lang.Scala -> Member_lookup.Scala_class_linearisation
   | Lang.Ruby
   | Lang.Crystal ->
-      Linearisation.Ruby_ancestor_chain
+      Member_lookup.Ruby_ancestor_chain
   | Lang.Java ->
-      single_inheritance Linearisation.Written_as_extends
+      single_inheritance Member_lookup.Written_as_extends
         ~interface_bodies_inherited:true
-        ~mixins:Linearisation.Applied_in_the_chain
+        ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Kotlin ->
-      single_inheritance Linearisation.Carrying_constructor_arguments
+      single_inheritance Member_lookup.Carrying_constructor_arguments
         ~interface_bodies_inherited:true
-        ~mixins:Linearisation.Applied_in_the_chain
+        ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Swift ->
-      single_inheritance Linearisation.Of_class_kind
+      single_inheritance Member_lookup.First_parent_if_class
         ~interface_bodies_inherited:true
-        ~mixins:Linearisation.Applied_in_the_chain
+        ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Csharp ->
-      single_inheritance Linearisation.Of_class_kind
+      single_inheritance Member_lookup.First_parent_if_class
         ~interface_bodies_inherited:false
-        ~mixins:Linearisation.Applied_in_the_chain
+        ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Apex
   | Lang.Vb
   | Lang.Dart
@@ -1011,18 +1011,18 @@ let member_resolution (lang : Lang.t) : Linearisation.strategy =
   | Lang.Ts
   | Lang.Vue
   | Lang.Lua ->
-      single_inheritance Linearisation.Written_as_extends
+      single_inheritance Member_lookup.Written_as_extends
         ~interface_bodies_inherited:false
-        ~mixins:Linearisation.Applied_in_the_chain
+        ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Php
   | Lang.Hack ->
-      single_inheritance Linearisation.Written_as_extends
+      single_inheritance Member_lookup.Written_as_extends
         ~interface_bodies_inherited:false
-        ~mixins:Linearisation.Flattened_into_the_class
-  | Lang.Go -> Linearisation.Go_embedding_promotion
-  | Lang.Cpp -> Linearisation.Cpp_member_lookup
-  | Lang.Rust -> Linearisation.Rust_method_probing
-  | _ -> Linearisation.C3 { bases_listed_most_base_first = false }
+        ~mixins:Member_lookup.Flattened_into_the_class
+  | Lang.Go -> Member_lookup.Go_embedding_promotion
+  | Lang.Cpp -> Member_lookup.Cpp_member_lookup
+  | Lang.Rust -> Member_lookup.Rust_method_probing
+  | _ -> Member_lookup.C3 { bases_listed_most_base_first = false }
 
 type dereference = {
   traits : string list list;
@@ -1160,8 +1160,8 @@ let method_receiver_is_first_parameter (lang : Lang.t) : bool =
   | Lang.Lua -> true
   | _ -> false
 
-let class_header_is_constructor : Lang.t -> bool =
-  Visit_function_defs.class_header_is_constructor
+let has_primary_constructor : Lang.t -> bool =
+  Visit_function_defs.has_primary_constructor
 
 let bracket_member_access (lang : Lang.t) : bool =
   match lang with

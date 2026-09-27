@@ -1,7 +1,8 @@
-(* The definitions one file makes, reached through the bindings naming
-   recorded on its names: a binding holds function definitions, a class its
-   members, the functions stored in the fields of its instances and its
-   written parents, and the object a binding holds the functions stored in
+(* The definitions one file makes, reached through the bindings that name
+   resolution recorded on its identifiers. The table maps a binding to the
+   function definitions it refers to; a class to its members, to the
+   functions stored in the fields of its instances and to its written
+   parents; and the object a binding refers to, to the functions stored in
    its fields. *)
 
 module G = AST_generic
@@ -30,7 +31,7 @@ type kind = Class_table.kind =
   | Class_kind of G.class_kind
   | Module_kind
 
-type role = Class_table.role =
+type declaration_kind = Class_table.declaration_kind =
   | Definition of Function_id.t
   | Singleton_object
   | Trait_impl of Function_id.t
@@ -42,7 +43,7 @@ type parent = Class_table.parent =
 
 type parent_clause = Class_table.parent_clause = {
   parent : parent;
-  relation : Linearisation.relation;
+  relation : Member_lookup.relation;
   written : G.type_ option;
   arguments : G.arguments option;
   delegate : G.expr option;
@@ -55,7 +56,7 @@ type member_import = Class_table.member_import = {
 
 type class_scope = Class_table.class_scope = {
   binding : G.SId.t;
-  role : role;
+  declaration_kind : declaration_kind;
   members : Func_info.t list SMap.t;
   fields : Func_info.t list Field_path_map.t;
   parents : parent_clause list;
@@ -65,8 +66,8 @@ type class_scope = Class_table.class_scope = {
   requirements : string list;
   kind : kind;
   declaration : Lang_config.class_declaration;
-  singleton_exposure : Class_parents.singleton_exposure;
-  bound_functions : Func_info.t list;
+  module_functions : Class_parents.module_functions;
+  constructor_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
   extensions : Func_info.t list SMap.t;
   reopens : bool;
@@ -74,18 +75,18 @@ type class_scope = Class_table.class_scope = {
 
 type scope_id = Class_table.scope_id = {
   scope_binding : G.SId.t;
-  scope_role : role;
+  scope_declaration_kind : declaration_kind;
 }
 
-type held_class =
+type referent_class =
   | Of_class of Class_table.cls
   | Of_external_class
   | Of_unknown_class
 
-type held_object = {
-  holder : G.SId.t;
+type referent = {
+  variable : G.SId.t;
   path : string list;
-  held_class : held_class;
+  referent_class : referent_class;
 }
 
 type receiver_class =
@@ -93,9 +94,9 @@ type receiver_class =
   | Exact of Class_table.cls
   | Class_object of Class_table.cls
   | Ancestors_of of Class_table.cls
-  | Object_of of held_object
+  | Object_of of referent
   | External_class
-  | Root
+  | Top_level_object
   | Unknown
 
 type resolution =
@@ -108,15 +109,15 @@ type dispatch = {
   overridden : Class_table.definition list;
 }
 
-type selection = {
+type lookup_result = {
   resolution : resolution;
   dispatches : dispatch list;
 }
 
-let static_selection (resolution : resolution) : selection =
+let static_selection (resolution : resolution) : lookup_result =
   { resolution; dispatches = [] }
 
-type receiver_role =
+type receiver_relation =
   | Method_of
   | Extension_of
 
@@ -126,15 +127,15 @@ module Table_ops (Table : Hashtbl.S) = struct
     Table.replace table key
       (Option.value (Table.find_opt table key) ~default:[] @ values)
 
-  let joined (funcs : Func_info.t list) (held : Func_info.t list option) :
+  let joined (funcs : Func_info.t list) (existing : Func_info.t list option) :
       Func_info.t list option =
     Some
       (List_.uniq_by
          (fun (left : Func_info.t) (right : Func_info.t) ->
            left.Func_info.fdef == right.Func_info.fdef)
-         (Option.value held ~default:[] @ funcs))
+         (Option.value existing ~default:[] @ funcs))
 
-  let add_named (table : Func_info.t list SMap.t Table.t) (key : Table.key)
+  let add_member (table : Func_info.t list SMap.t Table.t) (key : Table.key)
       (name : string) (funcs : Func_info.t list) : unit =
     match funcs with
     | [] -> ()
@@ -164,13 +165,13 @@ module By_binding = Table_ops (SId_tbl)
 module By_scope = Table_ops (Scope_tbl)
 
 (* What [this] denotes in a function's body: an instance of a class, or the
-   object at a field path of the object a binding holds when the function is
-   stored in a field of it. *)
+   object at a field path of the object a binding refers to when the function
+   is stored in a field of it. *)
 type self_type =
   | Instance_of of scope_id
   | Instance_of_type of G.type_
   | Class_of of scope_id
-  | Held_by of G.SId.t * string list
+  | Referent_of of G.SId.t * string list
 
 type field_owner =
   | Instance_field of scope_id * string list
@@ -194,7 +195,7 @@ type module_use =
 
 (* Where a member is looked up from: the calling function and the byte
    position of the call, which decide the traits in scope. *)
-type site = {
+type program_point = {
   from : Function_id.t option;
   at : int option;
 }
@@ -218,7 +219,7 @@ type assigned_value = {
   in_function : bool;
 }
 
-let holds_function_value (e : G.expr) : bool =
+let may_refer_to_function (e : G.expr) : bool =
   match e.G.e with
   | G.N _
   | G.DotAccess _
@@ -227,11 +228,11 @@ let holds_function_value (e : G.expr) : bool =
   | _ -> false
 
 (* A lookup the class table's memo does not hold is recorded there while
-   files are read one at a time, and in the table's own memo in a pass that
-   reads files in parallel, so no two domains write one memo. *)
-type memo_writes =
-  | Into_class_table
-  | Into_own of Class_table.memo
+   files are read one at a time, and in this symbol table's own memo in a
+   pass that reads files in parallel, so no two domains write one memo. *)
+type memo_target =
+  | Class_table_memo
+  | Own_memo of Class_table.memo
 
 type t = {
   lang : Lang.t;
@@ -241,8 +242,8 @@ type t = {
   defined_here : unit Scope_tbl.t;
   owners : scope_id Scope_tbl.t;
   function_fields : Func_info.t list Field_path_map.t SId_tbl.t;
-  unbound_receivers : (receiver_role * G.name * Func_info.t list) list;
-  selves : self_type Fdef_tbl.t;
+  unbound_receivers : (receiver_relation * G.name * Func_info.t list) list;
+  self_types : self_type Fdef_tbl.t;
   receivers : self_type SId_tbl.t;
   qualified_functions : Func_info.t list Path_tbl.t;
   qualified_classes : scope_id Path_tbl.t;
@@ -253,14 +254,14 @@ type t = {
   by_node : Func_info.t Node_tbl.t;
   extension_visible : string -> Func_info.t -> bool;
   build_configuration : int;
-  outside : t -> caller:Function_id.t option -> G.expr -> selection;
+  cross_file_resolver : t -> caller:Function_id.t option -> G.expr -> lookup_result;
   types : Type_state.t;
   declared_types : (G.SId.t * G.SId.t option, receiver_class) Hashtbl.t;
   function_modules : string list Fdef_tbl.t;
   module_uses : module_use list Path_tbl.t;
   block_uses : (int * int * module_use list) list;
-  index_links : G.SId.t list SId_tbl.t;
-  memo_writes : memo_writes;
+  index_metavalues : G.SId.t list SId_tbl.t;
+  memo_target : memo_target;
 }
 
 let binding_of_id_info = Class_table.binding_of_id_info
@@ -347,14 +348,15 @@ let top_level_defs_are_methods_of_object (lang : Lang.t) : bool =
       true
   | _ -> false
 
-(* The definitions a use with the binding [sid] sees: in a language with
-   overloads, every definition under the binding (an overload set); elsewhere
-   only the definition whose own binding carries the use's site, or none. *)
-let names_class (class_sites : G.SId.t list SId_tbl.t) (sid : G.SId.t) : bool =
+let is_class_binding (class_sites : G.SId.t list SId_tbl.t) (sid : G.SId.t) :
+    bool =
   List.exists (G.SId.same_site sid)
     (Option.value (SId_tbl.find_opt class_sites sid) ~default:[])
 
-let definitions_seen ~(lang : Lang.t) (functions : Func_info.t list SId_tbl.t)
+(* The definitions a use with the binding [sid] refers to: in a language with
+   overloads, every definition under the binding (an overload set); elsewhere
+   only the definition whose own binding carries the use's site, or none. *)
+let visible_definitions ~(lang : Lang.t) (functions : Func_info.t list SId_tbl.t)
     (sid : G.SId.t) : Func_info.t list =
   match SId_tbl.find_opt functions sid with
   | None -> []
@@ -404,8 +406,9 @@ let rec field_chain (e : G.expr) : G.expr * string list =
       (root, path @ [ fst (last_ident_of_name name) ])
   | _ -> (e, [])
 
-(* A member chain rooted at a name naming leaves unbound: the qualified name
-   the chain writes, which the language resolves in the global namespace. *)
+(* A member chain rooted at an identifier that name resolution leaves unbound:
+   the qualified name the chain writes, which the language resolves in the
+   global namespace. *)
 let unbound_chain_path (e : G.expr) : string list option =
   let root, prefix = field_chain e in
   match root.G.e with
@@ -419,7 +422,7 @@ type receiver_type =
   | Other_type of G.type_ * G.name
   | No_receiver_type
 
-let site_of_name (name : G.name) : Function_id.t =
+let function_id_of_name (name : G.name) : Function_id.t =
   Function_id.of_il_name (AST_to_IL.var_of_name name)
 
 let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
@@ -447,16 +450,16 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let class_sites = class_sites_of ast in
   let values = SId_tbl.create 16 in
   let assign (context : context) (name : G.name) (value : G.expr) : unit =
-    if holds_function_value value then
+    if may_refer_to_function value then
       Option.iter
         (fun (sid : G.SId.t) ->
           By_binding.add_to values sid
             [ { value; in_function = context.in_function } ])
         (binding_of_id_info (id_info_of_name name))
   in
-  let held_by_name (name : G.name) : Func_info.t list =
+  let functions_of_name (name : G.name) : Func_info.t list =
     match binding_of_id_info (id_info_of_name name) with
-    | Some sid -> definitions_seen ~lang functions sid
+    | Some sid -> visible_definitions ~lang functions sid
     | None -> []
   in
   let kinds = Scope_tbl.create 16 in
@@ -467,7 +470,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let member_imports = Scope_tbl.create 16 in
   let type_members = Scope_tbl.create 16 in
   let requirements = Scope_tbl.create 16 in
-  let exposures = Scope_tbl.create 16 in
+  let module_functions_by_scope = Scope_tbl.create 16 in
   let reopening = Scope_tbl.create 16 in
   let owners = Scope_tbl.create 16 in
   let members = Scope_tbl.create 16 in
@@ -475,7 +478,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let function_fields = SId_tbl.create 16 in
   let extensions = SId_tbl.create 16 in
   let unbound_receivers = ref [] in
-  let selves = Fdef_tbl.create (List.length funcs) in
+  let self_types = Fdef_tbl.create (List.length funcs) in
   let function_modules = Fdef_tbl.create (List.length funcs) in
   let module_uses = Path_tbl.create 16 in
   (* The visitor returns unit: its callbacks gather the blocks here. *)
@@ -490,7 +493,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       (def : G.definition_kind) : unit =
     match def with
     | G.ClassDef (cdef : G.class_definition)
-      when Lang_config.class_header_is_constructor lang ->
+      when Lang_config.has_primary_constructor lang ->
         Option.iter
           (fun (initialiser : Func_info.t) ->
             Scope_tbl.replace initialisers scope initialiser)
@@ -504,7 +507,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let add_member (cls : scope_id) (func : Func_info.t) : unit =
     match member_name func with
     | Some name ->
-        By_scope.add_named members cls name (definitions_of_member functions func)
+        By_scope.add_member members cls name (definitions_of_member functions func)
     | None -> ()
   in
   let add_parents (scope : scope_id) (def : G.definition_kind) : unit =
@@ -550,7 +553,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                  (fun (((imported : string), _), (alias : G.alias option)) ->
                    ( imported,
                      match alias with
-                     | Some ((seen_as, _), _) -> seen_as
+                     | Some ((alias_name, _), _) -> alias_name
                      | None -> imported ))
                  import.G.mi_members;
            })
@@ -559,8 +562,8 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       (List.map
          (fun ((name : string), (aliased : G.type_)) -> (name, parent_of aliased))
          (Class_parents.type_members def));
-    Scope_tbl.replace exposures scope
-      (Class_parents.singleton_exposure lang def)
+    Scope_tbl.replace module_functions_by_scope scope
+      (Class_parents.module_functions lang def)
   in
   let declare_class (context : context) (scope : scope_id) (kind : kind)
       (ent : G.entity) (name : G.name) (def : G.definition_kind) : unit =
@@ -588,7 +591,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
         Path_tbl.add qualified_classes (path @ qualified_path name) scope
     | None -> ()
   in
-  let opaque =
+  let empty_context =
     {
       class_body = None;
       self_type = None;
@@ -601,11 +604,11 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
   let definition_of (ent : G.entity) (name : G.name) (def : G.definition_kind)
       (sid : G.SId.t) : scope_id =
     if Class_parents.reopens lang ent def then definition_scope sid
-    else { scope_binding = sid; scope_role = Definition (site_of_name name) }
+    else { scope_binding = sid; scope_declaration_kind = Definition (function_id_of_name name) }
   in
   let inside_class (context : context) (scope : scope_id) : context =
     {
-      opaque with
+      empty_context with
       class_body = Some scope;
       self_type = Some (Instance_of scope);
       module_path = context.module_path;
@@ -619,7 +622,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       | Instance_of_type _
       | Class_of _ ->
           None
-      | Held_by (holder, path) -> Some (Object_field (holder, path @ prefix))
+      | Referent_of (variable, path) -> Some (Object_field (variable, path @ prefix))
     in
     match (root.G.e, prefix) with
     | G.IdSpecial ((G.This | G.Self), _), _ ->
@@ -642,26 +645,26 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     match owner with
     | Instance_field (cls, path) ->
         By_scope.add_at_path instance_fields cls (path @ [ field ]) stored
-    | Object_field (holder, path) ->
-        By_binding.add_at_path function_fields holder (path @ [ field ]) stored
-    | Prototype_member cls -> By_scope.add_named members cls field stored
+    | Object_field (variable, path) ->
+        By_binding.add_at_path function_fields variable (path @ [ field ]) stored
+    | Prototype_member cls -> By_scope.add_member members cls field stored
   in
   let self_type_of_owner (owner : field_owner) : self_type option =
     match owner with
     | Instance_field (cls, []) -> Some (Instance_of cls)
     | Instance_field (_, _ :: _) -> None
     | Prototype_member cls -> Some (Instance_of cls)
-    | Object_field (holder, path) -> Some (Held_by (holder, path))
+    | Object_field (variable, path) -> Some (Referent_of (variable, path))
   in
-  let deeper (owner : field_owner) (field : string) : field_owner option =
+  let nested_field_owner (owner : field_owner) (field : string) : field_owner option =
     match owner with
     | Instance_field (cls, path) -> Some (Instance_field (cls, path @ [ field ]))
-    | Object_field (holder, path) -> Some (Object_field (holder, path @ [ field ]))
+    | Object_field (variable, path) -> Some (Object_field (variable, path @ [ field ]))
     | Prototype_member _ -> None
   in
   let inside_record (owner : field_owner) : context =
     {
-      opaque with
+      empty_context with
       self_type = self_type_of_owner owner;
       enclosing_record = Some owner;
     }
@@ -683,7 +686,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
           (unbound_chain_path receiver);
         None
   in
-  let hold_record (owner : field_owner) (fields : G.field list) : unit =
+  let store_record_fields (owner : field_owner) (fields : G.field list) : unit =
     fields
     |> List.iter (fun (G.F stmt) ->
            match stmt.G.s with
@@ -697,7 +700,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                    store owner field (defined_by fdef)
                | G.VarDef { G.vinit = Some { G.e = G.N value; _ }; _ }
                | G.FieldDefColon { G.vinit = Some { G.e = G.N value; _ }; _ } ->
-                   store owner field (held_by_name value)
+                   store owner field (functions_of_name value)
                | _ -> ())
            | _ -> ())
   in
@@ -774,7 +777,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       List.iter
         (fun (func : Func_info.t) ->
           match member_name func with
-          | Some name -> By_binding.add_named extensions cls name [ func ]
+          | Some name -> By_binding.add_member extensions cls name [ func ]
           | None -> ())
         defined
     in
@@ -824,7 +827,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       inherit [_] G.iter_no_id_info as super
 
       method! visit_definition (context : context) ((ent, def) as definition) =
-        let named =
+        let name_binding =
           match ent.G.name with
           | G.EN name ->
               Option.map
@@ -832,7 +835,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                 (binding_of_id_info (id_info_of_name name))
           | _ -> None
         in
-        let class_named =
+        let class_name_binding =
           match (Class_parents.extended_type def, ent.G.name) with
           | Some extended, _ ->
               Option.bind (name_of_type extended) (fun (name : G.name) ->
@@ -845,7 +848,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                 (Class_table.definition_binding name)
           | None, _ -> None
         in
-        match (def, class_named) with
+        match (def, class_name_binding) with
         | G.ClassDef cdef, Some (name, _)
           when Option.is_some (Class_parents.extended_type def)
                && Option.is_none (binding_of_id_info (id_info_of_name name)) ->
@@ -865,7 +868,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
               :: !unbound_receivers;
             super#visit_definition
               {
-                opaque with
+                empty_context with
                 self_type = Some (Instance_of_type extended);
                 module_path = context.module_path;
               }
@@ -874,7 +877,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
             let scope =
               {
                 scope_binding = sid;
-                scope_role =
+                scope_declaration_kind =
                   (match fst cdef.G.ckind with
                   | G.Object when Lang_config.companion_object_has_own_name lang
                     ->
@@ -885,12 +888,12 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                   | G.Interface
                   | G.Trait
                   | G.Extension _ ->
-                      (definition_of ent name def sid).scope_role);
+                      (definition_of ent name def sid).scope_declaration_kind);
               }
             in
             declare_class context scope (Class_kind (fst cdef.G.ckind)) ent name def;
             super#visit_definition (inside_class context scope) definition
-        | G.ClassDef _, None -> super#visit_definition opaque definition
+        | G.ClassDef _, None -> super#visit_definition empty_context definition
         | G.ModuleDef { G.mbody = G.ModuleStruct _ }, Some (name, sid) ->
             let scope = definition_of ent name def sid in
             declare_class context scope Module_kind ent name def;
@@ -939,9 +942,9 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                           add_parents own impl_def;
                           own
                       | _ :: _ ->
-                          let site = site_of_name name in
+                          let site = function_id_of_name name in
                           let impl =
-                            { scope_binding = sid; scope_role = Trait_impl site }
+                            { scope_binding = sid; scope_declaration_kind = Trait_impl site }
                           in
                           Scope_tbl.replace kinds impl (Class_kind G.Class);
                           add_parents impl impl_def;
@@ -949,7 +952,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                             [
                               {
                                 parent = Impl site;
-                                relation = Linearisation.Implements;
+                                relation = Member_lookup.Implements;
                                 written = None;
                                 arguments = None;
                                 delegate = None;
@@ -963,7 +966,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                         self_type = Some (Instance_of own);
                       }
                       reshaped
-                | None -> super#visit_definition opaque definition)
+                | None -> super#visit_definition empty_context definition)
             | Some _
             | None ->
                 super#visit_definition context definition)
@@ -985,15 +988,15 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                 { G.vinit = Some { G.e = G.Record (_, fields, _); _ }; _ } ),
             _ ) ->
             let owner =
-              match (context.enclosing_record, ent.G.name, named) with
+              match (context.enclosing_record, ent.G.name, name_binding) with
               | Some enclosing, G.EN name, _ ->
-                  deeper enclosing (fst (last_ident_of_name name))
+                  nested_field_owner enclosing (fst (last_ident_of_name name))
               | None, _, Some (_, sid) -> Some (Object_field (sid, []))
               | Some _, (G.EDynamic _ | G.EPattern _ | G.OtherEntity _), _
               | None, _, None ->
                   None
             in
-            self#hold_fields owner fields
+            self#store_fields owner fields
         | G.VarDef { G.vinit = Some value; _ }, _ -> (
             match ent.G.name with
             | G.EN name ->
@@ -1012,7 +1015,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
         match e.G.e with
         | G.Assign ({ G.e = G.N name; _ }, _, { G.e = G.Record (_, fields, _); _ })
           ->
-            self#hold_fields
+            self#store_fields
               (Option.map
                  (fun (sid : G.SId.t) -> Object_field (sid, []))
                  (binding_of_id_info (id_info_of_name name)))
@@ -1022,10 +1025,10 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
               _,
               { G.e = G.Record (_, fields, _); _ } ) ->
             self#visit_expr context receiver;
-            self#hold_fields
+            self#store_fields
               (Option.bind (field_owner context receiver)
                  (fun (owner : field_owner) ->
-                   deeper owner (fst (last_ident_of_name name))))
+                   nested_field_owner owner (fst (last_ident_of_name name))))
               fields
         | G.Assign
             ( { G.e = G.DotAccess (receiver, _, G.FN name); _ },
@@ -1044,22 +1047,22 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
               { G.e = G.N value; _ } ) ->
             Option.iter
               (fun (owner : field_owner) ->
-                store owner (fst (last_ident_of_name name)) (held_by_name value))
+                store owner (fst (last_ident_of_name name)) (functions_of_name value))
               (field_owner context receiver);
             super#visit_expr context e
-        | G.Record (_, fields, _) -> List.iter (self#visit_field opaque) fields
+        | G.Record (_, fields, _) -> List.iter (self#visit_field empty_context) fields
         | G.Assign ({ G.e = G.N name; _ }, _, value) ->
             assign context name value;
             super#visit_expr context e
         | _ -> super#visit_expr context e
 
-      method hold_fields (owner : field_owner option) (fields : G.field list) :
+      method store_fields (owner : field_owner option) (fields : G.field list) :
           unit =
         match owner with
         | Some owner ->
-            hold_record owner fields;
+            store_record_fields owner fields;
             List.iter (self#visit_field (inside_record owner)) fields
-        | None -> List.iter (self#visit_field opaque) fields
+        | None -> List.iter (self#visit_field empty_context) fields
 
       method! visit_stmt (context : context) (stmt : G.stmt) =
         (match stmt.G.s with
@@ -1094,7 +1097,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
 
       method! visit_function_definition (context : context)
           (fdef : G.function_definition) =
-        Option.iter (Fdef_tbl.replace selves fdef) context.self_type;
+        Option.iter (Fdef_tbl.replace self_types fdef) context.self_type;
         Fdef_tbl.replace function_modules fdef context.module_path;
         super#visit_function_definition
           {
@@ -1116,16 +1119,16 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
         | G.DirectiveStmt { G.d = G.PackageEnd _; _ } -> []
         | _ ->
             visitor#visit_stmt
-              { opaque with namespace = Some namespace; module_path = namespace }
+              { empty_context with namespace = Some namespace; module_path = namespace }
               stmt;
             namespace)
       [] ast
   in
   let scopes = Scope_tbl.create 16 in
   let add_scope (id : scope_id) : unit =
-    let held_by_binding (type held) (table : held SId_tbl.t) (default : held) :
-        held =
-      match id.scope_role with
+    let of_scope_binding (type value) (table : value SId_tbl.t) (default : value) :
+        value =
+      match id.scope_declaration_kind with
       | Definition _
       | Singleton_object ->
           Option.value (SId_tbl.find_opt table id.scope_binding) ~default
@@ -1135,7 +1138,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       Scope_tbl.replace scopes id
         {
           binding = id.scope_binding;
-          role = id.scope_role;
+          declaration_kind = id.scope_declaration_kind;
           members = Option.value (Scope_tbl.find_opt members id) ~default:SMap.empty;
           fields =
             Option.value
@@ -1160,19 +1163,19 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
             Option.value
               (Scope_tbl.find_opt declarations id)
               ~default:Lang_config.Plain_class;
-          singleton_exposure =
+          module_functions =
             Option.value
-              (Scope_tbl.find_opt exposures id)
-              ~default:Class_parents.No_singleton_exposure;
-          bound_functions =
-            (match id.scope_role with
+              (Scope_tbl.find_opt module_functions_by_scope id)
+              ~default:Class_parents.No_module_functions;
+          constructor_functions =
+            (match id.scope_declaration_kind with
             | Definition _ -> (
                 Option.to_list (Scope_tbl.find_opt initialisers id)
                 @
-                let held = held_by_binding functions [] in
+                let own_functions = of_scope_binding functions [] in
                 match Scope_tbl.find_opt kinds id with
-                | None -> held
-                | Some _ when Naming_AST.constructor_named_after_class lang ->
+                | None -> own_functions
+                | Some _ when Naming_AST.constructor_has_class_identifier lang ->
                     let own =
                       List.concat_map snd
                         (SMap.bindings
@@ -1182,15 +1185,15 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                     List.filter
                       (fun (func : Func_info.t) ->
                         List.exists (same_definition func) own)
-                      held
+                      own_functions
                 | Some _ -> [])
             | Singleton_object
             | Trait_impl _ ->
                 []);
-          object_fields = held_by_binding function_fields Field_path_map.empty;
+          object_fields = of_scope_binding function_fields Field_path_map.empty;
           extensions =
-            (match id.scope_role with
-            | Definition _ -> held_by_binding extensions SMap.empty
+            (match id.scope_declaration_kind with
+            | Definition _ -> of_scope_binding extensions SMap.empty
             | Singleton_object
             | Trait_impl _ ->
                 SMap.empty);
@@ -1213,7 +1216,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
         && not (Scope_tbl.mem external_classes id)
       then Scope_tbl.replace defined_here id ())
     scopes;
-  let index_links = SId_tbl.create 16 in
+  let index_metavalues = SId_tbl.create 16 in
   Option.iter
     (fun (metatable : Lang_config.metatable) ->
       let facts = Class_parents.metatable_facts metatable ast in
@@ -1235,9 +1238,9 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
       List.iter
         (fun (fact : Class_parents.metatable_fact) ->
           match fact with
-          | Class_parents.Metatable_set { holder; metatable = table } ->
+          | Class_parents.Metatable_set { table = target; metatable = metatable_arg } ->
               let indexes =
-                match table.G.e with
+                match metatable_arg.G.e with
                 | G.Container (G.Dict, (_, fields, _)) ->
                     Class_parents.index_field metatable fields
                 | G.N name -> (
@@ -1247,15 +1250,15 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
                 | _ -> []
               in
               Option.iter
-                (fun (holder : G.SId.t) ->
-                  By_binding.add_to index_links holder
+                (fun (target_sid : G.SId.t) ->
+                  By_binding.add_to index_metavalues target_sid
                     (List.filter_map
                        (fun (index : G.expr) ->
                          match index.G.e with
                          | G.N parent -> bound parent
                          | _ -> None)
                        indexes))
-                (bound holder)
+                (bound target)
           | Class_parents.Index_assigned _ -> ())
         facts)
     (Lang_config.metatable lang);
@@ -1277,9 +1280,9 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
         match parent with
         | Bound sid -> Some (definition_scope sid)
         | Impl site ->
-            Some { scope_binding = scope.binding; scope_role = Trait_impl site }
+            Some { scope_binding = scope.binding; scope_declaration_kind = Trait_impl site }
         | Unbound _ -> None)
-      ~outside:
+      ~cross_file_resolver:
         (fun
           (_ : Class_table.position)
           (_ : scope_id option)
@@ -1296,7 +1299,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     owners;
     function_fields;
     unbound_receivers = List.rev !unbound_receivers;
-    selves;
+    self_types;
     receivers;
     qualified_functions;
     qualified_classes;
@@ -1307,18 +1310,18 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     by_node;
     extension_visible = (fun (_ : string) (_ : Func_info.t) -> true);
     build_configuration = 0;
-    outside = (fun (_ : t) ~caller:_ (_ : G.expr) -> static_selection External);
+    cross_file_resolver = (fun (_ : t) ~caller:_ (_ : G.expr) -> static_selection External);
     types = Type_state.empty;
     declared_types = Hashtbl.create 64;
     function_modules;
     module_uses;
     block_uses = !block_uses;
-    index_links;
-    memo_writes = Into_class_table;
+    index_metavalues;
+    memo_target = Class_table_memo;
   }
 
 let functions_of_binding (t : t) (sid : G.SId.t) : Func_info.t list =
-  definitions_seen ~lang:t.lang t.functions sid
+  visible_definitions ~lang:t.lang t.functions sid
 
 let class_of_binding (t : t) (sid : G.SId.t) : class_scope option =
   Option.bind (Class_table.class_of_binding t.classes sid)
@@ -1342,7 +1345,7 @@ let owner (t : t) (cls : class_scope) : class_scope option =
     (Scope_tbl.find_opt t.owners (scope_id_of cls))
     (Scope_tbl.find_opt t.scopes)
 
-let unbound_receivers (t : t) : (receiver_role * G.name * Func_info.t list) list
+let unbound_receivers (t : t) : (receiver_relation * G.name * Func_info.t list) list
     =
   t.unbound_receivers
 
@@ -1351,21 +1354,21 @@ let class_table (t : t) : Class_table.t = t.classes
 let with_project (t : t) (classes : Class_table.t)
     ~(extension_visible : string -> Func_info.t -> bool)
     ~(build_configuration : int)
-    ~(outside : t -> caller:Function_id.t option -> G.expr -> selection) : t =
+    ~(cross_file_resolver : t -> caller:Function_id.t option -> G.expr -> lookup_result) : t =
   {
     t with
     classes;
     extension_visible;
     build_configuration;
-    outside;
+    cross_file_resolver;
     declared_types = Hashtbl.create 64;
-    memo_writes = Into_class_table;
+    memo_target = Class_table_memo;
   }
 
 let with_own_memo (t : t) : t =
-  { t with memo_writes = Into_own (Class_table.create_memo ()) }
+  { t with memo_target = Own_memo (Class_table.create_memo ()) }
 
-let recorded (type found) (t : t)
+let memoised (type found) (t : t)
     ~(find : Class_table.memo -> found option)
     ~(record : Class_table.memo -> found -> unit) (compute : unit -> found) :
     found =
@@ -1377,23 +1380,23 @@ let recorded (type found) (t : t)
   match find (Class_table.memo t.classes) with
   | Some found -> found
   | None -> (
-      match t.memo_writes with
-      | Into_class_table -> computed_into (Class_table.memo t.classes)
-      | Into_own memo -> (
+      match t.memo_target with
+      | Class_table_memo -> computed_into (Class_table.memo t.classes)
+      | Own_memo memo -> (
           match find memo with
           | Some found -> found
           | None -> computed_into memo))
 
 let order (t : t) (cls : Class_table.cls) :
-    Class_table.cls Linearisation.linearisation =
+    Class_table.cls Member_lookup.lookup_order =
   Class_table.order t.classes cls
 
 let is_subclass (t : t) (sub : Class_table.cls) (super : Class_table.cls) :
     bool option =
-  let linearisation = order t sub in
-  if List.exists (Class_table.same super) linearisation.Linearisation.order then
+  let lookup_order = order t sub in
+  if List.exists (Class_table.same super) lookup_order.Member_lookup.order then
     Some true
-  else if linearisation.Linearisation.complete then Some false
+  else if lookup_order.Member_lookup.complete then Some false
   else None
 
 let own_members (t : t) (cls : Class_table.cls) (name : string) :
@@ -1413,40 +1416,40 @@ let on_side (t : t) (side : Class_parents.side) (cls : Class_table.cls)
       let static = Receiver.is_static func.Func_info.entity in
       match side with
       | Class_parents.Instance_side -> not static
-      | Class_parents.Class_side -> static || Class_table.exposes cls name)
+      | Class_parents.Class_side -> static || Class_table.is_module_function cls name)
 
 (* A key for a tree of base subobjects: each base in preorder as its class
    index and its depth, the depth doubled plus one for a virtual base. *)
 let rec base_key (depth : int)
-    (bases : Class_table.cls Linearisation.base list) : (int * int) list =
+    (bases : Class_table.cls Member_lookup.base list) : (int * int) list =
   List.concat_map
-    (fun (base : Class_table.cls Linearisation.base) ->
+    (fun (base : Class_table.cls Member_lookup.base) ->
       match base with
-      | Linearisation.Base { cls; virtual_base; bases } ->
+      | Member_lookup.Base { cls; virtual_base; bases } ->
           (Class_table.index cls, (2 * depth) + if virtual_base then 1 else 0)
           :: base_key (depth + 1) bases
-      | Linearisation.Unknown_base -> [ (-1, 2 * depth) ])
+      | Member_lookup.Unknown_base -> [ (-1, 2 * depth) ])
     bases
 
 let mixins_of (t : t) (cls : Class_table.cls) : Class_table.cls list =
   List.filter_map
     (fun ((parent : Class_table.cls option), (clause : parent_clause)) ->
       match clause.relation with
-      | Linearisation.Mixin -> parent
-      | Linearisation.Extends _
-      | Linearisation.Implements
-      | Linearisation.Embedded
-      | Linearisation.Included
-      | Linearisation.Prepended ->
+      | Member_lookup.Mixin -> parent
+      | Member_lookup.Extends _
+      | Member_lookup.Implements
+      | Member_lookup.Embedded
+      | Member_lookup.Included
+      | Member_lookup.Prepended ->
           None)
     (Class_table.parent_clauses t.classes cls)
 
 (* A member import from a source the project does not hold may define the
-   name: after the tier of a class with such an import, the lookup is
+   name: after the level of a class with such an import, the lookup is
    unknown. *)
 let with_unknown_imports (t : t) (name : string)
-    (tiers : Class_table.cls Linearisation.tier list) :
-    Class_table.cls Linearisation.tier list =
+    (levels : Class_table.cls Member_lookup.level list) :
+    Class_table.cls Member_lookup.level list =
   let imports_unknown (cls : Class_table.cls) : bool =
     List.exists
       (fun ((origin : Class_table.import_origin), (_ : string)) ->
@@ -1458,11 +1461,11 @@ let with_unknown_imports (t : t) (name : string)
       (Class_table.imports t.classes cls name)
   in
   List.concat_map
-    (fun (tier : Class_table.cls Linearisation.tier) ->
-      if List.exists imports_unknown (Linearisation.tier_classes tier) then
-        [ tier; Linearisation.Unknown_classes ]
-      else [ tier ])
-    tiers
+    (fun (level : Class_table.cls Member_lookup.level) ->
+      if List.exists imports_unknown (Member_lookup.level_classes level) then
+        [ level; Member_lookup.Unknown_classes ]
+      else [ level ])
+    levels
 
 (* A class's own members with a name: those it declares, then those a
    member import brings in under that name, less an imported one a
@@ -1495,39 +1498,39 @@ and imported_members (t : t) ~(importing : Class_table.cls list)
     Class_table.definition list =
   List.concat_map
     (fun ((origin : Class_table.import_origin), (imported : string)) ->
-      let tiers =
+      let levels =
         match origin with
-        | Class_table.Imported_from source -> (order t source).Linearisation.tiers
+        | Class_table.Imported_from source -> (order t source).Member_lookup.levels
         | Class_table.Imported_from_mixins ->
             [
-              Linearisation.Candidates
+              Member_lookup.Candidates
                 (List.map
                    (fun (mixin : Class_table.cls) ->
                      {
-                       Linearisation.cls = mixin;
+                       Member_lookup.cls = mixin;
                        hides = [];
                        paths = 1;
                      })
                    (mixins_of t cls));
             ]
-        | Class_table.Imported_from_unknown -> [ Linearisation.Unknown_classes ]
+        | Class_table.Imported_from_unknown -> [ Member_lookup.Unknown_classes ]
       in
       match
-        (first_defining_from t ~importing side tiers imported)
+        (first_definitions t ~importing side levels imported)
           .Class_table.definitions
       with
-      | Linearisation.Selected (_, defined) -> defined
-      | Linearisation.Ambiguous
-      | Linearisation.Undefined
-      | Linearisation.Unknown ->
+      | Member_lookup.Selected (_, defined) -> defined
+      | Member_lookup.Ambiguous
+      | Member_lookup.Undefined
+      | Member_lookup.Unknown ->
           [])
     (Class_table.imports t.classes cls name)
 
-and first_defining_from (t : t) ~(importing : Class_table.cls list)
+and first_definitions (t : t) ~(importing : Class_table.cls list)
     (side : Class_parents.side)
-    (tiers : Class_table.cls Linearisation.tier list) (name : string) :
+    (levels : Class_table.cls Member_lookup.level list) (name : string) :
     Class_table.selected =
-  let tiers = with_unknown_imports t name tiers in
+  let levels = with_unknown_imports t name levels in
   let key =
     {
       Class_table.Selection_key.build_configuration = t.build_configuration;
@@ -1535,58 +1538,61 @@ and first_defining_from (t : t) ~(importing : Class_table.cls list)
       name;
       importing =
         List.sort_uniq Int.compare (List.map Class_table.index importing);
-      tiers =
+      levels =
         List.map
-          (fun (tier : Class_table.cls Linearisation.tier) ->
-            match tier with
-            | Linearisation.Candidates candidates ->
+          (fun (level : Class_table.cls Member_lookup.level) ->
+            match level with
+            | Member_lookup.Candidates candidates ->
                 List.map
-                  (fun (candidate : Class_table.cls Linearisation.candidate) ->
-                    ( Class_table.index candidate.Linearisation.cls,
-                      candidate.Linearisation.paths ))
+                  (fun (candidate : Class_table.cls Member_lookup.candidate) ->
+                    ( Class_table.index candidate.Member_lookup.cls,
+                      candidate.Member_lookup.paths ))
                   candidates
-            | Linearisation.Base_subobjects bases -> base_key 0 bases
-            | Linearisation.Unknown_classes -> [])
-          tiers;
+            | Member_lookup.Base_subobjects bases -> base_key 0 bases
+            | Member_lookup.Unknown_classes -> [])
+          levels;
     }
   in
-  recorded t
+  memoised t
     ~find:(fun (memo : Class_table.memo) ->
       Class_table.Selection_tbl.find_opt memo.Class_table.selections key)
     ~record:(fun (memo : Class_table.memo) (found : Class_table.selected) ->
       Class_table.Selection_tbl.replace memo.Class_table.selections key found)
     (fun () ->
       Class_table.selected_of
-        (Class_table.select_member ~lang:t.lang tiers
+        (Class_table.select_member ~lang:t.lang levels
            ~defines:(fun (cls : Class_table.cls) ->
              own_members_on t ~importing side cls name)))
 
-let first_defining_on (t : t) (side : Class_parents.side)
-    (tiers : Class_table.cls Linearisation.tier list) (name : string) :
-    (Class_table.cls, Func_info.t) Linearisation.selection =
-  (first_defining_from t ~importing:[] side tiers name).Class_table.functions
+let first_definitions_on_side (t : t) (side : Class_parents.side)
+    (levels : Class_table.cls Member_lookup.level list) (name : string) :
+    (Class_table.cls, Func_info.t) Member_lookup.selection =
+  (first_definitions t ~importing:[] side levels name).Class_table.functions
 
 let descendants (t : t) (cls : Class_table.cls) : Class_table.cls list =
   Class_table.descendants t.classes cls
 
-(* The tiers a lookup from [super] in a definition of [cls] reads: after
+(* The levels a lookup from [super] in a definition of [cls] reads: after
    [cls] in the order of every class whose instances can run that
-   definition when the order follows the receiver, else the tiers of the
+   definition when the order follows the receiver, else the levels of the
    superclass. *)
-let super_tiers (t : t) (cls : Class_table.cls) :
-    Class_table.cls Linearisation.tier list list =
-  if Linearisation.follows_receiver (Lang_config.member_resolution t.lang) then
+let super_levels (t : t) (cls : Class_table.cls) :
+    Class_table.cls Member_lookup.level list list =
+  if
+    Member_lookup.super_follows_receiver_order
+      (Lang_config.member_lookup t.lang)
+  then
     List.map
       (fun (receiver : Class_table.cls) ->
-        Linearisation.after ~equal:Class_table.same cls
-          (order t receiver).Linearisation.tiers)
+        Member_lookup.levels_after ~equal:Class_table.same cls
+          (order t receiver).Member_lookup.levels)
       (cls :: descendants t cls)
-  else [ (order t cls).Linearisation.super_tiers ]
+  else [ (order t cls).Member_lookup.super_levels ]
 
 let rec overridable (t : t) ~(visited : Class_table.cls list)
     (cls : Class_table.cls) (defined : Func_info.t list) (name : string) : bool
     =
-  Class_table.is_abstraction cls
+  Class_table.is_abstract_type cls
   || List.exists
        (fun (func : Func_info.t) ->
          let attrs =
@@ -1598,20 +1604,20 @@ let rec overridable (t : t) ~(visited : Class_table.cls list)
          | Some answer -> answer
          | None -> (
              match
-               first_defining_on t Class_parents.Instance_side
-                 (order t cls).Linearisation.super_tiers name
+               first_definitions_on_side t Class_parents.Instance_side
+                 (order t cls).Member_lookup.super_levels name
              with
-             | Linearisation.Selected (ancestor, inherited)
+             | Member_lookup.Selected (ancestor, inherited)
                when not (List.exists (Class_table.same ancestor) visited) ->
                  overridable t ~visited:(cls :: visited) ancestor inherited name
-             | Linearisation.Selected _
-             | Linearisation.Ambiguous
-             | Linearisation.Undefined
-             | Linearisation.Unknown ->
+             | Member_lookup.Selected _
+             | Member_lookup.Ambiguous
+             | Member_lookup.Undefined
+             | Member_lookup.Unknown ->
                  false))
        defined
 
-let dispatches (t : t) (cls : Class_table.cls) (defined : Func_info.t list)
+let dispatches_dynamically (t : t) (cls : Class_table.cls) (defined : Func_info.t list)
     (name : string) : bool =
   if
     Lang_config.extension_members_dispatch_statically t.lang
@@ -1621,45 +1627,45 @@ let dispatches (t : t) (cls : Class_table.cls) (defined : Func_info.t list)
   else
     match (Lang_config.get t.lang).Lang_config.method_dispatch with
     | Lang_config.Dynamic -> true
-    | Lang_config.Static -> Class_table.is_abstraction cls
+    | Lang_config.Static -> Class_table.is_abstract_type cls
     | Lang_config.Dynamic_when_overridable ->
         overridable t ~visited:[] cls defined name
 
-let root_members (t : t) (name : string) : Func_info.t list =
+let top_level_object_members (t : t) (name : string) : Func_info.t list =
   if top_level_defs_are_methods_of_object t.lang then
     Option.value (Path_tbl.find_opt t.qualified_functions [ name ]) ~default:[]
   else []
 
-let root_resolution (t : t) (name : string) : resolution =
-  match root_members t name with
+let top_level_object_resolution (t : t) (name : string) : resolution =
+  match top_level_object_members t name with
   | _ :: _ as found -> Defined found
   | [] when top_level_defs_are_methods_of_object t.lang -> External
   | [] -> Defined []
 
-let extension_along (t : t) (tiers : Class_table.cls Linearisation.tier list)
+let nearest_extensions (t : t) (levels : Class_table.cls Member_lookup.level list)
     (name : string) : resolution =
   match
-    Class_table.nearest tiers ~defines:(fun (cls : Class_table.cls) ->
+    Class_table.nearest levels ~defines:(fun (cls : Class_table.cls) ->
         List.filter (t.extension_visible name) (Class_table.extensions cls name))
   with
-  | Linearisation.Selected (_, found) -> Defined found
-  | Linearisation.Ambiguous -> Defined []
-  | Linearisation.Undefined
-  | Linearisation.Unknown -> (
+  | Member_lookup.Selected (_, found) -> Defined found
+  | Member_lookup.Ambiguous -> Defined []
+  | Member_lookup.Undefined
+  | Member_lookup.Unknown -> (
       match (Lang_config.get t.lang).Lang_config.receiver_parameter with
       | Lang_config.Declares_extension -> External
       | Lang_config.Declares_method -> Defined [])
 
-let instance_fields_along (tiers : Class_table.cls Linearisation.tier list)
+let nearest_instance_fields (levels : Class_table.cls Member_lookup.level list)
     (path : string list) : Func_info.t list =
   match
-    Class_table.nearest tiers ~defines:(fun (cls : Class_table.cls) ->
+    Class_table.nearest levels ~defines:(fun (cls : Class_table.cls) ->
         Class_table.instance_fields cls path)
   with
-  | Linearisation.Selected (_, found) -> found
-  | Linearisation.Ambiguous
-  | Linearisation.Undefined
-  | Linearisation.Unknown ->
+  | Member_lookup.Selected (_, found) -> found
+  | Member_lookup.Ambiguous
+  | Member_lookup.Undefined
+  | Member_lookup.Unknown ->
       []
 
 let overriding_key (t : t) (cls : Class_table.cls) (name : string) :
@@ -1673,7 +1679,7 @@ let overriding_key (t : t) (cls : Class_table.cls) (name : string) :
 let overrides (t : t) (cls : Class_table.cls) (name : string) :
     Class_table.definition list =
   let key = overriding_key t cls name in
-  recorded t
+  memoised t
     ~find:(fun (memo : Class_table.memo) ->
       Class_table.Overriding_tbl.find_opt memo.Class_table.overriding key)
     ~record:(fun (memo : Class_table.memo)
@@ -1683,14 +1689,14 @@ let overrides (t : t) (cls : Class_table.cls) (name : string) :
       List.concat_map
         (fun (sub : Class_table.cls) ->
           match
-            (first_defining_from t ~importing:[] Class_parents.Instance_side
-               (order t sub).Linearisation.tiers name)
+            (first_definitions t ~importing:[] Class_parents.Instance_side
+               (order t sub).Member_lookup.levels name)
               .Class_table.definitions
           with
-          | Linearisation.Selected (_, defined) -> defined
-          | Linearisation.Ambiguous
-          | Linearisation.Undefined
-          | Linearisation.Unknown ->
+          | Member_lookup.Selected (_, defined) -> defined
+          | Member_lookup.Ambiguous
+          | Member_lookup.Undefined
+          | Member_lookup.Unknown ->
               [])
         (descendants t cls)
       |> Class_table.distinct_by (fun (definition : Class_table.definition) ->
@@ -1712,7 +1718,7 @@ let overriding (t : t) (source : dispatch)
   let same_overridden (known : Class_table.definition list) : bool =
     List.equal ( == ) known overridden
   in
-  recorded t
+  memoised t
     ~find:(fun (memo : Class_table.memo) ->
       Option.bind
         (Class_table.Overriding_tbl.find_opt memo.Class_table.dispatched key)
@@ -1736,7 +1742,7 @@ let overriding (t : t) (source : dispatch)
                overridden)
            (overrides t source.receiver source.name)))
 
-let dispatch (t : t) (selection : selection) (selected : Func_info.t list) :
+let dispatch (t : t) (selection : lookup_result) (selected : Func_info.t list) :
     Func_info.t list =
   distinct_definitions
     (selected
@@ -1754,13 +1760,13 @@ let dispatch (t : t) (selection : selection) (selected : Func_info.t list) :
           | overridden -> overriding t source overridden)
         selection.dispatches)
 
-let dispatched (t : t) (selection : selection) : resolution =
+let dispatched (t : t) (selection : lookup_result) : resolution =
   match selection.resolution with
   | Defined selected -> Defined (dispatch t selection selected)
   | External -> External
 
 let found_in_descendants (t : t) (cls : Class_table.cls) : bool =
-  Class_table.is_abstraction cls
+  Class_table.is_abstract_type cls
   ||
   match (Lang_config.get t.lang).Lang_config.method_dispatch with
   | Lang_config.Dynamic -> true
@@ -1784,8 +1790,8 @@ let caller_module (t : t) ~(caller : Function_id.t option) : string list =
 
 (* The classes a use path written in a module denotes: a class of this file
    at that path, else the class the project resolves the written path to.
-   The item a use directive imports is bound at its own site, as the naming
-   pass binds it for the uses of its name. *)
+   The item a use directive imports is bound at its own site, as name
+   resolution binds it for the uses of its name. *)
 let classes_of_use (t : t) ~(module_path : string list) (use : module_use)
     (item : string list) : Class_table.cls list =
   let path =
@@ -1828,13 +1834,13 @@ let classes_of_use (t : t) ~(module_path : string list) (use : module_use)
                ~position:Class_table.Type_position ~context:None written)
       | None -> [])
 
-(* The use directives in force at a site: those of the caller's module and
-   those of every block that holds the site. *)
-let uses_at (t : t) ~(module_path : string list) (site : site) :
+(* The use directives in scope at a program point: those of the caller's
+   module and those of every block that holds the program point. *)
+let uses_at (t : t) ~(module_path : string list) (program_point : program_point) :
     module_use list =
   Option.value (Path_tbl.find_opt t.module_uses module_path) ~default:[]
   @
-  match site.at with
+  match program_point.at with
   | Some at ->
       List.concat_map
         (fun ((start : int), (stop : int), (uses : module_use list)) ->
@@ -1901,16 +1907,16 @@ let written_trait_in_scope (t : t) ~(module_path : string list)
 
 (* Rust: at a call, the methods of a trait count only when the trait is in
    scope in the caller's module; the receiver's own methods always count. *)
-let visible_tiers (t : t) ~(site : site) (receiver : Class_table.cls)
-    (tiers : Class_table.cls Linearisation.tier list) :
-    Class_table.cls Linearisation.tier list =
-  match Lang_config.member_resolution t.lang with
-  | Linearisation.Rust_method_probing ->
-      let module_path = caller_module t ~caller:site.from in
-      let uses = uses_at t ~module_path site in
-      let visible (candidate : Class_table.cls Linearisation.candidate) : bool
+let visible_levels (t : t) ~(program_point : program_point) (receiver : Class_table.cls)
+    (levels : Class_table.cls Member_lookup.level list) :
+    Class_table.cls Member_lookup.level list =
+  match Lang_config.member_lookup t.lang with
+  | Member_lookup.Rust_method_probing ->
+      let module_path = caller_module t ~caller:program_point.from in
+      let uses = uses_at t ~module_path program_point in
+      let visible (candidate : Class_table.cls Member_lookup.candidate) : bool
           =
-        let cls = candidate.Linearisation.cls in
+        let cls = candidate.Member_lookup.cls in
         Class_table.same cls receiver
         || (if Class_table.is_trait_impl cls then
               List.for_all
@@ -1940,34 +1946,34 @@ let visible_tiers (t : t) ~(site : site) (receiver : Class_table.cls)
              (Class_table.parent_clauses t.classes cls)
       in
       List.concat_map
-        (fun (tier : Class_table.cls Linearisation.tier) ->
-          match tier with
-          | Linearisation.Candidates candidates ->
+        (fun (level : Class_table.cls Member_lookup.level) ->
+          match level with
+          | Member_lookup.Candidates candidates ->
               let kept = List.filter visible candidates in
-              Linearisation.Candidates kept
+              Member_lookup.Candidates kept
               ::
               (if
                  List.exists
-                   (fun (candidate : Class_table.cls Linearisation.candidate) ->
-                     implements_unknown_trait candidate.Linearisation.cls)
+                   (fun (candidate : Class_table.cls Member_lookup.candidate) ->
+                     implements_unknown_trait candidate.Member_lookup.cls)
                    kept
-               then [ Linearisation.Unknown_classes ]
+               then [ Member_lookup.Unknown_classes ]
                else [])
-          | Linearisation.Base_subobjects _
-          | Linearisation.Unknown_classes ->
-              [ tier ])
-        tiers
-  | Linearisation.C3 _
-  | Linearisation.Scala_class_linearisation
-  | Linearisation.Ruby_ancestor_chain
-  | Linearisation.Single_inheritance _
-  | Linearisation.Go_embedding_promotion
-  | Linearisation.Cpp_member_lookup ->
-      tiers
+          | Member_lookup.Base_subobjects _
+          | Member_lookup.Unknown_classes ->
+              [ level ])
+        levels
+  | Member_lookup.C3 _
+  | Member_lookup.Scala_class_linearisation
+  | Member_lookup.Ruby_ancestor_chain
+  | Member_lookup.Single_inheritance _
+  | Member_lookup.Go_embedding_promotion
+  | Member_lookup.Cpp_member_lookup ->
+      levels
 
-let joined_selections (selections : selection list) : selection =
+let join_selections (selections : lookup_result list) : lookup_result =
   List.fold_left
-    (fun (joined : selection) (selection : selection) ->
+    (fun (joined : lookup_result) (selection : lookup_result) ->
       {
         resolution =
           (match (joined.resolution, selection.resolution) with
@@ -1980,16 +1986,16 @@ let joined_selections (selections : selection list) : selection =
       })
     (static_selection (Defined [])) selections
 
-let rec select_on_instance (t : t) ~(site : site)
-    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : selection =
-  match delegated t ~site cls name with
+let rec select_on_instance (t : t) ~(program_point : program_point)
+    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : lookup_result =
+  match delegated t ~program_point cls name with
   | Some selection -> selection
-  | None -> selected_on_instance t ~site cls ~dispatch name
+  | None -> select_by_lookup_order t ~program_point cls ~dispatch name
 
 (* Kotlin 'I by e': a member of I the class does not declare is the member
    of the class of e. *)
-and delegated (t : t) ~(site : site) (cls : Class_table.cls)
-    (name : string) : selection option =
+and delegated (t : t) ~(program_point : program_point) (cls : Class_table.cls)
+    (name : string) : lookup_result option =
   match
     ( Class_table.delegations t.classes cls,
       own_members_on t ~importing:[] Class_parents.Instance_side cls name )
@@ -2005,53 +2011,53 @@ and delegated (t : t) ~(site : site) (cls : Class_table.cls)
             match interface with
             | Some interface -> (
                 match
-                  first_defining_on t Class_parents.Instance_side
-                    (order t interface).Linearisation.tiers name
+                  first_definitions_on_side t Class_parents.Instance_side
+                    (order t interface).Member_lookup.levels name
                 with
-                | Linearisation.Selected _ -> (
+                | Member_lookup.Selected _ -> (
                     match target with
                     | Some target ->
                         Some
-                          (select_on_instance t ~site target ~dispatch:true
+                          (select_on_instance t ~program_point target ~dispatch:true
                              name)
                     | None -> Some (static_selection External))
-                | Linearisation.Ambiguous
-                | Linearisation.Undefined
-                | Linearisation.Unknown ->
+                | Member_lookup.Ambiguous
+                | Member_lookup.Undefined
+                | Member_lookup.Unknown ->
                     None)
             | None -> None)
           delegations
       with
       | [] -> None
-      | found -> Some (joined_selections found))
+      | found -> Some (join_selections found))
 
-(* The fields and root methods found are definitions of this file that
-   shadow whatever an ancestor the file does not hold defines. *)
-and selected_on_instance (t : t) ~(site : site)
-    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : selection =
-  let tiers =
-    visible_tiers t ~site cls (order t cls).Linearisation.tiers
+(* The fields and top level object methods found are definitions of this
+   file that shadow whatever an ancestor the file does not hold defines. *)
+and select_by_lookup_order (t : t) ~(program_point : program_point)
+    (cls : Class_table.cls) ~(dispatch : bool) (name : string) : lookup_result =
+  let levels =
+    visible_levels t ~program_point cls (order t cls).Member_lookup.levels
   in
-  let fields = instance_fields_along tiers [ name ] in
+  let fields = nearest_instance_fields levels [ name ] in
   match
-    (first_defining_from t ~importing:[] Class_parents.Instance_side tiers name)
+    (first_definitions t ~importing:[] Class_parents.Instance_side levels name)
       .Class_table.definitions
   with
-  | Linearisation.Selected (definer, overridden) ->
+  | Member_lookup.Selected (definer, overridden) ->
       let defined = functions_of overridden in
       {
         resolution = Defined (distinct_definitions (defined @ fields));
         dispatches =
-          (if dispatch && dispatches t definer defined name then
+          (if dispatch && dispatches_dynamically t definer defined name then
              [ { receiver = cls; name; overridden } ]
            else []);
       }
-  | Linearisation.Ambiguous -> static_selection (Defined fields)
-  | Linearisation.Unknown -> (
+  | Member_lookup.Ambiguous -> static_selection (Defined fields)
+  | Member_lookup.Unknown -> (
       match fields with
       | [] -> static_selection External
       | _ :: _ -> static_selection (Defined (distinct_definitions fields)))
-  | Linearisation.Undefined -> (
+  | Member_lookup.Undefined -> (
       match
         if dispatch && found_in_descendants t cls then
           functions_of (overrides t cls name)
@@ -2060,52 +2066,52 @@ and selected_on_instance (t : t) ~(site : site)
       | _ :: _ as inherited ->
           static_selection (Defined (distinct_definitions (fields @ inherited)))
       | [] -> (
-          match fields @ root_members t name with
+          match fields @ top_level_object_members t name with
           | _ :: _ as found ->
               static_selection (Defined (distinct_definitions found))
           | [] -> (
-              match root_resolution t name with
-              | Defined _ -> static_selection (extension_along t tiers name)
+              match top_level_object_resolution t name with
+              | Defined _ -> static_selection (nearest_extensions t levels name)
               | External -> static_selection External)))
 
 (* Along the order, each class's own class-side members, then the instance
    members of the modules that class extends, the last extended first. *)
 let select_on_class_side (t : t) (cls : Class_table.cls) (name : string) :
     resolution =
-  let rec along (tiers : Class_table.cls Linearisation.tier list) : resolution =
-    match tiers with
-    | [] -> root_resolution t name
-    | Linearisation.Unknown_classes :: _ -> External
-    | ((Linearisation.Candidates _ | Linearisation.Base_subobjects _) as tier)
+  let rec select_in_levels (levels : Class_table.cls Member_lookup.level list) : resolution =
+    match levels with
+    | [] -> top_level_object_resolution t name
+    | Member_lookup.Unknown_classes :: _ -> External
+    | ((Member_lookup.Candidates _ | Member_lookup.Base_subobjects _) as level)
       :: rest -> (
-        match first_defining_on t Class_parents.Class_side [ tier ] name with
-        | Linearisation.Selected (_, defined) -> Defined defined
-        | Linearisation.Ambiguous -> Defined []
-        | Linearisation.Undefined
-        | Linearisation.Unknown ->
+        match first_definitions_on_side t Class_parents.Class_side [ level ] name with
+        | Member_lookup.Selected (_, defined) -> Defined defined
+        | Member_lookup.Ambiguous -> Defined []
+        | Member_lookup.Undefined
+        | Member_lookup.Unknown ->
             extended
               (List.concat_map
                  (Class_table.class_side_parents t.classes)
-                 (Linearisation.tier_classes tier))
+                 (Member_lookup.level_classes level))
               rest)
   and extended (parents : Class_table.cls option list)
-      (rest : Class_table.cls Linearisation.tier list) : resolution =
+      (rest : Class_table.cls Member_lookup.level list) : resolution =
     match parents with
-    | [] -> along rest
+    | [] -> select_in_levels rest
     | None :: _ -> External
     | Some mixin :: others -> (
         let mixin_order = order t mixin in
         match
-          first_defining_on t Class_parents.Instance_side
-            mixin_order.Linearisation.tiers name
+          first_definitions_on_side t Class_parents.Instance_side
+            mixin_order.Member_lookup.levels name
         with
-        | Linearisation.Selected (_, defined) -> Defined defined
-        | Linearisation.Ambiguous -> Defined []
-        | Linearisation.Undefined -> extended others rest
-        | Linearisation.Unknown -> External)
+        | Member_lookup.Selected (_, defined) -> Defined defined
+        | Member_lookup.Ambiguous -> Defined []
+        | Member_lookup.Undefined -> extended others rest
+        | Member_lookup.Unknown -> External)
   in
   let object_fields = Class_table.object_fields cls [ name ] in
-  match (along (order t cls).Linearisation.tiers, object_fields) with
+  match (select_in_levels (order t cls).Member_lookup.levels, object_fields) with
   | Defined defined, _ ->
       Defined (distinct_definitions (defined @ object_fields))
   | External, [] -> External
@@ -2126,15 +2132,15 @@ let member_type (t : t) (receiver : receiver_class)
   | Class cls
   | Exact cls
   | Class_object cls
-  | Object_of { path = []; held_class = Of_class cls; _ } ->
-      Class_table.find_along (order t cls).Linearisation.tiers lookup
+  | Object_of { path = []; referent_class = Of_class cls; _ } ->
+      Class_table.find_nearest (order t cls).Member_lookup.levels lookup
   | Ancestors_of cls -> (
       match
         List_.uniq_by (Option.equal Class_table.same)
           (List.map
-             (fun (tiers : Class_table.cls Linearisation.tier list) ->
-               Class_table.find_along tiers lookup)
-             (super_tiers t cls))
+             (fun (levels : Class_table.cls Member_lookup.level list) ->
+               Class_table.find_nearest levels lookup)
+             (super_levels t cls))
       with
       | [ found ] -> found
       | []
@@ -2142,7 +2148,7 @@ let member_type (t : t) (receiver : receiver_class)
           None)
   | Object_of _
   | External_class
-  | Root
+  | Top_level_object
   | Unknown ->
       None
 
@@ -2153,7 +2159,7 @@ let field_type (t : t) (receiver : receiver_class) (field : string) :
 
 (* Lua: a key a table does not hold is read from the table its metatable's
    index field holds, along the chain of such links. *)
-let rec linked_members (t : t) ~(visited : G.SId.t list) (holder : G.SId.t)
+let rec index_chain_members (t : t) ~(visited : G.SId.t list) (table : G.SId.t)
     (path : string list) : Func_info.t list =
   distinct_definitions
     (List.concat_map
@@ -2161,50 +2167,50 @@ let rec linked_members (t : t) ~(visited : G.SId.t list) (holder : G.SId.t)
          if List.exists (G.SId.equal parent) visited then []
          else
            match By_binding.at_path t.function_fields parent path with
-           | [] -> linked_members t ~visited:(parent :: visited) parent path
+           | [] -> index_chain_members t ~visited:(parent :: visited) parent path
            | found -> found)
-       (Option.value (SId_tbl.find_opt t.index_links holder) ~default:[]))
+       (Option.value (SId_tbl.find_opt t.index_metavalues table) ~default:[]))
 
 (* The functions a field path read from a receiver holds: a member for a
    single field, else the functions stored at that path of the object. *)
-let rec resolve_path (t : t) ~(site : site)
-    (receiver : receiver_class) (path : string list) : selection =
-  let through_field (stored : Func_info.t list) : selection =
+let rec resolve_path (t : t) ~(program_point : program_point)
+    (receiver : receiver_class) (path : string list) : lookup_result =
+  let resolve_rest_in_field_class (stored : Func_info.t list) : lookup_result =
     match (stored, path) with
     | [], field :: (_ :: _ as rest) -> (
         match field_type t receiver field with
-        | Some cls -> resolve_path t ~site (Class cls) rest
+        | Some cls -> resolve_path t ~program_point (Class cls) rest
         | None -> static_selection (Defined []))
     | _ -> static_selection (Defined stored)
   in
   match (receiver, path) with
-  | Class cls, [ name ] -> select_on_instance t ~site cls ~dispatch:true name
-  | Exact cls, [ name ] -> select_on_instance t ~site cls ~dispatch:false name
+  | Class cls, [ name ] -> select_on_instance t ~program_point cls ~dispatch:true name
+  | Exact cls, [ name ] -> select_on_instance t ~program_point cls ~dispatch:false name
   | (Class cls | Exact cls), _ ->
-      through_field (instance_fields_along (order t cls).Linearisation.tiers path)
+      resolve_rest_in_field_class (nearest_instance_fields (order t cls).Member_lookup.levels path)
   | Class_object cls, [ name ] ->
       static_selection (select_on_class_side t cls name)
   | Class_object cls, _ ->
       static_selection (Defined (Class_table.object_fields cls path))
   | Ancestors_of cls, [ name ] ->
-      let continuing (tiers : Class_table.cls Linearisation.tier list) :
-          selection =
+      let continuing (levels : Class_table.cls Member_lookup.level list) :
+          lookup_result =
         static_selection
-          (match first_defining_on t Class_parents.Instance_side tiers name with
-          | Linearisation.Selected (_, defined) -> Defined defined
-          | Linearisation.Ambiguous -> Defined []
-          | Linearisation.Undefined -> root_resolution t name
-          | Linearisation.Unknown -> External)
+          (match first_definitions_on_side t Class_parents.Instance_side levels name with
+          | Member_lookup.Selected (_, defined) -> Defined defined
+          | Member_lookup.Ambiguous -> Defined []
+          | Member_lookup.Undefined -> top_level_object_resolution t name
+          | Member_lookup.Unknown -> External)
       in
-      joined_selections (List.map continuing (super_tiers t cls))
+      join_selections (List.map continuing (super_levels t cls))
   | Ancestors_of _, _ -> static_selection (Defined [])
-  | Object_of held, _ -> (
+  | Object_of referent, _ -> (
       let fields =
-        By_binding.at_path t.function_fields held.holder (held.path @ path)
+        By_binding.at_path t.function_fields referent.variable (referent.path @ path)
       in
-      match (held.path, path, held.held_class) with
+      match (referent.path, path, referent.referent_class) with
       | [], [ name ], Of_class cls -> (
-          let selection = select_on_instance t ~site cls ~dispatch:true name in
+          let selection = select_on_instance t ~program_point cls ~dispatch:true name in
           match selection.resolution with
           | Defined defined ->
               {
@@ -2217,35 +2223,35 @@ let rec resolve_path (t : t) ~(site : site)
             (fields_else_external
                (match fields with
                | [] ->
-                   linked_members t ~visited:[ held.holder ] held.holder path
+                   index_chain_members t ~visited:[ referent.variable ] referent.variable path
                | _ :: _ -> fields))
       | [], _, Of_class cls ->
-          through_field
+          resolve_rest_in_field_class
             (distinct_definitions
                (fields
-               @ instance_fields_along (order t cls).Linearisation.tiers path))
+               @ nearest_instance_fields (order t cls).Member_lookup.levels path))
       | _, _, (Of_class _ | Of_external_class | Of_unknown_class) ->
           static_selection (Defined fields))
   | External_class, _ -> static_selection External
-  | Root, [ name ] -> static_selection (root_resolution t name)
-  | Root, _
+  | Top_level_object, [ name ] -> static_selection (top_level_object_resolution t name)
+  | Top_level_object, _
   | Unknown, _ ->
       static_selection (Defined [])
 
 let resolve_member (t : t) ~(caller : Function_id.t option)
-    (receiver : receiver_class) (name : string) : selection =
-  resolve_path t ~site:{ from = caller; at = None } receiver [ name ]
+    (receiver : receiver_class) (name : string) : lookup_result =
+  resolve_path t ~program_point:{ from = caller; at = None } receiver [ name ]
 
 let self_type_of_caller (t : t) (caller : Function_id.t option) :
     self_type option =
   Option.bind caller (fun (node : Function_id.t) ->
       Option.bind (function_of_node t node) (fun (func : Func_info.t) ->
-          Fdef_tbl.find_opt t.selves func.Func_info.fdef))
+          Fdef_tbl.find_opt t.self_types func.Func_info.fdef))
 
 let self_scope (t : t) ~(caller : Function_id.t option) : scope_id option =
   match self_type_of_caller t caller with
   | Some (Instance_of id) -> Some id
-  | Some (Instance_of_type _ | Class_of _ | Held_by _)
+  | Some (Instance_of_type _ | Class_of _ | Referent_of _)
   | None ->
       None
 
@@ -2319,13 +2325,13 @@ let of_self_type (t : t) (self_type : self_type) : receiver_class =
       match Class_table.class_of_scope t.classes id with
       | Some cls -> Class_object cls
       | None -> Unknown)
-  | Held_by (holder, path) ->
-      Object_of { holder; path; held_class = Of_unknown_class }
+  | Referent_of (variable, path) ->
+      Object_of { variable; path; referent_class = Of_unknown_class }
 
 let self_receiver (t : t) ~(caller : Function_id.t option) : receiver_class =
   match self_type_of_caller t caller with
   | Some self_type -> of_self_type t self_type
-  | None when top_level_defs_are_methods_of_object t.lang -> Root
+  | None when top_level_defs_are_methods_of_object t.lang -> Top_level_object
   | None -> Unknown
 
 let ancestors_of_self (t : t) ~(caller : Function_id.t option) :
@@ -2337,22 +2343,22 @@ let ancestors_of_self (t : t) ~(caller : Function_id.t option) :
   | Class_object _
   | Ancestors_of _
   | Object_of _
-  | Root
+  | Top_level_object
   | Unknown ->
       Unknown
 
 let method_class (t : t) (func : Func_info.t) : Class_table.cls option =
   match
-    Option.map (of_self_type t) (Fdef_tbl.find_opt t.selves func.Func_info.fdef)
+    Option.map (of_self_type t) (Fdef_tbl.find_opt t.self_types func.Func_info.fdef)
   with
   | Some (Class cls) -> Some cls
   | Some
       ( Exact _ | Class_object _ | Ancestors_of _ | Object_of _ | External_class
-      | Root | Unknown )
+      | Top_level_object | Unknown )
   | None ->
       None
 
-let with_overrides (t : t) (defined : Func_info.t list) : selection =
+let with_overrides (t : t) (defined : Func_info.t list) : lookup_result =
   {
     resolution = Defined defined;
     dispatches =
@@ -2364,7 +2370,7 @@ let with_overrides (t : t) (defined : Func_info.t list) : selection =
                 List.find_opt (same_function func)
                   (Class_table.own_definitions t.classes cls name)
               with
-              | Some definition when dispatches t cls [ func ] name ->
+              | Some definition when dispatches_dynamically t cls [ func ] name ->
                   Some { receiver = cls; name; overridden = [ definition ] }
               | Some _
               | None ->
@@ -2373,7 +2379,7 @@ let with_overrides (t : t) (defined : Func_info.t list) : selection =
         defined;
   }
 
-let external_or_outside (t : t) ~(context : scope_id option) (name : G.name) :
+let class_object_or_external (t : t) ~(context : scope_id option) (name : G.name) :
     receiver_class =
   match
     Class_table.class_of_name t.classes ~position:Class_table.Term_position
@@ -2386,7 +2392,7 @@ let external_or_outside (t : t) ~(context : scope_id option) (name : G.name) :
    runs (JavaScript, Python and Ruby modules, C and C++ static
    initialisers), so a use inside a function sees the last of them unless a
    function assigns the variable too. *)
-let values_in_force (t : t) ~(caller : Function_id.t option) (sid : G.SId.t) :
+let reaching_values (t : t) ~(caller : Function_id.t option) (sid : G.SId.t) :
     G.expr list =
   let assigned = Option.value (SId_tbl.find_opt t.values sid) ~default:[] in
   let in_functions, at_module_level =
@@ -2417,29 +2423,29 @@ let rec receiver_of_name_from (t : t) ~(caller : Function_id.t option)
           match SId_tbl.find_opt t.receivers sid with
           | Some self_type -> of_self_type t self_type
           | None when defined_elsewhere info ->
-              external_or_outside t ~context name
+              class_object_or_external t ~context name
           | None -> (
               match
                 Option.map (class_of_type t ~context)
                   (Ty_bare_name.instance_or_declared_type info)
               with
               | Some (Class cls) ->
-                  Object_of { holder = sid; path = []; held_class = Of_class cls }
+                  Object_of { variable = sid; path = []; referent_class = Of_class cls }
               | Some External_class ->
                   Object_of
-                    { holder = sid; path = []; held_class = Of_external_class }
+                    { variable = sid; path = []; referent_class = Of_external_class }
               | Some
                   ( Unknown | Exact _ | Class_object _ | Ancestors_of _
-                  | Object_of _ | Root ) ->
+                  | Object_of _ | Top_level_object ) ->
                   Object_of
-                    { holder = sid; path = []; held_class = Of_unknown_class }
+                    { variable = sid; path = []; referent_class = Of_unknown_class }
               | None ->
                   Object_of
                     {
-                      holder = sid;
+                      variable = sid;
                       path = [];
-                      held_class =
-                        held_by_values t ~caller ~visited:(sid :: visited) sid
+                      referent_class =
+                        referent_class_of_values t ~caller ~visited:(sid :: visited) sid
                           info;
                     })))
   | None -> (
@@ -2447,19 +2453,20 @@ let rec receiver_of_name_from (t : t) ~(caller : Function_id.t option)
       | G.IdQualified { G.name_top = Some _; _ } -> (
           match classes_at t (qualified_path name) with
           | [ cls ] -> Class_object cls
-          | [] | _ :: _ :: _ -> external_or_outside t ~context name)
+          | [] | _ :: _ :: _ -> class_object_or_external t ~context name)
       | G.Id _
       | G.IdQualified _ ->
           if
             top_level_defs_are_methods_of_object t.lang
             && not (String_.is_capitalized (fst (last_ident_of_name name)))
           then Unknown
-          else external_or_outside t ~context name)
+          else class_object_or_external t ~context name)
 
-and held_by_values (t : t) ~(caller : Function_id.t option)
-    ~(visited : G.SId.t list) (sid : G.SId.t) (info : G.id_info) : held_class =
+and referent_class_of_values (t : t) ~(caller : Function_id.t option)
+    ~(visited : G.SId.t list) (sid : G.SId.t) (info : G.id_info) :
+    referent_class =
   let values =
-    match (values_in_force t ~caller sid, !(info.G.id_svalue)) with
+    match (reaching_values t ~caller sid, !(info.G.id_svalue)) with
     | (_ :: _ as assigned), _ -> assigned
     | [], Some (G.Sym value) -> [ value ]
     | [], (Some _ | None) -> []
@@ -2475,13 +2482,13 @@ and held_by_values (t : t) ~(caller : Function_id.t option)
         match receiver_of_name_from t ~caller ~visited value_name with
         | Exact cls
         | Class cls
-        | Object_of { path = []; held_class = Of_class cls; _ } ->
+        | Object_of { path = []; referent_class = Of_class cls; _ } ->
             Some cls
         | Class_object _
         | Ancestors_of _
         | Object_of _
         | External_class
-        | Root
+        | Top_level_object
         | Unknown ->
             None)
     | _ -> None
@@ -2506,7 +2513,7 @@ let exact (receiver : receiver_class) : receiver_class =
   | Ancestors_of _
   | Object_of _
   | External_class
-  | Root
+  | Top_level_object
   | Unknown ->
       receiver
 
@@ -2556,25 +2563,25 @@ let rec receiver_chain (t : t) (e : G.expr) : G.expr * string list =
   | _ -> (e, [])
 
 (* The constructors of the first class in the resolution order that has one:
-   the functions its binding holds (a constructor written with the class's
-   name, a JavaScript function called with [new]) and its members with the
-   language's constructor names. *)
-let constructors_along (t : t) (tiers : Class_table.cls Linearisation.tier list)
-    : resolution =
+   the functions its binding refers to (a constructor written with the
+   class's name, a JavaScript function called with [new]) and its members
+   with the language's constructor names. *)
+let nearest_constructors (t : t)
+    (levels : Class_table.cls Member_lookup.level list) : resolution =
   let constructor_names = (Lang_config.get t.lang).Lang_config.constructor_names in
   match
-    Class_table.nearest tiers ~defines:(fun (ancestor : Class_table.cls) ->
-        Class_table.bound_functions ancestor
+    Class_table.nearest levels ~defines:(fun (ancestor : Class_table.cls) ->
+        Class_table.constructor_functions ancestor
         @ List.concat_map (Class_table.own_members ancestor) constructor_names)
   with
-  | Linearisation.Selected (_, found) -> Defined found
-  | Linearisation.Ambiguous
-  | Linearisation.Undefined ->
+  | Member_lookup.Selected (_, found) -> Defined found
+  | Member_lookup.Ambiguous
+  | Member_lookup.Undefined ->
       Defined []
-  | Linearisation.Unknown -> External
+  | Member_lookup.Unknown -> External
 
 let constructors_of_class (t : t) (cls : Class_table.cls) : resolution =
-  constructors_along t (order t cls).Linearisation.tiers
+  nearest_constructors t (order t cls).Member_lookup.levels
 
 let constructors (t : t) (scope : class_scope) : resolution =
   match Class_table.class_of_scope t.classes (scope_id_of scope) with
@@ -2600,7 +2607,7 @@ let position_of_member (e : G.expr) : int option =
   | _ -> None
 
 let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
-    ~(visited : G.SId.t list) (name : G.name) : selection =
+    ~(visited : G.SId.t list) (name : G.name) : lookup_result =
   let info = id_info_of_name name in
   match !(info.G.id_resolved) with
   | Some (G.TypeName, sid) -> (
@@ -2613,7 +2620,7 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
       | None ->
           static_selection (Defined []))
   | Some ((G.Global | G.LocalVar | G.Parameter | G.EnclosedVar | G.Macro), sid)
-    when names_class t.class_sites sid -> (
+    when is_class_binding t.class_sites sid -> (
       match Class_table.class_of_binding t.classes sid with
       | Some cls when constructs t use ->
           static_selection (constructors_of_class t cls)
@@ -2627,9 +2634,9 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
       | [] when List.exists (G.SId.equal sid) visited ->
           static_selection (Defined [])
       | [] -> (
-          match (values_in_force t ~caller sid, !(info.G.id_svalue)) with
+          match (reaching_values t ~caller sid, !(info.G.id_svalue)) with
           | (_ :: _ as assigned), _ ->
-              joined_selections
+              join_selections
                 (List.map
                    (resolve_expr t ~caller ~use ~visited:(sid :: visited))
                    assigned)
@@ -2646,14 +2653,14 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
   | None -> static_selection External
 
 and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
-    ~(visited : G.SId.t list) (e : G.expr) : selection =
+    ~(visited : G.SId.t list) (e : G.expr) : lookup_result =
   match (e.G.e, member_access t e) with
   | (G.N name | G.Ref (_, { G.e = G.N name; _ })), _ ->
       resolve_name t ~caller ~use ~visited name
   | _, Some (receiver, member) ->
       let root, prefix = receiver_chain t receiver in
       resolve_member_access t
-        ~site:{ from = caller; at = position_of_member e }
+        ~program_point:{ from = caller; at = position_of_member e }
         ~receiver ~member ~prefix
         ~root_class:(lazy (receiver_class t ~caller root))
   | G.ArrayAccess (indexed, _), None ->
@@ -2662,20 +2669,20 @@ and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
       static_selection
         (match self_receiver t ~caller with
         | Class cls ->
-            constructors_along t (order t cls).Linearisation.super_tiers
+            nearest_constructors t (order t cls).Member_lookup.super_levels
         | External_class -> External
         | Exact _
         | Class_object _
         | Ancestors_of _
         | Object_of _
-        | Root
+        | Top_level_object
         | Unknown ->
             Defined [])
   | _ -> static_selection (Defined [])
 
-and resolve_member_access (t : t) ~(site : site)
+and resolve_member_access (t : t) ~(program_point : program_point)
     ~(receiver : G.expr) ~(member : string)
-    ~(prefix : string list) ~(root_class : receiver_class Lazy.t) : selection
+    ~(prefix : string list) ~(root_class : receiver_class Lazy.t) : lookup_result
     =
   match
     Option.bind (unbound_chain_path receiver) (fun (path : string list) ->
@@ -2689,18 +2696,18 @@ and resolve_member_access (t : t) ~(site : site)
         when is_constructor_reference t member
              &&
              match
-               first_defining_on t Class_parents.Class_side
-                 (order t cls).Linearisation.tiers member
+               first_definitions_on_side t Class_parents.Class_side
+                 (order t cls).Member_lookup.levels member
              with
-             | Linearisation.Selected _
-             | Linearisation.Ambiguous ->
+             | Member_lookup.Selected _
+             | Member_lookup.Ambiguous ->
                  false
-             | Linearisation.Undefined
-             | Linearisation.Unknown ->
+             | Member_lookup.Undefined
+             | Member_lookup.Unknown ->
                  true ->
           static_selection (constructors_of_class t cls)
       | root_receiver, _ ->
-          resolve_path t ~site root_receiver (prefix @ [ member ]))
+          resolve_path t ~program_point root_receiver (prefix @ [ member ]))
 
 (* The class an expression denotes as a receiver, when this file knows it. *)
 and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
@@ -2723,7 +2730,7 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
       | Class_object _
       | Ancestors_of _
       | Object_of _
-      | Root
+      | Top_level_object
       | Unknown ->
           Unknown)
   | G.N name -> receiver_of_name t ~caller name
@@ -2749,7 +2756,7 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
       | Exact _
       | Ancestors_of _
       | Object_of _
-      | Root
+      | Top_level_object
       | Unknown ->
           Unknown)
   | G.Call (callee, _) -> returned_by t ~caller callee
@@ -2765,16 +2772,16 @@ and member_receiver (t : t) (receiver : receiver_class) (field : string) :
     receiver_class =
   match (field_type t receiver field, receiver) with
   | Some cls, _ -> Class cls
-  | None, Object_of held ->
+  | None, Object_of referent ->
       Object_of
-        { held with path = held.path @ [ field ]; held_class = Of_unknown_class }
+        { referent with path = referent.path @ [ field ]; referent_class = Of_unknown_class }
   | None, External_class -> External_class
   | ( None,
-      (Class _ | Exact _ | Class_object _ | Ancestors_of _ | Root | Unknown) ) ->
+      (Class _ | Exact _ | Class_object _ | Ancestors_of _ | Top_level_object | Unknown) ) ->
       Unknown
 
 and member_call (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
-    (receiver_class * string * selection Lazy.t) option =
+    (receiver_class * string * lookup_result Lazy.t) option =
   match (callee.G.e, member_access t callee) with
   | G.DotAccess _, Some (receiver, member) ->
       let root, prefix = receiver_chain t receiver in
@@ -2784,7 +2791,7 @@ and member_call (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
           member,
           lazy
             (resolve_member_access t
-               ~site:{ from = caller; at = position_of_member callee }
+               ~program_point:{ from = caller; at = position_of_member callee }
                ~receiver ~member ~prefix
                ~root_class:(Lazy.from_val root_class)) )
   | _ -> None
@@ -2805,7 +2812,7 @@ and returned_by (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
       match dispatched t (Lazy.force resolved) with
       | Defined (funcs : Func_info.t list) -> returned_by_functions t funcs
       | External -> (
-          match dispatched t (t.outside t ~caller callee) with
+          match dispatched t (t.cross_file_resolver t ~caller callee) with
           | Defined (funcs : Func_info.t list) -> returned_by_functions t funcs
           | External -> Unknown))
 
@@ -2824,11 +2831,11 @@ and returned_by_functions (t : t) (funcs : Func_info.t list) : receiver_class =
       Unknown
 
 let resolve_callee (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    selection =
+    lookup_result =
   resolve_expr t ~caller ~use:Called ~visited:[] e
 
 let resolve_reference (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    selection =
+    lookup_result =
   resolve_expr t ~caller ~use:Referenced ~visited:[] e
 
 (* The constructors [new T(...)] reaches: those of the class [T] binds, or
@@ -2887,13 +2894,13 @@ let class_of_receiver (receiver : receiver_class) : Class_table.cls option =
   match receiver with
   | Class cls
   | Exact cls
-  | Object_of { path = []; held_class = Of_class cls; _ } ->
+  | Object_of { path = []; referent_class = Of_class cls; _ } ->
       Some cls
   | Class_object _
   | Ancestors_of _
   | Object_of _
   | External_class
-  | Root
+  | Top_level_object
   | Unknown ->
       None
 
@@ -2918,26 +2925,26 @@ let external_type_path (t : t) ~(written_in : Function_id.t option)
   | Class_object _
   | Ancestors_of _
   | Object_of _
-  | Root
+  | Top_level_object
   | Unknown ->
       None
 
 let accepts_external (t : t) (cls : Class_table.cls) (path : string list) :
     bool option =
   let supertypes = Lang_config.implicit_supertypes t.lang in
-  let linearisation = order t cls in
+  let lookup_order = order t cls in
   let implicit =
     supertypes.Lang_config.of_every_class
     @ List.concat_map
         (fun (ancestor : Class_table.cls) ->
           List.concat_map supertypes.Lang_config.of_declaration
             (Class_table.declarations ancestor))
-        linearisation.Linearisation.order
+        lookup_order.Member_lookup.order
   in
   if List.exists (List.equal String.equal path) implicit then Some true
   else if
     supertypes.Lang_config.user_defined_conversions
-    || not linearisation.Linearisation.complete
+    || not lookup_order.Member_lookup.complete
   then None
   else Some false
 
@@ -2947,29 +2954,29 @@ let this_class (t : t) ~(caller : Function_id.t option) :
 
 let class_of_function (t : t) (func : Func_info.t) : Class_table.cls option =
   match
-    Option.map (of_self_type t) (Fdef_tbl.find_opt t.selves func.Func_info.fdef)
+    Option.map (of_self_type t) (Fdef_tbl.find_opt t.self_types func.Func_info.fdef)
   with
   | Some (Class cls | Exact cls | Class_object cls) -> Some cls
   | Some
-      ( Ancestors_of _ | Object_of _ | External_class | Root | Unknown )
+      ( Ancestors_of _ | Object_of _ | External_class | Top_level_object | Unknown )
   | None ->
       None
 
-let or_outside (t : t) ~(caller : Function_id.t option) (e : G.expr)
-    (resolved : selection) : selection =
+let or_across_files (t : t) ~(caller : Function_id.t option) (e : G.expr)
+    (resolved : lookup_result) : lookup_result =
   match resolved.resolution with
   | Defined _ -> resolved
-  | External -> t.outside t ~caller e
+  | External -> t.cross_file_resolver t ~caller e
 
 let resolve_call (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    selection =
-  or_outside t ~caller e (resolve_callee t ~caller e)
+    lookup_result =
+  or_across_files t ~caller e (resolve_callee t ~caller e)
 
 let class_of_member_call (t : t) ~(caller : Function_id.t option)
-    (callee : G.expr) : (Class_table.cls option * selection Lazy.t) option =
+    (callee : G.expr) : (Class_table.cls option * lookup_result Lazy.t) option =
   Option.map
     (fun ((receiver : receiver_class), (_ : string),
-          (resolved : selection Lazy.t)) ->
+          (resolved : lookup_result Lazy.t)) ->
       ( class_of_receiver receiver,
-        lazy (or_outside t ~caller callee (Lazy.force resolved)) ))
+        lazy (or_across_files t ~caller callee (Lazy.force resolved)) ))
     (member_call t ~caller callee)

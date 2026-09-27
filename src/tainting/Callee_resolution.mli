@@ -57,14 +57,14 @@ val callees_of_call :
   typing:static_typing ->
   table:Symbol_table.t ->
   AST_generic.argument list option ->
-  Symbol_table.selection ->
+  Symbol_table.lookup_result ->
   func_info list
 
 val table_typing :
   lang:Lang.t ->
   table:Symbol_table.t ->
   caller:Function_id.t option ->
-  resolve:(AST_generic.expr -> Symbol_table.selection) ->
+  resolve:(AST_generic.expr -> Symbol_table.lookup_result) ->
   static_typing
 
 module Callee_use_tbl :
@@ -96,7 +96,7 @@ type argument_typer =
   AST_generic.argument list ->
   static_type option list
 
-val resolve_outside_file :
+val resolve_across_files :
   lang:Lang.t ->
   table:Symbol_table.t ->
   func_lookup:Func_lookup.t ->
@@ -104,9 +104,9 @@ val resolve_outside_file :
   caller_parent_path:IL.name option list ->
   use:Symbol_table.use ->
   AST_generic.expr ->
-  Symbol_table.selection
+  Symbol_table.lookup_result
 
-val resolve_construction_outside_file :
+val resolve_construction_across_files :
   table:Symbol_table.t ->
   func_lookup:Func_lookup.t ->
   caller_parent_path:IL.name option list ->

@@ -72,5 +72,5 @@ type item = {
 }
 [@@deriving show, eq, ord]
 
-type t = { origin : pattern_match_tokens; items : item list }
+type t = { source_tokens : pattern_match_tokens; items : item list }
 [@@deriving show, eq, ord]

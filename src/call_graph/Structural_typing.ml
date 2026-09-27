@@ -62,7 +62,7 @@ let returns_compatible (type declared) ~(equal_type : declared equal_type)
    names below ([string]/[int]/...) are defensive: they CAN legally be
    param names, but flagging one only forces the same conservative skip
    (keep the edge), never a wrong rejection. *)
-let untrustworthy_pname (name : string) : bool =
+let incomparable_param_name (name : string) : bool =
   match name with
   (* Reserved words — impossible as identifiers; the garble triggers. *)
   | "func" | "map" | "chan" | "interface" | "struct" | "type" | "range"
@@ -78,11 +78,11 @@ let params_of (fdef : G.function_definition) : G.parameter list =
   | G.ParamReceiver _ :: rest -> rest
   | params -> params
 
-let params_trustworthy (fdef : G.function_definition) : bool =
+let has_comparable_params (fdef : G.function_definition) : bool =
   List.for_all
     (fun (param : G.parameter) ->
       match param with
-      | G.Param { G.pname = Some (name, _); _ } -> not (untrustworthy_pname name)
+      | G.Param { G.pname = Some (name, _); _ } -> not (incomparable_param_name name)
       | _ -> true)
     (params_of fdef)
 
@@ -117,7 +117,7 @@ let signature (type declared) ~(lang : Lang.t)
   {
     arity = method_arity ~lang entity fdef;
     parameters =
-      (if params_trustworthy fdef then Some (param_types ~declared fdef)
+      (if has_comparable_params fdef then Some (param_types ~declared fdef)
        else None);
     return = Option.map declared fdef.G.frettype;
   }

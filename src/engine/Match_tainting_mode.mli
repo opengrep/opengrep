@@ -19,45 +19,45 @@ val build_info_map :
    [taint_focus_on] / [taint_match_on] rule options. *)
 val match_on_of_xconf : Match_env.xconfig -> [ `Sink | `Source ]
 
-type retention = {
+type reanalysis = {
   lang : Lang.t;
   cfg_of : Function_id.t -> IL.fun_cfg option;
   index_of : IL.fun_cfg -> Path_feasibility.index;
-  check :
+  check_path :
     IL.fun_cfg ->
     entry:Path_feasibility.state ->
-    Path_feasibility.anchor list ->
+    Path_feasibility.trace_step list ->
     Path_feasibility.verdict * Path_feasibility.state option list;
-  reanalysed :
+  reanalyse_once :
     IL.fun_cfg ->
     Shape_and_sig.signature_database option ->
     (Shape_and_sig.signature_database option -> Shape_and_sig.Effects.t) ->
     Shape_and_sig.Effects.t;
-  retained_db :
+  signatures_with_all_traces :
     Function_id.t list -> Shape_and_sig.signature_database option;
-  retain_tables : Taint_shared_tables.t;
+  tables_with_all_traces : Taint_shared_tables.t;
 }
 
 type checked_function = {
-  retention : retention;
+  reanalysis : reanalysis;
   cfg : IL.fun_cfg;
   reanalyse :
     (Shape_and_sig.signature_database option -> Shape_and_sig.Effects.t) option;
 }
 
-val retaining : Taint_rule_inst.t -> Taint_rule_inst.t
+val with_all_traces : Taint_rule_inst.t -> Taint_rule_inst.t
 
-val mk_retention :
+val mk_reanalysis :
   lang:Lang.t ->
   cfg_of:(Function_id.t -> IL.fun_cfg option) ->
   shared_tables:Taint_shared_tables.t ->
-  retain_signature:
+  signature_with_all_traces:
     (Taint_shared_tables.t ->
     Function_id.t ->
     Shape_and_sig.signature_database ->
     Shape_and_sig.signature_database) ->
   Shape_and_sig.signature_database option ->
-  retention
+  reanalysis
 
 val pms_of_effect :
   lang:Lang.t ->
@@ -104,7 +104,7 @@ val extract_and_check :
   taint_inst:Taint_rule_inst.t ->
   shared_tables:Taint_shared_tables.t ->
   detect_findings:bool ->
-  retention:retention option ->
+  reanalysis:reanalysis option ->
   fun_info ->
   Shape_and_sig.signature_database * Core_match.t list
 (** Shared signature-extraction + finding-detection logic. *)

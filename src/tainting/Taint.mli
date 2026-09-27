@@ -28,11 +28,11 @@ type call_site = {
   callee_params : Signature_params.params;
   callee_params_il : IL.param list;
   caller_params : IL.param list option;
-  can_freeze : bool;
+  may_weaken_guards : bool;
   subst : [ `Effect | `Nested_sig ];
 }
 
-type trace_merge = Keep_best | Keep_both
+type kept_traces = One_trace_per_guard | All_traces
 
 (** A call trace to a source or sink match.
   * E.g. Call('foo()', PM('sink(x)')) tells us that by calling `foo(a)` we reach
@@ -225,11 +225,12 @@ and taint = {
 }
 (** At a given program location, taint is given by its origin (i.e. 'orig') and
  * the path it took from that origin to the current location (i.e. 'tokens'). *)
-(* The trace is a tree: each node in [nodes] points at the trace of a callee
- * or of a merged taint, and those traces are shared between taints, never
- * copied. [token_count] is the length of [tokens]; [trace_length] is the
- * number of tokens in the flattened trace, following the kept side of every
- * merge, so that comparing traces by length does not walk them. *)
+(* The trace is a directed acyclic graph: each node in [nodes] points at the
+ * trace of a callee or of a merged taint, and those traces are shared between
+ * taints, never copied. [token_count] is the length of [tokens];
+ * [trace_length] is the number of tokens in the flattened trace, following
+ * the kept alternative of every merge, so that comparing traces by length
+ * does not walk them. *)
 
 val taint_of_orig : orig -> taint
 val push_token : tainted_token -> taint -> taint
@@ -238,8 +239,8 @@ val reverse_trace : taint -> taint
 val call_of_taint :
   AST_generic.expr -> call_site -> taint -> 'a call_trace -> 'a call_trace
 
-val through :
-  call_site -> join_tok:tainted_token option -> inner:taint -> taint -> taint
+val append_callee_trace :
+  call_site -> call_tok:tainted_token option -> inner:taint -> taint -> taint
 
 val same_trace : taint -> taint -> bool
 
@@ -249,7 +250,7 @@ val compare_traces :
   taint -> unit call_trace option -> taint -> unit call_trace option -> int
 
 val merge_items :
-  merge:trace_merge ->
+  traces:kept_traces ->
   kept:Effect_guard.t * taint * unit call_trace ->
   other:Effect_guard.t * taint * unit call_trace ->
   taint
@@ -258,7 +259,7 @@ type step =
   | Token of tainted_token
   | Callee of {
       site : call_site;
-      join_tok : tainted_token option;
+      call_tok : tainted_token option;
       steps : step list;
     }
 
@@ -272,28 +273,28 @@ type 'a flat_call_trace =
       inner : 'a flat_call_trace;
     }
 
-type resolved = {
-  resolved_orig : orig option;
-  resolved_tokens : tainted_tokens;
-  resolved_steps : step list;
-  resolved_sink_trace : unit call_trace option;
+type trace_path = {
+  path_orig : orig option;
+  path_tokens : tainted_tokens;
+  path_steps : step list;
+  path_sink_trace : unit call_trace option;
   refuted_by_guard : bool;
 }
 
-val taint_resolutions :
-  valid:(call_site list -> Effect_guard.t -> bool) -> taint -> resolved Seq.t
+val trace_paths :
+  valid:(call_site list -> Effect_guard.t -> bool) -> taint -> trace_path Seq.t
 
-val source_trace_resolutions :
+val source_trace_paths :
   valid:(call_site list -> Effect_guard.t -> bool) ->
   Rule.taint_source call_trace ->
   (Rule.taint_source flat_call_trace * bool) Seq.t
 
-val sink_trace_resolutions :
+val sink_trace_paths :
   valid:(call_site list -> Effect_guard.t -> bool) ->
   unit call_trace ->
   (unit flat_call_trace * bool) Seq.t
 
-val first_resolution : 'a Seq.t -> 'a
+val first_path : 'a Seq.t -> 'a
 
 val trace_of_pm : Core_match.t * 'a -> 'a call_trace
 val pm_of_trace : 'a call_trace -> Core_match.t * 'a
@@ -305,7 +306,7 @@ val pm_of_trace : 'a call_trace -> Core_match.t * 'a
    the same.
 *)
 val map_preconditions :
-  merge:trace_merge -> (taint list -> taint list) -> taint -> taint option
+  traces:kept_traces -> (taint list -> taint list) -> taint -> taint option
 val show_lval : lval -> string
 val show_taint : taint -> string
 val compare_lval : lval -> lval -> int
@@ -348,27 +349,27 @@ module Taint_set : sig
 
   val compare : t -> t -> int
   val singleton : taint -> t
-  val add : merge:trace_merge -> guarded_taint -> t -> t
-  val union : merge:trace_merge -> t -> t -> t
-  val merge_into : merge:trace_merge -> t -> t -> t
+  val add : traces:kept_traces -> guarded_taint -> t -> t
+  val union : traces:kept_traces -> t -> t -> t
+  val merge_into : traces:kept_traces -> t -> t -> t
   val diff : t -> t -> t
-  val map : merge:trace_merge -> (guarded_taint -> guarded_taint) -> t -> t
-  val bind : merge:trace_merge -> t -> (guarded_taint -> t) -> t
+  val map : traces:kept_traces -> (guarded_taint -> guarded_taint) -> t -> t
+  val bind : traces:kept_traces -> t -> (guarded_taint -> t) -> t
   val iter : (guarded_taint -> unit) -> t -> unit
   val fold : (guarded_taint -> 'a -> 'a) -> t -> 'a -> 'a
   val filter : (guarded_taint -> bool) -> t -> t
-  val of_list : merge:trace_merge -> guarded_taint list -> t
+  val of_list : traces:kept_traces -> guarded_taint list -> t
   val to_seq : t -> guarded_taint Seq.t
   val elements : t -> guarded_taint list
 
-  val add_taint : merge:trace_merge -> taint -> t -> t
+  val add_taint : traces:kept_traces -> taint -> t -> t
   (** Add a bare taint with [Effect_guard.top] guard. *)
 
   val add_taint_with_guard :
-    merge:trace_merge -> taint -> Effect_guard.t -> t -> t
+    traces:kept_traces -> taint -> Effect_guard.t -> t -> t
   (** Add a taint paired with the given guard. *)
 
-  val of_taint_list : merge:trace_merge -> taint list -> t
+  val of_taint_list : traces:kept_traces -> taint list -> t
   (** Lift a list of bare taints, each with [Effect_guard.top]. *)
 
   val to_taint_list : t -> taint list
@@ -381,7 +382,7 @@ module Taint_set : sig
   (** The disjunction of every guarded taint's guard: the condition under which at
       least one taint in the set is live. [empty] yields [Effect_guard.top]. *)
 
-  val map_taint : merge:trace_merge -> (taint -> taint) -> t -> t
+  val map_taint : traces:kept_traces -> (taint -> taint) -> t -> t
   (** Map the inner taint of every guarded taint, leaving guards untouched.
       [f] MAY change taint identity: the set detects it and rebuilds
       itself with correct keys, fusing guards of identity-colliding
@@ -397,7 +398,7 @@ val solve_precondition :
 val taints_satisfy_requires : taint list -> Rule.precondition -> bool
 
 val taints_of_pms :
-  merge:trace_merge ->
+  traces:kept_traces ->
   incoming:taints ->
   (Core_match.t * Rule.taint_source) list ->
   taints

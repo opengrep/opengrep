@@ -60,9 +60,9 @@ val is_constant : t -> bool
 val set_constant : t -> t
 
 val is_data_field : t -> bool
-(** The field name of a field access that naming found to be a data field
-    of the receiver's type: a function-typed one holds a function, it is
-    not a method. *)
+(** The field name of a field access that name resolution marked as a data
+    field of the receiver's type: a function-typed one holds a function, it
+    is not a method. *)
 
 val set_data_field : t -> t
 

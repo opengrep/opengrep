@@ -61,14 +61,14 @@ val augment_fields_from_self_assignments :
   Graph_from_AST.func_info list ->
   Type_state.t
 
-(* Stamp inferred variable classes onto [id_instance_type] across an AST. *)
-val add_value_type_sites :
+val add_value_type_annotations :
   lang:Lang.t ->
   table_of_file:table_of_file ->
   Type_state.t ->
   Graph_from_AST.func_info list ->
   Type_state.t
 
+(* Stamp inferred variable classes onto [id_instance_type] across an AST. *)
 val stamp_var_types_from_bodies :
   lang:Lang.t ->
   table:Symbol_table.t ->

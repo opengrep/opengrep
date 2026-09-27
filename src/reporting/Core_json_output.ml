@@ -119,7 +119,7 @@ let content_of_loc (loc : Out.location) : string =
 let core_unique_key ~(taint_interfile : bool)
     ~(interfile_dedup_by : Core_match.interfile_dedup_by)
     (rule_options : Core_match.rule_id_options Rule_ID.Map.t)
-    ~(origin : Tok.t list) (c : Out.core_match) : key =
+    ~(source_tokens : Tok.t list) (c : Out.core_match) : key =
   let name = Rule_ID.to_string c.check_id in
   let path =
     match c.extra.historical_info with
@@ -151,7 +151,7 @@ let core_unique_key ~(taint_interfile : bool)
          | Some { taint_source = Some src; _ } -> Some (leaf_source src)
          | Some { taint_source = None; _ }
          | None ->
-             OutUtils.tokens_to_single_loc origin
+             OutUtils.tokens_to_single_loc source_tokens
              |> Option.map (fun (loc : Out.location) ->
                     Out.CliLoc (loc, content_of_loc loc))
        in
@@ -219,16 +219,16 @@ let dedup_and_sort
     | _ -> false
   in
   let seen = Hashtbl.create 101 in
-  xs |> OutUtils.sort_core_matches_with
+  xs |> OutUtils.sort_paired_core_matches
   (* This deduplication logic used to live in Pysemgrep, which would assume that
      the matches had already been sorted via sort_core_matches.
      If you run through this deduplication logic without that assumption, you'll
      keep undesirable matches, such as those with less metavariables.
   *)
-  |> List.iter (fun ((x : Out.core_match), (origin : Tok.t list)) ->
+  |> List.iter (fun ((x : Out.core_match), (source_tokens : Tok.t list)) ->
          let key =
            core_unique_key ~taint_interfile ~interfile_dedup_by rule_options
-             ~origin x
+             ~source_tokens x
          in
          match Hashtbl.find_opt seen key with
          | None -> Hashtbl.add seen key x
@@ -369,10 +369,10 @@ let taint_trace_to_dataflow_trace (traces : Taint_trace.item list) :
             taint_sink = taint_call_trace sink_trace;
           }
 
-let origin_of_match (pm : Core_match.t) : Tok.t list =
+let source_tokens_of_match (pm : Core_match.t) : Tok.t list =
   match pm.taint_trace with
   | None -> []
-  | Some (lazy trace) -> trace.Taint_trace.origin
+  | Some (lazy trace) -> trace.Taint_trace.source_tokens
 
 let unsafe_match_to_match ?(inline = false)
     ({ pm = x; is_ignored; autofix_edit } : Core_result.processed_match) :
@@ -635,7 +635,7 @@ let core_output_of_matches_and_errors ?(inline = false)
     |> Result_.partition (fun (m : Core_result.processed_match) ->
            match_to_match ~inline m
            |> Result.map (fun (core_match : Out.core_match) ->
-                  (core_match, origin_of_match m.pm)))
+                  (core_match, source_tokens_of_match m.pm)))
   in
   let errs = new_errs @ res.errors in
   {
@@ -682,4 +682,4 @@ let core_output_of_matches_and_errors ?(inline = false)
 
 let test_core_unique_key c =
   core_unique_key ~taint_interfile:false ~interfile_dedup_by:Core_match.Sink
-    Rule_ID.Map.empty ~origin:[] c
+    Rule_ID.Map.empty ~source_tokens:[] c

@@ -4,7 +4,7 @@ type side =
 
 type t = {
   written : AST_generic.type_;
-  relation : Linearisation.relation;
+  relation : Member_lookup.relation;
   side : side;
   arguments : AST_generic.arguments option;
   delegate : AST_generic.expr option;
@@ -19,15 +19,15 @@ val type_members :
 
 val declared_members : AST_generic.definition_kind -> string list
 
-type singleton_exposure =
-  | No_singleton_exposure
-  | Every_method_is_a_singleton
-  | Named_singleton_methods of string list
+type module_functions =
+  | No_module_functions
+  | All_module_functions
+  | Module_functions of string list
 
-val singleton_exposure :
-  Lang.t -> AST_generic.definition_kind -> singleton_exposure
+val module_functions :
+  Lang.t -> AST_generic.definition_kind -> module_functions
 
-val exposes : singleton_exposure -> string -> bool
+val is_module_function : module_functions -> string -> bool
 
 val extended_type : AST_generic.definition_kind -> AST_generic.type_ option
 
@@ -36,7 +36,7 @@ val reopens :
 
 type metatable_fact =
   | Metatable_set of {
-      holder : AST_generic.name;
+      table : AST_generic.name;
       metatable : AST_generic.expr;
     }
   | Index_assigned of {

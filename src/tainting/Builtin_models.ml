@@ -26,7 +26,7 @@ let make_args_taints ((taints, shape) : Taint.taints * Shape.shape)
 
 let whole_value_taint_set (lval : Taint.lval) : Taint.taints =
   Taint.(
-    Taint_set.union ~merge:Keep_best
+    Taint_set.union ~traces:One_trace_per_guard
       (Taint_set.singleton (taint_of_orig (Var lval)))
       (Taint_set.singleton (taint_of_orig (Shape_var lval))))
 
@@ -58,7 +58,7 @@ let hof_return_effects (result : Lang_config.hof_result)
         {
           data_taints;
           data_shape;
-          several_results = false;
+          multiple_results = false;
           control_taints = Taint.Taint_set.empty;
           return_tok = Tok.unsafe_fake_tok "builtin_hof";
           guards;
@@ -120,7 +120,7 @@ let add_hof_returning_function_signatures db method_names
       params_il = synthetic_params_il params;
       captured = [];
       effects =
-        Effects.of_list ~merge:Taint.Keep_best
+        Effects.of_list ~traces:Taint.One_trace_per_guard
           (hof_effect
           :: hof_return_effects result ~input:this_taint_set ~callee
                ~arg:callback ~arg_offset:[] ~guards:Effect_guard.top);
@@ -133,13 +133,13 @@ let add_hof_returning_function_signatures db method_names
       {
         data_taints = this_taint_set;
         data_shape =
-          closure_of_definition
+          fun_shape_of_definition
             ( Function_id.of_string_and_tok
                 (Printf.sprintf "builtin_hof/%d" taint_arg_index)
                 (Tok.unsafe_fake_tok "builtin_hof"),
               returned_fun_sig )
             [];
-        several_results = false;
+        multiple_results = false;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
         guards = Effect_guard.top;
@@ -215,7 +215,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.of_list ~merge:Taint.Keep_best (hof_effect :: return_effects);
+      effects = Effects.of_list ~traces:Taint.One_trace_per_guard (hof_effect :: return_effects);
     }
   in
 
@@ -282,7 +282,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
       Signature.params;
       params_il = synthetic_params_il params;
       captured = [];
-      effects = Effects.of_list ~merge:Taint.Keep_best (hof_effect :: return_effects);
+      effects = Effects.of_list ~traces:Taint.One_trace_per_guard (hof_effect :: return_effects);
     }
   in
 
@@ -433,7 +433,7 @@ let add_function_hof_signatures_clojure ~(lang : Lang.t)
           Signature.params;
           params_il = synthetic_params_il params;
       captured = [];
-          effects = Effects.of_list ~merge:Taint.Keep_best effects;
+          effects = Effects.of_list ~traces:Taint.One_trace_per_guard effects;
         }
       in
       add_builtin_signature acc_db function_name
@@ -485,7 +485,7 @@ let return_effect ((taints, shape) : Taint.taints * Shape.shape) =
     {
       data_taints = taints;
       data_shape = shape;
-      several_results = false;
+      multiple_results = false;
       control_taints = Taint.Taint_set.empty;
       return_tok = Tok.unsafe_fake_tok "builtin";
       guards = Effect_guard.top;
@@ -533,7 +533,7 @@ let add_arg_taints_this_signatures db method_names arity
                 (Shape.Cell (`Tainted stored_taints, stored_shape));
           }
       in
-      Effects.of_list ~merge:Taint.Keep_best
+      Effects.of_list ~traces:Taint.One_trace_per_guard
         [
           to_lval;
           return_effect (value_at Taint.Receiver []);

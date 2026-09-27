@@ -302,7 +302,7 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
                    | Ok (match_ : Out.core_match) ->
                        Some
                          ( match_,
-                           Core_json_output.origin_of_match processed_match.pm ))
+                           Core_json_output.source_tokens_of_match processed_match.pm ))
           in
           let matches =
             Core_json_output.dedup_and_sort

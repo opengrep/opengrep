@@ -17,7 +17,7 @@ val leaf_of_call_trace : Out.match_call_trace -> Out.loc_and_content
 
 (* now used also in osemgrep *)
 val error_to_error : Core_error.t -> Out.core_error
-val origin_of_match : Core_match.t -> Tok.t list
+val source_tokens_of_match : Core_match.t -> Tok.t list
 
 val dedup_and_sort :
   ?taint_interfile:bool ->

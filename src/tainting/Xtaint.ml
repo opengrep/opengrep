@@ -61,10 +61,10 @@ let show = function
   | `None -> "0"
   | `Clean -> "C"
 
-let union ~(merge : Taint.trace_merge) (xt1 : t) (xt2 : t) : t =
+let union ~(traces : Taint.kept_traces) (xt1 : t) (xt2 : t) : t =
   match (xt1, xt2) with
   | `Tainted taints1, `Tainted taints2 ->
-      let taints = Taints.merge_into ~merge taints1 taints2 in
+      let taints = Taints.merge_into ~traces taints1 taints2 in
       if Common.phys_equal taints taints1 then xt1
       else if Common.phys_equal taints taints2 then xt2
       else `Tainted taints

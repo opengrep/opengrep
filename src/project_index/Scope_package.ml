@@ -97,7 +97,7 @@ let build
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
-    ~(object_classes : unit Common.SMap.t)
+    ~(singleton_objects : unit Common.SMap.t)
     ~(companions : bool)
     (fi : file_info)
     : Func_lookup.scope_entry list Common.SMap.t
@@ -114,15 +114,15 @@ let build
   in
   let own_class_by_qn : entry Common.SMap.t =
     List.fold_left
-      (fun (by_qn : entry Common.SMap.t) (ci : entry) ->
-        Common.SMap.add (Names.Class_qn.to_string (Scope_binding.class_qn_of_entry ci)) ci by_qn)
+      (fun (by_qn : entry Common.SMap.t) (entry : entry) ->
+        Common.SMap.add (Names.Class_qn.to_string (Scope_binding.class_qn_of_entry entry)) entry by_qn)
       Common.SMap.empty own_classes
   in
   let type_bindings =
     Scope_binding.own_class_bindings
-      ~companion:(fun (ci : entry) ->
+      ~companion:(fun (entry : entry) ->
         companions
-        && (match ci.kind with
+        && (match entry.kind with
             | K_companion -> true
             | K_class
             | K_function
@@ -132,8 +132,8 @@ let build
         Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scopes)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
-          (fun (ci : entry) ->
-            [ Some (Scope_binding.class_il_name_of ci) ])
+          (fun (entry : entry) ->
+            [ Some (Scope_binding.class_il_name_of entry) ])
           (Common.SMap.find_opt (Names.Class_qn.to_string owner)
              own_class_by_qn))
       own_classes
@@ -156,7 +156,7 @@ let build
         match attribute with
         | Func_lookup.Attr_class (class_qn : Names.Class_qn.t)
           when Common.SMap.mem (Names.Class_qn.to_string class_qn)
-                 object_classes ->
+                 singleton_objects ->
           class_qn :: objects
         | Func_lookup.Attr_class _
         | Func_lookup.Attr_class_with_companion _
@@ -320,10 +320,10 @@ let build
         | Imports.Named_binding _ -> None)
       (fi.fi_imports @ global_imports)
   in
-  let member_classes =
+  let classes_with_members_in_scope =
     List.filter_map class_target (wildcard_targets true)
     @ List.concat_map objects_of_module
         (own_namespaces @ wildcard_targets false)
   in
   (Scope_binding.bindings_of_positioned (keep_highest_precedence ~precedence bindings),
-   member_classes)
+   classes_with_members_in_scope)

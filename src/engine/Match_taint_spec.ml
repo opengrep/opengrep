@@ -483,7 +483,7 @@ let taint_config_of_spec_matches
                 |> List.exists (fun (src : R.taint_source) -> src.source_control);
                 preds;
                 handle_effects;
-                merge = Taint.Keep_best;
+                traces = Taint.One_trace_per_guard;
                 recursive = false;
                 is_value_type;
                 java_props_cache = Hashtbl.create 30;

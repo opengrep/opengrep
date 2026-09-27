@@ -65,8 +65,8 @@ let narrow_by_arity ~(lang : Lang.t) (call_arity : int option)
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
      with an empty param list) against a positional-arg call.  A body-less
      decl WITH params is an interface/abstract declaration and stays
-     resolvable: the call's stamp holds the definitions its arguments
-     select, and dispatch adds the overriding definitions. *)
+     resolvable: the call's [id_callee_definition] holds the definitions its
+     arguments select, and dispatch adds the overriding definitions. *)
   let single_synth_with_args (f : func_info) : bool =
     match call_arity with
     | Some n ->
@@ -360,7 +360,7 @@ let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
 
 let callees_of_call ~(lang : Lang.t) ~(typing : static_typing)
     ~(table : Symbol_table.t) (call_args : G.argument list option)
-    (selection : Symbol_table.selection) : func_info list =
+    (selection : Symbol_table.lookup_result) : func_info list =
   match selection.Symbol_table.resolution with
   | Symbol_table.External -> []
   | Symbol_table.Defined (selected : func_info list) ->
@@ -388,7 +388,7 @@ let return_type ~(lang : Lang.t) ~(typing : static_typing)
   | _ -> None
 
 let type_of_call ~(lang : Lang.t) ~(table : Symbol_table.t)
-    ~(resolve : G.expr -> Symbol_table.selection) ~(typing : static_typing)
+    ~(resolve : G.expr -> Symbol_table.lookup_result) ~(typing : static_typing)
     (e : G.expr) : static_type option =
   match e.G.e with
   | G.Call (callee, (_, args, _)) ->
@@ -399,7 +399,7 @@ let type_of_call ~(lang : Lang.t) ~(table : Symbol_table.t)
 
 let table_typing ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(caller : Function_id.t option)
-    ~(resolve : G.expr -> Symbol_table.selection) : static_typing =
+    ~(resolve : G.expr -> Symbol_table.lookup_result) : static_typing =
   let rec typing =
     {
       class_of_type = Symbol_table.class_of_type_written_in table;
@@ -722,7 +722,7 @@ let in_own_modules ~(func_lookup : Func_lookup.t) ~(position : name_position)
           (Names.Module_qn.parts namespace_scope @ chain))
     (Func_lookup.own_modules func_lookup)
 
-let completed ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
+let follow_segments ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
     ~(position : name_position)
     ((target : binding_target), (segments : string list))
     : binding_target option =
@@ -736,7 +736,7 @@ let follow_chain ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(position : name_position)
     (chain : dotted_chain) : binding_target option =
   let segments_of_chain = chain.dc_segments in
-  let completed = completed ~table ~func_lookup ~position in
+  let follow_segments = follow_segments ~table ~func_lookup ~position in
   match segments_of_chain with
   | [] -> None
   | head :: segments -> (
@@ -750,14 +750,14 @@ let follow_chain ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
           global_attribute_binding ~func_lookup ~position segments_of_chain
       with
       | None -> None
-      | Some (start : binding_target * string list) -> completed start
+      | Some (start : binding_target * string list) -> follow_segments start
     else
       match head_binding ~func_lookup ~caller_parent_path ~position head with
-      | Some (target : binding_target) -> completed (target, segments)
+      | Some (target : binding_target) -> follow_segments (target, segments)
       | None ->
         List.find_map
           (fun (start : unit -> (binding_target * string list) option) ->
-            Option.bind (start ()) completed)
+            Option.bind (start ()) follow_segments)
           [ (fun () ->
               in_own_modules ~func_lookup ~position segments_of_chain);
             (fun () ->
@@ -820,7 +820,7 @@ let root_of_chain ~(func_lookup : Func_lookup.t) (e : G.expr) : chain_root =
     | _ -> Local_root)
   | None -> Local_root
 
-let member_of_member_classes ~(table : Symbol_table.t)
+let member_of_classes_with_members_in_scope ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) (name : string) : func_info list =
   List.find_map
     (fun (class_qn : Names.Class_qn.t) ->
@@ -834,14 +834,14 @@ let member_of_member_classes ~(table : Symbol_table.t)
           | Symbol_table.Defined (_ :: _ as funcs) -> Some funcs
           | Symbol_table.Defined []
           | Symbol_table.External -> None))
-    (Func_lookup.member_classes func_lookup)
+    (Func_lookup.classes_with_members_in_scope func_lookup)
   |> Option.value ~default:[]
 
 let resolve_name_in_scope ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
     ~(caller_parent_path : IL.name option list) ~(construct : bool)
-    ~(unbound : bool) (name : string) : Symbol_table.selection =
-  let of_self_class () : Symbol_table.selection option =
+    ~(unbound : bool) (name : string) : Symbol_table.lookup_result =
+  let of_self_class () : Symbol_table.lookup_result option =
     if unbound && Naming_AST.members_in_scope_in_methods lang then
       let selection =
         Symbol_table.resolve_member table ~caller
@@ -868,7 +868,7 @@ let resolve_name_in_scope ~(lang : Lang.t) ~(table : Symbol_table.t)
          resolution_of_target ~table ~func_lookup ~construct (Some target)
        | _, (_ :: _ as funcs) -> Symbol_table.Defined funcs
        | (Some (Bound_module _ | Bound_functions _) | None), [] -> (
-         match member_of_member_classes ~table ~func_lookup name with
+         match member_of_classes_with_members_in_scope ~table ~func_lookup name with
          | _ :: _ as funcs -> Symbol_table.Defined funcs
          | [] -> Symbol_table.External))
 
@@ -884,7 +884,7 @@ let resolve_chain ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
   in
   resolution_of_target ~table ~func_lookup ~construct target
 
-let defined_of_any (resolutions : Symbol_table.resolution list)
+let join_defined_resolutions (resolutions : Symbol_table.resolution list)
     : Symbol_table.resolution =
   match
     List.concat_map
@@ -903,26 +903,26 @@ let defined_of_any (resolutions : Symbol_table.resolution list)
     Symbol_table.External
   | (funcs : func_info list) -> Symbol_table.Defined funcs
 
-let selected_by_any (selections : Symbol_table.selection list)
-    : Symbol_table.selection =
+let join_defined_selections (selections : Symbol_table.lookup_result list)
+    : Symbol_table.lookup_result =
   {
     Symbol_table.resolution =
-      defined_of_any
+      join_defined_resolutions
         (List.map
-           (fun (selection : Symbol_table.selection) ->
+           (fun (selection : Symbol_table.lookup_result) ->
              selection.Symbol_table.resolution)
            selections);
     dispatches =
       List.concat_map
-        (fun (selection : Symbol_table.selection) ->
+        (fun (selection : Symbol_table.lookup_result) ->
           selection.Symbol_table.dispatches)
         selections;
   }
 
-let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
+let rec resolve_across_files_from ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
     ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
-    ~(visited : G.SId.t list) (e : G.expr) : Symbol_table.selection =
+    ~(visited : G.SId.t list) (e : G.expr) : Symbol_table.lookup_result =
   let construct = Symbol_table.constructs table use in
   match e.G.e with
   | G.N (G.Id ((name, _), info))
@@ -943,18 +943,18 @@ let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
       resolve_name_in_scope ~lang ~table ~func_lookup ~caller
         ~caller_parent_path ~construct ~unbound:false name
     | Local_root -> (
-      let follow (sid : G.SId.t) (value : G.expr) : Symbol_table.selection =
-        resolve_outside_file_from ~lang ~table ~func_lookup ~caller
+      let follow (sid : G.SId.t) (value : G.expr) : Symbol_table.lookup_result =
+        resolve_across_files_from ~lang ~table ~func_lookup ~caller
           ~caller_parent_path ~use ~visited:(sid :: visited) value
       in
       match use_binding info with
       | Some (sid : G.SId.t) when not (List.exists (G.SId.equal sid) visited)
         -> (
         match
-          (Symbol_table.values_in_force table ~caller sid, !(info.G.id_svalue))
+          (Symbol_table.reaching_values table ~caller sid, !(info.G.id_svalue))
         with
         | (_ :: _ as assigned), _ ->
-          selected_by_any (List.map (follow sid) assigned)
+          join_defined_selections (List.map (follow sid) assigned)
         | [], Some (G.Sym (value : G.expr)) -> follow sid value
         | [], (Some _ | None) ->
           Symbol_table.static_selection Symbol_table.External)
@@ -966,18 +966,18 @@ let rec resolve_outside_file_from ~(lang : Lang.t) ~(table : Symbol_table.t)
       (resolve_chain ~table ~func_lookup ~caller_parent_path
          ~position:Term_position ~construct e)
   | G.ArrayAccess (indexed, _) ->
-    resolve_outside_file_from ~lang ~table ~func_lookup ~caller
+    resolve_across_files_from ~lang ~table ~func_lookup ~caller
       ~caller_parent_path ~use ~visited indexed
   | _ -> Symbol_table.static_selection Symbol_table.External
 
-let resolve_outside_file ~(lang : Lang.t) ~(table : Symbol_table.t)
+let resolve_across_files ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller : Function_id.t option)
     ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
-    (e : G.expr) : Symbol_table.selection =
-  resolve_outside_file_from ~lang ~table ~func_lookup ~caller
+    (e : G.expr) : Symbol_table.lookup_result =
+  resolve_across_files_from ~lang ~table ~func_lookup ~caller
     ~caller_parent_path ~use ~visited:[] e
 
-let resolve_construction_outside_file ~(table : Symbol_table.t)
+let resolve_construction_across_files ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) ~(caller_parent_path : IL.name option list)
     (ty : G.type_) : Symbol_table.resolution =
   match expr_of_type_name ty with

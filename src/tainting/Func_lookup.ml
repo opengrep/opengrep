@@ -152,7 +152,7 @@ type t = {
   class_of_qn : Names.Class_qn.t -> Class_table.cls option;
   is_import : AST_generic.SId.t -> bool;
   definition : string -> module_attribute option;
-  member_classes : Names.Class_qn.t list;
+  classes_with_members_in_scope : Names.Class_qn.t list;
 }
 
 let own_modules (t : t) : Names.Module_qn.t list = t.own_modules
@@ -228,7 +228,8 @@ let is_known_module (t : t) (module_qn : Names.Module_qn.t) : bool =
 
 let is_import (t : t) (sid : AST_generic.SId.t) : bool = t.is_import sid
 
-let member_classes (t : t) : Names.Class_qn.t list = t.member_classes
+let classes_with_members_in_scope (t : t) : Names.Class_qn.t list =
+  t.classes_with_members_in_scope
 
 let definition (t : t) (qualified_name : string) : module_attribute option =
   t.definition qualified_name
@@ -237,7 +238,7 @@ let create
     ?alias_to_module_qn
     ?(own_modules : Names.Module_qn.t list = [])
     ?(companions : companion_index = Class_qn_map.empty)
-    ?(member_classes : Names.Class_qn.t list = [])
+    ?(classes_with_members_in_scope : Names.Class_qn.t list = [])
     ~(module_attributes : module_attributes)
     ~(class_of_qn : Names.Class_qn.t -> Class_table.cls option)
     ~(is_import : AST_generic.SId.t -> bool)
@@ -251,7 +252,7 @@ let create
     class_of_qn;
     is_import;
     definition;
-    member_classes }
+    classes_with_members_in_scope }
 
 let resolve_alias t name =
   match t.alias_to_module_qn with

@@ -22,7 +22,7 @@ val set_callee_definition :
 
 type reference =
   | Bound of AST_generic.expr
-  | Written of AST_generic.expr
+  | Callable_literal of AST_generic.expr
 
 type callback_resolver =
   caller:Function_id.t option -> reference -> Symbol_table.resolution

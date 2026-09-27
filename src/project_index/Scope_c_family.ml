@@ -219,8 +219,8 @@ let build
         Common.SMap.mem (Names.Class_qn.to_string owner) namespace_scopes)
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
-          (fun (ci : entry) ->
-            [ Some (Scope_binding.class_il_name_of ci) ])
+          (fun (entry : entry) ->
+            [ Some (Scope_binding.class_il_name_of entry) ])
           (Common.SMap.find_opt (Names.Class_qn.to_string owner)
              own_class_by_qn))
       own_classes
@@ -248,12 +248,12 @@ let build
   in
   let included_type_bindings =
     List.filter_map
-      (fun (ci : entry) ->
+      (fun (entry : entry) ->
         Option.map
           (fun (((_ : Names.Class_qn.t), (name : string))) ->
             Scope_binding.class_binding_of ~pos:None ~parent_path:[] name
-              (Scope_binding.class_qn_of_entry ci))
-          (Names.Class_qn.split_last (Scope_binding.class_qn_of_entry ci)))
+              (Scope_binding.class_qn_of_entry entry))
+          (Names.Class_qn.split_last (Scope_binding.class_qn_of_entry entry)))
       included_classes
   in
   let on_demand =

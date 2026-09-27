@@ -82,7 +82,7 @@ type stats = {
   (* the fields written through a receiver other than [this], by name: the
    * receiver's class is not known, so no field of that name is assigned
    * once *)
-  fields_written_elsewhere : (string, unit) Hashtbl.t;
+  fields_written_through_other_receivers : (string, unit) Hashtbl.t;
   (* the functions of the program, by binding: whether each positional
    * parameter is passed by reference *)
   by_reference_parameters : bool list SIdMap.t;
@@ -92,7 +92,7 @@ let new_stats (by_reference_parameters : bool list SIdMap.t) =
   {
     var_stats = Hashtbl.create 100;
     class_stats = Hashtbl.create 1;
-    fields_written_elsewhere = Hashtbl.create 8;
+    fields_written_through_other_receivers = Hashtbl.create 8;
     by_reference_parameters;
   }
 
@@ -140,7 +140,7 @@ let is_static (attrs : attribute list) : bool = H.has_keyword_attr Static attrs
 
 (* Assigned only while the object or the class is being constructed, as the
  * language guarantees. *)
-let is_immutable (attrs : attribute list) : bool =
+let is_final (attrs : attribute list) : bool =
   H.has_keyword_attr Const attrs || H.has_keyword_attr Final attrs
 
 (* Whether the language guarantees that a private member [name] can be
@@ -300,7 +300,7 @@ class ['self] stats_of_prog_visitor =
     (match lhs.e with
     | DotAccess ({ e = IdSpecial ((This | Self), _); _ }, _, _) -> ()
     | DotAccess (_, _, FN (Id ((fname, _), _))) ->
-        Hashtbl.replace env.fields_written_elsewhere fname ()
+        Hashtbl.replace env.fields_written_through_other_receivers fname ()
     | _ -> ());
     lvars_in_lhs lhs
     |> List_.map (fun (id, sid) ->
@@ -579,7 +579,7 @@ class ['self] propagate_basic_visitor lang stats =
         | None -> []
       in
       is_class_member kind attrs
-      && (not (Hashtbl.mem stats.fields_written_elsewhere name))
+      && (not (Hashtbl.mem stats.fields_written_through_other_receivers name))
       && private_to_class lang class_attrs name attrs
     
     (* the defs *)
@@ -622,7 +622,7 @@ class ['self] propagate_basic_visitor lang stats =
             is_assigned_just_once stats.var_stats (H.str_of_ident id, sid)
           in
           if
-            is_immutable attrs
+            is_final attrs
             (* a JS variable, not a class field *)
             || assigned_just_once && Eval.is_js env
                && not (is_class_member kind attrs)
@@ -737,7 +737,7 @@ class ['self] propagate_basic_visitor lang stats =
                         && has_just_one_constructor stats.class_stats cid
                 in
                 in_construction
-                && (is_immutable attrs
+                && (is_final attrs
                    || self#member_written_only_by_class ctx kind attrs
                         (fst id))
           in

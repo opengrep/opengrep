@@ -12,9 +12,10 @@ let evaluates_at_definition (lang : Lang.t) : bool =
       true
   | _ -> false
 
-(* A parameter the callee can rebind for the caller. *)
+(* A by reference parameter: an assignment to it in the callee assigns the
+   caller's variable. *)
 let parameter_is_by_reference (lang : Lang.t) (p : G.parameter_classic) : bool =
-  let has_named_attr (names : string list) (attrs : G.attribute list) =
+  let has_attribute_in (names : string list) (attrs : G.attribute list) =
     List.exists
       (function
         | G.NamedAttr (_, G.Id ((s, _), _), _) -> List.mem s names
@@ -26,7 +27,7 @@ let parameter_is_by_reference (lang : Lang.t) (p : G.parameter_classic) : bool =
       match p.ptype with
       | Some { t = G.TyRef _; _ } -> true
       | _ -> false)
-  | Lang.Csharp -> has_named_attr [ "ref"; "out" ] p.pattrs
+  | Lang.Csharp -> has_attribute_in [ "ref"; "out" ] p.pattrs
   | Lang.Vb ->
       List.exists
         (function
@@ -35,6 +36,6 @@ let parameter_is_by_reference (lang : Lang.t) (p : G.parameter_classic) : bool =
         p.pattrs
   | Lang.Swift -> (
       match p.ptype with
-      | Some { t_attrs; _ } -> has_named_attr [ "inout" ] t_attrs
+      | Some { t_attrs; _ } -> has_attribute_in [ "inout" ] t_attrs
       | None -> false)
   | _ -> false

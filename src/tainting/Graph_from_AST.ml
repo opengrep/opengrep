@@ -228,7 +228,8 @@ let write_back_callee_definition (callee : G.expr) (fn_ids : fn_id list) :
   | Some ii -> set_callee_definition ~allow_located_fake:true ii fn_ids
   | None -> ()
 
-(* Non-memoisable callee shapes bypass the cache; the stamp of every resolved call is written here. *)
+(* Non-memoisable callee shapes bypass the cache; the [id_callee_definition]
+   of every resolved call is written here. *)
 let memo_lookup_or_compute (memo_tbl : callee_memo)
     ~(argument_types : G.argument list -> static_type option list)
     ~(call_args : G.argument list option) (callee : G.expr)
@@ -577,10 +578,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
   let resolve_callback : Callback_extraction.callback_resolver =
    fun ~caller (reference : Callback_extraction.reference) ->
     match reference with
-    | Callback_extraction.Written { G.e = G.N (name : G.name); _ } ->
+    | Callback_extraction.Callable_literal { G.e = G.N (name : G.name); _ } ->
         Symbol_table.resolve_qualified table name
     | Callback_extraction.Bound (e : G.expr)
-    | Callback_extraction.Written (e : G.expr) ->
+    | Callback_extraction.Callable_literal (e : G.expr) ->
         Symbol_table.dispatched table
           (Symbol_table.resolve_reference table ~caller e)
   in

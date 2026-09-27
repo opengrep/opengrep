@@ -18,14 +18,15 @@ val pattern_to_expr : AST_generic.pattern -> AST_generic.expr
 val argument_to_expr : AST_generic.argument -> AST_generic.expr
 
 (* The initialiser written after the arguments of a construction: C#
- * [new T(a) { X = v, e }] holds the entries of an object initialiser,
- * C# and Java [new T[] { a, b }] the container of an array initialiser.
+ * [new T(a) { X = v }] and [new T(a) { e }] hold the entries of an object
+ * or collection initialiser, C# and Java [new T[] { a, b }] the container
+ * of an array initialiser.
  * A front end carries it as a tagged argument of the construction. *)
 type construction_initializer =
-  | Object_initializer of AST_generic.expr list
+  | Object_or_collection_initializer of AST_generic.expr list
   | Array_initializer of AST_generic.expr
 
-val object_initializer_argument :
+val object_or_collection_initializer_argument :
   AST_generic.expr list AST_generic.bracket -> AST_generic.argument
 
 val array_initializer_argument :

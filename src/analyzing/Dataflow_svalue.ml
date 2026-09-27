@@ -559,6 +559,6 @@ and update_svalue (flow : F.cfg) mapping =
          (* Should not update the LHS svalue since in x = E, x is a "ref",
           * and it should not be substituted for the value it holds. *))
 
-let node_transfer (lang : Lang.t) (fun_cfg : F.fun_cfg)
+let transfer_node_without_writes (lang : Lang.t) (fun_cfg : F.fun_cfg)
     (env : G.svalue Var_env.t) (node : F.node) : G.svalue Var_env.t =
   transfer_node ~lang ~write_svalues:false ~fun_cfg env node

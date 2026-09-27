@@ -15,7 +15,7 @@ val union_env :
   AST_generic.svalue Dataflow_var_env.t ->
   AST_generic.svalue Dataflow_var_env.t
 
-val node_transfer :
+val transfer_node_without_writes :
   Lang.t ->
   IL.fun_cfg ->
   AST_generic.svalue Dataflow_var_env.t ->

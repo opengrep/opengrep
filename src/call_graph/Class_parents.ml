@@ -6,7 +6,7 @@ type side =
 
 type t = {
   written : G.type_;
-  relation : Linearisation.relation;
+  relation : Member_lookup.relation;
   side : side;
   arguments : G.arguments option;
   delegate : G.expr option;
@@ -17,14 +17,14 @@ type mixin_calls = {
   extends : G.type_ list;
 }
 
-let instance_parent (relation : Linearisation.relation) (written : G.type_) : t
+let instance_parent (relation : Member_lookup.relation) (written : G.type_) : t
     =
   { written; relation; side = Instance_side; arguments = None; delegate = None }
 
 let class_side (written : G.type_) : t =
   {
     written;
-    relation = Linearisation.Included;
+    relation = Member_lookup.Included;
     side = Class_side;
     arguments = None;
     delegate = None;
@@ -34,7 +34,7 @@ let extended (parent : G.class_parent) : t =
   {
     written = parent.G.cp_type;
     relation =
-      Linearisation.Extends
+      Member_lookup.Extends
         {
           constructed = Option.is_some parent.G.cp_args;
           virtual_base =
@@ -65,7 +65,7 @@ let embedded (body : G.stmt list) : t list =
          | G.Call
              ({ G.e = G.IdSpecial (G.Spread, _); _ }, (_, [ G.Arg embedded ], _))
            ->
-             Some (instance_parent Linearisation.Embedded (type_of_expr embedded))
+             Some (instance_parent Member_lookup.Embedded (type_of_expr embedded))
          | _ -> None)
 
 let mixes_in_by_call (lang : Lang.t) : bool =
@@ -99,7 +99,7 @@ let mixin_calls (lang : Lang.t) (body : G.stmt list) : mixin_calls =
                  inclusions =
                    calls.inclusions
                    @ List.rev_map
-                       (instance_parent Linearisation.Prepended)
+                       (instance_parent Member_lookup.Prepended)
                        (mixin_arguments args);
                }
            | G.Call ({ G.e = G.N (G.Id (("include", _), _)); _ }, (_, args, _))
@@ -109,7 +109,7 @@ let mixin_calls (lang : Lang.t) (body : G.stmt list) : mixin_calls =
                  inclusions =
                    calls.inclusions
                    @ List.rev_map
-                       (instance_parent Linearisation.Included)
+                       (instance_parent Member_lookup.Included)
                        (mixin_arguments args);
                }
            | G.Call ({ G.e = G.N (G.Id (("extend", _), _)); _ }, (_, args, _))
@@ -166,8 +166,8 @@ let of_definition (lang : Lang.t) (def : G.definition_kind) : t list =
       of_body lang
         ~written:
           (List.map extended cdef.G.cextends
-          @ List.map (instance_parent Linearisation.Mixin) cdef.G.cmixins
-          @ List.map (instance_parent Linearisation.Implements)
+          @ List.map (instance_parent Member_lookup.Mixin) cdef.G.cmixins
+          @ List.map (instance_parent Member_lookup.Implements)
               cdef.G.cimplements)
         (definition_body def)
   | G.ModuleDef { G.mbody = G.ModuleStruct _ }
@@ -175,54 +175,54 @@ let of_definition (lang : Lang.t) (def : G.definition_kind) : t list =
       of_body lang ~written:[] (definition_body def)
   | _ -> []
 
-type singleton_exposure =
-  | No_singleton_exposure
-  | Every_method_is_a_singleton
-  | Named_singleton_methods of string list
+type module_functions =
+  | No_module_functions
+  | All_module_functions
+  | Module_functions of string list
 
-let exposure_of_call (e : G.expr) : singleton_exposure =
+let module_functions_of_call (e : G.expr) : module_functions =
   match e.G.e with
   | G.Call
       ( { G.e = G.N (G.Id (("extend", _), _)); _ },
         (_, [ G.Arg { G.e = G.IdSpecial (G.Self, _); _ } ], _) )
   | G.Call ({ G.e = G.N (G.Id (("module_function", _), _)); _ }, (_, [], _)) ->
-      Every_method_is_a_singleton
+      All_module_functions
   | G.Call
       ({ G.e = G.N (G.Id (("module_function", _), _)); _ }, (_, args, _)) ->
-      Named_singleton_methods
+      Module_functions
         (List.filter_map
            (fun (arg : G.argument) ->
              match arg with
              | G.Arg { G.e = G.L (G.Atom (_, (name, _))); _ } -> Some name
              | _ -> None)
            args)
-  | _ -> No_singleton_exposure
+  | _ -> No_module_functions
 
-let joined_exposure (exposure : singleton_exposure)
-    (found : singleton_exposure) : singleton_exposure =
-  match (exposure, found) with
-  | Every_method_is_a_singleton, _
-  | _, Every_method_is_a_singleton ->
-      Every_method_is_a_singleton
-  | No_singleton_exposure, _ -> found
-  | _, No_singleton_exposure -> exposure
-  | Named_singleton_methods earlier, Named_singleton_methods later ->
-      Named_singleton_methods (earlier @ later)
+let joined_module_functions (functions : module_functions)
+    (found : module_functions) : module_functions =
+  match (functions, found) with
+  | All_module_functions, _
+  | _, All_module_functions ->
+      All_module_functions
+  | No_module_functions, _ -> found
+  | _, No_module_functions -> functions
+  | Module_functions earlier, Module_functions later ->
+      Module_functions (earlier @ later)
 
-let singleton_exposure (lang : Lang.t) (def : G.definition_kind) :
-    singleton_exposure =
+let module_functions (lang : Lang.t) (def : G.definition_kind) :
+    module_functions =
   if mixes_in_by_call lang then
     definition_body def
     |> List.concat_map expression_statements
-    |> List.map exposure_of_call
-    |> List.fold_left joined_exposure No_singleton_exposure
-  else No_singleton_exposure
+    |> List.map module_functions_of_call
+    |> List.fold_left joined_module_functions No_module_functions
+  else No_module_functions
 
-let has_keyword_attribute (keyword : string) (ent : G.entity) : bool =
+let has_modifier (modifier : string) (ent : G.entity) : bool =
   List.exists
     (fun (attr : G.attribute) ->
       match attr with
-      | G.NamedAttr (_, G.Id ((found, _), _), _) -> String.equal found keyword
+      | G.NamedAttr (_, G.Id ((found, _), _), _) -> String.equal found modifier
       | _ -> false)
     ent.G.attrs
 
@@ -239,18 +239,18 @@ let reopens (lang : Lang.t) (ent : G.entity) (def : G.definition_kind) : bool =
   | (Lang.C | Lang.Cpp), G.ClassDef _ ->
       true
   | _, G.ClassDef { G.ckind = G.Extension _, _; _ } -> true
-  | Lang.Csharp, G.ClassDef _ -> has_keyword_attribute "partial" ent
+  | Lang.Csharp, G.ClassDef _ -> has_modifier "partial" ent
   | _ -> false
 
-let exposes (exposure : singleton_exposure) (name : string) : bool =
-  match exposure with
-  | No_singleton_exposure -> false
-  | Every_method_is_a_singleton -> true
-  | Named_singleton_methods names -> List.exists (String.equal name) names
+let is_module_function (functions : module_functions) (name : string) : bool =
+  match functions with
+  | No_module_functions -> false
+  | All_module_functions -> true
+  | Module_functions names -> List.exists (String.equal name) names
 
 type metatable_fact =
   | Metatable_set of {
-      holder : G.name;
+      table : G.name;
       metatable : G.expr;
     }
   | Index_assigned of {
@@ -271,7 +271,7 @@ let index_field (metatable : Lang_config.metatable) (fields : G.expr list) :
 
 let metatable_facts (metatable : Lang_config.metatable) (program : G.program) :
     metatable_fact list =
-  let setting (e : G.expr) : (G.expr * G.expr) option =
+  let setmetatable_call (e : G.expr) : (G.expr * G.expr) option =
     match e.G.e with
     | G.Call
         ( { G.e = G.N (G.Id ((callee, _), info)); _ },
@@ -290,11 +290,11 @@ let metatable_facts (metatable : Lang_config.metatable) (program : G.program) :
 
       method! visit_expr env e =
         (match e.G.e with
-        | G.Assign ({ G.e = G.N holder; _ }, _, value) ->
+        | G.Assign ({ G.e = G.N target; _ }, _, value) ->
             Option.iter
-              (fun ((_ : G.expr), (table : G.expr)) ->
-                add (Metatable_set { holder; metatable = table }))
-              (setting value)
+              (fun ((_ : G.expr), (metatable_arg : G.expr)) ->
+                add (Metatable_set { table = target; metatable = metatable_arg }))
+              (setmetatable_call value)
         | G.Assign
             ( {
                 G.e =
@@ -307,9 +307,9 @@ let metatable_facts (metatable : Lang_config.metatable) (program : G.program) :
           when String.equal key metatable.Lang_config.index_key ->
             add (Index_assigned { table; index })
         | _ -> (
-            match setting e with
-            | Some ({ G.e = G.N holder; _ }, table) ->
-                add (Metatable_set { holder; metatable = table })
+            match setmetatable_call e with
+            | Some ({ G.e = G.N target; _ }, metatable_arg) ->
+                add (Metatable_set { table = target; metatable = metatable_arg })
             | Some _
             | None ->
                 ()));
@@ -317,16 +317,16 @@ let metatable_facts (metatable : Lang_config.metatable) (program : G.program) :
 
       method! visit_definition env ((ent, def) as definition) =
         (match (ent.G.name, def) with
-        | G.EN holder, G.VarDef { G.vinit = Some value; _ } -> (
+        | G.EN target, G.VarDef { G.vinit = Some value; _ } -> (
             Option.iter
-              (fun ((_ : G.expr), (table : G.expr)) ->
-                add (Metatable_set { holder; metatable = table }))
-              (setting value);
+              (fun ((_ : G.expr), (metatable_arg : G.expr)) ->
+                add (Metatable_set { table = target; metatable = metatable_arg }))
+              (setmetatable_call value);
             match value.G.e with
             | G.Container (G.Dict, (_, fields, _)) ->
                 List.iter
                   (fun (index : G.expr) ->
-                    add (Index_assigned { table = holder; index }))
+                    add (Index_assigned { table = target; index }))
                   (index_field metatable fields)
             | _ -> ())
         | _ -> ());

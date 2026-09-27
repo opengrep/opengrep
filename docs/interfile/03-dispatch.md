@@ -217,10 +217,10 @@ Within Phase 1, each function is summarised by its body shape:
 
 A bodiless interface or abstract method (Java abstract methods lower
 to `FBNothing`) gets no signature.  A call to it carries an
-`id_callee_definition` stamp that lists the implementations the
+`id_callee_definition` annotation that lists the implementations the
 project graph selects for the receiver, the declaration's overrides
 and implementors, and the engine instantiates each of them.  An empty
-signature stored for the declaration would make its callers see no
+signature stored for the declaration would give its callers no
 effects instead of conservative propagation, so none is stored.
 
 The `Dispatch` edge from each implementation to the declaration keeps

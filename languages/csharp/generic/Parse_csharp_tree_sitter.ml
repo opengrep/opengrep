@@ -1109,12 +1109,16 @@ and argument (env : env) (x : CST.argument) : G.argument =
       G.Arg (N (H2.name_of_id id) |> G.e)
 
 (* [new T(args) { X = v, ... }]: the construction with its initializer. *)
-and object_initializer (env : env) ((l, args, r) : G.arguments)
+and object_or_collection_initializer (env : env)
+    ((l, args, r) : G.arguments)
     (init : CST.initializer_expression option) : G.arguments =
   match init with
   | None -> (l, args, r)
   | Some x ->
-      let init = H2.object_initializer_argument (initializer_expression env x) in
+      let init =
+        H2.object_or_collection_initializer_argument
+          (initializer_expression env x)
+      in
       (l, args @ [ init ], r)
 
 and initializer_expression (env : env)
@@ -1397,7 +1401,9 @@ and expression_statement_expression (env : env)
         | Some x -> argument_list env x
         | None -> fb []
       in
-      New (v1, v2, empty_id_info (), object_initializer env v3 v4) |> G.e
+      New
+        (v1, v2, empty_id_info (), object_or_collection_initializer env v3 v4)
+      |> G.e
   | `Paren_exp x -> parenthesized_expression env x
 
 and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
@@ -1514,7 +1520,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
       let v2 = argument_list env v2 in
       (* old: was New *)
       let e = G.OtherExpr (("NewNoType", v1), []) |> G.e in
-      Call (e, object_initializer env v2 v3) |> G.e
+      Call (e, object_or_collection_initializer env v2 v3) |> G.e
   | `Impl_stack_alloc_array_crea_exp (v1, v2, v4, v5) ->
       let _v1 = token env v1 (* "stackalloc" *) in
       let _v2 = token env v2 (* "[" *) in

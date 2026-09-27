@@ -834,10 +834,11 @@ let semgrep_rules_repo_tests () : Testo.t list =
              (* These expect a name to keep a binding the language gives it
                 elsewhere: a Python name assigned in a function is local to
                 the whole function, a module-level assignment rebinds an
-                imported name, and a Ruby method body does not see the
-                file's local variables. tests/rules/pdb_local_shadows_import,
+                imported name, and the file's local variables are not in
+                scope in a Ruby method body.
+                tests/rules/pdb_local_shadows_import,
                 paramiko_module_rebinds_import and
-                ruby_def_does_not_see_file_locals hold the same rules and
+                ruby_def_file_locals_not_in_scope hold the same rules and
                 targets with those lines marked ok. *)
              | s when s =~ ".*/semgrep-rules/python/lang/correctness/pdb.yaml" -> None
              | s when s =~ ".*/semgrep-rules/python/lang/security/audit/paramiko/paramiko-exec-command.yaml" -> None

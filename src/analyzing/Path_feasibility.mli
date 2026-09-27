@@ -1,6 +1,6 @@
 type verdict = Feasible | Infeasible | Unknown
 
-type anchor =
+type trace_step =
   | Entry
   | Token of Tok.t
   | Range of Tok.location * Tok.location
@@ -15,8 +15,8 @@ val entry_state : (IL.name * AST_generic.svalue) list -> state
 val value : Lang.t -> state -> IL.exp -> AST_generic.svalue
 val refutes : state -> (IL.exp * bool) list -> bool
 val equal_state : state -> state -> bool
-val equal_anchor : anchor -> anchor -> bool
-val hash_anchors : anchor list -> int
+val equal_trace_step : trace_step -> trace_step -> bool
+val hash_trace_steps : trace_step list -> int
 val literals : state -> (IL.exp * bool) list
 
 val check :
@@ -24,5 +24,5 @@ val check :
   IL.fun_cfg ->
   index ->
   entry:state ->
-  anchor list ->
+  trace_step list ->
   verdict * state option list

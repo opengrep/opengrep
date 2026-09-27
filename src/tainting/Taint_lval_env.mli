@@ -30,7 +30,7 @@ val normalize_lval : Lang.t -> IL.lval -> (IL.name * Taint.offset list) option
 
 val add_shape :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   IL.name ->
   Taint.offset list ->
   Taint.taints ->
@@ -40,7 +40,7 @@ val add_shape :
 
 val add_lval_shape :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   IL.lval ->
   Taint.taints ->
   shape ->
@@ -54,7 +54,7 @@ val add_lval_shape :
 
 val add :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   IL.name ->
   Taint.offset list ->
   Taint.taints ->
@@ -63,7 +63,7 @@ val add :
 
 val add_written_through :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   IL.name ->
   Taint.offset list ->
   Taint.taints ->
@@ -80,7 +80,7 @@ val set_pointee : Lang.t -> IL.name -> IL.lval -> env -> env
 val copy_pointees : srcs:IL.name list -> dst:IL.name -> env -> env
 (** The variable now holds one of the values of the sources. *)
 
-val forget_pointees : IL.name -> env -> env
+val kill_pointees : IL.name -> env -> env
 
 val seed_entry_object : IL.name -> env -> env
 (** The parameter refers to the object the caller passed. *)
@@ -89,13 +89,13 @@ val may_refer_to_entry_object : env -> IL.name -> bool
 (** Whether the parameter may still refer to the object the caller passed. *)
 
 val add_lval :
-  Lang.t -> merge:Taint.trace_merge -> IL.lval -> Taint.taints -> env -> env
+  Lang.t -> traces:Taint.kept_traces -> IL.lval -> Taint.taints -> env -> env
 (** Assign a set of taints (but no specific shape) to an l-value. *)
 
 (* THINK: Perhaps keep propagators outside of this environment? *)
 val propagate_to :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   Dataflow_var_env.var ->
   Taint.taints ->
   env ->
@@ -105,12 +105,12 @@ val find_var : env -> IL.name -> cell option
 (** Find the 'cell' of a variable. *)
 
 val find_lval :
-  Lang.t -> merge:Taint.trace_merge -> env -> IL.lval -> cell option
+  Lang.t -> traces:Taint.kept_traces -> env -> IL.lval -> cell option
 (** Find the 'cell' of an l-value. *)
 
 val find_poly :
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   env -> IL.name -> Taint.offset list -> (Taint.taints * shape) option
 (** Find the taints and shape associated to a variable (name) and an offset.
     If an offset is not being explicitly recorded, then it returns the
@@ -143,14 +143,14 @@ val find_poly :
 
 val find_lval_poly :
   Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   env ->
   IL.lval ->
   (Taint.taints * shape) option
 (** Same as 'find_poly' for l-values. *)
 
 val find_lval_xtaint :
-  Lang.t -> merge:Taint.trace_merge -> env -> IL.lval -> Xtaint.t
+  Lang.t -> traces:Taint.kept_traces -> env -> IL.lval -> Xtaint.t
 (** Look up an l-value on the environemnt and return whether it's tainted, clean,
     or we hold no info about it. It does not check sub-lvalues, e.g. if we record
     that 'x.a' is tainted but had no explicit info about 'x.a.b', checking for
@@ -172,7 +172,7 @@ val clean : Lang.t -> env -> IL.lval -> env
  *)
 
 val filter_tainted : (IL.name -> bool) -> env -> env
-val add_control_taints : merge:Taint.trace_merge -> env -> Taint.taints -> env
+val add_control_taints : traces:Taint.kept_traces -> env -> Taint.taints -> env
 val get_control_taints : env -> Taint.taints
 
 val active_guards : env -> Effect_guard.Set.t
@@ -209,7 +209,7 @@ val mark_dead : env -> env
 (** Mark the env as unreachable. Set at a branch whose condition folds
     to a constant that contradicts the branch direction. *)
 
-val union : lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
+val union : lang:Lang.t -> traces:Taint.kept_traces -> env -> env -> env
 (** Compute the environment for the join of two branches.
 
      If an lvalue x.a_1. ... .a_N was clean in one branch, we still consider it
@@ -219,12 +219,12 @@ val union : lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
      best case scenario to reduce FPs. *)
 
 val union_at_loop_head :
-  lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
+  lang:Lang.t -> traces:Taint.kept_traces -> env -> env -> env
 (** [union] of the previous and the computed environment of a loop head,
     each variable's cells joined by [Taint_shape.join_folded_by_site]. *)
 
 val union_list :
-  lang:Lang.t -> merge:Taint.trace_merge -> ?default:env -> env list -> env
+  lang:Lang.t -> traces:Taint.kept_traces -> ?default:env -> env list -> env
 val equal : env -> env -> bool
 
 val equal_by_lval : Lang.t -> env -> env -> IL.lval -> bool

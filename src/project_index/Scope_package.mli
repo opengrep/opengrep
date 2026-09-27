@@ -30,7 +30,7 @@ val build :
   extensions_by_module:Func_info.t list Common.SMap.t Common.SMap.t ->
   nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
   global_imports:Types.import list ->
-  object_classes:unit Common.SMap.t ->
+  singleton_objects:unit Common.SMap.t ->
   companions:bool ->
   Types.file_info ->
   Func_lookup.scope_entry list Common.SMap.t

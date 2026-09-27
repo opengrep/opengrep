@@ -1812,8 +1812,9 @@ and map_access_field (env : env) ((v1, v2, v3) : CST.access_field) =
     | `Exp x -> map_expression env x
   in
   (* The grammar parses the field as a whole expression, so the operators
-     after it end up inside: `s.f = e` arrives as `s.(f = e)`. The field is
-     the leftmost operand, and the access moves down onto it. *)
+     after it end up inside: `s.f = e` is parsed as `s.(f = e)`. The field is
+     the leftmost operand: the member access is applied to it and the
+     operators are rebuilt around the access. *)
   let rec access (e : G.expr) : G.expr =
     G.e
       (match e.e with

@@ -16,7 +16,7 @@ type file_scope = {
   scope_table : Func_lookup.scope_table;
   own_modules : Names.Module_qn.t list;
   module_aliases : (string, Names.Module_qn.t) Hashtbl.t option;
-  member_classes : Names.Class_qn.t list;
+  classes_with_members_in_scope : Names.Class_qn.t list;
 }
 
 type project_classes = {
@@ -32,7 +32,7 @@ type ctx = {
   companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
-  object_classes : unit Common.SMap.t;
+  singleton_objects : unit Common.SMap.t;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t;

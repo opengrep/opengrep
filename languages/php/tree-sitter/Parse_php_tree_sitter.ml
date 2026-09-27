@@ -54,27 +54,27 @@ type classmember =
   | ClassVar of A.class_var
   | MethodDef of A.method_def
   | UseTrait of A.class_name
-  | TraitRule of A.trait_rule
+  | TraitAdaptation of A.trait_adaptation
   | EnumCase of A.class_var (* TODO add enum case to AST *)
 
 let todo (env : env) _ = failwith "not implemented"
 let map_name (env : env) tok : A.name = A.name_of_ids [ _str env tok ]
 
-let rec _split_classmembers env members constants variables methods uses rules
+let rec _split_classmembers env members constants variables methods uses adaptations
     =
   match members with
-  | [] -> (constants, variables, methods, uses, rules)
+  | [] -> (constants, variables, methods, uses, adaptations)
   | hd :: rest -> (
-      let constants, variables, methods, uses, rules =
-        _split_classmembers env rest constants variables methods uses rules
+      let constants, variables, methods, uses, adaptations =
+        _split_classmembers env rest constants variables methods uses adaptations
       in
       match hd with
-      | ConstantDef c -> (c :: constants, variables, methods, uses, rules)
-      | ClassVar c -> (constants, c :: variables, methods, uses, rules)
-      | MethodDef m -> (constants, variables, m :: methods, uses, rules)
-      | UseTrait u -> (constants, variables, methods, u :: uses, rules)
-      | TraitRule r -> (constants, variables, methods, uses, r :: rules)
-      | EnumCase c -> (constants, c :: variables, methods, uses, rules))
+      | ConstantDef c -> (c :: constants, variables, methods, uses, adaptations)
+      | ClassVar c -> (constants, c :: variables, methods, uses, adaptations)
+      | MethodDef m -> (constants, variables, m :: methods, uses, adaptations)
+      | UseTrait u -> (constants, variables, methods, u :: uses, adaptations)
+      | TraitAdaptation a -> (constants, variables, methods, uses, a :: adaptations)
+      | EnumCase c -> (constants, c :: variables, methods, uses, adaptations))
 
 let split_classmembers env members =
   _split_classmembers env members [] [] [] [] []
@@ -1651,7 +1651,7 @@ and map_object_creation_expression (env : env)
       in
       let v6 = map_declaration_list env v6 in
       let opn, decls, cls = v6 in
-      let consts, vars, methods, uses, rules = split_classmembers env decls in
+      let consts, vars, methods, uses, adaptations = split_classmembers env decls in
       A.NewAnonClass
         ( v2,
           v3,
@@ -1661,7 +1661,7 @@ and map_object_creation_expression (env : env)
             c_extends = v4;
             c_implements = v5;
             c_uses = uses;
-          c_trait_rules = rules;
+          c_trait_adaptations = adaptations;
             c_enum_type = None;
             c_modifiers = [];
             (* this grammar's anonymous class carries no attribute_list *)
@@ -2096,7 +2096,7 @@ and map_statement (env : env) (x : CST.statement) =
         | None -> None
       in
       let opn, decls, cls = v7 in
-      let consts, vars, methods, uses, rules = split_classmembers env decls in
+      let consts, vars, methods, uses, adaptations = split_classmembers env decls in
       ClassDef
         {
           c_name = v4;
@@ -2104,7 +2104,7 @@ and map_statement (env : env) (x : CST.statement) =
           c_extends = v5;
           c_implements = v6;
           c_uses = uses;
-          c_trait_rules = rules;
+          c_trait_adaptations = adaptations;
           c_enum_type = None;
           c_modifiers = v2;
           c_attrs = v1;
@@ -2128,7 +2128,7 @@ and map_statement (env : env) (x : CST.statement) =
       in
       let v4 = map_declaration_list env v4 in
       let opn, decls, cls = v4 in
-      let consts, vars, methods, uses, rules = split_classmembers env decls in
+      let consts, vars, methods, uses, adaptations = split_classmembers env decls in
       ClassDef
         {
           c_name = v2;
@@ -2136,7 +2136,7 @@ and map_statement (env : env) (x : CST.statement) =
           c_extends = None;
           c_implements = v3;
           c_uses = uses;
-          c_trait_rules = rules;
+          c_trait_adaptations = adaptations;
           c_enum_type = None;
           c_modifiers = [];
           (* this grammar's interface_declaration carries no attribute_list *)
@@ -2154,7 +2154,7 @@ and map_statement (env : env) (x : CST.statement) =
       in
       let v3 = map_declaration_list env v3 in
       let opn, decls, cls = v3 in
-      let consts, vars, methods, uses, rules = split_classmembers env decls in
+      let consts, vars, methods, uses, adaptations = split_classmembers env decls in
       ClassDef
         {
           c_name = v2;
@@ -2162,7 +2162,7 @@ and map_statement (env : env) (x : CST.statement) =
           c_extends = None;
           c_implements = [];
           c_uses = uses;
-          c_trait_rules = rules;
+          c_trait_adaptations = adaptations;
           c_enum_type = None;
           c_modifiers = [];
           (* this grammar's trait_declaration carries no attribute_list *)
@@ -2195,7 +2195,7 @@ and map_statement (env : env) (x : CST.statement) =
         | None -> []
       in
       let opn, decls, cls = map_enum_declaration_list env v6 in
-      let consts, vars, methods, uses, rules = split_classmembers env decls in
+      let consts, vars, methods, uses, adaptations = split_classmembers env decls in
       ClassDef
         {
           c_name = v3;
@@ -2203,7 +2203,7 @@ and map_statement (env : env) (x : CST.statement) =
           c_extends = None;
           c_implements = v5;
           c_uses = uses;
-          c_trait_rules = rules;
+          c_trait_adaptations = adaptations;
           c_enum_type = v4;
           c_modifiers = [];
           c_attrs = v1;
@@ -2404,7 +2404,7 @@ and map_update_expression (env : env) (x : CST.update_expression) =
       A.Infix ((G.Decr, v1), v2)
 
 and map_use_as_clause (env : env) ((v1, v2, v3) : CST.use_as_clause) :
-    A.trait_rule =
+    A.trait_adaptation =
   let source, member = map_trait_method_reference env v1 in
   let v2 = (* pattern [aA][sS] *) token env v2 in
   let modifiers, alias =
@@ -2466,7 +2466,7 @@ and map_use_declaration (env : env) ((v1, v2, v3, v4) : CST.use_declaration) :
   in
   let uses = v2 :: v3 in
   List_.map (fun u -> UseTrait u) uses
-  @ List_.map (fun (rule : A.trait_rule) -> TraitRule rule) v4
+  @ List_.map (fun (adaptation : A.trait_adaptation) -> TraitAdaptation adaptation) v4
 
 and map_use_instead_of_clause (env : env)
     ((v1, v2, v3) : CST.use_instead_of_clause) =
@@ -2479,7 +2479,7 @@ and map_use_instead_of_clause (env : env)
   | Some source, member -> A.InsteadOf (source, member, v2, [ v3 ])
   | None, _ -> todo env ()
 
-and map_use_list (env : env) ((v1, v2, v3) : CST.use_list) : A.trait_rule list
+and map_use_list (env : env) ((v1, v2, v3) : CST.use_list) : A.trait_adaptation list
     =
   let _v1 = (* "{" *) token env v1 in
   let v2 =

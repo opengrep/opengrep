@@ -33,7 +33,7 @@ type file_scope = {
   scope_table : Func_lookup.scope_table;
   own_modules : Names.Module_qn.t list;
   module_aliases : (string, Names.Module_qn.t) Hashtbl.t option;
-  member_classes : Names.Class_qn.t list;
+  classes_with_members_in_scope : Names.Class_qn.t list;
 }
 
 type project_classes = {
@@ -49,7 +49,7 @@ type ctx = {
   companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
-  object_classes : unit Common.SMap.t;
+  singleton_objects : unit Common.SMap.t;
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t;
@@ -257,7 +257,7 @@ let build_scope_table
     ~(classes_by_file : entry list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
-    ~(object_classes : unit Common.SMap.t)
+    ~(singleton_objects : unit Common.SMap.t)
     ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
@@ -277,19 +277,19 @@ let build_scope_table
   else
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package ->
-      let bindings, member_classes =
+      let bindings, classes_with_members_in_scope =
         Scope_package.build ~precedence:cfg.Index_lang_rules.precedence
           ~own_package_members_kind:cfg.Index_lang_rules.own_package_members_kind
           ~namespaces_nest:cfg.Index_lang_rules.namespaces_nest
           ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~file_funcs_index
           ~extensions_by_module ~nested_types_by_class ~global_imports
-          ~object_classes
+          ~singleton_objects
           ~companions:(Lang_config.companion_object_has_own_name lang) fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              own_modules = []; module_aliases = None;
-             member_classes }
+             classes_with_members_in_scope }
     | `Per_go_package ->
       let bindings, module_aliases =
         Scope_go.build ~lang ~cfg ~package_index:go_packages ~build_constraints
@@ -299,14 +299,14 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              own_modules = [];
              module_aliases = Some module_aliases;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_project ->
       Some { scope_table =
                Scope_project.build ~classes_by_file ~class_parent_paths
                  ~file_funcs_index ~module_object_by_module ~top_level_scope fi;
              own_modules = [];
              module_aliases = None;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_constant_path ->
       let bindings, own_modules =
         Scope_ruby.build ~classes_by_file ~class_parent_paths
@@ -318,7 +318,7 @@ let build_scope_table
                  ~back:top_level_scope;
              own_modules;
              module_aliases = None;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_namespace ->
       let bindings, own_modules =
         Scope_php.build ~definitions_by_qn ~attributes_by_module
@@ -329,7 +329,7 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              own_modules;
              module_aliases = None;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_translation_unit ->
       let closure =
         Include_map.closure_of_file include_map (Fpath.to_string fi.fi_file)
@@ -347,7 +347,7 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              own_modules = fi.fi_namespace_scopes;
              module_aliases = None;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_crate ->
       let bindings, module_aliases =
         Scope_rust.build ~cfg ~definitions_by_qn ~attributes_by_module
@@ -357,7 +357,7 @@ let build_scope_table
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
              own_modules = [];
              module_aliases = Some module_aliases;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_module ->
       let bound =
         Scope_module.build ~scope:module_scope ~classes_by_file
@@ -367,7 +367,7 @@ let build_scope_table
                Func_lookup.scope_table_of_map bound.Scope_module.fb_scope;
              own_modules = bound.Scope_module.fb_own_modules;
              module_aliases = Some bound.Scope_module.fb_module_aliases;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
     | `Per_file
     | `Per_directory ->
     let fi_file_str = Fpath.to_string fi.fi_file in
@@ -443,7 +443,7 @@ let build_scope_table
                (Scope_binding.bindings_of_positioned
                   (own_bindings @ own_classes @ List.rev imported));
            own_modules = []; module_aliases = None;
-             member_classes = [] }
+             classes_with_members_in_scope = [] }
 
 let file_scope_of (ctx : ctx) (fi : file_info) : file_scope option =
   build_scope_table ~lang:ctx.lang ~cfg:ctx.cfg
@@ -452,7 +452,7 @@ let file_scope_of (ctx : ctx) (fi : file_info) : file_scope option =
     ~attributes_by_module:ctx.attributes_by_module ~dunder_all:ctx.dunder_all
     ~classes_by_file:ctx.classes_by_file
     ~class_parent_paths:ctx.class_parent_paths
-    ~object_classes:ctx.object_classes
+    ~singleton_objects:ctx.singleton_objects
     ~extensions_by_module:ctx.extensions_by_module
     ~nested_types_by_class:ctx.nested_types_by_class
     ~global_imports:ctx.global_imports
@@ -506,9 +506,9 @@ let func_lookup_of (ctx : ctx)
       (match file_scope with
        | Some (scope : file_scope) -> scope.own_modules
        | None -> [])
-    ~member_classes:
+    ~classes_with_members_in_scope:
       (match file_scope with
-       | Some (scope : file_scope) -> scope.member_classes
+       | Some (scope : file_scope) -> scope.classes_with_members_in_scope
        | None -> [])
     ()
 
@@ -545,16 +545,16 @@ let defined_funcs (resolution : Symbol_table.resolution) : Func_info.t list =
 let fn_ids_of (funcs : Func_info.t list) : Func_info.fn_id list =
   List_.map (fun (func : Func_info.t) -> func.Func_info.fn_id) funcs
 
-let or_outside_file (resolved : Symbol_table.resolution)
-    (outside : unit -> Symbol_table.resolution) : Symbol_table.resolution =
+let or_across_files (resolved : Symbol_table.resolution)
+    (cross_file_resolver : unit -> Symbol_table.resolution) : Symbol_table.resolution =
   match resolved with
   | Symbol_table.Defined _ -> resolved
-  | Symbol_table.External -> outside ()
+  | Symbol_table.External -> cross_file_resolver ()
 
 let resolve_in_project ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) ~(use : Symbol_table.use)
-    (e : G.expr) : Symbol_table.selection =
+    (e : G.expr) : Symbol_table.lookup_result =
   let caller = FA.fn_id_to_node caller_parent_path in
   let resolved =
     match use with
@@ -564,7 +564,7 @@ let resolve_in_project ~(lang : Lang.t) ~(table : Symbol_table.t)
   match resolved.Symbol_table.resolution with
   | Symbol_table.Defined _ -> resolved
   | Symbol_table.External ->
-    Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup ~caller
+    Callee_resolution.resolve_across_files ~lang ~table ~func_lookup ~caller
       ~caller_parent_path ~use e
 
 let typing ~(lang : Lang.t) ~(table : Symbol_table.t)
@@ -599,14 +599,14 @@ let callback_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     : Callback_extraction.callback_resolver =
  fun ~caller:_ (reference : Callback_extraction.reference) ->
   match reference with
-  | Callback_extraction.Written ({ G.e = G.N (name : G.name); _ } as e) ->
-    or_outside_file (Symbol_table.resolve_qualified table name) (fun () ->
+  | Callback_extraction.Callable_literal ({ G.e = G.N (name : G.name); _ } as e) ->
+    or_across_files (Symbol_table.resolve_qualified table name) (fun () ->
       Symbol_table.dispatched table
-        (Callee_resolution.resolve_outside_file ~lang ~table ~func_lookup
+        (Callee_resolution.resolve_across_files ~lang ~table ~func_lookup
            ~caller:(FA.fn_id_to_node caller_parent_path) ~caller_parent_path
            ~use:Symbol_table.Referenced e))
   | Callback_extraction.Bound (e : G.expr)
-  | Callback_extraction.Written (e : G.expr) ->
+  | Callback_extraction.Callable_literal (e : G.expr) ->
     Symbol_table.dispatched table
       (resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
          ~use:Symbol_table.Referenced e)
@@ -616,8 +616,8 @@ let construction_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(caller_parent_path : IL.name option list)
     : Callee_resolution.construction_resolver =
  fun ~call_args (ty : G.type_) ->
-  or_outside_file (Symbol_table.resolve_construction table ty) (fun () ->
-    Callee_resolution.resolve_construction_outside_file ~table ~func_lookup
+  or_across_files (Symbol_table.resolve_construction table ty) (fun () ->
+    Callee_resolution.resolve_construction_across_files ~table ~func_lookup
       ~caller_parent_path ty)
   |> defined_funcs
   |> Callee_resolution.narrow_by_call ~lang
@@ -640,14 +640,14 @@ let project_table (ctx : ctx) ~(classes : project_classes)
   let func_lookup =
     func_lookup_of ctx ~class_of_qn:classes.class_of_qn file_scope fi
   in
-  let outside (table : Symbol_table.t) ~(caller : Function_id.t option)
-      (e : G.expr) : Symbol_table.selection =
+  let cross_file_resolver (table : Symbol_table.t) ~(caller : Function_id.t option)
+      (e : G.expr) : Symbol_table.lookup_result =
     let caller_parent_path =
       match Option.bind caller (Symbol_table.function_of_node table) with
       | Some (func : Func_info.t) -> func.Func_info.fn_id
       | None -> []
     in
-    Callee_resolution.resolve_outside_file ~lang:ctx.lang ~table ~func_lookup
+    Callee_resolution.resolve_across_files ~lang:ctx.lang ~table ~func_lookup
       ~caller ~caller_parent_path ~use:Symbol_table.Called e
   in
   ( Symbol_table.with_project file_table classes.class_table
@@ -655,7 +655,7 @@ let project_table (ctx : ctx) ~(classes : project_classes)
       ~build_configuration:
         (Go_build_constraints.build_configuration ctx.build_constraints
            fi.fi_file)
-      ~outside,
+      ~cross_file_resolver,
     func_lookup )
 
 let edges_for_file (ctx : ctx) ~(classes : project_classes)
@@ -722,7 +722,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
              first (fill-on-None): isinstance narrowing, then [self]/[cls],
              then typed params. *)
           let fdef_facts =
-            let stamped (cls : Class_table.cls) : G.name option =
+            let name_of_class (cls : Class_table.cls) : G.name option =
               Class_table.name_of_class classes.class_table cls
             in
             let param_facts =
@@ -735,7 +735,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
                      Option.bind
                        (Symbol_table.class_of_declared_type table ~context:None
                           (Ty_bare_name.inner_named_type pty))
-                       stamped
+                       name_of_class
                    with
                    | Some cls -> Some (G.Id (pn, G.empty_id_info ()), cls)
                    | None -> None)
@@ -759,7 +759,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
                              ~caller:caller_node_opt ty_e )
                        with
                        | G.N (G.Id _ as var_n), Symbol_table.Class_object cls ->
-                         (match stamped cls with
+                         (match name_of_class cls with
                           | Some (ty_name : G.name) -> (var_n, ty_name) :: acc
                           | None -> acc)
                        | _ -> acc)

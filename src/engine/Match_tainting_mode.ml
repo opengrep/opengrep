@@ -131,42 +131,42 @@ end)
 
 module Fid_tbl = Hashtbl.Make (Function_id)
 
-type retention = {
+type reanalysis = {
   lang : Lang.t;
   cfg_of : Function_id.t -> IL.fun_cfg option;
   index_of : IL.fun_cfg -> PF.index;
-  check :
-    IL.fun_cfg -> entry:PF.state -> PF.anchor list -> PF.verdict * PF.state option list;
-  reanalysed :
+  check_path :
+    IL.fun_cfg -> entry:PF.state -> PF.trace_step list -> PF.verdict * PF.state option list;
+  reanalyse_once :
     IL.fun_cfg ->
     Shape_and_sig.signature_database option ->
     (Shape_and_sig.signature_database option -> Effects.t) ->
     Effects.t;
-  retained_db :
+  signatures_with_all_traces :
     Function_id.t list -> Shape_and_sig.signature_database option;
-  retain_tables : Taint_shared_tables.t;
+  tables_with_all_traces : Taint_shared_tables.t;
 }
 
 type checked_function = {
-  retention : retention;
+  reanalysis : reanalysis;
   cfg : IL.fun_cfg;
   reanalyse : (Shape_and_sig.signature_database option -> Effects.t) option;
 }
 
-let retaining (taint_inst : Taint_rule_inst.t) : Taint_rule_inst.t =
-  { taint_inst with merge = T.Keep_both }
+let with_all_traces (taint_inst : Taint_rule_inst.t) : Taint_rule_inst.t =
+  { taint_inst with traces = T.All_traces }
 
-let mk_retention ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
+let mk_reanalysis ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
     ~(shared_tables : Taint_shared_tables.t)
-    ~(retain_signature :
+    ~(signature_with_all_traces :
        Taint_shared_tables.t ->
        Function_id.t ->
        Shape_and_sig.signature_database ->
        Shape_and_sig.signature_database)
-    (db : Shape_and_sig.signature_database option) : retention =
+    (db : Shape_and_sig.signature_database option) : reanalysis =
   let indexes : PF.index Cfg_tbl.t = Cfg_tbl.create 16 in
-  let retained : unit Fid_tbl.t = Fid_tbl.create 16 in
-  let retain_tables =
+  let fids_with_all_traces : unit Fid_tbl.t = Fid_tbl.create 16 in
+  let tables_with_all_traces =
     {
       shared_tables with
       Taint_shared_tables.constructor_envs =
@@ -186,7 +186,7 @@ let mk_retention ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
       ( int,
         (IL.fun_cfg
         * PF.state
-        * PF.anchor list
+        * PF.trace_step list
         * (PF.verdict * PF.state option list))
         list )
       Hashtbl.t =
@@ -200,7 +200,7 @@ let mk_retention ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
     lang;
     cfg_of;
     index_of;
-    reanalysed =
+    reanalyse_once =
       (fun (cfg : IL.fun_cfg) (db : Shape_and_sig.signature_database option)
            (reanalyse : Shape_and_sig.signature_database option -> Effects.t) ->
         let computed = Option.value (Cfg_tbl.find_opt reanalyses cfg) ~default:[] in
@@ -215,41 +215,41 @@ let mk_retention ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
             let effects = reanalyse db in
             Cfg_tbl.replace reanalyses cfg ((db, effects) :: computed);
             effects);
-    check =
-      (fun (cfg : IL.fun_cfg) ~(entry : PF.state) (anchors : PF.anchor list) ->
-        let key = PF.hash_anchors anchors in
+    check_path =
+      (fun (cfg : IL.fun_cfg) ~(entry : PF.state) (trace_steps : PF.trace_step list) ->
+        let key = PF.hash_trace_steps trace_steps in
         let checked = Option.value (Hashtbl.find_opt checks key) ~default:[] in
         match
           List.find_opt
-            (fun ((cfg', entry', anchors', _) :
+            (fun ((cfg', entry', trace_steps', _) :
                    IL.fun_cfg
                    * PF.state
-                   * PF.anchor list
+                   * PF.trace_step list
                    * (PF.verdict * PF.state option list)) ->
               Common.phys_equal cfg' cfg
-              && List.equal PF.equal_anchor anchors' anchors
+              && List.equal PF.equal_trace_step trace_steps' trace_steps
               && PF.equal_state entry' entry)
             checked
         with
         | Some (_, _, _, result) -> result
         | None ->
-            let result = PF.check lang cfg (index_of cfg) ~entry anchors in
-            Hashtbl.replace checks key ((cfg, entry, anchors, result) :: checked);
+            let result = PF.check lang cfg (index_of cfg) ~entry trace_steps in
+            Hashtbl.replace checks key ((cfg, entry, trace_steps, result) :: checked);
             result);
-    retained_db =
+    signatures_with_all_traces =
       (fun (fids : Function_id.t list) ->
         List.iter
           (fun (fid : Function_id.t) ->
-            if not (Fid_tbl.mem retained fid) then (
-              Fid_tbl.add retained fid ();
+            if not (Fid_tbl.mem fids_with_all_traces fid) then (
+              Fid_tbl.add fids_with_all_traces fid ();
               current :=
-                Option.map (retain_signature retain_tables fid) !current))
+                Option.map (signature_with_all_traces tables_with_all_traces fid) !current))
           fids;
         !current);
-    retain_tables;
+    tables_with_all_traces;
   }
 
-type candidate = {
+type witness = {
   source : T.source;
   tokens : T.tainted_tokens;
   steps : T.step list;
@@ -258,27 +258,27 @@ type candidate = {
   refuted_by_guard : bool;
 }
 
-let candidates_of_item ~valid (item : Effect.taint_to_sink_item) :
-    candidate Seq.t =
-  T.taint_resolutions ~valid item.taint
-  |> Seq.flat_map (fun (r : T.resolved) ->
-         match Option.value r.resolved_orig ~default:item.taint.orig with
+let witnesses_of_item ~valid (item : Effect.taint_to_sink_item) :
+    witness Seq.t =
+  T.trace_paths ~valid item.taint
+  |> Seq.flat_map (fun (r : T.trace_path) ->
+         match Option.value r.path_orig ~default:item.taint.orig with
          | Src src ->
              let sink_trace =
-               Option.value r.resolved_sink_trace ~default:item.sink_trace
+               Option.value r.path_sink_trace ~default:item.sink_trace
              in
-             T.source_trace_resolutions ~valid src.call_trace
+             T.source_trace_paths ~valid src.call_trace
              |> Seq.flat_map
                   (fun ((source_trace, source_refuted) :
                          R.taint_source T.flat_call_trace * bool) ->
-                    T.sink_trace_resolutions ~valid sink_trace
+                    T.sink_trace_paths ~valid sink_trace
                     |> Seq.map
                          (fun ((sink_trace, sink_refuted) :
                                 unit T.flat_call_trace * bool) ->
                            {
                              source = src;
-                             tokens = r.resolved_tokens;
-                             steps = r.resolved_steps;
+                             tokens = r.path_tokens;
+                             steps = r.path_steps;
                              source_trace;
                              sink_trace;
                              refuted_by_guard =
@@ -292,14 +292,14 @@ let candidates_of_item ~valid (item : Effect.taint_to_sink_item) :
          | Control ->
              Seq.empty)
 
-let trace_of_candidate (c : candidate) : Taint_trace.item =
+let trace_of_witness (c : witness) : Taint_trace.item =
   {
     Taint_trace.source_trace = convert_taint_call_trace c.source_trace;
     tokens = c.tokens;
     sink_trace = convert_taint_call_trace c.sink_trace;
   }
 
-let origin_of_candidate (c : candidate) : Tok.t list =
+let source_tokens_of_witness (c : witness) : Tok.t list =
   leaf_tokens (convert_taint_call_trace c.source_trace)
 
 (* For now CLI does not support multiple taint traces for a finding, and it
@@ -309,14 +309,14 @@ let origin_of_candidate (c : candidate) : Tok.t list =
  * taint labels, because not all labels are equally relevant for the finding. *)
 let sources_of_taints ~valid ?preferred_label
     (taints : Effect.taint_to_sink_item list) :
-    (candidate * Effect.taint_to_sink_item) list =
+    (witness * Effect.taint_to_sink_item) list =
   (* We only report actual sources reaching a sink. If users want Semgrep to
    * report function parameters reaching a sink without sanitization, then
    * they need to specify the parameters as taint sources. *)
   let taint_sources =
     taints
     |> List_.filter_map (fun (item : Effect.taint_to_sink_item) ->
-           match candidates_of_item ~valid item () with
+           match witnesses_of_item ~valid item () with
            | Seq.Cons (c, _) -> Some (c, item)
            | Seq.Nil -> None)
   in
@@ -329,8 +329,8 @@ let sources_of_taints ~valid ?preferred_label
         taint_sources
         |> List.stable_sort
              (fun
-               ((c1, _) : candidate * Effect.taint_to_sink_item)
-               ((c2, _) : candidate * Effect.taint_to_sink_item)
+               ((c1, _) : witness * Effect.taint_to_sink_item)
+               ((c2, _) : witness * Effect.taint_to_sink_item)
              ->
                match
                  (String.equal c1.source.label label, String.equal c2.source.label label)
@@ -347,7 +347,7 @@ let sources_of_taints ~valid ?preferred_label
   let with_req, without_req =
     taint_sources
     |> Either_.partition
-         (fun ((c, _) as source : candidate * Effect.taint_to_sink_item) ->
+         (fun ((c, _) as source : witness * Effect.taint_to_sink_item) ->
            match get_source_requires c.source with
            | Some _ -> Left source
            | None -> Right source)
@@ -360,21 +360,21 @@ let sources_of_taints ~valid ?preferred_label
            taint trace from the source with precondition.");
     with_req)
 
-type activation_check = { anchors : PF.anchor list; children : (int * callee_check) list }
-and callee_check = { site : T.call_site; check : activation_check }
+type path_query = { trace_steps : PF.trace_step list; children : (int * callee_query) list }
+and callee_query = { site : T.call_site; query : path_query }
 
-let activation_check_of_parts (parts : (PF.anchor * callee_check option) list) : activation_check =
+let path_query_of_parts (parts : (PF.trace_step * callee_query option) list) : path_query =
   {
-    anchors = List.map fst parts;
+    trace_steps = List.map fst parts;
     children =
       parts
-      |> List.mapi (fun (i : int) ((_, child) : PF.anchor * callee_check option) ->
-             Option.map (fun (c : callee_check) -> (i, c)) child)
+      |> List.mapi (fun (i : int) ((_, child) : PF.trace_step * callee_query option) ->
+             Option.map (fun (c : callee_query) -> (i, c)) child)
       |> List.filter_map Fun.id;
   }
 
 let rec parts_of_steps (steps : T.step list) :
-    (PF.anchor * callee_check option) list =
+    (PF.trace_step * callee_query option) list =
   steps
   |> List.map (fun (step : T.step) ->
          match step with
@@ -384,14 +384,14 @@ let rec parts_of_steps (steps : T.step list) :
                Some
                  {
                    site;
-                   check =
-                     activation_check_of_parts
+                   query =
+                     path_query_of_parts
                        (((PF.Entry, None) :: parts_of_steps steps)
                        @ [ (PF.Exit, None) ]);
                  } ))
 
 let rec sink_part (trace : unit T.flat_call_trace) :
-    PF.anchor * callee_check option =
+    PF.trace_step * callee_query option =
   match trace with
   | Flat_PM (pm, _) -> (PF.Range (fst pm.range_loc, snd pm.range_loc), None)
   | Flat_call { site; steps; inner; _ } ->
@@ -399,13 +399,13 @@ let rec sink_part (trace : unit T.flat_call_trace) :
         Some
           {
             site;
-            check =
-              activation_check_of_parts
+            query =
+              path_query_of_parts
                 (((PF.Entry, None) :: parts_of_steps steps) @ [ sink_part inner ]);
           } )
 
 let rec source_part (trace : R.taint_source T.flat_call_trace) :
-    PF.anchor * callee_check option =
+    PF.trace_step * callee_query option =
   match trace with
   | Flat_PM (pm, _) -> (PF.Range (fst pm.range_loc, snd pm.range_loc), None)
   | Flat_call { site; steps; inner; _ } ->
@@ -413,14 +413,14 @@ let rec source_part (trace : R.taint_source T.flat_call_trace) :
         Some
           {
             site;
-            check =
-              activation_check_of_parts
+            query =
+              path_query_of_parts
                 ((PF.Entry, None) :: source_part inner
                  :: (parts_of_steps steps @ [ (PF.Exit, None) ]));
           } )
 
-let activation_check_of_candidate (c : candidate) : activation_check =
-  activation_check_of_parts
+let path_query_of_witness (c : witness) : path_query =
+  path_query_of_parts
     ((PF.Entry, None) :: source_part c.source_trace
      :: (parts_of_steps c.steps @ [ sink_part c.sink_trace ]))
 
@@ -434,27 +434,27 @@ let conjoin_verdicts (v1 : PF.verdict) (v2 : PF.verdict) : PF.verdict =
   | _, Unknown ->
       Unknown
 
-let rec verify_activation (retention : retention) (cfg : IL.fun_cfg) (entry : PF.state)
-    (fc : activation_check) : PF.verdict * PF.state option =
+let rec verify_path_query (reanalysis : reanalysis) (cfg : IL.fun_cfg) (entry : PF.state)
+    (query : path_query) : PF.verdict * PF.state option =
   let verdict, states =
-    retention.check cfg ~entry fc.anchors
+    reanalysis.check_path cfg ~entry query.trace_steps
   in
   let at (i : int) : PF.state option = Option.join (List.nth_opt states i) in
   let final = at (List.length states - 1) in
   let verdict =
     List.fold_left
-      (fun (acc : PF.verdict) ((i, child) : int * callee_check) ->
+      (fun (acc : PF.verdict) ((i, child) : int * callee_query) ->
         match acc with
         | Infeasible -> Infeasible
         | Feasible
         | Unknown ->
-            conjoin_verdicts acc (verify_callee retention (at i) child))
-      verdict fc.children
+            conjoin_verdicts acc (verify_callee reanalysis (at i) child))
+      verdict query.children
   in
   (verdict, final)
 
-and verify_callee (retention : retention) (at_call : PF.state option)
-    (child : callee_check) : PF.verdict =
+and verify_callee (reanalysis : reanalysis) (at_call : PF.state option)
+    (child : callee_query) : PF.verdict =
   let params =
     List.filter_map IL_helpers.pname_of_param child.site.callee_params_il
   in
@@ -467,7 +467,7 @@ and verify_callee (retention : retention) (at_call : PF.state option)
            | IL.Mem _ ->
                false)
   in
-  match Option.bind child.site.callee_fid retention.cfg_of with
+  match Option.bind child.site.callee_fid reanalysis.cfg_of with
   | None -> Unknown
   | Some cfg -> (
       let bindings =
@@ -476,10 +476,10 @@ and verify_callee (retention : retention) (at_call : PF.state option)
         | Some caller ->
             Sig_inst.actuals_of_params child.site
             |> List.map (fun ((param, actual) : IL.name * IL.exp) ->
-                   (param, PF.value retention.lang caller actual))
+                   (param, PF.value reanalysis.lang caller actual))
       in
       let verdict, final =
-        verify_activation retention cfg (PF.entry_state bindings) child.check
+        verify_path_query reanalysis cfg (PF.entry_state bindings) child.query
       in
       match (verdict, at_call, final) with
       | Infeasible, _, _ -> Infeasible
@@ -491,26 +491,26 @@ and verify_callee (retention : retention) (at_call : PF.state option)
           Infeasible
       | (Feasible | Unknown), _, _ -> verdict)
 
-let verify_candidate (checked_function : checked_function) (c : candidate) : PF.verdict =
+let verify_witness (checked_function : checked_function) (c : witness) : PF.verdict =
   if c.refuted_by_guard then Infeasible
   else
     fst
-      (verify_activation checked_function.retention checked_function.cfg (PF.entry_state [])
-         (activation_check_of_candidate c))
+      (verify_path_query checked_function.reanalysis checked_function.cfg (PF.entry_state [])
+         (path_query_of_witness c))
 
-let rec fids_of_activation_check (depth : int) (fc : activation_check) :
+let rec fids_of_path_query (depth : int) (query : path_query) :
     (Function_id.t * int) list =
-  fc.children
-  |> List.concat_map (fun ((_, child) : int * callee_check) ->
+  query.children
+  |> List.concat_map (fun ((_, child) : int * callee_query) ->
          (match child.site.callee_fid with
          | Some fid -> [ (fid, depth) ]
          | None -> [])
-         @ fids_of_activation_check (depth + 1) child.check)
+         @ fids_of_path_query (depth + 1) child.query)
 
-let callee_fids (cs : candidate list) : Function_id.t list =
+let callee_fids (cs : witness list) : Function_id.t list =
   cs
-  |> List.concat_map (fun (c : candidate) ->
-         fids_of_activation_check 0 (activation_check_of_candidate c))
+  |> List.concat_map (fun (c : witness) ->
+         fids_of_path_query 0 (path_query_of_witness c))
   |> List.stable_sort (fun ((_, d1) : _ * int) ((_, d2) : _ * int) ->
          Int.compare d2 d1)
   |> List.fold_left
@@ -519,8 +519,8 @@ let callee_fids (cs : candidate list) : Function_id.t list =
        []
   |> List.rev
 
-let anchor_position (anchor : PF.anchor) : int =
-  match anchor with
+let trace_step_position (trace_step : PF.trace_step) : int =
+  match trace_step with
   | PF.Entry -> -1
   | PF.Exit -> max_int
   | PF.Token tok -> (
@@ -533,29 +533,29 @@ let anchor_position (anchor : PF.anchor) : int =
       | Some (first, _) -> first.pos.bytepos
       | None -> -1)
 
-let rec positions (fc : activation_check) : int list list =
-  List.map anchor_position fc.anchors
+let rec positions (query : path_query) : int list list =
+  List.map trace_step_position query.trace_steps
   :: List.concat_map
-       (fun ((_, child) : int * callee_check) -> positions child.check)
-       fc.children
+       (fun ((_, child) : int * callee_query) -> positions child.query)
+       query.children
 
-let candidates_in_order ~valid (item : Effect.taint_to_sink_item) :
-    candidate list =
-  candidates_of_item ~valid item
+let witnesses_in_order ~valid (item : Effect.taint_to_sink_item) :
+    witness list =
+  witnesses_of_item ~valid item
   |> List.of_seq
-  |> List.map (fun (c : candidate) ->
-         (positions (activation_check_of_candidate c), trace_of_candidate c, c))
+  |> List.map (fun (c : witness) ->
+         (positions (path_query_of_witness c), trace_of_witness c, c))
   |> List.stable_sort
        (fun
-         ((p1, t1, _) : int list list * Taint_trace.item * candidate)
-         ((p2, t2, _) : int list list * Taint_trace.item * candidate)
+         ((p1, t1, _) : int list list * Taint_trace.item * witness)
+         ((p2, t2, _) : int list list * Taint_trace.item * witness)
        ->
          match List.compare (List.compare Int.compare) p1 p2 with
          | 0 -> Taint_trace.compare_item t1 t2
          | c -> c)
   |> List.fold_left
-       (fun (acc : (Taint_trace.item * candidate) list)
-            ((_, t, c) : int list list * Taint_trace.item * candidate) ->
+       (fun (acc : (Taint_trace.item * witness) list)
+            ((_, t, c) : int list list * Taint_trace.item * witness) ->
          match acc with
          | (previous, _) :: _ when Taint_trace.equal_item previous t -> acc
          | _ -> (t, c) :: acc)
@@ -581,11 +581,11 @@ let reported_items ~lang (effect_ : Effect.t) :
   | ToSinkInCall _ ->
       None
 
-let retained_candidates (checked_function : checked_function) ~(sink : string) (effect_ : Effect.t)
+let witnesses_with_all_traces (checked_function : checked_function) ~(sink : string) (effect_ : Effect.t)
     (items : Effect.taint_to_sink_item list) :
-    (Effect.taint_to_sink_item * candidate list) list =
-  let lang = checked_function.retention.lang in
-  let rec retain (fids : Function_id.t list) =
+    (Effect.taint_to_sink_item * witness list) list =
+  let lang = checked_function.reanalysis.lang in
+  let rec reanalyse_with_callees (fids : Function_id.t list) =
     match checked_function.reanalyse with
     | None -> None
     | Some reanalyse -> (
@@ -597,126 +597,126 @@ let retained_candidates (checked_function : checked_function) ~(sink : string) (
               sink (List.length fids));
         match
           Effects.find_opt effect_
-            (checked_function.retention.reanalysed checked_function.cfg
-               (checked_function.retention.retained_db fids)
+            (checked_function.reanalysis.reanalyse_once checked_function.cfg
+               (checked_function.reanalysis.signatures_with_all_traces fids)
                reanalyse)
           |> Fun.flip Option.bind (reported_items ~lang)
         with
         | None -> None
-        | Some (retained_items, valid) ->
+        | Some (items_with_all_traces, valid) ->
             let found =
-              retained_items
+              items_with_all_traces
               |> List.map (fun (i : Effect.taint_to_sink_item) ->
-                     (i, candidates_in_order ~valid i))
+                     (i, witnesses_in_order ~valid i))
             in
             let more =
               found
               |> List.concat_map
-                   (fun ((_, cs) : Effect.taint_to_sink_item * candidate list) ->
+                   (fun ((_, cs) : Effect.taint_to_sink_item * witness list) ->
                      callee_fids cs)
               |> List.filter (fun (fid : Function_id.t) ->
                      not (List.exists (Function_id.equal fid) fids))
             in
-            if List_.null more then Some found else retain (fids @ more))
+            if List_.null more then Some found else reanalyse_with_callees (fids @ more))
   in
-  let today (valid : T.call_site list -> Effect_guard.t -> bool) :
-      (Effect.taint_to_sink_item * candidate list) list =
+  let first_analysis_witnesses (valid : T.call_site list -> Effect_guard.t -> bool) :
+      (Effect.taint_to_sink_item * witness list) list =
     items
     |> List.map (fun (i : Effect.taint_to_sink_item) ->
-           (i, candidates_in_order ~valid i))
+           (i, witnesses_in_order ~valid i))
   in
   let valid = Sig_inst.guard_valid_under ~lang (Effect.guards_of effect_) in
   let first_fids =
     items
     |> List.concat_map (fun (i : Effect.taint_to_sink_item) ->
-           match candidates_of_item ~valid i () with
+           match witnesses_of_item ~valid i () with
            | Seq.Cons (c, _) -> callee_fids [ c ]
            | Seq.Nil -> [])
   in
-  match retain first_fids with
-  | None -> today valid
+  match reanalyse_with_callees first_fids with
+  | None -> first_analysis_witnesses valid
   | Some found ->
       items
       |> List.map (fun (i : Effect.taint_to_sink_item) ->
              match
                List.find_opt
-                 (fun ((r, _) : Effect.taint_to_sink_item * candidate list) ->
+                 (fun ((r, _) : Effect.taint_to_sink_item * witness list) ->
                    Int.equal (T.compare_taint r.taint i.taint) 0)
                  found
              with
              | Some (_, cs) -> (i, cs)
-             | None -> (i, candidates_in_order ~valid i))
+             | None -> (i, witnesses_in_order ~valid i))
 
-let search (checked_function : checked_function) (candidates : candidate list) : candidate option =
-  let rec go (unknown : candidate option) (cs : candidate list) =
+let first_feasible_witness (checked_function : checked_function) (witnesses : witness list) : witness option =
+  let rec go (unknown : witness option) (cs : witness list) =
     match cs with
     | [] -> unknown
     | c :: rest -> (
-        match verify_candidate checked_function c with
+        match verify_witness checked_function c with
         | Feasible -> Some c
         | Unknown -> go (first_some unknown (Some c)) rest
         | Infeasible -> go unknown rest)
-  and first_some (a : candidate option) (b : candidate option) =
+  and first_some (a : witness option) (b : witness option) =
     match a with
     | Some _ -> a
     | None -> b
   in
-  go None candidates
+  go None witnesses
 
 let displayed_trace (checked_function : checked_function option) (effect_ : Effect.t) (sink_pm : PM.t)
-    (sources : (candidate * Effect.taint_to_sink_item) list) : Taint_trace.t =
+    (sources : (witness * Effect.taint_to_sink_item) list) : Taint_trace.t =
   let sink = Tok.stringpos_of_tok (Tok.tok_of_loc (fst sink_pm.range_loc)) in
-  let today =
+  let first_analysis_trace =
     {
-      Taint_trace.origin =
+      Taint_trace.source_tokens =
         (match sources with
-        | (c, _) :: _ -> origin_of_candidate c
+        | (c, _) :: _ -> source_tokens_of_witness c
         | [] -> []);
       items =
         List_.map
-          (fun ((c, _) : candidate * Effect.taint_to_sink_item) ->
-            trace_of_candidate c)
+          (fun ((c, _) : witness * Effect.taint_to_sink_item) ->
+            trace_of_witness c)
           sources;
     }
   in
   match (checked_function, sources) with
   | None, _
   | _, [] ->
-      today
+      first_analysis_trace
   | Some checked_function, (first, _) :: _ -> (
-      match verify_candidate checked_function first with
+      match verify_witness checked_function first with
       | Feasible
       | Unknown ->
-          today
+          first_analysis_trace
       | Infeasible -> (
           Log_tainting.Trace_log.debug (fun m ->
               m
                 "Taint trace: the trace to the sink at %s contradicts a branch \
                  condition or a guard"
                 sink);
-          let candidates =
-            retained_candidates checked_function ~sink effect_ (List.map snd sources)
+          let witnesses =
+            witnesses_with_all_traces checked_function ~sink effect_ (List.map snd sources)
             |> List.concat_map snd
           in
-          match search checked_function candidates with
+          match first_feasible_witness checked_function witnesses with
           | Some c ->
               Log_tainting.Trace_log.debug (fun m ->
                   m
                     "Taint trace: the trace to the sink at %s is replaced, out \
-                     of %d candidate traces"
-                    sink (List.length candidates));
+                     of %d witnesses"
+                    sink (List.length witnesses));
               {
-                Taint_trace.origin = origin_of_candidate c;
-                items = [ trace_of_candidate c ];
+                Taint_trace.source_tokens = source_tokens_of_witness c;
+                items = [ trace_of_witness c ];
               }
           | None ->
               Log_tainting.Trace_log.debug (fun m ->
                   m
-                    "Taint trace: every path of %d candidate traces to the sink \
+                    "Taint trace: every one of %d witnesses to the sink \
                      at %s contradicts a branch condition; the finding is \
                      reported without a trace"
-                    (List.length candidates) sink);
-              { today with items = [] }))
+                    (List.length witnesses) sink);
+              { first_analysis_trace with items = [] }))
 
 let match_on_of_xconf (xconf : Match_env.xconfig) : [ `Sink | `Source ] =
   (* TEMPORARY HACK to support both taint_match_on (DEPRECATED) and
@@ -784,7 +784,7 @@ let pms_of_effect ~lang ~match_on ~(checked_function : checked_function option) 
         | `Source ->
             taint_sources
             |> List_.map
-                 (fun ((c, _) as source : candidate * Effect.taint_to_sink_item) ->
+                 (fun ((c, _) as source : witness * Effect.taint_to_sink_item) ->
                    let src_pm, _ = T.pm_of_trace c.source.T.call_trace in
                    {
                      src_pm with
@@ -828,7 +828,7 @@ let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t)
     Dataflow_tainting.fixpoint taint_inst shared_tables ~in_env ~name ?class_name
       ?signature_db ?builtin_signature_db fcfg
   in
-  let effects = Effects.union ~merge:taint_inst.merge env_effects effects in
+  let effects = Effects.union ~traces:taint_inst.traces env_effects effects in
   (fcfg, effects, mapping)
 
 (* [check_fundef_with_cfg] on a freshly-lowered [fdef]. *)
@@ -1025,7 +1025,7 @@ let extract_and_check
     ~(taint_inst : Taint_rule_inst.t)
     ~(shared_tables : Taint_shared_tables.t)
     ~(detect_findings : bool)
-    ~(retention : retention option)
+    ~(reanalysis : reanalysis option)
     (info : fun_info)
     : Shape_and_sig.signature_database * PM.t list =
   let updated_db, _fresh_sigs =
@@ -1071,24 +1071,24 @@ let extract_and_check
     in
     let effects_to_record =
     if info.is_lambda_assignment then
-      Effects.filter_map ~merge:taint_inst.merge keep_src_toSink_only
+      Effects.filter_map ~traces:taint_inst.traces keep_src_toSink_only
         fdef_effects
     else fdef_effects
   in
     let checked_function =
-      retention
-      |> Option.map (fun (retention : retention) ->
+      reanalysis
+      |> Option.map (fun (reanalysis : reanalysis) ->
              {
-               retention;
+               reanalysis;
                cfg = info.cfg;
                reanalyse =
                  Some
-                   (fun (retained : Shape_and_sig.signature_database option) ->
-                     let taint_inst = retaining taint_inst in
-                     let shared_tables = retention.retain_tables in
+                   (fun (signatures_with_all_traces : Shape_and_sig.signature_database option) ->
+                     let taint_inst = with_all_traces taint_inst in
+                     let shared_tables = reanalysis.tables_with_all_traces in
                      let db, _fresh =
                        extract_signatures ?builtin_signature_db ~lang
-                         ~db:(Option.value retained ~default:db)
+                         ~db:(Option.value signatures_with_all_traces ~default:db)
                          ~taint_inst ~shared_tables info
                      in
                      let _flow, effects, _mapping =
@@ -1097,7 +1097,7 @@ let extract_and_check
                          ~signature_db:db ?builtin_signature_db info.cfg
                      in
                      if info.is_lambda_assignment then
-                       Effects.filter_map ~merge:taint_inst.merge
+                       Effects.filter_map ~traces:taint_inst.traces
                          keep_src_toSink_only effects
                      else effects);
              })
@@ -1113,7 +1113,7 @@ let build_class_init_cfgs ~(initialisers_are_functions : bool)
   let analysed_as_function (opt_ent : G.entity option)
       (cdef : G.class_definition) : bool =
     initialisers_are_functions
-    && Lang_config.class_header_is_constructor lang
+    && Lang_config.has_primary_constructor lang
     &&
     match opt_ent with
     | Some ent ->
@@ -1153,7 +1153,7 @@ let check_class_inits_prebuilt
           ?signature_db ?builtin_signature_db
           fun_cfg
       in
-      Shape_and_sig.Effects.union ~merge:taint_inst.merge init_effects acc)
+      Shape_and_sig.Effects.union ~traces:taint_inst.traces init_effects acc)
     Shape_and_sig.Effects.empty cfgs
 
 let check_class_inits
@@ -1254,7 +1254,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst shared_tables ast in
       let glob_matches = pms_of_effects ~lang ~match_on ~checked_function:None glob_effects in
 
-      let final_signature_db, branch_matches, retention =
+      let final_signature_db, branch_matches, reanalysis =
         if taint_inst.options.taint_intrafile then (
           let call_graph =
             match local_ast_call_graph with
@@ -1350,30 +1350,30 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   ~lang ~db
                   ~taint_inst:(taint_inst_of node) ~shared_tables info
               in
-              Sig_fixpoint.store ~merge:taint_inst.merge node fresh db'
+              Sig_fixpoint.store ~traces:taint_inst.traces node fresh db'
           in
           let signature_db_after_order =
             Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
               ~sccs ~analyze initial_signature_db
           in
-          let retention =
-            mk_retention ~lang
+          let reanalysis =
+            mk_reanalysis ~lang
               ~cfg_of:(fun (fid : Function_id.t) ->
                 Shape_and_sig.FunctionMap.find_opt fid info_map
                 |> Option.map (fun (info : fun_info) -> info.cfg))
               ~shared_tables
-              ~retain_signature:(fun (tables : Taint_shared_tables.t)
+              ~signature_with_all_traces:(fun (tables : Taint_shared_tables.t)
                                      (fid : Function_id.t)
                                      (db : Shape_and_sig.signature_database) ->
                 match Shape_and_sig.FunctionMap.find_opt fid info_map with
                 | None -> db
                 | Some info ->
-                    let taint_inst = retaining (taint_inst_of fid) in
+                    let taint_inst = with_all_traces (taint_inst_of fid) in
                     let db', fresh =
                       extract_signatures ?builtin_signature_db ~lang ~db
                         ~taint_inst ~shared_tables:tables info
                     in
-                    Sig_fixpoint.store ~merge:taint_inst.merge fid fresh db')
+                    Sig_fixpoint.store ~traces:taint_inst.traces fid fresh db')
               (Some signature_db_after_order)
           in
           (* Single match-emission pass over the converged DB. *)
@@ -1395,7 +1395,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                       ~glob_env ~lang
                       ~db:signature_db_after_order ~match_on
                       ~taint_inst:(taint_inst_of node) ~shared_tables
-                      ~detect_findings:true ~retention:(Some retention) info
+                      ~detect_findings:true ~reanalysis:(Some reanalysis) info
                   in
                   if not (List_.null findings) then
                     Log.debug (fun m ->
@@ -1406,14 +1406,14 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   List.rev_append findings ms)
               [] analysis_order
           in
-          (Some signature_db_after_order, topo_matches, retention))
+          (Some signature_db_after_order, topo_matches, reanalysis))
         else (
           (* Cross-function taint analysis disabled: use main branch behavior *)
-          let retention =
-            mk_retention ~lang
+          let reanalysis =
+            mk_reanalysis ~lang
               ~cfg_of:(fun (_ : Function_id.t) -> None)
               ~shared_tables
-              ~retain_signature:(fun (_ : Taint_shared_tables.t)
+              ~signature_with_all_traces:(fun (_ : Taint_shared_tables.t)
                                      (_ : Function_id.t)
                                      (db : Shape_and_sig.signature_database) ->
                 db)
@@ -1453,14 +1453,14 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                       let checked_function =
                         Some
                           {
-                            retention;
+                            reanalysis;
                             cfg = flow;
                             reanalyse =
                               Some
                                 (fun (_ : Shape_and_sig.signature_database option) ->
                                   let _flow, effects, _mapping =
-                                    check_fundef_with_cfg (retaining taint_inst)
-                                      retention.retain_tables name ~glob_env
+                                    check_fundef_with_cfg (with_all_traces taint_inst)
+                                      reanalysis.tables_with_all_traces name ~glob_env
                                       ?builtin_signature_db flow
                                   in
                                   effects);
@@ -1471,7 +1471,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                           (pms_of_effects ~lang ~match_on ~checked_function fdef_effects)
                           !fdef_matches)
             ast;
-          (None, !fdef_matches, retention))
+          (None, !fdef_matches, reanalysis))
       in
 
       let class_init_effects =
@@ -1493,13 +1493,13 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         let checked_function =
           Some
             {
-              retention;
+              reanalysis;
               cfg = snd top_cfg;
               reanalyse =
                 Some
-                  (fun (retained : Shape_and_sig.signature_database option) ->
-                    check_top_level_prebuilt (retaining taint_inst)
-                      retention.retain_tables top_cfg ?signature_db:retained
+                  (fun (signatures_with_all_traces : Shape_and_sig.signature_database option) ->
+                    check_top_level_prebuilt (with_all_traces taint_inst)
+                      reanalysis.tables_with_all_traces top_cfg ?signature_db:signatures_with_all_traces
                       ?builtin_signature_db ());
             }
         in

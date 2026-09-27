@@ -406,8 +406,8 @@ and instr_kind =
   | FixmeInstr of fixme_kind * G.any
 
 (* A call bound to one target gives it its first result when the callee
- * returns several (Lua reference manual 3.4.12). In Go a call with several
- * results is never bound to one target. *)
+ * returns multiple results (Lua reference manual 3.4.12). In Go a call with
+ * multiple results is never bound to one target. *)
 and call_results = All_results | First_result
 
 and call_special =

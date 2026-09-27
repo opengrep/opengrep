@@ -322,7 +322,7 @@ let test_displayed_trace (caps : Scan_subcommand.caps) ~(case : string)
     "the lines of the displayed trace" [ expected ]
     (trace_scan caps ~case args |> List_.map trace_text)
 
-let test_dispatched_trace_not_mixed (caps : Scan_subcommand.caps)
+let test_dispatched_trace_is_feasible (caps : Scan_subcommand.caps)
     (args : string list) () =
   let findings =
     trace_scan caps ~case:"trace_flag_in_dispatched_callee_python" args
@@ -852,7 +852,7 @@ let tests (caps : < Scan_subcommand.caps >) =
                       "findings: %s trace through a dispatched callee follows \
                        the branch the flag selects"
                       mode)
-                   (test_dispatched_trace_not_mixed caps args);
+                   (test_dispatched_trace_is_feasible caps args);
                ]))
     @ (aliengrep_cases
       |> List.map (fun ((rule : string), (target : string)) ->

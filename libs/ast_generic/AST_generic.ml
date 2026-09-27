@@ -801,8 +801,8 @@ and fact =
   | Equal of name * expr
   | NotEqual of name * expr
   (* The function a PHP callable string or array, or a Ruby [method(:f)] call,
-     denotes, as the name or member access whose id_info the call graph
-     stamps; the [when] facts ignore it. *)
+     denotes, as the name or member access in whose id_info the call graph
+     records the definitions; the [when] facts ignore it. *)
   | Callable_reference of expr
 
 and facts = fact list

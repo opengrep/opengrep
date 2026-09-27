@@ -22,7 +22,7 @@ module Eval = Eval_il_partial
 
 type verdict = Feasible | Infeasible | Unknown
 
-type anchor =
+type trace_step =
   | Entry
   | Token of Tok.t
   | Range of Tok.location * Tok.location
@@ -30,8 +30,8 @@ type anchor =
   | Exit
 
 type state =
-  | Dead
-  | Live of { values : G.svalue Var_env.t; literals : (IL.exp * bool) list }
+  | Unreachable
+  | Reachable of { values : G.svalue Var_env.t; literals : (IL.exp * bool) list }
 
 type span = { span_node : IL.nodei; first : int; last : int; stop : int }
 
@@ -41,20 +41,25 @@ type index = {
   spans : span list;
   calls : (IL.nodei * IL.exp) list;
   params : int list;
-  exposed : IL.name list;
-  exposed_keys : string list;
-  call_forgotten_keys : string list;
+  aliased : IL.name list;
+  aliased_keys : string list;
+  call_killed_keys : string list;
 }
 
-module Stage = struct
+module Product_state = struct
   type t = IL.nodei * int
 end
 
 
-type stage_node = { il_node : IL.node option; stage : int }
+type product_node = {
+  il_node : IL.node option;
+  (* The state of the automaton over the trace steps, in the product of the
+     CFG with that automaton: the index of the last trace step matched. *)
+  automaton_state : int;
+}
 
 module Product = Dataflow_core.Make (struct
-  type node = stage_node
+  type node = product_node
   type edge = IL.edge
   type flow = (node, edge) CFG.t
 
@@ -146,7 +151,7 @@ let index (fun_cfg : IL.fun_cfg) : index =
            Option.bind (LV.pname_of_param param) (fun (name : IL.name) ->
                start_of (snd name.ident)))
   in
-  let exposed = written_in_lambdas fun_cfg @ referenced fun_cfg in
+  let aliased = written_in_lambdas fun_cfg @ referenced fun_cfg in
   let nonlocal_written =
     nodes
     |> List.filter_map (fun ((_, node) : IL.nodei * IL.node) ->
@@ -162,9 +167,9 @@ let index (fun_cfg : IL.fun_cfg) : index =
     spans;
     calls;
     params;
-    exposed;
-    exposed_keys = List.map IL.str_of_name exposed;
-    call_forgotten_keys = List.map IL.str_of_name (exposed @ nonlocal_written);
+    aliased;
+    aliased_keys = List.map IL.str_of_name aliased;
+    call_killed_keys = List.map IL.str_of_name (aliased @ nonlocal_written);
   }
 
 let covering (ix : index) (first : int) (last : int) : IL.nodei list =
@@ -172,8 +177,8 @@ let covering (ix : index) (first : int) (last : int) : IL.nodei list =
   |> List.filter (fun (s : span) -> s.first <= first && last <= s.last)
   |> List.map (fun (s : span) -> s.span_node)
 
-let nodes_of_anchor (ix : index) (anchor : anchor) : IL.nodei list =
-  match anchor with
+let nodes_of_trace_step (ix : index) (trace_step : trace_step) : IL.nodei list =
+  match trace_step with
   | Entry -> [ ix.entry_node ]
   | Exit -> [ ix.exit_node ]
   | Token tok -> (
@@ -206,7 +211,7 @@ let equal_location_of_tok (tok1 : Tok.t) (tok2 : Tok.t) : bool =
   | _, Error _ ->
       false
 
-let equal_anchor (a1 : anchor) (a2 : anchor) : bool =
+let equal_trace_step (a1 : trace_step) (a2 : trace_step) : bool =
   match (a1, a2) with
   | Entry, Entry
   | Exit, Exit ->
@@ -218,10 +223,10 @@ let equal_anchor (a1 : anchor) (a2 : anchor) : bool =
   | Call e1, Call e2 -> Common.phys_equal e1 e2
   | (Entry | Exit | Token _ | Range _ | Call _), _ -> false
 
-let hash_anchors (anchors : anchor list) : int =
-  anchors
-  |> List.map (fun (anchor : anchor) ->
-         match anchor with
+let hash_trace_steps (trace_steps : trace_step list) : int =
+  trace_steps
+  |> List.map (fun (trace_step : trace_step) ->
+         match trace_step with
          | Entry -> -1
          | Exit -> -2
          | Call _ -> -3
@@ -230,7 +235,7 @@ let hash_anchors (anchors : anchor list) : int =
   |> Hashtbl.hash
 
 let entry_state (bindings : (IL.name * G.svalue) list) : state =
-  Live
+  Reachable
     {
       values =
         List.fold_left
@@ -242,18 +247,18 @@ let entry_state (bindings : (IL.name * G.svalue) list) : state =
 
 let value (lang : Lang.t) (s : state) (e : IL.exp) : G.svalue =
   match s with
-  | Dead -> G.NotCst
-  | Live { values; _ } -> Eval.eval (Eval.mk_env lang values) e
+  | Unreachable -> G.NotCst
+  | Reachable { values; _ } -> Eval.eval (Eval.mk_env lang values) e
 
 let literals (s : state) : (IL.exp * bool) list =
   match s with
-  | Dead -> []
-  | Live { literals; _ } -> literals
+  | Unreachable -> []
+  | Reachable { literals; _ } -> literals
 
 let refutes (s : state) (lits : (IL.exp * bool) list) : bool =
   match s with
-  | Dead -> false
-  | Live { literals; _ } -> not (LV.literals_consistent (lits @ literals))
+  | Unreachable -> false
+  | Reachable { literals; _ } -> not (LV.literals_consistent (lits @ literals))
 
 let equal_literal ((a1, n1) : IL.exp * bool) ((a2, n2) : IL.exp * bool) : bool
     =
@@ -261,24 +266,24 @@ let equal_literal ((a1, n1) : IL.exp * bool) ((a2, n2) : IL.exp * bool) : bool
 
 let equal_state (s1 : state) (s2 : state) : bool =
   match (s1, s2) with
-  | Dead, Dead -> true
-  | Live l1, Live l2 ->
+  | Unreachable, Unreachable -> true
+  | Reachable l1, Reachable l2 ->
       Var_env.eq_env Eval.eq l1.values l2.values
       && Int.equal (List.length l1.literals) (List.length l2.literals)
       && List.for_all
            (fun (l : IL.exp * bool) -> List.exists (equal_literal l) l2.literals)
            l1.literals
-  | Dead, Live _
-  | Live _, Dead ->
+  | Unreachable, Reachable _
+  | Reachable _, Unreachable ->
       false
 
 let join (s1 : state) (s2 : state) : state =
   match (s1, s2) with
-  | Dead, s
-  | s, Dead ->
+  | Unreachable, s
+  | s, Unreachable ->
       s
-  | Live l1, Live l2 ->
-      Live
+  | Reachable l1, Reachable l2 ->
+      Reachable
         {
           values = Dataflow_svalue.union_env l1.values l2.values;
           literals =
@@ -356,7 +361,7 @@ let assume (lang : Lang.t) (values : G.svalue Var_env.t)
   in
   let assumed = literals_of_condition cond positive in
   if List.exists (fun l -> Option.equal Bool.equal (decided l) (Some false)) assumed
-  then Dead
+  then Unreachable
   else
     let undecided =
       List.filter
@@ -367,7 +372,7 @@ let assume (lang : Lang.t) (values : G.svalue Var_env.t)
         assumed
     in
     if LV.literals_consistent (undecided @ known) then
-      Live
+      Reachable
         {
           values;
           literals =
@@ -376,9 +381,9 @@ let assume (lang : Lang.t) (values : G.svalue Var_env.t)
               undecided
             @ known;
         }
-    else Dead
+    else Unreachable
 
-let survives (ix : index) (instr : IL.instr) : IL.exp * bool -> bool =
+let not_killed_by (ix : index) (instr : IL.instr) : IL.exp * bool -> bool =
   let written =
     LV.lval_of_instr_opt instr |> Option.to_list |> base_vars
   in
@@ -419,7 +424,7 @@ let survives (ix : index) (instr : IL.instr) : IL.exp * bool -> bool =
       (fun (v : IL.name) -> List.exists (IL.equal_name v) names)
       read
   in
-  let reads_exposed = reads_any ix.exposed in
+  let reads_aliased = reads_any ix.aliased in
   let reads_locals_only =
     List.for_all
       (fun (lval : IL.lval) ->
@@ -434,25 +439,25 @@ let survives (ix : index) (instr : IL.instr) : IL.exp * bool -> bool =
   && ((not is_call)
      || reads_locals_only
         && (not (reads_any passed_vars))
-        && not reads_exposed)
-  && ((not writes_object) || not (object_read || reads_exposed))
+        && not reads_aliased)
+  && ((not writes_object) || not (object_read || reads_aliased))
 
 let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
     (node : IL.node) : state =
   match s with
-  | Dead -> Dead
-  | Live { values; literals } -> (
-      let values' = Dataflow_svalue.node_transfer lang fun_cfg values node in
+  | Unreachable -> Unreachable
+  | Reachable { values; literals } -> (
+      let values' = Dataflow_svalue.transfer_node_without_writes lang fun_cfg values node in
       match node.n with
       | TrueNode cond -> assume lang values literals cond true
       | FalseNode cond -> assume lang values literals cond false
       | NInstr instr ->
-          let forgotten =
+          let killed =
             match instr.i with
             | Call _
             | CallSpecial _
             | New _ ->
-                ix.call_forgotten_keys
+                ix.call_killed_keys
             | Assign _
             | AugmentedAssign _
             | AssignAnon _
@@ -462,19 +467,19 @@ let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
                 | None ->
                     []
                 | Some { base = Var _ | VarSpecial _ | Mem _; _ } ->
-                    ix.exposed_keys)
+                    ix.aliased_keys)
           in
-          Live
+          Reachable
             {
               values =
                 List.fold_left
                   (fun (values : G.svalue Var_env.t) (key : string) ->
                     VarMap.remove key values)
-                  values' forgotten;
+                  values' killed;
               literals =
                 (match literals with
                 | [] -> []
-                | _ -> List.filter (survives ix instr) literals);
+                | _ -> List.filter (not_killed_by ix instr) literals);
             }
       | Enter
       | Exit
@@ -485,18 +490,18 @@ let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
       | NThrow _
       | NOther _
       | NTodo _ ->
-          Live { values = values'; literals })
+          Reachable { values = values'; literals })
 
 let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
-    ~(entry : state) (anchors : anchor list) : verdict * state option list =
+    ~(entry : state) (trace_steps : trace_step list) : verdict * state option list =
   let sets =
-    anchors
-    |> List.map (fun (anchor : anchor) ->
-           CFG.NodeiSet.of_list (nodes_of_anchor ix anchor))
+    trace_steps
+    |> List.map (fun (trace_step : trace_step) ->
+           CFG.NodeiSet.of_list (nodes_of_trace_step ix trace_step))
     |> Array.of_list
   in
   let last = Array.length sets - 1 in
-  let unknown = (Unknown, List.map (fun (_ : anchor) -> None) anchors) in
+  let unknown = (Unknown, List.map (fun (_ : trace_step) -> None) trace_steps) in
   if last < 0 || Array.exists CFG.NodeiSet.is_empty sets then unknown
   else
     let flow = fun_cfg.cfg in
@@ -505,34 +510,34 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
       if i < last && mem (i + 1) n then advance (i + 1) n ((i + 1) :: acc)
       else acc
     in
-    let stages_at (i : int) (n : IL.nodei) : Stage.t list =
+    let product_states_at (i : int) (n : IL.nodei) : Product_state.t list =
       List.map (fun (j : int) -> (n, j)) (advance i n [ i ])
     in
-    let successors ((n, i) : Stage.t) : Stage.t list =
+    let successors ((n, i) : Product_state.t) : Product_state.t list =
       CFG.successors flow n
-      |> List.concat_map (fun ((m, _) : IL.nodei * IL.edge) -> stages_at i m)
+      |> List.concat_map (fun ((m, _) : IL.nodei * IL.edge) -> product_states_at i m)
     in
     let starts =
-      if mem 0 ix.entry_node then stages_at 0 ix.entry_node else []
+      if mem 0 ix.entry_node then product_states_at 0 ix.entry_node else []
     in
     let width = last + 1 in
-    let slot ((n, i) : Stage.t) : int = (n * width) + i in
-    let stage_of_slot (k : int) : Stage.t = (k / width, k mod width) in
+    let slot ((n, i) : Product_state.t) : int = (n * width) + i in
+    let product_state_of_slot (k : int) : Product_state.t = (k / width, k mod width) in
     let slots = Array.length flow.order_index * width in
     let reached = Array.make slots false in
-    List.iter (fun (p : Stage.t) -> reached.(slot p) <- true) starts;
-    let rec forward (edges : (Stage.t * Stage.t) list) (seen : int list)
-        (todo : Stage.t list) : (Stage.t * Stage.t) list * int list =
+    List.iter (fun (p : Product_state.t) -> reached.(slot p) <- true) starts;
+    let rec forward (edges : (Product_state.t * Product_state.t) list) (seen : int list)
+        (todo : Product_state.t list) : (Product_state.t * Product_state.t) list * int list =
       match todo with
       | [] -> (edges, seen)
       | p :: rest ->
           let succs = successors p in
           let fresh =
-            List.filter (fun (q : Stage.t) -> not reached.(slot q)) succs
+            List.filter (fun (q : Product_state.t) -> not reached.(slot q)) succs
           in
-          List.iter (fun (q : Stage.t) -> reached.(slot q) <- true) fresh;
+          List.iter (fun (q : Product_state.t) -> reached.(slot q) <- true) fresh;
           forward
-            (List.rev_append (List.map (fun (q : Stage.t) -> (p, q)) succs) edges)
+            (List.rev_append (List.map (fun (q : Product_state.t) -> (p, q)) succs) edges)
             (List.rev_append (List.map slot fresh) seen)
             (List.rev_append fresh rest)
     in
@@ -541,61 +546,62 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
     let finals =
       List.filter
         (fun (k : int) ->
-          let n, i = stage_of_slot k in
+          let n, i = product_state_of_slot k in
           Int.equal i last && mem last n)
         reached_slots
     in
     let predecessors = Array.make slots [] in
     List.iter
-      (fun ((p, q) : Stage.t * Stage.t) ->
+      (fun ((p, q) : Product_state.t * Product_state.t) ->
         predecessors.(slot q) <- p :: predecessors.(slot q))
       edges;
-    let live = Array.make slots false in
-    List.iter (fun (k : int) -> live.(k) <- true) finals;
-    let rec backward (todo : Stage.t list) : unit =
+    let coreachable = Array.make slots false in
+    List.iter (fun (k : int) -> coreachable.(k) <- true) finals;
+    let rec backward (todo : Product_state.t list) : unit =
       match todo with
       | [] -> ()
       | q :: rest ->
           let preds =
-            List.filter (fun (p : Stage.t) -> not live.(slot p))
+            List.filter (fun (p : Product_state.t) -> not coreachable.(slot p))
               predecessors.(slot q)
           in
-          List.iter (fun (p : Stage.t) -> live.(slot p) <- true) preds;
+          List.iter (fun (p : Product_state.t) -> coreachable.(slot p) <- true) preds;
           backward (List.rev_append preds rest)
     in
-    backward (List.map stage_of_slot finals);
+    backward (List.map product_state_of_slot finals);
     if List.is_empty finals then unknown
     else
       let graph = new Ograph_extended.ograph_mutable in
-      let start = graph#add_node { il_node = None; stage = 0 } in
-      let relevant = List.filter (fun (k : int) -> live.(k)) reached_slots in
+      let start = graph#add_node { il_node = None; automaton_state = 0 } in
+      let relevant = List.filter (fun (k : int) -> coreachable.(k)) reached_slots in
       let ids = Array.make slots (-1) in
       List.iter
         (fun (k : int) ->
-          let n, i = stage_of_slot k in
+          let n, i = product_state_of_slot k in
           ids.(k) <-
-            graph#add_node { il_node = Some (flow.graph#nodes#assoc n); stage = i })
+            graph#add_node
+              { il_node = Some (flow.graph#nodes#assoc n); automaton_state = i })
         relevant;
-      let id_of (p : Stage.t) : IL.nodei option =
+      let id_of (p : Product_state.t) : IL.nodei option =
         match ids.(slot p) with
         | -1 -> None
         | id -> Some id
       in
       List.iter
-        (fun (p : Stage.t) ->
+        (fun (p : Product_state.t) ->
           match id_of p with
           | Some id -> graph#add_arc ((start, id), IL.Direct)
           | None -> ())
         starts;
       List.iter
-        (fun ((p, q) : Stage.t * Stage.t) ->
+        (fun ((p, q) : Product_state.t * Product_state.t) ->
           match (id_of p, id_of q) with
           | Some pid, Some qid -> graph#add_arc ((pid, qid), IL.Direct)
           | _ -> ())
         edges;
       let product = CFG.make graph start start in
       let trans (mapping : state D.mapping) (pi : IL.nodei) : state D.inout =
-        let stage_node = product.graph#nodes#assoc pi in
+        let product_node = product.graph#nodes#assoc pi in
         let in_state =
           if Int.equal pi start then entry
           else
@@ -603,10 +609,10 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
             |> List.fold_left
                  (fun (acc : state) ((pp, _) : IL.nodei * IL.edge) ->
                    join acc mapping.(pp).D.out_env)
-                 Dead
+                 Unreachable
         in
         let out_state =
-          match stage_node.il_node with
+          match product_node.il_node with
           | Some node -> transfer lang fun_cfg ix in_state node
           | None -> in_state
         in
@@ -614,24 +620,24 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
       in
       let mapping =
         Product.fixpoint ~eq_env:equal_state ~join
-          ~init:(Product.new_node_array product { D.in_env = Dead; out_env = Dead })
+          ~init:(Product.new_node_array product { D.in_env = Unreachable; out_env = Unreachable })
           ~trans ~flow:product
       in
       let state_at (i : int) : state option =
         List.fold_left
           (fun (acc : state option) (k : int) ->
-            let n, j = stage_of_slot k in
+            let n, j = product_state_of_slot k in
             if Int.equal i j && mem i n then
               Some
-                (join (Option.value acc ~default:Dead) mapping.(ids.(k)).D.in_env)
+                (join (Option.value acc ~default:Unreachable) mapping.(ids.(k)).D.in_env)
             else acc)
           None relevant
       in
-      let states = List.mapi (fun (i : int) (_ : anchor) -> state_at i) anchors in
+      let states = List.mapi (fun (i : int) (_ : trace_step) -> state_at i) trace_steps in
       let verdict =
         match state_at last with
-        | Some (Live _) -> Feasible
-        | Some Dead -> Infeasible
+        | Some (Reachable _) -> Feasible
+        | Some Unreachable -> Infeasible
         | None -> Unknown
       in
       (verdict, states)

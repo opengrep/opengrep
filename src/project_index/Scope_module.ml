@@ -444,11 +444,11 @@ let class_field_aliases ~(definitions_by_qn : definition Common.SMap.t)
           let class_id = Function_id.of_il_name (AST_to_IL.var_of_name gname) in
           match
             List.find_opt
-              (fun (ci : entry) -> Function_id.equal ci.id class_id)
+              (fun (entry : entry) -> Function_id.equal entry.id class_id)
               own_classes
           with
           | None -> []
-          | Some (ci : entry) ->
+          | Some (entry : entry) ->
             let _, fields, _ = cdef.G.cbody in
             List.filter_map
               (fun (field : G.field) ->
@@ -461,7 +461,7 @@ let class_field_aliases ~(definitions_by_qn : definition Common.SMap.t)
                   with
                   | Some (Exports_definition
                             (Function_definitions (funcs : Func_info.t list))) ->
-                    Some ((Scope_binding.class_qn_of_entry ci), alias, funcs)
+                    Some ((Scope_binding.class_qn_of_entry entry), alias, funcs)
                   | Some (Exports_definition (Class_definition _))
                   | Some (Exports_object _)
                   | Some (Exports_module _)

@@ -43,7 +43,7 @@ let initial_context =
   }
 
 (* code that does not run as part of the enclosing construction *)
-let outside_construction ctx =
+let leave_construction ctx =
   {
     ctx with
     in_static_block = false;
@@ -82,7 +82,7 @@ class virtual ['self] iter_with_context =
       | { name = EN (Id (id, _ii)); attrs; _ }, ClassDef cdef ->
           let ctx =
             {
-              (outside_construction ctx) with
+              (leave_construction ctx) with
               in_class = Some { cid = id; cattrs = attrs; ckind = fst cdef.ckind };
               (* the body of a singleton object runs once, as a static
                * initialiser (Kotlin companion objects, Scala objects) *)
@@ -91,7 +91,7 @@ class virtual ['self] iter_with_context =
           in
           self#with_context_visit_definition (env, ctx) x
       | { attrs; _ }, FuncDef _fdef ->
-          let ctx = outside_construction ctx in
+          let ctx = leave_construction ctx in
           let ctx =
             if has_keyword G.Ctor attrs then
               if has_keyword G.Static attrs then
@@ -109,13 +109,13 @@ class virtual ['self] iter_with_context =
       match x.s with
       | OtherStmtWithStmt (OSWS_Block ("Static", _), [], _block) ->
           self#with_context_visit_stmt
-            (env, { (outside_construction ctx) with in_static_block = true })
+            (env, { (leave_construction ctx) with in_static_block = true })
             x
       | OtherStmtWithStmt (OSWS_Block ("Init", _), [], _block) ->
           self#with_context_visit_stmt
             ( env,
               {
-                (outside_construction ctx) with
+                (leave_construction ctx) with
                 in_constructor = true;
                 in_instance_init = true;
               } )
@@ -142,6 +142,6 @@ class virtual ['self] iter_with_context =
           self#visit_expr (env, { ctx with in_lvalue = false }) e2
       (* a lambda's body runs when it is called, not where it is written *)
       | Lambda _ ->
-          self#with_context_visit_expr (env, outside_construction ctx) x
+          self#with_context_visit_expr (env, leave_construction ctx) x
       | __else__ -> self#with_context_visit_expr (env, ctx) x
   end

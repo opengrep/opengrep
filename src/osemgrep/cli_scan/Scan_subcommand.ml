@@ -253,7 +253,7 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
       |> Result_.partition (fun (m : Core_result.processed_match) ->
              Core_json_output.match_to_match ~inline:inline_metavars m
              |> Result.map (fun (core_match : Out.core_match) ->
-                    (core_match, Core_json_output.origin_of_match m.pm)))
+                    (core_match, Core_json_output.source_tokens_of_match m.pm)))
       (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
       |> fst
       |> Core_json_output.dedup_and_sort

@@ -28,7 +28,7 @@ let svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK = 1000
 let taint_INTERFILE_DEPTH = 3
 (* The depth at which a callback's signature stops being instantiated
  * recursively. *)
-let taint_MAX_VISITS_PER_NODE = 4
+let taint_MAX_CALLBACK_INSTANTIATION_DEPTH = 4
 
 (** Bounds the number of variables we can track. *)
 let taint_MAX_TAINTED_VARS = 1000

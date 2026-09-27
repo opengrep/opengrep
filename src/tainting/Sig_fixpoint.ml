@@ -47,7 +47,7 @@ let recursive_members (graph : Call_graph.G.t)
          | [ fid ] -> if Call_graph.G.mem_edge graph fid fid then [ fid ] else []
          | _ -> members)
 
-let store ~(merge : Taint.trace_merge) ?(max_shape_depth : int option)
+let store ~(traces : Taint.kept_traces) ?(max_shape_depth : int option)
     (fid : Function_id.t)
     (fresh : Shape_and_sig.extended_sig list) (db : db) : db =
   let cut (xs : Shape_and_sig.extended_sig) : Shape_and_sig.extended_sig =
@@ -56,7 +56,7 @@ let store ~(merge : Taint.trace_merge) ?(max_shape_depth : int option)
     | Some max_depth ->
         { xs with
           Shape_and_sig.sig_ =
-            Taint_shape.truncate_signature ~merge ~max_depth
+            Taint_shape.truncate_signature ~traces ~max_depth
               xs.Shape_and_sig.sig_ }
   in
   let set =

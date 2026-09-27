@@ -75,17 +75,17 @@ let build
           (Names.Module_qn.to_string fi.fi_module_path))
       ~scope_of_owner:(fun (owner : Names.Class_qn.t) ->
         Option.map
-          (fun (ci : entry) ->
-            [ Some (Scope_binding.class_il_name_of ci) ])
+          (fun (entry : entry) ->
+            [ Some (Scope_binding.class_il_name_of entry) ])
           (Common.SMap.find_opt (Names.Class_qn.to_string owner) own_by_qn))
       own_classes
   in
   let self_bindings =
     List.concat_map
-      (fun (ci : entry) ->
-        Scope_binding.bindings_in_class ci (fun ~pos ~parent_path ->
+      (fun (entry : entry) ->
+        Scope_binding.bindings_in_class entry (fun ~pos ~parent_path ->
           [ Scope_binding.class_binding_of ~pos ~parent_path self_type_name
-              (Scope_binding.class_qn_of_entry ci) ]))
+              (Scope_binding.class_qn_of_entry entry) ]))
       own_classes
   in
   let imported =

@@ -1308,7 +1308,7 @@ conversion_declarator:
 class_specifier: class_head "{" optl(member_specification) "}"
      { let (kind, nameopt, baseopt) = $1 in
        nameopt, { c_kind = kind;
-                  c_inherit = baseopt; c_specifiers = [];
+                  c_inherit = baseopt; c_virt_specifiers = [];
                   c_members = ($2, $3, $4) } }
 
 (* todo in grammar they allow anon class with base_clause, weird.

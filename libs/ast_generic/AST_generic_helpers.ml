@@ -398,16 +398,16 @@ let argument_to_expr arg =
       raise NotAnExpr
 
 type construction_initializer =
-  | Object_initializer of expr list
+  | Object_or_collection_initializer of expr list
   | Array_initializer of expr
 
-let object_initializer_tag = "ObjectInitializer"
+let object_or_collection_initializer_tag = "ObjectInitializer"
 let array_initializer_tag = "ArrayInitializer"
 
-let object_initializer_argument ((l, entries, r) : expr list bracket) :
-    argument =
+let object_or_collection_initializer_argument
+    ((l, entries, r) : expr list bracket) : argument =
   OtherArg
-    ( (object_initializer_tag, l),
+    ( (object_or_collection_initializer_tag, l),
       [ E (Container (Tuple, (l, entries, r)) |> G.e) ] )
 
 let array_initializer_argument (tok : tok) (container : expr) : argument =
@@ -417,8 +417,8 @@ let construction_initializer_of_argument (arg : argument) :
     construction_initializer option =
   match arg with
   | OtherArg ((tag, _), [ E { e = Container (_, (_, entries, _)); _ } ])
-    when String.equal tag object_initializer_tag ->
-      Some (Object_initializer entries)
+    when String.equal tag object_or_collection_initializer_tag ->
+      Some (Object_or_collection_initializer entries)
   | OtherArg ((tag, _), [ E container ])
     when String.equal tag array_initializer_tag ->
       Some (Array_initializer container)
@@ -427,7 +427,7 @@ let construction_initializer_of_argument (arg : argument) :
 let exprs_of_construction_initializer (init : construction_initializer) :
     expr list =
   match init with
-  | Object_initializer entries -> entries
+  | Object_or_collection_initializer entries -> entries
   | Array_initializer container -> [ container ]
 
 let construction_arguments (args : argument list) :

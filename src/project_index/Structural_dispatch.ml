@@ -15,9 +15,9 @@ let dispatch_call_tok (c_m : FA.func_info) : Tok.t =
    and an arity, Java's [handle(String)] and [handle(int)], form a group.
    For a language whose top level scope is the project, the scope spans
    files. Each other member gets a Dispatch edge to the earliest by
-   position, which the reachability closure follows; a call stamps the
-   members its arguments select. Runs serially on the coordinator, like
-   [emit_dispatch_edges]. *)
+   position, which the reachability closure follows; a call records the
+   members its arguments select in its [id_callee_definition]. Runs
+   serially on the coordinator, like [emit_dispatch_edges]. *)
 let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     ~(graph : Call_graph.G.t)
     ~(class_table : Class_table.t)

@@ -2359,7 +2359,7 @@ and map_class_declaration_item (env : env)
             {
               c_kind = cwrap;
               c_inherit = v3;
-              c_specifiers = Option.to_list v2;
+              c_virt_specifiers = Option.to_list v2;
               c_members = v4;
             } )
         in

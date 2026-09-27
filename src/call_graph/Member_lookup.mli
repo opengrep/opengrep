@@ -10,13 +10,13 @@ type relation =
   | Prepended
 
 type 'c parent =
-  | Bound of relation * 'c
-  | Unbound of relation
+  | Resolved of relation * 'c
+  | Unresolved of relation
 
 type superclass =
   | Written_as_extends
   | Carrying_constructor_arguments
-  | Of_class_kind
+  | First_parent_if_class
 
 type mixins =
   | Applied_in_the_chain
@@ -49,16 +49,16 @@ type 'c base =
     }
   | Unknown_base
 
-type 'c tier =
+type 'c level =
   | Candidates of 'c candidate list
   | Base_subobjects of 'c base list
   | Unknown_classes
 
-type 'c linearisation = {
+type 'c lookup_order = {
   order : 'c list;
   complete : bool;
-  tiers : 'c tier list;
-  super_tiers : 'c tier list;
+  levels : 'c level list;
+  super_levels : 'c level list;
 }
 
 type ('c, 'a) selection =
@@ -67,10 +67,10 @@ type ('c, 'a) selection =
   | Undefined
   | Unknown
 
-val follows_receiver : strategy -> bool
+val super_follows_receiver_order : strategy -> bool
 val hides_inherited_overloads : strategy -> bool
-val tier_classes : 'c tier -> 'c list
-val after : equal:('c -> 'c -> bool) -> 'c -> 'c tier list -> 'c tier list
+val level_classes : 'c level -> 'c list
+val levels_after : equal:('c -> 'c -> bool) -> 'c -> 'c level list -> 'c level list
 
 val select :
   equal:('c -> 'c -> bool) ->
@@ -78,18 +78,18 @@ val select :
   overrides:(nearer:'a -> farther:'a -> bool) ->
   overload_key:('a -> int) ->
   declared_only:('a -> bool) ->
-  shared:('a -> bool) ->
+  is_static_member:('a -> bool) ->
   accumulate:bool ->
-  'c tier list ->
+  'c level list ->
   ('c, 'a) selection
 
-val linearise :
+val lookup_order :
   strategy ->
   equal:('c -> 'c -> bool) ->
   hash:('c -> int) ->
   parents:('c -> 'c parent list list) ->
   is_interface:('c -> bool) ->
-  defined_outside:('c -> bool) ->
+  is_external:('c -> bool) ->
   dereferences:('c -> 'c option) ->
   'c ->
-  'c linearisation
+  'c lookup_order

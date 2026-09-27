@@ -6,13 +6,13 @@ open Callee_resolution
    string (PHP), which the language resolves by name when the program runs. *)
 type reference =
   | Bound of G.expr
-  | Written of G.expr
+  | Callable_literal of G.expr
 
-(* [tmp] is the IL name of the wrapper an Elixir [&f/n] lowers to. *)
+(* [wrapper_name] is the IL name of the wrapper an Elixir [&f/n] lowers to. *)
 type candidate = {
   reference : reference;
   tok : Tok.t;
-  tmp : IL.name option;
+  wrapper_name : IL.name option;
   callable : G.expr list;
 }
 
@@ -149,13 +149,13 @@ let id_of_reference (e : G.expr) : (G.ident * G.id_info) option =
 let expr_of_reference (reference : reference) : G.expr =
   match reference with
   | Bound e
-  | Written e ->
+  | Callable_literal e ->
       e
 
-let candidate ?(tmp : IL.name option) ?(callable : G.expr list = [])
+let candidate ?(wrapper_name : IL.name option) ?(callable : G.expr list = [])
     (reference : reference) : candidate list =
   match id_of_reference (expr_of_reference reference) with
-  | Some ((_, tok), _) -> [ { reference; tok; tmp; callable } ]
+  | Some ((_, tok), _) -> [ { reference; tok; wrapper_name; callable } ]
   | None -> []
 
 let method_object_member ~(lang : Lang.t) (e : G.expr) :
@@ -229,7 +229,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
       | None -> [])
   | G.L (G.String _) -> (
       match reference_of_callable_literal ~lang arg_expr with
-      | Some reference -> candidate ~callable:[ arg_expr ] (Written reference)
+      | Some reference -> candidate ~callable:[ arg_expr ] (Callable_literal reference)
       | None -> [])
   | G.Call (callee, (_, [ G.Arg (inner : G.expr) ], _))
     when (Lang_config.get lang).Lang_config.reflection.Lang_config.callable_literals
@@ -254,7 +254,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
           let tmp_name =
             Visit_function_defs.synth_lambda_il_name_of_tok shortlambda_tok
           in
-          candidate ~tmp:tmp_name (Bound callee)
+          candidate ~wrapper_name:tmp_name (Bound callee)
       | _ -> [])
   (* Record literal: recurse into each field's value *)
   | G.Record (_, fields, _) ->
@@ -283,7 +283,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
   | G.Container
       ((G.List | G.Array), (_, [ _; { G.e = G.L (G.String _); _ } ], _)) -> (
       match reference_of_callable_literal ~lang arg_expr with
-      | Some reference -> candidate ~callable:[ arg_expr ] (Written reference)
+      | Some reference -> candidate ~callable:[ arg_expr ] (Callable_literal reference)
       | None ->
           List.concat_map (extract_callbacks_from_arg ~lang)
             (match arg_expr.G.e with
@@ -334,7 +334,7 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
              TARGET's sid under a different name; propagating it points
              at where the def and its signature live. A definition naming
              did not bind is identified by its site. *)
-          let made_here (rsid : G.SId.t) : bool =
+          let declared_at_definition (rsid : G.SId.t) : bool =
             let _, rfile, rline, rcol = G.SId.to_loc rsid in
             match Tok.loc_of_tok tok with
             | Ok (loc : Tok.location) ->
@@ -347,7 +347,8 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
              class) does not identify this definition. *)
           match !(n.IL.id_info.G.id_resolved) with
           | Some (_, rsid)
-            when (not (G.SId.is_unsafe_default rsid)) && made_here rsid ->
+            when (not (G.SId.is_unsafe_default rsid))
+                 && declared_at_definition rsid ->
               rsid
           | _ -> G.SId.of_site ~name:(fst n.IL.ident) ~file tok
         in
@@ -400,7 +401,7 @@ let try_identify_callback_args ~(lang : Lang.t)
                      G.Callable_reference reference :: callable.G.facts)
                candidate.callable;
            List_.map
-             (fun (fn_id : fn_id) -> (fn_id, candidate.tok, candidate.tmp))
+             (fun (fn_id : fn_id) -> (fn_id, candidate.tok, candidate.wrapper_name))
              fn_ids)
   in
   match arg with

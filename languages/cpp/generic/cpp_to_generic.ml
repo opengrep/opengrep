@@ -359,7 +359,7 @@ and map_typeC env x : G.type_ =
             let ent =
               {
                 G.name = G.EN n;
-                attrs = List_.map (map_modifier env) vdef.c_specifiers;
+                attrs = List_.map (map_modifier env) vdef.c_virt_specifiers;
                 tparams = None;
               }
             in
@@ -1925,7 +1925,7 @@ and map_class_definition_bis env
     {
       c_kind = v_c_kind;
       c_inherit = v_c_inherit;
-      c_specifiers = _;
+      c_virt_specifiers = _;
       c_members = v_c_members;
     } :
     G.class_definition =

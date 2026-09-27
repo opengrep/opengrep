@@ -6,7 +6,7 @@ type kind =
   | Class_kind of AST_generic.class_kind
   | Module_kind
 
-type role =
+type declaration_kind =
   | Definition of Function_id.t
   | Singleton_object
   | Trait_impl of Function_id.t
@@ -18,7 +18,7 @@ type parent =
 
 type parent_clause = {
   parent : parent;
-  relation : Linearisation.relation;
+  relation : Member_lookup.relation;
   written : AST_generic.type_ option;
   arguments : AST_generic.arguments option;
   delegate : AST_generic.expr option;
@@ -31,7 +31,7 @@ type member_import = {
 
 type class_scope = {
   binding : AST_generic.SId.t;
-  role : role;
+  declaration_kind : declaration_kind;
   members : Func_info.t list Common.SMap.t;
   fields : Func_info.t list Field_path_map.t;
   parents : parent_clause list;
@@ -41,8 +41,8 @@ type class_scope = {
   requirements : string list;
   kind : kind;
   declaration : Lang_config.class_declaration;
-  singleton_exposure : Class_parents.singleton_exposure;
-  bound_functions : Func_info.t list;
+  module_functions : Class_parents.module_functions;
+  constructor_functions : Func_info.t list;
   object_fields : Func_info.t list Field_path_map.t;
   extensions : Func_info.t list Common.SMap.t;
   reopens : bool;
@@ -50,7 +50,7 @@ type class_scope = {
 
 type scope_id = {
   scope_binding : AST_generic.SId.t;
-  scope_role : role;
+  scope_declaration_kind : declaration_kind;
 }
 
 val equal_scope_id : scope_id -> scope_id -> bool
@@ -83,8 +83,8 @@ type definition = {
 }
 
 type selected = {
-  definitions : (cls, definition) Linearisation.selection;
-  functions : (cls, Func_info.t) Linearisation.selection;
+  definitions : (cls, definition) Member_lookup.selection;
+  functions : (cls, Func_info.t) Member_lookup.selection;
 }
 
 module Selection_key : sig
@@ -93,7 +93,7 @@ module Selection_key : sig
     side : Class_parents.side;
     name : string;
     importing : int list;
-    tiers : (int * int) list list;
+    levels : (int * int) list list;
   }
 end
 
@@ -128,7 +128,7 @@ val build :
   compiled_in:(int -> Func_info.t -> bool) ->
   defined:(class_scope -> bool) ->
   link:(class_scope -> parent -> scope_id option) ->
-  outside:
+  cross_file_resolver:
     (position ->
     scope_id option ->
     AST_generic.name * string list ->
@@ -156,7 +156,7 @@ val class_of_path :
   context:scope_id option ->
   AST_generic.name * string list ->
   cls option
-val order : t -> cls -> cls Linearisation.linearisation
+val order : t -> cls -> cls Member_lookup.lookup_order
 val parents : t -> cls -> cls option list
 val parent_clauses : t -> cls -> (cls option * parent_clause) list
 
@@ -177,9 +177,9 @@ val member_table : cls -> Func_info.t list Common.SMap.t
 val instance_fields : cls -> string list -> Func_info.t list
 val object_fields : cls -> string list -> Func_info.t list
 val extensions : cls -> string -> Func_info.t list
-val bound_functions : cls -> Func_info.t list
-val exposes : cls -> string -> bool
-val is_abstraction : cls -> bool
+val constructor_functions : cls -> Func_info.t list
+val is_module_function : cls -> string -> bool
+val is_abstract_type : cls -> bool
 val declarations : cls -> Lang_config.class_declaration list
 val is_interface : cls -> bool
 val is_trait : cls -> bool
@@ -190,9 +190,9 @@ val overrides : lang:Lang.t -> nearer:definition -> farther:definition -> bool
 
 val select_member :
   lang:Lang.t ->
-  cls Linearisation.tier list ->
+  cls Member_lookup.level list ->
   defines:(cls -> definition list) ->
-  (cls, definition) Linearisation.selection
+  (cls, definition) Member_lookup.selection
 
 val definition_table : t -> cls -> definition list Common.SMap.t
 val own_definitions : t -> cls -> string -> definition list
@@ -200,13 +200,13 @@ val member_definitions : t -> cls -> definition list Common.SMap.t
 val members : t -> cls -> Func_info.t list Common.SMap.t
 val compiled_in : t -> build_configuration:int -> Func_info.t -> bool
 val memo : t -> memo
-val selected_of : (cls, definition) Linearisation.selection -> selected
-val tier_classes : cls Linearisation.tier list -> cls list
+val selected_of : (cls, definition) Member_lookup.selection -> selected
+val level_classes : cls Member_lookup.level list -> cls list
 
 val nearest :
-  cls Linearisation.tier list ->
+  cls Member_lookup.level list ->
   defines:(cls -> 'found list) ->
-  (cls, 'found) Linearisation.selection
+  (cls, 'found) Member_lookup.selection
 
-val find_along : cls Linearisation.tier list -> (cls -> 'found option) -> 'found option
+val find_nearest : cls Member_lookup.level list -> (cls -> 'found option) -> 'found option
 val descendants : t -> cls -> cls list

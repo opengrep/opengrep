@@ -1,6 +1,6 @@
 rules:
-  - id: redefinition_in_force_python
-    message: a call reaches the definition in force at the call
+  - id: reaching_definition_python
+    message: a call reaches the definition of its callee that reaches the call
     languages:
       - python
     severity: WARNING

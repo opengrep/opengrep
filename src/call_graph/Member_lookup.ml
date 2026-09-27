@@ -10,13 +10,13 @@ type relation =
   | Prepended
 
 type 'c parent =
-  | Bound of relation * 'c
-  | Unbound of relation
+  | Resolved of relation * 'c
+  | Unresolved of relation
 
 type superclass =
   | Written_as_extends
   | Carrying_constructor_arguments
-  | Of_class_kind
+  | First_parent_if_class
 
 type mixins =
   | Applied_in_the_chain
@@ -49,16 +49,16 @@ type 'c base =
     }
   | Unknown_base
 
-type 'c tier =
+type 'c level =
   | Candidates of 'c candidate list
   | Base_subobjects of 'c base list
   | Unknown_classes
 
-type 'c linearisation = {
+type 'c lookup_order = {
   order : 'c list;
   complete : bool;
-  tiers : 'c tier list;
-  super_tiers : 'c tier list;
+  levels : 'c level list;
+  super_levels : 'c level list;
 }
 
 type ('c, 'a) selection =
@@ -69,28 +69,28 @@ type ('c, 'a) selection =
 
 type 'c element =
   | Class of 'c
-  | Unbound_parent of 'c * int
-  | Rest_of of 'c
+  | Unresolved_parent of 'c * int
+  | Unknown_tail of 'c
 
-type merge_end =
+type merge_outcome =
   | Merged
   | Uncertain
   | Rejected
 
-(* A base class subobject: the anchor is the virtual base the path starts
-   from, or none for the most derived object; the path lists the classes
-   reached through non virtual bases from there. *)
+(* A base class subobject: the virtual base subobject is the virtual base
+   the path starts from, or none for the most derived object; the path lists
+   the classes reached through non virtual bases from there. *)
 type 'c subobject = {
-  anchor : 'c option;
+  virtual_base_subobject : 'c option;
   path : 'c list;
-  below : 'c base list;
+  bases : 'c base list;
 }
 
 type ('c, 'a) lookup_set =
   | Nothing_found
   | Unknown_set
   | Found of {
-      owner : 'c;
+      declaring_class : 'c;
       defs : 'a list;
       subobjects : 'c subobject list;
     }
@@ -99,7 +99,7 @@ type ('c, 'a) lookup_set =
       subobjects : 'c subobject list;
     }
 
-let follows_receiver (strategy : strategy) : bool =
+let super_follows_receiver_order (strategy : strategy) : bool =
   match strategy with
   | C3 _
   | Scala_class_linearisation
@@ -140,37 +140,37 @@ let rec has_unknown_base : type c. c base list -> bool =
       | Unknown_base -> true)
     bases
 
-let tier_classes (type c) (tier : c tier) : c list =
-  match tier with
+let level_classes (type c) (level : c level) : c list =
+  match level with
   | Candidates candidates ->
       List.map (fun (candidate : c candidate) -> candidate.cls) candidates
   | Base_subobjects bases -> base_classes bases
   | Unknown_classes -> []
 
-let alone (type c) (cls : c) : c candidate = { cls; hides = []; paths = 1 }
+let single_candidate (type c) (cls : c) : c candidate = { cls; hides = []; paths = 1 }
 
-let is_unknown (type c) (tier : c tier) : bool =
-  match tier with
+let is_unknown (type c) (level : c level) : bool =
+  match level with
   | Unknown_classes -> true
   | Candidates _
   | Base_subobjects _ ->
       false
 
-let truncated (type c) (tiers : c tier list) : c tier list =
-  let rec keep (remaining : c tier list) : c tier list =
+let truncated (type c) (levels : c level list) : c level list =
+  let rec keep (remaining : c level list) : c level list =
     match remaining with
     | [] -> []
     | Unknown_classes :: _ -> [ Unknown_classes ]
-    | ((Candidates _ | Base_subobjects _) as tier) :: rest -> tier :: keep rest
+    | ((Candidates _ | Base_subobjects _) as level) :: rest -> level :: keep rest
   in
-  keep tiers
+  keep levels
 
-(* The tiers after the one holding [cls]; when no tier holds it, the lookup
-   reaches only what the tiers leave unknown. *)
-let after (type c) ~(equal : c -> c -> bool) (cls : c) (tiers : c tier list) :
-    c tier list =
-  let holds (tier : c tier) : bool =
-    match tier with
+(* The levels after the one holding [cls]; when no level holds it, the lookup
+   reaches only what the levels leave unknown. *)
+let levels_after (type c) ~(equal : c -> c -> bool) (cls : c) (levels : c level list) :
+    c level list =
+  let holds (level : c level) : bool =
+    match level with
     | Candidates candidates ->
         List.exists
           (fun (candidate : c candidate) -> equal candidate.cls cls)
@@ -179,12 +179,12 @@ let after (type c) ~(equal : c -> c -> bool) (cls : c) (tiers : c tier list) :
     | Unknown_classes ->
         false
   in
-  let rec drop (remaining : c tier list) : c tier list =
+  let rec drop (remaining : c level list) : c level list =
     match remaining with
-    | [] -> if List.exists is_unknown tiers then [ Unknown_classes ] else []
-    | tier :: rest -> if holds tier then rest else drop rest
+    | [] -> if List.exists is_unknown levels then [ Unknown_classes ] else []
+    | level :: rest -> if holds level then rest else drop rest
   in
-  drop tiers
+  drop levels
 
 (* [class.member.lookup]: the lookup set of a subobject is its class's own
    declarations, else the merge of its bases' sets, where a set whose
@@ -194,13 +194,18 @@ let after (type c) ~(equal : c -> c -> bool) (cls : c) (tiers : c tier list) :
 let subobject_lookup (type c a) ~(equal : c -> c -> bool)
     ~(defines : c -> a list) (bases : c base list) : (c, a) lookup_set =
   let same_subobject (left : c subobject) (right : c subobject) : bool =
-    Option.equal equal left.anchor right.anchor
+    Option.equal equal left.virtual_base_subobject right.virtual_base_subobject
     && List.equal equal left.path right.path
   in
   let child (parent : c subobject) (cls : c) (virtual_base : bool)
-      (below : c base list) : c subobject =
-    if virtual_base then { anchor = Some cls; path = []; below }
-    else { anchor = parent.anchor; path = parent.path @ [ cls ]; below }
+      (bases : c base list) : c subobject =
+    if virtual_base then { virtual_base_subobject = Some cls; path = []; bases }
+    else
+      {
+        virtual_base_subobject = parent.virtual_base_subobject;
+        path = parent.path @ [ cls ];
+        bases;
+      }
   in
   let rec reachable (subobject : c subobject) : c subobject list =
     List.concat_map
@@ -210,7 +215,7 @@ let subobject_lookup (type c a) ~(equal : c -> c -> bool)
             let found = child subobject cls virtual_base bases in
             found :: reachable found
         | Unknown_base -> [])
-      subobject.below
+      subobject.bases
   in
   let dominated (lower : c subobject list) (upper : c subobject list) : bool =
     List.for_all
@@ -260,7 +265,7 @@ let subobject_lookup (type c a) ~(equal : c -> c -> bool)
         else if dominated upper lower then next
         else
           match (known, next) with
-          | Found left, Found right when equal left.owner right.owner ->
+          | Found left, Found right when equal left.declaring_class right.declaring_class ->
               Found { left with subobjects = upper @ lower }
           | _ ->
               Invalid
@@ -268,8 +273,8 @@ let subobject_lookup (type c a) ~(equal : c -> c -> bool)
   in
   let rec lookup (subobject : c subobject) (cls : c) : (c, a) lookup_set =
     match defines cls with
-    | _ :: _ as defs -> Found { owner = cls; defs; subobjects = [ subobject ] }
-    | [] -> merged subobject subobject.below
+    | _ :: _ as defs -> Found { declaring_class = cls; defs; subobjects = [ subobject ] }
+    | [] -> merged subobject subobject.bases
   and merged (subobject : c subobject) (bases : c base list) :
       (c, a) lookup_set =
     List.fold_left
@@ -281,7 +286,7 @@ let subobject_lookup (type c a) ~(equal : c -> c -> bool)
           | Unknown_base -> Unknown_set))
       Nothing_found bases
   in
-  match merged { anchor = None; path = []; below = bases } bases with
+  match merged { virtual_base_subobject = None; path = []; bases } bases with
   | Found found ->
       Found
         { found with subobjects = List_.uniq_by same_subobject found.subobjects }
@@ -291,8 +296,8 @@ module Key_map = Map.Make (Int)
 
 let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
     ~(overrides : nearer:a -> farther:a -> bool) ~(overload_key : a -> int)
-    ~(declared_only : a -> bool) ~(shared : a -> bool) ~(accumulate : bool)
-    (tiers : c tier list) : (c, a) selection =
+    ~(declared_only : a -> bool) ~(is_static_member : a -> bool) ~(accumulate : bool)
+    (levels : c level list) : (c, a) selection =
   let may_override (nearer : a) (farther : a) : bool =
     Int.equal (overload_key nearer) (overload_key farther)
     && overrides ~nearer ~farther
@@ -324,7 +329,7 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
     | _ -> if unknown then Unknown else Undefined
   in
   let rec walk (definer : c option) (visible : a list) (blocked : a list)
-      (earlier : a list Key_map.t) (remaining : c tier list) :
+      (earlier : a list Key_map.t) (remaining : c level list) :
       (c, a) selection =
     match remaining with
     | [] -> finish definer visible blocked false
@@ -339,15 +344,15 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
         match subobject_lookup ~equal ~defines bases with
         | Nothing_found -> walk definer visible blocked earlier rest
         | Unknown_set -> finish definer visible blocked true
-        | Found { owner; defs; subobjects } -> (
+        | Found { declaring_class; defs; subobjects } -> (
             match subobjects with
-            | _ :: _ :: _ when not (List.for_all shared defs) ->
+            | _ :: _ :: _ when not (List.for_all is_static_member defs) ->
                 next definer visible (blocked @ defs) defs
             | _ ->
                 next
                   (match definer with
                   | Some _ -> definer
-                  | None -> Some owner)
+                  | None -> Some declaring_class)
                   (visible @ defs) blocked defs)
         | Invalid { defs; _ } -> next definer visible (blocked @ defs) defs)
     | Candidates candidates :: rest -> (
@@ -426,78 +431,78 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
                 rest
             else finish definer visible blocked false)
   in
-  walk None [] [] Key_map.empty tiers
+  walk None [] [] Key_map.empty levels
 
-let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
+let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
     ~(hash : c -> int) ~(parents : c -> c parent list list)
-    ~(is_interface : c -> bool) ~(defined_outside : c -> bool)
-    ~(dereferences : c -> c option) : c -> c linearisation =
+    ~(is_interface : c -> bool) ~(is_external : c -> bool)
+    ~(dereferences : c -> c option) : c -> c lookup_order =
   let module Memo = Hashtbl.Make (struct
     type t = c
 
     let equal = equal
     let hash = hash
   end) in
-  let memo : c linearisation Memo.t = Memo.create 64 in
-  let links_memo : c tier list Memo.t = Memo.create 64 in
+  let memo : c lookup_order Memo.t = Memo.create 64 in
+  let superclass_chain_memo : c level list Memo.t = Memo.create 64 in
   let bases_memo : c base list Memo.t = Memo.create 64 in
   let same (left : c element) (right : c element) : bool =
     match (left, right) with
     | Class left, Class right
-    | Rest_of left, Rest_of right ->
+    | Unknown_tail left, Unknown_tail right ->
         equal left right
-    | Unbound_parent (left, left_index), Unbound_parent (right, right_index) ->
+    | Unresolved_parent (left, left_index), Unresolved_parent (right, right_index) ->
         equal left right && Int.equal left_index right_index
-    | (Class _ | Unbound_parent _ | Rest_of _), _ -> false
+    | (Class _ | Unresolved_parent _ | Unknown_tail _), _ -> false
   in
   let is_known (element : c element) : bool =
     match element with
     | Class _ -> true
-    | Unbound_parent _
-    | Rest_of _ ->
+    | Unresolved_parent _
+    | Unknown_tail _ ->
         false
   in
   let rec known_prefix (prefix : c list) (elements : c element list) :
       c list * bool =
     match elements with
     | Class cls :: rest -> known_prefix (cls :: prefix) rest
-    | (Unbound_parent _ | Rest_of _) :: _ -> (List.rev prefix, false)
+    | (Unresolved_parent _ | Unknown_tail _) :: _ -> (List.rev prefix, false)
     | [] -> (List.rev prefix, true)
   in
-  let unknown_after (complete : bool) : c tier list =
+  let unknown_suffix (complete : bool) : c level list =
     if complete then [] else [ Unknown_classes ]
   in
-  let along_order (cls : c) (order : c list) (complete : bool) :
-      c linearisation =
-    let tiers =
-      List.map (fun (found : c) -> Candidates [ alone found ]) order
-      @ unknown_after complete
+  let of_order (cls : c) (order : c list) (complete : bool) :
+      c lookup_order =
+    let levels =
+      List.map (fun (found : c) -> Candidates [ single_candidate found ]) order
+      @ unknown_suffix complete
     in
-    { order; complete; tiers; super_tiers = after ~equal cls tiers }
+    { order; complete; levels; super_levels = levels_after ~equal cls levels }
   in
-  (* A lookup that finds a definition among the known candidates of a tier
-     selects it: an unbound class of the same tier cannot hide it, since its
+  (* A lookup that finds a definition among the known candidates of a level
+     selects it: an unbound class of the same level cannot hide it, since its
      ancestors hold no known class, and a second definition there would make
      the program ill formed. A name the known candidates do not define is
      unknown. *)
   let known_then_unknown (known : c candidate list) (complete : bool) :
-      c tier list =
+      c level list =
     (match known with
     | [] -> []
     | _ :: _ -> [ Candidates known ])
-    @ unknown_after complete
+    @ unknown_suffix complete
   in
-  let of_elements (cls : c) (elements : c element list) : c linearisation =
+  let of_elements (cls : c) (elements : c element list) : c lookup_order =
     let order, complete = known_prefix [] elements in
-    along_order cls order complete
+    of_order cls order complete
   in
-  let class_alone (cls : c) : c linearisation =
-    along_order cls [ cls ] true
+  let of_class_only (cls : c) : c lookup_order =
+    of_order cls [ cls ] true
   in
   let relation_of (parent : c parent) : relation =
     match parent with
-    | Bound (relation, _)
-    | Unbound relation ->
+    | Resolved (relation, _)
+    | Unresolved relation ->
         relation
   in
   let is_extends (parent : c parent) : bool =
@@ -523,18 +528,18 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
   let in_elements (elements : c element list) (element : c element) : bool =
     List.exists (same element) elements
   in
-  let rec linearisation (active : c list) (cls : c) : c linearisation =
+  let rec lookup_order_of (active : c list) (cls : c) : c lookup_order =
     match Memo.find_opt memo cls with
     | Some found -> found
-    | None when List.exists (equal cls) active -> class_alone cls
+    | None when List.exists (equal cls) active -> of_class_only cls
     | None ->
         let found =
-          if defined_outside cls then
+          if is_external cls then
             {
               order = [ cls ];
               complete = false;
-              tiers = [ Candidates [ alone cls ]; Unknown_classes ];
-              super_tiers = [ Unknown_classes ];
+              levels = [ Candidates [ single_candidate cls ]; Unknown_classes ];
+              super_levels = [ Unknown_classes ];
             }
           else
             let active = cls :: active in
@@ -557,13 +562,13 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
   and elements (active : c list) (owner : c) (index : int) (parent : c parent)
       : c element list =
     match parent with
-    | Bound (_, cls) ->
-        let found = linearisation active cls in
+    | Resolved (_, cls) ->
+        let found = lookup_order_of active cls in
         List.map (fun (known : c) -> Class known) found.order
-        @ if found.complete then [] else [ Rest_of cls ]
-    | Unbound _ -> [ Unbound_parent (owner, index) ]
+        @ if found.complete then [] else [ Unknown_tail cls ]
+    | Unresolved _ -> [ Unresolved_parent (owner, index) ]
   and c3 (active : c list) (cls : c) ~(bases_listed_most_base_first : bool) :
-      c linearisation =
+      c lookup_order =
     let in_tail (sequences : c element list list) (element : c element) : bool
         =
       List.exists
@@ -631,7 +636,7 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         sequences
     in
     let rec merge (merged : c list) (sequences : c element list list) :
-        c list * merge_end =
+        c list * merge_outcome =
       match sequences with
       | [] -> (List.rev merged, Merged)
       | _ :: _ -> (
@@ -660,8 +665,8 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
               (fun (index : int) (parent : c parent) ->
                 let element =
                   match parent with
-                  | Bound (_, parent) -> Class parent
-                  | Unbound _ -> Unbound_parent (cls, next + index)
+                  | Resolved (_, parent) -> Class parent
+                  | Unresolved _ -> Unresolved_parent (cls, next + index)
                 in
                 (element, elements active cls (next + index) parent))
               (if bases_listed_most_base_first then List.rev sequence
@@ -677,11 +682,11 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
              | _ :: _ -> true)
     in
     match merge [] sequences with
-    | _, Rejected -> class_alone cls
-    | merged, Merged -> along_order cls (List_.uniq_by equal (cls :: merged)) true
+    | _, Rejected -> of_class_only cls
+    | merged, Merged -> of_order cls (List_.uniq_by equal (cls :: merged)) true
     | merged, Uncertain ->
-        along_order cls (List_.uniq_by equal (cls :: merged)) false
-  and scala (active : c list) (cls : c) : c linearisation =
+        of_order cls (List_.uniq_by equal (cls :: merged)) false
+  and scala (active : c list) (cls : c) : c lookup_order =
     let written =
       List.mapi (elements active cls) (List.concat (parents cls))
     in
@@ -693,7 +698,7 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         []
     in
     of_elements cls rightmost
-  and ruby (active : c list) (cls : c) : c linearisation =
+  and ruby (active : c list) (cls : c) : c lookup_order =
     let written = List.mapi (fun (index : int) parent -> (index, parent))
         (List.concat (parents cls))
     in
@@ -704,10 +709,10 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       |> List_.uniq_by
            (fun ((_ : int), (left : c parent)) ((_ : int), (right : c parent)) ->
              match (left, right) with
-             | Bound (_, left), Bound (_, right) -> equal left right
-             | (Bound _ | Unbound _), _ -> false)
+             | Resolved (_, left), Resolved (_, right) -> equal left right
+             | (Resolved _ | Unresolved _), _ -> false)
     in
-    let above =
+    let superclass_elements =
       match superclasses with
       | [] -> Some []
       | [ (index, parent) ] -> Some (elements active cls index parent)
@@ -716,73 +721,74 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
             List.find_opt
               (fun ((_ : int), (parent : c parent)) ->
                 match parent with
-                | Unbound _ -> true
-                | Bound _ -> false)
+                | Unresolved _ -> true
+                | Resolved _ -> false)
               several
           with
-          | Some (index, _) -> Some [ Unbound_parent (cls, index) ]
+          | Some (index, _) -> Some [ Unresolved_parent (cls, index) ]
           | None -> None)
     in
-    match above with
-    | None -> class_alone cls
-    | Some above ->
-        let before, after_class =
+    match superclass_elements with
+    | None -> of_class_only cls
+    | Some superclass_elements ->
+        let prepended, ancestors_after_class =
           List.fold_left
-            (fun ((before : c element list), (after_class : c element list))
+            (fun ((prepended : c element list),
+                  (ancestors_after_class : c element list))
                  ((index : int), (parent : c parent)) ->
               let fresh =
                 List_.uniq_by same (elements active cls index parent)
                 |> List.filter (fun (element : c element) ->
                        not
                          (in_elements
-                            (before @ (Class cls :: after_class))
+                            (prepended @ (Class cls :: ancestors_after_class))
                             element))
               in
               match relation_of parent with
-              | Included -> (before, fresh @ after_class)
-              | Prepended -> (fresh @ before, after_class)
+              | Included -> (prepended, fresh @ ancestors_after_class)
+              | Prepended -> (fresh @ prepended, ancestors_after_class)
               | Extends _
               | Implements
               | Mixin
               | Embedded ->
-                  (before, after_class))
-            ([], above) written
+                  (prepended, ancestors_after_class))
+            ([], superclass_elements) written
         in
-        of_elements cls (before @ (Class cls :: after_class))
-  and links (active : c list) (cls : c) ~(superclass : superclass)
-      ~(mixins : mixins) : c tier list =
-    match Memo.find_opt links_memo cls with
+        of_elements cls (prepended @ (Class cls :: ancestors_after_class))
+  and superclass_chain (active : c list) (cls : c) ~(superclass : superclass)
+      ~(mixins : mixins) : c level list =
+    match Memo.find_opt superclass_chain_memo cls with
     | Some found -> found
-    | None when List.exists (equal cls) active -> [ Candidates [ alone cls ] ]
+    | None when List.exists (equal cls) active -> [ Candidates [ single_candidate cls ] ]
     | None ->
         let found =
           match chain_parts cls ~superclass ~mixins with
           | Some parts -> chain_of (cls :: active) parts ~superclass ~mixins
-          | None -> [ Candidates [ alone cls ] ]
+          | None -> [ Candidates [ single_candidate cls ] ]
         in
-        Memo.replace links_memo cls found;
+        Memo.replace superclass_chain_memo cls found;
         found
   and chain_of (active : c list)
-      (((own : c tier list), (applied : c tier list), (above : c parent option)) :
-        c tier list * c tier list * c parent option) ~(superclass : superclass)
-      ~(mixins : mixins) : c tier list =
+      (((own : c level list), (applied : c level list), (superclass_parent : c parent option)) :
+        c level list * c level list * c parent option) ~(superclass : superclass)
+      ~(mixins : mixins) : c level list =
     let inherited =
-      match above with
-      | Some (Bound (_, parent)) -> links active parent ~superclass ~mixins
-      | Some (Unbound _) -> [ Unknown_classes ]
+      match superclass_parent with
+      | Some (Resolved (_, parent)) -> superclass_chain active parent ~superclass ~mixins
+      | Some (Unresolved _) -> [ Unknown_classes ]
       | None -> []
     in
     truncated (own @ applied @ inherited)
   and chain_parts (cls : c) ~(superclass : superclass) ~(mixins : mixins) :
-      (c tier list * c tier list * c parent option) option =
+      (c level list * c level list * c parent option) option =
     let written = List.concat (parents cls) in
-    if is_interface cls then Some ([ Candidates [ alone cls ] ], [], None)
+    if is_interface cls then Some ([ Candidates [ single_candidate cls ] ], [], None)
     else
       match superclasses written ~superclass with
       | _ :: _ :: _ -> None
       | chosen -> (
           let mixin_parents = List.filter is_mixin written in
-          let above =
+          let superclass_parent =
             match chosen with
             | [ parent ] -> Some parent
             | _ -> None
@@ -790,20 +796,20 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
           match mixins with
           | Applied_in_the_chain ->
               Some
-                ( [ Candidates [ alone cls ] ],
+                ( [ Candidates [ single_candidate cls ] ],
                   List.map
                     (fun (parent : c parent) ->
                       match parent with
-                      | Bound (_, mixin) -> Candidates [ alone mixin ]
-                      | Unbound _ -> Unknown_classes)
+                      | Resolved (_, mixin) -> Candidates [ single_candidate mixin ]
+                      | Unresolved _ -> Unknown_classes)
                     (List.rev mixin_parents),
-                  above )
+                  superclass_parent )
           | Flattened_into_the_class ->
               let used =
                 let found, complete = traits mixin_parents in
                 known_then_unknown found complete
               in
-              Some (Candidates [ alone cls ] :: used, [], above))
+              Some (Candidates [ single_candidate cls ] :: used, [], superclass_parent))
   and superclasses (written : c parent list) ~(superclass : superclass) :
       c parent list =
     match superclass with
@@ -820,12 +826,12 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
             | Prepended ->
                 false)
           written
-    | Of_class_kind -> (
+    | First_parent_if_class -> (
         match List.filter is_extends written with
-        | (Bound (_, parent) as first) :: _ when not (is_interface parent) ->
+        | (Resolved (_, parent) as first) :: _ when not (is_interface parent) ->
             [ first ]
-        | (Unbound _ as first) :: _ -> [ first ]
-        | Bound _ :: _
+        | (Unresolved _ as first) :: _ -> [ first ]
+        | Resolved _ :: _
         | [] ->
             [])
   and traits (written : c parent list) : c candidate list * bool =
@@ -836,8 +842,8 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         c list * bool =
       match pending with
       | [] -> (seen, complete)
-      | Unbound _ :: rest -> reach seen false rest
-      | Bound (_, trait) :: rest ->
+      | Unresolved _ :: rest -> reach seen false rest
+      | Resolved (_, trait) :: rest ->
           if List.exists (equal trait) seen then reach seen complete rest
           else reach (seen @ [ trait ]) complete (used trait @ rest)
     in
@@ -849,25 +855,25 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       complete )
   and single_inheritance (active : c list) (cls : c)
       ~(superclass : superclass) ~(interface_bodies_inherited : bool)
-      ~(mixins : mixins) : c linearisation =
+      ~(mixins : mixins) : c lookup_order =
     match chain_parts cls ~superclass ~mixins with
-    | None -> class_alone cls
-    | Some ((_, applied, above) as parts) ->
+    | None -> of_class_only cls
+    | Some ((_, applied, superclass_parent) as parts) ->
         let chain = chain_of active parts ~superclass ~mixins in
-        Memo.replace links_memo cls chain;
+        Memo.replace superclass_chain_memo cls chain;
         let ancestors =
           List.map
             (fun (parent : c parent) ->
               match parent with
-              | Bound (_, parent) -> Some (linearisation active parent)
-              | Unbound _ -> None)
+              | Resolved (_, parent) -> Some (lookup_order_of active parent)
+              | Unresolved _ -> None)
             (List.concat (parents cls))
         in
         let order =
           List_.uniq_by equal
             (cls
             :: List.concat_map
-                 (fun (ancestor : c linearisation option) ->
+                 (fun (ancestor : c lookup_order option) ->
                    match ancestor with
                    | Some found -> found.order
                    | None -> [])
@@ -875,7 +881,7 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         in
         let complete =
           List.for_all
-            (fun (ancestor : c linearisation option) ->
+            (fun (ancestor : c lookup_order option) ->
               match ancestor with
               | Some found -> found.complete
               | None -> false)
@@ -889,43 +895,43 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
                  {
                    cls = interface;
                    hides =
-                     (match (linearisation active interface).order with
-                     | _ :: above -> above
+                     (match (lookup_order_of active interface).order with
+                     | _ :: rest -> rest
                      | [] -> []);
                    paths = 1;
                  })
         in
-        let interface_tiers =
+        let interface_levels =
           if
             List.exists is_unknown chain
             || not (interface_bodies_inherited || is_interface cls)
           then []
           else known_then_unknown interfaces complete
         in
-        let super_tiers =
+        let super_levels =
           if is_interface cls then []
           else
             truncated
               (applied
               @
-              match above with
-              | Some (Bound (_, parent)) -> (linearisation active parent).tiers
-              | Some (Unbound _) -> [ Unknown_classes ]
+              match superclass_parent with
+              | Some (Resolved (_, parent)) -> (lookup_order_of active parent).levels
+              | Some (Unresolved _) -> [ Unknown_classes ]
               | None -> [])
         in
-        { order; complete; tiers = chain @ interface_tiers; super_tiers }
+        { order; complete; levels = chain @ interface_levels; super_levels }
   and bases_of (active : c list) (cls : c) : c base list =
     match Memo.find_opt bases_memo cls with
     | Some found -> found
     | None when List.exists (equal cls) active -> []
     | None ->
         let found =
-          if defined_outside cls then [ Unknown_base ]
+          if is_external cls then [ Unknown_base ]
           else
             List.map
               (fun (parent : c parent) ->
                 match parent with
-                | Bound (relation, base) ->
+                | Resolved (relation, base) ->
                     Base
                       {
                         cls = base;
@@ -940,14 +946,14 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
                               false);
                         bases = bases_of (cls :: active) base;
                       }
-                | Unbound _ -> Unknown_base)
+                | Unresolved _ -> Unknown_base)
               (List.concat (parents cls))
         in
         Memo.replace bases_memo cls found;
         found
-  and cpp (cls : c) : c linearisation =
+  and cpp (cls : c) : c lookup_order =
     let bases = bases_of [] cls in
-    let base_tiers =
+    let base_levels =
       match bases with
       | [] -> []
       | _ :: _ -> [ Base_subobjects bases ]
@@ -955,19 +961,19 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
     {
       order = List_.uniq_by equal (cls :: base_classes bases);
       complete = not (has_unknown_base bases);
-      tiers = Candidates [ alone cls ] :: base_tiers;
-      super_tiers = base_tiers;
+      levels = Candidates [ single_candidate cls ] :: base_levels;
+      super_levels = base_levels;
     }
-  and rust (active : c list) (cls : c) : c linearisation =
+  and rust (active : c list) (cls : c) : c lookup_order =
     let written = List.concat (parents cls) in
     let bound (relation_of_parent : relation -> bool) : c list =
       List.filter_map
         (fun (parent : c parent) ->
           match parent with
-          | Bound (relation, found) when relation_of_parent relation ->
+          | Resolved (relation, found) when relation_of_parent relation ->
               Some found
-          | Bound _
-          | Unbound _ ->
+          | Resolved _
+          | Unresolved _ ->
               None)
         written
     in
@@ -986,16 +992,16 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       List.filter_map
         (fun (parent : c parent) ->
           match parent with
-          | Bound (_, trait) -> Some trait
-          | Unbound _ -> None)
+          | Resolved (_, trait) -> Some trait
+          | Unresolved _ -> None)
         (List.concat (parents impl))
     in
     let impl_complete (impl : c) : bool =
       List.for_all
         (fun (parent : c parent) ->
           match parent with
-          | Bound _ -> true
-          | Unbound _ -> false)
+          | Resolved _ -> true
+          | Unresolved _ -> false)
         (List.concat (parents impl))
     in
     let implemented =
@@ -1003,7 +1009,7 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         List.concat_map
           (fun (impl : c) ->
             { cls = impl; hides = traits_of impl; paths = 1 }
-            :: List.map alone (traits_of impl))
+            :: List.map single_candidate (traits_of impl))
           impls
       with
       | [] -> []
@@ -1013,47 +1019,47 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       List.for_all
         (fun (parent : c parent) ->
           match parent with
-          | Bound (relation, impl) ->
+          | Resolved (relation, impl) ->
               (not (is_implements relation)) || impl_complete impl
-          | Unbound relation -> not (is_implements relation))
+          | Unresolved relation -> not (is_implements relation))
         written
     in
     let inherited =
       List.concat_map
         (fun (parent : c parent) ->
           match parent with
-          | Bound (relation, found) when not (is_implements relation) ->
-              (linearisation active found).tiers
-          | Bound _ -> []
-          | Unbound relation ->
+          | Resolved (relation, found) when not (is_implements relation) ->
+              (lookup_order_of active found).levels
+          | Resolved _ -> []
+          | Unresolved relation ->
               if is_implements relation then [] else [ Unknown_classes ])
         written
     in
     let dereferenced =
       match dereferences cls with
       | Some target when not (List.exists (equal target) active) ->
-          (linearisation active target).tiers
+          (lookup_order_of active target).levels
       | Some _
       | None ->
           []
     in
-    let tiers =
+    let levels =
       truncated
-        ((Candidates [ alone cls ] :: implemented) @ inherited @ dereferenced)
+        ((Candidates [ single_candidate cls ] :: implemented) @ inherited @ dereferenced)
     in
     {
       order =
         List_.uniq_by equal
           (cls
           :: List.concat_map
-               (fun (tier : c tier) -> tier_classes tier)
+               (fun (level : c level) -> level_classes level)
                (implemented @ inherited));
       complete =
         impls_complete && not (List.exists is_unknown (implemented @ inherited));
-      tiers;
-      super_tiers = [];
+      levels;
+      super_levels = [];
     }
-  and go (cls : c) : c linearisation =
+  and go (cls : c) : c lookup_order =
     let embedded (found : c) : c parent list = List.concat (parents found) in
     let add (next : (c * int) list) (parent : c) (paths : int) :
         (c * int) list =
@@ -1066,19 +1072,19 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
           next
       else next @ [ (parent, paths) ]
     in
-    let rec levels (seen : c list) (level : (c * int) list)
-        (tiers : c tier list) (known : bool) (unknown_here : bool) :
-        c list * bool * c tier list =
-      let tiers =
+    let rec by_depth (seen : c list) (at_depth : (c * int) list)
+        (levels : c level list) (known : bool) (unknown_here : bool) :
+        c list * bool * c level list =
+      let levels =
         if known then
-          tiers
+          levels
           @ known_then_unknown
               (List.map
                  (fun ((found : c), (paths : int)) ->
                    { cls = found; hides = []; paths })
-                 level)
+                 at_depth)
               (not unknown_here)
-        else tiers
+        else levels
       in
       let known = known && not unknown_here in
       let next, unbound =
@@ -1089,30 +1095,30 @@ let linearise (type c) (strategy : strategy) ~(equal : c -> c -> bool)
               (fun (((next : (c * int) list), (unbound : bool)))
                    (parent : c parent) ->
                 match parent with
-                | Unbound _ -> (next, true)
-                | Bound (_, parent) ->
+                | Unresolved _ -> (next, true)
+                | Resolved (_, parent) ->
                     if List.exists (equal parent) seen then (next, unbound)
                     else (add next parent paths, unbound))
               (next, unbound) (embedded found))
-          ([], false) level
+          ([], false) at_depth
       in
       match (next, unbound) with
-      | [], false -> (seen, known, tiers)
-      | _ -> levels (seen @ List.map fst next) next tiers known unbound
+      | [], false -> (seen, known, levels)
+      | _ -> by_depth (seen @ List.map fst next) next levels known unbound
     in
-    let order, complete, tiers = levels [ cls ] [ (cls, 1) ] [] true false in
+    let order, complete, levels = by_depth [ cls ] [ (cls, 1) ] [] true false in
     (* The method set of an interface is the union of the sets it embeds: a
        method reached along two embeddings is one method. *)
-    if is_interface cls then along_order cls order complete
+    if is_interface cls then of_order cls order complete
     else
       {
         order;
         complete;
-        tiers;
-        super_tiers =
-          (match tiers with
+        levels;
+        super_levels =
+          (match levels with
           | _ :: rest -> rest
           | [] -> []);
       }
   in
-  linearisation []
+  lookup_order_of []

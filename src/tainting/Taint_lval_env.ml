@@ -104,7 +104,7 @@ let compare_target ((n1, o1) : IL.name * T.offset list)
   | 0 -> List.compare T.compare_offset o1 o2
   | c -> c
 
-let union_by ~(join_cells : cell -> cell -> cell) ~(merge : T.trace_merge) le1
+let union_by ~(join_cells : cell -> cell -> cell) ~(traces : T.kept_traces) le1
     le2 =
   match (le1.dead, le2.dead) with
   (* Both dead: result stays dead. Return a clean empty env with the
@@ -120,9 +120,9 @@ let union_by ~(join_cells : cell -> cell -> cell) ~(merge : T.trace_merge) le1
       in
       {
         tainted;
-        control = Taints.union ~merge le1.control le2.control;
+        control = Taints.union ~traces le1.control le2.control;
         taints_to_propagate =
-          Var_env.varmap_union (Taints.union ~merge) le1.taints_to_propagate
+          Var_env.varmap_union (Taints.union ~traces) le1.taints_to_propagate
             le2.taints_to_propagate;
         pending_propagation_dests =
           (* THINK: Pending propagation is just meant to deal with
@@ -148,15 +148,15 @@ let union_by ~(join_cells : cell -> cell -> cell) ~(merge : T.trace_merge) le1
             le1.pointees le2.pointees;
       }
 
-let union ~lang ~(merge : T.trace_merge) le1 le2 =
-  union_by ~join_cells:(Shape.unify_cell ~lang ~merge) ~merge le1 le2
+let union ~lang ~(traces : T.kept_traces) le1 le2 =
+  union_by ~join_cells:(Shape.unify_cell ~lang ~traces) ~traces le1 le2
 
-let union_at_loop_head ~lang ~(merge : T.trace_merge) previous computed =
+let union_at_loop_head ~lang ~(traces : T.kept_traces) previous computed =
   let joined =
     union_by
       ~join_cells:(fun (previous_cell : cell) (computed_cell : cell) ->
-        Shape.join_folded_by_site ~lang ~merge (Some previous_cell) computed_cell)
-      ~merge previous computed
+        Shape.join_folded_by_site ~lang ~traces (Some previous_cell) computed_cell)
+      ~traces previous computed
   in
   let tainted =
     NameMap.fold
@@ -167,15 +167,15 @@ let union_at_loop_head ~lang ~(merge : T.trace_merge) previous computed =
             tainted
         | Some _
         | None ->
-            let folded = Shape.join_folded_by_site ~lang ~merge None cell in
+            let folded = Shape.join_folded_by_site ~lang ~traces None cell in
             if phys_equal folded cell then tainted
             else NameMap.add var folded tainted)
       joined.tainted joined.tainted
   in
   if phys_equal tainted joined.tainted then joined else { joined with tainted }
 
-let union_list ~lang ~(merge : T.trace_merge) ?(default = empty) les =
-  List.fold_left (union ~lang ~merge) default les
+let union_list ~lang ~(traces : T.kept_traces) ?(default = empty) les =
+  List.fold_left (union ~lang ~traces) default les
 
 (* Reduces an l-value into the form x.a_1. ... . a_N, the resulting l-value may
  * not represent the exact same object as the original l-value, but an
@@ -253,7 +253,7 @@ let check_tainted_lvals_limit tainted new_var =
         None)
   else Some tainted
 
-let add_shape lang ~(merge : T.trace_merge) var offset new_taints new_shape
+let add_shape lang ~(traces : T.kept_traces) var offset new_taints new_shape
     lval_env =
   match check_tainted_lvals_limit lval_env.tainted var with
   | None -> lval_env
@@ -263,7 +263,7 @@ let add_shape lang ~(merge : T.trace_merge) var offset new_taints new_shape
         if Tok.is_fake var_tok then new_taints
         else
           new_taints
-          |> Taints.map_taint ~merge (fun (t : T.taint) ->
+          |> Taints.map_taint ~traces (fun (t : T.taint) ->
                  T.push_token var_tok t)
       in
       {
@@ -271,7 +271,7 @@ let add_shape lang ~(merge : T.trace_merge) var offset new_taints new_shape
         tainted =
           NameMap.update var
             (fun opt_var_ref ->
-              Shape.update_offset_and_unify ~lang ~merge
+              Shape.update_offset_and_unify ~lang ~traces
                 ~write:(T.call_loc_of_tok (snd var.ident))
                 new_taints new_shape offset opt_var_ref)
             tainted;
@@ -281,7 +281,7 @@ let is_entry_object (var : IL.name)
     ((target, target_offset) : IL.name * T.offset list) : bool =
   IL.equal_name target var && List.is_empty target_offset
 
-let add_through_pointees lang ~(merge : T.trace_merge) var offset new_taints
+let add_through_pointees lang ~(traces : T.kept_traces) var offset new_taints
     new_shape lval_env =
   match NameMap.find_opt var lval_env.pointees with
   | None -> lval_env
@@ -291,7 +291,7 @@ let add_through_pointees lang ~(merge : T.trace_merge) var offset new_taints
           (* The variable's entry object is tracked in its own cell. *)
           if is_entry_object var pointee then lval_env
           else
-            add_shape lang ~merge target (target_offset @ offset) new_taints
+            add_shape lang ~traces target (target_offset @ offset) new_taints
               new_shape lval_env)
         lval_env targets
 
@@ -303,7 +303,7 @@ let writes_through (lval : IL.lval) : bool =
   | { base = Var _ | Mem _; _ } -> true
   | { base = VarSpecial _; _ } -> false
 
-let add_lval_shape lang ~(merge : T.trace_merge) lval new_taints new_shape
+let add_lval_shape lang ~(traces : T.kept_traces) lval new_taints new_shape
     lval_env =
   match normalize_lval lang lval with
   | None ->
@@ -312,21 +312,21 @@ let add_lval_shape lang ~(merge : T.trace_merge) lval new_taints new_shape
       lval_env
   | Some (var, offset) ->
       let lval_env =
-        add_shape lang ~merge var offset new_taints new_shape lval_env
+        add_shape lang ~traces var offset new_taints new_shape lval_env
       in
       if writes_through lval then
-        add_through_pointees lang ~merge var offset new_taints new_shape lval_env
+        add_through_pointees lang ~traces var offset new_taints new_shape lval_env
       else lval_env
 
-let add lang ~(merge : T.trace_merge) var offset new_taints lval_env =
-  add_shape lang ~merge var offset new_taints Bot lval_env
+let add lang ~(traces : T.kept_traces) var offset new_taints lval_env =
+  add_shape lang ~traces var offset new_taints Bot lval_env
 
-let add_written_through lang ~(merge : T.trace_merge) var offset new_taints
+let add_written_through lang ~(traces : T.kept_traces) var offset new_taints
     new_shape lval_env =
-  add_shape lang ~merge var offset new_taints new_shape lval_env
-  |> add_through_pointees lang ~merge var offset new_taints new_shape
+  add_shape lang ~traces var offset new_taints new_shape lval_env
+  |> add_through_pointees lang ~traces var offset new_taints new_shape
 
-let forget_pointees var lval_env =
+let kill_pointees var lval_env =
   if NameMap.mem var lval_env.pointees then
     { lval_env with pointees = NameMap.remove var lval_env.pointees }
   else lval_env
@@ -335,7 +335,7 @@ let set_pointee lang var (target : IL.lval) lval_env =
   match normalize_lval lang target with
   | Some target ->
       { lval_env with pointees = NameMap.add var [ target ] lval_env.pointees }
-  | None -> forget_pointees var lval_env
+  | None -> kill_pointees var lval_env
 
 let copy_pointees ~(srcs : IL.name list) ~(dst : IL.name) lval_env =
   match
@@ -344,7 +344,7 @@ let copy_pointees ~(srcs : IL.name list) ~(dst : IL.name) lval_env =
            Option.value ~default:[] (NameMap.find_opt src lval_env.pointees))
     |> List.sort_uniq compare_target
   with
-  | [] -> forget_pointees dst lval_env
+  | [] -> kill_pointees dst lval_env
   | targets ->
       { lval_env with pointees = NameMap.add dst targets lval_env.pointees }
 
@@ -356,10 +356,10 @@ let may_refer_to_entry_object lval_env (var : IL.name) : bool =
   | Some targets -> List.exists (is_entry_object var) targets
   | None -> false
 
-let add_lval lang ~(merge : T.trace_merge) lval new_taints lval_env =
-  add_lval_shape lang ~merge lval new_taints Bot lval_env
+let add_lval lang ~(traces : T.kept_traces) lval new_taints lval_env =
+  add_lval_shape lang ~traces lval new_taints Bot lval_env
 
-let propagate_to lang ~(merge : T.trace_merge) prop_var taints env =
+let propagate_to lang ~(traces : T.kept_traces) prop_var taints env =
   (* THINK: Should we record empty propagations anyways so that we can always
    *   match 'from' and 'to' ? We may be keeping around "pending" propagations
    *   that will never take place. *)
@@ -385,30 +385,30 @@ let propagate_to lang ~(merge : T.trace_merge) prop_var taints env =
               VarMap.remove prop_var env.pending_propagation_dests;
           }
         in
-        add_lval lang ~merge lval taints env
+        add_lval lang ~traces lval taints env
     | None -> env
 
 let find_var { tainted; _ } var = NameMap.find_opt var tainted
 
-let find_lval lang ~(merge : T.trace_merge) { tainted; _ } lval =
+let find_lval lang ~(traces : T.kept_traces) { tainted; _ } lval =
   let* var, offsets = normalize_lval lang lval in
   let* var_ref = NameMap.find_opt var tainted in
-  match Shape.find_in_cell ~lang ~merge offsets var_ref with
+  match Shape.find_in_cell ~lang ~traces offsets var_ref with
   | `Clean
   | `Not_found _ ->
       None
   | `Found cell -> Some cell
 
-let find_poly ~lang ~(merge : T.trace_merge) { tainted; _ } var offsets =
+let find_poly ~lang ~(traces : T.kept_traces) { tainted; _ } var offsets =
   let* var_ref = NameMap.find_opt var tainted in
-  Shape.find_in_cell_poly ~lang ~merge offsets var_ref
+  Shape.find_in_cell_poly ~lang ~traces offsets var_ref
 
-let find_lval_poly lang ~(merge : T.trace_merge) lval_env lval =
+let find_lval_poly lang ~(traces : T.kept_traces) lval_env lval =
   let* var, offsets = normalize_lval lang lval in
-  find_poly ~lang ~merge lval_env var offsets
+  find_poly ~lang ~traces lval_env var offsets
 
-let find_lval_xtaint lang ~(merge : T.trace_merge) env lval =
-  match find_lval lang ~merge env lval with
+let find_lval_xtaint lang ~(traces : T.kept_traces) env lval =
+  match find_lval lang ~traces env lval with
   | None -> `None
   | Some (Cell (xtaints, _shape)) -> xtaints
 
@@ -459,9 +459,9 @@ let filter_tainted pred ({ tainted; _ } as lval_env) =
   let tainted = tainted |> NameMap.filter (fun var _cell -> pred var) in
   { lval_env with tainted }
 
-let add_control_taints ~(merge : T.trace_merge) lval_env taints =
+let add_control_taints ~(traces : T.kept_traces) lval_env taints =
   if Taints.is_empty taints then lval_env
-  else { lval_env with control = Taints.union ~merge taints lval_env.control }
+  else { lval_env with control = Taints.union ~traces taints lval_env.control }
 
 let get_control_taints { control; _ } = control
 

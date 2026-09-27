@@ -1686,7 +1686,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
              | _ -> false))
          || Lang_reflection.is_send_method env.lang method_name -> (
       match
-        (callee.G.e, ruby_field_access_decode env.lang method_name args)
+        (callee.G.e, literal_field_access_decode env.lang method_name args)
       with
       | ( G.DotAccess (receiver, _, _),
           Some (first_id :: rest_ids, [], default_opt) ) ->
@@ -2720,7 +2720,7 @@ and expr env ?void e_gen : stmts * exp =
   | Fixme (kind, any_generic) ->
       ([], fixme_exp kind any_generic (related_exp e_gen))
 
-and one_target_value env (e : G.expr) : stmts * exp =
+and adjusted_to_one_value env (e : G.expr) : stmts * exp =
   let ss, e' = expr env e in
   match e'.e with
   | Fetch { base = Var result; rev_offset = [] } ->
@@ -2748,7 +2748,7 @@ and assigned_value env (lhs : G.expr) (rhs : G.expr) : stmts * exp =
   | G.Container ((G.Tuple | G.List | G.Array), _)
   | G.Record _ ->
       expr env rhs
-  | _ -> one_target_value env rhs
+  | _ -> adjusted_to_one_value env rhs
 
 and expr_opt env tok : G.expr option -> stmts * exp = function
   | None ->
@@ -3111,7 +3111,7 @@ and longest_literal_key_prefix (args : G.argument list) :
  * The [tail_args] list is empty when every [dig] key is literal;
  * when non-empty, the literal prefix is precise and the tail is
  * handed to the generic call as [prefix_lval.dig(tail_args)]. *)
-and ruby_field_access_decode (lang : Lang.t) (method_name : string)
+and literal_field_access_decode (lang : Lang.t) (method_name : string)
     (args : G.arguments) :
     (G.ident list * G.argument list * G.expr option) option =
   let arg_list = Tok.unbracket args in
@@ -4112,7 +4112,7 @@ and initialised_construction env (lval : lval) (origin_exp : G.expr)
   (* [new T(args) { X = v, ... }]: the construction, then a field write per
    * [X = v] entry; other entries (a collection's elements) are passed to the
    * construction as arguments. *)
-  | args, Some (H.Object_initializer entries) ->
+  | args, Some (H.Object_or_collection_initializer entries) ->
       let field_init (entry : G.expr) : (G.ident * G.expr) option =
         match entry.e with
         | G.AssignOp ({ e = G.N (G.Id (id, _)); _ }, _, v)
@@ -4191,7 +4191,7 @@ and stmt_aux env st : stmts =
       @ let_pattern_stmts (assign_pattern_env env) ~eorig:(Related (G.S st))
           pat e
   | G.DefStmt (ent, G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ }) ->
-      let ss1, e' = one_target_value env e in
+      let ss1, e' = adjusted_to_one_value env e in
       let ss_lv, lv = lval_of_ent env ent in
       let ss2, () = type_opt env opt_ty in
       ss1 @ ss_lv @ ss2 @ [ mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.S st)))) ]

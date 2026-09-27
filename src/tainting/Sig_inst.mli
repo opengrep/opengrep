@@ -57,7 +57,7 @@ val actuals_of_params : Taint.call_site -> (IL.name * IL.exp) list
 
 val instantiate_function_signature :
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   atoms:Effect_guard.atoms ->
   propagate_through_functions:bool ->
   ?max_offset:int ->
@@ -104,7 +104,7 @@ val mk_instantiations : unit -> instantiations
 val instantiate_at_call :
   instantiations ->
   lang:Lang.t ->
-  merge:Taint.trace_merge ->
+  traces:Taint.kept_traces ->
   atoms:Effect_guard.atoms ->
   propagate_through_functions:bool ->
   max_offset:int ->

@@ -111,11 +111,11 @@ let check_uses_shadow_def ast name =
                    (AST_generic.SId.to_string sid)
              | _ -> ())
 
-(* Every use of [name] binds the [n]th definition of that name (from 0, in
-   source order). *)
-let check_uses_bind_nth_def ast name n =
+(* Every use of [name] resolves to the [n]th definition of that name (from 0,
+   in source order). *)
+let check_uses_resolve_to_nth_def ast name n =
   match List.nth_opt (def_sids_of_name ast name) n with
-  | None -> Alcotest.failf "no definition #%d named '%s' found" n name
+  | None -> Alcotest.failf "no definition #%d of '%s' found" n name
   | Some def_sid -> (
       match resolutions_of_name ast name with
       | [] -> Alcotest.failf "no uses of '%s'" name
@@ -125,8 +125,9 @@ let check_uses_bind_nth_def ast name n =
                  match resolution with
                  | Some (_kind, sid) when AST_generic.SId.equal sid def_sid -> ()
                  | _ ->
-                     Alcotest.failf "use #%d of '%s' does not bind definition #%d"
-                       i name n))
+                     Alcotest.failf
+                       "use #%d of '%s' does not resolve to definition #%d" i
+                       name n))
 
 (* All resolved uses of [name] refer to one and the same binding (sid). *)
 let check_single_binding ast name =
@@ -165,7 +166,7 @@ let check_binding_groups ast name expected =
     (spf "bindings of '%s'" name)
     expected (binding_groups ast name)
 
-let check_sites_follow_textual_order ast name ~(last_use_sees_def : bool) =
+let check_sites_follow_textual_order ast name ~(last_use_resolves_to_def : bool) =
   check_single_binding ast name;
   match (def_sid_of_name ast name, resolutions_of_name ast name) with
   | Some def_sid, [ Some (_, assigned); Some (_, last) ] ->
@@ -175,8 +176,8 @@ let check_sites_follow_textual_order ast name ~(last_use_sees_def : bool) =
         false
         (Stdlib.( = ) (AST_generic.SId.to_loc assigned) def_site);
       Alcotest.(check bool)
-        (spf "the last use of '%s' sees the definition" name)
-        last_use_sees_def
+        (spf "the last use of '%s' resolves to the definition" name)
+        last_use_resolves_to_def
         (Stdlib.( = ) (AST_generic.SId.to_loc last) def_site)
   | _ -> Alcotest.failf "expected a definition and two resolved uses of '%s'" name
 
@@ -481,7 +482,7 @@ let tests parse_program =
                  Naming_AST.resolve lang ast;
                  (* [x] in the methods is the module's [x], not the static
                   * field, which is also a global *)
-                 check_uses_bind_nth_def ast "x" 0));
+                 check_uses_resolve_to_nth_def ast "x" 0));
       t "cpp capture lists refer to the enclosing variables" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/cpp/lambda_captures.cpp")
@@ -577,14 +578,14 @@ let tests parse_program =
           Naming_AST.resolve Lang.Solidity ast;
           check_resolutions ast "fa" [ "Other" ];
           check_resolutions ast "fb" [ "Other" ]);
-      t "kotlin do-while condition sees the body" (fun () ->
+      t "kotlin do-while condition is in the scope of the body" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/kotlin/do_while.kt")
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Kotlin ast;
           check_resolutions ast "x" [ "LocalVar" ]);
-      t "lua repeat until condition sees the body" (fun () ->
+      t "lua repeat until condition is in the scope of the body" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/lua/repeat_until.lua")
           in
@@ -601,13 +602,13 @@ let tests parse_program =
           check_resolutions ast "b" [ "LocalVar" ];
           (* a binding inside if does not leak *)
           check_resolutions ast "c" [ "Unresolved" ]);
-      t "cpp call with type arguments binds the function" (fun () ->
+      t "cpp call with type arguments resolves to the function" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/cpp/template_call.cpp")
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Cpp ast;
-          check_uses_bind_nth_def ast "f" 0);
+          check_uses_resolve_to_nth_def ast "f" 0);
       t "cpp rooted and qualified calls with type arguments" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/cpp/qualified_calls.cpp")
@@ -616,16 +617,16 @@ let tests parse_program =
           Naming_AST.resolve Lang.Cpp ast;
           check_resolutions ast "f" [ "Global"; "LocalVar" ];
           check_binding_groups ast "f" [ 0; 1 ];
-          check_uses_bind_nth_def ast "g" 0);
-      t "kotlin callable references bind the function and the class" (fun () ->
+          check_uses_resolve_to_nth_def ast "g" 0);
+      t "kotlin callable references resolve to the function and the class" (fun () ->
           let file =
             Fpath.v
               (Filename.concat tests_path "naming/kotlin/callable_reference.kt")
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Kotlin ast;
-          check_uses_bind_nth_def ast "f" 0;
-          check_uses_bind_nth_def ast "Foo" 0);
+          check_uses_resolve_to_nth_def ast "f" 0;
+          check_uses_resolve_to_nth_def ast "Foo" 0);
       t "lua assignment to an undeclared name binds a global" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/lua/global_assign.lua")
@@ -651,7 +652,7 @@ let tests parse_program =
           let ast = parse_program file in
           Naming_AST.resolve Lang.Julia ast;
           check_resolutions ast "Foo" [ "Global"; "Global" ];
-          check_uses_bind_nth_def ast "Foo" 0);
+          check_uses_resolve_to_nth_def ast "Foo" 0);
       t "r assignment binds in the current function" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/r/assign_scopes.R")
@@ -670,13 +671,13 @@ let tests parse_program =
           Naming_AST.resolve Lang.Hack ast;
           check_resolutions ast "$x" [ "LocalVar"; "LocalVar"; "LocalVar"; "LocalVar" ];
           check_single_binding ast "$x");
-      t "php namespaces hold their definitions" (fun () ->
+      t "php definitions are bound in their namespace" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/php/namespaces.php")
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Php ast;
-          check_uses_bind_nth_def ast "LIMIT" 0;
+          check_uses_resolve_to_nth_def ast "LIMIT" 0;
           match def_sids_of_name ast "helper" with
           | [ in_app; in_global ] ->
               Alcotest.(check bool) "two bindings" false
@@ -689,7 +690,7 @@ let tests parse_program =
           | sids ->
               Alcotest.failf "expected two definitions of helper, found %d"
                 (List.length sids));
-      t "hack namespaces hold their definitions" (fun () ->
+      t "hack definitions are bound in their namespace" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/hack/namespace.hack")
           in
@@ -712,11 +713,11 @@ let tests parse_program =
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Python ast;
-          check_sites_follow_textual_order ast "checker" ~last_use_sees_def:true;
-          check_sites_follow_textual_order ast "handler" ~last_use_sees_def:false;
+          check_sites_follow_textual_order ast "checker" ~last_use_resolves_to_def:true;
+          check_sites_follow_textual_order ast "handler" ~last_use_resolves_to_def:false;
           check_resolutions ast "counter" [ "Global"; "Global"; "Global"; "Global" ];
           check_single_site ast "counter");
-      t "bash assignment is global unless a local declaration is in force"
+      t "bash assignment is global unless a local declaration is in scope"
         (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/bash/assign_scopes.bash")
@@ -767,7 +768,7 @@ let tests parse_program =
           | sids ->
               Alcotest.failf "expected two definitions of f, found %d"
                 (List.length sids));
-          check_uses_bind_nth_def ast "f" 0);
+          check_uses_resolve_to_nth_def ast "f" 0);
       t "ruby module body is a scope" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/ruby/modules.rb")
@@ -798,7 +799,7 @@ let tests parse_program =
           | sids ->
               Alcotest.failf "expected two definitions of g, found %d"
                 (List.length sids));
-          check_uses_bind_nth_def ast "g" 0);
+          check_uses_resolve_to_nth_def ast "g" 0);
       t "lua binding statements rebind in textual order" (fun () ->
           let file =
             Fpath.v
@@ -806,6 +807,6 @@ let tests parse_program =
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Lua ast;
-          check_sites_follow_textual_order ast "checker" ~last_use_sees_def:true;
-          check_sites_follow_textual_order ast "handler" ~last_use_sees_def:false);
+          check_sites_follow_textual_order ast "checker" ~last_use_resolves_to_def:true;
+          check_sites_follow_textual_order ast "handler" ~last_use_resolves_to_def:false);
     ]

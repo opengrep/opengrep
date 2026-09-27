@@ -102,13 +102,17 @@ let build_definitions_by_qn ~(entries : entry list)
               companions))
       Func_lookup.Class_qn_map.empty entries
   in
-  let class_scope (entry : entry) (role : Class_table.role)
-      : Class_table.scope_id option =
+  let class_scope (entry : entry)
+      (declaration_kind : Class_table.declaration_kind) :
+      Class_table.scope_id option =
     match entry.entity with
     | Some { G.name = G.EN name; _ } ->
       Option.map
         (fun (sid : G.SId.t) ->
-          { Class_table.scope_binding = sid; scope_role = role })
+          {
+            Class_table.scope_binding = sid;
+            scope_declaration_kind = declaration_kind;
+          })
         (Class_table.definition_binding name)
     | Some _
     | None -> None
@@ -259,9 +263,9 @@ type linked_file = {
   lf_package : Names.Module_qn.t;
 }
 
-type written_start =
-  | Start_class of Class_table.scope_id
-  | Start_module of Names.Module_qn.t
+type qualifier =
+  | Qualifier_class of Class_table.scope_id
+  | Qualifier_module of Names.Module_qn.t
 
 module Written_key = struct
   type t = {
@@ -352,7 +356,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   in
   List.iter
     (fun (scope : Class_table.class_scope) ->
-      match scope.Class_table.role with
+      match scope.Class_table.declaration_kind with
       | Class_table.Definition _ ->
         Class_table.SId_tbl.replace definitions_of_binding
           scope.Class_table.binding
@@ -364,14 +368,14 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       | Class_table.Singleton_object
       | Class_table.Trait_impl _ -> ())
     collected;
-  let held_scope (id : Class_table.scope_id) : Class_table.scope_id =
+  let representative_scope (id : Class_table.scope_id) : Class_table.scope_id =
     if Scope_tbl.mem scope_file id then id
     else
       match
         Class_table.SId_tbl.find_opt definitions_of_binding
           id.Class_table.scope_binding
       with
-      | Some [ (held : Class_table.scope_id) ] -> held
+      | Some [ (representative : Class_table.scope_id) ] -> representative
       | Some _
       | None -> id
   in
@@ -381,20 +385,24 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   let qn_of_scope : string Scope_tbl.t = Scope_tbl.create 1024 in
   List.iter
     (fun (entry : entry) ->
-      let role =
+      let declaration_kind =
         match entry.kind with
         | K_class -> Some (Class_table.Definition entry.id)
         | K_companion -> Some Class_table.Singleton_object
         | K_function
         | K_method -> None
       in
-      match (role, entry.entity) with
-      | Some (role : Class_table.role), Some { G.name = G.EN (name : G.name); _ }
-        -> (
+      match (declaration_kind, entry.entity) with
+      | ( Some (declaration_kind : Class_table.declaration_kind),
+          Some { G.name = G.EN (name : G.name); _ } ) -> (
         match Class_table.definition_binding name with
         | Some (sid : G.SId.t) ->
           let id =
-            held_scope { Class_table.scope_binding = sid; scope_role = role }
+            representative_scope
+              {
+                Class_table.scope_binding = sid;
+                scope_declaration_kind = declaration_kind;
+              }
           in
           let qn = Names.Def_qn.to_string entry.qn in
           Scope_tbl.replace qn_of_scope id qn;
@@ -442,16 +450,16 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       | _ -> ())
     scopes_of_qn;
   let group_of : int Scope_tbl.t = Scope_tbl.create 1024 in
-  let members_of_group : (int, Class_table.class_scope list) Hashtbl.t =
+  let scopes_of_group : (int, Class_table.class_scope list) Hashtbl.t =
     Hashtbl.create 1024
   in
   let group_of_qn : (string, int) Hashtbl.t = Hashtbl.create 64 in
   let next_group = ref 0 in
   let add_to_group (group : int) (scope : Class_table.class_scope) : unit =
     Scope_tbl.replace group_of (Class_table.scope_id_of scope) group;
-    Hashtbl.replace members_of_group group
+    Hashtbl.replace scopes_of_group group
       (scope
-      :: Option.value (Hashtbl.find_opt members_of_group group) ~default:[])
+      :: Option.value (Hashtbl.find_opt scopes_of_group group) ~default:[])
   in
   let new_group (scope : Class_table.class_scope) : unit =
     let group = !next_group in
@@ -511,7 +519,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   let of_qn (qn : Names.Class_qn.t) : Class_table.scope_id option =
     unique_group (scopes_of qn)
   in
-  let of_qn_seen_from (lf : linked_file) (qn : Names.Class_qn.t)
+  let of_qn_visible_from (lf : linked_file) (qn : Names.Class_qn.t)
       : Class_table.scope_id option =
     unique_group
       (List.filter
@@ -526,7 +534,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       Pipeline.definition_of_target ~definitions_by_qn ~package:lf.lf_package qn
     with
     | Some (Class_definition { class_scope; _ }) ->
-      Option.map held_scope class_scope
+      Option.map representative_scope class_scope
     | Some (Function_definitions _)
     | None -> None
   in
@@ -535,25 +543,25 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     | Some (owner : Class_table.scope_id) -> owner :: owners owner
     | None -> []
   in
-  let start_of_text (lf : linked_file) ~(position : Class_table.position)
-      (text : string) : written_start option =
+  let qualifier_of_identifier (lf : linked_file) ~(position : Class_table.position)
+      (text : string) : qualifier option =
     let entries =
       Func_lookup.resolve_in_scope lf.lf_lookup ~caller_parent_path:[] text
     in
-    let named_class =
+    let referenced_class =
       match (position, Func_lookup.companion_of_entries entries) with
       | Class_table.Term_position, (Some _ as companion) -> companion
       | Class_table.Term_position, None
       | Class_table.Type_position, _ ->
         Func_lookup.class_of_entries entries
     in
-    match named_class with
+    match referenced_class with
     | Some (qn : Names.Class_qn.t) ->
-      Option.map (fun (id : Class_table.scope_id) -> Start_class id)
-        (of_qn_seen_from lf qn)
+      Option.map (fun (id : Class_table.scope_id) -> Qualifier_class id)
+        (of_qn_visible_from lf qn)
     | None ->
       Option.map
-        (fun (module_qn : Names.Module_qn.t) -> Start_module module_qn)
+        (fun (module_qn : Names.Module_qn.t) -> Qualifier_module module_qn)
         (Func_lookup.resolve_alias lf.lf_lookup text)
   in
   let constant_path ~(owners : Class_table.scope_id list) (path : string list)
@@ -569,44 +577,44 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
          owners
        @ [ [] ])
   in
-  let start_of_head (lf : linked_file) ~(owners : Class_table.scope_id list)
+  let qualifier_of_head (lf : linked_file) ~(owners : Class_table.scope_id list)
       ~(position : Class_table.position) (head : G.name)
-      : (written_start * string list) option =
-    let head_text, rest =
+      : (qualifier * string list) option =
+    let head_identifier, rest =
       match Class_table.qualified_path head with
       | (first : string) :: (rest : string list) -> (Some first, rest)
       | [] -> (None, [])
     in
-    let qualified (path : string list) : (written_start * string list) option =
+    let qualified (path : string list) : (qualifier * string list) option =
       match path with
       | _ :: _ :: _ ->
         Option.map
-          (fun (id : Class_table.scope_id) -> (Start_class id, []))
+          (fun (id : Class_table.scope_id) -> (Qualifier_class id, []))
           (List.find_map
              (fun (prefix : string list) ->
-               of_qn_seen_from lf (Names.Class_qn.of_parts (prefix @ path)))
+               of_qn_visible_from lf (Names.Class_qn.of_parts (prefix @ path)))
              (List.map Names.Module_qn.parts
                 (Func_lookup.own_modules lf.lf_lookup)
               @ [ [] ]))
       | []
       | [ _ ] -> None
     in
-    let by_text () : (written_start * string list) option =
-      Option.bind head_text (fun (first : string) ->
+    let by_identifier () : (qualifier * string list) option =
+      Option.bind head_identifier (fun (first : string) ->
         if cfg.Index_lang_rules.class_identity_is_constant_path then
           Option.map
-            (fun (id : Class_table.scope_id) -> (Start_class id, []))
+            (fun (id : Class_table.scope_id) -> (Qualifier_class id, []))
             (constant_path ~owners (first :: rest))
         else
-          match start_of_text lf ~position first with
-          | Some (start : written_start) -> Some (start, rest)
+          match qualifier_of_identifier lf ~position first with
+          | Some (start : qualifier) -> Some (start, rest)
           | None -> qualified (first :: rest))
     in
     let info = Class_table.id_info_of_name head in
     match (Class_table.binding_of_id_info info, !(info.G.id_resolved)) with
     | Some (sid : G.SId.t), _
       when Scope_tbl.mem group_of (Class_table.definition_scope sid) ->
-      Some (Start_class (Class_table.definition_scope sid), [])
+      Some (Qualifier_class (Class_table.definition_scope sid), [])
     | Some sid, _ -> (
       match Imports.import_of_binding lf.lf_info.fi_imports sid with
       | Some (imp : import) -> (
@@ -617,47 +625,47 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
         | Class_table.Type_position, _ ->
           Some
             ( (match class_of_module_path lf imp.im_target with
-               | Some (id : Class_table.scope_id) -> Start_class id
-               | None -> Start_module imp.im_target),
+               | Some (id : Class_table.scope_id) -> Qualifier_class id
+               | None -> Qualifier_module imp.im_target),
               rest ))
       | None -> (
         match !(info.G.id_resolved) with
         | Some ((G.ImportedEntity _ | G.ImportedModule _ | G.GlobalName _), _) ->
-          by_text ()
+          by_identifier ()
         | Some _
         | None -> None))
-    | None, _ -> by_text ()
+    | None, _ -> by_identifier ()
   in
-  let rec follow (lf : linked_file) (start : written_start)
+  let rec follow (lf : linked_file) (start : qualifier)
       (segments : string list) : Class_table.scope_id option =
     match (segments, start) with
-    | [], Start_class (id : Class_table.scope_id) -> Some id
-    | [], Start_module _ -> None
-    | (segment : string) :: (rest : string list), Start_class id ->
+    | [], Qualifier_class (id : Class_table.scope_id) -> Some id
+    | [], Qualifier_module _ -> None
+    | (segment : string) :: (rest : string list), Qualifier_class id ->
       Option.bind
         (Option.bind (Scope_tbl.find_opt group_of id) (fun (group : int) ->
            nested_in (Some group) segment))
         (fun (nested_id : Class_table.scope_id) ->
-          follow lf (Start_class nested_id) rest)
-    | segment :: rest, Start_module (module_qn : Names.Module_qn.t) -> (
+          follow lf (Qualifier_class nested_id) rest)
+    | segment :: rest, Qualifier_module (module_qn : Names.Module_qn.t) -> (
       match class_of_module_path lf (Names.Module_qn.concat module_qn segment) with
-      | Some (id : Class_table.scope_id) -> follow lf (Start_class id) rest
+      | Some (id : Class_table.scope_id) -> follow lf (Qualifier_class id) rest
       | None -> (
         match Func_lookup.module_attribute lf.lf_lookup module_qn segment with
         | Some (Func_lookup.Attr_class (qn : Names.Class_qn.t))
         | Some (Func_lookup.Attr_class_with_companion (qn, _)) ->
-          Option.bind (of_qn_seen_from lf qn) (fun (id : Class_table.scope_id) ->
-            follow lf (Start_class id) rest)
+          Option.bind (of_qn_visible_from lf qn) (fun (id : Class_table.scope_id) ->
+            follow lf (Qualifier_class id) rest)
         | Some (Func_lookup.Attr_module (submodule : Names.Module_qn.t)) ->
-          follow lf (Start_module submodule) rest
+          follow lf (Qualifier_module submodule) rest
         | Some (Func_lookup.Attr_functions _)
         | None -> None))
   in
   let resolve_written (lf : linked_file) ~(owners : Class_table.scope_id list)
       ~(position : Class_table.position)
       ((head : G.name), (rest : string list)) : Class_table.scope_id option =
-    Option.bind (start_of_head lf ~owners ~position head)
-      (fun ((start : written_start), (more : string list)) ->
+    Option.bind (qualifier_of_head lf ~owners ~position head)
+      (fun ((start : qualifier), (more : string list)) ->
         follow lf start (more @ rest))
   in
   let file_of_name (name : G.name) : linked_file option =
@@ -680,7 +688,9 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   let target_of_external (scope : Class_table.class_scope)
       : Class_table.scope_id option =
     let id = Class_table.scope_id_of scope in
-    match (scope.Class_table.role, Scope_tbl.find_opt scope_file id) with
+    match
+      (scope.Class_table.declaration_kind, Scope_tbl.find_opt scope_file id)
+    with
     | Class_table.Definition _, Some (lf : linked_file) ->
       Option.bind
         (Imports.import_of_binding lf.lf_info.fi_imports scope.Class_table.binding)
@@ -715,7 +725,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       in
       let targets : G.name Scope_tbl.t = Scope_tbl.create 16 in
       List.iter
-        (fun ((role : Symbol_table.receiver_role), (receiver : G.name),
+        (fun ((relation : Symbol_table.receiver_relation), (receiver : G.name),
               (funcs : Func_info.t list)) ->
           let binding =
             match
@@ -731,16 +741,16 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
               G.SId.of_site ~file:(Fpath.to_string lf.lf_info.fi_file) tok
           in
           let id = Class_table.definition_scope binding in
-          let named =
+          let by_member_name =
             List.fold_left
-              (fun (named : Func_info.t list Common.SMap.t) (func : Func_info.t) ->
+              (fun (by_member_name : Func_info.t list Common.SMap.t) (func : Func_info.t) ->
                 match Symbol_table.member_name func with
                 | Some (name : string) ->
                   Common.SMap.update name
-                    (fun (held : Func_info.t list option) ->
-                      Some (Option.value held ~default:[] @ [ func ]))
-                    named
-                | None -> named)
+                    (fun (existing : Func_info.t list option) ->
+                      Some (Option.value existing ~default:[] @ [ func ]))
+                    by_member_name
+                | None -> by_member_name)
               Common.SMap.empty funcs
           in
           let previous =
@@ -748,7 +758,9 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
             | Some (scope : Class_table.class_scope) -> scope
             | None ->
               { Class_table.binding;
-                role = (Class_table.definition_scope binding).Class_table.scope_role;
+                declaration_kind =
+                  (Class_table.definition_scope binding)
+                    .Class_table.scope_declaration_kind;
                 members = Common.SMap.empty;
                 fields = Class_table.Field_path_map.empty;
                 parents = [];
@@ -758,8 +770,8 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
                 requirements = [];
                 kind = Class_table.Class_kind G.Class;
                 declaration = Lang_config.Plain_class;
-                singleton_exposure = Class_parents.No_singleton_exposure;
-                bound_functions = [];
+                module_functions = Class_parents.No_module_functions;
+                constructor_functions = [];
                 object_fields = Class_table.Field_path_map.empty;
                 extensions = Common.SMap.empty;
                 reopens = false }
@@ -768,11 +780,11 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
             Common.SMap.union
               (fun (_ : string) (left : Func_info.t list)
                    (right : Func_info.t list) -> Some (left @ right))
-              earlier named
+              earlier by_member_name
           in
           Scope_tbl.replace targets id receiver;
           Scope_tbl.replace by_receiver id
-            (match role with
+            (match relation with
              | Symbol_table.Method_of ->
                { previous with Class_table.members = joined previous.Class_table.members }
              | Symbol_table.Extension_of ->
@@ -795,7 +807,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       match parent with
       | Class_table.Impl (site : Function_id.t) ->
         Some { Class_table.scope_binding = scope.Class_table.binding;
-               scope_role = Class_table.Trait_impl site }
+               scope_declaration_kind = Class_table.Trait_impl site }
       | Class_table.Bound (sid : G.SId.t) ->
         let own = Class_table.definition_scope sid in
         if Scope_tbl.mem group_of own then Some own
@@ -830,7 +842,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
   let resolved_written : Class_table.scope_id option Written_tbl.t =
     Written_tbl.create 1024
   in
-  let outside (position : Class_table.position)
+  let cross_file_resolver (position : Class_table.position)
       (context : Class_table.scope_id option)
       (((name : G.name), (rest : string list)) : G.name * string list)
       : Class_table.scope_id option =
@@ -887,7 +899,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
         (fun (id : Class_table.scope_id) ->
           add_to_group (Scope_tbl.find group_of id)
             { Class_table.binding = id.Class_table.scope_binding;
-              role = id.Class_table.scope_role;
+              declaration_kind = id.Class_table.scope_declaration_kind;
               members = Common.SMap.singleton name funcs;
               fields = Class_table.Field_path_map.empty;
               parents = [];
@@ -897,8 +909,8 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
               requirements = [];
               kind = Class_table.Class_kind G.Class;
               declaration = Lang_config.Plain_class;
-              singleton_exposure = Class_parents.No_singleton_exposure;
-              bound_functions = [];
+              module_functions = Class_parents.No_module_functions;
+              constructor_functions = [];
               object_fields = Class_table.Field_path_map.empty;
               extensions = Common.SMap.empty;
               reopens = false })
@@ -911,7 +923,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
         (* The definitions of one class are read in file path order: Ruby
            reads them in load order, which is not known statically. *)
         List.sort Class_table.compare_scope scopes :: classes)
-      members_of_group []
+      scopes_of_group []
     |> List.sort
          (fun (left : Class_table.class_scope list)
               (right : Class_table.class_scope list) ->
@@ -923,7 +935,7 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
       ~compiled_in:(Go_build_constraints.compiled_in build_constraints)
       ~defined:(fun (scope : Class_table.class_scope) ->
         Scope_tbl.mem defined (Class_table.scope_id_of scope))
-      ~link ~outside ~may_implement
+      ~link ~cross_file_resolver ~may_implement
   in
   { Pipeline.class_table;
     class_of_qn =
@@ -1164,13 +1176,13 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let classes_by_file : entry list Common.SMap.t =
     List.fold_left
-      (fun (by_file : entry list Common.SMap.t) (ci : entry) ->
-        match ci.kind with
+      (fun (by_file : entry list Common.SMap.t) (entry : entry) ->
+        match entry.kind with
         | K_class
         | K_companion ->
-          let key = Fpath.to_string ci.file in
+          let key = Fpath.to_string entry.file in
           Common.SMap.add key
-            (ci :: Option.value (Common.SMap.find_opt key by_file) ~default:[])
+            (entry :: Option.value (Common.SMap.find_opt key by_file) ~default:[])
             by_file
         | K_function
         | K_method -> by_file)
@@ -1354,7 +1366,7 @@ let build_project_call_graph (caps : < Cap.fork >)
                 (Names.Module_qn.to_string fi.fi_module_path) class_qn
                 by_module)
           Common.SMap.empty indexed_files;
-      object_classes =
+      singleton_objects =
         (if cfg.Index_lang_rules.object_members_bind_in_namespace then
            List.fold_left
              (fun (objects : unit Common.SMap.t) (entry : entry) ->
@@ -1515,7 +1527,7 @@ let build_project_call_graph (caps : < Cap.fork >)
           Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES);
   let type_state =
     timed "call graph: module singletons and value types" @@ fun () ->
-    Type_augment.add_value_type_sites ~lang ~table_of_file
+    Type_augment.add_value_type_annotations ~lang ~table_of_file
       (Type_augment.build_module_singleton_types ~table_of_file type_state
          file_infos)
       all_funcs
@@ -1651,7 +1663,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     List.concat_map
       (fun (cls : Class_table.cls) ->
         let ancestors =
-          match (Class_table.order classes.Pipeline.class_table cls).Linearisation.order with
+          match (Class_table.order classes.Pipeline.class_table cls).Member_lookup.order with
           | _ :: (rest : Class_table.cls list) -> rest
           | [] -> []
         in
@@ -1898,7 +1910,7 @@ let run_pipeline (caps : < Cap.fork >)
     build_project_call_graph caps ~cfg ~lang ~ncores ~entries:entries_pre_mro
       ~reexport_map ~go_packages all_files
   in
-  (* Inherited-method entry rows, derived from the same member resolution
+  (* Inherited-method entry rows, derived from the same member lookup
      order callee resolution reads, so the diagnostic dump matches what
      resolution sees.  Only [collect] consumers use these rows;
      [collect_resolved] discards them.  The derivation is one pass over the

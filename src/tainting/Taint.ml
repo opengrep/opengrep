@@ -327,11 +327,11 @@ and tokens = tainted_tokens
 and nodes = trace_node list
 
 and trace_node =
-  | Merge of { at : int; kept : side; other : side }
-  | Through of {
+  | Merge of { at : int; kept : alternative; other : alternative }
+  | Callee_trace of {
       at : int;
       site : call_site;
-      join_tok : tainted_token option;
+      call_tok : tainted_token option;
       inner_tokens : tokens;
       inner_token_count : int;
       inner_nodes : nodes;
@@ -343,10 +343,10 @@ and trace_node =
       inner_nodes : nodes;
     }
 
-and side = {
-  side_guard : EG.t;
-  side_taint : taint;
-  side_sink_trace : unit call_trace option;
+and alternative = {
+  alternative_guard : EG.t;
+  alternative_taint : taint;
+  alternative_sink_trace : unit call_trace option;
 }
 
 and call_site = {
@@ -356,11 +356,11 @@ and call_site = {
   callee_params : Signature_params.params;
   callee_params_il : IL.param list;
   caller_params : IL.param list option;
-  can_freeze : bool;
+  may_weaken_guards : bool;
   subst : [ `Effect | `Nested_sig ];
 }
 
-type trace_merge = Keep_best | Keep_both
+type kept_traces = One_trace_per_guard | All_traces
 
 let length_of_call_trace ct =
   let rec loop acc = function
@@ -426,18 +426,18 @@ let call_of_taint (callee : G.expr) (site : call_site) (t : taint)
     (inner : 'a call_trace) : 'a call_trace =
   Call (callee, site, t.tokens, t.token_count, t.nodes, inner)
 
-let through (site : call_site) ~(join_tok : tainted_token option)
+let append_callee_trace (site : call_site) ~(call_tok : tainted_token option)
     ~(inner : taint) (outer : taint) : taint =
-  if Int.equal inner.trace_length 0 && Option.is_none join_tok then outer
+  if Int.equal inner.trace_length 0 && Option.is_none call_tok then outer
   else
     {
       outer with
       nodes =
-        Through
+        Callee_trace
           {
             at = outer.token_count;
             site;
-            join_tok;
+            call_tok;
             inner_tokens = inner.tokens;
             inner_token_count = inner.token_count;
             inner_nodes = inner.nodes;
@@ -445,11 +445,11 @@ let through (site : call_site) ~(join_tok : tainted_token option)
         :: outer.nodes;
       trace_length =
         outer.trace_length + inner.trace_length
-        + List.length (Option.to_list join_tok);
+        + List.length (Option.to_list call_tok);
     }
 
-let record_merge ~(kept : side) ~(other : side) : taint =
-  let t = kept.side_taint in
+let record_merge ~(kept : alternative) ~(other : alternative) : taint =
+  let t = kept.alternative_taint in
   {
     t with
     nodes = [ Merge { at = t.token_count; kept; other } ];
@@ -472,7 +472,7 @@ let shares_trace (t1 : taint) (t2 : taint) : bool =
 let at_of_node (node : trace_node) : int =
   match node with
   | Merge { at; _ }
-  | Through { at; _ }
+  | Callee_trace { at; _ }
   | Reversed { at; _ } ->
       at
 
@@ -483,7 +483,7 @@ let compare_trace_lengths (t1 : taint) (t2 : taint) : int =
 
 type step =
   | Token of tainted_token
-  | Callee of { site : call_site; join_tok : tainted_token option; steps : step list }
+  | Callee of { site : call_site; call_tok : tainted_token option; steps : step list }
 
 type 'a flat_call_trace =
   | Flat_PM of PM.t * 'a
@@ -495,22 +495,22 @@ type 'a flat_call_trace =
       inner : 'a flat_call_trace;
     }
 
-type resolved = {
-  resolved_orig : orig option;
-  resolved_tokens : tainted_tokens;
-  resolved_steps : step list;
-  resolved_sink_trace : unit call_trace option;
+type trace_path = {
+  path_orig : orig option;
+  path_tokens : tainted_tokens;
+  path_steps : step list;
+  path_sink_trace : unit call_trace option;
   refuted_by_guard : bool;
 }
 
-let sides_in_order ~(valid : call_site list -> EG.t -> bool)
-    (ctx : call_site list) (kept : side) (other : side) : (side * bool) list =
-  let sides =
-    [ (kept, not (valid ctx kept.side_guard));
-      (other, not (valid ctx other.side_guard)) ]
+let alternatives_in_order ~(valid : call_site list -> EG.t -> bool)
+    (ctx : call_site list) (kept : alternative) (other : alternative) : (alternative * bool) list =
+  let alternatives =
+    [ (kept, not (valid ctx kept.alternative_guard));
+      (other, not (valid ctx other.alternative_guard)) ]
   in
-  List.filter (fun ((_, refuted) : side * bool) -> not refuted) sides
-  @ List.filter snd sides
+  List.filter (fun ((_, refuted) : alternative * bool) -> not refuted) alternatives
+  @ List.filter snd alternatives
 
 let first_some (a : 'a option) (b : 'a option) : 'a option =
   match a with
@@ -522,16 +522,16 @@ let token_steps (tokens : tokens) : step list =
 
 let pairs xs ys = Seq.flat_map (fun x -> Seq.map (fun y -> (x, y)) ys) xs
 
-let rec segment_resolutions ~valid (ctx : call_site list) (tokens : tokens)
-    (token_count : int) (nodes : nodes) : resolved Seq.t =
+let rec segment_paths ~valid (ctx : call_site list) (tokens : tokens)
+    (token_count : int) (nodes : nodes) : trace_path Seq.t =
   match nodes with
   | [] ->
       Seq.return
         {
-          resolved_orig = None;
-          resolved_tokens = tokens;
-          resolved_steps = token_steps tokens;
-          resolved_sink_trace = None;
+          path_orig = None;
+          path_tokens = tokens;
+          path_steps = token_steps tokens;
+          path_sink_trace = None;
           refuted_by_guard = false;
         }
   | node :: rest -> (
@@ -542,98 +542,98 @@ let rec segment_resolutions ~valid (ctx : call_site list) (tokens : tokens)
       let newer_steps = token_steps newer in
       match node with
       | Merge { kept; other; _ } ->
-          sides_in_order ~valid ctx kept other
+          alternatives_in_order ~valid ctx kept other
           |> List.to_seq
-          |> Seq.flat_map (fun ((side, refuted) : side * bool) ->
-                 segment_resolutions ~valid ctx side.side_taint.tokens
-                   side.side_taint.token_count side.side_taint.nodes
-                 |> Seq.map (fun (r : resolved) ->
+          |> Seq.flat_map (fun ((alternative, refuted) : alternative * bool) ->
+                 segment_paths ~valid ctx alternative.alternative_taint.tokens
+                   alternative.alternative_taint.token_count alternative.alternative_taint.nodes
+                 |> Seq.map (fun (r : trace_path) ->
                         {
-                          resolved_orig =
-                            first_some r.resolved_orig
-                              (Some side.side_taint.orig);
-                          resolved_tokens = newer @ r.resolved_tokens;
-                          resolved_steps = r.resolved_steps @ newer_steps;
-                          resolved_sink_trace =
-                            first_some r.resolved_sink_trace
-                              side.side_sink_trace;
+                          path_orig =
+                            first_some r.path_orig
+                              (Some alternative.alternative_taint.orig);
+                          path_tokens = newer @ r.path_tokens;
+                          path_steps = r.path_steps @ newer_steps;
+                          path_sink_trace =
+                            first_some r.path_sink_trace
+                              alternative.alternative_sink_trace;
                           refuted_by_guard = refuted || r.refuted_by_guard;
                         }))
-      | Through
-          { site; join_tok; inner_tokens; inner_token_count; inner_nodes; _ } ->
+      | Callee_trace
+          { site; call_tok; inner_tokens; inner_token_count; inner_nodes; _ } ->
           pairs
-            (segment_resolutions ~valid (site :: ctx) inner_tokens
+            (segment_paths ~valid (site :: ctx) inner_tokens
                inner_token_count inner_nodes)
-            (segment_resolutions ~valid ctx older at rest)
-          |> Seq.map (fun ((inner, r) : resolved * resolved) ->
+            (segment_paths ~valid ctx older at rest)
+          |> Seq.map (fun ((inner, r) : trace_path * trace_path) ->
                  {
                    r with
-                   resolved_tokens =
-                     newer @ inner.resolved_tokens @ Option.to_list join_tok
-                     @ r.resolved_tokens;
-                   resolved_steps =
-                     r.resolved_steps
-                     @ (Callee { site; join_tok; steps = inner.resolved_steps }
+                   path_tokens =
+                     newer @ inner.path_tokens @ Option.to_list call_tok
+                     @ r.path_tokens;
+                   path_steps =
+                     r.path_steps
+                     @ (Callee { site; call_tok; steps = inner.path_steps }
                        :: newer_steps);
                    refuted_by_guard =
                      inner.refuted_by_guard || r.refuted_by_guard;
                  })
       | Reversed { inner_tokens; inner_token_count; inner_nodes; _ } ->
           pairs
-            (segment_resolutions ~valid ctx inner_tokens inner_token_count
+            (segment_paths ~valid ctx inner_tokens inner_token_count
                inner_nodes)
-            (segment_resolutions ~valid ctx older at rest)
-          |> Seq.map (fun ((inner, r) : resolved * resolved) ->
+            (segment_paths ~valid ctx older at rest)
+          |> Seq.map (fun ((inner, r) : trace_path * trace_path) ->
                  {
-                   resolved_orig = first_some inner.resolved_orig r.resolved_orig;
-                   resolved_tokens =
-                     newer @ List.rev inner.resolved_tokens @ r.resolved_tokens;
-                   resolved_steps =
-                     r.resolved_steps @ inner.resolved_steps @ newer_steps;
-                   resolved_sink_trace =
-                     first_some inner.resolved_sink_trace r.resolved_sink_trace;
+                   path_orig = first_some inner.path_orig r.path_orig;
+                   path_tokens =
+                     newer @ List.rev inner.path_tokens @ r.path_tokens;
+                   path_steps =
+                     r.path_steps @ inner.path_steps @ newer_steps;
+                   path_sink_trace =
+                     first_some inner.path_sink_trace r.path_sink_trace;
                    refuted_by_guard =
                      inner.refuted_by_guard || r.refuted_by_guard;
                  }))
 
-let taint_resolutions ~valid (t : taint) : resolved Seq.t =
-  segment_resolutions ~valid [] t.tokens t.token_count t.nodes
+let trace_paths ~valid (t : taint) : trace_path Seq.t =
+  segment_paths ~valid [] t.tokens t.token_count t.nodes
 
-let rec call_trace_resolutions ~valid ~next (ctx : call_site list) ct =
+let rec call_trace_paths ~valid ~next (ctx : call_site list) ct =
   match ct with
   | PM (pm, x) -> Seq.return (Flat_PM (pm, x), false)
   | Call (callee, site, tokens, token_count, nodes, inner) ->
       let ctx = site :: ctx in
-      segment_resolutions ~valid ctx tokens token_count nodes
-      |> Seq.flat_map (fun (r : resolved) ->
-             call_trace_resolutions ~valid ~next ctx (next r inner)
+      segment_paths ~valid ctx tokens token_count nodes
+      |> Seq.flat_map (fun (r : trace_path) ->
+             call_trace_paths ~valid ~next ctx (next r inner)
              |> Seq.map (fun (flat, (refuted : bool)) ->
                     ( Flat_call
                         {
                           callee;
                           site;
-                          tokens = r.resolved_tokens;
-                          steps = r.resolved_steps;
+                          tokens = r.path_tokens;
+                          steps = r.path_steps;
                           inner = flat;
                         },
                       refuted || r.refuted_by_guard )))
 
-let source_trace_resolutions ~valid (ct : R.taint_source call_trace) :
+let source_trace_paths ~valid (ct : R.taint_source call_trace) :
     (R.taint_source flat_call_trace * bool) Seq.t =
-  call_trace_resolutions ~valid
-    ~next:(fun (r : resolved) (inner : R.taint_source call_trace) ->
-      match r.resolved_orig with
+  call_trace_paths ~valid
+    ~next:(fun (r : trace_path) (inner : R.taint_source call_trace) ->
+      match r.path_orig with
       | Some (Src src) -> src.call_trace
       | Some (Var _ | Shape_var _ | Control)
       | None ->
           inner)
     [] ct
 
-let sink_trace_resolutions ~valid (ct : unit call_trace) :
+let sink_trace_paths ~valid (ct : unit call_trace) :
     (unit flat_call_trace * bool) Seq.t =
-  call_trace_resolutions ~valid
-    ~next:(fun (r : resolved) (inner : unit call_trace) ->
-      Option.value r.resolved_sink_trace ~default:inner)
+  call_trace_paths ~valid
+    ~next:(fun (r : trace_path) (inner : unit call_trace) ->
+      Option.value r.path_sink_trace ~default:inner)
     [] ct
 
 let rec equal_flat_call_trace ct1 ct2 : bool =
@@ -648,8 +648,8 @@ let rec equal_flat_call_trace ct1 ct2 : bool =
   | Flat_call _, Flat_PM _ ->
       false
 
-let first_resolution resolutions =
-  match resolutions () with
+let first_path paths =
+  match paths () with
   | Seq.Cons (r, _) -> r
   | Seq.Nil -> raise Common.Impossible
 
@@ -661,24 +661,24 @@ type trace_key = {
   key_sink : unit flat_call_trace option;
 }
 
-let trace_key (s : side) : trace_key =
-  let r = first_resolution (taint_resolutions ~valid:any_guard s.side_taint) in
+let trace_key (s : alternative) : trace_key =
+  let r = first_path (trace_paths ~valid:any_guard s.alternative_taint) in
   {
-    key_tokens = r.resolved_tokens;
+    key_tokens = r.path_tokens;
     key_source =
-      (match first_some r.resolved_orig (Some s.side_taint.orig) with
+      (match first_some r.path_orig (Some s.alternative_taint.orig) with
       | Some (Src src) ->
           Some
             (fst
-               (first_resolution
-                  (source_trace_resolutions ~valid:any_guard src.call_trace)))
+               (first_path
+                  (source_trace_paths ~valid:any_guard src.call_trace)))
       | Some (Var _ | Shape_var _ | Control)
       | None ->
           None);
     key_sink =
-      first_some r.resolved_sink_trace s.side_sink_trace
+      first_some r.path_sink_trace s.alternative_sink_trace
       |> Option.map (fun (ct : unit call_trace) ->
-             fst (first_resolution (sink_trace_resolutions ~valid:any_guard ct)));
+             fst (first_path (sink_trace_paths ~valid:any_guard ct)));
   }
 
 let equal_trace_key (k1 : trace_key) (k2 : trace_key) : bool =
@@ -724,8 +724,6 @@ let rec compare_call_trace_positions : 'a. 'a call_trace -> 'a call_trace -> int
   | PM _, Call _ -> -1
   | Call _, PM _ -> 1
 
-(* The choice is by content, so the displayed trace does not depend on
- * recording order or sharing. *)
 let source_call_trace_length (t : taint) : int =
   match t.orig with
   | Src src -> length_of_call_trace src.call_trace
@@ -739,6 +737,8 @@ let sink_trace_length (sink_trace : unit call_trace option) : int =
   | None -> 0
   | Some sink_trace -> length_of_call_trace sink_trace
 
+(* The choice is by content, so the displayed trace does not depend on
+ * recording order or sharing. *)
 let compare_traces (taint1 : taint) (sink_trace1 : unit call_trace option)
     (taint2 : taint) (sink_trace2 : unit call_trace option) : int =
   if
@@ -776,40 +776,43 @@ let compare_traces (taint1 : taint) (sink_trace1 : unit call_trace option)
       | other -> other)
   | other -> other
 
-let rec leaf_sides (s : side) : side list =
-  match s.side_taint.nodes with
-  | [ Merge { at; kept; other } ] when Int.equal at s.side_taint.token_count ->
-      leaf_sides kept @ leaf_sides other
+let rec leaf_alternatives (s : alternative) : alternative list =
+  match s.alternative_taint.nodes with
+  | [ Merge { at; kept; other } ] when Int.equal at s.alternative_taint.token_count ->
+      leaf_alternatives kept @ leaf_alternatives other
   | _ -> [ s ]
 
-let keep_both ~(kept : side) ~(other : side) : taint =
-  let _held, merged =
-    leaf_sides other
+let keep_all_alternatives ~(kept : alternative) ~(other : alternative) : taint =
+  let _kept_keys, merged =
+    leaf_alternatives other
     |> List.fold_left
-         (fun ((held, acc) : trace_key list * side) (s : side) ->
+         (fun ((kept_keys, acc) : trace_key list * alternative)
+              (s : alternative) ->
            let key = trace_key s in
-           if List.exists (equal_trace_key key) held then (held, acc)
+           if List.exists (equal_trace_key key) kept_keys then (kept_keys, acc)
            else
-             (key :: held, { acc with side_taint = record_merge ~kept:acc ~other:s }))
-         (List.map trace_key (leaf_sides kept), kept)
+             ( key :: kept_keys,
+               { acc with alternative_taint = record_merge ~kept:acc ~other:s }
+             ))
+         (List.map trace_key (leaf_alternatives kept), kept)
   in
-  merged.side_taint
+  merged.alternative_taint
 
-let merge_items ~(merge : trace_merge) ~(kept : EG.t * taint * unit call_trace)
+let merge_items ~(traces : kept_traces) ~(kept : EG.t * taint * unit call_trace)
     ~(other : EG.t * taint * unit call_trace) : taint =
   let kept_guard, kept_taint, kept_sink_trace = kept in
   let other_guard, other_taint, other_sink_trace = other in
   let kept =
-    { side_guard = kept_guard; side_taint = kept_taint;
-      side_sink_trace = Some kept_sink_trace }
+    { alternative_guard = kept_guard; alternative_taint = kept_taint;
+      alternative_sink_trace = Some kept_sink_trace }
   in
   let other =
-    { side_guard = other_guard; side_taint = other_taint;
-      side_sink_trace = Some other_sink_trace }
+    { alternative_guard = other_guard; alternative_taint = other_taint;
+      alternative_sink_trace = Some other_sink_trace }
   in
-  match merge with
-  | Keep_best -> record_merge ~kept ~other
-  | Keep_both -> keep_both ~kept ~other
+  match traces with
+  | One_trace_per_guard -> record_merge ~kept ~other
+  | All_traces -> keep_all_alternatives ~kept ~other
 
 let compare_precondition (_ts1, f1) (_ts2, f2) =
   (* We don't consider the "incoming" taints here, assuming both
@@ -1021,13 +1024,13 @@ module Taint_set = struct
    *
    * coupling: If this changes, make sure to update docs for the `Taint.signature` type.
    *)
-  let rec add ~(merge : trace_merge) alt_guarded_taint set =
+  let rec add ~(traces : kept_traces) alt_guarded_taint set =
     Taints.update alt_guarded_taint.taint
       (function
         | None -> Some alt_guarded_taint
         | Some curr_guarded_taint ->
             Some
-              (merge_guarded_taints ~merge alt_guarded_taint curr_guarded_taint))
+              (merge_guarded_taints ~traces alt_guarded_taint curr_guarded_taint))
       set
 
   (* Merge two guarded taints with the same taint identity: best taint by the
@@ -1035,10 +1038,10 @@ module Taint_set = struct
    * [curr_guarded_taint] or [alt_guarded_taint] physically when the merge
    * equals it, so [Taints.update] and [union] return an argument
    * unchanged. *)
-  and merge_guarded_taints ~(merge : trace_merge) alt_guarded_taint
+  and merge_guarded_taints ~(traces : kept_traces) alt_guarded_taint
       curr_guarded_taint =
     let alt_taint, curr_taint, alt_is_best =
-      pick_best_taint ~merge alt_guarded_taint.taint curr_guarded_taint.taint
+      pick_best_taint ~traces alt_guarded_taint.taint curr_guarded_taint.taint
     in
     let best_taint, best_guard, other_taint, other_guard =
       if alt_is_best then
@@ -1049,15 +1052,15 @@ module Taint_set = struct
     let merged_guard =
       EG.compose_or alt_guarded_taint.guard curr_guarded_taint.guard
     in
-    let side (side_guard : EG.t) (side_taint : taint) : side =
-      { side_guard; side_taint; side_sink_trace = None }
+    let alternative (alternative_guard : EG.t) (alternative_taint : taint) : alternative =
+      { alternative_guard; alternative_taint; alternative_sink_trace = None }
     in
     let unchanged (guarded_taint : guarded_taint) (taint : taint) : bool =
       Common.phys_equal taint guarded_taint.taint
       && EG.equal merged_guard guarded_taint.guard
     in
-    match merge with
-    | Keep_best ->
+    match traces with
+    | One_trace_per_guard ->
         if unchanged curr_guarded_taint best_taint then curr_guarded_taint
         else if unchanged alt_guarded_taint best_taint then alt_guarded_taint
         else
@@ -1067,17 +1070,17 @@ module Taint_set = struct
               || same_trace alt_guarded_taint.taint curr_guarded_taint.taint
             then best_taint
             else
-              record_merge ~kept:(side best_guard best_taint)
-                ~other:(side other_guard other_taint)
+              record_merge ~kept:(alternative best_guard best_taint)
+                ~other:(alternative other_guard other_taint)
           in
           { taint; guard = merged_guard }
-    | Keep_both ->
+    | All_traces ->
         let taint =
           if same_trace alt_guarded_taint.taint curr_guarded_taint.taint then
             best_taint
           else
-            keep_both ~kept:(side best_guard best_taint)
-              ~other:(side other_guard other_taint)
+            keep_all_alternatives ~kept:(alternative best_guard best_taint)
+              ~other:(alternative other_guard other_taint)
         in
         if unchanged curr_guarded_taint taint then curr_guarded_taint
         else if unchanged alt_guarded_taint taint then alt_guarded_taint
@@ -1086,12 +1089,12 @@ module Taint_set = struct
   (* Hedge union: non-overlapping subtrees are linked without visiting
    * their elements; colliding keys merge like [add] (set1 is the
    * incoming side, matching the previous [fold add set1 set2]). *)
-  and union ~(merge : trace_merge) set1 set2 =
+  and union ~(traces : kept_traces) set1 set2 =
     Taints.union
-      (fun _taint b1 b2 -> Some (merge_guarded_taints ~merge b1 b2))
+      (fun _taint b1 b2 -> Some (merge_guarded_taints ~traces b1 b2))
       set1 set2
 
-  and merge_into ~(merge : trace_merge) (existing : t) (computed : t) : t =
+  and merge_into ~(traces : kept_traces) (existing : t) (computed : t) : t =
     if Common.phys_equal existing computed || Taints.is_empty computed then
       existing
     else if Taints.is_empty existing then computed
@@ -1101,14 +1104,14 @@ module Taint_set = struct
           Taints.update taint
             (function
               | None -> Some b2
-              | Some b1 -> Some (merge_guarded_taints ~merge b1 b2))
+              | Some b1 -> Some (merge_guarded_taints ~traces b1 b2))
             set)
         computed existing
 
-  and of_list ~(merge : trace_merge) guarded_taints =
-    List.fold_left (fun set b -> add ~merge b set) Taints.empty guarded_taints
+  and of_list ~(traces : kept_traces) guarded_taints =
+    List.fold_left (fun set b -> add ~traces b set) Taints.empty guarded_taints
 
-  and pick_best_taint ~(merge : trace_merge) taint1 taint2 =
+  and pick_best_taint ~(traces : kept_traces) taint1 taint2 =
     (* Here we assume that 'compare taint1 taint2 = 0' so we could keep any
        * of them, but we want "the best" one, e.g. the one with the shortest trace. *)
     match (taint1.orig, taint2.orig) with
@@ -1141,14 +1144,14 @@ module Taint_set = struct
                * and not having "Best_sources" [see note "Best matches" in 'Taint_spec_match'].
                * TOOD: Revisit ^^^ now we have `exact: true` sources.
                *)
-              let ts1' = of_list ~merge (List_.map lift_taint ts1) in
-              let ts2' = of_list ~merge (List_.map lift_taint ts2) in
+              let ts1' = of_list ~traces (List_.map lift_taint ts1) in
+              let ts2' = of_list ~traces (List_.map lift_taint ts2) in
               if equal ts1' ts2' then
                 (* Optimization: prefer sharing. *)
                 src1.precondition
               else
                 let ts =
-                  union ~merge ts1' ts2' |> elements
+                  union ~traces ts1' ts2' |> elements
                   |> List_.map (fun (b : guarded_taint) -> b.taint)
                 in
                 Some (ts, p1)
@@ -1183,7 +1186,7 @@ module Taint_set = struct
      [Dataflow_tainting]); when we detect that, rebuild the map with
      proper keys and merging instead of leaving stale keys behind.
      Returns the input set itself when [f] changes nothing. *)
-  let map ~(merge : trace_merge) f set =
+  let map ~(traces : kept_traces) f set =
     let changed = ref false in
     let rekey = ref false in
     let r =
@@ -1203,15 +1206,15 @@ module Taint_set = struct
           b')
         set
     in
-    if !rekey then Taints.fold (fun _ b acc -> add ~merge b acc) r Taints.empty
+    if !rekey then Taints.fold (fun _ b acc -> add ~traces b acc) r Taints.empty
     else if !changed then r
     else set
 
   (* Union the per-element results: identity-equal taints from different
      [f] outputs fuse guards ([compose_or]) and keep the best taint
      ([pick_best_taint]), as in [add]/[union]. *)
-  let bind ~(merge : trace_merge) set f =
-    Taints.fold (fun _ b acc -> union ~merge (f b) acc) set empty
+  let bind ~(traces : kept_traces) set f =
+    Taints.fold (fun _ b acc -> union ~traces (f b) acc) set empty
   let iter f set = Taints.iter (fun _ b -> f b) set
   let fold f set acc = Taints.fold (fun _ b acc -> f b acc) set acc
   let filter f set = Taints.filter (fun _ b -> f b) set
@@ -1222,8 +1225,8 @@ module Taint_set = struct
     set |> elements |> List_.map (fun (b : guarded_taint) -> b.taint)
 
   (* Lift a list of bare taints with [EG.top] guards. *)
-  let of_taint_list ~(merge : trace_merge) (taints : taint list) : t =
-    of_list ~merge (List_.map lift_taint taints)
+  let of_taint_list ~(traces : kept_traces) (taints : taint list) : t =
+    of_list ~traces (List_.map lift_taint taints)
 
   (* Conjoin [g] into every guarded taint's guard. *)
   let conjoin_guard (g : EG.t) (set : t) : t =
@@ -1243,17 +1246,17 @@ module Taint_set = struct
           b.guard bs
 
   (* Convenience: add a bare taint (with [EG.top] guard) to a set. *)
-  let add_taint ~(merge : trace_merge) (t : taint) (set : t) : t =
-    add ~merge (lift_taint t) set
+  let add_taint ~(traces : kept_traces) (t : taint) (set : t) : t =
+    add ~traces (lift_taint t) set
 
   (* Convenience: add a taint with a specific guard. *)
-  let add_taint_with_guard ~(merge : trace_merge) (t : taint) (g : EG.t)
+  let add_taint_with_guard ~(traces : kept_traces) (t : taint) (g : EG.t)
       (set : t) : t =
-    add ~merge { taint = t; guard = g } set
+    add ~traces { taint = t; guard = g } set
 
   (* Map the inner [taint] of every guarded taint, leaving guards untouched. *)
-  let map_taint ~(merge : trace_merge) (f : taint -> taint) (set : t) : t =
-    set |> map ~merge (fun (b : guarded_taint) -> { b with taint = f b.taint })
+  let map_taint ~(traces : kept_traces) (f : taint -> taint) (set : t) : t =
+    set |> map ~traces (fun (b : guarded_taint) -> { b with taint = f b.taint })
 end
 
 type taints = Taint_set.t
@@ -1364,7 +1367,7 @@ and labels_in_taints taints =
          | Src { label; precondition = Some (incoming, pre); _ } -> (
              match
                solve_precondition ~ignore_poly_taint:false
-                 ~taints:(Taint_set.of_taint_list ~merge:Keep_best incoming)
+                 ~taints:(Taint_set.of_taint_list ~traces:One_trace_per_guard incoming)
                  pre
              with
              | Some true -> sure_labels := LabelSet.add label !sure_labels
@@ -1393,7 +1396,7 @@ let taints_satisfy_requires taints pre =
    *)
   match
     solve_precondition ~ignore_poly_taint:true
-      ~taints:(Taint_set.of_taint_list ~merge:Keep_best taints) pre
+      ~taints:(Taint_set.of_taint_list ~traces:One_trace_per_guard taints) pre
   with
   | Some b -> b
   | None ->
@@ -1415,7 +1418,7 @@ let filter_relevant_taints requires taints =
              true)
 
 (* Just a straightforward bottom-up map on preconditions. *)
-let rec map_preconditions ~(merge : trace_merge) f taint =
+let rec map_preconditions ~(traces : kept_traces) f taint =
   match taint.orig with
   | Var _
   | Shape_var _
@@ -1425,9 +1428,9 @@ let rec map_preconditions ~(merge : trace_merge) f taint =
   | Src ({ precondition = Some (incoming, expr); _ } as src) -> (
       let new_incoming =
         incoming
-        |> List_.filter_map (map_preconditions ~merge f)
+        |> List_.filter_map (map_preconditions ~traces f)
         |> f
-        |> Taint_set.of_taint_list ~merge
+        |> Taint_set.of_taint_list ~traces
       in
       let new_incoming = filter_relevant_taints expr new_incoming in
       match
@@ -1486,7 +1489,7 @@ let taint_of_pm ~incoming pm =
   | Some orig -> Some (taint_of_orig orig)
   | None -> None
 
-let taints_of_pms ~(merge : trace_merge) ~incoming pms =
+let taints_of_pms ~(traces : kept_traces) ~incoming pms =
   let max_ITERS =
     (* Just in case, we set a limit. *)
     3
@@ -1499,7 +1502,7 @@ let taints_of_pms ~(merge : trace_merge) ~incoming pms =
   let rec go i taints pms_i =
     if i >= max_ITERS then taints
     else
-      let incoming = taints |> Taint_set.union ~merge incoming in
+      let incoming = taints |> Taint_set.union ~traces incoming in
       let new_taint_list, pms_left =
         pms_i |> Common2.fpartition (taint_of_pm ~incoming)
       in
@@ -1507,8 +1510,8 @@ let taints_of_pms ~(merge : trace_merge) ~incoming pms =
       | [] -> taints
       | _ :: _ ->
           let taints' =
-            Taint_set.of_taint_list ~merge new_taint_list
-            |> Taint_set.union ~merge taints
+            Taint_set.of_taint_list ~traces new_taint_list
+            |> Taint_set.union ~traces taints
           in
           go (i + 1) taints' pms_left
   in
