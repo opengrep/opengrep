@@ -18,6 +18,7 @@ val collect_in_ast :
   resolution:Module_paths.specifier_resolution ->
   module_path:Names.Module_qn.t ->
   file:Fpath.t ->
+  line_count:int ->
   AST_generic.program ->
   Types.entry list * Types.file_info
 

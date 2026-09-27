@@ -267,49 +267,6 @@ type qualifier =
   | Qualifier_class of Class_table.scope_id
   | Qualifier_module of Names.Module_qn.t
 
-module Written_key = struct
-  type t = {
-    position : Class_table.position;
-    context : Class_table.scope_id option;
-    file : string;
-    resolved : G.resolved_name option;
-    head : string list;
-    rest : string list;
-  }
-
-  let equal_position (left : Class_table.position)
-      (right : Class_table.position) : bool =
-    match (left, right) with
-    | Class_table.Term_position, Class_table.Term_position
-    | Class_table.Type_position, Class_table.Type_position -> true
-    | (Class_table.Term_position | Class_table.Type_position), _ -> false
-
-  let equal_resolved (((left_kind : G.resolved_name_kind), (left : G.SId.t)))
-      (((right_kind : G.resolved_name_kind), (right : G.SId.t))) : bool =
-    G.equal_resolved_name_kind left_kind right_kind
-    && G.SId.equal left right
-    && G.SId.same_site left right
-
-  let equal (left : t) (right : t) : bool =
-    equal_position left.position right.position
-    && Option.equal Class_table.equal_scope_id left.context right.context
-    && String.equal left.file right.file
-    && Option.equal equal_resolved left.resolved right.resolved
-    && List.equal String.equal left.head right.head
-    && List.equal String.equal left.rest right.rest
-
-  let hash (key : t) : int =
-    Hashtbl.hash
-      ( key.position,
-        Option.map Class_table.hash_scope_id key.context,
-        key.file,
-        Option.map G.hash_resolved_name key.resolved,
-        key.head,
-        key.rest )
-end
-
-module Written_tbl = Hashtbl.Make (Written_key)
-
 let scope_name (id : Class_table.scope_id) : string =
   let name, _, _, _ = G.SId.to_loc id.Class_table.scope_binding in
   name
@@ -839,10 +796,9 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
      | None, None -> ());
     linked
   in
-  let resolved_written : Class_table.scope_id option Written_tbl.t =
-    Written_tbl.create 1024
-  in
-  let cross_file_resolver (position : Class_table.position)
+  let cross_file_resolver (class_table_memo : Class_table.memo)
+      (memo_target : Class_table.memo_target)
+      (position : Class_table.position)
       (context : Class_table.scope_id option)
       (((name : G.name), (rest : string list)) : G.name * string list)
       : Class_table.scope_id option =
@@ -854,14 +810,20 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
     in
     Option.bind (file_of_name name) (fun (lf : linked_file) ->
       let key =
-        { Written_key.position;
+        { Class_table.Type_name_key.position;
           context;
           file = Fpath.to_string lf.lf_info.fi_file;
           resolved = !((Class_table.id_info_of_name name).G.id_resolved);
           head = Class_table.qualified_path name;
           rest }
       in
-      match Written_tbl.find_opt resolved_written key with
+      match
+        Class_table.find_memoised class_table_memo memo_target
+          (fun (memo : Class_table.memo) (key : Class_table.Type_name_key.t) ->
+            Class_table.Type_name_tbl.find_opt memo.Class_table.type_name_memo
+              key)
+          key
+      with
       | Some (found : Class_table.scope_id option) -> found
       | None ->
         let owners =
@@ -870,7 +832,12 @@ let build_class_table ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
           | Some (id : Class_table.scope_id) -> id :: owners id
         in
         let found = resolve_written lf ~owners ~position (name, rest) in
-        Written_tbl.replace resolved_written key found;
+        Class_table.record_memoised class_table_memo memo_target
+          (fun (memo : Class_table.memo) (key : Class_table.Type_name_key.t)
+               (found : Class_table.scope_id option) ->
+            Class_table.Type_name_tbl.replace memo.Class_table.type_name_memo
+              key found)
+          key found;
         found)
   in
   let may_implement ~(interface : Class_table.cls) (candidate : Class_table.cls)
@@ -1535,20 +1502,18 @@ let build_project_call_graph (caps : < Cap.fork >)
   let pipeline_ctx = { pipeline_ctx with Pipeline.type_state } in
   (* per-file wall time of the edge walk, across domains, for the slowest
      files: the pass is parallel, so a few slow files bound its wall time *)
-  let file_secs : (Fpath.t * float) list ref = ref [] in
-  let file_secs_mutex = Mutex.create () in
-  let edges_for_file fi =
-    let res, secs =
+  let edges_for_file (fi : file_info)
+      : (Function_id.t * Function_id.t * Tok.t) list
+        * (string * float) list
+        * (Fpath.t * float) =
+    let (edges, stage_secs), secs =
       Common.with_time (fun () ->
           match Hashtbl.find_opt project_tables (Fpath.to_string fi.fi_file) with
           | Some ((table : Symbol_table.t), (func_lookup : Func_lookup.t)) ->
             Pipeline.edges_for_file pipeline_ctx ~classes ~table ~func_lookup fi
-          | None -> [])
+          | None -> ([], []))
     in
-    Mutex.lock file_secs_mutex;
-    file_secs := (fi.fi_file, secs) :: !file_secs;
-    Mutex.unlock file_secs_mutex;
-    res
+    (edges, stage_secs, (fi.fi_file, secs))
   in
   (* Pre-populate [<top_level>] nodes BEFORE the parallel phase: the table and
      graph are read-only across domains after this. *)
@@ -1562,15 +1527,11 @@ let build_project_call_graph (caps : < Cap.fork >)
       Call_graph.G.add_vertex graph node
     end
   ) file_infos;
-  (* Largest-first so megafiles don't stall the tail on one worker; stat once
-     (decorate-sort-undecorate) to keep the comparator pure. *)
-  let file_size_of fi =
-    Nonfatal.catch ~default:0 (fun () ->
-      (Unix.stat (Fpath.to_string fi.fi_file)).Unix.st_size)
-  in
+  (* Largest-first so megafiles don't stall the tail on one worker; the key
+     is the line count parsing recorded. *)
   let file_infos =
     file_infos
-    |> List_.map (fun fi -> (file_size_of fi, fi))
+    |> List_.map (fun (fi : file_info) -> (fi.fi_line_count, fi))
     |> List.sort (fun (a, _) (b, _) -> Int.compare b a)
     |> List_.map snd
   in
@@ -1578,11 +1539,38 @@ let build_project_call_graph (caps : < Cap.fork >)
     timed "call graph: edges per file" @@ fun () ->
     run_per_file caps ~ncores edges_for_file file_infos
   in
+  (* The own memo of each file, its type-name memo included, is not
+     returned by the edge stage: no later stage reads the project memo (the
+     graph build reads the lookup order, the own members, the member
+     definitions and the signatures resolved at build, and the class table is
+     unreachable after this function returns). Every memo entry is a function
+     of its key, so a union of the own memos on the main domain would be free
+     of conflicts if a later stage ever needs it. *)
+  let stage_secs, file_secs =
+    List.fold_left
+      (fun ((stage_secs : float Common.SMap.t),
+            (file_secs : (Fpath.t * float) list)) -> function
+        | Ok ((_ : (Function_id.t * Function_id.t * Tok.t) list),
+              (stages : (string * float) list), (file : Fpath.t * float)) ->
+          ( List.fold_left
+              (fun (stage_secs : float Common.SMap.t)
+                   ((name : string), (secs : float)) ->
+                Common.SMap.update name
+                  (fun (sum : float option) ->
+                    Some (Option.value sum ~default:0. +. secs))
+                  stage_secs)
+              stage_secs stages,
+            file :: file_secs )
+        | Error _ -> (stage_secs, file_secs))
+      (Common.SMap.empty, []) per_file_edges
+  in
   (* stage split of the edge pass, and the shape of the name table it
      resolves calls against *)
   Log_interfile_timing.Log.info (fun m ->
       let stages =
-        Pipeline.edge_stage_report ()
+        Common.SMap.bindings stage_secs
+        |> List.sort (fun ((_ : string), (a : float)) ((_ : string), (b : float)) ->
+               Float.compare b a)
         |> List.map (fun (name, secs) -> Printf.sprintf "%s %.1fs" name secs)
         |> String.concat ", "
       in
@@ -1604,30 +1592,37 @@ let build_project_call_graph (caps : < Cap.fork >)
         stages n_names total top);
   Log_interfile_timing.Log.info (fun m ->
       let slowest =
-        List.sort (fun (_, a) (_, b) -> compare b a) !file_secs
-        |> List.filteri (fun i _ -> i < 8)
+        List.sort
+          (fun ((_ : Fpath.t), (a : float)) ((_ : Fpath.t), (b : float)) ->
+            Float.compare b a)
+          file_secs
+        |> List.filteri (fun (i : int) (_ : Fpath.t * float) -> i < 8)
         |> List.map (fun (file, secs) ->
                Printf.sprintf "%s %.1fs" (Fpath.to_string file) secs)
         |> String.concat ", "
       in
-      let total = List.fold_left (fun acc (_, s) -> acc +. s) 0. !file_secs in
+      let total =
+        List.fold_left
+          (fun (acc : float) ((_ : Fpath.t), (secs : float)) -> acc +. secs)
+          0. file_secs
+      in
       m "[interfile timing] project index: edge pass in-domain total %.1fs \
          over %d files (compare with the stage sum: the rest is outside the \
          timed stages); slowest files: %s"
-        total (List.length !file_secs) slowest);
+        total (List.length file_secs) slowest);
   (* A failed file's outgoing call edges are MISSING from the graph; the
      failure list is returned so the engine can surface it as a scan error. *)
   let t_merge_start = Unix.gettimeofday () in
   let n_emitted =
     List.fold_left
-      (fun n -> function Ok edges -> n + List.length edges | Error _ -> n)
+      (fun n -> function Ok (edges, _, _) -> n + List.length edges | Error _ -> n)
       0 per_file_edges
   in
   let phase2_failures =
     timed (Printf.sprintf "call graph: add call edges (%d emitted)" n_emitted)
     @@ fun () ->
     List.filter_map (function
-      | Ok edges ->
+      | Ok (edges, _, _) ->
         List.iter (fun (src, dst, call_tok) ->
           Call_graph.add_edge graph ~src ~dst ~call_tok)
           edges;
@@ -1818,14 +1813,15 @@ let run_pipeline (caps : < Cap.fork >)
   in
   let process (file : Fpath.t) =
     let file = absolutize file in
-    let { Parsing_result2.ast; skipped_tokens; _ } =
+    let { Parsing_result2.ast; skipped_tokens; stat; _ } =
       Parse_target.parse_and_resolve_name lang file
     in
     let mp =
       Module_paths.module_qn_of_file ~cfg ~go_modules ~rust_crates
         ~project_root ~ast:(Some ast) file
     in
-    (Symbols.collect_in_ast ~cfg ~lang ~resolution ~module_path:mp ~file ast,
+    (Symbols.collect_in_ast ~cfg ~lang ~resolution ~module_path:mp ~file
+       ~line_count:stat.Parsing_stat.total_line_count ast,
      (file, skipped_tokens))
   in
   let results =

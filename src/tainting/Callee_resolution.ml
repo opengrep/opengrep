@@ -359,12 +359,13 @@ let narrow_by_call ~(lang : Lang.t) ~(typing : static_typing)
     (prefer_concrete candidates)
 
 let callees_of_call ~(lang : Lang.t) ~(typing : static_typing)
-    ~(table : Symbol_table.t) (call_args : G.argument list option)
+    ~(table : Symbol_table.t)
+    ~(arguments : static_type option list Lazy.t)
+    (call_args : G.argument list option)
     (selection : Symbol_table.lookup_result) : func_info list =
   match selection.Symbol_table.resolution with
   | Symbol_table.External -> []
   | Symbol_table.Defined (selected : func_info list) ->
-      let arguments = arguments_of_call ~lang ~typing call_args in
       (if Lang_config.overloads_by_type lang then
          narrow_by_arguments ~lang ~typing call_args arguments selected
        else selected)
@@ -393,7 +394,9 @@ let type_of_call ~(lang : Lang.t) ~(table : Symbol_table.t)
   match e.G.e with
   | G.Call (callee, (_, args, _)) ->
       resolve callee
-      |> callees_of_call ~lang ~typing ~table (Some args)
+      |> callees_of_call ~lang ~typing ~table
+           ~arguments:(arguments_of_call ~lang ~typing (Some args))
+           (Some args)
       |> return_type ~lang ~typing
   | _ -> None
 
@@ -525,6 +528,7 @@ let callee_use_of_member ~(receiver : G.id_info) (member : string) :
 type call_site_resolver =
   caller_parent_path:IL.name option list ->
   call_args:G.argument list option ->
+  arguments:static_type option list Lazy.t ->
   G.expr ->
   fn_id list
 

@@ -1,0 +1,16 @@
+rules:
+  - id: import-alias-chain
+    languages: [python]
+    severity: ERROR
+    message: >
+      a.py binds `f = g` with `g` imported from b.py, and b.py binds
+      `g = sink`: the alias chain ends at `sink`, so the importing file's
+      call through `f` reaches the sink.
+    mode: taint
+    options:
+      taint_interfile: true
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

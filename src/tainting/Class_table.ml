@@ -303,10 +303,57 @@ end
 
 module Overriding_tbl = Hashtbl.Make (Overriding_key)
 
+type position =
+  | Term_position
+  | Type_position
+
+module Type_name_key = struct
+  type t = {
+    position : position;
+    context : scope_id option;
+    file : string;
+    resolved : G.resolved_name option;
+    head : string list;
+    rest : string list;
+  }
+
+  let equal_position (left : position) (right : position) : bool =
+    match (left, right) with
+    | Term_position, Term_position
+    | Type_position, Type_position -> true
+    | (Term_position | Type_position), _ -> false
+
+  let equal_resolved (((left_kind : G.resolved_name_kind), (left : G.SId.t)))
+      (((right_kind : G.resolved_name_kind), (right : G.SId.t))) : bool =
+    G.equal_resolved_name_kind left_kind right_kind
+    && G.SId.equal left right
+    && G.SId.same_site left right
+
+  let equal (left : t) (right : t) : bool =
+    equal_position left.position right.position
+    && Option.equal equal_scope_id left.context right.context
+    && String.equal left.file right.file
+    && Option.equal equal_resolved left.resolved right.resolved
+    && List.equal String.equal left.head right.head
+    && List.equal String.equal left.rest right.rest
+
+  let hash (key : t) : int =
+    Hashtbl.hash
+      ( key.position,
+        Option.map hash_scope_id key.context,
+        key.file,
+        Option.map G.hash_resolved_name key.resolved,
+        key.head,
+        key.rest )
+end
+
+module Type_name_tbl = Hashtbl.Make (Type_name_key)
+
 type memo = {
   selections : selected Selection_tbl.t;
   overriding : definition list Overriding_tbl.t;
   dispatched : (definition list * Func_info.t list) list Overriding_tbl.t;
+  type_name_memo : scope_id option Type_name_tbl.t;
 }
 
 let create_memo () : memo =
@@ -314,7 +361,34 @@ let create_memo () : memo =
     selections = Selection_tbl.create 64;
     overriding = Overriding_tbl.create 64;
     dispatched = Overriding_tbl.create 64;
+    type_name_memo = Type_name_tbl.create 64;
   }
+
+(* A lookup the class table's memo does not hold is recorded there when one
+   domain owns the class table (the project table in the sequential stages,
+   a per-file table in the worker that builds it), and in the own memo of a
+   Symbol_table (Symbol_table.with_own_memo) in a pass whose domains share
+   the class table, so no two domains write one memo. *)
+type memo_target =
+  | Class_table_memo
+  | Own_memo of memo
+
+let find_memoised (type key found) (class_table_memo : memo)
+    (target : memo_target) (find : memo -> key -> found option) (key : key) :
+    found option =
+  match find class_table_memo key with
+  | Some _ as found -> found
+  | None -> (
+      match target with
+      | Class_table_memo -> None
+      | Own_memo memo -> find memo key)
+
+let record_memoised (type key found) (class_table_memo : memo)
+    (target : memo_target) (record : memo -> key -> found -> unit) (key : key)
+    (found : found) : unit =
+  match target with
+  | Class_table_memo -> record class_table_memo key found
+  | Own_memo memo -> record memo key found
 
 type import_origin =
   | Imported_from of cls
@@ -328,11 +402,8 @@ type class_relations = {
   class_side_parents : cls option list;
   order : cls Member_lookup.lookup_order;
   subclasses : cls list;
+  descendants : cls list;
 }
-
-type position =
-  | Term_position
-  | Type_position
 
 type t = {
   lang : Lang.t;
@@ -340,8 +411,8 @@ type t = {
   classes : cls array;
   by_scope : cls Scope_tbl.t;
   definitions : cls list SId_tbl.t;
-  cross_file_resolver : position -> scope_id option -> G.name * string list -> cls option;
-  descendants : cls list option array;
+  cross_file_resolver :
+    memo_target -> position -> scope_id option -> G.name * string list -> cls option;
   own_definitions : definition list SMap.t array;
   compiled_in : int -> Func_info.t -> bool;
   memo : memo;
@@ -455,6 +526,7 @@ let order (t : t) (cls : cls) : cls Member_lookup.lookup_order =
   (relations_of t cls).order
 
 let subclasses (t : t) (cls : cls) : cls list = (relations_of t cls).subclasses
+let descendants (t : t) (cls : cls) : cls list = (relations_of t cls).descendants
 
 let class_side_parents (t : t) (cls : cls) : cls option list =
   (relations_of t cls).class_side_parents
@@ -506,7 +578,7 @@ let object_of_binding (t : t) (sid : G.SId.t) : cls option =
   | Some _ as found -> found
   | None -> class_of_binding t sid
 
-let class_of_name (t : t) ~(position : position)
+let class_of_name (t : t) ~(memo_target : memo_target) ~(position : position)
     ~(context : scope_id option) (name : G.name) : cls option =
   match
     Option.bind
@@ -514,13 +586,14 @@ let class_of_name (t : t) ~(position : position)
       (class_of_binding t)
   with
   | Some _ as found -> found
-  | None -> t.cross_file_resolver position context (name, [])
+  | None -> t.cross_file_resolver memo_target position context (name, [])
 
-let class_of_path (t : t) ~(position : position) ~(context : scope_id option)
+let class_of_path (t : t) ~(memo_target : memo_target) ~(position : position)
+    ~(context : scope_id option)
     (((head : G.name), (rest : string list)) as path) : cls option =
   match rest with
-  | [] -> class_of_name t ~position ~context head
-  | _ :: _ -> t.cross_file_resolver position context path
+  | [] -> class_of_name t ~memo_target ~position ~context head
+  | _ :: _ -> t.cross_file_resolver memo_target position context path
 
 let declared_type (class_of : G.name -> cls option) (ty : G.type_) :
     declared_type =
@@ -654,14 +727,42 @@ let is_dereference_trait (lang : Lang.t) (written : G.type_) : bool =
   | _, None ->
       false
 
+module Index_set = Set.Make (Int)
+
+let descendants_of ~(subclasses : cls -> cls list) (cls : cls) : cls list =
+  let rec visit (seen : Index_set.t) (found : cls list)
+      (pending : cls list) : cls list =
+    match pending with
+    | [] -> found
+    | current :: rest ->
+        let direct =
+          List.filter
+            (fun (sub : cls) -> not (Index_set.mem sub.id seen))
+            (subclasses current)
+        in
+        visit
+          (List.fold_left
+             (fun (seen : Index_set.t) (sub : cls) ->
+               Index_set.add sub.id seen)
+             seen direct)
+          (direct @ found) (direct @ rest)
+  in
+  visit (Index_set.singleton cls.id) [] [ cls ]
+
 let build ~(lang : Lang.t) ~(classes : class_scope list list)
     ~(compiled_together : Func_info.t list -> bool)
     ~(compiled_in : int -> Func_info.t -> bool)
     ~(defined : class_scope -> bool)
     ~(link : class_scope -> parent -> scope_id option)
     ~(cross_file_resolver :
-       position -> scope_id option -> G.name * string list -> scope_id option)
+       memo ->
+       memo_target ->
+       position ->
+       scope_id option ->
+       G.name * string list ->
+       scope_id option)
     ~(may_implement : interface:cls -> cls -> bool) : t =
+  let memo = create_memo () in
   let classes =
     Array.of_list
       (List.mapi
@@ -710,7 +811,11 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
         (class_of_binding_in by_scope definitions)
     with
     | Some _ as found -> found
-    | None -> Option.bind (cross_file_resolver Type_position None (name, [])) class_of_id
+    | None ->
+        Option.bind
+          (cross_file_resolver memo Class_table_memo Type_position None
+             (name, []))
+          class_of_id
   in
   let own_definitions =
     Array.map
@@ -860,6 +965,11 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
                  cls :: direct_subclasses.(interface.id))
            (Option.value fewest ~default:[]))
        interfaces);
+  let subclasses =
+    Array.map
+      (fun (cls : cls) -> List_.uniq_by same direct_subclasses.(cls.id))
+      classes
+  in
   let relations =
     Array.map
       (fun (cls : cls) ->
@@ -902,7 +1012,11 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
                 List.map (linked scope) scope.class_side_parents)
               cls.scopes;
           order = orders.(cls.id);
-          subclasses = List_.uniq_by same direct_subclasses.(cls.id);
+          subclasses = subclasses.(cls.id);
+          descendants =
+            descendants_of
+              ~subclasses:(fun (cls : cls) -> subclasses.(cls.id))
+              cls;
         })
       classes
   in
@@ -913,13 +1027,14 @@ let build ~(lang : Lang.t) ~(classes : class_scope list list)
     by_scope;
     definitions;
     cross_file_resolver =
-      (fun (position : position) (context : scope_id option)
-           (path : G.name * string list) ->
-        Option.bind (cross_file_resolver position context path) class_of_id);
-    descendants = Array.make (Array.length classes) None;
+      (fun (target : memo_target) (position : position)
+           (context : scope_id option) (path : G.name * string list) ->
+        Option.bind
+          (cross_file_resolver memo target position context path)
+          class_of_id);
     own_definitions;
     compiled_in;
-    memo = create_memo ();
+    memo;
   }
 
 let name_of_class (t : t) (cls : cls) : G.name option =
@@ -989,30 +1104,3 @@ let find_nearest (type found) (levels : cls Member_lookup.level list)
   | Member_lookup.Undefined
   | Member_lookup.Unknown ->
       None
-
-module Index_set = Set.Make (Int)
-
-let descendants (t : t) (cls : cls) : cls list =
-  match t.descendants.(cls.id) with
-  | Some found -> found
-  | None ->
-      let rec visit (seen : Index_set.t) (found : cls list)
-          (pending : cls list) : cls list =
-        match pending with
-        | [] -> found
-        | current :: rest ->
-            let direct =
-              List.filter
-                (fun (sub : cls) -> not (Index_set.mem sub.id seen))
-                (subclasses t current)
-            in
-            visit
-              (List.fold_left
-                 (fun (seen : Index_set.t) (sub : cls) ->
-                   Index_set.add sub.id seen)
-                 seen direct)
-              (direct @ found) (direct @ rest)
-      in
-      let found = visit (Index_set.singleton cls.id) [] [ cls ] in
-      t.descendants.(cls.id) <- Some found;
-      found

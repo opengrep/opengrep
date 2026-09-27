@@ -56,6 +56,7 @@ type file_info = {
   fi_imports : import list;
   fi_dataclass_wrappers : dataclass_wrapper list;
   fi_ast : G.program;
+  fi_line_count : int;
   fi_observations : Walker.Observation.t list;
   fi_module_object : Names.Class_qn.t option;
 }

@@ -228,17 +228,24 @@ let write_back_callee_definition (callee : G.expr) (fn_ids : fn_id list) :
   | Some ii -> set_callee_definition ~allow_located_fake:true ii fn_ids
   | None -> ()
 
+let lazy_argument_types (argument_types : Callee_resolution.argument_typer)
+    ~(caller_parent_path : IL.name option list)
+    (call_args : G.argument list option) : static_type option list Lazy.t =
+  lazy (argument_types ~caller_parent_path (Option.value call_args ~default:[]))
+
 (* Non-memoisable callee shapes bypass the cache; the [id_callee_definition]
    of every resolved call is written here. *)
 let memo_lookup_or_compute (memo_tbl : callee_memo)
-    ~(argument_types : G.argument list -> static_type option list)
+    ~(arguments : static_type option list Lazy.t)
     ~(call_args : G.argument list option) (callee : G.expr)
     (compute : unit -> fn_id list) : fn_id list =
   let result =
     match callee_use callee with
     | None -> compute ()
     | Some use ->
-      let key = (use, Option.map argument_types call_args) in
+      let key =
+        (use, Option.map (fun (_ : G.argument list) -> Lazy.force arguments) call_args)
+      in
       (match Callee_use_tbl.find_opt memo_tbl key with
        | Some r -> r
        | None ->
@@ -282,9 +289,11 @@ let extract_calls ~(lang : Lang.t)
   let identify_callee_cached ~(call_args : G.argument list option)
       (callee : G.expr) : fn_id list =
     let callee = member_reference ~lang callee in
-    memo_lookup_or_compute memo_tbl
-      ~argument_types:(argument_types ~caller_parent_path) ~call_args callee
-      (fun () -> identify_callee ~caller_parent_path ~call_args callee)
+    let arguments =
+      lazy_argument_types argument_types ~caller_parent_path call_args
+    in
+    memo_lookup_or_compute memo_tbl ~arguments ~call_args callee
+      (fun () -> identify_callee ~caller_parent_path ~call_args ~arguments callee)
   in
   (* Ruby, Crystal: [foo(bar)] with no local [bar] means [foo(bar())]; a name argument that is not a local variable is treated as a call. *)
   let bare_name_is_a_call = Symbol_table.top_level_defs_are_methods_of_object lang in
@@ -441,6 +450,7 @@ let extract_calls ~(lang : Lang.t)
 
 let extract_decorator_calls
     ~(identify_callee : Callee_resolution.call_site_resolver)
+    ~(argument_types : Callee_resolution.argument_typer)
     ?(caller_parent_path = [])
     (attrs : G.attribute list) : (fn_id * Tok.t) list =
   List.fold_left (fun acc (attr : G.attribute) ->
@@ -454,6 +464,9 @@ let extract_decorator_calls
       in
       List_.map (fun (fn_id : fn_id) -> (fn_id, tok))
         (identify_callee ~caller_parent_path ~call_args:(Some (Tok.unbracket _args))
+           ~arguments:
+             (lazy_argument_types argument_types ~caller_parent_path
+                (Some (Tok.unbracket _args)))
            synth)
       @ acc
     | _ -> acc
@@ -470,9 +483,11 @@ let extract_toplevel_calls ~(lang : Lang.t)
   let identify_callee_cached ~(call_args : G.argument list option)
       (callee : G.expr) : fn_id list =
     let callee = member_reference ~lang callee in
-    memo_lookup_or_compute memo_tbl
-      ~argument_types:(argument_types ~caller_parent_path:[]) ~call_args callee
-      (fun () -> identify_callee ~caller_parent_path:[] ~call_args callee)
+    let arguments =
+      lazy_argument_types argument_types ~caller_parent_path:[] call_args
+    in
+    memo_lookup_or_compute memo_tbl ~arguments ~call_args callee
+      (fun () -> identify_callee ~caller_parent_path:[] ~call_args ~arguments callee)
   in
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
     match e.G.e with
@@ -568,11 +583,11 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       args
   in
   let identify_callee : Callee_resolution.call_site_resolver =
-   fun ~caller_parent_path ~call_args (callee : G.expr) ->
+   fun ~caller_parent_path ~call_args ~arguments (callee : G.expr) ->
     Symbol_table.resolve_callee table
       ~caller:(fn_id_to_node caller_parent_path) callee
     |> Callee_resolution.callees_of_call ~lang
-         ~typing:(typing ~caller_parent_path) ~table call_args
+         ~typing:(typing ~caller_parent_path) ~table ~arguments call_args
     |> fn_ids_of
   in
   let resolve_callback : Callback_extraction.callback_resolver =

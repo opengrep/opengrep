@@ -108,7 +108,7 @@ let cdef_of_module_items (items : G.stmt list) : G.class_definition =
 
 let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     ~(resolution : Module_paths.specifier_resolution)
-    ~(module_path : Names.Module_qn.t) ~(file : Fpath.t)
+    ~(module_path : Names.Module_qn.t) ~(file : Fpath.t) ~(line_count : int)
     (ast : G.program) : entry list * file_info =
   let entries = ref [] in
   let object_ids : Function_id.t Common.SMap.t ref = ref Common.SMap.empty in
@@ -631,6 +631,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
              fi_imports = imports;
              fi_dataclass_wrappers = !dc_wrappers;
              fi_ast = ast;
+             fi_line_count = line_count;
              fi_observations = Walker.walk_file ~lang ast;
              fi_module_object = module_object } in
   (List.rev !entries, fi)

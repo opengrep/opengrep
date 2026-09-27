@@ -52,6 +52,7 @@ val extract_calls :
 
 val extract_decorator_calls :
   identify_callee : Callee_resolution.call_site_resolver ->
+  argument_types : Callee_resolution.argument_typer ->
   ?caller_parent_path : fn_id ->
   AST_generic.attribute list ->
   (fn_id * Tok.t) list

@@ -3,21 +3,11 @@ module G = AST_generic
 open Types
 
 (* Wall-clock time of the stages of [edges_for_file], summed across every
-   file and every domain; [Project_index] logs it after the edge pass. *)
-let edge_stage_secs : (string, float) Hashtbl.t = Hashtbl.create 8
-let edge_stage_mutex = Mutex.create ()
-
-let staged (name : string) (f : unit -> 'a) : 'a =
+   file on the main domain by [Project_index], which logs it after the edge
+   pass. *)
+let staged (name : string) (f : unit -> 'a) : 'a * (string * float) =
   let res, secs = Common.with_time f in
-  Mutex.lock edge_stage_mutex;
-  let prev = Option.value (Hashtbl.find_opt edge_stage_secs name) ~default:0. in
-  Hashtbl.replace edge_stage_secs name (prev +. secs);
-  Mutex.unlock edge_stage_mutex;
-  res
-
-let edge_stage_report () : (string * float) list =
-  Hashtbl.fold (fun k v acc -> (k, v) :: acc) edge_stage_secs []
-  |> List.sort (fun (_, a) (_, b) -> compare b a)
+  (res, (name, secs))
 
 
 (* Infer var classes from assignments and stamp them onto
@@ -77,6 +67,15 @@ type ctx = {
   value_alias_index : (string * string, G.expr) Hashtbl.t;
 }
 
+let exported_name_of_import (imp : import) : (string * string) option =
+  (* From-imports record the full entity path (module ++ name). *)
+  match List.rev (Names.Module_qn.parts imp.im_target) with
+  | name :: (_ :: _ as rev_module) ->
+    Some
+      ( Names.Module_qn.to_string (Names.Module_qn.of_parts (List.rev rev_module)),
+        name )
+  | _ -> None
+
 (* Module-level bare-name value aliases ([f = sink] / [const f = sink] at
    the top level of a module): (module qn string, exported name) -> the
    aliased value expression. A name assigned more than once, or to
@@ -117,9 +116,72 @@ let build_value_alias_index (file_infos : file_info list)
       | _ -> ())
       fi.fi_ast)
     file_infos;
+  let imports_of_module : (string, import list) Hashtbl.t =
+    Hashtbl.create (List.length file_infos)
+  in
+  List.iter (fun (fi : file_info) ->
+    let module_str = Names.Module_qn.to_string fi.fi_module_path in
+    Hashtbl.replace imports_of_module module_str
+      (Option.value (Hashtbl.find_opt imports_of_module module_str) ~default:[]
+       @ fi.fi_imports))
+    file_infos;
+  let aliased (key : string * string) : G.expr option =
+    Option.join (Hashtbl.find_opt tbl key)
+  in
+  let next_alias ((module_str, _) : string * string) (value : G.expr)
+      : (string * string) option =
+    match value.G.e with
+    | G.N (G.Id ((local, _), info)) -> (
+        match !(info.G.id_resolved) with
+        | Some (G.ImportedEntity _, _) ->
+          List.find_map (fun (imp : import) ->
+            if not (String.equal imp.im_local local) then None
+            else
+              Option.bind (exported_name_of_import imp)
+                (fun (key : string * string) ->
+                  Option.map (fun (_ : G.expr) -> key) (aliased key)))
+            (Option.value (Hashtbl.find_opt imports_of_module module_str)
+               ~default:[])
+        | Some _
+        | None -> None)
+    | _ -> None
+  in
+  let module Key_set = Set.Make (struct
+    type t = string * string
+
+    let compare ((left_module, left_name) : t) ((right_module, right_name) : t)
+        : int =
+      match String.compare left_module right_module with
+      | 0 -> String.compare left_name right_name
+      | order -> order
+  end) in
+  (* A module-level alias whose value chain returns to itself has no value in
+     the language (Python: circular import of a name not yet bound;
+     JavaScript modules: a binding read before its initialisation), so the
+     index records nothing for it, and a stamp is always a terminal
+     expression, which keeps the invariant that a symbolic value never
+     leads back to itself. *)
+  let terminals : (string * string, G.expr option) Hashtbl.t =
+    Hashtbl.create (Hashtbl.length tbl)
+  in
+  let rec terminal (seen : Key_set.t) (key : string * string) (value : G.expr)
+      : G.expr option =
+    match Hashtbl.find_opt terminals key with
+    | Some (found : G.expr option) -> found
+    | None ->
+      let found =
+        match next_alias key value with
+        | None -> Some value
+        | Some next when Key_set.mem next seen -> None
+        | Some next ->
+          Option.bind (aliased next) (terminal (Key_set.add next seen) next)
+      in
+      Hashtbl.replace terminals key found;
+      found
+  in
   let out = Hashtbl.create 16 in
   Hashtbl.iter (fun k v ->
-    match v with
+    match Option.bind v (terminal (Key_set.singleton k) k) with
     | Some e -> Hashtbl.replace out k e
     | None -> ()) tbl;
   out
@@ -140,23 +202,18 @@ let stamp_import_value_aliases
     let by_local : (string, G.expr) Hashtbl.t = Hashtbl.create 4 in
     List.iter (fun (imp : import) ->
       let local = imp.im_local in
-      (* From-imports record the full entity path (module ++ name). *)
-      match List.rev (Names.Module_qn.parts imp.im_target) with
-      | name :: (_ :: _ as rev_module) -> (
-          let module_str =
-            Names.Module_qn.of_parts (List.rev rev_module)
-            |> Names.Module_qn.to_string
-          in
-          match Hashtbl.find_opt value_alias_index (module_str, name) with
-          | Some value when not (Hashtbl.mem by_local local) ->
-            Hashtbl.replace by_local local value
-          | _ -> ())
+      match
+        Option.bind (exported_name_of_import imp)
+          (Hashtbl.find_opt value_alias_index)
+      with
+      | Some value when not (Hashtbl.mem by_local local) ->
+        Hashtbl.replace by_local local value
       | _ -> ())
       fi.fi_imports;
     if Hashtbl.length by_local > 0 then begin
       let visitor =
         object
-          inherit [_] G.iter as super
+          inherit [_] G.iter_no_id_info as super
 
           method! visit_expr () e =
             (match e.G.e with
@@ -585,12 +642,12 @@ let argument_types ~(lang : Lang.t) ~(table : Symbol_table.t)
 
 let call_site_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
     ~(func_lookup : Func_lookup.t) : Callee_resolution.call_site_resolver =
- fun ~caller_parent_path ~call_args (callee : G.expr) ->
+ fun ~caller_parent_path ~call_args ~arguments (callee : G.expr) ->
   resolve_in_project ~lang ~table ~func_lookup ~caller_parent_path
     ~use:Symbol_table.Called callee
   |> Callee_resolution.callees_of_call ~lang
        ~typing:(typing ~lang ~table ~func_lookup ~caller_parent_path)
-       ~table call_args
+       ~table ~arguments call_args
   |> fn_ids_of
 
 let callback_resolver ~(lang : Lang.t) ~(table : Symbol_table.t)
@@ -660,7 +717,8 @@ let project_table (ctx : ctx) ~(classes : project_classes)
 
 let edges_for_file (ctx : ctx) ~(classes : project_classes)
     ~(table : Symbol_table.t) ~(func_lookup : Func_lookup.t)
-    (fi : file_info) : (Function_id.t * Function_id.t * Tok.t) list =
+    (fi : file_info) :
+    (Function_id.t * Function_id.t * Tok.t) list * (string * float) list =
   let { lang; cfg; type_state;
         project_class_names;
         top_level_node_for;
@@ -672,18 +730,22 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
       Edge_emitter.create ~top_level:(top_level_node_for fi.fi_file)
     in
     let top_level_node = top_level_node_for fi.fi_file in
-    staged "stamp base var types + import aliases" (fun () ->
-      stamp_base_var_types ~lang ~project_class_names fi;
-      stamp_import_value_aliases ~value_alias_index fi);
+    let (), base_var_types_and_import_aliases_secs =
+      staged "stamp base var types + import aliases" (fun () ->
+        stamp_base_var_types ~lang ~project_class_names fi;
+        stamp_import_value_aliases ~value_alias_index fi)
+    in
     let table =
       Symbol_table.with_own_memo (Symbol_table.with_types table type_state)
     in
-    staged "stamp var types" (fun () ->
-      stamp_singleton_imports ~type_state ~class_table:classes.class_table fi;
-      (* the file's view: the classes it imports, a method's return type
-         from the class it sees *)
-      stamp_var_types ~table ~type_state ~caller:None fi.fi_ast);
-    let per_fdef_edges =
+    let (), stamp_var_types_secs =
+      staged "stamp var types" (fun () ->
+        stamp_singleton_imports ~type_state ~class_table:classes.class_table fi;
+        (* the file's view: the classes it imports, a method's return type
+           from the class it sees *)
+        stamp_var_types ~table ~type_state ~caller:None fi.fi_ast)
+    in
+    let per_fdef_edges, extract_calls_secs =
       staged "extract calls" @@ fun () ->
       Visit_function_defs.fold_with_parent_path ~lang
         (fun edges opt_ent parent_path fdef ->
@@ -803,6 +865,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
              let dec_calls =
                FA.extract_decorator_calls
                  ~identify_callee:(call_site_resolver ~lang ~table ~func_lookup)
+                 ~argument_types:(argument_types ~lang ~table ~func_lookup)
                  ~caller_parent_path:fn_id ent.G.attrs
              in
              List.fold_left (fun edges (callee, call_tok) ->
@@ -833,4 +896,6 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
         Edge_emitter.emit_toplevel emitter ~callee:callback ~call_tok @ edges
       ) [] toplevel_callbacks
     in
-    per_fdef_edges @ toplevel_call_edges @ toplevel_callback_edges
+    ( per_fdef_edges @ toplevel_call_edges @ toplevel_callback_edges,
+      [ base_var_types_and_import_aliases_secs; stamp_var_types_secs;
+        extract_calls_secs ] )

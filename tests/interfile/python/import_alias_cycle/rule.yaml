@@ -1,0 +1,18 @@
+rules:
+  - id: import-alias-cycle
+    languages: [python]
+    severity: ERROR
+    message: >
+      a.py binds `x = y` with `y` imported from b.py, and b.py binds
+      `y = x` with `x` imported from a.py: the alias chain of `x` and `y`
+      returns to itself and has no value, so the index records no alias
+      for them. The alias `f = sink` in a.py still reaches the sink from
+      the importing files.
+    mode: taint
+    options:
+      taint_interfile: true
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

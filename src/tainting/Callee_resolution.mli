@@ -52,10 +52,17 @@ val narrow_by_call :
   func_info list ->
   func_info list
 
+val arguments_of_call :
+  lang:Lang.t ->
+  typing:static_typing ->
+  AST_generic.argument list option ->
+  static_type option list Lazy.t
+
 val callees_of_call :
   lang:Lang.t ->
   typing:static_typing ->
   table:Symbol_table.t ->
+  arguments:static_type option list Lazy.t ->
   AST_generic.argument list option ->
   Symbol_table.lookup_result ->
   func_info list
@@ -82,6 +89,7 @@ val callee_use_of_member :
 type call_site_resolver =
   caller_parent_path:IL.name option list ->
   call_args:AST_generic.argument list option ->
+  arguments:static_type option list Lazy.t ->
   AST_generic.expr ->
   fn_id list
 

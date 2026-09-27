@@ -227,13 +227,6 @@ let may_refer_to_function (e : G.expr) : bool =
       true
   | _ -> false
 
-(* A lookup the class table's memo does not hold is recorded there while
-   files are read one at a time, and in this symbol table's own memo in a
-   pass that reads files in parallel, so no two domains write one memo. *)
-type memo_target =
-  | Class_table_memo
-  | Own_memo of Class_table.memo
-
 type t = {
   lang : Lang.t;
   functions : Func_info.t list SId_tbl.t;
@@ -261,7 +254,7 @@ type t = {
   module_uses : module_use list Path_tbl.t;
   block_uses : (int * int * module_use list) list;
   index_metavalues : G.SId.t list SId_tbl.t;
-  memo_target : memo_target;
+  memo_target : Class_table.memo_target;
 }
 
 let binding_of_id_info = Class_table.binding_of_id_info
@@ -1284,6 +1277,8 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
         | Unbound _ -> None)
       ~cross_file_resolver:
         (fun
+          (_ : Class_table.memo)
+          (_ : Class_table.memo_target)
           (_ : Class_table.position)
           (_ : scope_id option)
           (_ : G.name * string list)
@@ -1317,7 +1312,7 @@ let create ~(lang : Lang.t) (ast : G.program) (funcs : Func_info.t list) : t =
     module_uses;
     block_uses = !block_uses;
     index_metavalues;
-    memo_target = Class_table_memo;
+    memo_target = Class_table.Class_table_memo;
   }
 
 let functions_of_binding (t : t) (sid : G.SId.t) : Func_info.t list =
@@ -1362,30 +1357,22 @@ let with_project (t : t) (classes : Class_table.t)
     build_configuration;
     cross_file_resolver;
     declared_types = Hashtbl.create 64;
-    memo_target = Class_table_memo;
+    memo_target = Class_table.Class_table_memo;
   }
 
 let with_own_memo (t : t) : t =
-  { t with memo_target = Own_memo (Class_table.create_memo ()) }
+  { t with memo_target = Class_table.Own_memo (Class_table.create_memo ()) }
 
-let memoised (type found) (t : t)
-    ~(find : Class_table.memo -> found option)
-    ~(record : Class_table.memo -> found -> unit) (compute : unit -> found) :
-    found =
-  let computed_into (memo : Class_table.memo) : found =
-    let found = compute () in
-    record memo found;
-    found
-  in
-  match find (Class_table.memo t.classes) with
-  | Some found -> found
-  | None -> (
-      match t.memo_target with
-      | Class_table_memo -> computed_into (Class_table.memo t.classes)
-      | Own_memo memo -> (
-          match find memo with
-          | Some found -> found
-          | None -> computed_into memo))
+let find_memoised (type key found) (t : t)
+    (find : Class_table.memo -> key -> found option) (key : key) : found option =
+  Class_table.find_memoised (Class_table.memo t.classes) t.memo_target find key
+
+let record_memoised (type key found) (t : t)
+    (record : Class_table.memo -> key -> found -> unit) (key : key)
+    (found : found) : found =
+  Class_table.record_memoised (Class_table.memo t.classes) t.memo_target record
+    key found;
+  found
 
 let order (t : t) (cls : Class_table.cls) :
     Class_table.cls Member_lookup.lookup_order =
@@ -1553,16 +1540,23 @@ and first_definitions (t : t) ~(importing : Class_table.cls list)
           levels;
     }
   in
-  memoised t
-    ~find:(fun (memo : Class_table.memo) ->
-      Class_table.Selection_tbl.find_opt memo.Class_table.selections key)
-    ~record:(fun (memo : Class_table.memo) (found : Class_table.selected) ->
-      Class_table.Selection_tbl.replace memo.Class_table.selections key found)
-    (fun () ->
-      Class_table.selected_of
-        (Class_table.select_member ~lang:t.lang levels
-           ~defines:(fun (cls : Class_table.cls) ->
-             own_members_on t ~importing side cls name)))
+  match
+    find_memoised t
+      (fun (memo : Class_table.memo) (key : Class_table.Selection_key.t) ->
+        Class_table.Selection_tbl.find_opt memo.Class_table.selections key)
+      key
+  with
+  | Some (found : Class_table.selected) -> found
+  | None ->
+      record_memoised t
+        (fun (memo : Class_table.memo) (key : Class_table.Selection_key.t)
+             (found : Class_table.selected) ->
+          Class_table.Selection_tbl.replace memo.Class_table.selections key found)
+        key
+        (Class_table.selected_of
+           (Class_table.select_member ~lang:t.lang levels
+              ~defines:(fun (cls : Class_table.cls) ->
+                own_members_on t ~importing side cls name)))
 
 let first_definitions_on_side (t : t) (side : Class_parents.side)
     (levels : Class_table.cls Member_lookup.level list) (name : string) :
@@ -1679,28 +1673,34 @@ let overriding_key (t : t) (cls : Class_table.cls) (name : string) :
 let overrides (t : t) (cls : Class_table.cls) (name : string) :
     Class_table.definition list =
   let key = overriding_key t cls name in
-  memoised t
-    ~find:(fun (memo : Class_table.memo) ->
-      Class_table.Overriding_tbl.find_opt memo.Class_table.overriding key)
-    ~record:(fun (memo : Class_table.memo)
-                 (found : Class_table.definition list) ->
-      Class_table.Overriding_tbl.replace memo.Class_table.overriding key found)
-    (fun () ->
-      List.concat_map
-        (fun (sub : Class_table.cls) ->
-          match
-            (first_definitions t ~importing:[] Class_parents.Instance_side
-               (order t sub).Member_lookup.levels name)
-              .Class_table.definitions
-          with
-          | Member_lookup.Selected (_, defined) -> defined
-          | Member_lookup.Ambiguous
-          | Member_lookup.Undefined
-          | Member_lookup.Unknown ->
-              [])
-        (descendants t cls)
-      |> Class_table.distinct_by (fun (definition : Class_table.definition) ->
-             definition.Class_table.func))
+  match
+    find_memoised t
+      (fun (memo : Class_table.memo) (key : Class_table.Overriding_key.t) ->
+        Class_table.Overriding_tbl.find_opt memo.Class_table.overriding key)
+      key
+  with
+  | Some (found : Class_table.definition list) -> found
+  | None ->
+      record_memoised t
+        (fun (memo : Class_table.memo) (key : Class_table.Overriding_key.t)
+             (found : Class_table.definition list) ->
+          Class_table.Overriding_tbl.replace memo.Class_table.overriding key found)
+        key
+        (List.concat_map
+           (fun (sub : Class_table.cls) ->
+             match
+               (first_definitions t ~importing:[] Class_parents.Instance_side
+                  (order t sub).Member_lookup.levels name)
+                 .Class_table.definitions
+             with
+             | Member_lookup.Selected (_, defined) -> defined
+             | Member_lookup.Ambiguous
+             | Member_lookup.Undefined
+             | Member_lookup.Unknown ->
+                 [])
+           (descendants t cls)
+        |> Class_table.distinct_by (fun (definition : Class_table.definition) ->
+               definition.Class_table.func))
 
 let functions_of (definitions : Class_table.definition list) : Func_info.t list
     =
@@ -1715,32 +1715,40 @@ let same_function (func : Func_info.t) (definition : Class_table.definition) :
 let overriding (t : t) (source : dispatch)
     (overridden : Class_table.definition list) : Func_info.t list =
   let key = overriding_key t source.receiver source.name in
-  let same_overridden (known : Class_table.definition list) : bool =
-    List.equal ( == ) known overridden
-  in
-  memoised t
-    ~find:(fun (memo : Class_table.memo) ->
-      Option.bind
-        (Class_table.Overriding_tbl.find_opt memo.Class_table.dispatched key)
-        (List.find_map
-           (fun ((known : Class_table.definition list),
-                 (found : Func_info.t list)) ->
-             if same_overridden known then Some found else None)))
-    ~record:(fun (memo : Class_table.memo) (found : Func_info.t list) ->
-      Class_table.Overriding_tbl.replace memo.Class_table.dispatched key
-        ((overridden, found)
-        :: Option.value ~default:[]
-             (Class_table.Overriding_tbl.find_opt memo.Class_table.dispatched
-                key)))
-    (fun () ->
-      functions_of
-        (List.filter
-           (fun (nearer : Class_table.definition) ->
-             List.exists
-               (fun (farther : Class_table.definition) ->
-                 Class_table.overrides ~lang:t.lang ~nearer ~farther)
-               overridden)
-           (overrides t source.receiver source.name)))
+  match
+    find_memoised t
+      (fun (memo : Class_table.memo)
+           (((key : Class_table.Overriding_key.t),
+             (overridden : Class_table.definition list))) ->
+        Option.bind
+          (Class_table.Overriding_tbl.find_opt memo.Class_table.dispatched key)
+          (List.find_map
+             (fun ((known : Class_table.definition list),
+                   (found : Func_info.t list)) ->
+               if List.equal ( == ) known overridden then Some found else None)))
+      (key, overridden)
+  with
+  | Some (found : Func_info.t list) -> found
+  | None ->
+      record_memoised t
+        (fun (memo : Class_table.memo)
+             (((key : Class_table.Overriding_key.t),
+               (overridden : Class_table.definition list)))
+             (found : Func_info.t list) ->
+          Class_table.Overriding_tbl.replace memo.Class_table.dispatched key
+            ((overridden, found)
+            :: Option.value ~default:[]
+                 (Class_table.Overriding_tbl.find_opt
+                    memo.Class_table.dispatched key)))
+        (key, overridden)
+        (functions_of
+           (List.filter
+              (fun (nearer : Class_table.definition) ->
+                List.exists
+                  (fun (farther : Class_table.definition) ->
+                    Class_table.overrides ~lang:t.lang ~nearer ~farther)
+                  overridden)
+              (overrides t source.receiver source.name)))
 
 let dispatch (t : t) (selection : lookup_result) (selected : Func_info.t list) :
     Func_info.t list =
@@ -1830,7 +1838,7 @@ let classes_of_use (t : t) ~(module_path : string list) (use : module_use)
       match written with
       | Some written ->
           Option.to_list
-            (Class_table.class_of_path t.classes
+            (Class_table.class_of_path t.classes ~memo_target:t.memo_target
                ~position:Class_table.Type_position ~context:None written)
       | None -> [])
 
@@ -2273,7 +2281,7 @@ let rec class_of_aliased_type (t : t) ~(context : scope_id option)
           class_of_aliased_type t ~context ~visited:(sid :: visited) target
       | None -> (
           match
-            Class_table.class_of_name t.classes
+            Class_table.class_of_name t.classes ~memo_target:t.memo_target
               ~position:Class_table.Type_position ~context name
           with
           | Some cls -> Class cls
@@ -2284,7 +2292,7 @@ let rec class_of_aliased_type (t : t) ~(context : scope_id option)
       match Class_table.path_of_type ty with
       | Some ((_, _ :: _) as path) -> (
           match
-            Class_table.class_of_path t.classes
+            Class_table.class_of_path t.classes ~memo_target:t.memo_target
               ~position:Class_table.Type_position ~context path
           with
           | Some cls -> Class cls
@@ -2382,8 +2390,8 @@ let with_overrides (t : t) (defined : Func_info.t list) : lookup_result =
 let class_object_or_external (t : t) ~(context : scope_id option) (name : G.name) :
     receiver_class =
   match
-    Class_table.class_of_name t.classes ~position:Class_table.Term_position
-      ~context name
+    Class_table.class_of_name t.classes ~memo_target:t.memo_target
+      ~position:Class_table.Term_position ~context name
   with
   | Some cls -> Class_object cls
   | None -> External_class
@@ -2741,8 +2749,9 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
   | G.Call (({ G.e = G.N name; _ } as callee), _)
     when Lang_config.constructs_by_bare_call t.lang -> (
       match
-        Class_table.class_of_name t.classes ~position:Class_table.Term_position
-          ~context:(self_scope t ~caller) name
+        Class_table.class_of_name t.classes ~memo_target:t.memo_target
+          ~position:Class_table.Term_position ~context:(self_scope t ~caller)
+          name
       with
       | Some cls -> Exact cls
       | None -> returned_by t ~caller callee)
@@ -2846,7 +2855,7 @@ let resolve_construction (t : t) (ty : G.type_) : resolution =
       let info = id_info_of_name name in
       match
         ( binding_of_id_info info,
-          Class_table.class_of_name t.classes
+          Class_table.class_of_name t.classes ~memo_target:t.memo_target
             ~position:Class_table.Type_position ~context:None name )
       with
       | _, Some cls -> constructors_of_class t cls
@@ -2859,7 +2868,7 @@ let resolve_construction (t : t) (ty : G.type_) : resolution =
       match Class_table.path_of_type ty with
       | Some ((_, _ :: _) as path) -> (
           match
-            Class_table.class_of_path t.classes
+            Class_table.class_of_path t.classes ~memo_target:t.memo_target
               ~position:Class_table.Type_position ~context:None path
           with
           | Some cls -> constructors_of_class t cls

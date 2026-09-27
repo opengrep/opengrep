@@ -264,12 +264,14 @@ let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)
   match resolved.Symbol_table.resolution with
   | Symbol_table.External -> Symbol_table.External
   | Symbol_table.Defined _ ->
+    let typing =
+      Callee_resolution.table_typing ~lang ~table ~caller
+        ~resolve:(Symbol_table.resolve_call table ~caller)
+    in
     Symbol_table.Defined
-      (Callee_resolution.callees_of_call ~lang
-         ~typing:
-           (Callee_resolution.table_typing ~lang ~table ~caller
-              ~resolve:(Symbol_table.resolve_call table ~caller))
-         ~table (Some args) resolved)
+      (Callee_resolution.callees_of_call ~lang ~typing ~table
+         ~arguments:(Callee_resolution.arguments_of_call ~lang ~typing (Some args))
+         (Some args) resolved)
 
 let fold_calls_of_file ~(table_of_file : table_of_file)
     ~(type_state : Type_state.t)

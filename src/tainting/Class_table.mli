@@ -109,17 +109,41 @@ end
 
 module Overriding_tbl : Hashtbl.S with type key = Overriding_key.t
 
+type position =
+  | Term_position
+  | Type_position
+
+module Type_name_key : sig
+  type t = {
+    position : position;
+    context : scope_id option;
+    file : string;
+    resolved : AST_generic.resolved_name option;
+    head : string list;
+    rest : string list;
+  }
+end
+
+module Type_name_tbl : Hashtbl.S with type key = Type_name_key.t
+
 type memo = {
   selections : selected Selection_tbl.t;
   overriding : definition list Overriding_tbl.t;
   dispatched : (definition list * Func_info.t list) list Overriding_tbl.t;
+  type_name_memo : scope_id option Type_name_tbl.t;
 }
 
 val create_memo : unit -> memo
 
-type position =
-  | Term_position
-  | Type_position
+type memo_target =
+  | Class_table_memo
+  | Own_memo of memo
+
+val find_memoised :
+  memo -> memo_target -> (memo -> 'key -> 'found option) -> 'key -> 'found option
+
+val record_memoised :
+  memo -> memo_target -> (memo -> 'key -> 'found -> unit) -> 'key -> 'found -> unit
 
 val build :
   lang:Lang.t ->
@@ -129,7 +153,9 @@ val build :
   defined:(class_scope -> bool) ->
   link:(class_scope -> parent -> scope_id option) ->
   cross_file_resolver:
-    (position ->
+    (memo ->
+    memo_target ->
+    position ->
     scope_id option ->
     AST_generic.name * string list ->
     scope_id option) ->
@@ -146,12 +172,14 @@ val class_of_binding : t -> AST_generic.SId.t -> cls option
 val object_of_binding : t -> AST_generic.SId.t -> cls option
 val class_of_name :
   t ->
+  memo_target:memo_target ->
   position:position ->
   context:scope_id option ->
   AST_generic.name ->
   cls option
 val class_of_path :
   t ->
+  memo_target:memo_target ->
   position:position ->
   context:scope_id option ->
   AST_generic.name * string list ->

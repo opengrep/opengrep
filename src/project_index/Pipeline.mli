@@ -88,15 +88,12 @@ val project_table :
   file_info ->
   Symbol_table.t * Func_lookup.t
 
+(* Returns with the edges the wall-clock seconds per stage of
+   [edges_for_file] for this file. *)
 val edges_for_file :
   ctx ->
   classes:project_classes ->
   table:Symbol_table.t ->
   func_lookup:Func_lookup.t ->
   file_info ->
-  (Function_id.t * Function_id.t * Tok.t) list
-
-
-(* Wall-clock seconds per stage of [edges_for_file], summed over every
-   file and domain since the process started, largest first. *)
-val edge_stage_report : unit -> (string * float) list
+  (Function_id.t * Function_id.t * Tok.t) list * (string * float) list
