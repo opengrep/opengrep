@@ -14,6 +14,9 @@ val index : IL.fun_cfg -> index
 val entry_state : (IL.name * AST_generic.svalue) list -> state
 val value : Lang.t -> state -> IL.exp -> AST_generic.svalue
 val refutes : state -> (IL.exp * bool) list -> bool
+val equal_state : state -> state -> bool
+val equal_anchor : anchor -> anchor -> bool
+val hash_anchors : anchor list -> int
 val literals : state -> (IL.exp * bool) list
 
 val check :

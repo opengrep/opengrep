@@ -199,6 +199,36 @@ let nodes_of_anchor (ix : index) (anchor : anchor) : IL.nodei list =
               covering ix first.pos.bytepos last.pos.bytepos
           | None -> []))
 
+let equal_location_of_tok (tok1 : Tok.t) (tok2 : Tok.t) : bool =
+  match (Tok.loc_of_tok tok1, Tok.loc_of_tok tok2) with
+  | Ok loc1, Ok loc2 -> Tok.equal_location loc1 loc2
+  | Error _, _
+  | _, Error _ ->
+      false
+
+let equal_anchor (a1 : anchor) (a2 : anchor) : bool =
+  match (a1, a2) with
+  | Entry, Entry
+  | Exit, Exit ->
+      true
+  | Token tok1, Token tok2 ->
+      Common.phys_equal tok1 tok2 || equal_location_of_tok tok1 tok2
+  | Range (first1, last1), Range (first2, last2) ->
+      Tok.equal_location first1 first2 && Tok.equal_location last1 last2
+  | Call e1, Call e2 -> Common.phys_equal e1 e2
+  | (Entry | Exit | Token _ | Range _ | Call _), _ -> false
+
+let hash_anchors (anchors : anchor list) : int =
+  anchors
+  |> List.map (fun (anchor : anchor) ->
+         match anchor with
+         | Entry -> -1
+         | Exit -> -2
+         | Call _ -> -3
+         | Token tok -> Option.value (start_of tok) ~default:(-4)
+         | Range (first, _) -> first.pos.bytepos)
+  |> Hashtbl.hash
+
 let entry_state (bindings : (IL.name * G.svalue) list) : state =
   Live
     {

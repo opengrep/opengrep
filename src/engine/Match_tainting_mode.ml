@@ -135,6 +135,13 @@ type retention = {
   lang : Lang.t;
   cfg_of : Function_id.t -> IL.fun_cfg option;
   index_of : IL.fun_cfg -> PF.index;
+  check :
+    IL.fun_cfg -> entry:PF.state -> PF.anchor list -> PF.verdict * PF.state option list;
+  reanalysed :
+    IL.fun_cfg ->
+    Shape_and_sig.signature_database option ->
+    (Shape_and_sig.signature_database option -> Effects.t) ->
+    Effects.t;
   retained_db :
     Function_id.t list -> Shape_and_sig.signature_database option;
   retain_tables : Taint_shared_tables.t;
@@ -167,17 +174,68 @@ let mk_retention ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
     }
   in
   let current = ref db in
+  let index_of (cfg : IL.fun_cfg) : PF.index =
+    match Cfg_tbl.find_opt indexes cfg with
+    | Some ix -> ix
+    | None ->
+        let ix = PF.index cfg in
+        Cfg_tbl.add indexes cfg ix;
+        ix
+  in
+  let checks :
+      ( int,
+        (IL.fun_cfg
+        * PF.state
+        * PF.anchor list
+        * (PF.verdict * PF.state option list))
+        list )
+      Hashtbl.t =
+    Hashtbl.create 64
+  in
+  let reanalyses :
+      (Shape_and_sig.signature_database option * Effects.t) list Cfg_tbl.t =
+    Cfg_tbl.create 16
+  in
   {
     lang;
     cfg_of;
-    index_of =
-      (fun (cfg : IL.fun_cfg) ->
-        match Cfg_tbl.find_opt indexes cfg with
-        | Some ix -> ix
+    index_of;
+    reanalysed =
+      (fun (cfg : IL.fun_cfg) (db : Shape_and_sig.signature_database option)
+           (reanalyse : Shape_and_sig.signature_database option -> Effects.t) ->
+        let computed = Option.value (Cfg_tbl.find_opt reanalyses cfg) ~default:[] in
+        match
+          List.find_opt
+            (fun ((db', _) : Shape_and_sig.signature_database option * Effects.t) ->
+              Option.equal Common.phys_equal db' db)
+            computed
+        with
+        | Some (_, effects) -> effects
         | None ->
-            let ix = PF.index cfg in
-            Cfg_tbl.add indexes cfg ix;
-            ix);
+            let effects = reanalyse db in
+            Cfg_tbl.replace reanalyses cfg ((db, effects) :: computed);
+            effects);
+    check =
+      (fun (cfg : IL.fun_cfg) ~(entry : PF.state) (anchors : PF.anchor list) ->
+        let key = PF.hash_anchors anchors in
+        let checked = Option.value (Hashtbl.find_opt checks key) ~default:[] in
+        match
+          List.find_opt
+            (fun ((cfg', entry', anchors', _) :
+                   IL.fun_cfg
+                   * PF.state
+                   * PF.anchor list
+                   * (PF.verdict * PF.state option list)) ->
+              Common.phys_equal cfg' cfg
+              && List.equal PF.equal_anchor anchors' anchors
+              && PF.equal_state entry' entry)
+            checked
+        with
+        | Some (_, _, _, result) -> result
+        | None ->
+            let result = PF.check lang cfg (index_of cfg) ~entry anchors in
+            Hashtbl.replace checks key ((cfg, entry, anchors, result) :: checked);
+            result);
     retained_db =
       (fun (fids : Function_id.t list) ->
         List.iter
@@ -379,7 +437,7 @@ let conjoin_verdicts (v1 : PF.verdict) (v2 : PF.verdict) : PF.verdict =
 let rec verify_activation (retention : retention) (cfg : IL.fun_cfg) (entry : PF.state)
     (fc : activation_check) : PF.verdict * PF.state option =
   let verdict, states =
-    PF.check retention.lang cfg (retention.index_of cfg) ~entry fc.anchors
+    retention.check cfg ~entry fc.anchors
   in
   let at (i : int) : PF.state option = Option.join (List.nth_opt states i) in
   let final = at (List.length states - 1) in
@@ -538,7 +596,10 @@ let retained_candidates (checked_function : checked_function) ~(sink : string) (
                that keep them too"
               sink (List.length fids));
         match
-          Effects.find_opt effect_ (reanalyse (checked_function.retention.retained_db fids))
+          Effects.find_opt effect_
+            (checked_function.retention.reanalysed checked_function.cfg
+               (checked_function.retention.retained_db fids)
+               reanalyse)
           |> Fun.flip Option.bind (reported_items ~lang)
         with
         | None -> None

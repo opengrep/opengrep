@@ -23,6 +23,16 @@ type retention = {
   lang : Lang.t;
   cfg_of : Function_id.t -> IL.fun_cfg option;
   index_of : IL.fun_cfg -> Path_feasibility.index;
+  check :
+    IL.fun_cfg ->
+    entry:Path_feasibility.state ->
+    Path_feasibility.anchor list ->
+    Path_feasibility.verdict * Path_feasibility.state option list;
+  reanalysed :
+    IL.fun_cfg ->
+    Shape_and_sig.signature_database option ->
+    (Shape_and_sig.signature_database option -> Shape_and_sig.Effects.t) ->
+    Shape_and_sig.Effects.t;
   retained_db :
     Function_id.t list -> Shape_and_sig.signature_database option;
   retain_tables : Taint_shared_tables.t;
