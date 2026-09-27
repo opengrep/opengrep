@@ -1,0 +1,13 @@
+rules:
+  - id: record_holding_loop_value_in_10_fields_python
+    message: a record that a loop rebuilds around its previous value, held in 10 of its fields, reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

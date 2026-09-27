@@ -163,10 +163,10 @@ val update_offset_and_unify :
 val clean_cell : write:Taint.call_loc -> Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
 
-val fold_cell : lang:Lang.t -> merge:Taint.trace_merge -> cell -> cell
-(** [cell] with every object nested in an enclosing object that shares one of
-    its sites merged into that object, which becomes a summary the nested
-    position refers back to ([Rec]). For a join at a loop head. *)
+val join_folded_by_site :
+  lang:Lang.t -> merge:Taint.trace_merge -> cell option -> cell -> cell
+(** The join of a variable's previous and computed cells at a loop head,
+    folded by allocation site; one form per partition of their objects. *)
 
 val truncate_shape : merge:Taint.trace_merge -> max_depth:int -> shape -> shape
 (** Widen a shape to at most [max_depth] levels of ['Obj'] nesting. Subtrees

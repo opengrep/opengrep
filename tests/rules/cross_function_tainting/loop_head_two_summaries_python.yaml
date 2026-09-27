@@ -1,0 +1,13 @@
+rules:
+  - id: loop_head_two_summaries_python
+    message: one of two chains that a loop builds in one record carries a tainted field to the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

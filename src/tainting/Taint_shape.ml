@@ -493,6 +493,19 @@ let rec replace_clean_leaves ~lang ~(merge : T.trace_merge) ~offset ~carry ~leaf
         | _, false -> Some (Cell (xtaint, Obj { node with fields = obj' })))
   | _, (Bot | Rec _ | Arg _ | Fun _) -> Some cell
 
+let cell_of_join (xtaint : Xtaint.t) (shape : shape) : cell =
+  match (xtaint, shape) with
+  (* Restore INVARIANT(cell).2: 'Xtaint.union' gives 'Clean ∪ None = Clean'
+   * while 'unify_shape' gives 'Bot ∪ shape = shape', so unifying
+   * 'Cell(Clean, Bot)' with 'Cell(None, Obj _)' would produce
+   * 'Cell(Clean, Obj _)'. The 'Clean' claim only held on one side, and a
+   * join must not hide the taint recorded under the other side's shape
+   * ('find_in_cell_w_carry' stops at a 'Clean' cell). *)
+  | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) -> Cell (`None, shape)
+  | ( (`Clean | `None | `Tainted _),
+      (Bot | Obj _ | Rec _ | Arg _ | Fun _) ) ->
+      Cell (xtaint, shape)
+
 let rec unify_cell_in ~lang ~(merge : T.trace_merge) (join : join) cell1 cell2 =
   if phys_equal cell1 cell2 && both_aligned join then cell1
   else
@@ -511,17 +524,7 @@ let rec unify_cell_in ~lang ~(merge : T.trace_merge) (join : join) cell1 cell2 =
           ~other_xtaint:xtaint1 ~other shape)
       shape1 shape2
   in
-  match (xtaint, shape) with
-  (* Restore INVARIANT(cell).2: 'Xtaint.union' gives 'Clean ∪ None = Clean'
-   * while 'unify_shape' gives 'Bot ∪ shape = shape', so unifying
-   * 'Cell(Clean, Bot)' with 'Cell(None, Obj _)' would produce
-   * 'Cell(Clean, Obj _)'. The 'Clean' claim only held on one side, and a
-   * join must not hide the taint recorded under the other side's shape
-   * ('find_in_cell_w_carry' stops at a 'Clean' cell). *)
-  | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) -> Cell (`None, shape)
-  | ( (`Clean | `None | `Tainted _),
-      (Bot | Obj _ | Rec _ | Arg _ | Fun _) ) ->
-      Cell (xtaint, shape)
+  cell_of_join xtaint shape
 
 (* [shape] as it must be seen at a join whose other side is [other].
  *
@@ -1556,197 +1559,407 @@ let clean_cell ~(write : T.call_loc) (offset : T.offset list) cell =
 (* Folding objects nested in an object of the same site *)
 (*********************************************************)
 
-(* The first object, in pre-order, that shares a site with an object
- * enclosing it: the offsets that lead to it and the number of objects
- * between the two. *)
-let rec nested_same_site ~(ancestors : Shape_and_sig.Sites.t list)
-    (rev_path : T.offset list) (shape : shape) : (T.offset list * int) option =
+type target = Node of int | Leaf of shape
+
+type entry = { xtaint : Xtaint.t; target : target }
+
+type node = {
+  sites : Shape_and_sig.Sites.t;
+  summary : bool;
+  entries : entry Fields.t;
+  source : obj;
+  ancestors : int list;
+}
+
+type quotient = {
+  nodes : node Dynarray.t;
+  parent : int Dynarray.t;
+  size : int Dynarray.t;
+  members : int list Dynarray.t;
+  class_sites : Shape_and_sig.Sites.t Dynarray.t;
+  copies : int Fields.t Dynarray.t;
+  referenced : bool Dynarray.t;
+  incoming : entry list Dynarray.t;
+  recorded : bool Dynarray.t;
+  mutable unions : int;
+}
+
+type path_class = { class_root : int; size_at_visit : int; depth : int }
+
+type carried_taint = { leaf : Taints.t; offset : T.offset list; carry : Taints.t }
+
+let new_quotient () : quotient =
+  {
+    nodes = Dynarray.create ();
+    parent = Dynarray.create ();
+    size = Dynarray.create ();
+    members = Dynarray.create ();
+    class_sites = Dynarray.create ();
+    copies = Dynarray.create ();
+    referenced = Dynarray.create ();
+    incoming = Dynarray.create ();
+    recorded = Dynarray.create ();
+    unions = 0;
+  }
+
+let rec index_object (q : quotient) (ancestors : int list)
+    ~(sites : Shape_and_sig.Sites.t) ~(summary : bool) (source : obj) : int =
+  let i = Dynarray.length q.nodes in
+  Dynarray.add_last q.nodes
+    { sites; summary; entries = Fields.empty; source; ancestors };
+  Dynarray.add_last q.parent i;
+  Dynarray.add_last q.size 1;
+  Dynarray.add_last q.members [ i ];
+  Dynarray.add_last q.class_sites sites;
+  Dynarray.add_last q.copies Fields.empty;
+  Dynarray.add_last q.referenced false;
+  Dynarray.add_last q.incoming [];
+  Dynarray.add_last q.recorded false;
+  let entries =
+    Fields.map
+      (fun (Cell (xtaint, shape)) ->
+        { xtaint; target = index q (i :: ancestors) shape })
+      source
+  in
+  Dynarray.set q.nodes i { (Dynarray.get q.nodes i) with entries };
+  i
+
+and index (q : quotient) (ancestors : int list) (shape : shape) : target =
   match shape with
-  | Obj { sites; fields; _ } -> (
-      match
-        List.find_index
-          (fun enclosing_sites ->
-            not (Shape_and_sig.Sites.disjoint sites enclosing_sites))
-          ancestors
-      with
-      | Some k -> Some (List.rev rev_path, k)
-      | None ->
-          Fields.to_seq fields
-          |> Seq.find_map (fun (o, Cell (_, field)) ->
-                 nested_same_site ~ancestors:(sites :: ancestors) (o :: rev_path)
-                   field))
+  | Obj { sites; summary; fields } ->
+      Node (index_object q ancestors ~sites ~summary fields)
+  | Rec n -> (
+      match List.nth_opt ancestors n with
+      | Some i -> Node i
+      | None -> Leaf shape)
   | Bot
-  | Rec _
   | Arg _
   | Fun _ ->
-      None
+      Leaf shape
 
-let rec replace_by_back_reference ~(k : int) (path : T.offset list)
-    (shape : shape) : shape =
-  match (shape, path) with
-  | Obj ({ fields; _ } as node), o :: rest ->
-      let fields =
-        Fields.update o
-          (Option.map
-             (map_cell_shape (fun field ->
-                  match rest with
-                  | [] -> Rec k
-                  | _ :: _ -> replace_by_back_reference ~k rest field)))
-          fields
+let rec find (q : quotient) (i : int) : int =
+  let parent = Dynarray.get q.parent i in
+  if Int.equal parent i then i
+  else
+    let root = find q parent in
+    Dynarray.set q.parent i root;
+    root
+
+let union (q : quotient) (i : int) (j : int) : int =
+  let i = find q i in
+  let j = find q j in
+  if Int.equal i j then i
+  else
+    let root, child =
+      if Dynarray.get q.size i >= Dynarray.get q.size j then (i, j) else (j, i)
+    in
+    Dynarray.set q.parent child root;
+    Dynarray.set q.size root (Dynarray.get q.size root + Dynarray.get q.size child);
+    Dynarray.set q.members root
+      (List.merge Int.compare
+         (Dynarray.get q.members root)
+         (Dynarray.get q.members child));
+    Dynarray.set q.class_sites root
+      (Shape_and_sig.Sites.union
+         (Dynarray.get q.class_sites root)
+         (Dynarray.get q.class_sites child));
+    q.unions <- q.unions + 1;
+    root
+
+let any_copy (q : quotient) (member : int) (o : T.offset) (any : int) : int =
+  match Fields.find_opt o (Dynarray.get q.copies member) with
+  | Some copy -> copy
+  | None ->
+      let node = Dynarray.get q.nodes any in
+      let copy =
+        index_object q node.ancestors ~sites:node.sites ~summary:node.summary
+          node.source
       in
-      Obj { node with fields }
-  | (Bot | Rec _ | Arg _ | Fun _), _
-  | Obj _, [] ->
-      shape
+      Dynarray.set q.copies member
+        (Fields.add o copy (Dynarray.get q.copies member));
+      copy
 
-let rec shape_at (path : T.offset list) (shape : shape) : shape option =
-  match (shape, path) with
-  | _, [] -> Some shape
-  | Obj { fields; _ }, o :: rest -> (
-      match Fields.find_opt o fields with
-      | Some (Cell (_, field)) -> shape_at rest field
-      | None -> None)
-  | (Bot | Rec _ | Arg _ | Fun _), _ :: _ -> None
+let is_child (q : quotient) (parent : int) (i : int) : bool =
+  match (Dynarray.get q.nodes i).ancestors with
+  | nearest :: _ -> Int.equal nearest parent
+  | [] -> false
 
-let rec objects_along (path : T.offset list) (shape : shape) : shape list =
-  match (shape, path) with
-  | Obj { fields; _ }, o :: (_ :: _ as rest) -> (
-      match Fields.find_opt o fields with
-      | Some (Cell (_, field)) -> shape :: objects_along rest field
-      | None -> [ shape ])
-  | _ -> [ shape ]
-
-(* The fields of an object [k] objects below an outer object (with [between]
- * the objects in between, nearest to the outer object last), moved up to be
- * fields of the outer object: a back reference in them to that object or to
- * the outer object refers to the outer object, one to an object in between
- * is replaced by a copy of that object, and one above the outer object skips
- * the objects in between. *)
-let moved_fields ~(k : int) ~(between : shape array) (fields : obj) : obj =
-  let rec move ~(first : int) ~(depth_in_outer : int) (shape : shape) : shape =
-    rebind_free
-      ~outer:(fun j depth ->
-        let target = first + j in
-        let levels = depth_in_outer + depth in
-        if target < 0 || Int.equal target k then Rec (levels - 1)
-        else if target < k then
-          move ~first:(target + 1) ~depth_in_outer:levels between.(target)
-        else Rec (levels + (target - k - 1)))
-      shape
+let field_entries (q : quotient) (class_root : int) : entry list Fields.t =
+  let members = Dynarray.get q.members class_root in
+  let present =
+    List.fold_left
+      (fun present member ->
+        Fields.fold
+          (fun o entry present ->
+            Fields.update o
+              (fun entries -> Some (entry :: Option.value entries ~default:[]))
+              present)
+          (Dynarray.get q.nodes member).entries present)
+      Fields.empty members
   in
-  map_fields (map_cell_shape (move ~first:(-1) ~depth_in_outer:1)) fields
+  Fields.mapi
+    (fun o reversed ->
+      let reads_of_any =
+        List.filter_map
+          (fun member ->
+            let entries = (Dynarray.get q.nodes member).entries in
+            if Fields.mem o entries then None
+            else
+              Fields.find_opt T.Oany entries
+              |> Option.map (fun (any : entry) ->
+                     match any.target with
+                     | Node any_node when is_child q member any_node ->
+                         { any with target = Node (any_copy q member o any_node) }
+                     | Node _
+                     | Leaf _ ->
+                         any))
+          members
+      in
+      List.rev_append reversed reads_of_any)
+    present
 
-(* Merges the object [nested] at [path] below [outer], [k] objects below it
- * and sharing a site with it, into [outer]: [nested] becomes a back reference
- * to [outer], and its fields are joined into those of [outer]. [above] are
- * the objects enclosing [outer], nearest first. A field of [outer] that holds
- * a back reference to [outer] on one side and an object on the other refers
- * to [outer] after the join, and [outer] also takes that object's sites and
- * fields. *)
-let merge_into_outer ~lang ~(merge : T.trace_merge) ~(above : shape list)
-    ~(path : T.offset list) ~(k : int) (outer : shape) (nested : shape) : shape
-    =
-  match (outer, nested) with
-  | ( Obj { sites = outer_sites; fields = outer_fields; _ },
-      Obj { sites = nested_sites; fields = nested_fields; _ } ) ->
-      let sites = Shape_and_sig.Sites.union outer_sites nested_sites in
-      let replaced =
-        match replace_by_back_reference ~k path outer with
-        | Obj node -> Obj { node with sites; summary = true }
-        | (Bot | Rec _ | Arg _ | Fun _) as shape -> shape
-      in
-      let between = Array.of_list (List.rev (objects_along path replaced)) in
-      let fields_of_replaced =
-        match replaced with
-        | Obj { fields; _ } -> fields
-        | Bot
-        | Rec _
-        | Arg _
-        | Fun _ ->
-            outer_fields
-      in
-      let enclosing = replaced :: above in
-      let side = { enclosing; aligned = true } in
-      let join =
-        {
-          left = side;
-          right = side;
-          levels = List.map (fun node -> (Some node, Some node)) enclosing;
-          unrolled = false;
-        }
-      in
-      let back_reference (xtaint1 : Xtaint.t) (xtaint2 : Xtaint.t) : cell =
-        match Xtaint.union ~merge xtaint1 xtaint2 with
-        | `Clean -> Cell (`None, Rec 0)
-        | (`None | `Tainted _) as xtaint -> Cell (xtaint, Rec 0)
-      in
-      let rec absorb (sites : Shape_and_sig.Sites.t) (fields : obj)
-          (contributions : obj list) : Shape_and_sig.Sites.t * obj =
-        match contributions with
-        | [] -> (sites, fields)
-        | contribution :: rest ->
-            let sites, fields, more =
-              Fields.fold
-                (fun o cell (sites, fields, more) ->
-                  match (Fields.find_opt o fields, cell) with
-                  | None, _ -> (sites, Fields.add o cell fields, more)
-                  | ( Some (Cell (xtaint1, Rec 0)),
-                      Cell (xtaint2, Obj { sites = absorbed_sites; fields = absorbed; _ }) )
-                  | ( Some (Cell (xtaint1, Obj { sites = absorbed_sites; fields = absorbed; _ })),
-                      Cell (xtaint2, Rec 0) ) ->
-                      ( Shape_and_sig.Sites.union sites absorbed_sites,
-                        Fields.add o (back_reference xtaint1 xtaint2) fields,
-                        moved_fields ~k:0 ~between:[||] absorbed :: more )
-                  | Some existing, _ ->
-                      ( sites,
-                        Fields.add o
-                          (unify_cell_in ~lang ~merge join existing cell)
-                          fields,
-                        more ))
-                contribution (sites, fields, [])
-            in
-            absorb sites fields (List.rev_append more rest)
-      in
-      let sites, fields =
-        absorb sites fields_of_replaced
-          [ moved_fields ~k ~between nested_fields ]
-      in
-      Obj { sites; summary = true; fields }
-  | _ -> outer
+let nodes_of (entries : entry list) : int list =
+  List.filter_map
+    (fun (entry : entry) ->
+      match entry.target with
+      | Node i -> Some i
+      | Leaf _ -> None)
+    entries
 
-let fold_nested ~lang ~(merge : T.trace_merge) ~(path : T.offset list)
-    ~(k : int) (shape : shape) : shape =
-  let outer_index = List.length path - 1 - k in
-  let rec at ~(above : shape list) (index : int) (path : T.offset list)
-      (shape : shape) : shape =
-    match (shape, path) with
-    | Obj ({ fields; _ } as node), o :: rest when index < outer_index ->
-        let fields =
-          Fields.update o
-            (Option.map
-               (map_cell_shape (at ~above:(shape :: above) (index + 1) rest)))
-            fields
+let topmost_changed (q : quotient) (path : path_class list) : int option =
+  List.fold_left
+    (fun topmost (path_class : path_class) ->
+      let root = find q path_class.class_root in
+      if
+        Int.equal root path_class.class_root
+        && Int.equal (Dynarray.get q.size root) path_class.size_at_visit
+      then topmost
+      else Some path_class.depth)
+    None path
+
+let rec close_class (q : quotient) (above : path_class list) (member : int) :
+    int option =
+  let class_root = find q member in
+  let depth =
+    match above with
+    | [] -> 0
+    | (path_class : path_class) :: _ -> path_class.depth + 1
+  in
+  let path =
+    { class_root; size_at_visit = Dynarray.get q.size class_root; depth } :: above
+  in
+  let first_visit = not (Dynarray.get q.recorded class_root) in
+  Dynarray.set q.recorded class_root true;
+  let rec close_fields (fields : (T.offset * entry list) list) : int option =
+    match fields with
+    | [] -> None
+    | (_, entries) :: rest -> (
+        match nodes_of entries with
+        | [] -> close_fields rest
+        | first :: others -> (
+            let unions = q.unions in
+            let x = find q (List.fold_left (union q) first others) in
+            match
+              if q.unions > unions then topmost_changed q path else None
+            with
+            | Some _ as restart -> restart
+            | None -> (
+                if first_visit then
+                  Dynarray.set q.incoming x (Dynarray.get q.incoming x @ entries);
+                if List.exists (fun (path_class : path_class) -> Int.equal path_class.class_root x) path
+                then (
+                  Dynarray.set q.referenced x true;
+                  close_fields rest)
+                else
+                  let sites = Dynarray.get q.class_sites x in
+                  match
+                    List.filter
+                      (fun (path_class : path_class) ->
+                        not
+                          (Shape_and_sig.Sites.disjoint sites
+                             (Dynarray.get q.class_sites path_class.class_root)))
+                      path
+                  with
+                  | [] -> (
+                      match close_class q path x with
+                      | None -> close_fields rest
+                      | Some _ as restart -> restart)
+                  | hits ->
+                      ignore
+                        (List.fold_left
+                           (fun x (path_class : path_class) -> union q x path_class.class_root)
+                           x hits);
+                      topmost_changed q path)))
+  in
+  match close_fields (Fields.bindings (field_entries q class_root)) with
+  | Some restart when Int.equal restart depth -> close_class q above class_root
+  | outcome -> outcome
+
+let rec close (q : quotient) (roots : entry list) : unit =
+  let unions = q.unions in
+  Dynarray.iteri (fun i _ -> Dynarray.set q.referenced i false) q.referenced;
+  Dynarray.iteri (fun i _ -> Dynarray.set q.incoming i []) q.incoming;
+  Dynarray.iteri (fun i _ -> Dynarray.set q.recorded i false) q.recorded;
+  (match nodes_of roots with
+  | [] -> ()
+  | first :: others ->
+      let root = find q (List.fold_left (union q) first others) in
+      Dynarray.set q.incoming root roots;
+      ignore (close_class q [] root));
+  if q.unions > unions then close q roots
+
+let joined_xtaint ~(merge : T.trace_merge) (entries : entry list) : Xtaint.t =
+  match entries with
+  | [] -> `None
+  | first :: rest ->
+      List.fold_left
+        (fun xtaint (entry : entry) -> Xtaint.union ~merge xtaint entry.xtaint)
+        first.xtaint rest
+
+let read_on_entry ~lang ~(merge : T.trace_merge) (q : quotient) (o : T.offset)
+    (entry : entry) : [ `Kept | `Cell of entry | `Whole of Taints.t ] =
+  match (entry.xtaint, entry.target) with
+  | `Tainted taints, Node i ->
+      let entries = (Dynarray.get q.nodes i).entries in
+      if Fields.mem o entries || Fields.mem T.Oany entries then `Kept
+      else `Whole taints
+  | `Tainted taints, Leaf (Arg (arg, offsets)) -> (
+      match find_in_arg ~lang ~merge ~taints [ o ] arg offsets with
+      | Some (Cell (xtaint, shape)) -> `Cell { xtaint; target = Leaf shape }
+      | None -> `Whole taints)
+  | `Tainted taints, Leaf (Bot | Obj _ | Rec _ | Fun _) -> `Whole taints
+  | (`None | `Clean), _ -> `Kept
+
+let rec emit_cell ~lang ~(merge : T.trace_merge) (q : quotient)
+    (path : int list) ~(derived : entry list) (carried_taints : carried_taint list)
+    (entries : entry list) : cell option =
+  let xtaint = joined_xtaint ~merge entries in
+  match nodes_of entries with
+  | first :: _ -> (
+      let x = find q first in
+      match List.find_index (Int.equal x) path with
+      | Some distance -> Some (cell_of_join xtaint (Rec distance))
+      | None -> (
+          match emit_object ~lang ~merge q path x ~derived ~xtaint carried_taints with
+          | Bot when not (Xtaint.is_tainted xtaint) -> None
+          | shape -> Some (cell_of_join xtaint shape)))
+  | [] -> (
+      let shape =
+        List.fold_left
+          (fun shape (entry : entry) ->
+            match entry.target with
+            | Leaf leaf -> unify_shape ~lang ~merge shape leaf
+            | Node _ -> shape)
+          Bot entries
+      in
+      match (cell_of_join xtaint shape, carried_taints) with
+      | Cell (`Clean, _), _ :: _ ->
+          let taints =
+            carried_taints
+            |> List.filter (fun (carried_taint : carried_taint) ->
+                   not (Taints.equal carried_taint.leaf carried_taint.carry))
+            |> List.fold_left
+                 (fun taints (carried_taint : carried_taint) ->
+                   Taints.union ~merge taints
+                     (fix_poly_taint_with_offset ~lang ~merge carried_taint.offset
+                        carried_taint.leaf))
+                 Taints.empty
+          in
+          if Taints.is_empty taints then None
+          else Some (Cell (`Tainted taints, Bot))
+      | cell, _ -> Some cell)
+
+and emit_object ~lang ~(merge : T.trace_merge) (q : quotient) (path : int list)
+    (x : int) ~(derived : entry list) ~(xtaint : Xtaint.t)
+    (carried_taints : carried_taint list) : shape =
+  let incoming = Dynarray.get q.incoming x @ derived in
+  let carry = Xtaint.to_taints xtaint in
+  let inherited =
+    match xtaint with
+    | `Tainted taints ->
+        List.map (fun (carried_taint : carried_taint) -> { carried_taint with carry = taints }) carried_taints
+    | `None
+    | `Clean ->
+        carried_taints
+  in
+  let path = x :: path in
+  let field_map = field_entries q x in
+  let fields =
+    Fields.fold
+      (fun o entries fields ->
+        let reads = List.map (read_on_entry ~lang ~merge q o) incoming in
+        let derived =
+          List.filter_map
+            (function
+              | `Cell entry -> Some entry
+              | `Kept
+              | `Whole _ ->
+                  None)
+            reads
         in
-        Obj { node with fields }
-    | Obj _, _ :: _ -> (
-        match shape_at path shape with
-        | Some nested -> merge_into_outer ~lang ~merge ~above ~path ~k shape nested
-        | None -> shape)
-    | _ -> shape
+        let carried_taints =
+          List.filter_map
+            (function
+              | `Whole leaf -> Some { leaf; offset = [ o ]; carry }
+              | `Kept
+              | `Cell _ ->
+                  None)
+            reads
+          @ List.map
+              (fun (carried_taint : carried_taint) ->
+                { carried_taint with offset = carried_taint.offset @ [ o ] })
+              inherited
+        in
+        match
+          emit_cell ~lang ~merge q path ~derived carried_taints (entries @ derived)
+        with
+        | Some cell -> Fields.add o cell fields
+        | None -> fields)
+      field_map Fields.empty
   in
-  at ~above:[] 0 path shape
+  if Fields.is_empty fields && not (Fields.is_empty field_map) then Bot
+  else
+    Obj
+      {
+        sites = Dynarray.get q.class_sites x;
+        summary =
+          Dynarray.get q.referenced x
+          || List.exists
+               (fun member -> (Dynarray.get q.nodes member).summary)
+               (Dynarray.get q.members x);
+        fields;
+      }
 
-(* Merges each object nested in an enclosing object of one of its sites into
- * that object, until no path holds two objects that share a site. A function
- * has finitely many sites, so a folded shape has bounded depth. *)
-let rec fold_shape ~lang ~(merge : T.trace_merge) (shape : shape) : shape =
-  match nested_same_site ~ancestors:[] [] shape with
-  | None -> shape
-  | Some (path, k) ->
-      fold_shape ~lang ~merge (fold_nested ~lang ~merge ~path ~k shape)
-
-let fold_cell ~lang ~(merge : T.trace_merge) (cell : cell) : cell =
-  map_cell_shape (fold_shape ~lang ~merge) cell
+let join_folded_by_site ~lang ~(merge : T.trace_merge) (previous : cell option)
+    (computed : cell) : cell =
+  let is_object (Cell (_, shape) : cell) : bool =
+    match shape with
+    | Obj _ -> true
+    | Bot
+    | Rec _
+    | Arg _
+    | Fun _ ->
+        false
+  in
+  match previous with
+  | Some previous when phys_equal previous computed -> computed
+  | Some previous when not (is_object previous || is_object computed) ->
+      unify_cell ~lang ~merge previous computed
+  | None when not (is_object computed) -> computed
+  | Some _
+  | None -> (
+      let q = new_quotient () in
+      let roots =
+        Option.to_list previous @ [ computed ]
+        |> List.map (fun (Cell (xtaint, shape)) ->
+               { xtaint; target = index q [] shape })
+      in
+      close q roots;
+      if Option.is_none previous && Int.equal q.unions 0 then computed
+      else
+        match emit_cell ~lang ~merge q [] ~derived:[] [] roots with
+        | Some cell -> cell
+        | None -> Cell (joined_xtaint ~merge roots, Bot))
 
 (*********************************************************)
 (* Enumerate leaf cells and tainted object cells, with taints and shapes *)

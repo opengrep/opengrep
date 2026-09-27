@@ -104,7 +104,8 @@ let compare_target ((n1, o1) : IL.name * T.offset list)
   | 0 -> List.compare T.compare_offset o1 o2
   | c -> c
 
-let union ~lang ~(merge : T.trace_merge) le1 le2 =
+let union_by ~(join_cells : cell -> cell -> cell) ~(merge : T.trace_merge) le1
+    le2 =
   match (le1.dead, le2.dead) with
   (* Both dead: result stays dead. Return a clean empty env with the
    * flag set, so a debugger inspecting post-Join state sees just the
@@ -115,9 +116,7 @@ let union ~lang ~(merge : T.trace_merge) le1 le2 =
   | false, true -> le1
   | false, false ->
       let tainted =
-        NameMap.union
-          (fun _ x y -> Some (Shape.unify_cell ~lang ~merge x y))
-          le1.tainted le2.tainted
+        NameMap.union (fun _ x y -> Some (join_cells x y)) le1.tainted le2.tainted
       in
       {
         tainted;
@@ -149,16 +148,26 @@ let union ~lang ~(merge : T.trace_merge) le1 le2 =
             le1.pointees le2.pointees;
       }
 
+let union ~lang ~(merge : T.trace_merge) le1 le2 =
+  union_by ~join_cells:(Shape.unify_cell ~lang ~merge) ~merge le1 le2
+
 let union_at_loop_head ~lang ~(merge : T.trace_merge) previous computed =
-  let joined = union ~lang ~merge previous computed in
+  let joined =
+    union_by
+      ~join_cells:(fun (previous_cell : cell) (computed_cell : cell) ->
+        Shape.join_folded_by_site ~lang ~merge (Some previous_cell) computed_cell)
+      ~merge previous computed
+  in
   let tainted =
     NameMap.fold
       (fun var cell tainted ->
         match NameMap.find_opt var previous.tainted with
-        | Some previous_cell when phys_equal previous_cell cell -> tainted
+        | Some previous_cell
+          when (not previous.dead) || phys_equal previous_cell cell ->
+            tainted
         | Some _
         | None ->
-            let folded = Shape.fold_cell ~lang ~merge cell in
+            let folded = Shape.join_folded_by_site ~lang ~merge None cell in
             if phys_equal folded cell then tainted
             else NameMap.add var folded tainted)
       joined.tainted joined.tainted

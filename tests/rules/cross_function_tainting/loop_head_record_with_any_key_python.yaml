@@ -1,0 +1,13 @@
+rules:
+  - id: loop_head_record_with_any_key_python
+    message: a value written under a key unknown to the analysis in a loop reaches the sink through a field that the older record holds
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,13 @@
+rules:
+  - id: loop_head_record_joined_with_tainted_value_python
+    message: a record that a loop builds on a tainted value reaches the sink through a field of an older record
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

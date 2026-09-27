@@ -1,0 +1,13 @@
+rules:
+  - id: loop_head_record_of_functions_python
+    message: a function stored in a record that a loop links to its previous value returns a tainted value to the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

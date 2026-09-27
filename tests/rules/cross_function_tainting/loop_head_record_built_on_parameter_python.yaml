@@ -1,0 +1,13 @@
+rules:
+  - id: loop_head_record_built_on_parameter_python
+    message: a record that a loop builds on a parameter carries the argument to the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

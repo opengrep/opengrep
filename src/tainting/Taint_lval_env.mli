@@ -221,7 +221,7 @@ val union : lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
 val union_at_loop_head :
   lang:Lang.t -> merge:Taint.trace_merge -> env -> env -> env
 (** [union] of the previous and the computed environment of a loop head,
-    with each variable's shape folded ([Taint_shape.fold_cell]). *)
+    each variable's cells joined by [Taint_shape.join_folded_by_site]. *)
 
 val union_list :
   lang:Lang.t -> merge:Taint.trace_merge -> ?default:env -> env list -> env

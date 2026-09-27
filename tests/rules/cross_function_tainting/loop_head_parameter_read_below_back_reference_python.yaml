@@ -1,0 +1,13 @@
+rules:
+  - id: loop_head_parameter_read_below_back_reference_python
+    message: a field of the argument, read two links down a record that a loop builds on the parameter, reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
