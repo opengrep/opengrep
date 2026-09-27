@@ -132,8 +132,8 @@ Population happens via two mechanisms:
   `Reexports` (re-export chains resolved to a fixpoint,
   order-independently).  The return-type/field-type augmentation is
   itself an outer fixpoint that rebuilds caller-argument types
-  between passes, capped by
-  `Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES`.
+  between passes and ends after a pass that writes no `Type_state`
+  key.
 
 **Constructor type inference is language-gated.**  When
 `Type_infer.infer_expr_type` sees a bare call `foo()` with no known
@@ -162,13 +162,6 @@ simple class name appears in many files, the last write determines
 which entry the lattice carries.  This matches `Hashtbl.replace`
 semantics and avoids losing edges when (e.g.) `Unsupported` is
 declared in many files but only one is the "real" base.
-
-`Type_state.equal` (used by the augment-pass fixpoint to detect
-convergence) compares each binding's values structurally, including
-the **full qualified path** of `G.name` values, not only the bare
-names.  Two distinct qualified types with the same bare name (Go's
-`pkg_a.Store` vs `pkg_b.Store`) must register as a change, otherwise
-the fixpoint would converge prematurely on a stale type.
 
 ### Phase 2: Per-file edges
 

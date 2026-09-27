@@ -35,5 +35,3 @@ val function_return_tuple : t -> Function_id.t -> cls option list option
 val add_value_type_annotation : t -> AST_generic.SId.t -> t
 
 val is_value_type : t -> AST_generic.type_ -> bool
-
-val equal : t -> t -> bool

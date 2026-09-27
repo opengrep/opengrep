@@ -145,6 +145,8 @@ val find_memoised :
 val record_memoised :
   memo -> memo_target -> (memo -> 'key -> 'found -> unit) -> 'key -> 'found -> unit
 
+val merge_memo : into:memo -> memo -> unit
+
 val build :
   lang:Lang.t ->
   classes:class_scope list list ->

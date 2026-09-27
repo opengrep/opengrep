@@ -737,6 +737,7 @@ let edges_for_file (ctx : ctx) ~(classes : project_classes)
     in
     let table =
       Symbol_table.with_own_memo (Symbol_table.with_types table type_state)
+        (Class_table.create_memo ())
     in
     let (), stamp_var_types_secs =
       staged "stamp var types" (fun () ->

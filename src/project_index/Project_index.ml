@@ -208,6 +208,34 @@ let rec chunks (n : int) (xs : 'a list) : 'a list list =
     let rest = List_.drop take xs in
     batch :: chunks n rest
 
+(* Run [fn] on each batch of [per_file_batch_size] items, in parallel when
+   [ncores > 1] and there is more than one batch, sequentially otherwise;
+   one result per batch, in input order. *)
+let run_per_batch (caps : < Cap.fork >) ~(ncores : int)
+    (fn : 'a list -> 'b) (items : 'a list)
+    : ('b, 'a list * Exception.t) Result.t list =
+  let batches = chunks per_file_batch_size items in
+  let n = List.length batches in
+  if ncores <= 1 || n <= 1 then
+    List_.map
+      (fun (batch : 'a list) ->
+        try Ok (fn batch)
+        with
+        | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
+          Exception.catch_and_reraise exn
+        | exn -> Error (batch, Exception.catch exn))
+      batches
+  else
+    Domainslib_.parmap caps
+      ~num_domains:(min ncores n) ~chunksize:1
+      ~exception_handler:(fun (batch : 'a list) (exn : Exception.t) ->
+        match Exception.get_exn exn with
+        | Out_of_memory | Memory_limit.ExceededMemoryLimit _ ->
+          Exception.reraise exn
+        | _ -> (batch, exn))
+      fn
+      batches
+
 (* Run [fn] on each item, in parallel when [ncores > 1] and there is
    more than one batch, sequentially otherwise.  Each parallel work
    unit is a whole batch; inside a batch, a per-item failure becomes
@@ -227,26 +255,12 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
       Exception.catch_and_reraise exn
     | exn -> Error (item, Exception.catch exn)
   in
-  let batches = chunks per_file_batch_size items in
-  let n = List.length batches in
-  if ncores <= 1 || n <= 1 then List_.map run_one items
-  else
-    Domainslib_.parmap caps
-      ~num_domains:(min ncores n) ~chunksize:1
-      ~exception_handler:(fun _ exn ->
-        match Exception.get_exn exn with
-        | Out_of_memory | Memory_limit.ExceededMemoryLimit _ ->
-          Exception.reraise exn
-        | _ -> exn)
-      (fun batch -> List_.map run_one batch)
-      batches
-    |> List.map2 (fun batch -> function
-        | Ok batch_results -> batch_results
-        (* A batch-level failure (thrown outside [run_one]) loses the
-           per-item results; attribute it to every item. *)
-        | Error exn -> List_.map (fun item -> Error (item, exn)) batch)
-        batches
-    |> List.concat
+  run_per_batch caps ~ncores (List_.map run_one) items
+  |> List.concat_map (function
+      | Ok batch_results -> batch_results
+      (* A batch-level failure (thrown outside [run_one]) loses the
+         per-item results; attribute it to every item. *)
+      | Error (batch, exn) -> List_.map (fun item -> Error (item, exn)) batch)
 
 (* Wall-clock time of one phase, at info level under one tag so a log grep
    gives the phase table (see also Interfile_dispatch.timed). *)
@@ -1459,39 +1473,70 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Cross-type inference fixpoint: alternate body-return-types and
      self-assignment field-types until neither adds anything.  Rebuild
      [caller_arg_types] between passes so fresh return types feed the next;
-     compare on [Type_state] only (the Hashtbl is derived). *)
-  let outer_step (ts, _car) =
-    let ts =
-      Type_augment.augment_return_types_from_bodies ~table_of_file
-        ~type_state:ts all_funcs
-    in
-    let car =
-      Type_augment.build_caller_arg_types ~lang ~table_of_file ~type_state:ts
-        ~funcs_by_file:file_funcs_index file_infos
-    in
-    let ts =
-      Type_augment.augment_fields_from_self_assignments ~lang
-        ~caller_arg_types:car ~cfg ~table_of_file ~type_state:ts all_funcs
-    in
-    (ts, car)
-  in
-  let outer_equal (a, _) (b, _) = Type_state.equal a b in
+     end on a step that writes no [Type_state] key (the Hashtbl is derived). *)
   let (type_state, caller_arg_types), outer_iters =
     timed "call graph: type inference fixpoint" @@ fun () ->
-    Fixpoint.run
-      ~equal:outer_equal
-      ~step:outer_step
-      ~max_iterations:Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES
-      (type_state, Hashtbl.create 0)
+    let undeclared = Type_augment.undeclared_functions ~table_of_file all_funcs in
+    let calls =
+      List.filter_map
+        (Type_augment.calls_of_file ~table_of_file
+           ~funcs_by_file:file_funcs_index)
+        file_infos
+    in
+    let methods = Type_augment.method_infos ~lang ~cfg ~table_of_file all_funcs in
+    (* Each batch's unit of work records the memo misses of its files in one
+       own memo; the main domain merges the batch memos into the project memo
+       before the field phase, so that phase, the later steps and the edge
+       stage find them there. *)
+    let caller_arg_types_of (ts : Type_state.t)
+        : (Function_id.t * int, Class_table.cls) Hashtbl.t =
+      let per_batch =
+        List.map
+          (function
+            | Ok (result : (Function_id.t * int * Class_table.cls) list list
+                           * Class_table.memo) -> result
+            | Error ((_ : Type_augment.calls_of_file list), (exn : Exception.t))
+              ->
+              Exception.reraise exn)
+          (run_per_batch caps ~ncores
+             (fun (batch : Type_augment.calls_of_file list) ->
+               let memo = Class_table.create_memo () in
+               ( List_.map
+                   (Type_augment.caller_arg_types_of_file ~lang ~type_state:ts
+                      ~memo)
+                   batch,
+                 memo ))
+             calls)
+      in
+      List.iter
+        (fun ((_ : (Function_id.t * int * Class_table.cls) list list),
+              (memo : Class_table.memo)) ->
+          Class_table.merge_memo
+            ~into:(Class_table.memo classes.Pipeline.class_table) memo)
+        per_batch;
+      Type_augment.build_caller_arg_types (List.concat_map fst per_batch)
+    in
+    let outer_step
+        (((ts : Type_state.t),
+          (_ : (Function_id.t * int, Class_table.cls) Hashtbl.t))
+          : Type_state.t * (Function_id.t * int, Class_table.cls) Hashtbl.t)
+        : (Type_state.t * (Function_id.t * int, Class_table.cls) Hashtbl.t)
+          * bool =
+      let ts, returns_changed =
+        Type_augment.augment_return_types_from_bodies ~undeclared
+          ~type_state:ts
+      in
+      let car = caller_arg_types_of ts in
+      let ts, fields_changed =
+        Type_augment.augment_fields_from_self_assignments
+          ~caller_arg_types:car ~methods ~type_state:ts
+      in
+      ((ts, car), returns_changed || fields_changed)
+    in
+    Fixpoint.run ~step:outer_step (type_state, Hashtbl.create 0)
   in
   Log.debug (fun m -> m "Body-inferred type fixpoint: %d outer passes, %d caller-arg-types"
     outer_iters (Hashtbl.length caller_arg_types));
-  (* [Fixpoint.run] returns [i = max_iterations] only on the cap branch. *)
-  if outer_iters >= Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES then
-    Log.warn (fun m ->
-        m "Body-inferred type fixpoint hit the %d-pass cap without \
-           converging; inferred types may be incomplete"
-          Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES);
   let type_state =
     timed "call graph: module singletons and value types" @@ fun () ->
     Type_augment.add_value_type_annotations ~lang ~table_of_file

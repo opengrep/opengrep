@@ -116,18 +116,3 @@ let is_value_type (t : t) (ty : G.type_) : bool =
   match Option.bind (Class_table.name_of_type ty) Class_table.site_of_name with
   | Some (site : G.SId.t) -> Site_set.mem site t.value_type_annotations
   | None -> false
-
-let equal (left : t) (right : t) : bool =
-  let same_elements = List.equal (Option.equal Class_table.same) in
-  Module_qn_map.equal Class_table.same left.module_singletons
-    right.module_singletons
-  && Member_map.equal Class_table.same left.method_returns right.method_returns
-  && Member_map.equal same_elements left.method_return_tuples
-       right.method_return_tuples
-  && Member_map.equal Class_table.same left.fields right.fields
-  && Member_map.equal Class_table.same left.field_elements right.field_elements
-  && Node_map.equal Class_table.same left.function_returns
-       right.function_returns
-  && Node_map.equal same_elements left.function_return_tuples
-       right.function_return_tuples
-  && Site_set.equal left.value_type_annotations right.value_type_annotations

@@ -28,20 +28,38 @@ val build_file_funcs_index :
   Graph_from_AST.func_info list ->
   (string, Graph_from_AST.func_info list) Hashtbl.t
 
-(* Return types inferred from [return EXPR] bodies. *)
-val augment_return_types_from_bodies :
+type undeclared_function
+
+val undeclared_functions :
   table_of_file:table_of_file ->
-  type_state:Type_state.t ->
   Graph_from_AST.func_info list ->
-  Type_state.t
+  undeclared_function list
+
+(* Return types inferred from [return EXPR] bodies; the flag is true when
+   the state changed. *)
+val augment_return_types_from_bodies :
+  undeclared:undeclared_function list ->
+  type_state:Type_state.t ->
+  Type_state.t * bool
+
+type calls_of_file
+
+val calls_of_file :
+  table_of_file:table_of_file ->
+  funcs_by_file:(string, Graph_from_AST.func_info list) Hashtbl.t ->
+  Types.file_info ->
+  calls_of_file option
+
+val caller_arg_types_of_file :
+  lang:Lang.t ->
+  type_state:Type_state.t ->
+  memo:Class_table.memo ->
+  calls_of_file ->
+  (Function_id.t * int * Class_table.cls) list
 
 (* (class, method, arg index) -> inferred argument type, from call sites. *)
 val build_caller_arg_types :
-  lang:Lang.t ->
-  table_of_file:table_of_file ->
-  type_state:Type_state.t ->
-  funcs_by_file:(string, Graph_from_AST.func_info list) Hashtbl.t ->
-  Types.file_info list ->
+  (Function_id.t * int * Class_table.cls) list list ->
   (Function_id.t * int, Class_table.cls) Hashtbl.t
 
 (* Module-level singleton bindings typed from their initialisers. *)
@@ -51,15 +69,22 @@ val build_module_singleton_types :
   Types.file_info list ->
   Type_state.t
 
-(* Field types inferred from [this.X = RHS] assignments in method bodies. *)
-val augment_fields_from_self_assignments :
+type method_info
+
+val method_infos :
   lang:Lang.t ->
-  caller_arg_types:(Function_id.t * int, Class_table.cls) Hashtbl.t ->
   cfg:Index_lang_rules.t ->
   table_of_file:table_of_file ->
-  type_state:Type_state.t ->
   Graph_from_AST.func_info list ->
-  Type_state.t
+  method_info list
+
+(* Field types inferred from [this.X = RHS] assignments in method bodies;
+   the flag is true when the state changed. *)
+val augment_fields_from_self_assignments :
+  caller_arg_types:(Function_id.t * int, Class_table.cls) Hashtbl.t ->
+  methods:method_info list ->
+  type_state:Type_state.t ->
+  Type_state.t * bool
 
 val add_value_type_annotations :
   lang:Lang.t ->

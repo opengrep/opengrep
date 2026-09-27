@@ -390,6 +390,15 @@ let record_memoised (type key found) (class_table_memo : memo)
   | Class_table_memo -> record class_table_memo key found
   | Own_memo memo -> record memo key found
 
+(* Every memo entry is a function of its key, so two memos that hold one key
+   hold the same value for it, and a union replaces no value by another. *)
+let merge_memo ~(into : memo) (from : memo) : unit =
+  Selection_tbl.replace_seq into.selections (Selection_tbl.to_seq from.selections);
+  Overriding_tbl.replace_seq into.overriding (Overriding_tbl.to_seq from.overriding);
+  Overriding_tbl.replace_seq into.dispatched (Overriding_tbl.to_seq from.dispatched);
+  Type_name_tbl.replace_seq into.type_name_memo
+    (Type_name_tbl.to_seq from.type_name_memo)
+
 type import_origin =
   | Imported_from of cls
   | Imported_from_mixins

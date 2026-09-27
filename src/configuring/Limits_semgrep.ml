@@ -114,9 +114,7 @@ let taint_MAX_GUARD_CLAUSES = 64
 (* Project index (interfile call graph) *)
 (*****************************************************************************)
 
-(* Iteration caps on the projidx type-augmentation fixpoints; the passes are
- * monotone, the caps only bound how deep return-type / field-type chains
- * propagate. See 'src/project_index/Main.ml'. *)
-let projidx_RETURN_TYPES_MAX_ITERS = 4
+(* Iteration cap on the projidx type-augmentation fixpoint of
+ * stamp_var_types_from_bodies; the passes are monotone, the cap only bounds
+ * how deep chains propagate. See 'src/project_index/Main.ml'. *)
 let projidx_OBJECT_MAPPINGS_MAX_ITERS = 5
-let projidx_CALL_GRAPH_MAX_PASSES = 5

@@ -114,7 +114,7 @@ val with_project :
   cross_file_resolver:(t -> caller:Function_id.t option -> AST_generic.expr -> lookup_result) ->
   t
 
-val with_own_memo : t -> t
+val with_own_memo : t -> Class_table.memo -> t
 
 val with_types : t -> Type_state.t -> t
 

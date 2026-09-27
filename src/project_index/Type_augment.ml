@@ -185,12 +185,15 @@ let build_file_funcs_index (all_funcs : FA.func_info list)
   index
 
 
-(* Infer return types from [return EXPR] bodies when no declared type exists;
-   iterates to a fixpoint so chains like [return self.foo()] resolve. *)
-let augment_return_types_from_bodies
-    ~(table_of_file : table_of_file)
-    ~(type_state : Type_state.t)
-    (all_funcs : FA.func_info list) : Type_state.t =
+type undeclared_function =
+  FA.func_info
+  * Symbol_table.t
+  * Function_id.t
+  * Class_table.cls option
+  * G.expr list
+
+let undeclared_functions ~(table_of_file : table_of_file)
+    (all_funcs : FA.func_info list) : undeclared_function list =
   let collect_return_exprs (func : FA.func_info) : G.expr list =
     Nonfatal.catch ?on:(func_def_file func |> Option.map Fpath.v) ~default:[]
       (fun () ->
@@ -200,8 +203,7 @@ let augment_return_types_from_bodies
         | G.Return (_, Some expr, _) -> expr :: acc
         | _ -> acc) [] body_stmt)
   in
-  let undeclared =
-    List.filter_map (fun (func : FA.func_info) ->
+  List.filter_map (fun (func : FA.func_info) ->
       match
         ( func.FA.fdef.G.frettype,
           Option.bind (Func_info.def_file_opt func) table_of_file,
@@ -216,10 +218,19 @@ let augment_return_types_from_bodies
               returned ))
       | _ -> None)
       all_funcs
-  in
-  let step (state : Type_state.t) : Type_state.t =
+
+(* Infer return types from [return EXPR] bodies when no declared type exists;
+   iterates to a fixpoint so chains like [return self.foo()] resolve. *)
+let augment_return_types_from_bodies
+    ~(undeclared : undeclared_function list)
+    ~(type_state : Type_state.t) : Type_state.t * bool =
+  (* The flag is true when the pass writes a [function_returns] key the state
+     does not hold: [already_known] guards every such write, and a
+     [method_returns] write happens only with one, so a pass changes the
+     state exactly when it raises the flag. *)
+  let step (state : Type_state.t) : Type_state.t * bool =
     List.fold_left
-      (fun state
+      (fun ((state : Type_state.t), (changed : bool))
            ((func : FA.func_info), (table : Symbol_table.t),
             (node : Function_id.t), (owner : Class_table.cls option),
             (returned : G.expr list)) ->
@@ -228,7 +239,7 @@ let augment_return_types_from_bodies
              class elsewhere does not stand in for it *)
           Option.is_some (Type_state.function_return state node)
         in
-        if already_known then state
+        if already_known then (state, changed)
         else
           let table = Symbol_table.with_types table state in
           let inferred =
@@ -237,26 +248,18 @@ let augment_return_types_from_bodies
               returned
           in
           (match inferred with
-           | [] -> state
+           | [] -> (state, changed)
            | ty :: _ ->
              let state = Type_state.set_function_return state node ty in
-             (match (owner, method_name func) with
-              | Some (cls : Class_table.cls), Some (meth : string) ->
-                Type_state.set_method_return state cls meth ty
-              | _ -> state))
-    ) state undeclared
+             ( (match (owner, method_name func) with
+                | Some (cls : Class_table.cls), Some (meth : string) ->
+                  Type_state.set_method_return state cls meth ty
+                | _ -> state),
+               true ))
+    ) (state, false) undeclared
   in
-  let final, iters =
-    Fixpoint.run ~equal:Type_state.equal ~step
-      ~max_iterations:Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS type_state
-  in
-  (* [Fixpoint.run] returns [i = max_iterations] only on the cap branch. *)
-  if iters >= Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS then
-    Log.warn (fun m ->
-        m "Return-type fixpoint hit the %d-iteration cap without \
-           converging; inferred return types may be incomplete"
-          Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS);
-  final
+  let final, (changes : int) = Fixpoint.run ~step type_state in
+  (final, changes > 0)
 
 let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)
     ~(caller : Function_id.t option) (args : G.argument list)
@@ -273,51 +276,112 @@ let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)
          ~arguments:(Callee_resolution.arguments_of_call ~lang ~typing (Some args))
          (Some args) resolved)
 
-let fold_calls_of_file ~(table_of_file : table_of_file)
-    ~(type_state : Type_state.t)
+type calls_of_file =
+  Fpath.t
+  * Symbol_table.t
+  * (Function_id.t option * (G.expr * G.argument list) list) list
+
+let calls_of_file ~(table_of_file : table_of_file)
     ~(funcs_by_file : (string, FA.func_info list) Hashtbl.t)
-    (fold :
-      'acc ->
-      Symbol_table.t ->
-      caller:Function_id.t option ->
-      G.expr ->
-      G.argument list ->
-      'acc)
-    (acc : 'acc) (fi : file_info) : 'acc =
-  match table_of_file fi.fi_file with
-  | None -> acc
-  | Some table ->
-    let table = Symbol_table.with_types table type_state in
-    let calls ~(caller : Function_id.t option) (acc : 'acc) (stmt : G.stmt)
-        : 'acc =
-      Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true
-        (fun acc (expr : G.expr) ->
-          match expr.G.e with
-          | G.Call (callee, args) ->
-            fold acc table ~caller callee (Tok.unbracket args)
-          | _ -> acc)
-        acc stmt
+    (fi : file_info) : calls_of_file option =
+  Option.map
+    (fun (table : Symbol_table.t) ->
+      let calls (acc : (G.expr * G.argument list) list) (stmt : G.stmt)
+          : (G.expr * G.argument list) list =
+        Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true
+          (fun acc (expr : G.expr) ->
+            match expr.G.e with
+            | G.Call (callee, args) -> (callee, Tok.unbracket args) :: acc
+            | _ -> acc)
+          acc stmt
+      in
+      let top_level =
+        Nonfatal.catch ~on:fi.fi_file ~default:[] (fun () ->
+          List.rev (List.fold_left calls [] fi.fi_ast))
+      in
+      ( fi.fi_file,
+        table,
+        (None, top_level)
+        :: List.map
+             (fun (func : FA.func_info) ->
+               ( Symbol_table.node_of_function func,
+                 Nonfatal.catch ~on:fi.fi_file ~default:[] (fun () ->
+                   List.rev
+                     (calls []
+                        (AST_generic_helpers.funcbody_to_stmt
+                           func.FA.fdef.G.fbody))) ))
+             (Option.value ~default:[]
+                (Hashtbl.find_opt funcs_by_file (Fpath.to_string fi.fi_file))) ))
+    (table_of_file fi.fi_file)
+
+(* The (callee node, call-argument index, class) triples of the calls of one
+   file. [memo] receives the file's memo misses, so the file's evaluation
+   writes no table another domain reads. A call that raises ends the calls of
+   its caller. *)
+let caller_arg_types_of_file ~(lang : Lang.t) ~(type_state : Type_state.t)
+    ~(memo : Class_table.memo)
+    (((file : Fpath.t), (table : Symbol_table.t),
+      (calls_by_caller :
+        (Function_id.t option * (G.expr * G.argument list) list) list))
+      : calls_of_file)
+  : (Function_id.t * int * Class_table.cls) list =
+  let table =
+    Symbol_table.with_own_memo (Symbol_table.with_types table type_state) memo
+  in
+  let record ~(caller : Function_id.t option) (callee : G.expr)
+      (args : G.argument list) : (Function_id.t * int * Class_table.cls) list =
+    let typed =
+      List.filter_map (fun ((i : int), (arg : G.argument)) ->
+        match arg with
+        | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
+          Option.map (fun (cls : Class_table.cls) -> (i, cls))
+            (Symbol_table.class_of_expr table ~caller expr)
+        | _ -> None)
+        (List.mapi (fun (i : int) (arg : G.argument) -> (i, arg)) args)
     in
-    let acc =
-      Nonfatal.catch ~on:fi.fi_file ~default:acc (fun () ->
-        List.fold_left (calls ~caller:None) acc fi.fi_ast)
-    in
-    List.fold_left
-      (fun acc (func : FA.func_info) ->
-        Nonfatal.catch ~on:fi.fi_file ~default:acc (fun () ->
-          calls ~caller:(Symbol_table.node_of_function func) acc
-            (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody)))
-      acc
-      (Option.value ~default:[]
-         (Hashtbl.find_opt funcs_by_file (Fpath.to_string fi.fi_file)))
+    match typed with
+    | [] -> []
+    | _ :: _ -> (
+      match
+        applicable_callees ~lang table ~caller args
+          (Symbol_table.resolve_call table ~caller callee)
+      with
+      | Symbol_table.External -> []
+      | Symbol_table.Defined (funcs : Func_info.t list) ->
+        List.concat_map (fun ((i : int), (cls : Class_table.cls)) ->
+          List.filter_map
+            (fun (func : Func_info.t) ->
+              Option.map (fun (node : Function_id.t) -> (node, i, cls))
+                (Symbol_table.node_of_function func))
+            funcs)
+          typed)
+  in
+  let rec record_calls ~(caller : Function_id.t option)
+      (acc : (Function_id.t * int * Class_table.cls) list)
+      (calls : (G.expr * G.argument list) list)
+      : (Function_id.t * int * Class_table.cls) list =
+    match calls with
+    | [] -> acc
+    | ((callee : G.expr), (args : G.argument list)) :: rest -> (
+      match
+        Nonfatal.catch ~on:file ~default:None (fun () ->
+          Some (record ~caller callee args))
+      with
+      | Some (recorded : (Function_id.t * int * Class_table.cls) list) ->
+        record_calls ~caller (List.rev_append recorded acc) rest
+      | None -> acc)
+  in
+  List.fold_left
+    (fun (acc : (Function_id.t * int * Class_table.cls) list)
+         ((caller : Function_id.t option),
+          (calls : (G.expr * G.argument list) list)) ->
+      record_calls ~caller acc calls)
+    [] calls_by_caller
 
 (* [(callee_class, callee_method, arg_idx) -> type] of caller-supplied arg types,
    so [self.X = param] can be typed from what callers pass. *)
-let build_caller_arg_types ~(lang : Lang.t)
-    ~(table_of_file : table_of_file)
-    ~(type_state : Type_state.t)
-    ~(funcs_by_file : (string, FA.func_info list) Hashtbl.t)
-    (file_infos : file_info list)
+let build_caller_arg_types
+    (per_file : (Function_id.t * int * Class_table.cls) list list)
   : (Function_id.t * int, Class_table.cls) Hashtbl.t =
   (* Small: only known-class candidate types are stored (zero entries on
      the reference corpora); the table grows if a project really passes
@@ -338,46 +402,15 @@ let build_caller_arg_types ~(lang : Lang.t)
   let candidates : (Function_id.t * int, Class_table.cls list) Hashtbl.t =
     Hashtbl.create 64
   in
-  let record (table : Symbol_table.t) ~(caller : Function_id.t option)
-      (callee : G.expr) (args : G.argument list) : unit =
-    let typed =
-      List.filter_map (fun ((i : int), (arg : G.argument)) ->
-        match arg with
-        | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
-          Option.map (fun (cls : Class_table.cls) -> (i, cls))
-            (Symbol_table.class_of_expr table ~caller expr)
-        | _ -> None)
-        (List.mapi (fun (i : int) (arg : G.argument) -> (i, arg)) args)
-    in
-    match typed with
-    | [] -> ()
-    | _ :: _ -> (
-      match
-        applicable_callees ~lang table ~caller args
-          (Symbol_table.resolve_call table ~caller callee)
-      with
-      | Symbol_table.External -> ()
-      | Symbol_table.Defined (funcs : Func_info.t list) ->
-        List.iter (fun ((i : int), (cls : Class_table.cls)) ->
-          List.iter
-            (fun (func : Func_info.t) ->
-              match Symbol_table.node_of_function func with
-              | Some (node : Function_id.t) ->
-                let prev =
-                  Option.value ~default:[]
-                    (Hashtbl.find_opt candidates (node, i))
-                in
-                if not (List.exists (Class_table.same cls) prev) then
-                  Hashtbl.replace candidates (node, i) (cls :: prev)
-              | None -> ())
-            funcs)
-          typed)
-  in
   List.iter
-    (fold_calls_of_file ~table_of_file ~type_state ~funcs_by_file
-       (fun () table ~caller callee args -> record table ~caller callee args)
-       ())
-    file_infos;
+    (List.iter
+       (fun ((node : Function_id.t), (i : int), (cls : Class_table.cls)) ->
+         let prev =
+           Option.value ~default:[] (Hashtbl.find_opt candidates (node, i))
+         in
+         if not (List.exists (Class_table.same cls) prev) then
+           Hashtbl.replace candidates (node, i) (cls :: prev)))
+    per_file;
   let conflicted = ref 0 in
   Hashtbl.iter
     (fun (key : Function_id.t * int) (classes : Class_table.cls list) ->
@@ -441,39 +474,32 @@ let name_of_class (table : Symbol_table.t) (cls : Class_table.cls)
     : G.name option =
   Class_table.name_of_class (Symbol_table.class_table table) cls
 
-(* Augment fields from [this.X = RHS] in class methods so [self.X.method()]
-   chains resolve; [caller_arg_types] types [self.X = param] from callers;
-   [ctor_param_promotion] (PHP 8) registers typed ctor params as fields. *)
-let augment_fields_from_self_assignments
-    ~(lang : Lang.t)
-    ~(caller_arg_types : (Function_id.t * int, Class_table.cls) Hashtbl.t)
-    ~(cfg : Index_lang_rules.t)
-    ~(table_of_file : table_of_file)
-    ~(type_state : Type_state.t)
-    (all_funcs : FA.func_info list) : Type_state.t =
+type method_info = {
+  table : Symbol_table.t;
+  node : Function_id.t;
+  cls : Class_table.cls;
+  params : (int * string * Class_table.cls option) list;
+  receiver_offset : int;
+  promoted_properties : (string * Class_table.cls) list;
+  def_file_opt : Fpath.t option;
+  body : (G.stmt * (string * G.expr) list) option;
+}
+
+let method_infos ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
+    ~(table_of_file : table_of_file) (all_funcs : FA.func_info list)
+    : method_info list =
   let strip = cfg.Index_lang_rules.strip_field_sigil in
-  List.fold_left (fun state (func : FA.func_info) ->
+  List.filter_map (fun (func : FA.func_info) ->
     match
-      ( table_of_func ~table_of_file ~type_state:state func,
+      ( Option.bind (Func_info.def_file_opt func) table_of_file,
         Symbol_table.node_of_function func )
     with
-    | Some table, Some (node : Function_id.t) -> (
+    | Some (table : Symbol_table.t), Some (node : Function_id.t) -> (
       match
         (Func_info.as_method func.FA.fn_id,
          Symbol_table.class_of_function table func)
       with
       | Some _, Some (cls : Class_table.cls) ->
-        let already_known (field : string) (state : Type_state.t) : bool =
-          Option.is_some (Type_state.field state cls field)
-        in
-        let set_if_absent (field : string) (ty : Class_table.cls)
-            (state : Type_state.t) : Type_state.t =
-          if already_known field state then state
-          else Type_state.set_field state cls field ty
-        in
-        let param_types : (string, Class_table.cls) Hashtbl.t =
-          Hashtbl.create 4
-        in
         let params = Tok.unbracket func.FA.fdef.G.fparams in
         (* [caller_arg_types] is keyed by CALL-argument index, which does
            not count the receiver; an explicit receiver param ([self]/[cls]
@@ -484,24 +510,16 @@ let augment_fields_from_self_assignments
           - Receiver.arity lang ~is_method:(Receiver.is_method func.FA.fdef)
               ~is_static:(Receiver.is_static func.FA.entity) params
         in
-        let caller_arg_type (i : int) : Class_table.cls option =
-          Hashtbl.find_opt caller_arg_types (node, i - receiver_offset)
+        let named_params =
+          List.filter_map (fun ((i : int), (param : G.parameter)) ->
+            match param with
+            | G.Param { pname = Some (pn, _); ptype; _ }
+            | G.ParamReceiver { pname = Some (pn, _); ptype; _ } ->
+              Some
+                (i, pn, Option.bind ptype (declared_class table ~owner:(Some cls)))
+            | _ -> None)
+            (List.mapi (fun (i : int) (param : G.parameter) -> (i, param)) params)
         in
-        List.iteri (fun (i : int) (param : G.parameter) ->
-          match param with
-          | G.Param { pname = Some (pn, _); ptype; _ }
-          | G.ParamReceiver { pname = Some (pn, _); ptype; _ } -> (
-            let declared =
-              Option.bind ptype (declared_class table ~owner:(Some cls))
-            in
-            match declared with
-            | Some (ty : Class_table.cls) -> Hashtbl.replace param_types pn ty
-            | None -> (
-              match caller_arg_type i with
-              | Some (ty : Class_table.cls) -> Hashtbl.replace param_types pn ty
-              | None -> ()))
-          | _ -> ()
-        ) params;
         (* PHP 8 ctor property promotion: the parser drops the visibility
            modifier, so every typed ctor param is a candidate field. *)
         let is_constructor () : bool =
@@ -513,67 +531,135 @@ let augment_fields_from_self_assignments
               constructors
           | Symbol_table.External -> false
         in
-        let state =
+        let promoted_properties =
           if cfg.Index_lang_rules.ctor_param_promotion && is_constructor ()
           then
-            List.fold_left (fun state (param : G.parameter) ->
+            List.filter_map (fun (param : G.parameter) ->
               match param with
               | G.Param { G.pname = Some (pn, _); ptype = Some pty; _ }
               | G.ParamReceiver { G.pname = Some (pn, _); ptype = Some pty; _ } ->
-                (match declared_class table ~owner:(Some cls) pty with
-                 | Some (ty : Class_table.cls) -> set_if_absent (strip pn) ty state
-                 | None -> state)
-              | _ -> state
-            ) state params
-          else state
+                Option.map (fun (ty : Class_table.cls) -> (strip pn, ty))
+                  (declared_class table ~owner:(Some cls) pty)
+              | _ -> None
+            ) params
+          else []
         in
         let def_file_opt = func_def_file func |> Option.map Fpath.v in
         let body =
           Nonfatal.catch ?on:def_file_opt ~default:None (fun () ->
             Some (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody))
         in
-        (match body with
-         | None -> state
-         | Some body_stmt ->
-           (* Publish parameter classes onto the body's [id_instance_type] so
-              [Type_infer] resolves right-hand-side expressions derived from a
-              parameter. *)
-           let param_facts =
-             Hashtbl.fold (fun pname (ty : Class_table.cls) acc ->
-               match name_of_class table ty with
-               | Some (name : G.name) ->
-                 (G.Id ((pname, Tok.unsafe_fake_tok pname), G.empty_id_info ()),
-                  name) :: acc
-               | None -> acc
-             ) param_types []
-           in
-           Object_initialization.stamp_id_types param_facts [body_stmt];
-           Nonfatal.catch ?on:def_file_opt ~default:state (fun () ->
-             Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true (fun state expr ->
-               match expr.G.e with
-               | G.Assign (
-                   { G.e = G.DotAccess (
-                       { G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
-                       G.FN (G.Id ((field_name, _), _))); _ },
-                   _, rhs)
-                 when not (already_known (strip field_name) state) ->
-                 let field_name = strip field_name in
-                 let rhs_ty =
-                   match rhs.G.e with
-                   | G.N (G.Id ((vn, _), _)) ->
-                     (match Hashtbl.find_opt param_types vn with
-                      | Some _ as resolved -> resolved
-                      | None ->
-                        Symbol_table.class_of_expr table ~caller:(Some node) rhs)
-                   | _ -> Symbol_table.class_of_expr table ~caller:(Some node) rhs
-                 in
-                 (match rhs_ty with
-                  | Some (ty : Class_table.cls) -> set_if_absent field_name ty state
-                  | None -> state)
-               | _ -> state) state body_stmt))
-      | _ -> state)
-    | _ -> state
-  ) type_state all_funcs
+        let self_assignments (body_stmt : G.stmt) : (string * G.expr) list =
+          Nonfatal.catch ?on:def_file_opt ~default:[] (fun () ->
+            List.rev
+              (Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true
+                 (fun acc expr ->
+                   match expr.G.e with
+                   | G.Assign (
+                       { G.e = G.DotAccess (
+                           { G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
+                           G.FN (G.Id ((field_name, _), _))); _ },
+                       _, rhs) ->
+                     (strip field_name, rhs) :: acc
+                   | _ -> acc) [] body_stmt))
+        in
+        Some
+          { table; node; cls; params = named_params; receiver_offset;
+            promoted_properties; def_file_opt;
+            body =
+              Option.map
+                (fun (body_stmt : G.stmt) ->
+                  (body_stmt, self_assignments body_stmt))
+                body }
+      | _ -> None)
+    | _ -> None
+  ) all_funcs
+
+(* Augment fields from [this.X = RHS] in class methods so [self.X.method()]
+   chains resolve; [caller_arg_types] types [self.X = param] from callers;
+   [ctor_param_promotion] (PHP 8) registers typed ctor params as fields. *)
+let augment_fields_from_self_assignments
+    ~(caller_arg_types : (Function_id.t * int, Class_table.cls) Hashtbl.t)
+    ~(methods : method_info list)
+    ~(type_state : Type_state.t) : Type_state.t * bool =
+  (* The flag is true when the phase writes a [fields] key the state does not
+     hold; [set_if_absent] is the only writer, so the phase changes the state
+     exactly when it raises the flag. *)
+  List.fold_left
+    (fun ((state : Type_state.t), (changed : bool))
+         ({ table; node; cls; params; receiver_offset;
+            promoted_properties; def_file_opt; body } : method_info) ->
+      let table = Symbol_table.with_types table state in
+      let already_known (field : string) (state : Type_state.t) : bool =
+        Option.is_some (Type_state.field state cls field)
+      in
+      let set_if_absent (field : string) (ty : Class_table.cls)
+          (((state : Type_state.t), (changed : bool)) : Type_state.t * bool)
+          : Type_state.t * bool =
+        if already_known field state then (state, changed)
+        else (Type_state.set_field state cls field ty, true)
+      in
+      let param_types : (string, Class_table.cls) Hashtbl.t =
+        Hashtbl.create 4
+      in
+      let caller_arg_type (i : int) : Class_table.cls option =
+        Hashtbl.find_opt caller_arg_types (node, i - receiver_offset)
+      in
+      List.iter
+        (fun ((i : int), (pn : string), (declared : Class_table.cls option)) ->
+          match declared with
+          | Some (ty : Class_table.cls) -> Hashtbl.replace param_types pn ty
+          | None -> (
+            match caller_arg_type i with
+            | Some (ty : Class_table.cls) -> Hashtbl.replace param_types pn ty
+            | None -> ()))
+        params;
+      let state, changed =
+        List.fold_left
+          (fun (acc : Type_state.t * bool)
+               ((field : string), (ty : Class_table.cls)) ->
+            set_if_absent field ty acc)
+          (state, changed) promoted_properties
+      in
+      match body with
+      | None -> (state, changed)
+      | Some ((body_stmt : G.stmt), (self_assignments : (string * G.expr) list))
+        ->
+        (* Publish parameter classes onto the body's [id_instance_type] so
+           [Type_infer] resolves right-hand-side expressions derived from a
+           parameter. *)
+        let param_facts =
+          Hashtbl.fold (fun pname (ty : Class_table.cls) acc ->
+            match name_of_class table ty with
+            | Some (name : G.name) ->
+              (G.Id ((pname, Tok.unsafe_fake_tok pname), G.empty_id_info ()),
+               name) :: acc
+            | None -> acc
+          ) param_types []
+        in
+        (match param_facts with
+         | [] -> ()
+         | _ :: _ -> Object_initialization.stamp_id_types param_facts [body_stmt]);
+        Nonfatal.catch ?on:def_file_opt ~default:(state, changed) (fun () ->
+          List.fold_left
+            (fun (((state : Type_state.t), (_ : bool)) as acc)
+                 ((field_name : string), (rhs : G.expr)) ->
+              if already_known field_name state then acc
+              else
+                let rhs_ty =
+                  match rhs.G.e with
+                  | G.N (G.Id ((vn, _), _)) ->
+                    (match Hashtbl.find_opt param_types vn with
+                     | Some _ as resolved -> resolved
+                     | None ->
+                       Symbol_table.class_of_expr table ~caller:(Some node) rhs)
+                  | _ -> Symbol_table.class_of_expr table ~caller:(Some node) rhs
+                in
+                (match rhs_ty with
+                 | Some (ty : Class_table.cls) -> set_if_absent field_name ty acc
+                 | None -> acc))
+            (state, changed) self_assignments))
+    (type_state, false) methods
 
 let is_value_type ~(lang : Lang.t) (cls : Class_table.cls) : bool =
   List.exists

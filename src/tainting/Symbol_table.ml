@@ -1360,8 +1360,8 @@ let with_project (t : t) (classes : Class_table.t)
     memo_target = Class_table.Class_table_memo;
   }
 
-let with_own_memo (t : t) : t =
-  { t with memo_target = Class_table.Own_memo (Class_table.create_memo ()) }
+let with_own_memo (t : t) (memo : Class_table.memo) : t =
+  { t with memo_target = Class_table.Own_memo memo }
 
 let find_memoised (type key found) (t : t)
     (find : Class_table.memo -> key -> found option) (key : key) : found option =
