@@ -1749,34 +1749,30 @@ let fold_cell ~lang ~(merge : T.trace_merge) (cell : cell) : cell =
   map_cell_shape (fold_shape ~lang ~merge) cell
 
 (*********************************************************)
-(* Enumerate tainted offsets *)
+(* Enumerate leaf cells and tainted object cells, with taints and shapes *)
 (*********************************************************)
 
-let rec enum_in_cell cell : (T.offset list * Taints.t) Seq.t =
-  let (Cell (taints, shape)) = cell in
-  let x =
-    match taints with
-    | `Tainted taints -> Seq.cons ([], taints) Seq.empty
-    | `Clean
-    | `None ->
-        Seq.empty
-  in
-  Seq.append x (enum_in_shape shape)
+let rec enum_in_cell cell : (T.offset list * Taints.t * shape) Seq.t =
+  let (Cell (xtaint, shape)) = cell in
+  enum_in_shape (Xtaint.to_taints xtaint) shape
 
-and enum_in_shape = function
+and enum_in_shape (taints : Taints.t) (shape : shape) :
+    (T.offset list * Taints.t * shape) Seq.t =
+  let own_taints =
+    if Taints.is_empty taints then Seq.empty else Seq.return ([], taints, Bot)
+  in
+  match shape with
   | Bot
-  | Rec _ ->
-      Seq.empty
-  | Obj { fields; _ } -> enum_in_obj fields
-  | Arg _ ->
-      (* TODO: First need to record taint shapes in 'ToLval'.  *)
-      Seq.empty
-  | Fun _ -> Seq.empty
+  | Arg _
+  | Fun _ ->
+      Seq.return ([], taints, shape)
+  | Obj { fields; _ } -> Seq.append own_taints (enum_in_obj fields)
+  | Rec _ -> own_taints
 
 and enum_in_obj obj =
   obj
   |> Fields.to_seq
   |> Seq.map (fun (o, cell) ->
          enum_in_cell cell
-         |> Seq.map (fun (offset, taints) -> (o :: offset, taints)))
+         |> Seq.map (fun (offset, taints, shape) -> (o :: offset, taints, shape)))
   |> Seq.concat

@@ -122,6 +122,12 @@ type env = {
           well as 'Taint_lambda.find_vars_to_track_across_lambdas'. *)
   lval_env : Lval_env.t;
   effects_acc : Effects.t ref;
+  returns_at_node : Effects.t array;
+      (** The [ToReturn] effects of each return node and each node at the
+          exit from its latest evaluation, joined with the previous ones at a
+          component head as its values are. A node is evaluated again
+          whenever its IN changes, so these are the returns of the current
+          mapping, and after the fixpoint those of the final one. *)
   did_self_recurse : bool ref;
       (** Set to [true] when [self_sig_if_recursive] returns a sig during the
           current pass. Used to gate the outer self-sig convergence loop in
@@ -271,7 +277,7 @@ let taints_of_matches env ~incoming sources =
   let lval_env = Lval_env.add_control_taints ~merge:env.taint_inst.merge env.lval_env control_taints in
   (data_taints, lval_env)
 
-let record_effects env new_effects =
+let effects_to_record env (new_effects : Effect.t list) : Effect.t list =
   Log.debug (fun m ->
       let fn = Option.fold ~none:"<anon>" ~some:IL.str_of_name env.func.name in
       let effects_str =
@@ -280,8 +286,9 @@ let record_effects env new_effects =
       m "REC_EFFECTS in %s: [%s]" fn effects_str);
   if Lval_env.is_dead env.lval_env then
     (* Unreachable program point — no findings, no signature effects. *)
-    ()
-  else if not (List_.null new_effects) then
+    []
+  else if List_.null new_effects then []
+  else
     let new_effects =
       env.taint_inst.handle_effects env.func.name new_effects
     in
@@ -315,13 +322,32 @@ let record_effects env new_effects =
      * included). The cut is the longest offset a lookup can form: no level
      * below it is ever read, and a builder of [k] fields keeps a [k]-way
      * tree of the cut depth. *)
-    let new_effects =
-      new_effects
-      |> List_.map
-           (Shape.truncate_effect ~merge:env.taint_inst.merge
-              ~max_depth:(Shape.max_poly_offset env.taint_inst.lang))
-    in
-    env.effects_acc := Effects.add_list ~merge:env.taint_inst.merge new_effects !(env.effects_acc)
+    new_effects
+    |> List_.map
+         (Shape.truncate_effect ~merge:env.taint_inst.merge
+            ~max_depth:(Shape.max_poly_offset env.taint_inst.lang))
+
+let record_effects env new_effects =
+  match effects_to_record env new_effects with
+  | [] -> ()
+  | new_effects ->
+      env.effects_acc := Effects.add_list ~merge:env.taint_inst.merge new_effects !(env.effects_acc)
+
+(* The effects recorded so far with the returns of the current mapping. *)
+let current_effects env : Effects.t =
+  Array.fold_left
+    (Effects.union ~merge:env.taint_inst.merge)
+    !(env.effects_acc) env.returns_at_node
+
+let store_returns env (flow : IL.cfg) (ni : IL.nodei) (returns : Effect.t list) :
+    unit =
+  let returns =
+    Effects.of_list ~merge:env.taint_inst.merge (effects_to_record env returns)
+  in
+  env.returns_at_node.(ni) <-
+    (if CFG.is_component_head flow ni then
+       Effects.union ~merge:env.taint_inst.merge env.returns_at_node.(ni) returns
+     else returns)
 
 (* Field write on the enclosing receiver: record [BThis] so it composes
    into this function's signature. *)
@@ -1053,7 +1079,7 @@ let self_sig_if_recursive env fun_exp =
             Signature.params = env.func.sig_params;
             params_il = env.func.il_params;
             captured = Lazy.force env.func.captured;
-            effects = !(env.effects_acc);
+            effects = current_effects env;
           } )
   | Some _
   | None ->
@@ -1705,6 +1731,8 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
     | Composite ((CSet | Constructor _ | Regexp), (_, es, _)) ->
         let taints, lval_env = union_map_taints_and_vars env check es in
         (taints, S.Bot, lval_env)
+    | Operator ((G.NotNullPostfix, _), [ operand ]) ->
+        check env (IL_helpers.exp_of_arg operand)
     | Operator ((op, _), es) ->
         let args_taints, all_args_taints, lval_env =
           check_function_call_arguments env es
@@ -3471,28 +3499,33 @@ let arg_updates_of_var ~(lang : Lang.t) ~(merge : T.trace_merge)
           Seq.empty
       | [ lval ] ->
           Shape.enum_in_cell exit_var_ref
-          |> Seq.filter_map (fun (offset, exit_taints) ->
+          |> Seq.filter_map (fun (offset, exit_taints, exit_shape) ->
                  let lval =
                    { lval with offset = lval.offset @ offset }
                  in
                  if not (keep lval) then None
                  else
-                 let enter_taints_at_offset =
+                 let enter_taints_at_offset, enter_shape_at_offset =
                    match Shape.find_in_cell ~merge ~lang offset enter_cell with
-                   | `Found (Cell (xtaint, _)) -> Xtaint.to_taints xtaint
-                   | `Not_found (carried, _, _) -> carried
-                   | `Clean -> Taints.empty
+                   | `Found (Cell (xtaint, shape)) -> (Xtaint.to_taints xtaint, shape)
+                   | `Not_found (carried, _, _) -> (carried, S.Bot)
+                   | `Clean -> (Taints.empty, S.Bot)
                  in
                  let new_taints =
                    Taints.diff exit_taints enter_taints_at_offset
                  in
+                 let new_shape =
+                   match exit_shape with
+                   | S.Bot -> false
+                   | _ -> not (S.equal_shape exit_shape enter_shape_at_offset)
+                 in
                  (* TODO: Also report if taints are _cleaned_. *)
-                 if not (Taints.is_empty new_taints) then
+                 if not (Taints.is_empty new_taints) || new_shape then
                    Some
                      (Effect.ToLval
                         {
                           taints = new_taints;
-                          shape = Bot;
+                          shape = exit_shape;
                           lval;
                           (* The write may have happened under a branch
                            * guard; recover it from the guards the
@@ -3610,14 +3643,15 @@ let convert_escaping_closures ~(merge : T.trace_merge) ~(fun_cfg : IL.fun_cfg)
            | None -> []
            | Some cell ->
                Shape.enum_in_cell cell |> List.of_seq
-               |> List.filter_map (fun (offset, taints) ->
-                      if Taints.is_empty taints then None
+               |> List.filter_map (fun (offset, taints, shape) ->
+                      if Taints.is_empty taints && S.equal_shape shape S.Bot
+                      then None
                       else
                         Some
                           (Effect.ToLval
                              {
                                taints;
-                               shape = Bot;
+                               shape;
                                lval = { base = BLocal v; offset };
                                guards = Effect_guard.top;
                              })))
@@ -3634,7 +3668,7 @@ let effects_before_param_rebinding ~(lang : Lang.t) ~(merge : T.trace_merge)
         var_ref
       |> List.of_seq
 
-let check_tainted_control_at_exit node env =
+let check_tainted_control_at_exit (flow : IL.cfg) (ni : IL.nodei) node env =
   match node.F.n with
   (* This is only for implicit returns, we could handle 'NReturn' here too
    * but we would be generating duplicate effects. *)
@@ -3655,11 +3689,9 @@ let check_tainted_control_at_exit node env =
           | None -> G.fake "return"
           | Some name -> G.fake (IL.str_of_name name ^ "/return")
         in
-        let effects =
-          effects_of_tainted_return env ~several_results:false Taints.empty Bot
-            return_tok
-        in
-        record_effects env effects
+        effects_of_tainted_return env ~several_results:false Taints.empty Bot
+          return_tok
+        |> store_returns env flow ni
 
 (*****************************************************************************)
 (* Transfer *)
@@ -4131,13 +4163,11 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
     | NReturn (tok, e) ->
         (* TODO: Move most of this to check_tainted_return. *)
         let taints, shape, lval_env' = check_tainted_return env tok e in
-        let effects =
-          effects_of_tainted_return env
-            ~several_results:
-              (returns_several_results env.taint_inst.lang fun_cfg e)
-            taints shape tok
-        in
-        record_effects env effects;
+        effects_of_tainted_return env
+          ~several_results:
+            (returns_several_results env.taint_inst.lang fun_cfg e)
+          taints shape tok
+        |> store_returns env fun_cfg.cfg ni;
         lval_env'
     | TrueNode cond ->
         let pruned =
@@ -4174,7 +4204,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
   in
   env.effects_acc := Effects.union ~merge:env.taint_inst.merge effects_lambdas !(env.effects_acc);
   let env_at_exit = { env with lval_env = out' } in
-  check_tainted_control_at_exit node env_at_exit;
+  check_tainted_control_at_exit fun_cfg.cfg ni node env_at_exit;
   Log.debug (fun m ->
       m ~tags:transfer_tag "Taint transfer %s%s\n  %s:\n  IN:  %s\n  OUT: %s"
         (Option.map IL.str_of_name env.func.name ||| "<FUN>")
@@ -4332,6 +4362,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
       lval_env = enter_lval_env;
       needed_vars;
       effects_acc = ref Effects.empty;
+      returns_at_node = DataflowX.new_node_array flow Effects.empty;
       did_self_recurse = ref false;
       signature_db;
       builtin_signature_db;
@@ -4356,12 +4387,13 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   ;
   *)
   (* The inner [DataflowX.fixpoint] converges on per-node [lval_env]
-   * stability, but not on [effects_acc] — the latter is function-global
-   * monotonic state that grows as the body records taint effects. Direct
+   * stability, but not on the effects: [effects_acc] is function-global
+   * monotonic state that grows as the body records taint effects, and the
+   * returns are in the per-node store [returns_at_node]. Direct
    * self-recursive calls need to see effects recorded by earlier passes via
    * [self_sig_if_recursive]. We wrap the inner fixpoint in an outer loop
-   * that re-runs only if a self-recursive call happened AND the effects set
-   * grew, terminating when stable (or at a safety cap).
+   * that re-runs only if a self-recursive call happened AND
+   * [current_effects] grew, terminating when stable (or at a safety cap).
    *
    * Gated by [needs_self_sig_fixpoint]: only languages where self-sig
    * lifting can yield outcomes that body-direct effect recording would
@@ -4374,7 +4406,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   let end_mapping =
     if needs_self_sig_fixpoint then
       let rec run_to_sig_fixpoint passes =
-        let prev_effects = !(env.effects_acc) in
+        let prev_effects = current_effects env in
         env.did_self_recurse := false;
         let end_mapping =
           DataflowX.fixpoint ~eq_env:Lval_env.equal
@@ -4394,7 +4426,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
            * stopped growing this pass it is a clean fixpoint; otherwise the
            * result under-approximates (possible false negatives), so surface
            * it rather than truncating silently. *)
-          if not (Effects.equal_with_guards prev_effects !(env.effects_acc))
+          if not (Effects.equal_with_guards prev_effects (current_effects env))
           then
             (* nosemgrep: no-logs-in-library *)
             Logs.warn (fun m ->
@@ -4407,7 +4439,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
                   !!(taint_inst.file)
                   (Option.map IL.str_of_name env.func.name ||| "???"));
           end_mapping)
-        else if Effects.equal_with_guards prev_effects !(env.effects_acc) then
+        else if Effects.equal_with_guards prev_effects (current_effects env) then
           end_mapping
         else run_to_sig_fixpoint (passes + 1)
       in
@@ -4428,12 +4460,13 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
     ~is_value_type:taint_inst.is_value_type ~params:fun_cfg.params ~copied
     enter_lval_env exit_lval_env
   |> record_effects env;
+  let effects = current_effects env in
   let effects =
-    if Effects.exists effect_has_closure_env !(env.effects_acc) then
+    if Effects.exists effect_has_closure_env effects then
       convert_escaping_closures ~merge:taint_inst.merge ~fun_cfg
         ~captured:(Lazy.force env.func.captured) ~copied exit_lval_env
-        !(env.effects_acc)
-    else !(env.effects_acc)
+        effects
+    else effects
   in
   (effects, end_mapping)
 
@@ -4556,6 +4589,7 @@ and (fixpoint :
           needed_vars = IL.NameSet.empty;
           lval_env = enhanced_in_env;
           effects_acc = ref Effects.empty;
+          returns_at_node = [||];
           did_self_recurse = ref false;
           signature_db;
           builtin_signature_db;

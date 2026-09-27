@@ -1,0 +1,13 @@
+rules:
+  - id: exit_write_shape_python
+    message: a write through a parameter gives the caller the written value's taint and parts
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

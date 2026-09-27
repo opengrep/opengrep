@@ -1,0 +1,13 @@
+rules:
+  - id: not_null_assertion_kotlin
+    message: x!! returns the value of x, with its taint and fields
+    languages:
+      - kotlin
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

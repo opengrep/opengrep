@@ -1,0 +1,13 @@
+rules:
+  - id: force_unwrap_swift
+    message: x! returns the value of x, with its taint and fields
+    languages:
+      - swift
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

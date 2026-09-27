@@ -144,7 +144,6 @@ module Make (F : Flow) = struct
      * height of the lattice. The first visit is not joined, because the
      * initial mapping is not the bottom of every lattice. *)
     let visit_counts = Array.make (max_nodei + 1) 0 in
-    let is_head (ni : nodei) : bool = Int.equal flow.loop_header.(ni) ni in
     let add_succ (work : NodeiSet.t) ((succ, _) : nodei * _) : NodeiSet.t =
       let pos = flow.order_index.(succ) in
       if pos < 0 then work else NodeiSet.add pos work
@@ -163,7 +162,7 @@ module Make (F : Flow) = struct
         let old = mapping.(ni) in
         let computed = trans mapping ni in
         let new_ =
-          if is_head ni && visit_counts.(ni) > 1 then
+          if CFG.is_component_head flow ni && visit_counts.(ni) > 1 then
             {
               in_env = join old.in_env computed.in_env;
               out_env = join old.out_env computed.out_env;

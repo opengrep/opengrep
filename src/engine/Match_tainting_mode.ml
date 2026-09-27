@@ -131,8 +131,8 @@ end)
 
 module Fid_tbl = Hashtbl.Make (Function_id)
 
-type replay = {
-  replay_lang : Lang.t;
+type retention = {
+  lang : Lang.t;
   cfg_of : Function_id.t -> IL.fun_cfg option;
   index_of : IL.fun_cfg -> PF.index;
   retained_db :
@@ -140,23 +140,23 @@ type replay = {
   retain_tables : Taint_shared_tables.t;
 }
 
-type frame = {
-  replay : replay;
-  frame_cfg : IL.fun_cfg;
-  rerun : (Shape_and_sig.signature_database option -> Effects.t) option;
+type checked_function = {
+  retention : retention;
+  cfg : IL.fun_cfg;
+  reanalyse : (Shape_and_sig.signature_database option -> Effects.t) option;
 }
 
 let retaining (taint_inst : Taint_rule_inst.t) : Taint_rule_inst.t =
   { taint_inst with merge = T.Keep_both }
 
-let mk_replay ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
+let mk_retention ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
     ~(shared_tables : Taint_shared_tables.t)
     ~(retain_signature :
        Taint_shared_tables.t ->
        Function_id.t ->
        Shape_and_sig.signature_database ->
        Shape_and_sig.signature_database)
-    (db : Shape_and_sig.signature_database option) : replay =
+    (db : Shape_and_sig.signature_database option) : retention =
   let indexes : PF.index Cfg_tbl.t = Cfg_tbl.create 16 in
   let retained : unit Fid_tbl.t = Fid_tbl.create 16 in
   let retain_tables =
@@ -168,7 +168,7 @@ let mk_replay ~(lang : Lang.t) ~(cfg_of : Function_id.t -> IL.fun_cfg option)
   in
   let current = ref db in
   {
-    replay_lang = lang;
+    lang;
     cfg_of;
     index_of =
       (fun (cfg : IL.fun_cfg) ->
@@ -302,10 +302,10 @@ let sources_of_taints ~valid ?preferred_label
            taint trace from the source with precondition.");
     with_req)
 
-type frame_check = { anchors : PF.anchor list; children : (int * callee_check) list }
-and callee_check = { site : T.call_site; check : frame_check }
+type activation_check = { anchors : PF.anchor list; children : (int * callee_check) list }
+and callee_check = { site : T.call_site; check : activation_check }
 
-let frame_of_parts (parts : (PF.anchor * callee_check option) list) : frame_check =
+let activation_check_of_parts (parts : (PF.anchor * callee_check option) list) : activation_check =
   {
     anchors = List.map fst parts;
     children =
@@ -327,7 +327,7 @@ let rec parts_of_steps (steps : T.step list) :
                  {
                    site;
                    check =
-                     frame_of_parts
+                     activation_check_of_parts
                        (((PF.Entry, None) :: parts_of_steps steps)
                        @ [ (PF.Exit, None) ]);
                  } ))
@@ -342,7 +342,7 @@ let rec sink_part (trace : unit T.flat_call_trace) :
           {
             site;
             check =
-              frame_of_parts
+              activation_check_of_parts
                 (((PF.Entry, None) :: parts_of_steps steps) @ [ sink_part inner ]);
           } )
 
@@ -356,13 +356,13 @@ let rec source_part (trace : R.taint_source T.flat_call_trace) :
           {
             site;
             check =
-              frame_of_parts
+              activation_check_of_parts
                 ((PF.Entry, None) :: source_part inner
                  :: (parts_of_steps steps @ [ (PF.Exit, None) ]));
           } )
 
-let frame_check_of_candidate (c : candidate) : frame_check =
-  frame_of_parts
+let activation_check_of_candidate (c : candidate) : activation_check =
+  activation_check_of_parts
     ((PF.Entry, None) :: source_part c.source_trace
      :: (parts_of_steps c.steps @ [ sink_part c.sink_trace ]))
 
@@ -376,10 +376,10 @@ let conjoin_verdicts (v1 : PF.verdict) (v2 : PF.verdict) : PF.verdict =
   | _, Unknown ->
       Unknown
 
-let rec verify_frame (replay : replay) (cfg : IL.fun_cfg) (entry : PF.state)
-    (fc : frame_check) : PF.verdict * PF.state option =
+let rec verify_activation (retention : retention) (cfg : IL.fun_cfg) (entry : PF.state)
+    (fc : activation_check) : PF.verdict * PF.state option =
   let verdict, states =
-    PF.check replay.replay_lang cfg (replay.index_of cfg) ~entry fc.anchors
+    PF.check retention.lang cfg (retention.index_of cfg) ~entry fc.anchors
   in
   let at (i : int) : PF.state option = Option.join (List.nth_opt states i) in
   let final = at (List.length states - 1) in
@@ -390,12 +390,12 @@ let rec verify_frame (replay : replay) (cfg : IL.fun_cfg) (entry : PF.state)
         | Infeasible -> Infeasible
         | Feasible
         | Unknown ->
-            conjoin_verdicts acc (verify_callee replay (at i) child))
+            conjoin_verdicts acc (verify_callee retention (at i) child))
       verdict fc.children
   in
   (verdict, final)
 
-and verify_callee (replay : replay) (at_call : PF.state option)
+and verify_callee (retention : retention) (at_call : PF.state option)
     (child : callee_check) : PF.verdict =
   let params =
     List.filter_map IL_helpers.pname_of_param child.site.callee_params_il
@@ -409,7 +409,7 @@ and verify_callee (replay : replay) (at_call : PF.state option)
            | IL.Mem _ ->
                false)
   in
-  match Option.bind child.site.callee_fid replay.cfg_of with
+  match Option.bind child.site.callee_fid retention.cfg_of with
   | None -> Unknown
   | Some cfg -> (
       let bindings =
@@ -418,10 +418,10 @@ and verify_callee (replay : replay) (at_call : PF.state option)
         | Some caller ->
             Sig_inst.actuals_of_params child.site
             |> List.map (fun ((param, actual) : IL.name * IL.exp) ->
-                   (param, PF.value replay.replay_lang caller actual))
+                   (param, PF.value retention.lang caller actual))
       in
       let verdict, final =
-        verify_frame replay cfg (PF.entry_state bindings) child.check
+        verify_activation retention cfg (PF.entry_state bindings) child.check
       in
       match (verdict, at_call, final) with
       | Infeasible, _, _ -> Infeasible
@@ -433,26 +433,26 @@ and verify_callee (replay : replay) (at_call : PF.state option)
           Infeasible
       | (Feasible | Unknown), _, _ -> verdict)
 
-let verify_candidate (frame : frame) (c : candidate) : PF.verdict =
+let verify_candidate (checked_function : checked_function) (c : candidate) : PF.verdict =
   if c.refuted_by_guard then Infeasible
   else
     fst
-      (verify_frame frame.replay frame.frame_cfg (PF.entry_state [])
-         (frame_check_of_candidate c))
+      (verify_activation checked_function.retention checked_function.cfg (PF.entry_state [])
+         (activation_check_of_candidate c))
 
-let rec fids_of_frame_check (depth : int) (fc : frame_check) :
+let rec fids_of_activation_check (depth : int) (fc : activation_check) :
     (Function_id.t * int) list =
   fc.children
   |> List.concat_map (fun ((_, child) : int * callee_check) ->
          (match child.site.callee_fid with
          | Some fid -> [ (fid, depth) ]
          | None -> [])
-         @ fids_of_frame_check (depth + 1) child.check)
+         @ fids_of_activation_check (depth + 1) child.check)
 
 let callee_fids (cs : candidate list) : Function_id.t list =
   cs
   |> List.concat_map (fun (c : candidate) ->
-         fids_of_frame_check 0 (frame_check_of_candidate c))
+         fids_of_activation_check 0 (activation_check_of_candidate c))
   |> List.stable_sort (fun ((_, d1) : _ * int) ((_, d2) : _ * int) ->
          Int.compare d2 d1)
   |> List.fold_left
@@ -475,7 +475,7 @@ let anchor_position (anchor : PF.anchor) : int =
       | Some (first, _) -> first.pos.bytepos
       | None -> -1)
 
-let rec positions (fc : frame_check) : int list list =
+let rec positions (fc : activation_check) : int list list =
   List.map anchor_position fc.anchors
   :: List.concat_map
        (fun ((_, child) : int * callee_check) -> positions child.check)
@@ -486,7 +486,7 @@ let candidates_in_order ~valid (item : Effect.taint_to_sink_item) :
   candidates_of_item ~valid item
   |> List.of_seq
   |> List.map (fun (c : candidate) ->
-         (positions (frame_check_of_candidate c), trace_of_candidate c, c))
+         (positions (activation_check_of_candidate c), trace_of_candidate c, c))
   |> List.stable_sort
        (fun
          ((p1, t1, _) : int list list * Taint_trace.item * candidate)
@@ -523,14 +523,14 @@ let reported_items ~lang (effect_ : Effect.t) :
   | ToSinkInCall _ ->
       None
 
-let retained_candidates (frame : frame) ~(sink : string) (effect_ : Effect.t)
+let retained_candidates (checked_function : checked_function) ~(sink : string) (effect_ : Effect.t)
     (items : Effect.taint_to_sink_item list) :
     (Effect.taint_to_sink_item * candidate list) list =
-  let lang = frame.replay.replay_lang in
+  let lang = checked_function.retention.lang in
   let rec retain (fids : Function_id.t list) =
-    match frame.rerun with
+    match checked_function.reanalyse with
     | None -> None
-    | Some rerun -> (
+    | Some reanalyse -> (
         Log_tainting.Trace_log.debug (fun m ->
             m
               "Taint trace: the reporting function of the sink at %s runs \
@@ -538,7 +538,7 @@ let retained_candidates (frame : frame) ~(sink : string) (effect_ : Effect.t)
                that keep them too"
               sink (List.length fids));
         match
-          Effects.find_opt effect_ (rerun (frame.replay.retained_db fids))
+          Effects.find_opt effect_ (reanalyse (checked_function.retention.retained_db fids))
           |> Fun.flip Option.bind (reported_items ~lang)
         with
         | None -> None
@@ -586,12 +586,12 @@ let retained_candidates (frame : frame) ~(sink : string) (effect_ : Effect.t)
              | Some (_, cs) -> (i, cs)
              | None -> (i, candidates_in_order ~valid i))
 
-let search (frame : frame) (candidates : candidate list) : candidate option =
+let search (checked_function : checked_function) (candidates : candidate list) : candidate option =
   let rec go (unknown : candidate option) (cs : candidate list) =
     match cs with
     | [] -> unknown
     | c :: rest -> (
-        match verify_candidate frame c with
+        match verify_candidate checked_function c with
         | Feasible -> Some c
         | Unknown -> go (first_some unknown (Some c)) rest
         | Infeasible -> go unknown rest)
@@ -602,7 +602,7 @@ let search (frame : frame) (candidates : candidate list) : candidate option =
   in
   go None candidates
 
-let displayed_trace (frame : frame option) (effect_ : Effect.t) (sink_pm : PM.t)
+let displayed_trace (checked_function : checked_function option) (effect_ : Effect.t) (sink_pm : PM.t)
     (sources : (candidate * Effect.taint_to_sink_item) list) : Taint_trace.t =
   let sink = Tok.stringpos_of_tok (Tok.tok_of_loc (fst sink_pm.range_loc)) in
   let today =
@@ -618,12 +618,12 @@ let displayed_trace (frame : frame option) (effect_ : Effect.t) (sink_pm : PM.t)
           sources;
     }
   in
-  match (frame, sources) with
+  match (checked_function, sources) with
   | None, _
   | _, [] ->
       today
-  | Some frame, (first, _) :: _ -> (
-      match verify_candidate frame first with
+  | Some checked_function, (first, _) :: _ -> (
+      match verify_candidate checked_function first with
       | Feasible
       | Unknown ->
           today
@@ -634,10 +634,10 @@ let displayed_trace (frame : frame option) (effect_ : Effect.t) (sink_pm : PM.t)
                  condition or a guard"
                 sink);
           let candidates =
-            retained_candidates frame ~sink effect_ (List.map snd sources)
+            retained_candidates checked_function ~sink effect_ (List.map snd sources)
             |> List.concat_map snd
           in
-          match search frame candidates with
+          match search checked_function candidates with
           | Some c ->
               Log_tainting.Trace_log.debug (fun m ->
                   m
@@ -666,7 +666,7 @@ let match_on_of_xconf (xconf : Match_env.xconfig) : [ `Sink | `Source ] =
       `Source
   | `Sink, `Sink -> `Sink
 
-let pms_of_effect ~lang ~match_on ~(frame : frame option) (effect_ : Effect.t) =
+let pms_of_effect ~lang ~match_on ~(checked_function : checked_function option) (effect_ : Effect.t) =
   match effect_ with
   | ToLval _
   | ToReturn _
@@ -717,7 +717,7 @@ let pms_of_effect ~lang ~match_on ~(frame : frame option) (effect_ : Effect.t) =
                 * already expect Semgrep (and DeepSemgrep) to report the match on `sink(x)`.
             *)
             let taint_trace =
-              Some (lazy (displayed_trace frame effect_ sink_pm taint_sources))
+              Some (lazy (displayed_trace checked_function effect_ sink_pm taint_sources))
             in
             [ { sink_pm with env = merged_env; taint_trace } ]
         | `Source ->
@@ -730,14 +730,14 @@ let pms_of_effect ~lang ~match_on ~(frame : frame option) (effect_ : Effect.t) =
                      env = merged_env;
                      taint_trace =
                        Some
-                         (lazy (displayed_trace frame effect_ sink_pm [ source ]));
+                         (lazy (displayed_trace checked_function effect_ sink_pm [ source ]));
                    })))
 
-let pms_of_effects ~lang ~match_on ~(frame : frame option) (effects : Effects.t)
+let pms_of_effects ~lang ~match_on ~(checked_function : checked_function option) (effects : Effects.t)
     : PM.t list =
   Effects.fold
     (fun (effect_ : Effect.t) (acc : PM.t list) ->
-       List.rev_append (pms_of_effect ~lang ~match_on ~frame effect_) acc)
+       List.rev_append (pms_of_effect ~lang ~match_on ~checked_function effect_) acc)
     effects []
 
 let force_traces (matches : PM.t list) : PM.t list =
@@ -964,7 +964,7 @@ let extract_and_check
     ~(taint_inst : Taint_rule_inst.t)
     ~(shared_tables : Taint_shared_tables.t)
     ~(detect_findings : bool)
-    ~(replay : replay option)
+    ~(retention : retention option)
     (info : fun_info)
     : Shape_and_sig.signature_database * PM.t list =
   let updated_db, _fresh_sigs =
@@ -1014,17 +1014,17 @@ let extract_and_check
         fdef_effects
     else fdef_effects
   in
-    let frame =
-      replay
-      |> Option.map (fun (replay : replay) ->
+    let checked_function =
+      retention
+      |> Option.map (fun (retention : retention) ->
              {
-               replay;
-               frame_cfg = info.cfg;
-               rerun =
+               retention;
+               cfg = info.cfg;
+               reanalyse =
                  Some
                    (fun (retained : Shape_and_sig.signature_database option) ->
                      let taint_inst = retaining taint_inst in
-                     let shared_tables = replay.retain_tables in
+                     let shared_tables = retention.retain_tables in
                      let db, _fresh =
                        extract_signatures ?builtin_signature_db ~lang
                          ~db:(Option.value retained ~default:db)
@@ -1041,7 +1041,7 @@ let extract_and_check
                      else effects);
              })
     in
-    let findings = pms_of_effects ~lang ~match_on ~frame effects_to_record in
+    let findings = pms_of_effects ~lang ~match_on ~checked_function effects_to_record in
     (updated_db, findings)
 
 (* Class-body initialisers/static blocks aren't call-graph functions, except the class initialiser of a language whose class header is the constructor, which the function passes analyse when [initialisers_are_functions].  CFG build is lang+AST only, so it's split out for multi-rule reuse. *)
@@ -1191,9 +1191,9 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         { taint_inst with Taint_rule_inst.project_root = xtarget.project_root }
       in
       let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst shared_tables ast in
-      let glob_matches = pms_of_effects ~lang ~match_on ~frame:None glob_effects in
+      let glob_matches = pms_of_effects ~lang ~match_on ~checked_function:None glob_effects in
 
-      let final_signature_db, branch_matches, replay =
+      let final_signature_db, branch_matches, retention =
         if taint_inst.options.taint_intrafile then (
           let call_graph =
             match local_ast_call_graph with
@@ -1295,8 +1295,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
               ~sccs ~analyze initial_signature_db
           in
-          let replay =
-            mk_replay ~lang
+          let retention =
+            mk_retention ~lang
               ~cfg_of:(fun (fid : Function_id.t) ->
                 Shape_and_sig.FunctionMap.find_opt fid info_map
                 |> Option.map (fun (info : fun_info) -> info.cfg))
@@ -1334,7 +1334,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                       ~glob_env ~lang
                       ~db:signature_db_after_order ~match_on
                       ~taint_inst:(taint_inst_of node) ~shared_tables
-                      ~detect_findings:true ~replay:(Some replay) info
+                      ~detect_findings:true ~retention:(Some retention) info
                   in
                   if not (List_.null findings) then
                     Log.debug (fun m ->
@@ -1345,11 +1345,11 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   List.rev_append findings ms)
               [] analysis_order
           in
-          (Some signature_db_after_order, topo_matches, replay))
+          (Some signature_db_after_order, topo_matches, retention))
         else (
           (* Cross-function taint analysis disabled: use main branch behavior *)
-          let replay =
-            mk_replay ~lang
+          let retention =
+            mk_retention ~lang
               ~cfg_of:(fun (_ : Function_id.t) -> None)
               ~shared_tables
               ~retain_signature:(fun (_ : Taint_shared_tables.t)
@@ -1389,17 +1389,17 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                         check_fundef taint_inst shared_tables name ~glob_env
                           ?builtin_signature_db fdef
                       in
-                      let frame =
+                      let checked_function =
                         Some
                           {
-                            replay;
-                            frame_cfg = flow;
-                            rerun =
+                            retention;
+                            cfg = flow;
+                            reanalyse =
                               Some
                                 (fun (_ : Shape_and_sig.signature_database option) ->
                                   let _flow, effects, _mapping =
                                     check_fundef_with_cfg (retaining taint_inst)
-                                      replay.retain_tables name ~glob_env
+                                      retention.retain_tables name ~glob_env
                                       ?builtin_signature_db flow
                                   in
                                   effects);
@@ -1407,10 +1407,10 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                       in
                       fdef_matches :=
                         List.rev_append
-                          (pms_of_effects ~lang ~match_on ~frame fdef_effects)
+                          (pms_of_effects ~lang ~match_on ~checked_function fdef_effects)
                           !fdef_matches)
             ast;
-          (None, !fdef_matches, replay))
+          (None, !fdef_matches, retention))
       in
 
       let class_init_effects =
@@ -1419,7 +1419,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           ()
       in
       let class_init_matches =
-        pms_of_effects ~lang ~match_on ~frame:None class_init_effects
+        pms_of_effects ~lang ~match_on ~checked_function:None class_init_effects
       in
 
       let top_matches =
@@ -1429,20 +1429,20 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             ?signature_db:final_signature_db ?builtin_signature_db
             ()
         in
-        let frame =
+        let checked_function =
           Some
             {
-              replay;
-              frame_cfg = snd top_cfg;
-              rerun =
+              retention;
+              cfg = snd top_cfg;
+              reanalyse =
                 Some
                   (fun (retained : Shape_and_sig.signature_database option) ->
                     check_top_level_prebuilt (retaining taint_inst)
-                      replay.retain_tables top_cfg ?signature_db:retained
+                      retention.retain_tables top_cfg ?signature_db:retained
                       ?builtin_signature_db ());
             }
         in
-        pms_of_effects ~lang ~match_on ~frame top_effects
+        pms_of_effects ~lang ~match_on ~checked_function top_effects
       in
       let matches =
         List.concat

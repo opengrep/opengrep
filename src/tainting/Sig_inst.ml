@@ -1749,24 +1749,9 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
        * return it as a type variable. *)
       Taints.singleton (T.taint_of_orig (Var lval))
 
-let combine_rest_args_taint ~(merge : T.trace_merge) ~(site : T.call_loc)
+let combine_rest_args_taint ~(site : T.call_loc)
     (ts : (Taints.t * shape) list) : Taints.t * shape =
-  let taints =
-    List.fold_left (Taints.union ~merge) Taints.empty (List.map fst ts)
-  in
-  let shape =
-    Obj
-      {
-        sites = Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at site);
-        summary = false;
-        fields =
-          Fields.of_list
-            (List.mapi
-               (fun i (t, s) -> (Taint.Oint i, Cell (Xtaint.of_taints t, s)))
-               ts);
-      }
-  in
-  (taints, shape) 
+  (Taints.empty, Shape.tuple_like_obj ~site ts)
 
 let instantiate_lval_using_shape ~(lang : Lang.t) ~(merge : T.trace_merge)
     ~(max_offset : int) ~(env : env) lval_env fparams
@@ -1812,7 +1797,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(merge : T.trace_merge)
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:
-            (combine_rest_args_taint ~merge ~site:(T.call_loc_of_exp fun_exp))
+            (combine_rest_args_taint ~site:(T.call_loc_of_exp fun_exp))
           args_taints fparams pos
     | `Var var ->
         let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in

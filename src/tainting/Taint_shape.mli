@@ -191,13 +191,16 @@ val truncate_signature :
   Shape_and_sig.Signature.t
 (** [truncate_effect] applied to every effect of a signature. *)
 
-val enum_in_cell : cell -> (Taint.offset list * Taint.taints) Seq.t
+val enum_in_cell : cell -> (Taint.offset list * Taint.taints * shape) Seq.t
 (**
- * Enumerate all offsets in a cell and their taint.
+ * Enumerate the offsets in a cell with their taints and shapes: every cell
+ * whose shape is a leaf ('Bot', 'Arg' or 'Fun') with its own taints and that
+ * shape, and every tainted cell whose shape is an object or a back reference
+ * with its own taints and 'Bot'.
  *
  * For example,
  *
  *     enum_in_cell (cell<0>( obj {| a: cell<{"tainted"}>(_|_) |} ))
  *
- * would return a sequence with the pair (.a, "tainted").
+ * would return a sequence with the triple (.a, "tainted", _|_).
  *)

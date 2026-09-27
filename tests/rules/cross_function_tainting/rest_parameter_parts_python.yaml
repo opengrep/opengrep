@@ -1,0 +1,13 @@
+rules:
+  - id: rest_parameter_parts_python
+    message: a rest parameter holds its arguments as parts, without a taint of its own
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

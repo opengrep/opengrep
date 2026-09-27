@@ -125,6 +125,9 @@ let make (graph : _ Ograph_extended.ograph_mutable) entry exit : _ t =
 let reachable_nodes cfg =
   cfg.reachable |> NodeiSet.to_seq |> Seq.map cfg.graph#nodes#assoc
 
+let is_component_head cfg (nodei : nodei) : bool =
+  Int.equal cfg.loop_header.(nodei) nodei
+
 (* Predecessors of a node (that can be reached from the entry node). *)
 let predecessors cfg nodei : (nodei * 'node) list =
   (cfg.graph#predecessors nodei)#tolist
