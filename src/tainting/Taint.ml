@@ -989,11 +989,12 @@ module Taint_set = struct
    * sets must use this, or a fused wider guard is discarded for the
    * narrower one. *)
   let equal_with_guards set1 set2 =
-    equal set1 set2
-    && List.for_all2
-         (fun (b1 : guarded_taint) (b2 : guarded_taint) ->
-           EG.equal b1.guard b2.guard)
-         (elements set1) (elements set2)
+    Common.phys_equal set1 set2
+    || equal set1 set2
+       && List.for_all2
+            (fun (b1 : guarded_taint) (b2 : guarded_taint) ->
+              EG.equal b1.guard b2.guard)
+            (elements set1) (elements set2)
 
   (* If two taints are "the same", we still want to pick "the best", e.g.
    * the one with the shortest trace.
@@ -1031,11 +1032,9 @@ module Taint_set = struct
 
   (* Merge two guarded taints with the same taint identity: best taint by the
    * shortest-trace rule, guards fused disjunctively. Returns
-   * [curr_guarded_taint] physically when nothing changes, so [Taints.update]
-   * returns the map unchanged. (For [Src] taints [pick_best_taint]
-   * rebuilds the source to merge preconditions, so [best_taint] is never
-   * physically [curr_guarded_taint.taint] and this shortcut only fires for
-   * [Var]/[Shape_var]/[Control].) *)
+   * [curr_guarded_taint] or [alt_guarded_taint] physically when the merge
+   * equals it, so [Taints.update] and [union] return an argument
+   * unchanged. *)
   and merge_guarded_taints ~(merge : trace_merge) alt_guarded_taint
       curr_guarded_taint =
     let alt_taint, curr_taint, alt_is_best =
@@ -1053,12 +1052,14 @@ module Taint_set = struct
     let side (side_guard : EG.t) (side_taint : taint) : side =
       { side_guard; side_taint; side_sink_trace = None }
     in
+    let unchanged (guarded_taint : guarded_taint) (taint : taint) : bool =
+      Common.phys_equal taint guarded_taint.taint
+      && EG.equal merged_guard guarded_taint.guard
+    in
     match merge with
     | Keep_best ->
-        if
-          Common.phys_equal best_taint curr_guarded_taint.taint
-          && EG.equal merged_guard curr_guarded_taint.guard
-        then curr_guarded_taint
+        if unchanged curr_guarded_taint best_taint then curr_guarded_taint
+        else if unchanged alt_guarded_taint best_taint then alt_guarded_taint
         else
           let taint =
             if
@@ -1078,10 +1079,8 @@ module Taint_set = struct
             keep_both ~kept:(side best_guard best_taint)
               ~other:(side other_guard other_taint)
         in
-        if
-          Common.phys_equal taint curr_guarded_taint.taint
-          && EG.equal merged_guard curr_guarded_taint.guard
-        then curr_guarded_taint
+        if unchanged curr_guarded_taint taint then curr_guarded_taint
+        else if unchanged alt_guarded_taint taint then alt_guarded_taint
         else { taint; guard = merged_guard }
 
   (* Hedge union: non-overlapping subtrees are linked without visiting
@@ -1091,6 +1090,20 @@ module Taint_set = struct
     Taints.union
       (fun _taint b1 b2 -> Some (merge_guarded_taints ~merge b1 b2))
       set1 set2
+
+  and merge_into ~(merge : trace_merge) (existing : t) (computed : t) : t =
+    if Common.phys_equal existing computed || Taints.is_empty computed then
+      existing
+    else if Taints.is_empty existing then computed
+    else
+      Taints.fold
+        (fun taint b2 set ->
+          Taints.update taint
+            (function
+              | None -> Some b2
+              | Some b1 -> Some (merge_guarded_taints ~merge b1 b2))
+            set)
+        computed existing
 
   and of_list ~(merge : trace_merge) guarded_taints =
     List.fold_left (fun set b -> add ~merge b set) Taints.empty guarded_taints
@@ -1132,7 +1145,7 @@ module Taint_set = struct
               let ts2' = of_list ~merge (List_.map lift_taint ts2) in
               if equal ts1' ts2' then
                 (* Optimization: prefer sharing. *)
-                Some (ts1, p1)
+                src1.precondition
               else
                 let ts =
                   union ~merge ts1' ts2' |> elements
@@ -1140,8 +1153,14 @@ module Taint_set = struct
                 in
                 Some (ts, p1)
         in
-        let taint1 = { taint1 with orig = Src { src1 with precondition } } in
-        let taint2 = { taint2 with orig = Src { src2 with precondition } } in
+        let with_precondition (taint : taint) (src : source) : taint =
+          match (src.precondition, precondition) with
+          | None, None -> taint
+          | Some kept, Some merged when phys_equal kept merged -> taint
+          | (None | Some _), _ -> { taint with orig = Src { src with precondition } }
+        in
+        let taint1 = with_precondition taint1 src1 in
+        let taint2 = with_precondition taint2 src2 in
         (taint1, taint2, compare_traces taint1 None taint2 None < 0)
     | (Src _ | Var _ | Shape_var _ | Control), _ ->
         Log.err (fun m ->

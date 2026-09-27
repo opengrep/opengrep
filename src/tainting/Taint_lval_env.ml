@@ -521,7 +521,8 @@ let equal
    * the env stable while a guard is still widening lets the narrower
    * guard reach the sink recording (a lost finding at any call site the
    * wider guard would have kept). *)
-  && NameMap.equal equal_cell_with_guards tainted1 tainted2
+  && (phys_equal tainted1 tainted2
+     || NameMap.equal equal_cell_with_guards tainted1 tainted2)
   (* NOTE: We ignore 'taints_to_propagate' and 'pending_propagation_dests',
    * we just care how they affect 'tainted'. *)
   && Taints.equal_with_guards control1 control2

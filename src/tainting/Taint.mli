@@ -350,6 +350,7 @@ module Taint_set : sig
   val singleton : taint -> t
   val add : merge:trace_merge -> guarded_taint -> t -> t
   val union : merge:trace_merge -> t -> t -> t
+  val merge_into : merge:trace_merge -> t -> t -> t
   val diff : t -> t -> t
   val map : merge:trace_merge -> (guarded_taint -> guarded_taint) -> t -> t
   val bind : merge:trace_merge -> t -> (guarded_taint -> t) -> t

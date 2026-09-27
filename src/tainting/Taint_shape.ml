@@ -524,7 +524,9 @@ let rec unify_cell_in ~lang ~(merge : T.trace_merge) (join : join) cell1 cell2 =
           ~other_xtaint:xtaint1 ~other shape)
       shape1 shape2
   in
-  cell_of_join xtaint shape
+  if phys_equal xtaint xtaint1 && phys_equal shape shape1 then cell1
+  else if phys_equal xtaint xtaint2 && phys_equal shape shape2 then cell2
+  else cell_of_join xtaint shape
 
 (* [shape] as it must be seen at a join whose other side is [other].
  *
@@ -707,17 +709,33 @@ and unify_shape_in ~lang ~(merge : T.trace_merge) (join : join)
             ( process1 join ~other:shape2 shape1,
               process2 join ~other:shape1 shape2 )
           with
-          | ( Obj { sites = sites1; summary = summary1; fields = obj1 },
-              Obj { sites = sites2; summary = summary2; fields = obj2 } ) ->
-              Obj
-                {
-                  sites = Shape_and_sig.Sites.union sites1 sites2;
-                  summary = summary1 || summary2;
-                  fields =
-                    unify_obj_in ~lang ~merge
-                      (enter join (Some shape1) (Some shape2))
-                      obj1 obj2;
-                }
+          | ( (Obj { sites = sites1; summary = summary1; fields = obj1 } as
+               processed1),
+              (Obj { sites = sites2; summary = summary2; fields = obj2 } as
+               processed2) ) ->
+              let fields =
+                unify_obj_in ~lang ~merge
+                  (enter join (Some shape1) (Some shape2))
+                  obj1 obj2
+              in
+              let absorbs (sites : Shape_and_sig.Sites.t) (summary : bool)
+                  (obj : obj) (other_sites : Shape_and_sig.Sites.t)
+                  (other_summary : bool) : bool =
+                phys_equal fields obj
+                && (summary || not other_summary)
+                && (phys_equal sites other_sites
+                   || Shape_and_sig.Sites.subset other_sites sites)
+              in
+              if absorbs sites1 summary1 obj1 sites2 summary2 then processed1
+              else if absorbs sites2 summary2 obj2 sites1 summary1 then
+                processed2
+              else
+                Obj
+                  {
+                    sites = Shape_and_sig.Sites.union sites1 sites2;
+                    summary = summary1 || summary2;
+                    fields;
+                  }
           | Bot, shape -> relocate_right join shape
           | shape, _ -> relocate_left join shape))
   | Obj _, Fun _
@@ -734,7 +752,16 @@ and unify_shape_in ~lang ~(merge : T.trace_merge) (join : join)
 and unify_obj_in ~lang ~(merge : T.trace_merge) (join : join) obj1 obj2 =
   (* THINK: Apply taint_MAX_OBJ_FIELDS limit ? *)
   if both_aligned join then
-    Fields.union (fun _ x y -> Some (unify_cell_in ~lang ~merge join x y)) obj1 obj2
+    if Fields.is_empty obj1 then obj2
+    else
+      Fields.fold
+        (fun o cell2 obj ->
+          Fields.update o
+            (function
+              | None -> Some cell2
+              | Some cell1 -> Some (unify_cell_in ~lang ~merge join cell1 cell2))
+            obj)
+        obj2 obj1
   else
     Fields.merge
       (fun _ x y ->
