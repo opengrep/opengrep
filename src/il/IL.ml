@@ -118,7 +118,8 @@ type name = { ident : ident; sid : G.sid; id_info : G.id_info }
    goes through [Format]. *)
 let str_of_name name =
   let _, file, _, _ = G.SId.to_loc name.sid in
-  Common.spf "%s:%s#%d" (fst name.ident) file (G.SId.to_int name.sid)
+  String.concat ""
+    [ fst name.ident; ":"; file; "#"; Int.to_string (G.SId.to_int name.sid) ]
 
 let compare_name name1 name2 =
   let { ident = str1, _tok1; sid = sid1; id_info = _ } = name1 in

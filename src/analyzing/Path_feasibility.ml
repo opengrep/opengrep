@@ -42,20 +42,14 @@ type index = {
   calls : (IL.nodei * IL.exp) list;
   params : int list;
   exposed : IL.name list;
-  nonlocal_written : IL.name list;
+  exposed_keys : string list;
+  call_forgotten_keys : string list;
 }
 
 module Stage = struct
   type t = IL.nodei * int
-
-  let compare ((n1, i1) : t) ((n2, i2) : t) : int =
-    match Int.compare n1 n2 with
-    | 0 -> Int.compare i1 i2
-    | c -> c
 end
 
-module StageSet = Set.Make (Stage)
-module StageMap = Map.Make (Stage)
 
 type stage_node = { il_node : IL.node option; stage : int }
 
@@ -152,21 +146,25 @@ let index (fun_cfg : IL.fun_cfg) : index =
            Option.bind (LV.pname_of_param param) (fun (name : IL.name) ->
                start_of (snd name.ident)))
   in
+  let exposed = written_in_lambdas fun_cfg @ referenced fun_cfg in
+  let nonlocal_written =
+    nodes
+    |> List.filter_map (fun ((_, node) : IL.nodei * IL.node) ->
+           match node.n with
+           | NInstr instr -> LV.lval_of_instr_opt instr
+           | _ -> None)
+    |> base_vars
+    |> List.filter (fun (name : IL.name) -> not (is_local name))
+  in
   {
     entry_node = flow.entry;
     exit_node = flow.exit;
     spans;
     calls;
     params;
-    exposed = written_in_lambdas fun_cfg @ referenced fun_cfg;
-    nonlocal_written =
-      nodes
-      |> List.filter_map (fun ((_, node) : IL.nodei * IL.node) ->
-             match node.n with
-             | NInstr instr -> LV.lval_of_instr_opt instr
-             | _ -> None)
-      |> base_vars
-      |> List.filter (fun (name : IL.name) -> not (is_local name));
+    exposed;
+    exposed_keys = List.map IL.str_of_name exposed;
+    call_forgotten_keys = List.map IL.str_of_name (exposed @ nonlocal_written);
   }
 
 let covering (ix : index) (first : int) (last : int) : IL.nodei list =
@@ -350,18 +348,7 @@ let assume (lang : Lang.t) (values : G.svalue Var_env.t)
         }
     else Dead
 
-let survives (ix : index) (instr : IL.instr) ((atom, _) : IL.exp * bool) :
-    bool =
-  let reads = LV.lvals_of_exp atom in
-  let read = base_vars reads in
-  let object_read =
-    List.exists
-      (fun (lval : IL.lval) ->
-        match lval with
-        | { base = Var _; rev_offset = [] } -> false
-        | { base = Var _ | VarSpecial _ | Mem _; _ } -> true)
-      reads
-  in
+let survives (ix : index) (instr : IL.instr) : IL.exp * bool -> bool =
   let written =
     LV.lval_of_instr_opt instr |> Option.to_list |> base_vars
   in
@@ -386,11 +373,23 @@ let survives (ix : index) (instr : IL.instr) ((atom, _) : IL.exp * bool) :
         (false, [])
   in
   let passed_vars = base_vars (List.concat_map LV.lvals_of_exp passed) in
+  fun ((atom, _) : IL.exp * bool) ->
+  let reads = LV.lvals_of_exp atom in
+  let read = base_vars reads in
+  let object_read =
+    List.exists
+      (fun (lval : IL.lval) ->
+        match lval with
+        | { base = Var _; rev_offset = [] } -> false
+        | { base = Var _ | VarSpecial _ | Mem _; _ } -> true)
+      reads
+  in
   let reads_any (names : IL.name list) : bool =
     List.exists
       (fun (v : IL.name) -> List.exists (IL.equal_name v) names)
       read
   in
+  let reads_exposed = reads_any ix.exposed in
   let reads_locals_only =
     List.for_all
       (fun (lval : IL.lval) ->
@@ -405,8 +404,8 @@ let survives (ix : index) (instr : IL.instr) ((atom, _) : IL.exp * bool) :
   && ((not is_call)
      || reads_locals_only
         && (not (reads_any passed_vars))
-        && not (reads_any ix.exposed))
-  && ((not writes_object) || not (object_read || reads_any ix.exposed))
+        && not reads_exposed)
+  && ((not writes_object) || not (object_read || reads_exposed))
 
 let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
     (node : IL.node) : state =
@@ -423,7 +422,7 @@ let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
             | Call _
             | CallSpecial _
             | New _ ->
-                ix.exposed @ ix.nonlocal_written
+                ix.call_forgotten_keys
             | Assign _
             | AugmentedAssign _
             | AssignAnon _
@@ -432,16 +431,20 @@ let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
                 | Some { base = Var _; rev_offset = [] }
                 | None ->
                     []
-                | Some { base = Var _ | VarSpecial _ | Mem _; _ } -> ix.exposed)
+                | Some { base = Var _ | VarSpecial _ | Mem _; _ } ->
+                    ix.exposed_keys)
           in
           Live
             {
               values =
                 List.fold_left
-                  (fun (values : G.svalue Var_env.t) (name : IL.name) ->
-                    VarMap.remove (IL.str_of_name name) values)
+                  (fun (values : G.svalue Var_env.t) (key : string) ->
+                    VarMap.remove key values)
                   values' forgotten;
-              literals = List.filter (survives ix instr) literals;
+              literals =
+                (match literals with
+                | [] -> []
+                | _ -> List.filter (survives ix instr) literals);
             }
       | Enter
       | Exit
@@ -456,13 +459,18 @@ let transfer (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index) (s : state)
 
 let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
     ~(entry : state) (anchors : anchor list) : verdict * state option list =
-  let sets = anchors |> List.map (nodes_of_anchor ix) |> Array.of_list in
+  let sets =
+    anchors
+    |> List.map (fun (anchor : anchor) ->
+           CFG.NodeiSet.of_list (nodes_of_anchor ix anchor))
+    |> Array.of_list
+  in
   let last = Array.length sets - 1 in
   let unknown = (Unknown, List.map (fun (_ : anchor) -> None) anchors) in
-  if last < 0 || Array.exists List.is_empty sets then unknown
+  if last < 0 || Array.exists CFG.NodeiSet.is_empty sets then unknown
   else
     let flow = fun_cfg.cfg in
-    let mem (i : int) (n : IL.nodei) : bool = List.exists (Int.equal n) sets.(i) in
+    let mem (i : int) (n : IL.nodei) : bool = CFG.NodeiSet.mem n sets.(i) in
     let rec advance (i : int) (n : IL.nodei) (acc : int list) : int list =
       if i < last && mem (i + 1) n then advance (i + 1) n ((i + 1) :: acc)
       else acc
@@ -477,70 +485,81 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
     let starts =
       if mem 0 ix.entry_node then stages_at 0 ix.entry_node else []
     in
-    let rec forward (seen : StageSet.t) (edges : (Stage.t * Stage.t) list)
-        (todo : Stage.t list) : StageSet.t * (Stage.t * Stage.t) list =
+    let width = last + 1 in
+    let slot ((n, i) : Stage.t) : int = (n * width) + i in
+    let stage_of_slot (k : int) : Stage.t = (k / width, k mod width) in
+    let slots = Array.length flow.order_index * width in
+    let reached = Array.make slots false in
+    List.iter (fun (p : Stage.t) -> reached.(slot p) <- true) starts;
+    let rec forward (edges : (Stage.t * Stage.t) list) (seen : int list)
+        (todo : Stage.t list) : (Stage.t * Stage.t) list * int list =
       match todo with
-      | [] -> (seen, edges)
+      | [] -> (edges, seen)
       | p :: rest ->
           let succs = successors p in
           let fresh =
-            List.filter (fun (q : Stage.t) -> not (StageSet.mem q seen)) succs
+            List.filter (fun (q : Stage.t) -> not reached.(slot q)) succs
           in
+          List.iter (fun (q : Stage.t) -> reached.(slot q) <- true) fresh;
           forward
-            (List.fold_left (fun s q -> StageSet.add q s) seen fresh)
             (List.rev_append (List.map (fun (q : Stage.t) -> (p, q)) succs) edges)
+            (List.rev_append (List.map slot fresh) seen)
             (List.rev_append fresh rest)
     in
-    let reached, edges =
-      forward (StageSet.of_list starts) [] starts
-    in
+    let edges, seen = forward [] (List.map slot starts) starts in
+    let reached_slots = List.sort_uniq Int.compare seen in
     let finals =
-      StageSet.filter (fun ((n, i) : Stage.t) -> Int.equal i last && mem last n) reached
+      List.filter
+        (fun (k : int) ->
+          let n, i = stage_of_slot k in
+          Int.equal i last && mem last n)
+        reached_slots
     in
-    let predecessors =
-      List.fold_left
-        (fun (acc : Stage.t list StageMap.t) ((p, q) : Stage.t * Stage.t) ->
-          StageMap.update q
-            (fun (ps : Stage.t list option) -> Some (p :: Option.value ps ~default:[]))
-            acc)
-        StageMap.empty edges
-    in
-    let rec backward (live : StageSet.t) (todo : Stage.t list) : StageSet.t =
+    let predecessors = Array.make slots [] in
+    List.iter
+      (fun ((p, q) : Stage.t * Stage.t) ->
+        predecessors.(slot q) <- p :: predecessors.(slot q))
+      edges;
+    let live = Array.make slots false in
+    List.iter (fun (k : int) -> live.(k) <- true) finals;
+    let rec backward (todo : Stage.t list) : unit =
       match todo with
-      | [] -> live
+      | [] -> ()
       | q :: rest ->
           let preds =
-            StageMap.find_opt q predecessors
-            |> Option.value ~default:[]
-            |> List.filter (fun (p : Stage.t) -> not (StageSet.mem p live))
+            List.filter (fun (p : Stage.t) -> not live.(slot p))
+              predecessors.(slot q)
           in
-          backward
-            (List.fold_left (fun s p -> StageSet.add p s) live preds)
-            (List.rev_append preds rest)
+          List.iter (fun (p : Stage.t) -> live.(slot p) <- true) preds;
+          backward (List.rev_append preds rest)
     in
-    let relevant = backward finals (StageSet.elements finals) in
-    if StageSet.is_empty finals then unknown
+    backward (List.map stage_of_slot finals);
+    if List.is_empty finals then unknown
     else
       let graph = new Ograph_extended.ograph_mutable in
       let start = graph#add_node { il_node = None; stage = 0 } in
-      let ids =
-        StageSet.fold
-          (fun ((n, i) as p : Stage.t) (acc : IL.nodei StageMap.t) ->
-            StageMap.add p
-              (graph#add_node
-                 { il_node = Some (flow.graph#nodes#assoc n); stage = i })
-              acc)
-          relevant StageMap.empty
+      let relevant = List.filter (fun (k : int) -> live.(k)) reached_slots in
+      let ids = Array.make slots (-1) in
+      List.iter
+        (fun (k : int) ->
+          let n, i = stage_of_slot k in
+          ids.(k) <-
+            graph#add_node { il_node = Some (flow.graph#nodes#assoc n); stage = i })
+        relevant;
+      let id_of (p : Stage.t) : IL.nodei option =
+        match ids.(slot p) with
+        | -1 -> None
+        | id -> Some id
       in
       List.iter
         (fun (p : Stage.t) ->
-          match StageMap.find_opt p ids with
+          match id_of p with
           | Some id -> graph#add_arc ((start, id), IL.Direct)
           | None -> ())
         starts;
       List.iter
         (fun ((p, q) : Stage.t * Stage.t) ->
-          match (StageMap.find_opt p ids, StageMap.find_opt q ids) with
+          match (id_of p, id_of q) with
           | Some pid, Some qid -> graph#add_arc ((pid, qid), IL.Direct)
           | _ -> ())
         edges;
@@ -569,12 +588,14 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
           ~trans ~flow:product
       in
       let state_at (i : int) : state option =
-        StageMap.fold
-          (fun ((n, j) : Stage.t) (id : IL.nodei) (acc : state option) ->
+        List.fold_left
+          (fun (acc : state option) (k : int) ->
+            let n, j = stage_of_slot k in
             if Int.equal i j && mem i n then
-              Some (join (Option.value acc ~default:Dead) mapping.(id).D.in_env)
+              Some
+                (join (Option.value acc ~default:Dead) mapping.(ids.(k)).D.in_env)
             else acc)
-          ids None
+          None relevant
       in
       let states = List.mapi (fun (i : int) (_ : anchor) -> state_at i) anchors in
       let verdict =
