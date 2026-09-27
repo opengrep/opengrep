@@ -2173,7 +2173,8 @@ let join_folded_by_site ~lang ~(merge : T.trace_merge) (previous : cell option)
         | None -> Cell (joined_xtaint ~merge roots, Bot))
 
 (*********************************************************)
-(* Enumerate leaf cells and tainted object cells, with taints and shapes *)
+(* Enumerate leaf cells, summary object cells and tainted object cells, with
+ * taints and shapes *)
 (*********************************************************)
 
 let rec enum_in_cell cell : (T.offset list * Taints.t * shape) Seq.t =
@@ -2188,7 +2189,8 @@ and enum_in_shape (taints : Taints.t) (shape : shape) :
   match shape with
   | Bot
   | Arg _
-  | Fun _ ->
+  | Fun _
+  | Obj { summary = true; _ } ->
       Seq.return ([], taints, shape)
   | Obj { fields; _ } -> Seq.append own_taints (enum_in_obj fields)
   | Rec _ -> own_taints

@@ -196,8 +196,9 @@ val truncate_signature :
 val enum_in_cell : cell -> (Taint.offset list * Taint.taints * shape) Seq.t
 (**
  * Enumerate the offsets in a cell with their taints and shapes: every cell
- * whose shape is a leaf ('Bot', 'Arg' or 'Fun') with its own taints and that
- * shape, and every tainted cell whose shape is an object or a back reference
+ * whose shape is a leaf ('Bot', 'Arg' or 'Fun') or a summary object, with its
+ * own taints and that shape, the summary object not descended into; and
+ * every tainted cell whose shape is any other object or a back reference,
  * with its own taints and 'Bot'.
  *
  * For example,

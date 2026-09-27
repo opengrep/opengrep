@@ -1,0 +1,13 @@
+rules:
+  - id: exit_write_cyclic_shape_python
+    message: a tainted value that a callee links into a chain of records through its parameter reaches the sink at every depth of the chain
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
