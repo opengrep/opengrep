@@ -2190,6 +2190,7 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
             Log.debug (fun m ->
                 m "SIG_FROM_SHAPE: Found Fun shape for %s"
                   (Display_IL.string_of_exp fun_exp));
+            let c, cs = Shape.closures_of_fun c cs in
             Some
               (List_.map
                  (fun (closure : S.closure) ->
@@ -2554,6 +2555,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                 let args_taints = [lambda_arg_taint] in
                 (* Callback lookup in both modes; hazard contained by [preserve_effect]. *)
                 let call_effects =
+                  let c, cs = Shape.closures_of_fun c cs in
                   c :: cs
                   |> List.concat_map (fun (closure : S.closure) ->
                          Sig_inst.instantiate_function_signature ~merge:env.taint_inst.merge

@@ -108,9 +108,10 @@ module rec Shape : sig
             [summary] is set when a [Rec] may refer to it: it also stands for
             the objects of its sites that were nested inside it. *)
     | Rec of int
-        (** A back reference to the [n]th enclosing ['Obj'] (0 is the
-            nearest one): the shape is a regular tree, and a read through
-            [Rec n] continues in that object. *)
+        (** A back reference to the [n]th enclosing ['Obj'] or closure set
+            ['Fun'] whose captured cell holds it (0 is the nearest one): the
+            shape is a regular tree, and a read through [Rec n] continues in
+            that object or closure set. *)
     | Arg of Taint.formal * Taint.offset list list
         (** Represents the yet-unknown shape of a function/method parameter
             or of a variable captured by a closure,

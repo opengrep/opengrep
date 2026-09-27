@@ -2625,7 +2625,7 @@ let rec instantiate_signature ~(lang : Lang.t)
           | Captured _
           | Result _ -> (
               match lval_to_taints fun_lval with
-              | Some (_, Fun (c, cs)) -> Some (c, cs)
+              | Some (_, Fun (c, cs)) -> Some (Shape.closures_of_fun c cs)
               | _ -> None)
           | Param fun_arg ->
           (* Get the actual function expression from args if available. When
@@ -2675,7 +2675,7 @@ let rec instantiate_signature ~(lang : Lang.t)
                 (match lval_to_taints taint_lval with
                 | Some (_taints, Fun (c, cs)) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found signature in lval_env");
-                    Some (c, cs)
+                    Some (Shape.closures_of_fun c cs)
                 | Some (_taints, _other_shape) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found non-Fun shape in lval_env");
                     None
@@ -2700,7 +2700,7 @@ let rec instantiate_signature ~(lang : Lang.t)
                     (* The '_fun_taints' are the taints (not its signature) of the actual
                      * function argument, and they are not used for instantiation, they are
                      * tracked by the caller like any other intra-procedural taint. *)
-                    Some (c, cs)
+                    Some (Shape.closures_of_fun c cs)
                 | Some (_fun_taints, other_shape) ->
                     Log.debug (fun m ->
                         m "TOSINKINCALL: fun_lval resolved to non-Fun: %s"

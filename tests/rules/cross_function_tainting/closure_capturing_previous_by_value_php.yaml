@@ -1,0 +1,13 @@
+rules:
+  - id: closure_capturing_previous_by_value_php
+    message: a closure that a loop rebuilds, capturing the previous one by value, carries the initial tainted value to the sink
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

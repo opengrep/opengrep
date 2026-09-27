@@ -1,0 +1,13 @@
+rules:
+  - id: runnable_chain_by_value_java
+    message: a runnable that a loop rebuilds, capturing the previous one by value, runs a tainted sink
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

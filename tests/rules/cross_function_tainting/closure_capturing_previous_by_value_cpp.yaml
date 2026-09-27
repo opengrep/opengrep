@@ -1,0 +1,13 @@
+rules:
+  - id: closure_capturing_previous_by_value_cpp
+    message: a lambda that a loop rebuilds, capturing the previous one by value, returns the tainted value of the first to the sink
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

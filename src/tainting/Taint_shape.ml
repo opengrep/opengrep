@@ -317,24 +317,54 @@ let map_cell_shape (f : shape -> shape) (Cell (xtaint, shape) as cell : cell) :
   let shape' = f shape in
   if phys_equal shape' shape then cell else Cell (xtaint, shape')
 
+let map_captured_cells (f : cell -> cell) (closure : closure) : closure =
+  let env =
+    List.map
+      (fun ((var, entry) as binding : IL.name * env_entry) ->
+        match entry with
+        | Val cell ->
+            let cell' = f cell in
+            if phys_equal cell' cell then binding else (var, Val cell')
+        | Ref _ -> binding)
+      closure.env
+  in
+  if List.for_all2 phys_equal env closure.env then closure else { closure with env }
+
 (* [shape] with each back reference that leaves it replaced by [outer j
- * depth], where [j] counts the objects enclosing [shape] that the reference
- * skips and [depth] the objects of [shape] around the reference. *)
+ * depth], where [j] counts the objects and closure sets enclosing [shape]
+ * that the reference skips and [depth] the objects and closure sets of
+ * [shape] around the reference. *)
 let rebind_free ~(outer : int -> int -> shape) (shape : shape) : shape =
   let rec rebind (depth : int) (shape : shape) : shape =
     match shape with
     | Rec n when n >= depth -> outer (n - depth) depth
     | Bot
     | Rec _
-    | Arg _
-    | Fun _ ->
+    | Arg _ ->
         shape
+    | Fun (c, cs) ->
+        let c', cs' =
+          Shape_and_sig.map_closures
+            (map_captured_cells (map_cell_shape (rebind (depth + 1))))
+            (c, cs)
+        in
+        if phys_equal c' c && phys_equal cs' cs then shape else Fun (c', cs')
     | Obj ({ fields; _ } as node) ->
         let fields' = map_fields (map_cell_shape (rebind (depth + 1))) fields in
         if phys_equal fields' fields then shape
         else Obj { node with fields = fields' }
   in
   rebind 0 shape
+
+let closures_of_fun (c : closure) (cs : closure list) : closure * closure list =
+  let fun_shape = Fun (c, cs) in
+  Shape_and_sig.map_closures
+    (map_captured_cells
+       (map_cell_shape
+          (rebind_free ~outer:(fun (levels_above : int) (depth : int) ->
+               if Int.equal levels_above 0 then fun_shape
+               else Rec (depth + levels_above)))))
+    (c, cs)
 
 (* [shape], placed [levels] objects deeper than the objects it was found
  * under. *)
@@ -1590,11 +1620,24 @@ type target = Node of int | Leaf of shape
 
 type entry = { xtaint : Xtaint.t; target : target }
 
+module Defs = Set.Make (Function_id)
+
+module Captured = Map.Make (struct
+  type t = Function_id.t * int
+
+  let compare ((def1, i1) : t) ((def2, i2) : t) : int =
+    match Function_id.compare def1 def2 with
+    | 0 -> Int.compare i1 i2
+    | other -> other
+end)
+
 type node = {
   sites : Shape_and_sig.Sites.t;
+  defs : Defs.t;
   summary : bool;
   entries : entry Fields.t;
-  source : obj;
+  captured : entry Captured.t;
+  source : shape;
   ancestors : int list;
 }
 
@@ -1604,6 +1647,7 @@ type quotient = {
   size : int Dynarray.t;
   members : int list Dynarray.t;
   class_sites : Shape_and_sig.Sites.t Dynarray.t;
+  class_defs : Defs.t Dynarray.t;
   copies : int Fields.t Dynarray.t;
   referenced : bool Dynarray.t;
   incoming : entry list Dynarray.t;
@@ -1622,6 +1666,7 @@ let new_quotient () : quotient =
     size = Dynarray.create ();
     members = Dynarray.create ();
     class_sites = Dynarray.create ();
+    class_defs = Dynarray.create ();
     copies = Dynarray.create ();
     referenced = Dynarray.create ();
     incoming = Dynarray.create ();
@@ -1629,39 +1674,79 @@ let new_quotient () : quotient =
     unions = 0;
   }
 
-let rec index_object (q : quotient) (ancestors : int list)
-    ~(sites : Shape_and_sig.Sites.t) ~(summary : bool) (source : obj) : int =
+let add_node (q : quotient) (node : node) : int =
   let i = Dynarray.length q.nodes in
-  Dynarray.add_last q.nodes
-    { sites; summary; entries = Fields.empty; source; ancestors };
+  Dynarray.add_last q.nodes node;
   Dynarray.add_last q.parent i;
   Dynarray.add_last q.size 1;
   Dynarray.add_last q.members [ i ];
-  Dynarray.add_last q.class_sites sites;
+  Dynarray.add_last q.class_sites node.sites;
+  Dynarray.add_last q.class_defs node.defs;
   Dynarray.add_last q.copies Fields.empty;
   Dynarray.add_last q.referenced false;
   Dynarray.add_last q.incoming [];
   Dynarray.add_last q.recorded false;
-  let entries =
-    Fields.map
-      (fun (Cell (xtaint, shape)) ->
-        { xtaint; target = index q (i :: ancestors) shape })
-      source
-  in
-  Dynarray.set q.nodes i { (Dynarray.get q.nodes i) with entries };
   i
 
-and index (q : quotient) (ancestors : int list) (shape : shape) : target =
+let rec index (q : quotient) (ancestors : int list) (shape : shape) : target =
+  let entry_of (i : int) (Cell (xtaint, shape) : cell) : entry =
+    { xtaint; target = index q (i :: ancestors) shape }
+  in
   match shape with
   | Obj { sites; summary; fields } ->
-      Node (index_object q ancestors ~sites ~summary fields)
+      let i =
+        add_node q
+          {
+            sites;
+            defs = Defs.empty;
+            summary;
+            entries = Fields.empty;
+            captured = Captured.empty;
+            source = shape;
+            ancestors;
+          }
+      in
+      let entries = Fields.map (entry_of i) fields in
+      Dynarray.set q.nodes i { (Dynarray.get q.nodes i) with entries };
+      Node i
+  | Fun (c, cs) ->
+      let closures = c :: cs in
+      let i =
+        add_node q
+          {
+            sites = Shape_and_sig.Sites.empty;
+            defs = Defs.of_list (List.map (fun (closure : closure) -> closure.def) closures);
+            summary = false;
+            entries = Fields.empty;
+            captured = Captured.empty;
+            source = shape;
+            ancestors;
+          }
+      in
+      let captured =
+        List.fold_left
+          (fun captured (closure : closure) ->
+            snd
+              (List.fold_left
+                 (fun ((position, captured) : int * entry Captured.t)
+                      ((_, entry) : IL.name * env_entry) ->
+                   match entry with
+                   | Val cell ->
+                       ( position + 1,
+                         Captured.add (closure.def, position) (entry_of i cell)
+                           captured )
+                   | Ref _ -> (position + 1, captured))
+                 (0, captured) closure.env))
+          Captured.empty closures
+      in
+      Dynarray.set q.nodes i { (Dynarray.get q.nodes i) with captured };
+      Node i
   | Rec n -> (
       match List.nth_opt ancestors n with
       | Some i -> Node i
       | None -> Leaf shape)
   | Bot
-  | Arg _
-  | Fun _ ->
+  | Arg _ ->
       Leaf shape
 
 let rec find (q : quotient) (i : int) : int =
@@ -1690,6 +1775,8 @@ let union (q : quotient) (i : int) (j : int) : int =
       (Shape_and_sig.Sites.union
          (Dynarray.get q.class_sites root)
          (Dynarray.get q.class_sites child));
+    Dynarray.set q.class_defs root
+      (Defs.union (Dynarray.get q.class_defs root) (Dynarray.get q.class_defs child));
     q.unions <- q.unions + 1;
     root
 
@@ -1698,13 +1785,12 @@ let any_copy (q : quotient) (member : int) (o : T.offset) (any : int) : int =
   | Some copy -> copy
   | None ->
       let node = Dynarray.get q.nodes any in
-      let copy =
-        index_object q node.ancestors ~sites:node.sites ~summary:node.summary
-          node.source
-      in
-      Dynarray.set q.copies member
-        (Fields.add o copy (Dynarray.get q.copies member));
-      copy
+      match index q node.ancestors node.source with
+      | Node copy ->
+          Dynarray.set q.copies member
+            (Fields.add o copy (Dynarray.get q.copies member));
+          copy
+      | Leaf _ -> any
 
 let is_child (q : quotient) (parent : int) (i : int) : bool =
   match (Dynarray.get q.nodes i).ancestors with
@@ -1745,13 +1831,48 @@ let field_entries (q : quotient) (class_root : int) : entry list Fields.t =
       List.rev_append reversed reads_of_any)
     present
 
-let nodes_of (entries : entry list) : int list =
-  List.filter_map
-    (fun (entry : entry) ->
-      match entry.target with
-      | Node i -> Some i
-      | Leaf _ -> None)
-    entries
+let captured_entries (q : quotient) (class_root : int) : entry list Captured.t =
+  List.fold_right
+    (fun member captured ->
+      Captured.fold
+        (fun key entry captured ->
+          Captured.update key
+            (fun entries -> Some (entry :: Option.value entries ~default:[]))
+            captured)
+        (Dynarray.get q.nodes member).captured captured)
+    (Dynarray.get q.members class_root)
+    Captured.empty
+
+let is_object (q : quotient) (i : int) : bool =
+  Defs.is_empty (Dynarray.get q.nodes i).defs
+
+let position_nodes (q : quotient) (entries : entry list) : int list =
+  let nodes =
+    List.filter_map
+      (fun (entry : entry) ->
+        match entry.target with
+        | Node i -> Some i
+        | Leaf _ -> None)
+      entries
+  in
+  match List.filter (is_object q) nodes with
+  | [] -> nodes
+  | objects -> objects
+
+let shares_site (q : quotient) (i : int) (j : int) : bool =
+  (not
+     (Shape_and_sig.Sites.disjoint
+        (Dynarray.get q.class_sites i)
+        (Dynarray.get q.class_sites j)))
+  || not (Defs.disjoint (Dynarray.get q.class_defs i) (Dynarray.get q.class_defs j))
+
+let class_entries (q : quotient) (class_root : int) : entry list list =
+  if is_object q class_root then
+    Fields.fold (fun _ entries all -> entries :: all) (field_entries q class_root) []
+    |> List.rev
+  else
+    Captured.fold (fun _ entries all -> entries :: all) (captured_entries q class_root) []
+    |> List.rev
 
 let topmost_changed (q : quotient) (path : path_class list) : int option =
   List.fold_left
@@ -1777,11 +1898,11 @@ let rec close_class (q : quotient) (above : path_class list) (member : int) :
   in
   let first_visit = not (Dynarray.get q.recorded class_root) in
   Dynarray.set q.recorded class_root true;
-  let rec close_fields (fields : (T.offset * entry list) list) : int option =
+  let rec close_fields (fields : entry list list) : int option =
     match fields with
     | [] -> None
-    | (_, entries) :: rest -> (
-        match nodes_of entries with
+    | entries :: rest -> (
+        match position_nodes q entries with
         | [] -> close_fields rest
         | first :: others -> (
             let unions = q.unions in
@@ -1798,13 +1919,10 @@ let rec close_class (q : quotient) (above : path_class list) (member : int) :
                   Dynarray.set q.referenced x true;
                   close_fields rest)
                 else
-                  let sites = Dynarray.get q.class_sites x in
                   match
                     List.filter
                       (fun (path_class : path_class) ->
-                        not
-                          (Shape_and_sig.Sites.disjoint sites
-                             (Dynarray.get q.class_sites path_class.class_root)))
+                        shares_site q x path_class.class_root)
                       path
                   with
                   | [] -> (
@@ -1818,7 +1936,7 @@ let rec close_class (q : quotient) (above : path_class list) (member : int) :
                            x hits);
                       topmost_changed q path)))
   in
-  match close_fields (Fields.bindings (field_entries q class_root)) with
+  match close_fields (class_entries q class_root) with
   | Some restart when Int.equal restart depth -> close_class q above class_root
   | outcome -> outcome
 
@@ -1827,7 +1945,7 @@ let rec close (q : quotient) (roots : entry list) : unit =
   Dynarray.iteri (fun i _ -> Dynarray.set q.referenced i false) q.referenced;
   Dynarray.iteri (fun i _ -> Dynarray.set q.incoming i []) q.incoming;
   Dynarray.iteri (fun i _ -> Dynarray.set q.recorded i false) q.recorded;
-  (match nodes_of roots with
+  (match position_nodes q roots with
   | [] -> ()
   | first :: others ->
       let root = find q (List.fold_left (union q) first others) in
@@ -1861,11 +1979,13 @@ let rec emit_cell ~lang ~(merge : T.trace_merge) (q : quotient)
     (path : int list) ~(derived : entry list) (carried_taints : carried_taint list)
     (entries : entry list) : cell option =
   let xtaint = joined_xtaint ~merge entries in
-  match nodes_of entries with
+  match position_nodes q entries with
   | first :: _ -> (
       let x = find q first in
       match List.find_index (Int.equal x) path with
       | Some distance -> Some (cell_of_join xtaint (Rec distance))
+      | None when not (is_object q x) ->
+          Some (cell_of_join xtaint (emit_closures ~lang ~merge q path x))
       | None -> (
           match emit_object ~lang ~merge q path x ~derived ~xtaint carried_taints with
           | Bot when not (Xtaint.is_tainted xtaint) -> None
@@ -1957,22 +2077,86 @@ and emit_object ~lang ~(merge : T.trace_merge) (q : quotient) (path : int list)
         fields;
       }
 
+and emit_closures ~lang ~(merge : T.trace_merge) (q : quotient)
+    (path : int list) (x : int) : shape =
+  let path = x :: path in
+  let captured = captured_entries q x in
+  let join_closures (first : closure) (others : closure list) : closure =
+    let sig_ =
+      List.fold_left
+        (fun (sig_ : Signature.t) (closure : closure) ->
+          if phys_equal closure.sig_ sig_ then sig_
+          else
+            {
+              sig_ with
+              Signature.effects =
+                Effects.union ~merge sig_.Signature.effects
+                  closure.sig_.Signature.effects;
+            })
+        first.sig_ others
+    in
+    let env =
+      List.mapi
+        (fun position ((var, entry) as binding : IL.name * env_entry) ->
+          match (entry, Captured.find_opt (first.def, position) captured) with
+          | Val _, Some entries -> (
+              match emit_cell ~lang ~merge q path ~derived:[] [] entries with
+              | Some cell -> (var, Val cell)
+              | None -> binding)
+          | (Val _ | Ref _), _ -> binding)
+        first.env
+    in
+    { first with sig_; env }
+  in
+  let closures =
+    Dynarray.get q.members x
+    |> List.concat_map (fun member ->
+           match (Dynarray.get q.nodes member).source with
+           | Fun (c, cs) -> c :: cs
+           | Bot
+           | Obj _
+           | Rec _
+           | Arg _ ->
+               [])
+    |> List.stable_sort (fun (c1 : closure) (c2 : closure) ->
+           Function_id.compare c1.def c2.def)
+  in
+  let groups =
+    List.fold_right
+      (fun (closure : closure) (groups : closure list list) ->
+        match groups with
+        | (next :: _ as group) :: rest when Function_id.equal next.def closure.def ->
+            (closure :: group) :: rest
+        | _ -> [ closure ] :: groups)
+      closures []
+  in
+  match
+    List.filter_map
+      (function
+        | first :: others -> Some (join_closures first others)
+        | [] -> None)
+      groups
+  with
+  | first :: others -> Fun (first, others)
+  | [] -> Bot
+
 let join_folded_by_site ~lang ~(merge : T.trace_merge) (previous : cell option)
     (computed : cell) : cell =
-  let is_object (Cell (_, shape) : cell) : bool =
+  let has_node (Cell (_, shape) : cell) : bool =
     match shape with
-    | Obj _ -> true
+    | Obj _
+    | Fun _ ->
+        true
     | Bot
     | Rec _
-    | Arg _
-    | Fun _ ->
+    | Arg _ ->
         false
   in
   match previous with
   | Some previous when phys_equal previous computed -> computed
-  | Some previous when not (is_object previous || is_object computed) ->
+  | Some previous when not (has_node previous || has_node computed) ->
       unify_cell ~lang ~merge previous computed
-  | None when not (is_object computed) -> computed
+  | None when not (has_node computed) -> computed
   | Some _
   | None -> (
       let q = new_quotient () in

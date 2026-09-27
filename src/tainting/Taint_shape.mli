@@ -52,6 +52,8 @@ val record_or_dict_like_obj :
 (** Constructs an 'Obj' shape from a list of taints and shapes associated with
     a record/dict expression. *)
 
+val closures_of_fun : closure -> closure list -> closure * closure list
+
 val unify_cell : lang:Lang.t -> merge:Taint.trace_merge -> cell -> cell -> cell
 (** Unify two 'cell's into one. *)
 

@@ -1,0 +1,13 @@
+rules:
+  - id: closure_chain_by_value_php
+    message: a closure that a loop composes from the previous one, captured by value, carries its argument to the sink
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
