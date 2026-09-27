@@ -96,3 +96,26 @@ val instantiate_function_signature :
     by sig-param position, which the instantiator has no other way to
     obtain. When [outer_params] is omitted, rebinding does not apply
     and unknown guards are dropped. *)
+
+type instantiations
+
+val mk_instantiations : unit -> instantiations
+
+val instantiate_at_call :
+  instantiations ->
+  lang:Lang.t ->
+  merge:Taint.trace_merge ->
+  atoms:Effect_guard.atoms ->
+  propagate_through_functions:bool ->
+  max_offset:int ->
+  outer_params:IL.param list ->
+  ?env:Shape_and_sig.Shape.env ->
+  Taint_lval_env.t ->
+  Shape_and_sig.Signature.t ->
+  callee:IL.exp ->
+  callee_fid:Function_id.t option ->
+  args:IL.exp IL.argument list ->
+  (Taint.Taint_set.t * Shape_and_sig.Shape.shape) IL.argument list ->
+  lookup_sig:
+    (IL.exp -> int -> (Function_id.t * Shape_and_sig.Signature.t) list) ->
+  call_effects

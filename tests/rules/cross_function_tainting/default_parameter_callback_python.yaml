@@ -1,0 +1,13 @@
+rules:
+  - id: default_parameter_callback_python
+    message: a parameter with no argument at the call holds its default value
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

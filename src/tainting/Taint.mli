@@ -243,6 +243,11 @@ val through :
 
 val same_trace : taint -> taint -> bool
 
+val shares_trace : taint -> taint -> bool
+
+val compare_traces :
+  taint -> unit call_trace option -> taint -> unit call_trace option -> int
+
 val merge_items :
   merge:trace_merge ->
   kept:Effect_guard.t * taint * unit call_trace ->

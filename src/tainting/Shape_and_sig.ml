@@ -219,6 +219,7 @@ module rec Shape : sig
 
   val equal_shape : shape -> shape -> bool
   val equal_env : env -> env -> bool
+  val equal_env_with_guards : env -> env -> bool
   val compare_shape : shape -> shape -> int
   val show_cell : cell -> string
   val show_shape : shape -> string
@@ -354,12 +355,15 @@ end = struct
     Fields.equal equal_cell_with_guards obj1 obj2
 
   let equal_env env1 env2 = equal_env_by equal_cell env1 env2
+  let equal_env_with_guards env1 env2 = equal_env_by equal_cell_with_guards env1 env2
 
   (*************************************)
   (* Comparison *)
   (*************************************)
 
   let rec compare_cell cell1 cell2 =
+    if phys_equal cell1 cell2 then 0
+    else
     let (Cell (taints1, shape1)) = cell1 in
     let (Cell (taints2, shape2)) = cell2 in
     match Xtaint.compare taints1 taints2 with
@@ -367,6 +371,8 @@ end = struct
     | other -> other
 
   and compare_shape shape1 shape2 =
+    if phys_equal shape1 shape2 then 0
+    else
     match (shape1, shape2) with
     | Bot, Bot -> 0
     | ( Obj { sites = sites1; summary = summary1; fields = fields1 },
@@ -400,6 +406,8 @@ end = struct
   and compare_obj obj1 obj2 = Fields.compare compare_cell obj1 obj2
 
   and compare_closure (c1 : closure) (c2 : closure) =
+    if phys_equal c1 c2 then 0
+    else
     match Function_id.compare c1.def c2.def with
     | 0 -> (
         match Signature.compare c1.sig_ c2.sig_ with
@@ -611,6 +619,7 @@ and Effect : sig
       payloads. The fused effect applies iff either of the two would. *)
 
   val guards_equal : t -> t -> bool
+  val traces_shared : t -> t -> bool
   (** Whether two identity-equal effects carry the same guards in every
       guard-bearing payload. Insertion no-op checks and fixpoint stability
       tests must use this; effect identity ([compare]) is guard-blind. *)
@@ -938,6 +947,19 @@ end = struct
                 T.same_trace i1.taint i2.taint
                 && phys_equal i1.sink_trace i2.sink_trace
               in
+              let i1 =
+                match merge with
+                | T.Keep_best
+                  when (not same_traces)
+                       && Effect_guard.equal side1_guard side2_guard
+                       && T.compare_traces i2.taint (Some i2.sink_trace)
+                            i1.taint (Some i1.sink_trace)
+                          < 0 ->
+                    { i1 with taint = i2.taint; sink_trace = i2.sink_trace }
+                | T.Keep_best
+                | T.Keep_both ->
+                    i1
+              in
               let taint =
                 match merge with
                 | T.Keep_best
@@ -1028,6 +1050,37 @@ end = struct
             | (IL.Unnamed _ | IL.Named _), _ -> true)
           c1.args_taints c2.args_taints
     | _ -> true
+
+  let traces_shared (e1 : t) (e2 : t) : bool =
+    let shared (taints1 : Taints.t) (taints2 : Taints.t) : bool =
+      List.for_all2
+        (fun (b1 : T.guarded_taint) (b2 : T.guarded_taint) ->
+          T.shares_trace b1.taint b2.taint)
+        (Taints.elements taints1) (Taints.elements taints2)
+    in
+    match (e1, e2) with
+    | ToSink tts1, ToSink tts2 ->
+        List.for_all2
+          (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
+            T.shares_trace i1.taint i2.taint
+            && phys_equal i1.sink_trace i2.sink_trace)
+          (fst tts1.taints_with_precondition)
+          (fst tts2.taints_with_precondition)
+    | ToReturn ttr1, ToReturn ttr2 ->
+        shared ttr1.data_taints ttr2.data_taints
+        && shared ttr1.control_taints ttr2.control_taints
+    | ToLval ttl1, ToLval ttl2 -> shared ttl1.taints ttl2.taints
+    | ToSinkInCall c1, ToSinkInCall c2 ->
+        List.for_all2
+          (fun (a1 : (Taints.t * Shape.shape) IL.argument)
+               (a2 : (Taints.t * Shape.shape) IL.argument) ->
+            match (a1, a2) with
+            | IL.Unnamed (t1, _), IL.Unnamed (t2, _)
+            | IL.Named (_, (t1, _)), IL.Named (_, (t2, _)) ->
+                shared t1 t2
+            | (IL.Unnamed _ | IL.Named _), _ -> true)
+          c1.args_taints c2.args_taints
+    | _ -> true
 end
 
 and Effects : sig
@@ -1075,7 +1128,10 @@ end = struct
     | Some existing -> (
         let fused = Effect.fuse_guards ~merge existing eff in
         match merge with
-        | T.Keep_best when Effect.guards_equal fused existing -> set
+        | T.Keep_best
+          when Effect.guards_equal fused existing
+               && Effect.traces_shared fused existing ->
+            set
         | T.Keep_best
         | T.Keep_both ->
             add fused (remove existing set))
@@ -1218,9 +1274,11 @@ end = struct
     && Int.equal (compare_captured captured1 captured2) 0
     && Effects.equal_with_guards effects1 effects2
 
-  let compare
-      { params = params1; params_il = _; captured = captured1; effects = effects1 }
-      { params = params2; params_il = _; captured = captured2; effects = effects2 } =
+  let compare (sig1 : t) (sig2 : t) =
+    if phys_equal sig1 sig2 then 0
+    else
+    let { params = params1; params_il = _; captured = captured1; effects = effects1 } = sig1 in
+    let { params = params2; params_il = _; captured = captured2; effects = effects2 } = sig2 in
     match Signature_params.compare_params params1 params2 with
     | 0 -> (
         match compare_captured captured1 captured2 with
@@ -1296,10 +1354,12 @@ end
 (* [f] keeps the definition of each closure, so the order of the set holds;
    the list is physically unchanged when [f] changes none of its closures. *)
 let map_closures (f : Shape.closure -> Shape.closure)
-    ((c, cs) : Shape.closure * Shape.closure list) :
+    (((c, cs) as closures) : Shape.closure * Shape.closure list) :
     Shape.closure * Shape.closure list =
   let cs' = List_.map f cs in
-  (f c, if List.for_all2 phys_equal cs' cs then cs else cs')
+  let cs' = if List.for_all2 phys_equal cs' cs then cs else cs' in
+  let c' = f c in
+  if phys_equal c' c && phys_equal cs' cs then closures else (c', cs')
 
 (* Rewrites the references of the closure environments in an effect's
    shapes. *)

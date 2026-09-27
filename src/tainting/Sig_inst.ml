@@ -27,6 +27,12 @@ module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 module Lval_env = Taint_lval_env
 
+module Lval_map = Map.Make (struct
+  type t = T.lval
+
+  let compare = T.compare_lval
+end)
+
 let sigs_tag = Log_tainting.sigs_tag
 let bad_tag = Log_tainting.bad_tag
 
@@ -180,6 +186,23 @@ let sig_cache_store (cache : sig_inst_cache) (entry : sig_inst_cache_entry) :
   in
   Hashtbl.replace cache key (entry :: entries)
 
+type instantiation = {
+  signature : Signature.t;
+  closure_env : env option;
+  callee_fid : Function_id.t option;
+  max_offset : int;
+  actual_args : IL.exp IL.argument list;
+  args_taints : Effect.args_taints;
+  control : Taints.t;
+  reads : (IL.name * cell option) list;
+  lookups : (IL.exp * int * (Function_id.t * Signature.t) list) list;
+  effects : call_effects;
+}
+
+type instantiations = instantiation list IL_helpers.PhysExpTbl.t
+
+let mk_instantiations () : instantiations = IL_helpers.PhysExpTbl.create 64
+
 (*****************************************************************************)
 (* Instantiation "config" *)
 (*****************************************************************************)
@@ -245,6 +268,28 @@ type inst_trace = {
       (** For variables we should too, but due to limitations in our call-trace
           * representation, we just record the path as tainted tokens. *)
 }
+
+module Definition_tbl = Hashtbl.Make (struct
+  type t = Function_id.t * Signature.t
+
+  let equal ((def1, sig1) : t) ((def2, sig2) : t) : bool =
+    phys_equal sig1 sig2 && Function_id.equal def1 def2
+
+  let hash ((def, _) : t) : int = Function_id.hash def
+end)
+
+type substitution = {
+  variables : inst_var;
+  source_trace :
+    T.call_site ->
+    T.taint ->
+    Rule.taint_source T.call_trace ->
+    Rule.taint_source T.call_trace option;
+  variable_trace : T.call_site -> var:T.taint -> T.taint -> T.taint;
+  result : Signature.t;
+}
+
+type substitutions = substitution list Definition_tbl.t
 
 (*****************************************************************************)
 (* Helpers *)
@@ -606,6 +651,117 @@ let combine_rest_args_exp (es : IL.exp list) : IL.exp =
   in
   {e; eorig}
 
+(* Convert a [G.expr] value into an [IL.exp]: a leaf that
+ * [resolve_callee_expr] reaches by walking a caller variable's
+ * [id_svalue], or a parameter's default value.
+ *
+ * Handles:
+ *   - [G.N (G.Id ...)]   -> [Fetch (Var ...)] — a name reference.
+ *   - [G.L lit]          -> [Literal lit] — a literal value.
+ *   - [G.Container ((List|Tuple|Array|Set), xs)]
+ *                        -> [Composite (kind, xs)] where each [x]
+ *                        is recursively converted; returns [None] if
+ *                        any sub-expression does not convert.
+ *   - [G.Container (Dict, kvs)]
+ *                        -> [RecordOrDict entries] via [IL.Entry];
+ *                        each entry's key and value are recursively
+ *                        converted. *)
+let rec svalue_leaf_to_il_exp (leaf : G.expr) : IL.exp option =
+  match leaf.G.e with
+  | G.N (G.Id (ident, id_info)) ->
+      let il_name = AST_to_IL.var_of_id_info ident id_info in
+      Some
+        {
+          IL.e =
+            IL.Fetch
+              { IL.base = IL.Var il_name; rev_offset = [] };
+          eorig = IL.SameAs leaf;
+        }
+  | G.L lit -> Some { IL.e = IL.Literal lit; eorig = IL.SameAs leaf }
+  | G.Container
+      (((G.List | G.Tuple | G.Array | G.Set) as gkind), (l, xs, r)) ->
+      let kind =
+        match gkind with
+        | G.List -> IL.CList
+        | G.Tuple -> IL.CTuple
+        | G.Array -> IL.CArray
+        | G.Set -> IL.CSet
+        | G.Dict -> assert false
+      in
+      let rec convert_all = function
+        | [] -> Some []
+        | x :: rest -> (
+            match svalue_leaf_to_il_exp x with
+            | None -> None
+            | Some y -> (
+                match convert_all rest with
+                | None -> None
+                | Some ys -> Some (y :: ys)))
+      in
+      Option.map
+        (fun xs_il ->
+          {
+            IL.e = IL.Composite (kind, (l, xs_il, r));
+            eorig = IL.SameAs leaf;
+          })
+        (convert_all xs)
+  | G.Container (G.Dict, (_, kvs, _)) ->
+      let rec convert_kvs = function
+        | [] -> Some []
+        | kv :: rest -> (
+            match kv.G.e with
+            | G.Container (G.Tuple, (_, [ k; v ], _)) -> (
+                match
+                  (svalue_leaf_to_il_exp k, svalue_leaf_to_il_exp v)
+                with
+                | Some k_il, Some v_il ->
+                    Option.map
+                      (fun ys -> IL.Entry (k_il, v_il) :: ys)
+                      (convert_kvs rest)
+                | _ -> None)
+            | _ -> None)
+      in
+      Option.map
+        (fun entries ->
+          { IL.e = IL.RecordOrDict entries; eorig = IL.SameAs leaf })
+        (convert_kvs kvs)
+  | G.Record (_, fields, _) ->
+      (* A record field [F(DefStmt({name=EN Id(s,idinfo); _},
+       *   FieldDefColon{vinit=Some v; _}))] becomes
+       * [IL.Field(il_name_of_s, v_il)]. Any other field kind
+       * (no name, no [vinit], non-Id name) fails the conversion. *)
+      let rec convert_fields = function
+        | [] -> Some []
+        | f :: rest -> (
+            match f with
+            | G.F
+                {
+                  s =
+                    G.DefStmt
+                      ( {
+                          name = G.EN (G.Id (ident, id_info));
+                          _;
+                        },
+                        G.FieldDefColon { vinit = Some v; _ } );
+                  _;
+                } -> (
+                match svalue_leaf_to_il_exp v with
+                | None -> None
+                | Some v_il ->
+                    let il_name =
+                      AST_to_IL.var_of_id_info ident id_info
+                    in
+                    Option.map
+                      (fun ys -> IL.Field (il_name, v_il) :: ys)
+                      (convert_fields rest))
+            | _ -> None)
+      in
+      Option.map
+        (fun entries ->
+          { IL.e = IL.RecordOrDict entries; eorig = IL.SameAs leaf })
+        (convert_fields fields)
+  | _ -> None
+
 (* Walk a caller-side [IL.exp] by [fun_arg_offset] to recover the concrete
  * sub-expression at that path. Used when instantiating a [ToSinkInCall]
  * effect: the callee's signature says the callback lives at
@@ -704,117 +860,6 @@ let resolve_callee_expr (base_exp : IL.exp) (fun_arg_offset : Taint.offset list)
                     Some v
                 | _ -> None)
               fields)
-    | _ -> None
-  in
-  (* Convert a [G.expr] leaf (returned by [step_generic] after walking a
-   * caller variable's [id_svalue]) back into an [IL.exp] so the outer
-   * fold can continue uniformly.
-   *
-   * Handles:
-   *   - [G.N (G.Id ...)]   -> [Fetch (Var ...)] — a name reference.
-   *   - [G.L lit]          -> [Literal lit] — a literal value.
-   *   - [G.Container ((List|Tuple|Array|Set), xs)]
-   *                        -> [Composite (kind, xs)] where each [x]
-   *                        is recursively converted; returns [None] if
-   *                        any sub-expression does not convert.
-   *   - [G.Container (Dict, kvs)]
-   *                        -> [RecordOrDict entries] via [IL.Entry];
-   *                        each entry's key and value are recursively
-   *                        converted. *)
-  let rec svalue_leaf_to_il_exp (leaf : G.expr) : IL.exp option =
-    match leaf.G.e with
-    | G.N (G.Id (ident, id_info)) ->
-        let il_name = AST_to_IL.var_of_id_info ident id_info in
-        Some
-          {
-            IL.e =
-              IL.Fetch
-                { IL.base = IL.Var il_name; rev_offset = [] };
-            eorig = IL.SameAs leaf;
-          }
-    | G.L lit -> Some { IL.e = IL.Literal lit; eorig = IL.SameAs leaf }
-    | G.Container
-        (((G.List | G.Tuple | G.Array | G.Set) as gkind), (l, xs, r)) ->
-        let kind =
-          match gkind with
-          | G.List -> IL.CList
-          | G.Tuple -> IL.CTuple
-          | G.Array -> IL.CArray
-          | G.Set -> IL.CSet
-          | G.Dict -> assert false
-        in
-        let rec convert_all = function
-          | [] -> Some []
-          | x :: rest -> (
-              match svalue_leaf_to_il_exp x with
-              | None -> None
-              | Some y -> (
-                  match convert_all rest with
-                  | None -> None
-                  | Some ys -> Some (y :: ys)))
-        in
-        Option.map
-          (fun xs_il ->
-            {
-              IL.e = IL.Composite (kind, (l, xs_il, r));
-              eorig = IL.SameAs leaf;
-            })
-          (convert_all xs)
-    | G.Container (G.Dict, (_, kvs, _)) ->
-        let rec convert_kvs = function
-          | [] -> Some []
-          | kv :: rest -> (
-              match kv.G.e with
-              | G.Container (G.Tuple, (_, [ k; v ], _)) -> (
-                  match
-                    (svalue_leaf_to_il_exp k, svalue_leaf_to_il_exp v)
-                  with
-                  | Some k_il, Some v_il ->
-                      Option.map
-                        (fun ys -> IL.Entry (k_il, v_il) :: ys)
-                        (convert_kvs rest)
-                  | _ -> None)
-              | _ -> None)
-        in
-        Option.map
-          (fun entries ->
-            { IL.e = IL.RecordOrDict entries; eorig = IL.SameAs leaf })
-          (convert_kvs kvs)
-    | G.Record (_, fields, _) ->
-        (* A record field [F(DefStmt({name=EN Id(s,idinfo); _},
-         *   FieldDefColon{vinit=Some v; _}))] becomes
-         * [IL.Field(il_name_of_s, v_il)]. Any other field kind
-         * (no name, no [vinit], non-Id name) fails the conversion. *)
-        let rec convert_fields = function
-          | [] -> Some []
-          | f :: rest -> (
-              match f with
-              | G.F
-                  {
-                    s =
-                      G.DefStmt
-                        ( {
-                            name = G.EN (G.Id (ident, id_info));
-                            _;
-                          },
-                          G.FieldDefColon { vinit = Some v; _ } );
-                    _;
-                  } -> (
-                  match svalue_leaf_to_il_exp v with
-                  | None -> None
-                  | Some v_il ->
-                      let il_name =
-                        AST_to_IL.var_of_id_info ident id_info
-                      in
-                      Option.map
-                        (fun ys -> IL.Field (il_name, v_il) :: ys)
-                        (convert_fields rest))
-              | _ -> None)
-        in
-        Option.map
-          (fun entries ->
-            { IL.e = IL.RecordOrDict entries; eorig = IL.SameAs leaf })
-          (convert_fields fields)
     | _ -> None
   in
   let index_into (exp : IL.exp) (off : Taint.offset) : IL.exp option =
@@ -1074,22 +1119,30 @@ let guard_valid_under ~(lang : Lang.t) (finding_guard : Effect_guard.t)
  * variable. *)
 let instantiate_env (inst_var : inst_var) ~(inst_cell : cell -> cell)
     (env : env) : env =
-  env
-  |> List_.map (fun ((x, entry) as binding) ->
-         match entry with
-         | Val cell -> (x, Val (inst_cell cell))
-         | Ref lval -> (
-             match inst_var.inst_lval_to_name lval with
-             | Some (var, offset, _tok) ->
-                 (x, Ref { T.base = T.BGlob var; offset })
-             | None -> (
-                 match inst_var.inst_lval lval with
-                 | Some (taints, shape) ->
-                     (x, Val (Cell (Xtaint.of_taints taints, shape)))
-                 | None -> binding)))
+  let env' =
+    env
+    |> List_.map (fun ((x, entry) as binding) ->
+           match entry with
+           | Val cell ->
+               let cell' = inst_cell cell in
+               if phys_equal cell' cell then binding else (x, Val cell')
+           | Ref lval -> (
+               match inst_var.inst_lval_to_name lval with
+               | Some (var, offset, _tok) ->
+                   let lval' = { T.base = T.BGlob var; offset } in
+                   if Int.equal (T.compare_lval lval' lval) 0 then binding
+                   else (x, Ref lval')
+               | None -> (
+                   match inst_var.inst_lval lval with
+                   | Some (taints, shape) ->
+                       (x, Val (Cell (Xtaint.of_taints taints, shape)))
+                   | None -> binding)))
+  in
+  if List.for_all2 phys_equal env' env then env else env'
 
-let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
-    (sig_ : Signature.t) : Signature.t =
+let rec substitute_in_sig ~lang ~(substitutions : substitutions)
+    (inst_var : inst_var) (inst_trace : inst_trace) (sig_ : Signature.t) :
+    Signature.t =
   let inst_trace =
     { inst_trace with site = { inst_trace.site with subst = `Nested_sig } }
   in
@@ -1152,38 +1205,39 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
    *   - Var/Shape_var on [BGlob]/[BThis]: substitute via [instantiate_taint]
    *     (concrete bases are resolvable from the call site).
    *   - [Src]/[Control]: substitute via [instantiate_taint]. *)
-  let walk_taint (b : T.guarded_taint) : T.taints =
-    let delegate () =
-      instantiate_taint inst_var inst_trace b.taint
-      |> Taints.conjoin_guard (walk_guard b.guard)
-    in
-    let keep () =
-      Taints.of_list ~merge:inst_var.merge
-        [ { b with guard = walk_guard b.guard } ]
-    in
+  let kept (b : T.guarded_taint) : bool =
     match b.taint.orig with
     | T.Var lval
     | T.Shape_var lval -> (
         match lval.base with
-        | T.BArg arg when bound_in_sig arg -> keep ()
-        | T.BEnv x when captured_in_sig x -> keep ()
-        | T.BCall call when bound_formal_in_sig (Result call) -> keep ()
-        | T.BArg _ -> (
-            match inst_var.inst_lval lval with
-            | Some _ -> delegate ()
-            | None -> keep ())
-        | T.BLocal _ -> keep ()
+        | T.BArg arg when bound_in_sig arg -> true
+        | T.BEnv x when captured_in_sig x -> true
+        | T.BCall call when bound_formal_in_sig (Result call) -> true
+        | T.BArg _ -> Option.is_none (inst_var.inst_lval lval)
+        | T.BLocal _ -> true
         | T.BGlob _
         | T.BThis
         | T.BEnv _
         | T.BCall _ ->
-            delegate ())
+            false)
     | T.Src _
     | T.Control ->
-        delegate ()
+        false
+  in
+  let walk_taint (b : T.guarded_taint) : T.taints =
+    if kept b then
+      Taints.of_list ~merge:inst_var.merge
+        [ { b with guard = walk_guard b.guard } ]
+    else
+      instantiate_taint inst_var inst_trace b.taint
+      |> Taints.conjoin_guard (walk_guard b.guard)
+  in
+  let unchanged (b : T.guarded_taint) : bool =
+    kept b && phys_equal (walk_guard b.guard) b.guard
   in
   let walk_taints (taints : T.taints) : T.taints =
-    Taints.bind ~merge:inst_var.merge taints walk_taint
+    if Seq.for_all unchanged (Taints.to_seq taints) then taints
+    else Taints.bind ~merge:inst_var.merge taints walk_taint
   in
   (* Walk a shape. Mirrors [instantiate_shape] but with the bound-vs-free
    * filter on [Arg] and nested taint substitution via [walk_taints].
@@ -1207,14 +1261,22 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     | Bot -> Bot
     | Rec _ -> sh
     | Obj ({ fields = obj; _ } as node) ->
-        let obj =
+        let obj' =
           obj
-          |> Fields.filter_map (fun _o cell ->
-                 Shape.update_offset_in_cell ~write:call_site ~f:walk_xtaint []
-                   cell)
+          |> Fields.filter_map (fun _o (Cell (xtaint, shape) as cell) ->
+                 match
+                   Shape.update_offset_in_cell ~write:call_site ~f:walk_xtaint
+                     [] cell
+                 with
+                 | Some (Cell (xtaint', shape'))
+                   when phys_equal xtaint' xtaint && phys_equal shape' shape ->
+                     Some cell
+                 | walked -> walked)
         in
-        if Fields.is_empty obj then Bot else Obj { node with fields = obj }
-    | Arg (arg, offsets) when bound_formal_in_sig arg -> Arg (arg, offsets)
+        if Fields.is_empty obj' then Bot
+        else if Fields.equal phys_equal obj' obj then sh
+        else Obj { node with fields = obj' }
+    | Arg (arg, _) when bound_formal_in_sig arg -> sh
     | Arg (arg, offsets) ->
         let resolve_offset off =
           let lval = { T.base = T.base_of_formal arg; offset = off } in
@@ -1231,27 +1293,26 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
                   (resolve_offset off))
               (resolve_offset first) rest)
     | Fun (c, cs) ->
-        let c, cs =
+        let c', cs' =
           Shape_and_sig.map_closures
-            (fun (closure : closure) ->
-              {
-                closure with
-                sig_ = substitute_in_sig ~lang inst_var inst_trace closure.sig_;
-                env = instantiate_env inst_var ~inst_cell:walk_cell closure.env;
-              })
+            (substitute_in_closure ~lang ~substitutions inst_var inst_trace
+               ~inst_cell:walk_cell)
             (c, cs)
         in
-        Fun (c, cs)
-  and walk_cell (Cell (xtaint, shape)) =
-    let xtaint, shape = walk_xtaint xtaint shape in
-    Cell (xtaint, shape)
+        if phys_equal c' c && phys_equal cs' cs then sh else Fun (c', cs')
+  and walk_cell (Cell (xtaint, shape) as cell) =
+    let xtaint', shape' = walk_xtaint xtaint shape in
+    if phys_equal xtaint' xtaint && phys_equal shape' shape then cell
+    else Cell (xtaint', shape')
   and walk_xtaint xtaint shape =
     let xtaint =
       match xtaint with
       | `None
       | `Clean ->
           xtaint
-      | `Tainted taints -> `Tainted (walk_taints taints)
+      | `Tainted taints ->
+          let taints' = walk_taints taints in
+          if phys_equal taints' taints then xtaint else `Tainted taints'
     in
     (xtaint, walk_shape shape)
   in
@@ -1286,28 +1347,50 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
           return_tok;
           guards;
         } ->
-        Some
-          (Effect.ToReturn
-             {
-               data_taints = walk_taints data_taints;
-               data_shape = walk_shape data_shape;
-               several_results;
-               control_taints = walk_taints control_taints;
-               return_tok;
-               guards = walk_guard guards;
-             })
+        let data_taints' = walk_taints data_taints in
+        let data_shape' = walk_shape data_shape in
+        let control_taints' = walk_taints control_taints in
+        let guards' = walk_guard guards in
+        if
+          phys_equal data_taints' data_taints
+          && phys_equal data_shape' data_shape
+          && phys_equal control_taints' control_taints
+          && phys_equal guards' guards
+        then Some e
+        else
+          Some
+            (Effect.ToReturn
+               {
+                 data_taints = data_taints';
+                 data_shape = data_shape';
+                 several_results;
+                 control_taints = control_taints';
+                 return_tok;
+                 guards = guards';
+               })
     | Effect.ToLval { taints; shape; lval; guards } -> (
         match walk_lval lval with
         | None -> None
-        | Some lval ->
-            Some
-              (Effect.ToLval
-                 {
-                   taints = walk_taints taints;
-                   shape = walk_shape shape;
-                   lval;
-                   guards = walk_guard guards;
-                 }))
+        | Some lval' ->
+            let taints' = walk_taints taints in
+            let shape' = walk_shape shape in
+            let guards' = walk_guard guards in
+            if
+              phys_equal lval' lval && phys_equal taints' taints
+              && phys_equal shape' shape && phys_equal guards' guards
+            then Some e
+            else
+              Some
+                (Effect.ToLval
+                   { taints = taints'; shape = shape'; lval = lval'; guards = guards' }))
+    | Effect.ToSink
+        { taints_with_precondition = items, _; guards; _ }
+      when List.for_all
+             (fun (item : Effect.taint_to_sink_item) ->
+               unchanged { T.taint = item.taint; guard = item.guard })
+             items
+           && phys_equal (walk_guard guards) guards ->
+        Some e
     | Effect.ToSink
         { taints_with_precondition = items, precondition;
           sink;
@@ -1339,36 +1422,90 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
              })
     | Effect.ToSinkInCall
         { callee; arg; arg_offset; args_taints; guards } ->
-        let args_taints =
-          args_taints
-          |> List_.map (function
-               | IL.Unnamed (taints, shape) ->
-                   IL.Unnamed (walk_taints taints, walk_shape shape)
-               | IL.Named (id, (taints, shape)) ->
-                   IL.Named (id, (walk_taints taints, walk_shape shape)))
+        let walk_value ((taints, shape) as value : T.taints * shape) :
+            T.taints * shape =
+          let taints' = walk_taints taints in
+          let shape' = walk_shape shape in
+          if phys_equal taints' taints && phys_equal shape' shape then value
+          else (taints', shape')
         in
-        Some
-          (Effect.ToSinkInCall
-             {
-               callee;
-               arg;
-               arg_offset;
-               args_taints;
-               guards = walk_guard guards;
-             })
+        let args_taints' =
+          args_taints
+          |> List_.map (fun (actual : (T.taints * shape) IL.argument) ->
+                 match actual with
+                 | IL.Unnamed value ->
+                     let value' = walk_value value in
+                     if phys_equal value' value then actual
+                     else IL.Unnamed value'
+                 | IL.Named (id, value) ->
+                     let value' = walk_value value in
+                     if phys_equal value' value then actual
+                     else IL.Named (id, value'))
+        in
+        let guards' = walk_guard guards in
+        if List.for_all2 phys_equal args_taints' args_taints && phys_equal guards' guards
+        then Some e
+        else
+          Some
+            (Effect.ToSinkInCall
+               {
+                 callee;
+                 arg;
+                 arg_offset;
+                 args_taints = args_taints';
+                 guards = guards';
+               })
   in
-  let effects =
-    sig_.effects
-    |> Effects.elements
-    |> List.filter_map walk_effect
-    |> Effects.of_list ~merge:inst_var.merge
+  let effects = Effects.elements sig_.effects in
+  let walked = List.filter_map walk_effect effects in
+  if List.equal phys_equal walked effects then sig_
+  else { sig_ with effects = Effects.of_list ~merge:inst_var.merge walked }
+
+and substitute_in_closure ~lang ~(substitutions : substitutions)
+    (inst_var : inst_var) (inst_trace : inst_trace) ~(inst_cell : cell -> cell)
+    (closure : closure) : closure =
+  let key = (closure.def, closure.sig_) in
+  let substituted = Definition_tbl.find_opt substitutions key in
+  let sig_ =
+    match
+      List.find_opt
+        (fun (substitution : substitution) ->
+          phys_equal substitution.variables inst_var
+          && phys_equal substitution.source_trace
+               inst_trace.add_call_to_trace_for_src
+          && phys_equal substitution.variable_trace
+               inst_trace.fix_token_trace_for_var)
+        (Option.value substituted ~default:[])
+    with
+    | Some substitution -> substitution.result
+    | None ->
+        let result =
+          substitute_in_sig ~lang ~substitutions inst_var inst_trace
+            closure.sig_
+        in
+        let substitution =
+          {
+            variables = inst_var;
+            source_trace = inst_trace.add_call_to_trace_for_src;
+            variable_trace = inst_trace.fix_token_trace_for_var;
+            result;
+          }
+        in
+        (match substituted with
+        | None -> Definition_tbl.add substitutions key [ substitution ]
+        | Some others ->
+            Definition_tbl.replace substitutions key (substitution :: others));
+        result
   in
-  { sig_ with effects }
+  let env = instantiate_env inst_var ~inst_cell closure.env in
+  if phys_equal sig_ closure.sig_ && phys_equal env closure.env then closure
+  else { closure with sig_; env }
 
 (* Public entry point retaining the original location's contract.
  * Walks a shape, substituting against [inst_var]; nested [Fun] shapes
  * are refined via [substitute_in_sig]. *)
-let instantiate_shape ~lang inst_var inst_trace shape =
+let instantiate_shape ~lang ~(substitutions : substitutions) inst_var
+    inst_trace shape =
   let inst_taints = instantiate_taints inst_var inst_trace in
   let call_site = T.call_loc_of_exp inst_trace.site.callee_exp in
   let sites = Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at call_site) in
@@ -1411,7 +1548,7 @@ let instantiate_shape ~lang inst_var inst_trace shape =
                 Shape.unify_shape ~lang ~merge:inst_var.merge acc
                   (resolve_offset off))
               (resolve_offset first) rest)
-    | Fun (c, cs) ->
+    | Fun (c, cs) as shape ->
         (* A [Fun] shape's signature may reference parameters of the
          * outer function being applied (lambdas can close over their
          * enclosing function's parameters). Refine the inner sig by
@@ -1423,17 +1560,13 @@ let instantiate_shape ~lang inst_var inst_trace shape =
           let xtaint, shape = inst_xtaint xtaint shape in
           Cell (xtaint, shape)
         in
-        let c, cs =
+        let c', cs' =
           Shape_and_sig.map_closures
-            (fun (closure : closure) ->
-              {
-                closure with
-                sig_ = substitute_in_sig ~lang inst_var inst_trace closure.sig_;
-                env = instantiate_env inst_var ~inst_cell closure.env;
-              })
+            (substitute_in_closure ~lang ~substitutions inst_var inst_trace
+               ~inst_cell)
             (c, cs)
         in
-        Fun (c, cs)
+        if phys_equal c' c && phys_equal cs' cs then shape else Fun (c', cs')
   and inst_xtaint xtaint shape =
     (* This may break INVARIANT(cell) but 'update_offset_in_cell' will restore it. *)
     let xtaint =
@@ -1754,7 +1887,7 @@ let combine_rest_args_taint ~(site : T.call_loc)
   (Taints.empty, Shape.tuple_like_obj ~site ts)
 
 let instantiate_lval_using_shape ~(lang : Lang.t) ~(merge : T.trace_merge)
-    ~(max_offset : int) ~(env : env) lval_env fparams
+    ~(max_offset : int) ~(env : env) ~(find_var : IL.name -> cell option) fparams
     (fun_exp : IL.exp) args_taints
     lval : (Taints.t * shape) option =
   let { T.base; offset } = lval in
@@ -1800,7 +1933,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(merge : T.trace_merge)
             (combine_rest_args_taint ~site:(T.call_loc_of_exp fun_exp))
           args_taints fparams pos
     | `Var var ->
-        let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
+        let* (Cell (xtaints, shape)) = find_var var in
         Some (Xtaint.to_taints xtaints, shape)
     | `Cell (Cell (xtaints, shape)) -> Some (Xtaint.to_taints xtaints, shape)
     | `Symbolic (ref_lval : T.lval) ->
@@ -1826,7 +1959,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(merge : T.trace_merge)
 (* What is the taint denoted by 'sig_lval' ? *)
 let instantiate_lval ~(lang : Lang.t) ~(merge : T.trace_merge)
     ~(max_offset : int) ~(env : env)
-    lval_env fparams fun_exp
+    ~(find_var : IL.name -> cell option) fparams fun_exp
     args_exps
     (args_taints : (Taints.t * shape) IL.argument list) (sig_lval : T.lval) =
   Log.debug (fun m ->
@@ -1834,7 +1967,7 @@ let instantiate_lval ~(lang : Lang.t) ~(merge : T.trace_merge)
         (T.show_lval sig_lval) (List.length args_taints)
         (fparams |> List.map Signature_params.show_param |> String.concat ","));
   match
-    instantiate_lval_using_shape ~lang ~merge ~max_offset ~env lval_env fparams
+    instantiate_lval_using_shape ~lang ~merge ~max_offset ~env ~find_var fparams
       fun_exp
       args_taints sig_lval
   with
@@ -1858,7 +1991,10 @@ let instantiate_lval ~(lang : Lang.t) ~(merge : T.trace_merge)
               fparams args_exps sig_lval
           in
           let lval_taints, shape =
-            match Lval_env.find_poly ~lang ~merge lval_env var offset with
+            match
+              let* cell = find_var var in
+              Shape.find_in_cell_poly ~lang ~merge offset cell
+            with
             | None -> (Taints.empty, Bot)
             | Some (taints, shape) -> (taints, shape)
           in
@@ -1907,6 +2043,35 @@ let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
       Some (List.map Option.get mapped)
   | _ -> None
 
+let param_of_arg (params : IL.param list) (arg : T.arg) : IL.name_param option =
+  params
+  |> List.filter (function
+       | IL.ParamReceiver _ -> false
+       | IL.Param _
+       | IL.ParamRest _
+       | IL.ParamKwd _
+       | IL.ParamPattern _
+       | IL.ParamFixme ->
+           true)
+  |> List.filteri (fun (index : int) (_ : IL.param) -> Int.equal index arg.index)
+  |> List_.hd_opt
+  |> function
+  | Some
+      ( IL.Param np
+      | IL.ParamRest np
+      | IL.ParamKwd np
+      | IL.ParamPattern (np, _) )
+    when String.equal (fst np.pname.ident) arg.name ->
+      Some np
+  | Some
+      ( IL.Param _
+      | IL.ParamRest _
+      | IL.ParamKwd _
+      | IL.ParamPattern _
+      | IL.ParamReceiver _
+      | IL.ParamFixme )
+  | None ->
+      None
 
 (* The locals of the callee that closures leaving it refer to become
  * variables of the caller, one per call site: the closures one call returns
@@ -1973,11 +2138,12 @@ let instantiate_locals ~(merge : T.trace_merge) (call : T.call_loc)
    2) Are there any effects that occur within the function due to taints being
       input into the function body, from the calling context?
 *)
-let rec instantiate_function_signature ~(lang : Lang.t)
+let rec instantiate_signature ~(lang : Lang.t)
     ~(merge : T.trace_merge) ~(atoms : Effect_guard.atoms)
     ~(propagate_through_functions : bool)
     ?(max_offset : int = Shape.max_poly_offset lang)
-    ?(outer_params : IL.param list option) ?(env : env option) lval_env
+    ?(outer_params : IL.param list option) ?(env : env option)
+    ~(find_var : IL.name -> cell option) ~(control : Taints.t)
     (taint_sig : Signature.t) ~callee ~(callee_fid : Function_id.t option)
     ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
@@ -2021,6 +2187,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   let call_result : (T.call -> (Taints.t * shape) option) ref =
     ref (fun _ -> None)
   in
+  let instantiated_lvals = ref Lval_map.empty in
   let lval_to_taints (lval : T.lval) =
     match lval.base with
     | T.BCall call ->
@@ -2033,6 +2200,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | T.BArg _
     | T.BEnv _
     | T.BLocal _ ->
+    match Lval_map.find_opt lval !instantiated_lvals with
+    | Some opt_taints_shape -> opt_taints_shape
+    | None ->
     (* This function simply produces the corresponding taints to the
         given argument, within the body of the function.
     *)
@@ -2044,7 +2214,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
        So we will isolate this as a specific step to be applied as necessary.
     *)
     let opt_taints_shape =
-      instantiate_lval ~lang ~merge ~max_offset ~env lval_env taint_sig.params
+      instantiate_lval ~lang ~merge ~max_offset ~env ~find_var taint_sig.params
         callee
         args args_taints lval
     in
@@ -2056,10 +2226,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           | None -> "nothing :/"
           | Some (taints, shape) ->
               spf "%s & %s" (T.show_taints taints) (show_shape shape)));
+    instantiated_lvals := Lval_map.add lval opt_taints_shape !instantiated_lvals;
     opt_taints_shape
   in
   (* Instantiation helpers *)
-  let taints_in_ctrl () = Lval_env.get_control_taints lval_env in
+  let taints_in_ctrl () = control in
   (* Resolves a parameter slot of [taint_sig] (the function being applied)
    * to the [IL.exp] actual at that position. [None] when we have no
    * concrete args for this call (e.g. signature extraction of an
@@ -2072,6 +2243,20 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         find_pos_in_actual_args args taint_sig.params
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
+  in
+  let has_actual (arg : T.arg) : bool =
+    Option.is_some
+      (find_pos_in_actual_args args_taints taint_sig.params
+         ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
+         ~combine_rest_args:
+           (combine_rest_args_taint ~site:(T.call_loc_of_exp callee))
+         arg)
+  in
+  let default_of_formal (arg : T.arg) : G.expr option =
+    if has_actual arg then None
+    else
+      Option.bind (param_of_arg taint_sig.params_il arg)
+        (fun (param : IL.name_param) -> param.pdefault)
   in
   (* Lval-side resolver: maps a [T.lval] anchored in [taint_sig] to the
    * triple [(IL.name, offset, tok)] in the caller. Args=Some path goes
@@ -2133,11 +2318,41 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   let inst_taints taints =
     instantiate_taints inst_var inst_trace taints
   in
-  let inst_shape shape = instantiate_shape ~lang inst_var inst_trace shape in
+  let substitutions : substitutions = Definition_tbl.create 8 in
+  let inst_shape shape =
+    instantiate_shape ~lang ~substitutions inst_var inst_trace shape
+  in
   let inst_taints_and_shape (taints, shape) =
     let taints = inst_taints taints in
     let shape = inst_shape shape in
     (taints, shape)
+  in
+  let lval_inst_var =
+    {
+      inst_var with
+      (* Note that control taints do not propagate to l-values. *)
+      inst_ctrl = (fun _ -> Taints.empty);
+    }
+  in
+  let this_tok = Tok.unsafe_fake_tok "this" in
+  let lval_inst_traces = ref [] in
+  let lval_inst_trace (tainted_tok : Tok.t) : inst_trace =
+    match
+      List.find_opt
+        (fun ((tok, _) : Tok.t * inst_trace) -> phys_equal tok tainted_tok)
+        !lval_inst_traces
+    with
+    | Some (_, trace) -> trace
+    | None ->
+        let trace =
+          {
+            inst_trace with
+            fix_token_trace_for_var =
+              add_lval_update_to_token_trace ~callee tainted_tok;
+          }
+        in
+        lval_inst_traces := (tainted_tok, trace) :: !lval_inst_traces;
+        trace
   in
   (* Instatiate effects *)
   let inst_effect : Effect.t -> call_effect list =
@@ -2287,33 +2502,19 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         (* Taints 'taints' go into an argument of the call, by side-effect.
          * Right now this is mainly used to track taint going into specific
          * fields of the callee object, like `this.x = "tainted"`. *)
-        let lval_inst_var =
-          {
-            inst_var with
-            (* Note that control taints do not propagate to l-values. *)
-            inst_ctrl = (fun _ -> Taints.empty);
-          }
-        in
-        let lval_inst_trace tainted_tok =
-          {
-            inst_trace with
-            fix_token_trace_for_var =
-              add_lval_update_to_token_trace ~callee tainted_tok;
-          }
-        in
         let inst_taints tainted_tok =
           instantiate_taints lval_inst_var (lval_inst_trace tainted_tok) taints
         in
         let inst_shape tainted_tok =
-          instantiate_shape ~lang lval_inst_var (lval_inst_trace tainted_tok)
-            shape
+          instantiate_shape ~lang ~substitutions lval_inst_var
+            (lval_inst_trace tainted_tok) shape
         in
         if
           (match dst_sig_lval.base with T.BThis -> true | _ -> false)
           && callee_on_enclosing_this callee
         then
           (* keep [BThis] so it composes into the caller's sig *)
-          let tainted_tok = Tok.unsafe_fake_tok "this" in
+          let tainted_tok = this_tok in
           let taints = inst_taints tainted_tok in
           let shape = inst_shape tainted_tok in
           if not (Shape.taints_and_shape_are_relevant taints shape) then []
@@ -2399,11 +2600,24 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           | _ -> None
         in
         let param_actual =
-          match (fun_formal, args) with
-          | Param fun_arg, Some actual_args
-            when fun_arg.index < List.length actual_args ->
-              Some (List.nth actual_args fun_arg.index)
-          | _ -> None
+          match fun_formal with
+          | Param fun_arg -> resolve_arg fun_arg
+          | Receiver
+          | Captured _
+          | Result _ ->
+              None
+        in
+        let param_default =
+          match fun_formal with
+          | Param fun_arg -> default_of_formal fun_arg
+          | Receiver
+          | Captured _
+          | Result _ ->
+              None
+        in
+        let reads_caller_env =
+          Option.is_none param_default
+          || not (Lang_evaluation.evaluates_at_definition lang)
         in
         let fun_closure_opt =
           match fun_formal with
@@ -2419,13 +2633,12 @@ let rec instantiate_function_signature ~(lang : Lang.t)
            * [arg[i]] in the callee), take the [i]-th element of the caller's
            * composite expression to recover the concrete callback. *)
           let actual_fun_exp, leftover_offset =
-            match args with
-            | Some actual_args when fun_arg.index < List.length actual_args ->
-                let base_exp =
-                  match List.nth actual_args fun_arg.index with
-                  | IL.Unnamed exp -> exp
-                  | IL.Named (_, exp) -> exp
-                in
+            match
+              match param_actual with
+              | Some _ -> param_actual
+              | None -> Option.bind param_default svalue_leaf_to_il_exp
+            with
+            | Some base_exp ->
                 let consumed, leftover =
                   resolve_callee_expr base_exp fun_arg_offset
                 in
@@ -2436,7 +2649,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                       (Display_IL.string_of_exp consumed)
                       (T.show_offset_list leftover));
                 (Some consumed, leftover)
-            | _ -> (None, fun_arg_offset)
+            | None -> (None, fun_arg_offset)
           in
           Log.debug (fun m ->
               m "ToSinkInCall: actual_fun_exp = %s, lookup_sig = %s"
@@ -2445,7 +2658,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           (* Try to use the actual lambda expression to find its shape in lval_env *)
           let fun_sig_opt =
             match actual_fun_exp with
-            | Some ({ IL.e = Fetch { base = Var var_name; rev_offset = []; _ }; _ }) ->
+            | Some ({ IL.e = Fetch { base = Var var_name; rev_offset = []; _ }; _ })
+              when reads_caller_env ->
                 (* Variable reference — look it up at [leftover_offset] so
                  * that callbacks reached via record/map field access
                  * (e.g. [opts[Ofld "cb"]]) resolve to the Fun cell stored
@@ -2537,14 +2751,34 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         (* Try to get callback from callee's original call expression *)
                         (match callee.eorig with
                         | IL.SameAs { G.e = G.Call (_, (_, orig_args, _)); _ } ->
-                            (* Extract the argument at fun_arg.index from original AST args *)
-                            (match List.nth_opt orig_args fun_arg.index with
-                            | Some (G.Arg { G.e = G.N (G.Id (id, id_info)); _ }) ->
+                            (* Extract the argument bound to fun_arg, by name and position, from original AST args *)
+                            let orig_actual =
+                              orig_args
+                              |> List_.map (function
+                                   | G.Arg e
+                                   | G.ArgType { t = G.TyExpr e; _ } ->
+                                       IL.Unnamed (Some e)
+                                   | G.ArgKwd (id, e)
+                                   | G.ArgKwdOptional (id, e) ->
+                                       IL.Named (id, Some e)
+                                   | G.ArgType _
+                                   | G.OtherArg _ ->
+                                       IL.Unnamed None)
+                              |> (fun (orig : G.expr option IL.argument list) ->
+                                   find_pos_in_actual_args orig taint_sig.params
+                                     ~rest_leaves_trailing_args:
+                                       (rest_leaves_trailing_args lang)
+                                     ~combine_rest_args:(fun _ -> None)
+                                     fun_arg)
+                              |> Option.join
+                            in
+                            (match orig_actual with
+                            | Some { G.e = G.N (G.Id (id, id_info)); _ } ->
                                 (* Simple callback: customForEach(arr, n, sink_callback) *)
                                 let callback_name = AST_to_IL.var_of_id_info id id_info in
                                 { IL.e = Fetch { base = Var callback_name; rev_offset = [] };
                                   eorig = IL.NoOrig }
-                            | Some (G.Arg { G.e = G.Ref (_, { G.e = G.N (G.Id (id, id_info)); _ }); _ }) ->
+                            | Some { G.e = G.Ref (_, { G.e = G.N (G.Id (id, id_info)); _ }); _ } ->
                                 (* Address-of callback: customForEach(arr, n, &sink_callback) *)
                                 let callback_name = AST_to_IL.var_of_id_info id id_info in
                                 { IL.e = Fetch { base = Var callback_name; rev_offset = [] };
@@ -2635,9 +2869,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           | Some cached -> cached
           | None ->
               let result =
-                instantiate_function_signature ~lang ~merge ~atoms
+                instantiate_signature ~lang ~merge ~atoms
                   ~propagate_through_functions ~max_offset
-                  ?outer_params ~env:closure.env lval_env closure.sig_
+                  ?outer_params ~env:closure.env ~find_var ~control closure.sig_
                   ~callee:fun_exp ~callee_fid:(Some closure.def)
                   ~args:callback_actual_args args_taints ?lookup_sig
                   ~depth:(depth + 1) ~recursive_cache ()
@@ -2701,13 +2935,18 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               List.concat_map instantiate_callback (c :: cs))
         | None ->
             (* No signature found for callback (parameter during signature
-             * extraction). Preserve the ToSinkInCall effect, but update arg
-             * to refer to the enclosing function's parameter. When
-             * [rebind_arg_to_outer] set: one effect per outer offset, else [enclosing_param_of_exp]; on [None], the call's result carries its arguments' taints, as for any unknown callee. *)
-            (match param_actual with
-             | Some actual -> (
-                 match actual with
-                 | IL.Unnamed exp | IL.Named (_, exp) -> (
+             * extraction). With an actual, preserve the ToSinkInCall effect,
+             * but update arg to refer to the enclosing function's parameter:
+             * when [rebind_arg_to_outer] set, one effect per outer offset,
+             * else [enclosing_param_of_exp]; on [None], the call's result
+             * carries its arguments' taints, as for any unknown callee. With
+             * no actual, the parameter holds its default: a name is a call of
+             * an unknown callee, a literal, list or record is no call. A
+             * callee's own formal with neither an actual nor a default gives
+             * no effect; a formal that is not a slot of the callee is a
+             * parameter of an enclosing function and stays in the effect. *)
+            (match (param_actual, param_default) with
+             | Some exp, _ -> (
                      match rebind_arg_to_outer with
                      | Some (outer_arg, outer_offsets) ->
                          Log.debug (fun m ->
@@ -2750,10 +2989,27 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     (Display_IL.string_of_exp callee)
                                     (Display_IL.string_of_exp fun_exp)
                                     (Display_IL.string_of_exp exp));
-                              unknown_callee_result)))
-             | None -> (
+                              unknown_callee_result))
+             | None, Some default -> (
+                 match svalue_leaf_to_il_exp default with
+                 | Some { IL.e = IL.Literal _ | IL.Composite _ | IL.RecordOrDict _; _ } ->
+                     []
+                 | Some _
+                 | None ->
+                     unknown_callee_result)
+             | None, None -> (
                  match (fun_formal, rebind_arg_to_outer) with
-                 | (Receiver | Captured _ | Result _), Some (outer_arg, outer_offsets) ->
+                 | Param fun_arg, _
+                   when Option.is_none (param_of_arg taint_sig.params_il fun_arg)
+                   ->
+                     [ ToSinkInCall
+                         { callee = fun_exp;
+                           arg = fun_formal;
+                           arg_offset = fun_arg_offset;
+                           args_taints;
+                           guards = Effect_guard.top; } ]
+                 | Param fun_arg, _ when not (has_actual fun_arg) -> []
+                 | _, Some (outer_arg, outer_offsets) ->
                      outer_offsets
                      |> List.map (fun arg_offset ->
                             ToSinkInCall
@@ -2762,14 +3018,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                 arg_offset;
                                 args_taints;
                                 guards = Effect_guard.top; })
-                 | (Receiver | Captured _ | Result _), None -> unknown_callee_result
-                 | Param _, _ ->
-                     [ ToSinkInCall
-                         { callee = fun_exp;
-                           arg = fun_formal;
-                           arg_offset = fun_arg_offset;
-                           args_taints;
-                           guards = Effect_guard.top; } ]))))
+                 | _, None -> unknown_callee_result))))
   in
   let effects_list = taint_sig.effects |> Effects.elements in
   let call_of_effect (eff : Effect.t) : T.call option =
@@ -2908,3 +3157,108 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         (Display_IL.string_of_exp callee)
         (show_call_effects call_effects));
   call_effects
+
+let instantiate_function_signature ~(lang : Lang.t) ~(merge : T.trace_merge)
+    ~(atoms : Effect_guard.atoms) ~(propagate_through_functions : bool)
+    ?(max_offset : int option) ?(outer_params : IL.param list option)
+    ?(env : env option) (lval_env : Lval_env.t) (taint_sig : Signature.t)
+    ~(callee : IL.exp) ~(callee_fid : Function_id.t option)
+    ~(args : IL.exp IL.argument list option)
+    (args_taints : (Taints.t * shape) IL.argument list)
+    ?(lookup_sig :
+       (IL.exp -> int -> (Function_id.t * Signature.t) list) option)
+    ?(depth : int option) ?(recursive_cache : sig_inst_cache option) () :
+    call_effects =
+  instantiate_signature ~lang ~merge ~atoms ~propagate_through_functions
+    ?max_offset ?outer_params ?env ~find_var:(Lval_env.find_var lval_env)
+    ~control:(Lval_env.get_control_taints lval_env)
+    taint_sig ~callee ~callee_fid ~args args_taints ?lookup_sig ?depth
+    ?recursive_cache ()
+
+let instantiate_at_call (instantiations : instantiations) ~(lang : Lang.t)
+    ~(merge : T.trace_merge) ~(atoms : Effect_guard.atoms)
+    ~(propagate_through_functions : bool) ~(max_offset : int)
+    ~(outer_params : IL.param list) ?(env : env option)
+    (lval_env : Lval_env.t) (taint_sig : Signature.t) ~(callee : IL.exp)
+    ~(callee_fid : Function_id.t option) ~(args : IL.exp IL.argument list)
+    (args_taints : (Taints.t * shape) IL.argument list)
+    ~(lookup_sig : IL.exp -> int -> (Function_id.t * Signature.t) list) :
+    call_effects =
+  let control = Lval_env.get_control_taints lval_env in
+  let same_definitions (found1 : (Function_id.t * Signature.t) list)
+      (found2 : (Function_id.t * Signature.t) list) : bool =
+    List.equal
+      (fun ((def1, sig1) : Function_id.t * Signature.t)
+           ((def2, sig2) : Function_id.t * Signature.t) ->
+        Function_id.equal def1 def2 && phys_equal sig1 sig2)
+      found1 found2
+  in
+  let is_current (entry : instantiation) : bool =
+    phys_equal entry.signature taint_sig
+    && phys_equal entry.actual_args args
+    && Option.equal equal_env_with_guards entry.closure_env env
+    && Option.equal Function_id.equal entry.callee_fid callee_fid
+    && Int.equal entry.max_offset max_offset
+    && equal_args_taints_with_guards entry.args_taints args_taints
+    && Taints.equal_with_guards entry.control control
+    && List.for_all
+         (fun ((var, cell) : IL.name * cell option) ->
+           Option.equal equal_cell_with_guards (Lval_env.find_var lval_env var)
+             cell)
+         entry.reads
+    && List.for_all
+         (fun ((exp, arity, found) :
+                IL.exp * int * (Function_id.t * Signature.t) list) ->
+           same_definitions (lookup_sig exp arity) found)
+         entry.lookups
+  in
+  let entries =
+    IL_helpers.PhysExpTbl.find_opt instantiations callee
+    |> Option.value ~default:[]
+  in
+  match List.find_opt is_current entries with
+  | Some entry -> entry.effects
+  | None ->
+      let reads = ref [] in
+      let lookups = ref [] in
+      let find_var (var : IL.name) : cell option =
+        let cell = Lval_env.find_var lval_env var in
+        if
+          not
+            (List.exists
+               (fun ((read, _) : IL.name * cell option) ->
+                 IL.equal_name read var)
+               !reads)
+        then reads := (var, cell) :: !reads;
+        cell
+      in
+      let recording_lookup_sig (exp : IL.exp) (arity : int) :
+          (Function_id.t * Signature.t) list =
+        let found = lookup_sig exp arity in
+        lookups := (exp, arity, found) :: !lookups;
+        found
+      in
+      let effects =
+        instantiate_signature ~lang ~merge ~atoms ~propagate_through_functions
+          ~max_offset ~outer_params ?env ~find_var ~control taint_sig ~callee
+          ~callee_fid ~args:(Some args) args_taints
+          ~lookup_sig:recording_lookup_sig ()
+      in
+      IL_helpers.PhysExpTbl.replace instantiations callee
+        ({
+           signature = taint_sig;
+           closure_env = env;
+           callee_fid;
+           max_offset;
+           actual_args = args;
+           args_taints;
+           control;
+           reads = !reads;
+           lookups = !lookups;
+           effects;
+         }
+        :: List.filter
+             (fun (entry : instantiation) ->
+               not (phys_equal entry.signature taint_sig))
+             entries);
+      effects

@@ -1,0 +1,13 @@
+rules:
+  - id: effects_from_final_state_python
+    message: a signature holds the effects of the final dataflow state
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

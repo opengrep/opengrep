@@ -122,12 +122,11 @@ type env = {
           well as 'Taint_lambda.find_vars_to_track_across_lambdas'. *)
   lval_env : Lval_env.t;
   effects_acc : Effects.t ref;
-  returns_at_node : Effects.t array;
-      (** The [ToReturn] effects of each return node and each node at the
-          exit from its latest evaluation, joined with the previous ones at a
-          component head as its values are. A node is evaluated again
-          whenever its IN changes, so these are the returns of the current
-          mapping, and after the fixpoint those of the final one. *)
+  effects_at_node : Effects.t array;
+      (** The effects each node recorded, over every evaluation, one element
+          per effect identity ([Effects.add]); an element's traces are the
+          ones ranked first by content ([Taint.compare_traces]). *)
+  instantiations : Sig_inst.instantiations;
   did_self_recurse : bool ref;
       (** Set to [true] when [self_sig_if_recursive] returns a sig during the
           current pass. Used to gate the outer self-sig convergence loop in
@@ -337,17 +336,13 @@ let record_effects env new_effects =
 let current_effects env : Effects.t =
   Array.fold_left
     (Effects.union ~merge:env.taint_inst.merge)
-    !(env.effects_acc) env.returns_at_node
+    !(env.effects_acc) env.effects_at_node
 
-let store_returns env (flow : IL.cfg) (ni : IL.nodei) (returns : Effect.t list) :
-    unit =
-  let returns =
-    Effects.of_list ~merge:env.taint_inst.merge (effects_to_record env returns)
-  in
-  env.returns_at_node.(ni) <-
-    (if CFG.is_component_head flow ni then
-       Effects.union ~merge:env.taint_inst.merge env.returns_at_node.(ni) returns
-     else returns)
+let store_node_effects env (ni : IL.nodei) (effects : Effects.t) : unit =
+  env.effects_at_node.(ni) <-
+    Effects.fold
+      (Effects.add ~merge:env.taint_inst.merge)
+      effects env.effects_at_node.(ni)
 
 (* Field write on the enclosing receiver: record [BThis] so it composes
    into this function's signature. *)
@@ -2266,14 +2261,14 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
                    m "SIG_FOUND: %s -> %s"
                      (Display_IL.string_of_exp fun_exp)
                      (Signature.show fun_sig));
-               Sig_inst.instantiate_function_signature ~merge:env.taint_inst.merge
-                 ~lang:env.taint_inst.lang
+               Sig_inst.instantiate_at_call env.instantiations
+                 ~merge:env.taint_inst.merge ~lang:env.taint_inst.lang
                  ~atoms:env.shared_tables.guard_atoms
                  ~propagate_through_functions:(propagate_through_functions env)
                  ~max_offset:(poly_offset_bound env fun_exp)
                  ~outer_params:env.func.il_params ?env:fun_env env.lval_env
-                 fun_sig ~callee:fun_exp ~callee_fid ~args:(Some args) args_taints
-                 ~lookup_sig:(lookup_signature env) ())
+                 fun_sig ~callee:fun_exp ~callee_fid ~args args_taints
+                 ~lookup_sig:(lookup_signature env))
       in
       Log.debug (fun m ->
           m "INSTANTIATE_SIG: %s returned %d call_effects"
@@ -3668,7 +3663,7 @@ let effects_before_param_rebinding ~(lang : Lang.t) ~(merge : T.trace_merge)
         var_ref
       |> List.of_seq
 
-let check_tainted_control_at_exit (flow : IL.cfg) (ni : IL.nodei) node env =
+let check_tainted_control_at_exit node env =
   match node.F.n with
   (* This is only for implicit returns, we could handle 'NReturn' here too
    * but we would be generating duplicate effects. *)
@@ -3691,7 +3686,7 @@ let check_tainted_control_at_exit (flow : IL.cfg) (ni : IL.nodei) node env =
         in
         effects_of_tainted_return env ~several_results:false Taints.empty Bot
           return_tok
-        |> store_returns env flow ni
+        |> record_effects env
 
 (*****************************************************************************)
 (* Transfer *)
@@ -4041,7 +4036,9 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
       ~flow mapping ni
   in
   let node = flow.graph#nodes#assoc ni in
-  let env = { enter_env with lval_env = in' } in
+  let env =
+    { enter_env with lval_env = in'; effects_acc = ref Effects.empty }
+  in
   let out' : Lval_env.t =
     match node.F.n with
     | NInstr x ->
@@ -4167,7 +4164,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
           ~several_results:
             (returns_several_results env.taint_inst.lang fun_cfg e)
           taints shape tok
-        |> store_returns env fun_cfg.cfg ni;
+        |> record_effects env;
         lval_env'
     | TrueNode cond ->
         let pruned =
@@ -4204,7 +4201,8 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
   in
   env.effects_acc := Effects.union ~merge:env.taint_inst.merge effects_lambdas !(env.effects_acc);
   let env_at_exit = { env with lval_env = out' } in
-  check_tainted_control_at_exit fun_cfg.cfg ni node env_at_exit;
+  check_tainted_control_at_exit node env_at_exit;
+  store_node_effects env ni !(env.effects_acc);
   Log.debug (fun m ->
       m ~tags:transfer_tag "Taint transfer %s%s\n  %s:\n  IN:  %s\n  OUT: %s"
         (Option.map IL.str_of_name env.func.name ||| "<FUN>")
@@ -4362,7 +4360,8 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
       lval_env = enter_lval_env;
       needed_vars;
       effects_acc = ref Effects.empty;
-      returns_at_node = DataflowX.new_node_array flow Effects.empty;
+      effects_at_node = DataflowX.new_node_array flow Effects.empty;
+      instantiations = Sig_inst.mk_instantiations ();
       did_self_recurse = ref false;
       signature_db;
       builtin_signature_db;
@@ -4387,9 +4386,9 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   ;
   *)
   (* The inner [DataflowX.fixpoint] converges on per-node [lval_env]
-   * stability, but not on the effects: [effects_acc] is function-global
-   * monotonic state that grows as the body records taint effects, and the
-   * returns are in the per-node store [returns_at_node]. Direct
+   * stability, but not on the effects: the effects each node records are
+   * in the per-node store [effects_at_node], and [effects_acc] holds those
+   * recorded outside a node, at the exit. Direct
    * self-recursive calls need to see effects recorded by earlier passes via
    * [self_sig_if_recursive]. We wrap the inner fixpoint in an outer loop
    * that re-runs only if a self-recursive call happened AND
@@ -4589,7 +4588,8 @@ and (fixpoint :
           needed_vars = IL.NameSet.empty;
           lval_env = enhanced_in_env;
           effects_acc = ref Effects.empty;
-          returns_at_node = [||];
+          effects_at_node = [||];
+          instantiations = Sig_inst.mk_instantiations ();
           did_self_recurse = ref false;
           signature_db;
           builtin_signature_db;

@@ -460,6 +460,15 @@ let same_trace (t1 : taint) (t2 : taint) : bool =
   && phys_equal t1.orig t2.orig
   && List_.null t1.nodes && List_.null t2.nodes
 
+let shares_trace (t1 : taint) (t2 : taint) : bool =
+  phys_equal t1 t2
+  || phys_equal t1.tokens t2.tokens
+     && phys_equal t1.nodes t2.nodes
+     &&
+     match (t1.orig, t2.orig) with
+     | Src src1, Src src2 -> phys_equal src1.call_trace src2.call_trace
+     | (Src _ | Var _ | Shape_var _ | Control), _ -> phys_equal t1.orig t2.orig
+
 let at_of_node (node : trace_node) : int =
   match node with
   | Merge { at; _ }
@@ -677,6 +686,96 @@ let equal_trace_key (k1 : trace_key) (k2 : trace_key) : bool =
   && Option.equal equal_flat_call_trace k1.key_source k2.key_source
   && Option.equal equal_flat_call_trace k1.key_sink k2.key_sink
 
+let compare_token (tok1 : tainted_token) (tok2 : tainted_token) : int =
+  if phys_equal tok1 tok2 then 0
+  else
+    match (tok1, tok2) with
+    | Tok.OriginTok loc1, Tok.OriginTok loc2 ->
+        Tok.compare_location loc1 loc2
+    | _ -> (
+        match (Tok.loc_of_tok tok1, Tok.loc_of_tok tok2) with
+        | Ok loc1, Ok loc2 -> Tok.compare_location loc1 loc2
+        | Error _, Error _ -> 0
+        | Error _, Ok _ -> -1
+        | Ok _, Error _ -> 1)
+
+let rec compare_tokens (tokens1 : tainted_tokens) (tokens2 : tainted_tokens) :
+    int =
+  if phys_equal tokens1 tokens2 then 0
+  else
+    match (tokens1, tokens2) with
+    | [], [] -> 0
+    | [], _ :: _ -> -1
+    | _ :: _, [] -> 1
+    | tok1 :: rest1, tok2 :: rest2 -> (
+        match compare_token tok1 tok2 with
+        | 0 -> compare_tokens rest1 rest2
+        | other -> other)
+
+let rec compare_call_trace_positions : 'a. 'a call_trace -> 'a call_trace -> int
+    =
+ fun ct1 ct2 ->
+  match (ct1, ct2) with
+  | PM (pm1, _), PM (pm2, _) -> PM.compare_range_loc pm1.range_loc pm2.range_loc
+  | Call (_, _, tokens1, _, _, inner1), Call (_, _, tokens2, _, _, inner2) -> (
+      match compare_tokens tokens1 tokens2 with
+      | 0 -> compare_call_trace_positions inner1 inner2
+      | other -> other)
+  | PM _, Call _ -> -1
+  | Call _, PM _ -> 1
+
+(* The choice is by content, so the displayed trace does not depend on
+ * recording order or sharing. *)
+let source_call_trace_length (t : taint) : int =
+  match t.orig with
+  | Src src -> length_of_call_trace src.call_trace
+  | Var _
+  | Shape_var _
+  | Control ->
+      0
+
+let sink_trace_length (sink_trace : unit call_trace option) : int =
+  match sink_trace with
+  | None -> 0
+  | Some sink_trace -> length_of_call_trace sink_trace
+
+let compare_traces (taint1 : taint) (sink_trace1 : unit call_trace option)
+    (taint2 : taint) (sink_trace2 : unit call_trace option) : int =
+  if
+    shares_trace taint1 taint2
+    && Option.equal phys_equal sink_trace1 sink_trace2
+  then 0
+  else
+  match
+    Int.compare (source_call_trace_length taint1)
+      (source_call_trace_length taint2)
+  with
+  | 0 -> (
+      match compare_trace_lengths taint1 taint2 with
+      | 0 -> (
+          match
+            Int.compare (sink_trace_length sink_trace1)
+              (sink_trace_length sink_trace2)
+          with
+          | 0 -> (
+              match compare_tokens taint1.tokens taint2.tokens with
+              | 0 -> (
+                  match
+                    match (taint1.orig, taint2.orig) with
+                    | Src src1, Src src2 ->
+                        compare_call_trace_positions src1.call_trace
+                          src2.call_trace
+                    | (Src _ | Var _ | Shape_var _ | Control), _ -> 0
+                  with
+                  | 0 ->
+                      Option.compare compare_call_trace_positions sink_trace1
+                        sink_trace2
+                  | other -> other)
+              | other -> other)
+          | other -> other)
+      | other -> other)
+  | other -> other
+
 let rec leaf_sides (s : side) : side list =
   match s.side_taint.nodes with
   | [ Merge { at; kept; other } ] when Int.equal at s.side_taint.token_count ->
@@ -834,7 +933,8 @@ type guarded_taint = { taint : taint; guard : EG.t }
 let lift_taint (t : taint) : guarded_taint = { taint = t; guard = EG.top }
 
 let with_guard (g : EG.t) (gt : guarded_taint) : guarded_taint =
-  { gt with guard = EG.compose_and gt.guard g }
+  let guard = EG.compose_and gt.guard g in
+  if Common.phys_equal guard gt.guard then gt else { gt with guard }
 
 module Taint_set = struct
   (* NOTE "Taint sets"
@@ -1003,7 +1103,7 @@ module Taint_set = struct
     | Shape_var _, Shape_var _
     | Control, Control ->
         (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
-        (taint1, taint2, compare_trace_lengths taint1 taint2 < 0)
+        (taint1, taint2, compare_traces taint1 None taint2 None < 0)
     | Src src1, Src src2 ->
         let precondition =
           (* We don't pick a precondition, but we merge them! *)
@@ -1042,19 +1142,7 @@ module Taint_set = struct
         in
         let taint1 = { taint1 with orig = Src { src1 with precondition } } in
         let taint2 = { taint2 with orig = Src { src2 with precondition } } in
-        let call_trace_cmp =
-          Int.compare
-            (length_of_call_trace src1.call_trace)
-            (length_of_call_trace src2.call_trace)
-        in
-        let first_is_best =
-          if call_trace_cmp < 0 then true
-          else if call_trace_cmp > 0 then false
-          else
-            (* same length *)
-            compare_trace_lengths taint1 taint2 < 0
-        in
-        (taint1, taint2, first_is_best)
+        (taint1, taint2, compare_traces taint1 None taint2 None < 0)
     | (Src _ | Var _ | Shape_var _ | Control), _ ->
         Log.err (fun m ->
             m "Taint_set.pick_taint: Ooops, the impossible happened!");
@@ -1119,7 +1207,8 @@ module Taint_set = struct
     of_list ~merge (List_.map lift_taint taints)
 
   (* Conjoin [g] into every guarded taint's guard. *)
-  let conjoin_guard (g : EG.t) (set : t) : t = Taints.map (with_guard g) set
+  let conjoin_guard (g : EG.t) (set : t) : t =
+    if EG.is_top g then set else Taints.map (with_guard g) set
 
   (* The disjunction of the guards of the guarded taints: the condition under which at
    * least one taint in the set is live. Used to derive the effect-level
