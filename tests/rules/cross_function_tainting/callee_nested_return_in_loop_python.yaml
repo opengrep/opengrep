@@ -1,0 +1,13 @@
+rules:
+  - id: callee_nested_return_in_loop_python
+    message: a field of a record that a callee returns in a loop reaches the sink only from the level where the callee put the tainted value
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

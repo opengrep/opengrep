@@ -1508,11 +1508,15 @@ let instantiate_shape ~lang ~(substitutions : substitutions) inst_var
     inst_trace shape =
   let inst_taints = instantiate_taints inst_var inst_trace in
   let call_site = T.call_loc_of_exp inst_trace.site.callee_exp in
-  let sites = Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at call_site) in
+  let instantiated_sites (sites : Shape_and_sig.Sites.t) : Shape_and_sig.Sites.t =
+    if Shape_and_sig.Sites.is_empty sites then
+      Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at call_site)
+    else sites
+  in
   let rec inst_shape = function
     | Bot -> Bot
     | Rec _ as shape -> shape
-    | Obj { fields = obj; summary; _ } ->
+    | Obj { sites; fields = obj; summary } ->
         let obj =
           obj
           |> Fields.filter_map (fun _o cell ->
@@ -1521,7 +1525,8 @@ let instantiate_shape ~lang ~(substitutions : substitutions) inst_var
                  Shape.update_offset_in_cell ~write:call_site ~f:inst_xtaint []
                    cell)
         in
-        if Fields.is_empty obj then Bot else Obj { sites; summary; fields = obj }
+        if Fields.is_empty obj then Bot
+        else Obj { sites = instantiated_sites sites; summary; fields = obj }
     | Arg (arg, offsets) ->
         (* For each alternative offset, resolve to the caller's actual
          * shape; unify the results so the dispatcher sees every

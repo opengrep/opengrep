@@ -222,6 +222,7 @@ module rec Shape : sig
   val equal_env : env -> env -> bool
   val equal_env_with_guards : env -> env -> bool
   val compare_shape : shape -> shape -> int
+  val union_sites : shape -> shape -> shape
   val show_cell : cell -> string
   val show_shape : shape -> string
   val show_obj : obj -> string
@@ -376,13 +377,10 @@ end = struct
     else
     match (shape1, shape2) with
     | Bot, Bot -> 0
-    | ( Obj { sites = sites1; summary = summary1; fields = fields1 },
-        Obj { sites = sites2; summary = summary2; fields = fields2 } ) -> (
-        match Sites.compare sites1 sites2 with
-        | 0 -> (
-            match Bool.compare summary1 summary2 with
-            | 0 -> compare_obj fields1 fields2
-            | other -> other)
+    | ( Obj { sites = _; summary = summary1; fields = fields1 },
+        Obj { sites = _; summary = summary2; fields = fields2 } ) -> (
+        match Bool.compare summary1 summary2 with
+        | 0 -> compare_obj fields1 fields2
         | other -> other)
     | Rec n1, Rec n2 -> Int.compare n1 n2
     | Arg (formal1, offsets1), Arg (formal2, offsets2) -> (
@@ -428,6 +426,58 @@ end = struct
             | Val _, Ref _ -> 1)
         | other -> other)
       env1 env2
+
+  let rec union_sites_in_cell (Cell (xtaint, shape1) as cell1 : cell)
+      (Cell (_, shape2) : cell) : cell =
+    let shape = union_sites shape1 shape2 in
+    if phys_equal shape shape1 then cell1 else Cell (xtaint, shape)
+
+  and union_sites (shape1 : shape) (shape2 : shape) : shape =
+    if phys_equal shape1 shape2 then shape1
+    else
+      match (shape1, shape2) with
+      | ( Obj { sites = sites1; summary; fields = fields1 },
+          Obj { sites = sites2; fields = fields2; _ } ) ->
+          let sites =
+            if Sites.subset sites2 sites1 then sites1
+            else Sites.union sites1 sites2
+          in
+          let fields =
+            Fields.fold
+              (fun o cell1 fields ->
+                match Fields.find_opt o fields2 with
+                | Some cell2 ->
+                    let cell = union_sites_in_cell cell1 cell2 in
+                    if phys_equal cell cell1 then fields
+                    else Fields.add o cell fields
+                | None -> fields)
+              fields1 fields1
+          in
+          if phys_equal sites sites1 && phys_equal fields fields1 then shape1
+          else Obj { sites; summary; fields }
+      | Fun (c1, cs1), Fun (c2, cs2)
+        when Int.equal (List.length cs1) (List.length cs2) ->
+          let union_closure (closure1 : closure) (closure2 : closure) :
+              closure =
+            let env =
+              List.map2
+                (fun ((var, entry1) as binding : IL.name * env_entry)
+                     ((_, entry2) : IL.name * env_entry) ->
+                  match (entry1, entry2) with
+                  | Val cell1, Val cell2 ->
+                      let cell = union_sites_in_cell cell1 cell2 in
+                      if phys_equal cell cell1 then binding else (var, Val cell)
+                  | (Val _ | Ref _), _ -> binding)
+                closure1.env closure2.env
+            in
+            if List.for_all2 phys_equal env closure1.env then closure1
+            else { closure1 with env }
+          in
+          let c = union_closure c1 c2 in
+          let cs = List.map2 union_closure cs1 cs2 in
+          if phys_equal c c1 && List.for_all2 phys_equal cs cs1 then shape1
+          else Fun (c, cs)
+      | (Bot | Obj _ | Rec _ | Arg _ | Fun _), _ -> shape1
 
   (*************************************)
   (* Pretty-printing *)
@@ -620,6 +670,7 @@ and Effect : sig
       payloads. The fused effect applies iff either of the two would. *)
 
   val guards_equal : t -> t -> bool
+  val shapes_shared : t -> t -> bool
   val traces_shared : t -> t -> bool
   (** Whether two identity-equal effects carry the same guards in every
       guard-bearing payload. Insertion no-op checks and fixpoint stability
@@ -988,6 +1039,7 @@ end = struct
         ToReturn
           { ttr1 with
             data_taints = Taints.union ~merge ttr1.data_taints ttr2.data_taints;
+            data_shape = Shape.union_sites ttr1.data_shape ttr2.data_shape;
             control_taints =
               Taints.union ~merge ttr1.control_taints ttr2.control_taints;
             guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
@@ -995,19 +1047,21 @@ end = struct
         ToLval
           { ttl1 with
             taints = Taints.union ~merge ttl1.taints ttl2.taints;
+            shape = Shape.union_sites ttl1.shape ttl2.shape;
             guards = Effect_guard.compose_or ttl1.guards ttl2.guards }
     | ToSinkInCall c1, ToSinkInCall c2 ->
         let fuse_arg (a1 : (Taints.t * Shape.shape) IL.argument)
             (a2 : (Taints.t * Shape.shape) IL.argument) :
             (Taints.t * Shape.shape) IL.argument =
-          (* Shapes compare guard-blind, so [a1]'s shape is kept; guard
-           * refinement inside [Fun] shapes is a known gap of the
-           * guard-blind [Signature] equality. *)
+          (* Shapes compare guard-blind and site-blind; the two shapes are
+           * joined by their sites ([Shape.union_sites]). Guard refinement
+           * inside [Fun] shapes is a known gap of the guard-blind
+           * [Signature] equality. *)
           match (a1, a2) with
-          | IL.Unnamed (t1, s1), IL.Unnamed (t2, _) ->
-              IL.Unnamed (Taints.union ~merge t1 t2, s1)
-          | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, _)) ->
-              IL.Named (id1, (Taints.union ~merge t1 t2, s1))
+          | IL.Unnamed (t1, s1), IL.Unnamed (t2, s2) ->
+              IL.Unnamed (Taints.union ~merge t1 t2, Shape.union_sites s1 s2)
+          | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, s2)) ->
+              IL.Named (id1, (Taints.union ~merge t1 t2, Shape.union_sites s1 s2))
           | (IL.Unnamed _ | IL.Named _), _ ->
               a1 (* unreachable: identity-equal args have equal shape *)
         in
@@ -1048,6 +1102,22 @@ end = struct
             | IL.Unnamed (t1, _), IL.Unnamed (t2, _)
             | IL.Named (_, (t1, _)), IL.Named (_, (t2, _)) ->
                 Taints.equal_with_guards t1 t2
+            | (IL.Unnamed _ | IL.Named _), _ -> true)
+          c1.args_taints c2.args_taints
+    | _ -> true
+
+  let shapes_shared (e1 : t) (e2 : t) : bool =
+    match (e1, e2) with
+    | ToReturn ttr1, ToReturn ttr2 -> phys_equal ttr1.data_shape ttr2.data_shape
+    | ToLval ttl1, ToLval ttl2 -> phys_equal ttl1.shape ttl2.shape
+    | ToSinkInCall c1, ToSinkInCall c2 ->
+        List.for_all2
+          (fun (a1 : (Taints.t * Shape.shape) IL.argument)
+               (a2 : (Taints.t * Shape.shape) IL.argument) ->
+            match (a1, a2) with
+            | IL.Unnamed (_, s1), IL.Unnamed (_, s2)
+            | IL.Named (_, (_, s1)), IL.Named (_, (_, s2)) ->
+                phys_equal s1 s2
             | (IL.Unnamed _ | IL.Named _), _ -> true)
           c1.args_taints c2.args_taints
     | _ -> true
@@ -1131,7 +1201,8 @@ end = struct
         match merge with
         | T.Keep_best
           when Effect.guards_equal fused existing
-               && Effect.traces_shared fused existing ->
+               && Effect.traces_shared fused existing
+               && Effect.shapes_shared fused existing ->
             set
         | T.Keep_best
         | T.Keep_both ->
