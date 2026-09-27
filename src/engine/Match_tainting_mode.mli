@@ -160,6 +160,7 @@ val check_rule :
   Rule.taint_rule ->
   (Core_match.t list -> Core_match.t list) ->
   shared_tables:Taint_shared_tables.t ->
+  is_value_type:(AST_generic.type_ -> bool) Lazy.t ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?local_ast_call_graph:Call_graph.G.t option ->

@@ -28,6 +28,7 @@ type spec_matches = {
 *)
 val taint_config_of_rule :
   per_file_formula_cache:Formula_cache.t ->
+  is_value_type:(AST_generic.type_ -> bool) ->
   ?handle_effects:Taint_rule_inst.effects_handler
     (** Use 'handle_effects' to e.g. apply hash-consing (see 'Deep_tainting'), or
         to do some side-effect if needed.

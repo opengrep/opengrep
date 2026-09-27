@@ -4027,8 +4027,9 @@ let recognised_guards (env : env) ~(negated : bool) (params : IL.param list)
                          Effect_guard.is_length_atom l.atom.node)))
   else []
 
-let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
- fun enter_env ~fun_cfg
+let rec transfer :
+    env -> fun_cfg:F.fun_cfg -> copied:IL.NameSet.t -> Lval_env.t D.transfn =
+ fun enter_env ~fun_cfg ~copied
      (* the transfer function to update the mapping at node index ni *)
        mapping ni ->
   let flow = fun_cfg.cfg in
@@ -4121,12 +4122,10 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         | Some { IL.base = IL.Var name; rev_offset = [] }
           when List.exists
                  (function
-                   | IL.Param ({ pname; by_reference = false; _ } as np)
-                   | IL.ParamKwd ({ pname; by_reference = false; _ } as np) ->
+                   | IL.Param { pname; by_reference = false; _ }
+                   | IL.ParamKwd { pname; by_reference = false; _ } ->
                        IL.equal_name pname name
-                       && not
-                            (param_is_copy
-                               ~is_value_type:env.taint_inst.is_value_type np)
+                       && not (IL.NameSet.mem pname copied)
                    | _ -> false)
                  fun_cfg.params ->
             effects_before_param_rebinding ~lang:env.taint_inst.lang
@@ -4405,6 +4404,10 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
   let needs_self_sig_fixpoint =
     match taint_inst.lang with Lang.Clojure -> true | _ -> false
   in
+  let copied =
+    copied_params
+      ~is_value_type:taint_inst.is_value_type fun_cfg.params
+  in
   let end_mapping =
     if needs_self_sig_fixpoint then
       let rec run_to_sig_fixpoint passes =
@@ -4415,7 +4418,7 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
             ~join:
               (Lval_env.union_at_loop_head ~traces:taint_inst.traces
                  ~lang:taint_inst.lang) ~init:init_mapping
-            ~trans:(transfer env ~fun_cfg) ~flow
+            ~trans:(transfer env ~fun_cfg ~copied) ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
          * comparison) when neither short-circuits. [equal_with_guards], not
@@ -4451,13 +4454,9 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
         ~join:
           (Lval_env.union_at_loop_head ~traces:taint_inst.traces
              ~lang:taint_inst.lang) ~init:init_mapping
-        ~trans:(transfer env ~fun_cfg) ~flow
+        ~trans:(transfer env ~fun_cfg ~copied) ~flow
   in
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-  let copied =
-    copied_params
-      ~is_value_type:taint_inst.is_value_type fun_cfg.params
-  in
   effects_from_arg_updates_at_exit ~lang:taint_inst.lang ~traces:taint_inst.traces
     ~is_value_type:taint_inst.is_value_type ~params:fun_cfg.params ~copied
     enter_lval_env exit_lval_env

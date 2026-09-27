@@ -490,14 +490,14 @@ let taint_config_of_spec_matches
             })
 
 let taint_config_of_rule ~per_file_formula_cache
+    ~(is_value_type : G.type_ -> bool)
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
     xconf lang file ast_and_errors (rule : R.taint_rule) =
   let spec_matches, expls =
     spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
       ast_and_errors rule
   in
-  taint_config_of_spec_matches ~handle_effects ~allow_partial
-    ~is_value_type:(value_type_predicate lang (fst ast_and_errors))
+  taint_config_of_spec_matches ~handle_effects ~allow_partial ~is_value_type
     xconf lang file rule spec_matches
   |> Option.map (fun inst -> (inst, spec_matches, expls))
 [@@trace_trace]

@@ -1195,6 +1195,7 @@ let check_top_level_prebuilt
 
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ~(shared_tables : Taint_shared_tables.t)
+    ~(is_value_type : (G.type_ -> bool) Lazy.t)
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(local_ast_call_graph : Call_graph.G.t option = None)
@@ -1243,6 +1244,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
    * (i.e., add a "debugging" field to 'Report.match_result'). *)
   match
     Match_taint_spec.taint_config_of_rule ~per_file_formula_cache
+      ~is_value_type:(lazy_force is_value_type)
       xconf lang file (ast, []) rule
   with
   | None -> (Some (report_of_matches []), None)
@@ -1625,6 +1627,14 @@ let check_rules ~match_hook
            | None -> call_graph)
   in
 
+  let is_value_type =
+    lazy
+      (let ast, _skipped_tokens = lazy_force xtarget.lazy_ast_and_errors in
+       Match_taint_spec.value_type_predicate
+         (Xlang.to_lang_exn xtarget.xlang)
+         ast)
+  in
+
   let guard_atoms = Effect_guard.create_atoms () in
 
   let builtin_db =
@@ -1656,6 +1666,7 @@ let check_rules ~match_hook
                    let report, _signature_db =
                      check_rule per_file_formula_cache rule match_hook
                        ~shared_tables:(Taint_shared_tables.create guard_atoms)
+                       ~is_value_type
                        ?builtin_signature_db:rule_builtin_signature_db
                        ~local_ast_call_graph:rule_local_ast_call_graph
                        xconf xtarget

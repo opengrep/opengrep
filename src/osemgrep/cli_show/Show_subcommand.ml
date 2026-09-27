@@ -338,6 +338,12 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
               Match_tainting_mode.check_rule tbl rule Fun.id
                 ~shared_tables:
                   (Taint_shared_tables.create (Effect_guard.create_atoms ()))
+                ~is_value_type:
+                  (lazy
+                    (let ast, _skipped_tokens =
+                       Lazy.force xtarget.lazy_ast_and_errors
+                     in
+                     Match_taint_spec.value_type_predicate lang ast))
                 xconf xtarget
             in
             begin match signature_db_opt with

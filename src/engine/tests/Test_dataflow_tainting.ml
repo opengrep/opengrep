@@ -75,8 +75,9 @@ let test_dfg_tainting rules_file file =
   *)
   let tbl = Formula_cache.mk_specialized_formula_cache [] in
   let taint_inst, spec_matches, _exps =
-    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache:tbl xconf lang
-      file (ast, []) rule
+    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache:tbl
+      ~is_value_type:(Match_taint_spec.value_type_predicate lang ast)
+      xconf lang file (ast, []) rule
     |> Option.get
   in
   UCommon.pr2 "\nSources";
