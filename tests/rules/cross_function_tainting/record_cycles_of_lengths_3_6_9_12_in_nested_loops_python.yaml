@@ -1,0 +1,13 @@
+rules:
+  - id: record_cycles_of_lengths_3_6_9_12_in_nested_loops_python
+    message: records built in nested loops that refer to each other in cycles of 3, 6, 9 and 12 records carry the source to the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

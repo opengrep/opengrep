@@ -160,7 +160,7 @@ val find_lval_xtaint :
 val propagate_from : Dataflow_var_env.var -> env -> Taint.taints option * env
 val pending_propagation : Dataflow_var_env.var -> IL.lval -> env -> env
 
-val clean : Lang.t -> env -> IL.lval -> env
+val clean : traces:Taint.kept_traces -> Lang.t -> env -> IL.lval -> env
 (** Remove taint from an lvalue.
 
     Cleaning x.a_1. ... .a_N will clean that l-value as well as all its

@@ -1057,12 +1057,19 @@ let closure_env (env : env) (sig_ : Signature.t) : S.env =
                  | Some cell -> cell
                  | None -> S.Cell (`None, S.Bot)) ))
 
+(* The closure of [definition] over the variables it captures; a captured
+ * cyclic value makes it a graph (INVARIANT(graph).1). *)
+let fun_shape_of_definition (env : env)
+    (((_, sig_) as definition) : Function_id.t * Signature.t) : S.shape =
+  S.canonical ~traces:env.taint_inst.traces
+    (Shape_and_sig.fun_shape_of_definition definition (closure_env env sig_))
+
 let fun_shape_of_definitions (env : env)
     (found : (Function_id.t * Signature.t) list) : S.shape =
   List.fold_left
-    (fun (shape : S.shape) (((_, sig_) as definition) : Function_id.t * Signature.t) ->
+    (fun (shape : S.shape) (definition : Function_id.t * Signature.t) ->
       Shape.unify_shape ~traces:env.taint_inst.traces ~lang:env.taint_inst.lang shape
-        (Shape_and_sig.fun_shape_of_definition definition (closure_env env sig_)))
+        (fun_shape_of_definition env definition))
     S.Bot found
 
 let self_sig_if_recursive env fun_exp =
@@ -1230,7 +1237,8 @@ let fix_poly_taint_with_field lang ~(traces : T.kept_traces) lval xtaint =
 (* Tainted *)
 (*****************************************************************************)
 
-let sanitize_lval_by_side_effect lang lval_env sanitizer_pms lval =
+let sanitize_lval_by_side_effect ~(traces : T.kept_traces) lang lval_env
+    sanitizer_pms lval =
   let lval_is_now_safe =
     (* If the l-value is an exact match (overlap > 0.99) for a sanitizer
      * annotation, then we infer that the l-value itself has been updated
@@ -1241,7 +1249,7 @@ let sanitize_lval_by_side_effect lang lval_env sanitizer_pms lval =
         m.spec.sanitizer_by_side_effect && TM.is_exact m)
       sanitizer_pms
   in
-  if lval_is_now_safe then Lval_env.clean lang lval_env lval else lval_env
+  if lval_is_now_safe then Lval_env.clean ~traces lang lval_env lval else lval_env
 
 (* Check if an expression is sanitized, if so returns `Some' and otherise `None'.
    If the expression is of the form `x.a.b.c` then we try to sanitize it by
@@ -1254,8 +1262,8 @@ let exp_is_sanitized env exp =
       match exp.e with
       | Fetch lval ->
           Some
-            (sanitize_lval_by_side_effect env.taint_inst.lang env.lval_env
-               sanitizer_pms lval)
+            (sanitize_lval_by_side_effect ~traces:env.taint_inst.traces
+               env.taint_inst.lang env.lval_env sanitizer_pms lval)
       | __else__ -> Some env.lval_env)
 
 (* Checks if `thing' is a propagator `from' and if so propagates `taints' through it.
@@ -1541,8 +1549,8 @@ and check_tainted_lval_aux env (lval : IL.lval) :
        *  from lval_env by sanitize_lval, but that is not guaranteed.
        *)
       let lval_env =
-        sanitize_lval_by_side_effect env.taint_inst.lang env.lval_env
-          sanitizer_pms lval
+        sanitize_lval_by_side_effect ~traces:env.taint_inst.traces
+          env.taint_inst.lang env.lval_env sanitizer_pms lval
       in
       (Taints.empty, `Sanitized, Bot, `Sub (Taints.empty, Bot), lval_env)
   | [] ->
@@ -1721,7 +1729,8 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
         let taints_and_shapes, lval_env = map_check_expr env check es in
         let tuple_shape =
-          Shape.tuple_like_obj ~site:(T.call_loc_of_exp exp) taints_and_shapes
+          Shape.tuple_like_obj ~traces:env.taint_inst.traces
+            ~site:(T.call_loc_of_exp exp) taints_and_shapes
         in
         (Taints.empty, tuple_shape, lval_env)
     | Composite ((CSet | Constructor _ | Regexp), (_, es, _)) ->
@@ -1818,10 +1827,10 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                      in
                      let taints_acc = taints_acc |> Taints.union ~traces:env.taint_inst.traces e_taints in
                      let taints_acc =
-                       match e_shape with
+                       match S.unfold e_shape with
                        | S.Obj _ -> taints_acc
                        | S.Bot
-                       | S.Rec _
+                       | S.Graph _
                        | S.Arg _
                        | S.Fun _ ->
                            taints_acc |> add_taints_from_shape ~traces:env.taint_inst.traces e_shape
@@ -1874,7 +1883,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
                   (S.show_shape shape));
             (* Give fn-references a [Fun] shape so HOF callback dispatch finds a signature; keep existing [S.Fun] shapes. *)
             let shape =
-              match shape with
+              match S.unfold shape with
               | S.Fun _ -> shape
               | _ ->
                   let is_temp_var =
@@ -2185,13 +2194,15 @@ let check_function_call env ~(results : IL.call_results) fun_exp args
       let from_shape =
         let* lval_to_check = lval_to_check in
         match
-          Lval_env.find_lval ~traces:env.taint_inst.traces env.taint_inst.lang env.lval_env lval_to_check
+          Option.map
+            (fun (S.Cell (_, shape) : S.cell) -> S.unfold shape)
+            (Lval_env.find_lval ~traces:env.taint_inst.traces env.taint_inst.lang
+               env.lval_env lval_to_check)
         with
-        | Some (S.Cell (_, S.Fun (c, cs))) ->
+        | Some (S.Fun (c, cs)) ->
             Log.debug (fun m ->
                 m "SIG_FROM_SHAPE: Found Fun shape for %s"
                   (Display_IL.string_of_exp fun_exp));
-            let c, cs = Shape.closures_of_fun c cs in
             Some
               (List_.map
                  (fun (closure : S.closure) ->
@@ -2509,7 +2520,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                  Lval_env.find_lval ~traces:env.taint_inst.traces env.taint_inst.lang env.lval_env lval
                with
               | Some (S.Cell (_, shape)) ->
-                  (match shape with
+                  (match S.unfold shape with
                   | S.Fun _ ->
                       (* It's a function/lambda! *)
                       Some (e, lambda_exp)
@@ -2531,9 +2542,13 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
         | Fetch lval ->
             (* Check the shape of this lval to see if it has a Fun signature *)
             (match
-               Lval_env.find_lval ~traces:env.taint_inst.traces env.taint_inst.lang env.lval_env lval
+               Option.map
+                 (fun (S.Cell (var_taints, shape) : S.cell) ->
+                   (var_taints, S.unfold shape))
+                 (Lval_env.find_lval ~traces:env.taint_inst.traces env.taint_inst.lang
+                    env.lval_env lval)
              with
-            | Some (S.Cell (var_taints, S.Fun (c, cs))) ->
+            | Some (var_taints, S.Fun (c, cs)) ->
                 (* The variable has a Fun shape. Instantiate it directly instead of
                  * doing signature database lookup. *)
                 let lambda_arg = IL.Unnamed lambda_exp in
@@ -2556,7 +2571,6 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                 let args_taints = [lambda_arg_taint] in
                 (* Callback lookup in both modes; hazard contained by [preserve_effect]. *)
                 let call_effects =
-                  let c, cs = Shape.closures_of_fun c cs in
                   c :: cs
                   |> List.concat_map (fun (closure : S.closure) ->
                          Sig_inst.instantiate_function_signature ~traces:env.taint_inst.traces
@@ -2617,7 +2631,7 @@ let call_with_intrafile ~(results : IL.call_results) lval_opt e env args instr =
                         call_effects
                     in
                     (call_taints, shape, lval_env)
-            | Some (S.Cell (_, _)) ->
+            | Some (_, _) ->
                 (* Try signature lookup instead *)
                 (match check_function_call { env with lval_env } ~results inner_e args args_taints () with
                 | Some (call_taints, shape, lval_env) ->
@@ -2933,11 +2947,8 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             | Var lambda_name, Some db, Lambda fdef ->
                 let arity = List.length fdef.fparams in
                 (match Shape_and_sig.lookup_definition db (Function_id.of_il_name lambda_name) arity with
-                | Some ((_, sig_) as found) ->
-                    let fun_shape =
-                      Shape_and_sig.fun_shape_of_definition found
-                        (closure_env env sig_)
-                    in
+                | Some found ->
+                    let fun_shape = fun_shape_of_definition env found in
                     Log.debug (fun m ->
                         m "AssignAnon: lambda %s has signature shape %s"
                           (IL.str_of_name lambda_name)
@@ -3551,13 +3562,35 @@ let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(traces : T.kept_traces)
 let rec shape_has_closure_env (shape : S.shape) : bool =
   match shape with
   | Bot
-  | Rec _
   | Arg _ ->
       false
   | Obj { fields; _ } ->
       Shape_and_sig.Fields.exists
         (fun _ (S.Cell (_, shape)) -> shape_has_closure_env shape)
         fields
+  | Graph g ->
+      (* The nodes that the objects reach, as the fields of 'Obj'. *)
+      S.preorder
+        (Array.map
+           (fun (node : S.node) ->
+             match node with
+             | S.Object _ -> S.successors node
+             | S.Closures _ -> [])
+           g.nodes)
+        g.root
+      |> List.exists (fun (i : int) ->
+             match g.nodes.(i) with
+             | S.Object { edges; _ } ->
+                 Shape_and_sig.Fields.exists
+                   (fun _ (edge : S.edge) ->
+                     match edge.target with
+                     | S.Leaf shape -> shape_has_closure_env shape
+                     | S.Node _ -> false)
+                   edges
+             | S.Closures (c, cs) ->
+                 List.exists
+                   (fun (closure : S.graph_closure) -> not (List_.null closure.env))
+                   (c :: cs))
   | Fun (c, cs) ->
       List.exists
         (fun (closure : S.closure) -> not (List_.null closure.env))
@@ -3630,7 +3663,7 @@ let convert_escaping_closures ~(traces : T.kept_traces) ~(fun_cfg : IL.fun_cfg)
         lval
   in
   let effects =
-    effects |> Effects.map ~traces (Shape_and_sig.map_closure_refs convert_ref)
+    effects |> Effects.map ~traces (Shape_and_sig.map_closure_refs ~traces convert_ref)
   in
   let escaped_values =
     IL.NameSet.elements !escaped
@@ -3917,7 +3950,8 @@ let mk_lambda_in_env env lcfg =
             * have attached to it previously. This can happen when a
             * lambda is called inside a loop. *)
            let lval_env =
-             Lval_env.clean env.taint_inst.lang lval_env (LV.lval_of_var var)
+             Lval_env.clean ~traces:env.taint_inst.traces env.taint_inst.lang
+               lval_env (LV.lval_of_var var)
            in
            (* Now check if the parameter is itself a taint source. *)
            let taints, shape, lval_env =
@@ -3955,7 +3989,8 @@ let mk_lambda_in_env env lcfg =
                           { base = Var leaf_name; rev_offset = [] }
                         in
                         let lval_env =
-                          Lval_env.clean env.taint_inst.lang lval_env leaf_lval
+                          Lval_env.clean ~traces:env.taint_inst.traces
+                            env.taint_inst.lang lval_env leaf_lval
                         in
                         let source_taints, _shape, lval_env =
                           check_tainted_var { env with lval_env } leaf_name
@@ -4055,7 +4090,8 @@ let rec transfer :
                 match lval with
                 | { IL.base = IL.Var _; rev_offset = [] }
                   when Shape.taints_and_shape_are_relevant taints shape ->
-                    Lval_env.clean env.taint_inst.lang lval_env' lval
+                    Lval_env.clean ~traces:env.taint_inst.traces
+                      env.taint_inst.lang lval_env' lval
                 | _ -> lval_env'
               in
               (* We call `check_tainted_lval` here because the assigned `lval`
@@ -4109,7 +4145,8 @@ let rec transfer :
                   (* No side-effects on 'lval', and the instruction returns safe data,
                    * so we assume that the assigment acts as a sanitizer and therefore
                    * remove taints from lval. See [Taint_lval_env] for details. *)
-                  Lval_env.clean env.taint_inst.lang lval_env' lval
+                  Lval_env.clean ~traces:env.taint_inst.traces
+                    env.taint_inst.lang lval_env' lval
           | None ->
               (* Instruction returns 'void' or its return value is ignored. *)
               lval_env'

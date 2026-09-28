@@ -34,7 +34,11 @@ val fix_poly_taint_with_offset :
 
     FEATURE(field-sensitivity) *)
 
-val tuple_like_obj : site:Taint.call_loc -> (Taint.taints * shape) list -> shape
+val tuple_like_obj :
+  traces:Taint.kept_traces ->
+  site:Taint.call_loc ->
+  (Taint.taints * shape) list ->
+  shape
 (** Constructs a 0-indexed tuple-like 'obj' from a list of pairs, taints and shape,
  * for each element in the tuple.  *)
 
@@ -51,8 +55,6 @@ val record_or_dict_like_obj :
   shape
 (** Constructs an 'Obj' shape from a list of taints and shapes associated with
     a record/dict expression. *)
-
-val closures_of_fun : closure -> closure list -> closure * closure list
 
 val unify_cell : lang:Lang.t -> traces:Taint.kept_traces -> cell -> cell -> cell
 (** Unify two 'cell's into one. *)
@@ -142,11 +144,29 @@ val find_in_shape_poly :
     are the "base taints" in case the offset cannot be found. *)
 
 val update_offset_in_cell :
+  traces:Taint.kept_traces ->
   write:Taint.call_loc ->
   f:(Xtaint.t -> shape -> Xtaint.t * shape) ->
   Taint.offset list ->
   cell ->
   cell option
+
+val map_graph :
+  traces:Taint.kept_traces ->
+  sites:(Shape_and_sig.Sites.t -> Shape_and_sig.Sites.t) ->
+  xtaint:(Xtaint.t -> Xtaint.t) ->
+  shape:(shape -> shape) ->
+  closure:
+    (inst_value:(edge -> edge) ->
+    value_of_cell:(cell -> edge) ->
+    graph_closure ->
+    graph_closure) ->
+  graph ->
+  shape
+(** One map over the nodes of a graph value: each object's sites by
+    [sites], each edge's taint by [xtaint], each tree by [shape], each
+    closure by [closure]; the result in the form INVARIANT(graph)
+    requires. *)
 
 val update_offset_and_unify :
   lang:Lang.t ->
@@ -162,7 +182,8 @@ val update_offset_and_unify :
  * is given (i.e. 'None'), it creates a fresh one. If 'taints' are empty
  * and 'shape' is 'Bot', it just returns the given 'cell' (or 'None'). *)
 
-val clean_cell : write:Taint.call_loc -> Taint.offset list -> cell -> cell
+val clean_cell :
+  traces:Taint.kept_traces -> write:Taint.call_loc -> Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
 
 val join_folded_by_site :
@@ -200,8 +221,9 @@ val enum_in_cell : cell -> (Taint.offset list * Taint.taints * shape) Seq.t
  * Enumerate the offsets in a cell with their taints and shapes: every cell
  * whose shape is a leaf ('Bot', 'Arg' or 'Fun') or a summary object, with its
  * own taints and that shape, the summary object not descended into; and
- * every tainted cell whose shape is any other object or a back reference,
- * with its own taints and 'Bot'.
+ * every tainted cell whose shape is any other object, with its own taints
+ * and 'Bot'. In a 'Graph', a summary node or a closure set is such a leaf,
+ * with the value that starts at it.
  *
  * For example,
  *

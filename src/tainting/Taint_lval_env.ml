@@ -431,7 +431,7 @@ let pending_propagation prop_var lval env =
       VarMap.add prop_var lval env.pending_propagation_dests;
   }
 
-let clean lang lval_env lval =
+let clean ~(traces : T.kept_traces) lang lval_env lval =
   match normalize_lval lang lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
@@ -449,7 +449,7 @@ let clean lang lval_env lval =
               | None -> None
               | Some var_ref ->
                   Some
-                    (Shape.clean_cell
+                    (Shape.clean_cell ~traces
                        ~write:(T.call_loc_of_tok (snd var.ident))
                        offsets var_ref))
             lval_env.tainted;

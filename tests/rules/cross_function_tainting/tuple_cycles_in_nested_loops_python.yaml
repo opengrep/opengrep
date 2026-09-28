@@ -1,0 +1,13 @@
+rules:
+  - id: tuple_cycles_in_nested_loops_python
+    message: tuples built in nested loops that refer to each other in cycles carry the source to the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

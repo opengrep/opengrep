@@ -1,0 +1,13 @@
+rules:
+  - id: field_below_cycle_on_one_branch_python
+    message: a field read below the cycle of a loop-built record, joined at a branch with a record that holds the source one level down, reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

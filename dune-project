@@ -508,6 +508,7 @@ For more information see https://opengrep.dev.
     ; (checked at build time by src/main/flags.sh)
     ; misc
     ocamlgraph
+    fix
     semver
     (timedesc (>= 2.0.0)) ; used via git-wrapper
     (lsp (= 1.27.0))

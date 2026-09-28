@@ -1,0 +1,13 @@
+rules:
+  - id: closure_capturing_previous_closure_joined_at_branch_php
+    message: a closure that captures the closure built before it, joined at a branch, returns the source to the sink
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

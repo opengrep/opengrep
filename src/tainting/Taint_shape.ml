@@ -31,16 +31,19 @@ module Signature = Shape_and_sig.Signature
 (* UNSAFE: Violates INVARIANT(cell), see 'internal_UNSAFE_find_offset_in_obj' *)
 let cell_none_bot = Cell (`None, Bot)
 
+(* UNSAFE: Violates INVARIANT(cell), see 'internal_UNSAFE_find_offset_in_obj' *)
+let edge_none_bot : edge = { xtaint = `None; target = Leaf Bot }
+
 (* Temporarily breaks INVARIANT(cell) by initializing a field with the shape
  * 'cell<0>(_|_)', but right away the field should be either tainted or cleaned.
  * The caller must restore the invariant. *)
-let internal_UNSAFE_find_offset_in_obj o obj =
+let internal_UNSAFE_find_offset_in_obj ~none o obj =
   match Fields.find_opt o obj with
   | Some _ -> (o, obj)
   | None ->
       let num_fields = Fields.cardinal obj in
       if num_fields <= Limits_semgrep.taint_MAX_OBJ_FIELDS then
-        let obj = Fields.add o cell_none_bot obj in
+        let obj = Fields.add o none obj in
         (o, obj)
       else (
         Log.warn (fun m ->
@@ -57,28 +60,7 @@ let debug_offset offset =
 (* Misc *)
 (*********************************************************)
 
-(* Does [shape] carry any content relevant to taint propagation?
- * - [`Tainted] xtaint on any cell — direct taint.
- * - [Arg _] — polymorphic caller-supplied taint yet to be instantiated.
- * - [Fun _] — function reference; HOF analysis tracks the callback's
- *   signature via this shape, so an assignment of a lambda to a
- *   variable is not a sanitizer even though no [`Tainted] cell is
- *   reachable through the shape.
- * - [`Clean] cell with [Bot] subshape — literal construction observed
- *   no taint here; does NOT count as content.
- * - [Bot] — nothing. *)
-let rec shape_has_relevant_content = function
-  | Bot
-  | Rec _ ->
-      false
-  | Arg _
-  | Fun _ ->
-      true
-  | Obj { fields; _ } ->
-      Fields.exists (fun _ cell -> cell_has_relevant_content cell) fields
-
-and cell_has_relevant_content (Cell (xtaint, shape)) =
-  Xtaint.is_tainted xtaint || shape_has_relevant_content shape
+let shape_has_relevant_content = shape_has_relevant_content
 
 let taints_and_shape_are_relevant taints shape =
   (* An assignment whose RHS carries neither taints nor tainted shape
@@ -249,6 +231,28 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t)
                         taint))
        taints
 
+(* The taints of an access path cut short: each polymorphic 'Var l' with
+ * 'Shape_var l'. 'Var l' stands for the taints of the actual's cell at [l]
+ * and 'Shape_var l' for every taint reachable from the actual's value at
+ * [l] ('Sig_inst.instantiate_taint_var'), so together they cover 'Var l.w'
+ * for every extension [w]. *)
+let cut_poly_taints ~(traces : T.kept_traces) (taints : Taints.t) : Taints.t =
+  match
+    Taints.fold
+      (fun (guarded : T.guarded_taint) (shape_vars : T.guarded_taint list) ->
+        match guarded.taint.orig with
+        | Var lval ->
+            { guarded with taint = { guarded.taint with orig = Shape_var lval } }
+            :: shape_vars
+        | Src _
+        | Shape_var _
+        | Control ->
+            shape_vars)
+      taints []
+  with
+  | [] -> taints
+  | shape_vars -> Taints.union ~traces taints (Taints.of_list ~traces shape_vars)
+
 (* A read of [offset] on a parameter's shape 'Arg (arg, base_offsets)', whose
  * value carries [taints]: the polymorphic taints extended by [offset], under
  * the shape extended the same way. 'None' when [offset] is a method call. *)
@@ -281,12 +285,15 @@ let find_in_arg ?max ~lang ~(traces : T.kept_traces) ~taints offset arg
     Some (Cell (Xtaint.of_taints taints, Arg (arg, extended)))
 
 (*********************************************************)
-(* Back references *)
+(* Objects and closure sets *)
 (*********************************************************)
 
-let obj_or_bot ~(sites : Shape_and_sig.Sites.t) ~(summary : bool) (fields : obj)
-    : shape =
-  if Fields.is_empty fields then Bot else Obj { sites; summary; fields }
+(* An object with [fields]: 'Bot' when it has none, a 'Graph' when a field
+ * holds one (INVARIANT(graph).1). *)
+let obj_or_bot ~(traces : T.kept_traces) ~(sites : Shape_and_sig.Sites.t)
+    ~(summary : bool) (fields : obj) : shape =
+  if Fields.is_empty fields then Bot
+  else canonical ~traces (Obj { sites; summary; fields })
 
 let written_obj ~(write : T.call_loc) ~(depth : int) : shape =
   Obj
@@ -296,193 +303,83 @@ let written_obj ~(write : T.call_loc) ~(depth : int) : shape =
       fields = Fields.empty;
     }
 
-let is_summary (shape : shape) : bool =
+(* A tree object or closure set as a node whose targets are its cells'
+ * trees. *)
+let node_of_tree (shape : shape) : node option =
+  let edge_of (Cell (xtaint, shape) : cell) : edge = { xtaint; target = Leaf shape } in
   match shape with
-  | Obj { summary; _ } -> summary
+  | Obj { sites; summary; fields } ->
+      Some (Object { sites; summary; edges = Fields.map edge_of fields })
+  | Fun (c, cs) ->
+      let graph_closure (closure : closure) : graph_closure =
+        {
+          def = closure.def;
+          sig_ = closure.sig_;
+          env =
+            List.map
+              (fun ((x, entry) : IL.name * env_entry) ->
+                match entry with
+                | Ref lval -> (x, (Ref lval : graph_env_entry))
+                | Val cell -> (x, Val (edge_of cell)))
+              closure.env;
+        }
+      in
+      Some (Closures (graph_closure c, List.map graph_closure cs))
   | Bot
-  | Rec _
-  | Arg _
-  | Fun _ ->
-      false
+  | Graph _
+  | Arg _ ->
+      None
 
-let map_fields (f : cell -> cell) (fields : obj) : obj =
-  Fields.fold
-    (fun o cell acc ->
-      let cell' = f cell in
-      if phys_equal cell' cell then acc else Fields.add o cell' acc)
-    fields fields
-
-let map_cell_shape (f : shape -> shape) (Cell (xtaint, shape) as cell : cell) :
-    cell =
-  let shape' = f shape in
-  if phys_equal shape' shape then cell else Cell (xtaint, shape')
-
-let map_captured_cells (f : cell -> cell) (closure : closure) : closure =
-  let env =
-    List.map
-      (fun ((var, entry) as binding : IL.name * env_entry) ->
-        match entry with
-        | Val cell ->
-            let cell' = f cell in
-            if phys_equal cell' cell then binding else (var, Val cell')
-        | Ref _ -> binding)
-      closure.env
+(* [nodes] with INVARIANT(cell) restored after edges were dropped: an object
+ * with no edge left is 'Bot' ('obj_or_bot'), and a cell with no taint whose
+ * value is 'Bot' is dropped (INVARIANT(cell).1), up to [root]. A node keeps
+ * content when it is a closure set or has an edge with a taint, a 'Clean'
+ * edge, an edge to a tree other than 'Bot', or an edge to a node that keeps
+ * content: the least solution of these equations. *)
+let restore_cell_invariant (nodes : node array) (root : int) : node array * target =
+  let keeps_content =
+    Shape_and_sig.least_fixpoint ~leq_join:( || )
+      ~local:(fun (i : int) ->
+        match nodes.(i) with
+        | Closures _ -> true
+        | Object { edges; _ } ->
+            Fields.exists
+              (fun _o (edge : edge) ->
+                match (edge.xtaint, edge.target) with
+                | (`Clean | `Tainted _), _ -> true
+                | `None, Leaf Bot -> false
+                | `None, Leaf (Obj _ | Graph _ | Arg _ | Fun _) -> true
+                | `None, Node _ -> false)
+              edges)
+      (Array.map successors nodes)
   in
-  if List.for_all2 phys_equal env closure.env then closure else { closure with env }
-
-(* [shape] with each back reference that leaves it replaced by [outer j
- * depth], where [j] counts the objects and closure sets enclosing [shape]
- * that the reference skips and [depth] the objects and closure sets of
- * [shape] around the reference. *)
-let rebind_free ~(outer : int -> int -> shape) (shape : shape) : shape =
-  let rec rebind (depth : int) (shape : shape) : shape =
-    match shape with
-    | Rec n when n >= depth -> outer (n - depth) depth
-    | Bot
-    | Rec _
-    | Arg _ ->
-        shape
-    | Fun (c, cs) ->
-        let c', cs' =
-          Shape_and_sig.map_closures
-            (map_captured_cells (map_cell_shape (rebind (depth + 1))))
-            (c, cs)
-        in
-        if phys_equal c' c && phys_equal cs' cs then shape else Fun (c', cs')
-    | Obj ({ fields; _ } as node) ->
-        let fields' = map_fields (map_cell_shape (rebind (depth + 1))) fields in
-        if phys_equal fields' fields then shape
-        else Obj { node with fields = fields' }
+  let restore (edge : edge) : edge option =
+    match (edge.xtaint, edge.target) with
+    | `None, Node j when not keeps_content.(j) -> None
+    | (`Clean | `Tainted _), Node j when not keeps_content.(j) ->
+        Some { edge with target = Leaf Bot }
+    | _, (Node _ | Leaf _) -> Some edge
   in
-  rebind 0 shape
-
-let closures_of_fun (c : closure) (cs : closure list) : closure * closure list =
-  let fun_shape = Fun (c, cs) in
-  Shape_and_sig.map_closures
-    (map_captured_cells
-       (map_cell_shape
-          (rebind_free ~outer:(fun (levels_above : int) (depth : int) ->
-               if Int.equal levels_above 0 then fun_shape
-               else Rec (depth + levels_above)))))
-    (c, cs)
-
-(* [shape], placed [levels] objects deeper than the objects it was found
- * under. *)
-let shift_free ~(levels : int) (shape : shape) : shape =
-  rebind_free ~outer:(fun j depth -> Rec (depth + j + levels)) shape
-
-(* [shape], found under [enclosing] (nearest first), with each back
- * reference that leaves it replaced by the object it refers to, itself
- * closed: a regular tree unrolled once, which no longer depends on its
- * position. Only a summary is referred to. *)
-let rec close_shape (enclosing : shape list) (shape : shape) : shape =
-  if not (List.exists is_summary enclosing) then shape
-  else
-    let targets =
-      enclosing
-      |> List.mapi (fun i target ->
-             lazy (close_shape (List.drop (i + 1) enclosing) target))
-      |> Array.of_list
-    in
-    rebind_free ~outer:(fun j _depth -> Lazy.force targets.(j)) shape
-
-let close_cell (enclosing : shape list) (cell : cell) : cell =
-  map_cell_shape (close_shape enclosing) cell
+  let nodes =
+    Array.map
+      (fun (node : node) ->
+        match node with
+        | Object ({ edges; _ } as node) ->
+            Object { node with edges = Fields.filter_map (fun _o -> restore) edges }
+        | Closures _ ->
+            map_edges
+              (fun (edge : edge) ->
+                match restore edge with
+                | Some edge -> edge
+                | None -> { edge with target = Leaf Bot })
+              node)
+      nodes
+  in
+  (nodes, if keeps_content.(root) then Node root else Leaf Bot)
 
 (*********************************************************)
 (* Unification (merging shapes) *)
 (*********************************************************)
-
-(* One operand of a unification: the objects that enclose the position,
- * nearest first, and whether its back references count the levels of the
- * result, which stops once a back reference of this operand was followed. *)
-type operand = { enclosing : shape list; unshifted : bool }
-
-(* [levels] holds, for each object enclosing the result's position, the
- * objects of both sides it joins. After a back reference was followed
- * ([unrolled]), a pair of objects met again, one of them a summary, is a
- * cycle of the result. *)
-type join_context = {
-  left : operand;
-  right : operand;
-  levels : (shape option * shape option) list;
-  unrolled : bool;
-}
-
-let empty_join_context : join_context =
-  {
-    left = { enclosing = []; unshifted = true };
-    right = { enclosing = []; unshifted = true };
-    levels = [];
-    unrolled = false;
-  }
-
-let flip (join : join_context) : join_context =
-  {
-    left = join.right;
-    right = join.left;
-    levels = List.map (fun (l, r) -> (r, l)) join.levels;
-    unrolled = join.unrolled;
-  }
-
-let enter (join : join_context) (left : shape option) (right : shape option) :
-    join_context =
-  let push (operand : operand) (node : shape option) : operand =
-    match node with
-    | Some node -> { operand with enclosing = node :: operand.enclosing }
-    | None -> operand
-  in
-  {
-    join with
-    left = push join.left left;
-    right = push join.right right;
-    levels = (left, right) :: join.levels;
-  }
-
-let both_unshifted (join : join_context) : bool =
-  join.left.unshifted && join.right.unshifted
-
-let follow (operand : operand) (n : int) : (shape * operand) option =
-  match List.nth_opt operand.enclosing n with
-  | Some target ->
-      Some
-        ( target,
-          {
-            enclosing = List.drop (n + 1) operand.enclosing;
-            unshifted = false;
-          } )
-  | None -> None
-
-(* [shape] of the operand that [pick] selects from a level, moved to the
- * result's position: a back reference refers to the nearest level that joins
- * its object, or else to a closed copy of that object. *)
-let reindex (join : join_context)
-    ~(pick : shape option * shape option -> shape option)
-    (operand : operand) (shape : shape) : shape =
-  if operand.unshifted then shape
-  else
-    rebind_free
-      ~outer:(fun j depth ->
-        match List.nth_opt operand.enclosing j with
-        | None -> Rec (depth + j)
-        | Some target -> (
-            match
-              List.find_index
-                (fun level ->
-                  match pick level with
-                  | Some node -> phys_equal node target
-                  | None -> false)
-                join.levels
-            with
-            | Some m -> Rec (depth + m)
-            | None -> close_shape (List.drop (j + 1) operand.enclosing) target))
-      shape
-
-let reindex_left (join : join_context) (shape : shape) : shape =
-  reindex join ~pick:fst join.left shape
-
-let reindex_right (join : join_context) (shape : shape) : shape =
-  reindex join ~pick:snd join.right shape
 
 (* [cell] with every 'Clean' leaf, at any depth, given the taint a read of
  * the leaf gives on the other path: [leaf], the taint of that path's whole
@@ -494,14 +391,16 @@ let reindex_right (join : join_context) (shape : shape) : shape =
  * has one, 'find_in_cell_w_carry'), else replaced by a cell holding that
  * taint. Every other cell keeps its own taint. 'None' when nothing is left
  * of [cell] (INVARIANT(cell)); [cell] itself when it has no 'Clean' leaf, in
- * one pass, so a join that changes nothing allocates nothing. *)
+ * one pass, so a join that changes nothing allocates nothing. [extended] is
+ * [leaf] extended by the offsets above [cell], [offset] those below; when
+ * [truncated] the offsets below are not added ('join_graphs'). *)
 let rec replace_clean_leaves ~lang ~(traces : T.kept_traces) ~offset ~carry ~leaf
-    (Cell (xtaint, shape) as cell) =
+    ~extended ~(truncated : bool) (Cell (xtaint, shape) as cell) =
   match (xtaint, shape) with
   | `Clean, _ ->
       if Taints.equal leaf carry then None
       else
-        let taints = fix_poly_taint_with_offset ~lang ~traces offset leaf in
+        let taints = fix_poly_taint_with_offset ~lang ~traces offset extended in
         if Taints.is_empty taints then None
         else Some (Cell (`Tainted taints, Bot))
   | _, Obj ({ fields = obj; _ } as node) -> (
@@ -516,7 +415,9 @@ let rec replace_clean_leaves ~lang ~(traces : T.kept_traces) ~offset ~carry ~lea
         Fields.fold
           (fun o c acc ->
             match
-              replace_clean_leaves ~lang ~traces ~offset:(offset @ [ o ]) ~carry ~leaf c
+              replace_clean_leaves ~lang ~traces
+                ~offset:(if truncated then offset else offset @ [ o ])
+                ~carry ~leaf ~extended ~truncated c
             with
             | Some c' when phys_equal c' c -> acc
             | Some c' -> Fields.add o c' acc
@@ -529,7 +430,7 @@ let rec replace_clean_leaves ~lang ~(traces : T.kept_traces) ~offset ~carry ~lea
         | (`None | `Clean), true -> None
         | `Tainted _, true -> Some (Cell (xtaint, Bot))
         | _, false -> Some (Cell (xtaint, Obj { node with fields = obj' })))
-  | _, (Bot | Rec _ | Arg _ | Fun _) -> Some cell
+  | _, (Bot | Graph _ | Arg _ | Fun _) -> Some cell
 
 let cell_of_join (xtaint : Xtaint.t) (shape : shape) : cell =
   match (xtaint, shape) with
@@ -539,13 +440,286 @@ let cell_of_join (xtaint : Xtaint.t) (shape : shape) : cell =
    * 'Cell(Clean, Obj _)'. The 'Clean' claim only held on one side, and a
    * join must not hide the taint recorded under the other side's shape
    * ('find_in_cell_w_carry' stops at a 'Clean' cell). *)
-  | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) -> Cell (`None, shape)
+  | `Clean, (Obj _ | Graph _ | Arg _ | Fun _) -> Cell (`None, shape)
   | ( (`Clean | `None | `Tainted _),
-      (Bot | Obj _ | Rec _ | Arg _ | Fun _) ) ->
+      (Bot | Obj _ | Graph _ | Arg _ | Fun _) ) ->
       Cell (xtaint, shape)
 
-let rec unify_cell_in ~lang ~(traces : T.kept_traces) (join : join_context) cell1 cell2 =
-  if phys_equal cell1 cell2 && both_unshifted join then cell1
+(* 'cell_of_join' on an edge. *)
+let edge_of_join (xtaint : Xtaint.t) (target : target) : edge =
+  match target with
+  | Node _ -> (
+      match xtaint with
+      | `Clean -> { xtaint = `None; target }
+      | `None
+      | `Tainted _ ->
+          { xtaint; target })
+  | Leaf shape ->
+      let (Cell (xtaint, shape)) = cell_of_join xtaint shape in
+      { xtaint; target = Leaf shape }
+
+(* The taint of a cell as the other side of a join reads it for a field it
+ * does not track ('whole' in 'taint_untracked_fields'). *)
+let whole (xtaint : Xtaint.t) : Taints.t option =
+  match xtaint with
+  | `Tainted taints -> Some taints
+  | `None
+  | `Clean ->
+      None
+
+(* A state of the product construction (Rabin and Scott 1959) of two values
+ * of which one at least is a graph: a pair of positions of the operands, a
+ * node, 'Bot' or an 'Arg' (a read through a parameter gives an 'Arg' at
+ * every offset, so such a position can be met again along a cycle), with
+ * the taints of the cells that reach them ('whole') and whether the fields
+ * of each side that the other does not track take what a read of them gives
+ * on the other side ('taint_untracked_fields'); a node of an operand kept
+ * as it is; or a node whose 'Clean' leaves take [leaf] extended to them
+ * ('replace_clean_leaves'), with the taint [carry] a read carries into it.
+ * [truncated] is set below the first node of a cycle on the path from the
+ * root ('join_graphs'). A pair with a tree object or closure set is not a
+ * state: its tree is a part of one operand, so no path meets it twice. *)
+type state =
+  | Pair of {
+      left : target;
+      left_taints : Taints.t option;
+      right : target;
+      right_taints : Taints.t option;
+      untracked_fields : bool;
+      truncated : bool;
+    }
+  | Kept of int
+  | Replaced of {
+      node : int;
+      leaf : Taints.t;
+      carry : Taints.t;
+      extended : Taints.t;
+      truncated : bool;
+    }
+
+(* On the positions of states: 'compare_shape' is exact on 'Bot' and
+ * 'Arg', which have no sites. *)
+let compare_position (target1 : target) (target2 : target) : int =
+  match (target1, target2) with
+  | Node i, Node j -> Int.compare i j
+  | Leaf shape1, Leaf shape2 -> compare_shape shape1 shape2
+  | Node _, Leaf _ -> -1
+  | Leaf _, Node _ -> 1
+
+let is_position (target : target) : bool =
+  match target with
+  | Node _
+  | Leaf (Bot | Arg _) ->
+      true
+  | Leaf (Obj _ | Graph _ | Fun _) -> false
+
+module State = struct
+  type t = state
+
+  let equal (state1 : t) (state2 : t) : bool =
+    let equal_position (target1 : target) (target2 : target) : bool =
+      Int.equal (compare_position target1 target2) 0
+    in
+    match (state1, state2) with
+    | Pair pair1, Pair pair2 ->
+        equal_position pair1.left pair2.left
+        && equal_position pair1.right pair2.right
+        && Bool.equal pair1.untracked_fields pair2.untracked_fields
+        && Bool.equal pair1.truncated pair2.truncated
+        && Option.equal Taints.equal_with_guards pair1.left_taints pair2.left_taints
+        && Option.equal Taints.equal_with_guards pair1.right_taints pair2.right_taints
+    | Kept i1, Kept i2 -> Int.equal i1 i2
+    | Replaced replaced1, Replaced replaced2 ->
+        Int.equal replaced1.node replaced2.node
+        && Bool.equal replaced1.truncated replaced2.truncated
+        && Taints.equal_with_guards replaced1.leaf replaced2.leaf
+        && Taints.equal_with_guards replaced1.carry replaced2.carry
+        && Taints.equal_with_guards replaced1.extended replaced2.extended
+    | Pair _, (Kept _ | Replaced _)
+    | Kept _, (Pair _ | Replaced _)
+    | Replaced _, (Pair _ | Kept _) ->
+        false
+
+  (* The positions and the sizes of the taint sets, which equal states
+   * share. *)
+  let hash (state : t) : int =
+    match state with
+    | Pair { left; right; left_taints; right_taints; _ } ->
+        (* The fields that 'T.equal_formal' compares. *)
+        let hash_formal (formal : T.formal) : int =
+          match formal with
+          | Param { name; index } -> Hashtbl.hash (0, index, name)
+          | Receiver -> 1
+          | Captured name -> Hashtbl.hash (2, fst name.ident)
+          | Result { loc; _ } -> Hashtbl.hash (3, loc)
+        in
+        let hash_position (target : target) : int =
+          match target with
+          | Node i -> i
+          | Leaf (Arg (formal, offsets)) ->
+              Hashtbl.hash (hash_formal formal, List.map List.length offsets)
+          | Leaf (Bot | Obj _ | Graph _ | Fun _) -> -1
+        in
+        let size (taints : Taints.t option) : int =
+          match taints with
+          | Some taints -> Taints.cardinal taints
+          | None -> -1
+        in
+        Hashtbl.hash
+          (0, hash_position left, hash_position right, size left_taints, size right_taints)
+    | Kept i -> Hashtbl.hash (1, i)
+    | Replaced { node; leaf; carry; extended; _ } ->
+        Hashtbl.hash
+          (2, node, Taints.cardinal leaf, Taints.cardinal carry, Taints.cardinal extended)
+end
+
+module State_tbl = Hashtbl.Make (State)
+
+(* One product construction: [operands] holds the nodes of both operands,
+ * [nodes] the result's, [states] the index of each state's node. Both
+ * tables are created by the join that runs the construction and owned by
+ * the domain that runs it. *)
+type product = {
+  lang : Lang.t;
+  traces : T.kept_traces;
+  operands : node array;
+  clean_leaves : bool array Lazy.t;
+      (** For each node of [operands], whether a 'Clean' leaf is reachable
+          from it through objects, where 'replace_clean_leaves' changes
+          something. *)
+  on_cycle : bool array Lazy.t;
+      (** For each node of [operands], whether it lies on a cycle: its
+          strongly connected component has several nodes, or an edge from
+          the node to itself. *)
+  nodes : node Dynarray.t;
+  states : int State_tbl.t;
+}
+
+(* Whether the tree [shape] holds a 'Clean' cell that 'replace_clean_leaves'
+ * reaches. *)
+let rec has_clean_leaves (shape : shape) : bool =
+  match shape with
+  | Obj { fields; _ } ->
+      Fields.exists
+        (fun _o (Cell (xtaint, shape) : cell) ->
+          match xtaint with
+          | `Clean -> true
+          | `None
+          | `Tainted _ ->
+              has_clean_leaves shape)
+        fields
+  | Bot
+  | Graph _
+  | Arg _
+  | Fun _ ->
+      false
+
+let clean_leaves_of_operands (operands : node array) : bool array =
+  Shape_and_sig.least_fixpoint ~leq_join:( || )
+    ~local:(fun (i : int) ->
+      match operands.(i) with
+      | Object { edges; _ } ->
+          Fields.exists
+            (fun _o (edge : edge) ->
+              match (edge.xtaint, edge.target) with
+              | `Clean, _ -> true
+              | (`None | `Tainted _), Leaf shape -> has_clean_leaves shape
+              | (`None | `Tainted _), Node _ -> false)
+            edges
+      | Closures _ -> false)
+    (Array.map
+       (fun (node : node) ->
+         match node with
+         | Object _ -> successors node
+         | Closures _ -> [])
+       operands)
+
+let empty_object : node =
+  Object { sites = Shape_and_sig.Sites.empty; summary = false; edges = Fields.empty }
+
+(* The nodes of two operands in one array, the second shifted after the
+ * first unless both are values of one array, and the operands' roots. *)
+let operands (shape1 : shape) (shape2 : shape) : node array * target * target =
+  match (shape1, shape2) with
+  | Graph g1, Graph g2 when phys_equal g1.nodes g2.nodes ->
+      (g1.nodes, Node g1.root, Node g2.root)
+  | Graph g1, Graph g2 ->
+      let shift = Array.length g1.nodes in
+      ( Array.append g1.nodes
+          (Array.map
+             (map_targets (fun (target : target) ->
+                  match target with
+                  | Node i -> Node (i + shift)
+                  | Leaf _ -> target))
+             g2.nodes),
+        Node g1.root,
+        Node (g2.root + shift) )
+  | Graph g, _ -> (g.nodes, Node g.root, Leaf shape2)
+  | _, Graph g -> (g.nodes, Leaf shape1, Node g.root)
+  | (Bot | Obj _ | Arg _ | Fun _), (Bot | Obj _ | Arg _ | Fun _) ->
+      ([||], Leaf shape1, Leaf shape2)
+
+let node_of_state (product : product) (states : state list) (state : state) :
+    int * state list =
+  match State_tbl.find_opt product.states state with
+  | Some index -> (index, states)
+  | None ->
+      let index = Dynarray.length product.nodes in
+      Dynarray.add_last product.nodes empty_object;
+      State_tbl.add product.states state index;
+      (index, state :: states)
+
+let keep (product : product) (states : state list) (edge : edge) : edge * state list =
+  match edge.target with
+  | Node i ->
+      let index, states = node_of_state product states (Kept i) in
+      ({ edge with target = Node index }, states)
+  | Leaf _ -> (edge, states)
+
+let keep_closure (product : product) (states : state list) (closure : graph_closure) :
+    graph_closure * state list =
+  let env, states =
+    List.fold_left
+      (fun ((env, states) : (IL.name * graph_env_entry) list * state list)
+           ((x, entry) as binding : IL.name * graph_env_entry) ->
+        match entry with
+        | Val edge ->
+            let edge, states = keep product states edge in
+            ((x, (Val edge : graph_env_entry)) :: env, states)
+        | Ref _ -> (binding :: env, states))
+      ([], states) closure.env
+  in
+  ({ closure with env = List.rev env }, states)
+
+let keep_node (product : product) (states : state list) (node : node) : node * state list =
+  match node with
+  | Object ({ edges; _ } as node) ->
+      let edges, states =
+        Fields.fold
+          (fun (o : T.offset) (edge : edge) ((edges, states) : edge Fields.t * state list) ->
+            let edge, states = keep product states edge in
+            (Fields.add o edge edges, states))
+          edges (Fields.empty, states)
+      in
+      (Object { node with edges }, states)
+  | Closures (c, cs) ->
+      let c, states = keep_closure product states c in
+      let cs, states =
+        List.fold_left
+          (fun ((cs, states) : graph_closure list * state list) (closure : graph_closure) ->
+            let closure, states = keep_closure product states closure in
+            (closure :: cs, states))
+          ([], states) cs
+      in
+      (Closures (c, List.rev cs), states)
+
+let position_node (product : product) (target : target) : node option =
+  match target with
+  | Node i -> Some product.operands.(i)
+  | Leaf shape -> node_of_tree shape
+
+let rec unify_cell_in ~lang ~(traces : T.kept_traces) cell1 cell2 =
+  if phys_equal cell1 cell2 then cell1
   else
   let (Cell (xtaint1, shape1)) = cell1 in
   let (Cell (xtaint2, shape2)) = cell2 in
@@ -553,14 +727,26 @@ let rec unify_cell_in ~lang ~(traces : T.kept_traces) (join : join_context) cell
   let xtaint = Xtaint.union ~traces xtaint1 xtaint2 in
   let carry = Xtaint.to_taints xtaint in
   let shape =
-    unify_shape_in ~lang ~traces join
-      ~process1:(fun join ~other shape ->
-        taint_untracked_fields ~lang ~traces join ~carry ~other_xtaint:xtaint2
-          ~other shape)
-      ~process2:(fun join ~other shape ->
-        taint_untracked_fields ~lang ~traces (flip join) ~carry
-          ~other_xtaint:xtaint1 ~other shape)
-      shape1 shape2
+    match (shape1, shape2) with
+    (* A value joined with an untainted 'Bot' or 'Arg': every field reads
+     * what it holds on the other side, so the value is the join, as
+     * 'taint_untracked_fields' keeps it. *)
+    | Graph _, (Bot | Arg _) when Option.is_none (whole xtaint2) -> shape1
+    | (Bot | Arg _), Graph _ when Option.is_none (whole xtaint1) -> shape2
+    | Graph _, _
+    | _, Graph _ ->
+        join_graphs ~lang ~traces shape1 shape2 (fun (product : product) ->
+            join_targets product [] ~untracked_fields:true ~truncated:false
+              ~left_taints:(whole xtaint1) ~right_taints:(whole xtaint2))
+    | (Bot | Obj _ | Arg _ | Fun _), (Bot | Obj _ | Arg _ | Fun _) ->
+        unify_shape_in ~lang ~traces
+          ~process1:(fun ~other shape ->
+            taint_untracked_fields ~lang ~traces ~carry ~other_xtaint:xtaint2
+              ~other shape)
+          ~process2:(fun ~other shape ->
+            taint_untracked_fields ~lang ~traces ~carry ~other_xtaint:xtaint1
+              ~other shape)
+          shape1 shape2
   in
   if phys_equal xtaint xtaint1 && phys_equal shape shape1 then cell1
   else if phys_equal xtaint xtaint2 && phys_equal shape shape2 then cell2
@@ -587,26 +773,11 @@ let rec unify_cell_in ~lang ~(traces : T.kept_traces) (join : join_context) cell
  *
  * A literal records its untainted fields as 'Clean', and so does a
  * sanitizer. A field that [other] tracks is left to 'unify_obj'. *)
-and taint_untracked_fields ~lang ~(traces : T.kept_traces) (join : join_context) ~carry
+and taint_untracked_fields ~lang ~(traces : T.kept_traces) ~carry
     ~other_xtaint:(xtaint : Xtaint.t) ~other:(other_shape : shape) shape =
   match shape with
   | Obj ({ fields = obj; _ } as node) ->
-      let whole =
-        match xtaint with
-        | `Tainted taints -> Some taints
-        | `None
-        | `Clean ->
-            None
-      in
-      let other_node =
-        match other_shape with
-        | Obj _ -> Some other_shape
-        | Bot
-        | Rec _
-        | Arg _
-        | Fun _ ->
-            None
-      in
+      let whole = whole xtaint in
       let read_on_other o =
         match (other_shape, xtaint) with
         | Obj { fields = other_obj; _ }, _ when Fields.mem o other_obj -> `Tracked
@@ -619,7 +790,7 @@ and taint_untracked_fields ~lang ~(traces : T.kept_traces) (join : join_context)
             | Some cell -> `Cell cell
             | None -> `Whole)
         | Arg _, (`None | `Clean)
-        | (Bot | Rec _ | Fun _), _ ->
+        | (Bot | Graph _ | Fun _), _ ->
             `Whole
       in
       let obj' =
@@ -630,14 +801,10 @@ and taint_untracked_fields ~lang ~(traces : T.kept_traces) (join : join_context)
               | `Tracked, _
               | `Whole, None ->
                   Some field
-              | `Cell cell, _ ->
-                  Some
-                    (unify_cell_in ~lang ~traces
-                       (flip (enter join (Some shape) other_node))
-                       cell field)
+              | `Cell cell, _ -> Some (unify_cell_in ~lang ~traces cell field)
               | `Whole, Some leaf ->
                   replace_clean_leaves ~lang ~traces ~offset:[ o ] ~carry ~leaf
-                    field
+                    ~extended:leaf ~truncated:false field
             with
             | Some field' when phys_equal field' field -> acc
             | Some field' -> Fields.add o field' acc
@@ -645,41 +812,25 @@ and taint_untracked_fields ~lang ~(traces : T.kept_traces) (join : join_context)
           obj obj
       in
       if phys_equal obj' obj then shape
-      else obj_or_bot ~sites:node.sites ~summary:node.summary obj'
-  | Rec n -> (
-      match (xtaint, follow join.left n) with
-      | `Tainted leaf, Some (target, operand) -> (
-          let closed = close_shape operand.enclosing target in
-          match
-            replace_clean_leaves ~lang ~traces ~offset:[] ~carry ~leaf
-              (Cell (`None, closed))
-          with
-          | Some (Cell (_, replaced)) when phys_equal replaced closed -> shape
-          | Some (Cell (_, replaced)) -> replaced
-          | None -> Bot)
-      | (`None | `Clean), _
-      | `Tainted _, None ->
-          shape)
+      else obj_or_bot ~traces ~sites:node.sites ~summary:node.summary obj'
   | Bot
+  | Graph _
   | Arg _
   | Fun _ ->
       shape
 
 (* [process1] and [process2] give an object of one operand as it must appear
- * in the join with the [other] operand's shape ('taint_untracked_fields'); a
- * level records the objects before that, so an object met again through a
- * back reference is recognised. *)
-and unify_shape_in ~lang ~(traces : T.kept_traces) (join : join_context)
-    ~(process1 : join_context -> other:shape -> shape -> shape)
-    ~(process2 : join_context -> other:shape -> shape -> shape) shape1 shape2 =
-  if phys_equal shape1 shape2 && both_unshifted join then shape1
+ * in the join with the [other] operand's shape ('taint_untracked_fields'). *)
+and unify_shape_in ~lang ~(traces : T.kept_traces)
+    ~(process1 : other:shape -> shape -> shape)
+    ~(process2 : other:shape -> shape -> shape) shape1 shape2 =
+  if phys_equal shape1 shape2 then shape1
   else
   match (shape1, shape2) with
   | Bot, shape ->
       (* 'Bot' acts like a do-not-care. *)
-      reindex_right join (process2 join ~other:shape1 shape)
-  | shape, Bot -> reindex_left join (process1 join ~other:shape2 shape)
-  | Rec n1, Rec n2 when both_unshifted join && Int.equal n1 n2 -> shape1
+      process2 ~other:shape1 shape
+  | shape, Bot -> process1 ~other:shape2 shape
   | Fun (c1, cs1), Fun (c2, cs2) ->
       let c, cs = unify_closure_sets ~lang ~traces (c1, cs1) (c2, cs2) in
       Fun (c, cs)
@@ -707,75 +858,38 @@ and unify_shape_in ~lang ~(traces : T.kept_traces) (join : join_context)
             (T.show_formal arg1) (T.show_formal arg2));
       shape1
   (* 'Arg' acts like a shape variable. *)
-  | Arg _, ((Obj _ | Rec _) as obj) ->
-      reindex_right join (process2 join ~other:shape1 obj)
-  | ((Obj _ | Rec _) as obj), Arg _ ->
-      reindex_left join (process1 join ~other:shape2 obj)
+  | Arg _, (Obj _ as obj) -> process2 ~other:shape1 obj
+  | (Obj _ as obj), Arg _ -> process1 ~other:shape2 obj
   | Arg _, (Fun _ as func)
   | (Fun _ as func), Arg _ ->
       func
-  | Rec n, _ -> (
-      match follow join.left n with
-      | Some (target, left) ->
-          unify_shape_in ~lang ~traces
-            { join with left; unrolled = true }
-            ~process1 ~process2 target shape2
-      | None -> shape1)
-  | _, Rec n -> (
-      match follow join.right n with
-      | Some (target, right) ->
-          unify_shape_in ~lang ~traces
-            { join with right; unrolled = true }
-            ~process1 ~process2 shape1 target
-      | None -> shape2)
   | Obj _, Obj _ -> (
-      let cycle =
-        if join.unrolled && (is_summary shape1 || is_summary shape2) then
-          List.find_index
-            (fun level ->
-              match level with
-              | Some node1, Some node2 ->
-                  phys_equal node1 shape1 && phys_equal node2 shape2
-              | _ -> false)
-            join.levels
-        else None
-      in
-      match cycle with
-      | Some m -> Rec m
-      | None -> (
-          match
-            ( process1 join ~other:shape2 shape1,
-              process2 join ~other:shape1 shape2 )
-          with
-          | ( (Obj { sites = sites1; summary = summary1; fields = obj1 } as
-               processed1),
-              (Obj { sites = sites2; summary = summary2; fields = obj2 } as
-               processed2) ) ->
-              let fields =
-                unify_obj_in ~lang ~traces
-                  (enter join (Some shape1) (Some shape2))
-                  obj1 obj2
-              in
-              let subsumes (sites : Shape_and_sig.Sites.t) (summary : bool)
-                  (obj : obj) (other_sites : Shape_and_sig.Sites.t)
-                  (other_summary : bool) : bool =
-                phys_equal fields obj
-                && (summary || not other_summary)
-                && (phys_equal sites other_sites
-                   || Shape_and_sig.Sites.subset other_sites sites)
-              in
-              if subsumes sites1 summary1 obj1 sites2 summary2 then processed1
-              else if subsumes sites2 summary2 obj2 sites1 summary1 then
-                processed2
-              else
-                Obj
-                  {
-                    sites = Shape_and_sig.Sites.union sites1 sites2;
-                    summary = summary1 || summary2;
-                    fields;
-                  }
-          | Bot, shape -> reindex_right join shape
-          | shape, _ -> reindex_left join shape))
+      match (process1 ~other:shape2 shape1, process2 ~other:shape1 shape2) with
+      | ( (Obj { sites = sites1; summary = summary1; fields = obj1 } as
+           processed1),
+          (Obj { sites = sites2; summary = summary2; fields = obj2 } as
+           processed2) ) ->
+          let fields = unify_obj_in ~lang ~traces obj1 obj2 in
+          let subsumes (sites : Shape_and_sig.Sites.t) (summary : bool)
+              (obj : obj) (other_sites : Shape_and_sig.Sites.t)
+              (other_summary : bool) : bool =
+            phys_equal fields obj
+            && (summary || not other_summary)
+            && (phys_equal sites other_sites
+               || Shape_and_sig.Sites.subset other_sites sites)
+          in
+          if subsumes sites1 summary1 obj1 sites2 summary2 then processed1
+          else if subsumes sites2 summary2 obj2 sites1 summary1 then
+            processed2
+          else
+            Obj
+              {
+                sites = Shape_and_sig.Sites.union sites1 sites2;
+                summary = summary1 || summary2;
+                fields;
+              }
+      | Bot, shape -> shape
+      | shape, _ -> shape)
   | Obj _, Fun _
   | Fun _, Obj _ ->
       (* This could be caused by bugs in Semgrep, or by an if-then-else in a
@@ -785,30 +899,27 @@ and unify_shape_in ~lang ~(traces : T.kept_traces) (join : join_context)
           m "Trying to unify incompatible shapes: %s ~ %s" (show_shape shape1)
             (show_shape shape2));
       (* Not sure what to do here, so we just pick one arbitrary shape. *)
-      reindex_left join (process1 join ~other:shape2 shape1)
+      process1 ~other:shape2 shape1
+  | Arg _, Graph _ -> shape2
+  | Graph _, Arg _ -> shape1
+  | Graph _, _
+  | _, Graph _ ->
+      join_graphs ~lang ~traces shape1 shape2 (fun (product : product) ->
+          join_targets product [] ~untracked_fields:false ~truncated:false
+            ~left_taints:None ~right_taints:None)
 
-and unify_obj_in ~lang ~(traces : T.kept_traces) (join : join_context) obj1 obj2 =
+and unify_obj_in ~lang ~(traces : T.kept_traces) obj1 obj2 =
   (* THINK: Apply taint_MAX_OBJ_FIELDS limit ? *)
-  if both_unshifted join then
-    if Fields.is_empty obj1 then obj2
-    else
-      Fields.fold
-        (fun o cell2 obj ->
-          Fields.update o
-            (function
-              | None -> Some cell2
-              | Some cell1 -> Some (unify_cell_in ~lang ~traces join cell1 cell2))
-            obj)
-        obj2 obj1
+  if Fields.is_empty obj1 then obj2
   else
-    Fields.merge
-      (fun _ x y ->
-        match (x, y) with
-        | Some x, Some y -> Some (unify_cell_in ~lang ~traces join x y)
-        | Some x, None -> Some (map_cell_shape (reindex_left join) x)
-        | None, Some y -> Some (map_cell_shape (reindex_right join) y)
-        | None, None -> None)
-      obj1 obj2
+    Fields.fold
+      (fun o cell2 obj ->
+        Fields.update o
+          (function
+            | None -> Some cell2
+            | Some cell1 -> Some (unify_cell_in ~lang ~traces cell1 cell2))
+          obj)
+      obj2 obj1
 
 and unify_closure ~lang ~(traces : T.kept_traces) (c1 : closure)
     (c2 : closure) : closure =
@@ -851,23 +962,491 @@ and unify_env ~lang ~(traces : T.kept_traces) (env1 : env) (env2 : env) : env =
   List.map2
     (fun ((x, entry1) as binding1) (_, entry2) ->
       match (entry1, entry2) with
-      | Val cell1, Val cell2 ->
-          (x, Val (unify_cell_in ~lang ~traces empty_join_context cell1 cell2))
+      | Val cell1, Val cell2 -> (x, Val (unify_cell_in ~lang ~traces cell1 cell2))
       | Ref _, _
       | Val _, Ref _ ->
           binding1)
     env1 env2
 
+(* The join of [shape1] and [shape2], one of them at least a graph, as the
+ * product of the two (Rabin and Scott 1959) restricted to the states
+ * reachable from the pair of roots: [root] gives the root's target and the
+ * states it refers to, and each state's node is built once, so a state met
+ * again, on the current path (a cycle) or on another (sharing), is an edge
+ * to its node. The result is minimal, and an operand equal to it is
+ * returned physically.
+ *
+ * A read through a parameter, and the taint of a whole value that a
+ * 'Clean' leaf takes, are extended by the key of every edge from the root
+ * to the first node of a cycle, that edge's key included, and truncated
+ * below it: their polymorphic taints are those of the access path cut
+ * there ('cut_poly_taints'). 'Var l' stands for the taints of the actual's
+ * cell at [l] and 'Shape_var l' for every taint reachable from the
+ * actual's value at [l] ('Sig_inst.instantiate_taint_var'), so together
+ * they cover 'Var l.w' for every extension [w]. The truncated path is a
+ * prefix of every path that the unrolling of the cycle would give to the
+ * positions below, so every taint a read below the first node of the cycle
+ * would carry is carried. The read is coarser than the unrolled read: the
+ * taints of the siblings under [l] are included.
+ *
+ * Termination: a two-sided state is a pair of positions, one of each
+ * operand in either order ('untracked_edge' puts the other operand's edge
+ * first), with the taints of the edges that reach them and two flags, at
+ * most eight times the product of the numbers of edges into the two
+ * operands' positions, the roots counted as one edge each:
+ * 8 (E1 + 1) (E2 + 1). A one-sided state (a pair with an 'Arg' or 'Bot'
+ * side, or a 'Replaced' node) below the first node of a cycle carries the
+ * argument, the taints and the extended taint as truncated there, and
+ * otherwise only the taint of the nearest tainted edge above its node
+ * ('Replaced.carry'), so the states in a cycle's component are at most the
+ * edges into its nodes times the distinct truncated values at its entries;
+ * above it, the paths from the root are acyclic. *)
+and join_graphs ~lang ~(traces : T.kept_traces) (shape1 : shape) (shape2 : shape)
+    (root : product -> target -> target -> target * state list) : shape =
+  match (shape1, shape2) with
+  | _ when phys_equal shape1 shape2 -> shape1
+  | Graph _, Graph _ when equal_shape_with_guards shape1 shape2 -> shape1
+  | _ ->
+  let operands, target1, target2 = operands shape1 shape2 in
+  let product =
+    {
+      lang;
+      traces;
+      operands;
+      clean_leaves = lazy (clean_leaves_of_operands operands);
+      on_cycle =
+        lazy
+          (let successors = Array.map successors operands in
+           let count, component_of =
+             Shape_and_sig.Adjacency_components.scc successors
+           in
+           let sizes = Array.make count 0 in
+           Array.iteri
+             (fun (i : int) (_ : int list) ->
+               sizes.(component_of i) <- sizes.(component_of i) + 1)
+             successors;
+           Array.mapi
+             (fun (i : int) (next : int list) ->
+               sizes.(component_of i) > 1 || List.exists (Int.equal i) next)
+             successors);
+      nodes = Dynarray.create ();
+      states = State_tbl.create 16;
+    }
+  in
+  let target, roots = root product target1 target2 in
+  (* [node_of_state] returns only the states it creates, so each state is
+   * expanded once. *)
+  let rec build (states : state list) : unit =
+    List.iter (fun (state : state) -> build (expand product state)) states
+  in
+  build roots;
+  let shape = minimise ~traces (Dynarray.to_array product.nodes) target in
+  if equal_shape_with_guards shape shape1 then shape1
+  else if equal_shape_with_guards shape shape2 then shape2
+  else shape
+
+(* Whether a position is a node on a cycle. *)
+and on_cycle (product : product) (target : target) : bool =
+  match target with
+  | Node i -> (Lazy.force product.on_cycle).(i)
+  | Leaf _ -> false
+
+(* Builds the node of [state] and returns the states that it refers to. *)
+and expand (product : product) (state : state) : state list =
+  let index = State_tbl.find product.states state in
+  let node, states =
+    match state with
+    | Pair { left; left_taints; right; right_taints; untracked_fields; truncated } -> (
+        match
+          pair_content product [] ~untracked_fields ~truncated ~left_taints ~right_taints
+            left right
+        with
+        | Some node, states -> (node, states)
+        | None, states -> (empty_object, states))
+    | Kept i -> keep_node product [] product.operands.(i)
+    | Replaced { node; leaf; carry; extended; truncated } -> (
+        let extended, truncated =
+          if (not truncated) && on_cycle product (Node node) then
+            (cut_poly_taints ~traces:product.traces extended, true)
+          else (extended, truncated)
+        in
+        match product.operands.(node) with
+        | Object ({ edges; _ } as node) ->
+            let edges, states =
+              Fields.fold
+                (fun (o : T.offset) (edge : edge)
+                     ((edges, states) : edge Fields.t * state list) ->
+                  let extended =
+                    if truncated then Lazy.from_val extended
+                    else
+                      lazy
+                        (fix_poly_taint_with_offset ~lang:product.lang
+                           ~traces:product.traces [ o ] extended)
+                  in
+                  match replace product states ~truncated ~leaf ~carry ~extended edge with
+                  | Some edge, states -> (Fields.add o edge edges, states)
+                  | None, states -> (edges, states))
+                edges (Fields.empty, [])
+            in
+            (Object { node with edges }, states)
+        | Closures _ as node -> keep_node product [] node)
+  in
+  Dynarray.set product.nodes index node;
+  states
+
+(* 'unify_cell_in' on two edges. *)
+and join_edges (product : product) (states : state list) ~(truncated : bool)
+    (edge1 : edge) (edge2 : edge) : edge * state list =
+  match (edge1.target, edge2.target) with
+  | Leaf (Arg _), Leaf (Obj _)
+  | Leaf (Obj _), Leaf (Arg _)
+    when truncated ->
+      (* The tree join would extend the 'Arg' by the object's keys. *)
+      let target, states =
+        join_targets product states ~untracked_fields:true ~truncated
+          ~left_taints:(whole edge1.xtaint) ~right_taints:(whole edge2.xtaint)
+          edge1.target edge2.target
+      in
+      (edge_of_join (Xtaint.union ~traces:product.traces edge1.xtaint edge2.xtaint) target, states)
+  | Leaf shape1, Leaf shape2 ->
+      let (Cell (xtaint, shape)) =
+        unify_cell_in ~lang:product.lang ~traces:product.traces
+          (Cell (edge1.xtaint, shape1))
+          (Cell (edge2.xtaint, shape2))
+      in
+      ({ xtaint; target = Leaf shape }, states)
+  | (Node _ | Leaf _), _ ->
+      let target, states =
+        join_targets product states ~untracked_fields:true ~truncated
+          ~left_taints:(whole edge1.xtaint) ~right_taints:(whole edge2.xtaint)
+          edge1.target edge2.target
+      in
+      (edge_of_join (Xtaint.union ~traces:product.traces edge1.xtaint edge2.xtaint) target, states)
+
+(* 'unify_shape_in' on two targets, one at least a node. *)
+and join_targets (product : product) (states : state list) ~untracked_fields
+    ~(truncated : bool) ~left_taints ~right_taints (target1 : target)
+    (target2 : target) : target * state list =
+  match (target1, target2) with
+  (* A node joined with itself: every field is on both sides, so the join
+   * is the node, as 'unify_shape_in' returns a shape joined with itself. *)
+  | Node i, Node j when Int.equal i j ->
+      let index, states = node_of_state product states (Kept i) in
+      (Node index, states)
+  | _ when is_position target1 && is_position target2 ->
+      let index, states =
+        node_of_state product states
+          (Pair
+             {
+               left = target1;
+               left_taints;
+               right = target2;
+               right_taints;
+               untracked_fields;
+               truncated;
+             })
+      in
+      (Node index, states)
+  | _ -> (
+      match
+        pair_content product states ~untracked_fields ~truncated ~left_taints
+          ~right_taints target1 target2
+      with
+      | None, states -> (Leaf Bot, states)
+      | Some node, states ->
+          Dynarray.add_last product.nodes node;
+          (Node (Dynarray.length product.nodes - 1), states))
+
+(* The node of the join at two positions; 'None' when it is 'Bot'. Below a
+ * node on a cycle, the states it refers to are truncated. *)
+and pair_content (product : product) (states : state list) ~untracked_fields
+    ~(truncated : bool) ~left_taints ~right_taints (target1 : target)
+    (target2 : target) : node option * state list =
+  let truncated = truncated || on_cycle product target1 || on_cycle product target2 in
+  let carry = union_whole ~traces:product.traces left_taints right_taints in
+  let processed ~whole ~other (target : target) : node option * state list =
+    match position_node product target with
+    | Some node ->
+        processed_node product states ~untracked_fields ~truncated ~carry ~whole ~other
+          node
+    | None -> (None, states)
+  in
+  match (target1, target2) with
+  (* 'Bot' acts like a do-not-care. *)
+  | Leaf Bot, _ -> processed ~whole:left_taints ~other:target1 target2
+  | _, Leaf Bot -> processed ~whole:right_taints ~other:target2 target1
+  (* 'Arg' acts like a shape variable. *)
+  | Leaf (Arg _), _ -> processed ~whole:left_taints ~other:target1 target2
+  | _, Leaf (Arg _) -> processed ~whole:right_taints ~other:target2 target1
+  | _ ->
+      pair_node product states ~untracked_fields ~truncated ~left_taints ~right_taints
+        target1 target2
+
+and union_whole ~(traces : T.kept_traces) (taints1 : Taints.t option)
+    (taints2 : Taints.t option) : Taints.t =
+  match (taints1, taints2) with
+  | Some taints1, Some taints2 -> Taints.union ~traces taints1 taints2
+  | Some taints, None
+  | None, Some taints ->
+      taints
+  | None, None -> Taints.empty
+
+(* The node of the join of two objects or closure sets; 'None' when the
+ * result is 'Bot'. *)
+and pair_node (product : product) (states : state list) ~untracked_fields
+    ~(truncated : bool) ~left_taints ~right_taints (target1 : target)
+    (target2 : target) : node option * state list =
+  let carry = union_whole ~traces:product.traces left_taints right_taints in
+  match (position_node product target1, position_node product target2) with
+  | Some (Object object1), Some (Object object2) ->
+      let untracked ~whole ~other (o : T.offset) (edge : edge) states =
+        if untracked_fields then
+          untracked_edge product states ~truncated ~carry ~whole ~other o edge
+        else
+          let edge, states = keep product states edge in
+          (Some edge, states)
+      in
+      let fields, kept1, kept2, states =
+        Fields.fold
+          (fun (o : T.offset) (edge1 : edge)
+               ((fields, kept1, kept2, states) : edge Fields.t * bool * bool * state list) ->
+            match Fields.find_opt o object2.edges with
+            | Some edge2 ->
+                let edge, states = join_edges product states ~truncated edge1 edge2 in
+                (Fields.add o edge fields, true, true, states)
+            | None -> (
+                match untracked ~whole:right_taints ~other:target2 o edge1 states with
+                | Some edge, states -> (Fields.add o edge fields, true, kept2, states)
+                | None, states -> (fields, kept1, kept2, states)))
+          object1.edges (Fields.empty, false, false, states)
+      in
+      let fields, kept2, states =
+        Fields.fold
+          (fun (o : T.offset) (edge2 : edge)
+               ((fields, kept2, states) : edge Fields.t * bool * state list) ->
+            if Fields.mem o object1.edges then (fields, kept2, states)
+            else
+              match untracked ~whole:left_taints ~other:target1 o edge2 states with
+              | Some edge, states -> (Fields.add o edge fields, true, states)
+              | None, states -> (fields, kept2, states))
+          object2.edges (fields, kept2, states)
+      in
+      let node =
+        match (kept1, kept2) with
+        | false, false -> None
+        | true, false ->
+            Some (Object { sites = object1.sites; summary = object1.summary; edges = fields })
+        | false, true ->
+            Some (Object { sites = object2.sites; summary = object2.summary; edges = fields })
+        | true, true ->
+            Some
+              (Object
+                 {
+                   sites = Shape_and_sig.Sites.union object1.sites object2.sites;
+                   summary = object1.summary || object2.summary;
+                   edges = fields;
+                 })
+      in
+      (node, states)
+  | Some (Closures (c1, cs1)), Some (Closures (c2, cs2)) -> (
+      match closure_sets product states ~truncated (c1 :: cs1) (c2 :: cs2) with
+      | c :: cs, states -> (Some (Closures (c, cs)), states)
+      | [], states -> (None, states))
+  | Some node1, Some _ ->
+      (* As in 'unify_shape_in': the left shape, as it must be seen at the
+       * join. *)
+      let show_target (target : target) : string =
+        match target with
+        | Node i -> spf "node<%d>" i
+        | Leaf shape -> show_shape shape
+      in
+      Log.err (fun m ->
+          m "Trying to unify incompatible shapes: %s ~ %s" (show_target target1)
+            (show_target target2));
+      processed_node product states ~untracked_fields ~truncated ~carry
+        ~whole:right_taints ~other:target2 node1
+  | None, _
+  | _, None ->
+      (None, states)
+
+(* 'unify_closure_sets' on the closures of two closure sets, in increasing
+ * order of their definitions. *)
+and closure_sets (product : product) (states : state list) ~(truncated : bool)
+    (cs1 : graph_closure list) (cs2 : graph_closure list) :
+    graph_closure list * state list =
+  match (cs1, cs2) with
+  | [], cs
+  | cs, [] ->
+      List.fold_right
+        (fun (closure : graph_closure) ((cs, states) : graph_closure list * state list) ->
+          let closure, states = keep_closure product states closure in
+          (closure :: cs, states))
+        cs ([], states)
+  | c1 :: rest1, c2 :: rest2 -> (
+      match Function_id.compare c1.def c2.def with
+      | 0 ->
+          let c, states = closure_pair product states ~truncated c1 c2 in
+          let cs, states = closure_sets product states ~truncated rest1 rest2 in
+          (c :: cs, states)
+      | n when n < 0 ->
+          let c, states = keep_closure product states c1 in
+          let cs, states = closure_sets product states ~truncated rest1 cs2 in
+          (c :: cs, states)
+      | _ ->
+          let c, states = keep_closure product states c2 in
+          let cs, states = closure_sets product states ~truncated cs1 rest2 in
+          (c :: cs, states))
+
+(* 'unify_closure' on two closures of one definition, whose captured cells
+ * are joined as states of the product. *)
+and closure_pair (product : product) (states : state list) ~(truncated : bool)
+    (c1 : graph_closure) (c2 : graph_closure) : graph_closure * state list =
+  let env, states =
+    List.fold_left2
+      (fun ((env, states) : (IL.name * graph_env_entry) list * state list)
+           ((x, entry1) : IL.name * graph_env_entry)
+           ((_, entry2) : IL.name * graph_env_entry) ->
+        match (entry1, entry2) with
+        | Val edge1, Val edge2 ->
+            let edge, states = join_edges product states ~truncated edge1 edge2 in
+            ((x, (Val edge : graph_env_entry)) :: env, states)
+        | Val edge1, Ref _ ->
+            let edge, states = keep product states edge1 in
+            ((x, Val edge) :: env, states)
+        | Ref _, _ -> ((x, entry1) :: env, states))
+      ([], states) c1.env c2.env
+  in
+  let sig_ =
+    if phys_equal c1.sig_ c2.sig_ then c1.sig_
+    else
+      {
+        c1.sig_ with
+        Signature.effects =
+          Effects.union ~traces:product.traces c1.sig_.Signature.effects
+            c2.sig_.Signature.effects;
+      }
+  in
+  ({ c1 with sig_; env = List.rev env }, states)
+
+(* 'taint_untracked_fields' on the edges of [node], whose other side is
+ * [other] with the taint [whole]. *)
+and processed_node (product : product) (states : state list) ~untracked_fields
+    ~(truncated : bool) ~carry ~whole ~other (node : node) : node option * state list =
+  match node with
+  | Object ({ edges; _ } as node) ->
+      let edges', states =
+        Fields.fold
+          (fun (o : T.offset) (edge : edge) ((edges, states) : edge Fields.t * state list) ->
+            match
+              if untracked_fields then
+                untracked_edge product states ~truncated ~carry ~whole ~other o edge
+              else
+                let edge, states = keep product states edge in
+                (Some edge, states)
+            with
+            | Some edge, states -> (Fields.add o edge edges, states)
+            | None, states -> (edges, states))
+          edges (Fields.empty, states)
+      in
+      if Fields.is_empty edges' && not (Fields.is_empty edges) then (None, states)
+      else (Some (Object { node with edges = edges' }), states)
+  | Closures _ ->
+      let node, states = keep_node product states node in
+      (Some node, states)
+
+(* A field [o] of one side that the [other] side does not track: joined
+ * with what a read of [o] gives on the other side, or its 'Clean' leaves
+ * given the other side's [whole] taint ('taint_untracked_fields'). When
+ * [truncated], the read through a parameter and the whole taint are not
+ * extended by [o] but cut ('cut_poly_taints', 'join_graphs'). *)
+and untracked_edge (product : product) (states : state list) ~(truncated : bool)
+    ~carry ~whole ~(other : target) (o : T.offset) (edge : edge) :
+    edge option * state list =
+  let read_on_other =
+    match (position_node product other, other, whole) with
+    | Some (Object { edges; _ }), _, _ when Fields.mem o edges -> `Tracked
+    | Some (Object { edges; _ }), _, _ -> (
+        match Fields.find_opt T.Oany edges with
+        | Some any -> `Edge any
+        | None -> `Whole)
+    | _, Leaf (Arg _), Some taints when truncated ->
+        `Edge
+          { xtaint = `Tainted (cut_poly_taints ~traces:product.traces taints); target = other }
+    | _, Leaf (Arg (arg, base_offsets)), Some taints -> (
+        match
+          find_in_arg ~lang:product.lang ~traces:product.traces ~taints [ o ] arg
+            base_offsets
+        with
+        | Some (Cell (xtaint, shape)) -> `Edge { xtaint; target = Leaf shape }
+        | None -> `Whole)
+    | _, _, _ -> `Whole
+  in
+  match (read_on_other, whole) with
+  | `Tracked, _
+  | `Whole, None ->
+      let edge, states = keep product states edge in
+      (Some edge, states)
+  | `Edge any, _ ->
+      let edge, states = join_edges product states ~truncated any edge in
+      (Some edge, states)
+  | `Whole, Some leaf ->
+      replace product states ~truncated ~leaf ~carry
+        ~extended:
+          (if truncated then Lazy.from_val (cut_poly_taints ~traces:product.traces leaf)
+           else
+             lazy
+               (fix_poly_taint_with_offset ~lang:product.lang ~traces:product.traces
+                  [ o ] leaf))
+        edge
+
+(* 'replace_clean_leaves' on an edge; [extended] is [leaf] extended by the
+ * offset of the edge from the join, computed only where a 'Clean' leaf is
+ * below the edge: elsewhere the edge is kept as it is. *)
+and replace (product : product) (states : state list) ~(truncated : bool) ~leaf
+    ~carry ~(extended : Taints.t Lazy.t) (edge : edge) : edge option * state list =
+  match (edge.xtaint, edge.target) with
+  | `Clean, _ ->
+      let extended = Lazy.force extended in
+      if Taints.equal leaf carry || Taints.is_empty extended then (None, states)
+      else (Some { xtaint = `Tainted extended; target = Leaf Bot }, states)
+  | (`None | `Tainted _), Leaf shape when has_clean_leaves shape ->
+      ( replace_clean_leaves ~lang:product.lang ~traces:product.traces ~offset:[]
+          ~carry ~leaf ~extended:(Lazy.force extended) ~truncated
+          (Cell (edge.xtaint, shape))
+        |> Option.map (fun (Cell (xtaint, shape)) -> { xtaint; target = Leaf shape }),
+        states )
+  | (`None | `Tainted _), Node i when (Lazy.force product.clean_leaves).(i) -> (
+      match product.operands.(i) with
+      | Closures _ ->
+          let edge, states = keep product states edge in
+          (Some edge, states)
+      | Object _ ->
+          let carry =
+            match edge.xtaint with
+            | `Tainted taints -> taints
+            | `None
+            | `Clean ->
+                carry
+          in
+          let index, states =
+            node_of_state product states
+              (Replaced
+                 { node = i; leaf; carry; extended = Lazy.force extended; truncated })
+          in
+          (Some { edge with target = Node index }, states))
+  | (`None | `Tainted _), (Leaf _ | Node _) ->
+      let edge, states = keep product states edge in
+      (Some edge, states)
+
 let unify_cell ~lang ~(traces : T.kept_traces) cell1 cell2 =
-  unify_cell_in ~lang ~traces empty_join_context cell1 cell2
+  unify_cell_in ~lang ~traces cell1 cell2
 
 let unify_shape ~lang ~(traces : T.kept_traces) shape1 shape2 =
-  let keep (_ : join_context) ~other:(_ : shape) (shape : shape) : shape = shape in
-  unify_shape_in ~lang ~traces empty_join_context ~process1:keep ~process2:keep shape1
-    shape2
+  let keep ~other:(_ : shape) (shape : shape) : shape = shape in
+  unify_shape_in ~lang ~traces ~process1:keep ~process2:keep shape1 shape2
 
 let unify_obj ~lang ~(traces : T.kept_traces) obj1 obj2 =
-  unify_obj_in ~lang ~traces empty_join_context obj1 obj2
+  unify_obj_in ~lang ~traces obj1 obj2
 
 (*********************************************************)
 (* Object shapes *)
@@ -890,7 +1469,8 @@ let add_field_to_obj_check_invariant obj offset taints shape =
       Fields.add offset (Cell (`Clean, Bot)) obj
   | xtaint, shape -> Fields.add offset (Cell (xtaint, shape)) obj
 
-let tuple_like_obj ~(site : T.call_loc) taints_and_shapes : shape =
+let tuple_like_obj ~(traces : T.kept_traces) ~(site : T.call_loc)
+    taints_and_shapes : shape =
   let _index, obj =
     taints_and_shapes
     |> List.fold_left
@@ -902,7 +1482,7 @@ let tuple_like_obj ~(site : T.call_loc) taints_and_shapes : shape =
          (0, Fields.empty)
   in
   (* See INVARIANT(cell) *)
-  obj_or_bot
+  obj_or_bot ~traces
     ~sites:(Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at site))
     ~summary:false obj
 
@@ -928,12 +1508,10 @@ let record_or_dict_like_obj ~lang ~(traces : T.kept_traces) ~(site : T.call_loc)
                in
                add_field_to_obj_check_invariant obj offset taints shape
            | `Spread shape -> (
-               match shape with
-               | Obj { fields = obj'; _ } ->
-                   unify_obj ~lang ~traces obj
-                     (map_fields (close_cell [ shape ]) obj')
+               match unfold shape with
+               | Obj { fields = obj'; _ } -> unify_obj ~lang ~traces obj obj'
                | Bot
-               | Rec _
+               | Graph _
                | Arg _
                | Fun _ ->
                    Log.err (fun m ->
@@ -945,53 +1523,13 @@ let record_or_dict_like_obj ~lang ~(traces : T.kept_traces) ~(site : T.call_loc)
          Fields.empty
   in
   (* See INVARIANT(cell) *)
-  obj_or_bot
+  obj_or_bot ~traces
     ~sites:(Shape_and_sig.Sites.singleton (Shape_and_sig.Built_at site))
     ~summary:false obj
 
 (*********************************************************)
 (* Collect/union all taints *)
 (*********************************************************)
-
-(* THINK: Generalize to "fold" ? *)
-let rec gather_all_taints_in_cell_acc ~(traces : T.kept_traces) acc cell =
-  let (Cell (xtaint, shape)) = cell in
-  match xtaint with
-  | `Clean ->
-      (* Due to INVARIANT(cell) we can just stop here. *)
-      acc
-  | `None -> gather_all_taints_in_shape_acc ~traces acc shape
-  | `Tainted taints ->
-      gather_all_taints_in_shape_acc ~traces (Taints.union ~traces taints acc)
-        shape
-
-and gather_all_taints_in_shape_acc ~(traces : T.kept_traces) acc = function
-  | Bot
-  | Rec _ ->
-      acc
-  | Obj { fields; _ } -> gather_all_taints_in_obj_acc ~traces acc fields
-  | Arg (arg, offsets) ->
-      (* One [Shape_var] per alternative offset. *)
-      List.fold_left
-        (fun acc off ->
-          let lval = { T.base = T.base_of_formal arg; offset = off } in
-          let taint = T.taint_of_orig (T.Shape_var lval) in
-          Taints.add_taint ~traces taint acc)
-        acc offsets
-  | Fun _ ->
-      (* Consider a third-party/opaque function to which we pass a record that
-       * contains a function object. Should be gather the taints in the function
-       * shape? In principle, no, since taints within a function shape aren't
-       * reachable until the function gets called...
-       *
-       * TODO: We could perhaps consider gathering the concrete taint sources
-       * that may be reachable if the function ever gets called? *)
-      acc
-
-and gather_all_taints_in_obj_acc ~(traces : T.kept_traces) acc obj =
-  Fields.fold
-    (fun _ o_cell acc -> gather_all_taints_in_cell_acc ~traces acc o_cell)
-    obj acc
 
 let gather_all_taints_in_cell ~(traces : T.kept_traces) =
   gather_all_taints_in_cell_acc ~traces Taints.empty
@@ -1036,49 +1574,74 @@ let gather_all_taints_in_args_taints ~(traces : T.kept_traces)
  * Returns [None] when the truncated cell carries no information
  * ([`None]/[Bot]), so obj entries can be dropped and INVARIANT(cell) is
  * preserved. *)
-let rec truncate_cell ~(traces : T.kept_traces) ~budget
-    ~(enclosing : shape list) cell : cell option =
+let rec truncate_cell ~(traces : T.kept_traces) ~budget cell : cell option =
   let (Cell (xtaint, shape)) = cell in
   match shape with
   | Bot
-  | Rec _
+  | Graph _
   | Arg _
   | Fun _ ->
       Some cell
   | Obj ({ fields = obj; _ } as node) ->
       if budget <= 0 then (
-        let deep = gather_all_taints_in_cell ~traces (close_cell enclosing cell) in
+        let deep = gather_all_taints_in_cell ~traces cell in
         if Taints.is_empty deep then None
         else Some (Cell (`Tainted deep, Bot)))
       else
         let obj' =
           Fields.filter_map
-            (fun _o inner ->
-              truncate_cell ~traces ~budget:(budget - 1)
-                ~enclosing:(shape :: enclosing) inner)
+            (fun _o inner -> truncate_cell ~traces ~budget:(budget - 1) inner)
             obj
         in
-        let shape' = obj_or_bot ~sites:node.sites ~summary:node.summary obj' in
+        let shape' = obj_or_bot ~traces ~sites:node.sites ~summary:node.summary obj' in
         (match (xtaint, shape') with
         (* Restore INVARIANT(cell).1 *)
         | `None, Bot -> None
         (* Restore INVARIANT(cell).2, see 'unify_cell'. *)
-        | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) -> Some (Cell (`None, shape'))
+        | `Clean, (Obj _ | Graph _ | Arg _ | Fun _) -> Some (Cell (`None, shape'))
         | ( (`Clean | `None | `Tainted _),
-            (Bot | Obj _ | Rec _ | Arg _ | Fun _) ) ->
+            (Bot | Obj _ | Graph _ | Arg _ | Fun _) ) ->
             Some (Cell (xtaint, shape')))
+
+(* The depth of each object node of [g] (-1 when no path of objects reaches
+ * it): its breadth-first distance from the root over the edges of objects,
+ * the levels of 'Obj' nesting of the tree that unfolds the graph at its
+ * first occurrence. A closure set is not descended into, as in
+ * [truncate_cell]. *)
+let object_depths (g : graph) : int array =
+  let depths = Array.make (Array.length g.nodes) (-1) in
+  Shape_and_sig.Adjacency_bfs.iter_component_dist
+    (fun (i : int) (depth : int) -> depths.(i) <- depth)
+    (Array.map
+       (fun (node : node) ->
+         match node with
+         | Object _ -> successors node
+         | Closures _ -> [])
+       g.nodes)
+    g.root;
+  depths
+
+(* Whether the edge of an object at [depth] reaches an object below
+ * [max_depth], or a tree that exceeds the levels left. *)
+let rec edge_exceeds (g : graph) (depths : int array) ~(max_depth : int)
+    ~(depth : int) (edge : edge) : bool =
+  match edge.target with
+  | Node j -> (
+      match g.nodes.(j) with
+      | Object _ -> depths.(j) >= max_depth
+      | Closures _ -> false)
+  | Leaf shape -> shape_depth_exceeds ~budget:(max_depth - depth - 1) shape
 
 (* Fast path for [truncate_shape]: [record_effects] truncates every effect
  * it records, and almost all shapes are nowhere near the cutoff, so don't
  * rebuild (reallocate) a shape that is already within budget. Short-circuits
  * via [Fields.exists]. *)
-let rec cell_depth_exceeds ~budget (Cell (_xtaint, shape)) =
+and cell_depth_exceeds ~budget (Cell (_xtaint, shape)) =
   shape_depth_exceeds ~budget shape
 
 and shape_depth_exceeds ~budget shape =
   match shape with
   | Bot
-  | Rec _
   | Arg _
   | Fun _ ->
       false
@@ -1087,15 +1650,31 @@ and shape_depth_exceeds ~budget shape =
       || Fields.exists
            (fun _o cell -> cell_depth_exceeds ~budget:(budget - 1) cell)
            fields
+  | Graph g ->
+      let depths = object_depths g in
+      Seq.exists
+        (fun ((i, node) : int * node) ->
+          match node with
+          | Object { edges; _ } when depths.(i) >= 0 ->
+              depths.(i) >= budget
+              || Fields.exists
+                   (fun _o (edge : edge) ->
+                     edge_exceeds g depths ~max_depth:budget ~depth:depths.(i) edge)
+                   edges
+          | Object _
+          | Closures _ ->
+              false)
+        (Array.to_seqi g.nodes)
 
 (* Widen [shape] to at most [max_depth] levels of [Obj] nesting;
- * see [truncate_cell]. *)
+ * see [truncate_cell]. On a graph, an object at depth [max_depth] or below
+ * ('object_depths') collapses into the taints of the cell that reaches it,
+ * and a tree reached at a lower depth is truncated with the levels left. *)
 let truncate_shape ~(traces : T.kept_traces) ~max_depth shape =
   if max_depth < 1 then shape
   else
     match shape with
     | Bot
-    | Rec _
     | Arg _
     | Fun _ ->
         shape
@@ -1104,12 +1683,52 @@ let truncate_shape ~(traces : T.kept_traces) ~max_depth shape =
         else
           let obj' =
             Fields.filter_map
-              (fun _o cell ->
-                truncate_cell ~traces ~budget:(max_depth - 1) ~enclosing:[ shape ]
-                  cell)
+              (fun _o cell -> truncate_cell ~traces ~budget:(max_depth - 1) cell)
               obj
           in
-          obj_or_bot ~sites:node.sites ~summary:node.summary obj'
+          obj_or_bot ~traces ~sites:node.sites ~summary:node.summary obj'
+    | Graph g ->
+        if not (shape_depth_exceeds ~budget:max_depth shape) then shape
+        else
+          let depths = object_depths g in
+          let truncate_edge ~(depth : int) (edge : edge) : edge option =
+            match edge.target with
+            | Node j when edge_exceeds g depths ~max_depth ~depth edge ->
+                let deep =
+                  gather_all_taints_in_cell ~traces
+                    (Cell (edge.xtaint, Graph { g with root = j }))
+                in
+                if Taints.is_empty deep then None
+                else Some { xtaint = `Tainted deep; target = Leaf Bot }
+            | Node _ -> Some edge
+            | Leaf leaf ->
+                truncate_cell ~traces ~budget:(max_depth - depth - 1)
+                  (Cell (edge.xtaint, leaf))
+                |> Option.map (fun (Cell (xtaint, leaf)) ->
+                       { xtaint; target = Leaf leaf })
+          in
+          let nodes =
+            Array.mapi
+              (fun (i : int) (node : node) ->
+                match node with
+                | Object ({ edges; _ } as node)
+                  when depths.(i) >= 0 && depths.(i) < max_depth ->
+                    Object
+                      {
+                        node with
+                        edges =
+                          Fields.filter_map
+                            (fun _o (edge : edge) ->
+                              truncate_edge ~depth:depths.(i) edge)
+                            edges;
+                      }
+                | Object _
+                | Closures _ ->
+                    node)
+              g.nodes
+          in
+          let nodes, root = restore_cell_invariant nodes g.root in
+          minimise ~traces nodes root
 
 (* Widen the shapes an effect stores: [Obj] nesting by [truncate_shape],
  * [Fun] nesting by [bound_fun_shape]. Identity-preserving: returns [eff] itself
@@ -1150,9 +1769,63 @@ let rec map_effect_shapes ~(widen : shape -> shape)
 and bound_fun_shape ~(traces : T.kept_traces) ~levels (shape : shape) : shape =
   match shape with
   | Bot
-  | Rec _
   | Arg _ ->
       shape
+  | Graph g -> (
+      (* The same bound on the trees of the edges and on the closure sets'
+       * effects and captured trees; a closure set reached by an edge keeps
+       * its node. *)
+      let bound_edge ~(levels : int) (edge : edge) : edge =
+        match edge.target with
+        | Leaf inner ->
+            let inner' = bound_fun_shape ~traces ~levels inner in
+            if phys_equal inner' inner then edge else { edge with target = Leaf inner' }
+        | Node _ -> edge
+      in
+      let bound_node (node : node) : node =
+        match node with
+        | Object ({ edges; _ } as object_) ->
+            let edges' = Fields.map (bound_edge ~levels) edges in
+            if Fields.equal phys_equal edges' edges then node
+            else Object { object_ with edges = edges' }
+        | Closures (c, cs) ->
+            let bound_closure (closure : graph_closure) : graph_closure =
+              let sig_ = closure.sig_ in
+              let effects =
+                Effects.map ~traces
+                  (map_effect_shapes
+                     ~widen:(bound_fun_shape ~traces ~levels:(levels - 1)))
+                  sig_.Signature.effects
+              in
+              let env' =
+                List_.map
+                  (fun ((x, entry) as binding : IL.name * graph_env_entry) ->
+                    match entry with
+                    | Ref _ -> binding
+                    | Val edge ->
+                        let edge' = bound_edge ~levels:(levels - 1) edge in
+                        if phys_equal edge' edge then binding
+                        else (x, (Val edge' : graph_env_entry)))
+                  closure.env
+              in
+              if
+                phys_equal effects sig_.Signature.effects
+                && List.for_all2 phys_equal env' closure.env
+              then closure
+              else { closure with sig_ = { sig_ with Signature.effects }; env = env' }
+            in
+            let c' = bound_closure c in
+            let cs' = List_.map bound_closure cs in
+            if phys_equal c' c && List.for_all2 phys_equal cs' cs then node
+            else Closures (c', cs')
+      in
+      match g.nodes.(g.root) with
+      | Closures _ when levels <= 0 -> Bot
+      | Object _
+      | Closures _ ->
+          let nodes = Array.map bound_node g.nodes in
+          if Array.for_all2 phys_equal nodes g.nodes then shape
+          else minimise ~traces nodes (Node g.root))
   | Fun (c, cs) ->
       if levels <= 0 then Bot
       else
@@ -1239,10 +1912,10 @@ let cell_read_of_find_result ?max ~lang ~(traces : T.kept_traces) res :
       else Some (Cell (`Tainted taints, Bot))
 
 let rec find_in_cell_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
-    ~(enclosing : shape list) offset cell =
+    offset cell =
   let (Cell (xtaint, shape)) = cell in
   match offset with
-  | [] -> `Found (close_cell enclosing cell)
+  | [] -> `Found cell
   | _ :: _ -> (
       match xtaint with
       | `Clean ->
@@ -1251,26 +1924,32 @@ let rec find_in_cell_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
                 m "BUG: Taint_shape.find_in_cell: INVARIANT(cell).2 is broken");
           `Clean
       | `None ->
-          find_in_shape_w_carry ?max ~lang ~traces ~taints ~enclosing offset shape
+          find_in_shape_w_carry ?max ~lang ~traces ~taints offset shape
       | `Tainted taints ->
-          find_in_shape_w_carry ?max ~lang ~traces ~taints ~enclosing offset shape)
+          find_in_shape_w_carry ?max ~lang ~traces ~taints offset shape)
 
-and find_in_shape_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
-    ~(enclosing : shape list) offset shape =
-  let not_found () = `Not_found (taints, close_shape enclosing shape, offset) in
+and find_in_shape_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints offset
+    shape =
+  let not_found () = `Not_found (taints, shape, offset) in
   match shape with
   (* offset <> [] *)
   | Bot -> not_found ()
   | Obj { fields = obj; _ } ->
-      find_in_obj_w_carry ?max ~lang ~traces ~taints ~enclosing ~self:shape
-        offset obj
-  | Rec n -> (
-      match List.nth_opt enclosing n with
-      | Some target ->
-          find_in_shape_w_carry ?max ~lang ~traces ~taints
-            ~enclosing:(List.drop (n + 1) enclosing)
-            offset target
-      | None -> not_found ())
+      find_in_obj_w_carry ?max ~lang ~traces ~taints ~self:shape offset obj
+  | Graph _ -> (
+      (* The root node's edges, each to the value that starts at its
+       * target. *)
+      match unfold shape with
+      | Obj { fields = obj; _ } ->
+          find_in_obj_w_carry ?max ~lang ~traces ~taints ~self:shape offset obj
+      | Bot
+      | Graph _
+      | Arg _
+      | Fun _ ->
+          Log.err (fun m ->
+              m "Could not find offset %s in function shape %s"
+                (debug_offset offset) (show_shape shape));
+          not_found ())
   | Arg (arg, base_offsets) -> (
       match find_in_arg ?max ~lang ~traces ~taints offset arg base_offsets with
       | Some cell -> `Found cell
@@ -1287,11 +1966,8 @@ and find_in_shape_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
       not_found ()
 
 and find_in_obj_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
-    ~(enclosing : shape list) ~(self : shape) (offset : T.offset list) obj =
-  let not_found () =
-    `Not_found (taints, close_shape enclosing self, offset)
-  in
-  let enclosing = self :: enclosing in
+    ~(self : shape) (offset : T.offset list) obj =
+  let not_found () = `Not_found (taints, self, offset) in
   (* offset <> [] *)
   match offset with
   | [] ->
@@ -1307,8 +1983,8 @@ and find_in_obj_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
                 match
                   ( acc,
                     cell_read_of_find_result ?max ~lang ~traces
-                      (find_in_cell_w_carry ?max ~lang ~traces ~taints
-                         ~enclosing offset cell) )
+                      (find_in_cell_w_carry ?max ~lang ~traces ~taints offset
+                         cell) )
                 with
                 | acc, None -> acc
                 | None, (Some _ as found) -> found
@@ -1347,7 +2023,7 @@ and find_in_obj_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
                       ( acc,
                         cell_read_of_find_result ?max ~lang ~traces
                           (find_in_cell_w_carry ?max ~lang ~traces ~taints
-                             ~enclosing recur_offset cell) )
+                             recur_offset cell) )
                     with
                     | acc, None -> acc
                     | None, (Some _ as found) -> found
@@ -1361,8 +2037,7 @@ and find_in_obj_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
       | Ostr _ -> (
           match Fields.find_opt o obj with
           | Some o_cell ->
-              find_in_cell_w_carry ?max ~lang ~traces ~taints ~enclosing offset
-                o_cell
+              find_in_cell_w_carry ?max ~lang ~traces ~taints offset o_cell
           | None -> (
               (* Per INVARIANT(obj) in [Shape_and_sig], an [Oany] entry
                * carries the taint and shape of any field that is not
@@ -1375,12 +2050,11 @@ and find_in_obj_w_carry ?max ~lang ~(traces : T.kept_traces) ~taints
               match Fields.find_opt T.Oany obj with
               | None -> not_found ()
               | Some any_cell ->
-                  find_in_cell_w_carry ?max ~lang ~traces ~taints ~enclosing
-                    offset any_cell)))
+                  find_in_cell_w_carry ?max ~lang ~traces ~taints offset
+                    any_cell)))
 
 let find_in_cell ?max ~lang ~(traces : T.kept_traces) offset cell =
-  find_in_cell_w_carry ?max ~lang ~traces ~taints:Taints.empty ~enclosing:[]
-    offset cell
+  find_in_cell_w_carry ?max ~lang ~traces ~taints:Taints.empty offset cell
 
 let option_of_find_result ?max ~lang ~(traces : T.kept_traces) res =
   match res with
@@ -1399,59 +2073,108 @@ let find_in_shape_poly ?max ~lang ~(traces : T.kept_traces) ~taints offset shape
   match offset with
   | [] -> Some (taints, shape)
   | _ :: _ ->
-      find_in_shape_w_carry ?max ~lang ~traces ~taints ~enclosing:[] offset shape
+      find_in_shape_w_carry ?max ~lang ~traces ~taints offset shape
       |> option_of_find_result ?max ~lang ~traces
 
 (*********************************************************)
 (* Update the xtaint and shape of an offset *)
 (*********************************************************)
 
-(* Finds an 'offset' within a 'cell' and updates it via 'f'. *)
-let rec update_offset_in_cell_at ~(write : T.call_loc) ~(depth : int)
-    ~(enclosing : shape list) ~f offset cell =
-  let xtaint, shape =
-    match (cell, offset) with
-    | Cell (xtaint, shape), [] -> f xtaint (close_shape enclosing shape)
-    | Cell (xtaint, shape), _ :: _ ->
-        let shape =
-          update_offset_in_shape ~write ~depth ~enclosing ~f offset shape
-        in
-        (xtaint, shape)
-  in
+let cell_of_update (xtaint : Xtaint.t) (shape : shape) : cell option =
   match (xtaint, shape) with
   (* Restore INVARIANT(cell).1 *)
   | `None, Bot -> None
   | `Tainted taints, Bot when Taints.is_empty taints -> None
   (* Restore INVARIANT(cell).2 *)
-  | `Clean, (Obj _ | Rec _ | Arg _ | Fun _) ->
+  | `Clean, (Obj _ | Graph _ | Arg _ | Fun _) ->
       (* If we are tainting an offset of this cell, the cell cannot be
          considered clean anymore. *)
       Some (Cell (`None, shape))
   | `Clean, Bot
-  | `None, (Obj _ | Rec _ | Arg _ | Fun _)
-  | `Tainted _, (Bot | Obj _ | Rec _ | Arg _ | Fun _) ->
+  | `None, (Obj _ | Graph _ | Arg _ | Fun _)
+  | `Tainted _, (Bot | Obj _ | Graph _ | Arg _ | Fun _) ->
       Some (Cell (xtaint, shape))
 
-and update_offset_in_shape ~(write : T.call_loc) ~(depth : int)
-    ~(enclosing : shape list) ~f offset shape =
+(* 'cell_of_update' on an edge. *)
+let edge_of_update (builder : node Dynarray.t) (xtaint : Xtaint.t) (target : target) :
+    edge option =
+  match target with
+  | Node _ -> (
+      match xtaint with
+      | `Clean -> Some { xtaint = `None; target }
+      | `None
+      | `Tainted _ ->
+          Some { xtaint; target })
+  | Leaf shape ->
+      cell_of_update xtaint shape
+      |> Option.map (fun (Cell (xtaint, shape)) ->
+             { xtaint; target = target_of_shape builder shape })
+
+(* The fields of [obj] that the first key of [offset] selects, each updated
+ * by [update] with the rest of [offset]; 'None' removes the field. *)
+let update_fields ~none ~update (offset : T.offset list) obj =
+  match offset with
+  | [] ->
+      Log.err (fun m ->
+          m "internal_UNSAFE_update_obj: Impossible happened: empty offset");
+      obj
+  | o :: offset -> (
+      let o, obj = internal_UNSAFE_find_offset_in_obj ~none o obj in
+      match o with
+      | Oany (* arbitrary index [*] *) ->
+          (* consider all fields/indexes *)
+          Fields.filter_map (fun _o' -> update offset) obj
+      | Oslice n ->
+          (* Update the trailing-rest from index [n]. For each entry
+           * intersecting [n, infinity), apply the update with the
+           * appropriately composed inner offset; entries outside the
+           * slice pass through unchanged. *)
+          Fields.filter_map
+            (fun key value ->
+              match key with
+              | Oint k when k >= n -> update offset value
+              | Oslice m when m >= n -> update offset value
+              | Oslice m ->
+                  (* m < n by case order; n - m > 0 *)
+                  update (T.Oslice (n - m) :: offset) value
+              | Oint _
+              | Ofld _
+              | Ostr _
+              | Oany ->
+                  Some value)
+            obj
+      | Ofld _
+      | Oint _
+      | Ostr _ ->
+          obj
+          |> Fields.update o (fun opt_value ->
+                 let* value = opt_value in
+                 update offset value))
+
+(* Finds an 'offset' within a 'cell' and updates it via 'f'. *)
+let rec update_offset_in_cell_at ~(traces : T.kept_traces) ~(write : T.call_loc)
+    ~(depth : int) ~f offset cell =
+  let xtaint, shape =
+    match (cell, offset) with
+    | Cell (xtaint, shape), [] -> f xtaint shape
+    | Cell (xtaint, shape), _ :: _ ->
+        let shape = update_offset_in_shape ~traces ~write ~depth ~f offset shape in
+        (xtaint, shape)
+  in
+  cell_of_update xtaint shape
+
+and update_offset_in_shape ~(traces : T.kept_traces) ~(write : T.call_loc)
+    ~(depth : int) ~f offset shape =
   match shape with
   | Bot
   | Arg _ ->
       let shape = written_obj ~write ~depth in
-      update_offset_in_shape ~write ~depth ~enclosing ~f offset shape
-  | Rec n -> (
-      match List.nth_opt enclosing n with
-      | Some target ->
-          update_offset_in_shape ~write ~depth ~enclosing ~f offset
-            (shift_free ~levels:(n + 1) target)
-      | None -> shape)
+      update_offset_in_shape ~traces ~write ~depth ~f offset shape
   | Obj ({ fields = obj; _ } as node) -> (
-      match
-        update_offset_in_obj ~write ~depth ~enclosing:(shape :: enclosing) ~f
-          offset obj
-      with
+      match update_offset_in_obj ~traces ~write ~depth ~f offset obj with
       | None -> Bot
-      | Some obj -> Obj { node with fields = obj })
+      | Some obj -> canonical ~traces (Obj { node with fields = obj }))
+  | Graph g -> update_offset_in_graph ~traces ~write ~depth ~f offset g
   | Fun _ ->
       (* This is an error, we just don't want to crash here. *)
       Log.err (fun m ->
@@ -1459,54 +2182,144 @@ and update_offset_in_shape ~(write : T.call_loc) ~(depth : int)
             (debug_offset offset) (show_shape shape));
       shape
 
-and update_offset_in_obj ~(write : T.call_loc) ~(depth : int)
-    ~(enclosing : shape list) ~f offset obj =
-  let update_offset_in_cell =
-    update_offset_in_cell_at ~write ~depth:(depth + 1) ~enclosing ~f
-  in
+and update_offset_in_obj ~(traces : T.kept_traces) ~(write : T.call_loc)
+    ~(depth : int) ~f offset obj =
   let obj' =
-    match offset with
-    | [] ->
-        Log.err (fun m ->
-            m "internal_UNSAFE_update_obj: Impossible happened: empty offset");
-        obj
-    | o :: offset -> (
-        let o, obj = internal_UNSAFE_find_offset_in_obj o obj in
-        match o with
-        | Oany (* arbitrary index [*] *) ->
-            (* consider all fields/indexes *)
-            Fields.filter_map (fun _o' -> update_offset_in_cell offset) obj
-        | Oslice n ->
-            (* Update the trailing-rest from index [n]. For each entry
-             * intersecting [n, infinity), apply the update with the
-             * appropriately composed inner offset; entries outside the
-             * slice pass through unchanged. *)
-            Fields.filter_map
-              (fun key cell ->
-                match key with
-                | Oint k when k >= n -> update_offset_in_cell offset cell
-                | Oslice m when m >= n -> update_offset_in_cell offset cell
-                | Oslice m ->
-                    (* m < n by case order; n - m > 0 *)
-                    update_offset_in_cell (T.Oslice (n - m) :: offset) cell
-                | Oint _
-                | Ofld _
-                | Ostr _
-                | Oany ->
-                    Some cell)
-              obj
-        | Ofld _
-        | Oint _
-        | Ostr _ ->
-            obj
-            |> Fields.update o (fun opt_cell ->
-                   let* cell = opt_cell in
-                   update_offset_in_cell offset cell))
+    update_fields ~none:cell_none_bot
+      ~update:(update_offset_in_cell_at ~traces ~write ~depth:(depth + 1) ~f)
+      offset obj
   in
   if Fields.is_empty obj' then None else Some obj'
 
-let update_offset_in_cell ~(write : T.call_loc) ~f offset cell =
-  update_offset_in_cell_at ~write ~depth:0 ~enclosing:[] ~f offset cell
+(* [offset] of the value [g] updated by [f]. A node on the path that is not a
+ * summary is copied (path copying, Driscoll, Sarnak, Sleator and Tarjan
+ * 1989), so every other edge into it keeps the old node. A summary node is
+ * replaced in its slot, so every edge into it sees the new version, cycles
+ * included: a weak update (Chase, Wegman and Zadeck 1990). The fields that
+ * the write changes are set on the slot as it is after the writes below,
+ * which may have reached the slot again through a cycle. *)
+and update_offset_in_graph ~(traces : T.kept_traces) ~(write : T.call_loc)
+    ~(depth : int) ~f offset (g : graph) : shape =
+  let order = Array.of_list (preorder (Array.map successors g.nodes) g.root) in
+  let nodes = Dynarray.create () in
+  let root = append_graph nodes g in
+  let rec write_node (k : int) (depth : int) (offset : T.offset list) : target =
+    match Dynarray.get nodes k with
+    | Closures _ ->
+        (* This is an error, we just don't want to crash here. *)
+        Log.err (fun m ->
+            m "Could not update offset %s in function shape %s"
+              (debug_offset offset) (show_shape (Graph g)));
+        Node k
+    | Object ({ edges; summary; _ } as node) ->
+        let edges' =
+          update_fields ~none:edge_none_bot ~update:(write_edge (depth + 1)) offset edges
+        in
+        if summary then (
+          let changed (o : T.offset) : bool =
+            match (Fields.find_opt o edges, Fields.find_opt o edges') with
+            | Some edge, Some edge' -> not (phys_equal edge edge')
+            | None, None -> false
+            | Some _, None
+            | None, Some _ ->
+                true
+          in
+          (match Dynarray.get nodes k with
+          | Object current ->
+              let keys = Fields.union (fun _o edge _ -> Some edge) edges edges' in
+              let edges =
+                Fields.fold
+                  (fun (o : T.offset) _ (current_edges : edge Fields.t) ->
+                    if not (changed o) then current_edges
+                    else
+                      match Fields.find_opt o edges' with
+                      | Some edge' -> Fields.add o edge' current_edges
+                      | None -> Fields.remove o current_edges)
+                  keys current.edges
+              in
+              Dynarray.set nodes k (Object { current with edges })
+          | Closures _ -> ());
+          Node k)
+        else if Fields.is_empty edges' then Leaf Bot
+        else (
+          Dynarray.add_last nodes (Object { node with edges = edges' });
+          Node (Dynarray.length nodes - 1))
+  and write_edge (depth : int) (offset : T.offset list) (edge : edge) : edge option =
+    match (edge.target, offset) with
+    | Leaf shape, _ ->
+        update_offset_in_cell_at ~traces ~write ~depth ~f offset
+          (Cell (edge.xtaint, shape))
+        |> Option.map (fun (Cell (xtaint, shape)) ->
+               { xtaint; target = target_of_shape nodes shape })
+    | Node i, [] ->
+        (* A node copied from [g] is the node [order.(i)] of [g], whose value
+         * is the old value at the offset; a node that this write built holds
+         * its current value. *)
+        let value =
+          if i < Array.length order then Graph { g with root = order.(i) }
+          else minimise ~traces (Dynarray.to_array nodes) (Node i)
+        in
+        let xtaint, shape = f edge.xtaint value in
+        edge_of_update nodes xtaint (target_of_shape nodes shape)
+    | Node i, _ :: _ -> edge_of_update nodes edge.xtaint (write_node i depth offset)
+  in
+  let target = write_node root depth offset in
+  minimise ~traces (Dynarray.to_array nodes) target
+
+let update_offset_in_cell ~(traces : T.kept_traces) ~(write : T.call_loc) ~f
+    offset cell =
+  update_offset_in_cell_at ~traces ~write ~depth:0 ~f offset cell
+
+(* One map over the nodes of [g]: each object's sites by [sites], each
+ * edge's taint by [xtaint], each tree by [shape] (a graph that it returns is
+ * appended), each closure by [closure] (given the map of an edge and the
+ * edge of a cell); every edge of an object restored to INVARIANT(cell) as
+ * 'update_offset_in_cell' restores a cell, then 'restore_cell_invariant'
+ * and 'minimise'. *)
+let map_graph ~(traces : T.kept_traces)
+    ~(sites : Shape_and_sig.Sites.t -> Shape_and_sig.Sites.t)
+    ~(xtaint : Xtaint.t -> Xtaint.t) ~(shape : shape -> shape)
+    ~(closure :
+       inst_value:(edge -> edge) ->
+       value_of_cell:(cell -> edge) ->
+       graph_closure ->
+       graph_closure) (g : graph) : shape =
+  let nodes = Dynarray.create () in
+  let root = append_graph nodes g in
+  let map_edge (edge : edge) : edge =
+    {
+      xtaint = xtaint edge.xtaint;
+      target =
+        (match edge.target with
+        | Node _ -> edge.target
+        | Leaf leaf -> target_of_shape nodes (shape leaf));
+    }
+  in
+  let edge_of_cell (Cell (xtaint, shape) : cell) : edge =
+    { xtaint; target = target_of_shape nodes shape }
+  in
+  Array.iteri
+    (fun (k : int) (node : node) ->
+      Dynarray.set nodes k
+        (match node with
+        | Object ({ sites = object_sites; edges; _ } as node) ->
+            Object
+              {
+                node with
+                sites = sites object_sites;
+                edges =
+                  Fields.filter_map
+                    (fun _o (edge : edge) ->
+                      let edge = map_edge edge in
+                      edge_of_update nodes edge.xtaint edge.target)
+                    edges;
+              }
+        | Closures (c, cs) ->
+            let closure = closure ~inst_value:map_edge ~value_of_cell:edge_of_cell in
+            Closures (closure c, List.map closure cs)))
+    (Dynarray.to_array nodes);
+  let nodes, root = restore_cell_invariant (Dynarray.to_array nodes) root in
+  minimise ~traces nodes root
 
 (*********************************************************)
 (* Updating an offset *)
@@ -1544,7 +2357,7 @@ let update_offset_and_unify ~lang ~(traces : T.kept_traces) ~(write : T.call_loc
                    | _ -> 0));
             (xtaint, shape))
     in
-    update_offset_in_cell ~write ~f:add_new_taints offset cell
+    update_offset_in_cell ~traces ~write ~f:add_new_taints offset cell
   else
     (* To maintain INVARIANT(cell) we cannot return 'cell_none_bot'! *)
     opt_cell
@@ -1553,9 +2366,22 @@ let update_offset_and_unify ~lang ~(traces : T.kept_traces) ~(write : T.call_loc
 (* Clean taint *)
 (*********************************************************)
 
+(* The fields of [obj] that the first key of [offset] selects, each cleaned
+ * by [clean] with the rest of [offset]. *)
+let clean_fields ~none ~clean (offset : T.offset list) obj =
+  match offset with
+  | [] ->
+      Log.err (fun m -> m "clean_obj: Impossible happened: empty offset");
+      obj
+  | o :: offset -> (
+      let o, obj = internal_UNSAFE_find_offset_in_obj ~none o obj in
+      match o with
+      | Oany -> Fields.map (clean offset) obj
+      | o -> Fields.update o (Option.map (fun value -> clean offset value)) obj)
+
 (* TODO: Reformulate in terms of 'update_offset_in_cell' *)
-let rec clean_cell_at ~(write : T.call_loc) ~(depth : int)
-    ~(enclosing : shape list) (offset : T.offset list) cell =
+let rec clean_cell_at ~(traces : T.kept_traces) ~(write : T.call_loc)
+    ~(depth : int) (offset : T.offset list) cell =
   let (Cell (xtaint, shape)) = cell in
   match offset with
   | [] ->
@@ -1573,29 +2399,22 @@ let rec clean_cell_at ~(write : T.call_loc) ~(depth : int)
        * `a` itself is being sanitized; otherwise `sink(a)` could be reported. *)
       Cell (`Clean, Bot)
   | _ :: _ ->
-      let shape = clean_shape ~write ~depth ~enclosing offset shape in
+      let shape = clean_shape ~traces ~write ~depth offset shape in
       Cell (xtaint, shape)
 
-and clean_shape ~(write : T.call_loc) ~(depth : int) ~(enclosing : shape list)
+and clean_shape ~(traces : T.kept_traces) ~(write : T.call_loc) ~(depth : int)
     offset shape =
   match shape with
   | Bot
   | Arg _ ->
       let shape = written_obj ~write ~depth in
-      clean_shape ~write ~depth ~enclosing offset shape
+      clean_shape ~traces ~write ~depth offset shape
   (* A summary stands for several objects and the clean reaches one of
    * them, so the others keep their taint. *)
-  | Rec _
-  | Obj { summary = true; _ } ->
-      shape
+  | Obj { summary = true; _ } -> shape
   | Obj ({ fields; _ } as node) ->
-      Obj
-        {
-          node with
-          fields =
-            clean_obj ~write ~depth ~enclosing:(shape :: enclosing) offset
-              fields;
-        }
+      Obj { node with fields = clean_obj ~traces ~write ~depth offset fields }
+  | Graph g -> clean_graph ~traces ~write ~depth offset g
   | Fun _ ->
       (* This is an error, we just don't want to crash here. *)
       Log.err (fun m ->
@@ -1603,30 +2422,53 @@ and clean_shape ~(write : T.call_loc) ~(depth : int) ~(enclosing : shape list)
             (debug_offset offset) (show_shape shape));
       shape
 
-and clean_obj ~(write : T.call_loc) ~(depth : int) ~(enclosing : shape list)
+and clean_obj ~(traces : T.kept_traces) ~(write : T.call_loc) ~(depth : int)
     offset obj =
-  let clean_cell = clean_cell_at ~write ~depth:(depth + 1) ~enclosing in
-  match offset with
-  | [] ->
-      Log.err (fun m -> m "clean_obj: Impossible happened: empty offset");
-      obj
-  | o :: offset -> (
-      let o, obj = internal_UNSAFE_find_offset_in_obj o obj in
-      match o with
-      | Oany -> Fields.map (clean_cell offset) obj
-      | o ->
-          Fields.update o (Option.map (fun cell -> clean_cell offset cell)) obj)
+  clean_fields ~none:cell_none_bot
+    ~clean:(clean_cell_at ~traces ~write ~depth:(depth + 1))
+    offset obj
 
-let clean_cell ~(write : T.call_loc) (offset : T.offset list) cell =
-  clean_cell_at ~write ~depth:0 ~enclosing:[] offset cell
+(* 'clean_shape' on a graph: the walk of 'update_offset_in_graph', which
+ * stops at a summary node, as 'clean_shape' stops at a summary object. *)
+and clean_graph ~(traces : T.kept_traces) ~(write : T.call_loc) ~(depth : int)
+    offset (g : graph) : shape =
+  let nodes = Dynarray.create () in
+  let root = append_graph nodes g in
+  let rec clean_node (k : int) (depth : int) (offset : T.offset list) : target =
+    match Dynarray.get nodes k with
+    | Object { summary = true; _ } -> Node k
+    | Closures _ ->
+        (* This is an error, we just don't want to crash here. *)
+        Log.err (fun m ->
+            m "Could not update offset %s in function shape %s"
+              (debug_offset offset) (show_shape (Graph g)));
+        Node k
+    | Object ({ edges; _ } as node) ->
+        let edges =
+          clean_fields ~none:edge_none_bot ~clean:(clean_edge (depth + 1)) offset edges
+        in
+        Dynarray.add_last nodes (Object { node with edges });
+        Node (Dynarray.length nodes - 1)
+  and clean_edge (depth : int) (offset : T.offset list) (edge : edge) : edge =
+    match (edge.target, offset) with
+    | Leaf shape, _ ->
+        let (Cell (xtaint, shape)) =
+          clean_cell_at ~traces ~write ~depth offset (Cell (edge.xtaint, shape))
+        in
+        { xtaint; target = Leaf shape }
+    | Node _, ([] | [ Oany ]) -> { xtaint = `Clean; target = Leaf Bot }
+    | Node i, _ :: _ -> { edge with target = clean_node i depth offset }
+  in
+  let target = clean_node root depth offset in
+  minimise ~traces (Dynarray.to_array nodes) target
+
+let clean_cell ~(traces : T.kept_traces) ~(write : T.call_loc)
+    (offset : T.offset list) cell =
+  clean_cell_at ~traces ~write ~depth:0 offset cell
 
 (*********************************************************)
 (* Folding objects nested in an object of the same site *)
 (*********************************************************)
-
-type target = Node of int | Leaf of shape
-
-type edge = { xtaint : Xtaint.t; target : target }
 
 module Defs = Set.Make (Function_id)
 
@@ -1646,7 +2488,7 @@ type node = {
   edges : edge Fields.t;
   captured : edge Captured.t;
   original_shape : shape;
-  ancestors : int list;
+  component : int option;
 }
 
 type quotient = {
@@ -1696,9 +2538,27 @@ let add_node (q : quotient) (node : node) : int =
   Dynarray.add_last q.visited false;
   i
 
-let rec graph_of_shape (q : quotient) (ancestors : int list) (shape : shape) : target =
-  let edge_of (i : int) (Cell (xtaint, shape) : cell) : edge =
-    { xtaint; target = graph_of_shape q (i :: ancestors) shape }
+(* The captured cells of [closures] by definition and position. *)
+let captured_by_position edge_of closures : edge Captured.t =
+  List.fold_left
+    (fun captured closure ->
+      snd
+        (List.fold_left
+           (fun ((position, captured) : int * edge Captured.t) (_, entry) ->
+             match entry with
+             | Val value ->
+                 ( position + 1,
+                   Captured.add (closure.def, position) (edge_of value) captured )
+             | Ref _ -> (position + 1, captured))
+           (0, captured) closure.env))
+    Captured.empty closures
+
+(* The nodes of the quotient for [shape]: one per object and closure set of
+ * a tree, one per node of a graph, each graph node with the strongly
+ * connected component (Tarjan 1972) it lies in. *)
+let rec graph_of_shape (q : quotient) (shape : shape) : target =
+  let edge_of (Cell (xtaint, shape) : cell) : edge =
+    { xtaint; target = graph_of_shape q shape }
   in
   match shape with
   | Obj { sites; summary; fields } ->
@@ -1711,10 +2571,10 @@ let rec graph_of_shape (q : quotient) (ancestors : int list) (shape : shape) : t
             edges = Fields.empty;
             captured = Captured.empty;
             original_shape = shape;
-            ancestors;
+            component = None;
           }
       in
-      let edges = Fields.map (edge_of i) fields in
+      let edges = Fields.map edge_of fields in
       Dynarray.set q.nodes i { (Dynarray.get q.nodes i) with edges };
       Node i
   | Fun (c, cs) ->
@@ -1728,31 +2588,65 @@ let rec graph_of_shape (q : quotient) (ancestors : int list) (shape : shape) : t
             edges = Fields.empty;
             captured = Captured.empty;
             original_shape = shape;
-            ancestors;
+            component = None;
           }
       in
-      let captured =
-        List.fold_left
-          (fun captured (closure : closure) ->
-            snd
-              (List.fold_left
-                 (fun ((position, captured) : int * edge Captured.t)
-                      ((_, entry) : IL.name * env_entry) ->
-                   match entry with
-                   | Val cell ->
-                       ( position + 1,
-                         Captured.add (closure.def, position) (edge_of i cell)
-                           captured )
-                   | Ref _ -> (position + 1, captured))
-                 (0, captured) closure.env))
-          Captured.empty closures
-      in
+      let captured = captured_by_position edge_of closures in
       Dynarray.set q.nodes i { (Dynarray.get q.nodes i) with captured };
       Node i
-  | Rec n -> (
-      match List.nth_opt ancestors n with
-      | Some i -> Node i
-      | None -> Leaf shape)
+  | Graph g ->
+      let order = Array.of_list (preorder (Array.map successors g.nodes) g.root) in
+      let base = Dynarray.length q.nodes in
+      let index = Array.make (Array.length g.nodes) (-1) in
+      Array.iteri (fun (k : int) (i : int) -> index.(i) <- base + k) order;
+      let component_of =
+        Shape_and_sig.Adjacency_components.scc
+          (Array.map
+             (fun (i : int) ->
+               List.map (fun (j : int) -> index.(j) - base) (successors g.nodes.(i)))
+             order)
+        |> snd
+      in
+      Array.iteri
+        (fun (k : int) (i : int) ->
+          let defs =
+            match g.nodes.(i) with
+            | Object _ -> Defs.empty
+            | Closures (c, cs) ->
+                Defs.of_list
+                  (List.map (fun (closure : graph_closure) -> closure.def) (c :: cs))
+          in
+          let sites, summary =
+            match g.nodes.(i) with
+            | Object { sites; summary; _ } -> (sites, summary)
+            | Closures _ -> (Shape_and_sig.Sites.empty, false)
+          in
+          ignore
+            (add_node q
+               {
+                 sites;
+                 defs;
+                 summary;
+                 edges = Fields.empty;
+                 captured = Captured.empty;
+                 original_shape = Graph { g with root = i };
+                 component = Some (base + component_of k);
+               }))
+        order;
+      let edge_of (edge : edge) : edge =
+        match edge.target with
+        | Node j -> { edge with target = Node index.(j) }
+        | Leaf shape -> { edge with target = graph_of_shape q shape }
+      in
+      Array.iteri
+        (fun (k : int) (i : int) ->
+          let node = Dynarray.get q.nodes (base + k) in
+          Dynarray.set q.nodes (base + k)
+            (match g.nodes.(i) with
+            | Object { edges; _ } -> { node with edges = Fields.map edge_of edges }
+            | Closures (c, cs) -> { node with captured = captured_by_position edge_of (c :: cs) }))
+        order;
+      Node base
   | Bot
   | Arg _ ->
       Leaf shape
@@ -1793,17 +2687,19 @@ let any_copy (q : quotient) (member : int) (o : T.offset) (any : int) : int =
   | Some copy -> copy
   | None ->
       let node = Dynarray.get q.nodes any in
-      match graph_of_shape q node.ancestors node.original_shape with
+      match graph_of_shape q node.original_shape with
       | Node copy ->
           Dynarray.set q.copies member
             (Fields.add o copy (Dynarray.get q.copies member));
           copy
       | Leaf _ -> any
 
-let is_child (q : quotient) (parent : int) (i : int) : bool =
-  match (Dynarray.get q.nodes i).ancestors with
-  | nearest :: _ -> Int.equal nearest parent
-  | [] -> false
+(* Whether [i] and [j] lie on one cycle of a graph value: for the target
+ * [j] of an edge of [i], whether [j] reaches [i]. *)
+let same_component (q : quotient) (i : int) (j : int) : bool =
+  match ((Dynarray.get q.nodes i).component, (Dynarray.get q.nodes j).component) with
+  | Some component_i, Some component_j -> Int.equal component_i component_j
+  | (Some _ | None), _ -> false
 
 let field_edges (q : quotient) (class_root : int) : edge list Fields.t =
   let members = Dynarray.get q.members class_root in
@@ -1829,7 +2725,7 @@ let field_edges (q : quotient) (class_root : int) : edge list Fields.t =
               Fields.find_opt T.Oany edges
               |> Option.map (fun (any : edge) ->
                      match any.target with
-                     | Node any_node when is_child q member any_node ->
+                     | Node any_node when not (same_component q member any_node) ->
                          { any with target = Node (any_copy q member o any_node) }
                      | Node _
                      | Leaf _ ->
@@ -1980,24 +2876,74 @@ let read_on_edge ~lang ~(traces : T.kept_traces) (q : quotient) (o : T.offset)
       match find_in_arg ~lang ~traces ~taints [ o ] arg offsets with
       | Some (Cell (xtaint, shape)) -> `Cell { xtaint; target = Leaf shape }
       | None -> `Whole taints)
-  | `Tainted taints, Leaf (Bot | Obj _ | Rec _ | Fun _) -> `Whole taints
+  | `Tainted taints, Leaf (Bot | Obj _ | Graph _ | Fun _) -> `Whole taints
   | (`None | `Clean), _ -> `Kept
 
+(* The result of one fold: its nodes, and for each class the targets built
+ * for it, by the context they were built in, so that a class reached again
+ * in one context shares its node. The context is the derived edges, the
+ * taint of the cell that reaches the class, the carried taints, and the
+ * classes on the path above it that lie in its strongly connected
+ * [component] of the classes, with their nodes: the only classes of the
+ * path that the nodes built for the class can refer to, since a class they
+ * refer to reaches it. Created by 'join_folded_by_site' for one fold and owned by
+ * the domain that runs it. *)
+type fold_memo = {
+  result : Shape_and_sig.Shape.node Dynarray.t;
+  component : int array;
+  emitted :
+    ((int * int) list * edge list * Xtaint.t * carried_taint list * target) list
+    array;
+}
+
+let equal_derived (edges1 : edge list) (edges2 : edge list) : bool =
+  List.equal
+    (fun (edge1 : edge) (edge2 : edge) ->
+      Xtaint.equal_with_guards edge1.xtaint edge2.xtaint
+      &&
+      match (edge1.target, edge2.target) with
+      | Node i, Node j -> Int.equal i j
+      | Leaf shape1, Leaf shape2 -> equal_shape_with_guards shape1 shape2
+      | Node _, Leaf _
+      | Leaf _, Node _ ->
+          false)
+    edges1 edges2
+
+let equal_carried_taints (carried1 : carried_taint list)
+    (carried2 : carried_taint list) : bool =
+  List.equal
+    (fun (carried_taint1 : carried_taint) (carried_taint2 : carried_taint) ->
+      Taints.equal_with_guards carried_taint1.object_taints
+        carried_taint2.object_taints
+      && List.equal T.equal_offset carried_taint1.offset carried_taint2.offset
+      && Taints.equal_with_guards carried_taint1.carry carried_taint2.carry)
+    carried1 carried2
+
+(* The cell that [edges] of one position give: a class on [path] is an edge
+ * to its node there, as a back reference to it. *)
 let rec cell_of_edges ~lang ~(traces : T.kept_traces) (q : quotient)
-    (path : int list) ~(derived : edge list) (carried_taints : carried_taint list)
-    (edges : edge list) : cell option =
+    (fold_memo : fold_memo) (path : (int * int) list) ~(derived : edge list)
+    (carried_taints : carried_taint list) (edges : edge list) : edge option =
   let xtaint = joined_xtaint ~traces edges in
   match position_nodes q edges with
   | first :: _ -> (
       let x = find q first in
-      match List.find_index (Int.equal x) path with
-      | Some distance -> Some (cell_of_join xtaint (Rec distance))
+      match
+        List.find_map
+          (fun ((class_root, index) : int * int) ->
+            if Int.equal class_root x then Some index else None)
+          path
+      with
+      | Some index -> Some (edge_of_join xtaint (Node index))
       | None when not (is_object q x) ->
-          Some (cell_of_join xtaint (closures_of_class ~lang ~traces q path x))
+          Some (edge_of_join xtaint (closures_of_class ~lang ~traces q fold_memo path x))
       | None -> (
-          match object_of_class ~lang ~traces q path x ~derived ~xtaint carried_taints with
-          | Bot when not (Xtaint.is_tainted xtaint) -> None
-          | shape -> Some (cell_of_join xtaint shape)))
+          match
+            object_of_class ~lang ~traces q fold_memo path x ~derived ~xtaint
+              carried_taints
+          with
+          | Leaf Bot when not (Xtaint.is_tainted xtaint) -> None
+          | target -> Some (edge_of_join xtaint target)))
   | [] -> (
       let shape =
         List.fold_left
@@ -2021,75 +2967,112 @@ let rec cell_of_edges ~lang ~(traces : T.kept_traces) (q : quotient)
                  Taints.empty
           in
           if Taints.is_empty taints then None
-          else Some (Cell (`Tainted taints, Bot))
-      | cell, _ -> Some cell)
+          else Some { xtaint = `Tainted taints; target = Leaf Bot }
+      | Cell (xtaint, shape), _ -> Some { xtaint; target = Leaf shape })
 
-and object_of_class ~lang ~(traces : T.kept_traces) (q : quotient) (path : int list)
-    (x : int) ~(derived : edge list) ~(xtaint : Xtaint.t)
-    (carried_taints : carried_taint list) : shape =
-  let incoming = Dynarray.get q.incoming x @ derived in
-  let carry = Xtaint.to_taints xtaint in
-  let inherited =
-    match xtaint with
-    | `Tainted taints ->
-        List.map (fun (carried_taint : carried_taint) -> { carried_taint with carry = taints }) carried_taints
-    | `None
-    | `Clean ->
-        carried_taints
+and object_of_class ~lang ~(traces : T.kept_traces) (q : quotient)
+    (fold_memo : fold_memo) (path : (int * int) list) (x : int)
+    ~(derived : edge list) ~(xtaint : Xtaint.t)
+    (carried_taints : carried_taint list) : target =
+  let component_path =
+    List.filter
+      (fun ((class_root, _) : int * int) ->
+        Int.equal fold_memo.component.(class_root) fold_memo.component.(x))
+      path
   in
-  let path = x :: path in
-  let field_map = field_edges q x in
-  let fields =
-    Fields.fold
-      (fun o edges fields ->
-        let reads = List.map (read_on_edge ~lang ~traces q o) incoming in
-        let derived =
-          List.filter_map
-            (function
-              | `Cell edge -> Some edge
-              | `Kept
-              | `Whole _ ->
-                  None)
-            reads
-        in
-        let carried_taints =
-          List.filter_map
-            (function
-              | `Whole object_taints -> Some { object_taints; offset = [ o ]; carry }
-              | `Kept
-              | `Cell _ ->
-                  None)
-            reads
-          @ List.map
-              (fun (carried_taint : carried_taint) ->
-                { carried_taint with offset = carried_taint.offset @ [ o ] })
-              inherited
-        in
-        match
-          cell_of_edges ~lang ~traces q path ~derived carried_taints (edges @ derived)
-        with
-        | Some cell -> Fields.add o cell fields
-        | None -> fields)
-      field_map Fields.empty
-  in
-  if Fields.is_empty fields && not (Fields.is_empty field_map) then Bot
-  else
-    Obj
-      {
-        sites = Dynarray.get q.class_sites x;
-        summary =
-          Dynarray.get q.back_edge_target x
-          || List.exists
-               (fun member -> (Dynarray.get q.nodes member).summary)
-               (Dynarray.get q.members x);
-        fields;
-      }
+  match
+    List.find_opt
+      (fun ((component_path', derived', xtaint', carried_taints', _) :
+             (int * int) list * edge list * Xtaint.t * carried_taint list * target) ->
+        List.equal
+          (fun ((class1, index1) : int * int) ((class2, index2) : int * int) ->
+            Int.equal class1 class2 && Int.equal index1 index2)
+          component_path component_path'
+        && equal_derived derived derived'
+        && Xtaint.equal_with_guards xtaint xtaint'
+        && equal_carried_taints carried_taints carried_taints')
+      fold_memo.emitted.(x)
+  with
+  | Some (_, _, _, _, target) -> target
+  | None ->
+      let index = Dynarray.length fold_memo.result in
+      Dynarray.add_last fold_memo.result empty_object;
+      let incoming = Dynarray.get q.incoming x @ derived in
+      let carry = Xtaint.to_taints xtaint in
+      let inherited =
+        match xtaint with
+        | `Tainted taints ->
+            List.map (fun (carried_taint : carried_taint) -> { carried_taint with carry = taints }) carried_taints
+        | `None
+        | `Clean ->
+            carried_taints
+      in
+      let path' = (x, index) :: path in
+      let field_map = field_edges q x in
+      let fields =
+        Fields.fold
+          (fun o edges fields ->
+            let reads = List.map (read_on_edge ~lang ~traces q o) incoming in
+            let derived =
+              List.filter_map
+                (function
+                  | `Cell edge -> Some edge
+                  | `Kept
+                  | `Whole _ ->
+                      None)
+                reads
+            in
+            let carried_taints =
+              List.filter_map
+                (function
+                  | `Whole object_taints -> Some { object_taints; offset = [ o ]; carry }
+                  | `Kept
+                  | `Cell _ ->
+                      None)
+                reads
+              @ List.map
+                  (fun (carried_taint : carried_taint) ->
+                    { carried_taint with offset = carried_taint.offset @ [ o ] })
+                  inherited
+            in
+            match
+              cell_of_edges ~lang ~traces q fold_memo path' ~derived carried_taints
+                (edges @ derived)
+            with
+            | Some edge -> Fields.add o edge fields
+            | None -> fields)
+          field_map Fields.empty
+      in
+      let target =
+        if Fields.is_empty fields && not (Fields.is_empty field_map) then Leaf Bot
+        else (
+          Dynarray.set fold_memo.result index
+            (Object
+               {
+                 sites = Dynarray.get q.class_sites x;
+                 summary =
+                   Dynarray.get q.back_edge_target x
+                   || List.exists
+                        (fun member -> (Dynarray.get q.nodes member).summary)
+                        (Dynarray.get q.members x);
+                 edges = fields;
+               });
+          Node index)
+      in
+      fold_memo.emitted.(x) <-
+        (component_path, derived, xtaint, carried_taints, target) :: fold_memo.emitted.(x);
+      target
 
 and closures_of_class ~lang ~(traces : T.kept_traces) (q : quotient)
-    (path : int list) (x : int) : shape =
-  let path = x :: path in
+    (fold_memo : fold_memo) (path : (int * int) list) (x : int) : target =
+  let index = Dynarray.length fold_memo.result in
+  Dynarray.add_last fold_memo.result empty_object;
+  let path = (x, index) :: path in
   let captured = captured_edges q x in
-  let join_closures (first : closure) (others : closure list) : closure =
+  let edge_of_cell (Cell (xtaint, shape) : cell) : edge =
+    { xtaint; target = target_of_shape fold_memo.result shape }
+  in
+  let join_closures (first : closure) (others : closure list) : graph_closure =
     let sig_ =
       List.fold_left
         (fun (sig_ : Signature.t) (closure : closure) ->
@@ -2105,25 +3088,26 @@ and closures_of_class ~lang ~(traces : T.kept_traces) (q : quotient)
     in
     let env =
       List.mapi
-        (fun position ((var, entry) as binding : IL.name * env_entry) ->
+        (fun position ((var, entry) : IL.name * env_entry) ->
           match (entry, Captured.find_opt (first.def, position) captured) with
-          | Val _, Some edges -> (
-              match cell_of_edges ~lang ~traces q path ~derived:[] [] edges with
-              | Some cell -> (var, Val cell)
-              | None -> binding)
-          | (Val _ | Ref _), _ -> binding)
+          | Val cell, Some edges -> (
+              match cell_of_edges ~lang ~traces q fold_memo path ~derived:[] [] edges with
+              | Some edge -> (var, (Val edge : graph_env_entry))
+              | None -> (var, Val (edge_of_cell cell)))
+          | Val cell, None -> (var, Val (edge_of_cell cell))
+          | Ref lval, _ -> (var, Ref lval))
         first.env
     in
-    { first with sig_; env }
+    { def = first.def; sig_; env }
   in
   let closures =
     Dynarray.get q.members x
     |> List.concat_map (fun member ->
-           match (Dynarray.get q.nodes member).original_shape with
+           match unfold (Dynarray.get q.nodes member).original_shape with
            | Fun (c, cs) -> c :: cs
            | Bot
            | Obj _
-           | Rec _
+           | Graph _
            | Arg _ ->
                [])
     |> List.stable_sort (fun (c1 : closure) (c2 : closure) ->
@@ -2145,23 +3129,39 @@ and closures_of_class ~lang ~(traces : T.kept_traces) (q : quotient)
         | [] -> None)
       groups
   with
-  | first :: others -> Fun (first, others)
-  | [] -> Bot
+  | first :: others ->
+      Dynarray.set fold_memo.result index (Closures (first, others));
+      Node index
+  | [] -> Leaf Bot
 
 let join_folded_by_site ~lang ~(traces : T.kept_traces) (previous : cell option)
     (computed : cell) : cell =
   let has_node (Cell (_, shape) : cell) : bool =
     match shape with
     | Obj _
+    | Graph _
     | Fun _ ->
         true
     | Bot
-    | Rec _
     | Arg _ ->
+        false
+  in
+  let holds_graph (Cell (_, shape) : cell) : bool =
+    match shape with
+    | Graph _ -> true
+    | Bot
+    | Obj _
+    | Arg _
+    | Fun _ ->
         false
   in
   match previous with
   | Some previous when phys_equal previous computed -> computed
+  (* Bisimilar values: the fold of equal values is the value. *)
+  | Some previous
+    when (holds_graph previous || holds_graph computed)
+         && equal_cell_with_guards previous computed ->
+      computed
   | Some previous when not (has_node previous || has_node computed) ->
       unify_cell ~lang ~traces previous computed
   | None when not (has_node computed) -> computed
@@ -2171,13 +3171,41 @@ let join_folded_by_site ~lang ~(traces : T.kept_traces) (previous : cell option)
       let roots =
         Option.to_list previous @ [ computed ]
         |> List.map (fun (Cell (xtaint, shape)) ->
-               { xtaint; target = graph_of_shape q [] shape })
+               { xtaint; target = graph_of_shape q shape })
       in
       close q roots;
       if Option.is_none previous && Int.equal q.unions 0 then computed
       else
-        match cell_of_edges ~lang ~traces q [] ~derived:[] [] roots with
-        | Some cell -> cell
+        let count = Dynarray.length q.nodes in
+        let class_successors =
+          Array.init count (fun (i : int) ->
+              if not (Int.equal (find q i) i) then []
+              else
+                List.filter_map
+                  (fun (edges : edge list) ->
+                    match position_nodes q edges with
+                    | first :: _ ->
+                        let j = find q first in
+                        if j < count then Some j else None
+                    | [] -> None)
+                  (class_edges q i))
+        in
+        let fold_memo =
+          {
+            result = Dynarray.create ();
+            component =
+              (let _, component_of =
+                 Shape_and_sig.Adjacency_components.scc class_successors
+               in
+               Array.init count component_of);
+            emitted = Array.make count [];
+          }
+        in
+        match cell_of_edges ~lang ~traces q fold_memo [] ~derived:[] [] roots with
+        | Some edge ->
+            Cell
+              ( edge.xtaint,
+                minimise ~traces (Dynarray.to_array fold_memo.result) edge.target )
         | None -> Cell (joined_xtaint ~traces roots, Bot))
 
 (*********************************************************)
@@ -2201,7 +3229,18 @@ and enum_in_shape (taints : Taints.t) (shape : shape) :
   | Obj { summary = true; _ } ->
       Seq.return ([], taints, shape)
   | Obj { fields; _ } -> Seq.append own_taints (enum_in_obj fields)
-  | Rec _ -> own_taints
+  | Graph _ -> (
+      (* The value that starts at a node is yielded whole at a summary node or
+       * a closure set; every cycle passes through a summary node
+       * (INVARIANT(graph).5), so the walk ends. *)
+      match unfold shape with
+      | Obj { summary = false; fields; _ } -> Seq.append own_taints (enum_in_obj fields)
+      | Obj { summary = true; _ }
+      | Bot
+      | Graph _
+      | Arg _
+      | Fun _ ->
+          Seq.return ([], taints, shape))
 
 and enum_in_obj obj =
   obj

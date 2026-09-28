@@ -1,0 +1,13 @@
+rules:
+  - id: write_into_record_of_cycle_python
+    message: a write into the next record of a loop-built record reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

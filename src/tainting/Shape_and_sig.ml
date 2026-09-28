@@ -60,6 +60,77 @@ module Sites = Set.Make (struct
   let compare = compare_site
 end)
 
+(* A directed graph over the integers from 0, as an array of successor
+   lists, for the algorithms of ocamlgraph. *)
+module Adjacency = struct
+  type t = int list array
+
+  let is_directed = true
+
+  module V = struct
+    type t = int
+
+    let compare = Int.compare
+    let hash (i : int) : int = i
+    let equal = Int.equal
+  end
+
+  let fold_vertex f (successors : t) acc =
+    Array.to_seq successors
+    |> Seq.fold_lefti (fun acc (i : int) (_ : int list) -> f i acc) acc
+
+  let iter_vertex (f : int -> unit) (successors : t) : unit =
+    Array.iteri (fun (i : int) (_ : int list) -> f i) successors
+
+  let fold_succ f (successors : t) (i : int) acc =
+    List.fold_left (fun acc (j : int) -> f j acc) acc successors.(i)
+
+  let iter_succ (f : int -> unit) (successors : t) (i : int) : unit =
+    List.iter f successors.(i)
+end
+
+module Adjacency_components = Graph.Components.Make (Adjacency)
+module Adjacency_dfs = Graph.Traverse.Dfs (Adjacency)
+module Adjacency_bfs = Graph.Traverse.Bfs (Adjacency)
+
+(* The least solution of [value i = join (local i) (value j)] over the
+   successors [j] of every [i] (Nielson, Nielson and Hankin 1999, 1.3), by
+   the data flow analysis of fix: [local i] flows into [i], and the value of
+   [j] into each predecessor of [j]. [leq_join p q] is the join of [p] and
+   [q], [q] itself when [p] is below [q]. Every vertex is a root, so every
+   vertex has a solution. *)
+let least_fixpoint (type value) ~(leq_join : value -> value -> value)
+    ~(local : int -> value) (successors : Adjacency.t) : value array =
+  let count = Array.length successors in
+  let predecessors = Array.make count [] in
+  Array.iteri
+    (fun (i : int) (next : int list) ->
+      List.iter (fun (j : int) -> predecessors.(j) <- i :: predecessors.(j)) next)
+    successors;
+  let module Solution =
+    Fix.DataFlow.ForIntSegment
+      (struct
+        let n = count
+      end)
+      (struct
+        type property = value
+
+        let leq_join = leq_join
+      end)
+      (struct
+        type variable = int
+        type property = value
+
+        let foreach_root (contribute : int -> value -> unit) : unit =
+          Array.iteri (fun (i : int) (_ : int list) -> contribute i (local i)) successors
+
+        let foreach_successor (j : int) (value : value) (yield : int -> value -> unit) :
+            unit =
+          List.iter (fun (i : int) -> yield i value) predecessors.(j)
+      end)
+  in
+  Array.init count (fun (i : int) -> Option.get (Solution.solution i))
+
 (** A shape approximates an object or data structure, and tracks the taint
  * associated with its fields and indexes.
  *
@@ -105,13 +176,30 @@ module rec Shape : sig
             the non-constant indexes.
 
             [sites] are the sites that create the objects it stands for.
-            [summary] is set when a [Rec] may refer to it: it also stands for
-            the objects of its sites that were nested inside it. *)
-    | Rec of int
-        (** A back reference to the [n]th enclosing ['Obj'] or closure set
-            ['Fun'] whose captured cell holds it (0 is the nearest one): the
-            shape is a regular tree, and a read through [Rec n] continues in
-            that object or closure set. *)
+            [summary] is set when it also stands for the objects of its
+            sites that were nested inside it; every cycle of a ['Graph']
+            passes through a node with [summary] set. *)
+    | Graph of graph
+        (** A value whose unfolding is infinite: a finite rooted graph whose
+            unfolding is the value, a regular tree (Courcelle 1983). A node
+            is an object or a closure set, an edge is a cell, and several
+            edges may have one target node, which a cycle is a case of. A
+            read continues in the target node.
+
+            INVARIANT(graph):
+              1. A ['Graph'] starts a whole value: a variable's cell, an
+                 effect's shape, a read's result. No [Leaf], ['Obj'] field or
+                 captured cell of a ['Fun'] holds one, so a tree is finite.
+              2. Every node reachable from [root] has an infinite unfolding;
+                 a finite part is a [Leaf] tree.
+              3. No two nodes reachable from [root] are bisimilar (Park
+                 1981), labels compared with sites and guards: the graph is
+                 the minimal one of its unfolding.
+              4. Node indices are the depth-first pre-order from the [root]
+                 of the value the array was built for, successors in key
+                 order.
+              5. Every cycle passes through a node with [summary] set.
+              6. INVARIANT(cell) holds for every edge. *)
     | Arg of Taint.formal * Taint.offset list list
         (** Represents the yet-unknown shape of a function/method parameter
             or of a variable captured by a closure,
@@ -129,20 +217,50 @@ module rec Shape : sig
             of their definitions.
             These enable Semgrep to handle HOFs. *)
 
-  and closure = {
+  and graph = {
+    nodes : node array;
+    root : int;  (** The node the value starts at. *)
+    all_taints : Taint.taints array;
+        (** For each node, [gather_all_taints_in_shape] of the value that
+            starts at it. *)
+    has_relevant_content : bool array;
+        (** For each node, [shape_has_relevant_content] of the value that
+            starts at it. *)
+  }
+
+  and node =
+    | Object of { sites : Sites.t; summary : bool; edges : edge Fields.t }
+        (** An object, as ['Obj']. *)
+    | Closures of graph_closure * graph_closure list
+        (** A closure set, as ['Fun']. *)
+
+  and graph_closure = edge closure_of
+  and graph_env_entry = edge env_entry_of
+  and edge = { xtaint : Xtaint.t; target : target }
+
+  and target =
+    | Node of int
+    | Leaf of shape  (** A tree, never a ['Graph']. *)
+
+  and 'value closure_of = {
     def : Function_id.t;
         (** The function definition whose code the closure runs. *)
     sig_ : Signature.t;
-    env : env;
+    env : (IL.name * 'value env_entry_of) list;
         (** Binds the variables the code captures; one definition always
             captures the same variables, in the same order. *)
   }
+  (** A closure whose captured values are ['value]: cells in a tree, edges
+      in a graph. *)
 
+  and closure = cell closure_of
   and env = (IL.name * env_entry) list
 
-  and env_entry =
+  and 'value env_entry_of =
     | Ref of Taint.lval  (** Captured by reference: the variable itself. *)
-    | Val of cell  (** Captured by value: the value at creation. *)
+    | Val of 'value  (** Captured by value: the value at creation. *)
+
+  and env_entry = cell env_entry_of
 
   and cell =
     | Cell of Xtaint.t * shape
@@ -219,10 +337,63 @@ module rec Shape : sig
       test; identity and fusion keying keep using [equal_cell]. *)
 
   val equal_shape : shape -> shape -> bool
+
+  val equal_shape_with_guards : shape -> shape -> bool
+  (** [equal_shape] with the guards of [equal_cell_with_guards]. *)
+
   val equal_env : env -> env -> bool
   val equal_env_with_guards : env -> env -> bool
   val compare_shape : shape -> shape -> int
-  val union_sites : shape -> shape -> shape
+
+  val union_sites : traces:Taint.kept_traces -> shape -> shape -> shape
+  (** [union_sites shape1 shape2], where [compare_shape shape1 shape2 = 0],
+      is [shape1] with the sites of [shape2] added at each position. *)
+
+  val gather_all_taints_in_cell_acc :
+    traces:Taint.kept_traces -> Taint.taints -> cell -> Taint.taints
+
+  val gather_all_taints_in_shape_acc :
+    traces:Taint.kept_traces -> Taint.taints -> shape -> Taint.taints
+
+  val shape_has_relevant_content : shape -> bool
+
+  val minimise : traces:Taint.kept_traces -> node array -> target -> shape
+  (** [minimise nodes root] is the value that starts at [root], in the form
+      INVARIANT(graph) requires. [nodes] may hold unreachable nodes,
+      bisimilar nodes and nodes whose unfolding is finite; a [Leaf] target
+      holds a tree. *)
+
+  val canonical : traces:Taint.kept_traces -> shape -> shape
+  (** The canonical form of an ['Obj'] or ['Fun'] whose cells may hold a
+      ['Graph'] (INVARIANT(graph).1): a ['Graph'] when one of them does,
+      else the shape itself. *)
+
+  val append_graph : node Dynarray.t -> graph -> int
+  (** Appends the nodes reachable from [root] and returns the index of the
+      root's copy. *)
+
+  val target_of_shape : node Dynarray.t -> shape -> target
+  (** A ['Graph'] appended ([append_graph]), a tree as a [Leaf]. *)
+
+  val node_edges : node -> edge list
+  (** Objects: in key order; closure sets: the captured cells in the order
+      of the closures and of their environments. *)
+
+  val map_edges : (edge -> edge) -> node -> node
+  val map_targets : (target -> target) -> node -> node
+
+  val successors : node -> int list
+  (** The indices of the [Node] targets of [node_edges]. *)
+
+  val preorder : int list array -> int -> int list
+  (** [preorder successors root]: the vertices reachable from [root] in
+      depth-first pre-order, successors in list order. *)
+
+  val unfold : shape -> shape
+  (** A ['Graph'] as the ['Obj'] or ['Fun'] of its root node, whose cells
+      hold the values that start at the edges' targets; a tree as it is.
+      For reads only: the result may hold a ['Graph'] below its root. *)
+
   val show_cell : cell -> string
   val show_shape : shape -> string
   val show_obj : obj -> string
@@ -234,24 +405,242 @@ end = struct
         summary : bool;
         fields : obj;
       }
-    | Rec of int
+    | Graph of graph
     | Arg of T.formal * T.offset list list
     | Fun of closure * closure list
-  and closure = {
+  and graph = {
+    nodes : node array;
+    root : int;
+    all_taints : (T.taints[@equal T.Taint_set.equal]) array;
+    has_relevant_content : bool array;
+  }
+  and node =
+    | Object of {
+        sites : (Sites.t[@equal Sites.equal]);
+        summary : bool;
+        edges : edge Fields.t;
+      }
+    | Closures of graph_closure * graph_closure list
+  and graph_closure = edge closure_of
+  and graph_env_entry = edge env_entry_of
+  and edge = { xtaint : Xtaint.t; target : target }
+  and target = Node of int | Leaf of shape
+  and 'value closure_of = {
     def : (Function_id.t[@equal Function_id.equal]);
     sig_ : Signature.t;
-    env : env;
+    env :
+      ((IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
+      * 'value env_entry_of)
+      list;
   }
+  and closure = cell closure_of
   and env =
     ((IL.name[@equal fun n1 n2 -> Int.equal (IL.compare_name n1 n2) 0])
     * env_entry)
     list
-  and env_entry =
+  and 'value env_entry_of =
     | Ref of (T.lval[@equal fun l1 l2 -> Int.equal (T.compare_lval l1 l2) 0])
-    | Val of cell
+    | Val of 'value
+  and env_entry = cell env_entry_of
   and cell = Cell of Xtaint.t * shape
   and obj = cell Fields.t
   [@@deriving eq]
+
+  (*************************************)
+  (* Graphs *)
+  (*************************************)
+
+  (* Objects: in key order; closure sets: the captured cells in the order of
+     the closures and of their environments. *)
+  let node_edges (node : node) : edge list =
+    match node with
+    | Object { edges; _ } ->
+        Fields.fold (fun _ (edge : edge) edges -> edge :: edges) edges []
+        |> List.rev
+    | Closures (c, cs) ->
+        List.concat_map
+          (fun (closure : graph_closure) ->
+            List.filter_map
+              (fun ((_, entry) : IL.name * graph_env_entry) ->
+                match entry with
+                | Val edge -> Some edge
+                | Ref _ -> None)
+              closure.env)
+          (c :: cs)
+
+  let map_edges (f : edge -> edge) (node : node) : node =
+    match node with
+    | Object ({ edges; _ } as node) ->
+        Object { node with edges = Fields.map f edges }
+    | Closures (c, cs) ->
+        let map_closure (closure : graph_closure) : graph_closure =
+          {
+            closure with
+            env =
+              List.map
+                (fun ((x, entry) as binding : IL.name * graph_env_entry) ->
+                  match entry with
+                  | Val edge -> (x, (Val (f edge) : graph_env_entry))
+                  | Ref _ -> binding)
+                closure.env;
+          }
+        in
+        Closures (map_closure c, List.map map_closure cs)
+
+  let map_targets (f : target -> target) (node : node) : node =
+    map_edges (fun (edge : edge) -> { edge with target = f edge.target }) node
+
+  let successors (node : node) : int list =
+    List.filter_map
+      (fun (edge : edge) ->
+        match edge.target with
+        | Node j -> Some j
+        | Leaf _ -> None)
+      (node_edges node)
+
+  (* The vertices reachable from [root] in depth-first pre-order, successors
+     in the order of [successors]: [Adjacency_dfs.fold_component] visits
+     first the successor it pushed last, so it is given the lists
+     reversed. *)
+  let preorder (successors : int list array) (root : int) : int list =
+    Adjacency_dfs.fold_component
+      (fun (i : int) (order : int list) -> i :: order)
+      [] (Array.map List.rev successors) root
+    |> List.rev
+
+  (* The pairs of nodes of two graphs that their unfoldings reach at one
+     position: the reachable part of the product of the two graphs (Rabin
+     and Scott 1959), for the algorithms of ocamlgraph. *)
+  module Pairs = struct
+    type t = graph * graph
+
+    let is_directed = true
+
+    module V = struct
+      type t = int * int
+
+      let compare ((i1, j1) : t) ((i2, j2) : t) : int =
+        match Int.compare i1 i2 with
+        | 0 -> Int.compare j1 j2
+        | other -> other
+
+      let hash ((i, j) : t) : int = Hashtbl.hash (i, j)
+
+      let equal ((i1, j1) : t) ((i2, j2) : t) : bool =
+        Int.equal i1 i2 && Int.equal j1 j2
+    end
+
+    let fold_vertex f ((g1, g2) : t) acc =
+      Seq.fold_lefti
+        (fun acc (i : int) (_ : node) ->
+          Seq.fold_lefti
+            (fun acc (j : int) (_ : node) -> f (i, j) acc)
+            acc (Array.to_seq g2.nodes))
+        acc (Array.to_seq g1.nodes)
+
+    let iter_vertex (f : V.t -> unit) (graphs : t) : unit =
+      fold_vertex (fun (pair : V.t) () -> f pair) graphs ()
+
+    (* The pairs of the targets of the edges at one key, or at one captured
+       position, that are nodes on both sides, in key order. *)
+    let succ ((g1, g2) : t) ((i, j) : V.t) : V.t list =
+      match (g1.nodes.(i), g2.nodes.(j)) with
+      | Object object1, Object object2 ->
+          Fields.fold
+            (fun (o : T.offset) (edge1 : edge) (pairs : V.t list) ->
+              match (edge1.target, Fields.find_opt o object2.edges) with
+              | Node i', Some { target = Node j'; _ } -> (i', j') :: pairs
+              | (Node _ | Leaf _), _ -> pairs)
+            object1.edges []
+          |> List.rev
+      | Closures _, Closures _ -> (
+          let edges1 = node_edges g1.nodes.(i) in
+          let edges2 = node_edges g2.nodes.(j) in
+          match List.compare_lengths edges1 edges2 with
+          | 0 ->
+              List.fold_left2
+                (fun (pairs : V.t list) (edge1 : edge) (edge2 : edge) ->
+                  match (edge1.target, edge2.target) with
+                  | Node i', Node j' -> (i', j') :: pairs
+                  | (Node _ | Leaf _), _ -> pairs)
+                [] edges1 edges2
+              |> List.rev
+          | _ -> [])
+      | Object _, Closures _
+      | Closures _, Object _ ->
+          []
+
+    let fold_succ f (graphs : t) (pair : V.t) acc =
+      List.fold_left (fun acc (pair : V.t) -> f pair acc) acc (succ graphs pair)
+
+    let iter_succ (f : V.t -> unit) (graphs : t) (pair : V.t) : unit =
+      List.iter f (succ graphs pair)
+  end
+
+  module Pair_dfs = Graph.Traverse.Dfs (Pairs)
+  module Pair_bfs = Graph.Traverse.Bfs (Pairs)
+  module Pair_tbl = Hashtbl.Make (Pairs.V)
+
+  let append_graph (builder : node Dynarray.t) (g : graph) : int =
+    let order = preorder (Array.map successors g.nodes) g.root in
+    let base = Dynarray.length builder in
+    let index = Array.make (Array.length g.nodes) (-1) in
+    List.iteri (fun (k : int) (i : int) -> index.(i) <- base + k) order;
+    List.iter
+      (fun (i : int) ->
+        Dynarray.add_last builder
+          (map_targets
+             (fun (target : target) ->
+               match target with
+               | Node j -> Node index.(j)
+               | Leaf _ -> target)
+             g.nodes.(i)))
+      order;
+    index.(g.root)
+
+  let target_of_shape (builder : node Dynarray.t) (shape : shape) : target =
+    match shape with
+    | Graph g -> Node (append_graph builder g)
+    | Bot
+    | Obj _
+    | Arg _
+    | Fun _ ->
+        Leaf shape
+
+  let shape_of_node (cell_of_edge : edge -> cell) (node : node) : shape =
+    match node with
+    | Object { sites; summary; edges } ->
+        Obj { sites; summary; fields = Fields.map cell_of_edge edges }
+    | Closures (c, cs) ->
+        let closure_of (closure : graph_closure) : closure =
+          {
+            def = closure.def;
+            sig_ = closure.sig_;
+            env =
+              List.map
+                (fun ((x, entry) : IL.name * graph_env_entry) ->
+                  match entry with
+                  | Ref lval -> (x, (Ref lval : env_entry))
+                  | Val edge -> (x, Val (cell_of_edge edge)))
+                closure.env;
+          }
+        in
+        Fun (closure_of c, List.map closure_of cs)
+
+  let unfold (shape : shape) : shape =
+    match shape with
+    | Graph g ->
+        shape_of_node
+          (fun (edge : edge) ->
+            match edge.target with
+            | Node i -> Cell (edge.xtaint, Graph { g with root = i })
+            | Leaf leaf -> Cell (edge.xtaint, leaf))
+          g.nodes.(g.root)
+    | Bot
+    | Obj _
+    | Arg _
+    | Fun _ ->
+        shape
 
   (*************************************)
   (* Equality *)
@@ -282,6 +671,74 @@ end = struct
     in
     equal_closure c1 c2 && List.equal equal_closure cs1 cs2
 
+  let phys_equal_graph (g1 : graph) (g2 : graph) : bool =
+    phys_equal g1 g2
+    || (phys_equal g1.nodes g2.nodes && Int.equal g1.root g2.root)
+
+  (* The labels of two nodes: everything but the nodes that their edges
+     reach, which the caller pairs. *)
+  let equal_labels ~(equal_xtaint : Xtaint.t -> Xtaint.t -> bool)
+      ~(equal_tree : shape -> shape -> bool)
+      ~(equal_sig : Signature.t -> Signature.t -> bool) (node1 : node)
+      (node2 : node) : bool =
+    let equal_edges (edge1 : edge) (edge2 : edge) : bool =
+      (phys_equal edge1.xtaint edge2.xtaint || equal_xtaint edge1.xtaint edge2.xtaint)
+      &&
+      match (edge1.target, edge2.target) with
+      | Node _, Node _ -> true
+      | Leaf shape1, Leaf shape2 -> phys_equal shape1 shape2 || equal_tree shape1 shape2
+      | Node _, Leaf _
+      | Leaf _, Node _ ->
+          false
+    in
+    match (node1, node2) with
+    | Object object1, Object object2 ->
+        Sites.equal object1.sites object2.sites
+        && Bool.equal object1.summary object2.summary
+        && Fields.equal equal_edges object1.edges object2.edges
+    | Closures (c1, cs1), Closures (c2, cs2) ->
+        List.equal
+          (fun (closure1 : graph_closure) (closure2 : graph_closure) ->
+            Function_id.equal closure1.def closure2.def
+            && equal_sig closure1.sig_ closure2.sig_
+            && List.equal
+                 (fun ((x1, e1) : IL.name * graph_env_entry)
+                      ((x2, e2) : IL.name * graph_env_entry) ->
+                   Int.equal (IL.compare_name x1 x2) 0
+                   &&
+                   match (e1, e2) with
+                   | Ref l1, Ref l2 -> Int.equal (T.compare_lval l1 l2) 0
+                   | Val edge1, Val edge2 -> equal_edges edge1 edge2
+                   | Ref _, Val _
+                   | Val _, Ref _ ->
+                       false)
+                 closure1.env closure2.env)
+          (c1 :: cs1) (c2 :: cs2)
+    | Object _, Closures _
+    | Closures _, Object _ ->
+        false
+
+  (* Whether the values that start at the roots of [g1] and [g2] are
+     bisimilar (Park 1981): the labels are equal at every pair of nodes that
+     the two unfoldings reach at one position. On minimal graphs this is
+     isomorphism. *)
+  let bisimilar ~(equal_xtaint : Xtaint.t -> Xtaint.t -> bool)
+      ~(equal_tree : shape -> shape -> bool)
+      ~(equal_sig : Signature.t -> Signature.t -> bool) (g1 : graph)
+      (g2 : graph) : bool =
+    match
+      Pair_dfs.iter_component
+        ~pre:(fun ((i, j) : int * int) ->
+          if
+            not
+              (equal_labels ~equal_xtaint ~equal_tree ~equal_sig g1.nodes.(i)
+                 g2.nodes.(j))
+          then raise_notrace Exit)
+        (g1, g2) (g1.root, g2.root)
+    with
+    | () -> true
+    | exception Exit -> false
+
   let equal_obj_node ~(equal_fields : obj -> obj -> bool) (sites1 : Sites.t)
       (summary1 : bool) (fields1 : obj) (sites2 : Sites.t) (summary2 : bool)
       (fields2 : obj) : bool =
@@ -302,7 +759,10 @@ end = struct
         Obj { sites = sites2; summary = summary2; fields = fields2 } ) ->
         equal_obj_node ~equal_fields:equal_obj sites1 summary1 fields1 sites2
           summary2 fields2
-    | Rec n1, Rec n2 -> Int.equal n1 n2
+    | Graph g1, Graph g2 ->
+        phys_equal_graph g1 g2
+        || bisimilar ~equal_xtaint:Xtaint.equal ~equal_tree:equal_shape
+             ~equal_sig:Signature.equal g1 g2
     | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
         T.equal_formal formal1 formal2
         && Int.equal
@@ -312,7 +772,7 @@ end = struct
         equal_closures_by Signature.equal equal_cell (c1, cs1) (c2, cs2)
     | Bot, _
     | Obj _, _
-    | Rec _, _
+    | Graph _, _
     | Arg _, _
     | Fun _, _ ->
         false
@@ -337,7 +797,11 @@ end = struct
         Obj { sites = sites2; summary = summary2; fields = fields2 } ) ->
         equal_obj_node ~equal_fields:equal_obj_with_guards sites1 summary1
           fields1 sites2 summary2 fields2
-    | Rec n1, Rec n2 -> Int.equal n1 n2
+    | Graph g1, Graph g2 ->
+        phys_equal_graph g1 g2
+        || bisimilar ~equal_xtaint:Xtaint.equal_with_guards
+             ~equal_tree:equal_shape_with_guards
+             ~equal_sig:Signature.equal_with_guards g1 g2
     | Arg (formal1, offsets1), Arg (formal2, offsets2) ->
         T.equal_formal formal1 formal2
         && Int.equal
@@ -348,7 +812,7 @@ end = struct
           (c1, cs1) (c2, cs2)
     | Bot, _
     | Obj _, _
-    | Rec _, _
+    | Graph _, _
     | Arg _, _
     | Fun _, _ ->
         false
@@ -362,6 +826,68 @@ end = struct
   (*************************************)
   (* Comparison *)
   (*************************************)
+
+  (* The order of two graphs modulo sites: their labels compared at the
+     pairs of nodes that the two unfoldings reach at one position, in
+     shortlex order of the positions (the breadth-first order, successors in
+     key order), each pair once; the first difference decides. A difference
+     below a pair met again appears first below its first visit, so the
+     pruning is exact, and the result is 0 exactly for values bisimilar
+     modulo sites. *)
+  let compare_graphs ~(compare_tree : shape -> shape -> int) (g1 : graph)
+      (g2 : graph) : int =
+    let exception Decided of int in
+    let compare_edges (edge1 : edge) (edge2 : edge) : int =
+      match Xtaint.compare edge1.xtaint edge2.xtaint with
+      | 0 -> (
+          match (edge1.target, edge2.target) with
+          | Leaf shape1, Leaf shape2 -> compare_tree shape1 shape2
+          | Node _, Node _ -> 0
+          | Leaf _, Node _ -> -1
+          | Node _, Leaf _ -> 1)
+      | other -> other
+    in
+    let compare_closures (c1 : graph_closure) (c2 : graph_closure) : int =
+      match Function_id.compare c1.def c2.def with
+      | 0 -> (
+          match Signature.compare c1.sig_ c2.sig_ with
+          | 0 ->
+              List.compare
+                (fun ((x1, e1) : IL.name * graph_env_entry)
+                     ((x2, e2) : IL.name * graph_env_entry) ->
+                  match IL.compare_name x1 x2 with
+                  | 0 -> (
+                      match (e1, e2) with
+                      | Ref l1, Ref l2 -> T.compare_lval l1 l2
+                      | Val edge1, Val edge2 -> compare_edges edge1 edge2
+                      | Ref _, Val _ -> -1
+                      | Val _, Ref _ -> 1)
+                  | other -> other)
+                c1.env c2.env
+          | other -> other)
+      | other -> other
+    in
+    let compare_labels (node1 : node) (node2 : node) : int =
+      match (node1, node2) with
+      | Object object1, Object object2 -> (
+          match Bool.compare object1.summary object2.summary with
+          | 0 -> Fields.compare compare_edges object1.edges object2.edges
+          | other -> other)
+      | Closures (c1, cs1), Closures (c2, cs2) ->
+          List.compare compare_closures (c1 :: cs1) (c2 :: cs2)
+      | Object _, Closures _ -> -1
+      | Closures _, Object _ -> 1
+    in
+    match
+      Pair_bfs.iter_component
+        (fun ((i, j) : int * int) ->
+          match compare_labels g1.nodes.(i) g2.nodes.(j) with
+          | 0 -> ()
+          | other -> raise_notrace (Decided other))
+        (g1, g2) (g1.root, g2.root)
+    with
+    | () -> 0
+    | exception Decided other -> other
 
   let rec compare_cell cell1 cell2 =
     if phys_equal cell1 cell2 then 0
@@ -382,7 +908,9 @@ end = struct
         match Bool.compare summary1 summary2 with
         | 0 -> compare_obj fields1 fields2
         | other -> other)
-    | Rec n1, Rec n2 -> Int.compare n1 n2
+    | Graph g1, Graph g2 ->
+        if phys_equal_graph g1 g2 then 0
+        else compare_graphs ~compare_tree:compare_shape g1 g2
     | Arg (formal1, offsets1), Arg (formal2, offsets2) -> (
         match T.compare_formal formal1 formal2 with
         | 0 -> List.compare (List.compare T.compare_offset) offsets1 offsets2
@@ -391,15 +919,15 @@ end = struct
         match compare_closure c1 c2 with
         | 0 -> List.compare compare_closure cs1 cs2
         | other -> other)
-    | Bot, (Obj _ | Rec _ | Arg _ | Fun _)
-    | Obj _, (Rec _ | Arg _ | Fun _)
-    | Rec _, (Arg _ | Fun _)
+    | Bot, (Obj _ | Graph _ | Arg _ | Fun _)
+    | Obj _, (Graph _ | Arg _ | Fun _)
+    | Graph _, (Arg _ | Fun _)
     | Arg _, Fun _ ->
         -1
     | Obj _, Bot
-    | Rec _, (Bot | Obj _)
-    | Arg _, (Bot | Obj _ | Rec _)
-    | Fun _, (Bot | Obj _ | Rec _ | Arg _) ->
+    | Graph _, (Bot | Obj _)
+    | Arg _, (Bot | Obj _ | Graph _)
+    | Fun _, (Bot | Obj _ | Graph _ | Arg _) ->
         1
 
   and compare_obj obj1 obj2 = Fields.compare compare_cell obj1 obj2
@@ -427,12 +955,600 @@ end = struct
         | other -> other)
       env1 env2
 
-  let rec union_sites_in_cell (Cell (xtaint, shape1) as cell1 : cell)
-      (Cell (_, shape2) : cell) : cell =
-    let shape = union_sites shape1 shape2 in
+  (*************************************)
+  (* Collect/union all taints *)
+  (*************************************)
+
+  (* THINK: Generalize to "fold" ? *)
+  let rec gather_all_taints_in_cell_acc ~(traces : T.kept_traces) acc cell =
+    let (Cell (xtaint, shape)) = cell in
+    match xtaint with
+    | `Clean ->
+        (* Due to INVARIANT(cell) we can just stop here. *)
+        acc
+    | `None -> gather_all_taints_in_shape_acc ~traces acc shape
+    | `Tainted taints ->
+        gather_all_taints_in_shape_acc ~traces
+          (T.Taint_set.union ~traces taints acc)
+          shape
+
+  and gather_all_taints_in_shape_acc ~(traces : T.kept_traces) acc = function
+    | Bot -> acc
+    | Obj { fields; _ } -> gather_all_taints_in_obj_acc ~traces acc fields
+    | Graph g -> T.Taint_set.union ~traces g.all_taints.(g.root) acc
+    | Arg (arg, offsets) ->
+        (* One [Shape_var] per alternative offset. *)
+        List.fold_left
+          (fun acc off ->
+            let lval = { T.base = T.base_of_formal arg; offset = off } in
+            let taint = T.taint_of_orig (T.Shape_var lval) in
+            T.Taint_set.add_taint ~traces taint acc)
+          acc offsets
+    | Fun _ ->
+        (* Consider a third-party/opaque function to which we pass a record that
+         * contains a function object. Should be gather the taints in the function
+         * shape? In principle, no, since taints within a function shape aren't
+         * reachable until the function gets called...
+         *
+         * TODO: We could perhaps consider gathering the concrete taint sources
+         * that may be reachable if the function ever gets called? *)
+        acc
+
+  and gather_all_taints_in_obj_acc ~(traces : T.kept_traces) acc obj =
+    Fields.fold
+      (fun _ o_cell acc -> gather_all_taints_in_cell_acc ~traces acc o_cell)
+      obj acc
+
+  (* Does [shape] carry any content relevant to taint propagation?
+   * - [`Tainted] xtaint on any cell — direct taint.
+   * - [Arg _] — polymorphic caller-supplied taint yet to be instantiated.
+   * - [Fun _] — function reference; HOF analysis tracks the callback's
+   *   signature via this shape, so an assignment of a lambda to a
+   *   variable is not a sanitizer even though no [`Tainted] cell is
+   *   reachable through the shape.
+   * - [`Clean] cell with [Bot] subshape — literal construction observed
+   *   no taint here; does NOT count as content.
+   * - [Bot] — nothing. *)
+  let rec shape_has_relevant_content = function
+    | Bot -> false
+    | Graph g -> g.has_relevant_content.(g.root)
+    | Arg _
+    | Fun _ ->
+        true
+    | Obj { fields; _ } ->
+        Fields.exists (fun _ cell -> cell_has_relevant_content cell) fields
+
+  and cell_has_relevant_content (Cell (xtaint, shape)) =
+    Xtaint.is_tainted xtaint || shape_has_relevant_content shape
+
+  (*************************************)
+  (* Minimisation *)
+  (*************************************)
+
+  module Label_tbl = Hashtbl.Make (Int)
+
+  module Letter = struct
+    type t = int
+
+    let compare = Int.compare
+    let print = Int.to_string
+  end
+
+  (* A hash of a label that equal labels share ([equal_labels] with sites and
+     guards): its kind, summary, sites and keys, and for each edge its taint's
+     kind and size and its target's kind. *)
+  let label_hash (node : node) : int =
+    let edge_hash (edge : edge) : int =
+      Hashtbl.hash
+        ( (match edge.xtaint with
+          | `None -> -1
+          | `Clean -> -2
+          | `Tainted taints -> T.Taint_set.cardinal taints),
+          match edge.target with
+          | Node _ -> -1
+          | Leaf Bot -> -2
+          | Leaf (Obj { fields; _ }) -> Fields.cardinal fields
+          | Leaf (Graph _) -> -3
+          | Leaf (Arg (_, offsets)) -> -4 - List.length offsets
+          | Leaf (Fun (_, cs)) -> -100 - List.length cs )
+    in
+    match node with
+    | Object { summary; edges; sites } ->
+        Hashtbl.hash
+          ( 0,
+            summary,
+            Sites.cardinal sites,
+            Fields.fold
+              (fun (o : T.offset) (edge : edge) (hashes : int list) ->
+                Hashtbl.hash
+                  ( (match o with
+                    | T.Ofld name -> Hashtbl.hash (fst name.ident)
+                    | T.Ostr name -> Hashtbl.hash name
+                    | T.Oint i -> i
+                    | T.Oslice i -> -i
+                    | T.Oany -> -1),
+                    edge_hash edge )
+                :: hashes)
+              edges [] )
+    | Closures (c, cs) ->
+        Hashtbl.hash
+          ( 1,
+            List.map
+              (fun (closure : graph_closure) -> Function_id.hash closure.def)
+              (c :: cs),
+            List.map edge_hash (node_edges node) )
+
+  (* [nodes] and [root]: a graph that may have unreachable nodes, bisimilar
+     nodes and nodes whose unfolding is finite. The strongly connected
+     components (Tarjan 1972) decide which nodes have an infinite unfolding;
+     the others become [Leaf] trees; partition refinement merges the
+     bisimilar ones; the classes are numbered in depth-first pre-order from
+     the root, and the derived attributes are computed component by
+     component, successors first. *)
+  let minimise ~(traces : T.kept_traces) (nodes : node array) (root : target) :
+      shape =
+    match root with
+    | Leaf shape -> shape
+    | Node root ->
+        let order = Array.of_list (preorder (Array.map successors nodes) root) in
+        let count = Array.length order in
+        let local = Array.make (Array.length nodes) (-1) in
+        Array.iteri (fun (k : int) (i : int) -> local.(i) <- k) order;
+        let local_successors =
+          Array.map
+            (fun (i : int) -> List.map (fun (j : int) -> local.(j)) (successors nodes.(i)))
+            order
+        in
+        (* An arc from [k] to [k'] gives [k]'s component an index at least
+           [k']'s, so the components in index order come successors first. *)
+        let components = Adjacency_components.scc_array local_successors in
+        let component_of = Array.make count 0 in
+        Array.iteri
+          (fun (c : int) (members : int list) ->
+            List.iter (fun (k : int) -> component_of.(k) <- c) members)
+          components;
+        let infinite = Array.make (Array.length components) false in
+        Array.iteri
+          (fun (c : int) (members : int list) ->
+            infinite.(c) <-
+              (match members with
+              | _ :: _ :: _ -> true
+              | [ k ] -> List.exists (Int.equal k) local_successors.(k)
+              | [] -> false)
+              || List.exists
+                   (fun (k : int) ->
+                     List.exists
+                       (fun (k' : int) -> infinite.(component_of.(k')))
+                       local_successors.(k))
+                   members)
+          components;
+        let is_infinite (k : int) : bool = infinite.(component_of.(k)) in
+        let trees = Array.make count None in
+        let rec tree_of (k : int) : shape =
+          match trees.(k) with
+          | Some shape -> shape
+          | None ->
+              let shape =
+                shape_of_node
+                  (fun (edge : edge) -> Cell (edge.xtaint, leaf_of edge.target))
+                  nodes.(order.(k))
+              in
+              trees.(k) <- Some shape;
+              shape
+        and leaf_of (target : target) : shape =
+          match target with
+          | Leaf shape -> shape
+          | Node j -> tree_of local.(j)
+        in
+        if not (is_infinite 0) then tree_of 0
+        else
+          let states =
+            List.filter is_infinite (List.init count Fun.id) |> Array.of_list
+          in
+          let state_of = Array.make count (-1) in
+          Array.iteri (fun (p : int) (k : int) -> state_of.(k) <- p) states;
+          let labelled =
+            Array.map
+              (fun (k : int) ->
+                map_targets
+                  (fun (target : target) ->
+                    match target with
+                    | Node j when is_infinite local.(j) ->
+                        Node state_of.(local.(j))
+                    | Node j -> Leaf (tree_of local.(j))
+                    | Leaf _ -> target)
+                  nodes.(order.(k)))
+              states
+          in
+          let equal_labels =
+            equal_labels ~equal_xtaint:Xtaint.equal_with_guards
+              ~equal_tree:equal_shape_with_guards
+              ~equal_sig:Signature.equal_with_guards
+          in
+          (* The initial partition: states of equal labels, grouped by
+             [label_hash] and compared within a group. *)
+          let groups = Label_tbl.create (Array.length labelled) in
+          Array.iteri
+            (fun (p : int) (node : node) ->
+              let hash = label_hash node in
+              let classes = Option.value (Label_tbl.find_opt groups hash) ~default:[] in
+              Label_tbl.replace groups hash
+                (match
+                   List.partition
+                     (fun ((representative, _) : int * int list) ->
+                       equal_labels labelled.(representative) node)
+                     classes
+                 with
+                | [ (representative, members) ], others ->
+                    (representative, p :: members) :: others
+                | _, _ -> (p, [ p ]) :: classes))
+            labelled;
+          let initial =
+            Label_tbl.fold
+              (fun _ (classes : (int * int list) list) (initial : int list list) ->
+                List.fold_left
+                  (fun (initial : int list list) ((_, members) : int * int list) ->
+                    members :: initial)
+                  initial classes)
+              groups []
+          in
+          (* The transitions of the automaton: from a state to the state of
+             the edge's target, labelled by the edge's position in
+             [node_edges]. *)
+          let transition_table =
+            Array.to_list labelled
+            |> List.mapi (fun (p : int) (node : node) ->
+                   List.mapi (fun (letter : int) (edge : edge) -> (p, letter, edge.target))
+                     (node_edges node)
+                   |> List.filter_map (fun ((p, letter, target) : int * int * target) ->
+                          match target with
+                          | Node q -> Some (p, letter, q)
+                          | Leaf _ -> None))
+            |> List.concat |> Array.of_list
+          in
+          (* The coarsest partition that respects [initial] and the
+             transitions, the classes of the largest bisimulation (Valmari
+             2012). Every state is initial and final: the minimal automaton
+             keeps all of them. *)
+          let module States =
+            Fix.Indexing.Const (struct
+              let cardinal = Array.length labelled
+            end)
+          in
+          let module Transitions =
+            Fix.Indexing.Const (struct
+              let cardinal = Array.length transition_table
+            end)
+          in
+          let module Minimal =
+            Fix.Minimize.Minimize
+              (Letter)
+              (struct
+                type states = States.n
+
+                let states = States.n
+
+                type state = states Fix.Indexing.index
+                type transitions = Transitions.n
+
+                let transitions = Transitions.n
+
+                type transition = transitions Fix.Indexing.index
+
+                let at (t : transition) : int * int * int =
+                  transition_table.(Fix.Indexing.Index.to_int t)
+
+                let label (t : transition) : int =
+                  let _, letter, _ = at t in
+                  letter
+
+                let source (t : transition) : state =
+                  let p, _, _ = at t in
+                  Fix.Indexing.Index.of_int states p
+
+                let target (t : transition) : state =
+                  let _, _, q = at t in
+                  Fix.Indexing.Index.of_int states q
+
+                let all : state Fix.Enum.enum =
+                  Fix.Enum.enum (fun (yield : state -> unit) ->
+                      Fix.Indexing.Index.iter states yield)
+
+                let initials = all
+                let finals = all
+                let debug = false
+
+                let groups =
+                  Fix.Enum.list
+                    (List.map
+                       (fun (members : int list) ->
+                         Fix.Enum.list
+                           (List.map (Fix.Indexing.Index.of_int states) members))
+                       initial)
+              end)
+          in
+          let block_of =
+            Array.init (Array.length labelled) (fun (p : int) ->
+                match
+                  Minimal.transport_state (Fix.Indexing.Index.of_int States.n p)
+                with
+                | Some block -> Fix.Indexing.Index.to_int block
+                | None -> -1)
+          in
+          let blocks = Fix.Indexing.cardinal Minimal.states in
+          let representative =
+            Array.init blocks (fun (block : int) ->
+                Fix.Indexing.Index.to_int
+                  (Minimal.backport_state_one
+                     (Fix.Indexing.Index.of_int Minimal.states block)))
+          in
+          let numbered =
+            preorder
+              (Array.map
+                 (fun (p : int) ->
+                   List.map (fun (q : int) -> block_of.(q)) (successors labelled.(p)))
+                 representative)
+              block_of.(state_of.(0))
+            |> Array.of_list
+          in
+          let index = Array.make blocks (-1) in
+          Array.iteri (fun (i : int) (block : int) -> index.(block) <- i) numbered;
+          let canonical =
+            Array.map
+              (fun (block : int) ->
+                map_targets
+                  (fun (target : target) ->
+                    match target with
+                    | Node q -> Node index.(block_of.(q))
+                    | Leaf _ -> target)
+                  labelled.(representative.(block)))
+              numbered
+          in
+          (* A read gathers through the edges of objects that are not
+             [Clean], and a closure set holds nothing a read gathers. *)
+          let dependencies =
+            Array.map
+              (fun (node : node) ->
+                match node with
+                | Object { edges; _ } ->
+                    Fields.fold
+                      (fun _ (edge : edge) (dependencies : int list) ->
+                        match (edge.xtaint, edge.target) with
+                        | (`None | `Tainted _), Node j -> j :: dependencies
+                        | `Clean, _
+                        | _, Leaf _ ->
+                            dependencies)
+                      edges []
+                | Closures _ -> [])
+              canonical
+          in
+          let own_edges (i : int) : edge list =
+            match canonical.(i) with
+            | Object { edges; _ } ->
+                Fields.fold (fun _ (edge : edge) edges -> edge :: edges) edges []
+                |> List.filter (fun (edge : edge) ->
+                       match edge.xtaint with
+                       | `Clean -> false
+                       | `None
+                       | `Tainted _ ->
+                           true)
+            | Closures _ -> []
+          in
+          let all_taints =
+            least_fixpoint
+              ~leq_join:(fun (taints1 : T.taints) (taints2 : T.taints) ->
+                let taints = T.Taint_set.union ~traces taints1 taints2 in
+                if T.Taint_set.equal_with_guards taints taints2 then taints2 else taints)
+              ~local:(fun (i : int) ->
+                List.fold_left
+                  (fun (taints : T.taints) (edge : edge) ->
+                    let taints =
+                      match edge.xtaint with
+                      | `Tainted own -> T.Taint_set.union ~traces own taints
+                      | `None
+                      | `Clean ->
+                          taints
+                    in
+                    match edge.target with
+                    | Leaf shape -> gather_all_taints_in_shape_acc ~traces taints shape
+                    | Node _ -> taints)
+                  T.Taint_set.empty (own_edges i))
+              dependencies
+          in
+          let has_relevant_content =
+            least_fixpoint ~leq_join:( || )
+              ~local:(fun (i : int) ->
+                match canonical.(i) with
+                | Closures _ -> true
+                | Object _ ->
+                    List.exists
+                      (fun (edge : edge) ->
+                        Xtaint.is_tainted edge.xtaint
+                        ||
+                        match edge.target with
+                        | Leaf shape -> shape_has_relevant_content shape
+                        | Node _ -> false)
+                      (own_edges i))
+              dependencies
+          in
+          Graph { nodes = canonical; root = 0; all_taints; has_relevant_content }
+
+  let canonical ~(traces : T.kept_traces) (shape : shape) : shape =
+    let holds_graph (Cell (_, shape) : cell) : bool =
+      match shape with
+      | Graph _ -> true
+      | Bot
+      | Obj _
+      | Arg _
+      | Fun _ ->
+          false
+    in
+    let captures_graph (closure : closure) : bool =
+      List.exists
+        (fun ((_, entry) : IL.name * env_entry) ->
+          match entry with
+          | Val cell -> holds_graph cell
+          | Ref _ -> false)
+        closure.env
+    in
+    let minimise_node (to_node : (cell -> edge) -> node) : shape =
+      let builder = Dynarray.create () in
+      let node =
+        to_node (fun (Cell (xtaint, shape) : cell) ->
+            { xtaint; target = target_of_shape builder shape })
+      in
+      Dynarray.add_last builder node;
+      minimise ~traces (Dynarray.to_array builder)
+        (Node (Dynarray.length builder - 1))
+    in
+    match shape with
+    | Obj { sites; summary; fields }
+      when Fields.exists (fun _ (cell : cell) -> holds_graph cell) fields ->
+        minimise_node (fun (edge_of : cell -> edge) ->
+            Object { sites; summary; edges = Fields.map edge_of fields })
+    | Fun (c, cs) when List.exists captures_graph (c :: cs) ->
+        minimise_node (fun (edge_of : cell -> edge) ->
+            let graph_closure (closure : closure) : graph_closure =
+              {
+                def = closure.def;
+                sig_ = closure.sig_;
+                env =
+                  List.map
+                    (fun ((x, entry) : IL.name * env_entry) ->
+                      match entry with
+                      | Ref lval -> (x, (Ref lval : graph_env_entry))
+                      | Val cell -> (x, Val (edge_of cell)))
+                    closure.env;
+              }
+            in
+            let c = graph_closure c in
+            Closures (c, List.map graph_closure cs))
+    | Bot
+    | Obj _
+    | Graph _
+    | Arg _
+    | Fun _ ->
+        shape
+
+  (*************************************)
+  (* Union of sites *)
+  (*************************************)
+
+  let rec union_sites_in_cell ~(traces : T.kept_traces)
+      (Cell (xtaint, shape1) as cell1 : cell) (Cell (_, shape2) : cell) : cell =
+    let shape = union_sites ~traces shape1 shape2 in
     if phys_equal shape shape1 then cell1 else Cell (xtaint, shape)
 
-  and union_sites (shape1 : shape) (shape2 : shape) : shape =
+  (* On two graphs, the pairs of nodes at one position form a bisimulation
+     modulo sites; the result has one node per pair with the union of the
+     two site sets. *)
+  and union_sites_in_graph ~(traces : T.kept_traces) (g1 : graph) (g2 : graph) :
+      shape option =
+    let union_edges (edge1 : edge) (edge2 : edge) : target option =
+      match (edge1.target, edge2.target) with
+      | Leaf shape1, Leaf shape2 ->
+          let shape = union_sites ~traces shape1 shape2 in
+          if phys_equal shape shape1 then None else Some (Leaf shape)
+      | (Node _ | Leaf _), _ -> None
+    in
+    let adds_sites ((i, j) : int * int) : bool =
+      match (g1.nodes.(i), g2.nodes.(j)) with
+      | Object object1, Object object2 ->
+          (not (Sites.subset object2.sites object1.sites))
+          || Fields.exists
+               (fun (o : T.offset) (edge1 : edge) ->
+                 match Fields.find_opt o object2.edges with
+                 | Some edge2 -> Option.is_some (union_edges edge1 edge2)
+                 | None -> false)
+               object1.edges
+      | (Object _ | Closures _), _ -> (
+          let edges1 = node_edges g1.nodes.(i) in
+          let edges2 = node_edges g2.nodes.(j) in
+          match List.compare_lengths edges1 edges2 with
+          | 0 ->
+              List.exists2
+                (fun (edge1 : edge) (edge2 : edge) ->
+                  Option.is_some (union_edges edge1 edge2))
+                edges1 edges2
+          | _ -> false)
+    in
+    match
+      Pair_dfs.iter_component
+        ~pre:(fun (pair : int * int) -> if adds_sites pair then raise_notrace Exit)
+        (g1, g2) (g1.root, g2.root)
+    with
+    | () -> None
+    | exception Exit ->
+        let pairs =
+          Pair_dfs.fold_component
+            (fun (pair : int * int) (pairs : (int * int) list) -> pair :: pairs)
+            [] (g1, g2) (g1.root, g2.root)
+          |> List.rev |> Array.of_list
+        in
+        let index = Pair_tbl.create (Array.length pairs) in
+        Array.iteri (fun (k : int) (pair : int * int) -> Pair_tbl.add index pair k) pairs;
+        (* The nodes of [pairs] first, then the copies of the parts of [g1]
+           that [g2] does not pair. *)
+        let builder = Dynarray.of_array (Array.map (fun ((i, _) : int * int) -> g1.nodes.(i)) pairs) in
+        let copy (target : target) : target =
+          match target with
+          | Node i -> Node (append_graph builder { g1 with root = i })
+          | Leaf _ -> target
+        in
+        let paired (edge1 : edge) (edge2 : edge) : edge =
+          match (edge1.target, edge2.target) with
+          | Node i, Node j -> { edge1 with target = Node (Pair_tbl.find index (i, j)) }
+          | _ -> (
+              match union_edges edge1 edge2 with
+              | Some target -> { edge1 with target }
+              | None -> { edge1 with target = copy edge1.target })
+        in
+        Array.iteri
+          (fun (k : int) ((i, j) : int * int) ->
+            Dynarray.set builder k
+              (match (g1.nodes.(i), g2.nodes.(j)) with
+              | Object object1, Object object2 ->
+                  Object
+                    {
+                      object1 with
+                      sites =
+                        (if Sites.subset object2.sites object1.sites then
+                           object1.sites
+                         else Sites.union object1.sites object2.sites);
+                      edges =
+                        Fields.mapi
+                          (fun (o : T.offset) (edge1 : edge) ->
+                            match Fields.find_opt o object2.edges with
+                            | Some edge2 -> paired edge1 edge2
+                            | None -> { edge1 with target = copy edge1.target })
+                          object1.edges;
+                    }
+              | Closures (c1, cs1), Closures (c2, cs2)
+                when Int.equal (List.compare_lengths cs1 cs2) 0 ->
+                  let paired_closure (closure1 : graph_closure)
+                      (closure2 : graph_closure) : graph_closure =
+                    {
+                      closure1 with
+                      env =
+                        List.map2
+                          (fun ((x, entry1) as binding : IL.name * graph_env_entry)
+                               ((_, entry2) : IL.name * graph_env_entry) ->
+                            match (entry1, entry2) with
+                            | Val edge1, Val edge2 ->
+                                (x, (Val (paired edge1 edge2) : graph_env_entry))
+                            | Val edge1, Ref _ ->
+                                (x, Val { edge1 with target = copy edge1.target })
+                            | Ref _, _ -> binding)
+                          closure1.env closure2.env;
+                    }
+                  in
+                  Closures (paired_closure c1 c2, List.map2 paired_closure cs1 cs2)
+              | node1, _ -> map_targets copy node1))
+          pairs;
+        Some (minimise ~traces (Dynarray.to_array builder) (Node 0))
+
+  and union_sites ~(traces : T.kept_traces) (shape1 : shape) (shape2 : shape) :
+      shape =
     if phys_equal shape1 shape2 then shape1
     else
       match (shape1, shape2) with
@@ -447,7 +1563,7 @@ end = struct
               (fun o cell1 fields ->
                 match Fields.find_opt o fields2 with
                 | Some cell2 ->
-                    let cell = union_sites_in_cell cell1 cell2 in
+                    let cell = union_sites_in_cell ~traces cell1 cell2 in
                     if phys_equal cell cell1 then fields
                     else Fields.add o cell fields
                 | None -> fields)
@@ -465,7 +1581,7 @@ end = struct
                      ((_, entry2) : IL.name * env_entry) ->
                   match (entry1, entry2) with
                   | Val cell1, Val cell2 ->
-                      let cell = union_sites_in_cell cell1 cell2 in
+                      let cell = union_sites_in_cell ~traces cell1 cell2 in
                       if phys_equal cell cell1 then binding else (var, Val cell)
                   | (Val _ | Ref _), _ -> binding)
                 closure1.env closure2.env
@@ -477,7 +1593,11 @@ end = struct
           let cs = List.map2 union_closure cs1 cs2 in
           if phys_equal c c1 && List.for_all2 phys_equal cs cs1 then shape1
           else Fun (c, cs)
-      | (Bot | Obj _ | Rec _ | Arg _ | Fun _), _ -> shape1
+      | Graph g1, Graph g2 -> (
+          match union_sites_in_graph ~traces g1 g2 with
+          | Some shape -> shape
+          | None -> shape1)
+      | (Bot | Obj _ | Graph _ | Arg _ | Fun _), _ -> shape1
 
   (*************************************)
   (* Pretty-printing *)
@@ -490,7 +1610,11 @@ end = struct
   and show_shape = function
     | Bot -> "_|_"
     | Obj { fields; _ } -> spf "obj {|%s|}" (show_obj fields)
-    | Rec n -> spf "rec<%d>" n
+    | Graph g ->
+        preorder (Array.map successors g.nodes) g.root
+        |> List.map (fun (i : int) -> spf "%d: %s" i (show_node g.nodes.(i)))
+        |> String.concat "; "
+        |> spf "graph<%d> {|%s|}" g.root
     | Arg (arg, []) ->
         (* No offsets recorded — should not arise from normal
            construction. *)
@@ -533,6 +1657,33 @@ end = struct
     |> Seq.map (fun (o, o_cell) ->
            spf "%s: %s" (T.show_offset o) (show_cell o_cell))
     |> List.of_seq |> String.concat "; "
+
+  and show_node (node : node) : string =
+    let show_edge (edge : edge) : string =
+      match edge.target with
+      | Node i -> spf "cell<%s>(node<%d>)" (Xtaint.show edge.xtaint) i
+      | Leaf shape -> show_cell (Cell (edge.xtaint, shape))
+    in
+    match node with
+    | Object { edges; _ } ->
+        edges |> Fields.to_seq
+        |> Seq.map (fun ((o, edge) : T.offset * edge) ->
+               spf "%s: %s" (T.show_offset o) (show_edge edge))
+        |> List.of_seq |> String.concat "; " |> spf "obj {|%s|}"
+    | Closures (c, cs) ->
+        c :: cs
+        |> List.map (fun (closure : graph_closure) ->
+               match closure.env with
+               | [] -> Signature.show closure.sig_
+               | env ->
+                   env
+                   |> List.map (fun ((x, entry) : IL.name * graph_env_entry) ->
+                          match entry with
+                          | Ref lval -> spf "%s -> &%s" (fst x.ident) (T.show_lval lval)
+                          | Val edge -> spf "%s -> %s" (fst x.ident) (show_edge edge))
+                   |> String.concat "; "
+                   |> spf "%s with [%s]" (Signature.show closure.sig_))
+        |> String.concat " | "
 end
 
 (*****************************************************************************)
@@ -944,7 +2095,7 @@ end = struct
     match shape with
     | Shape.Bot -> ""
     | Shape.Obj _
-    | Shape.Rec _
+    | Shape.Graph _
     | Shape.Arg _
     | Shape.Fun _ ->
         " & " ^ Shape.show_shape shape
@@ -1039,7 +2190,7 @@ end = struct
         ToReturn
           { ttr1 with
             data_taints = Taints.union ~traces ttr1.data_taints ttr2.data_taints;
-            data_shape = Shape.union_sites ttr1.data_shape ttr2.data_shape;
+            data_shape = Shape.union_sites ~traces ttr1.data_shape ttr2.data_shape;
             control_taints =
               Taints.union ~traces ttr1.control_taints ttr2.control_taints;
             guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
@@ -1047,7 +2198,7 @@ end = struct
         ToLval
           { ttl1 with
             taints = Taints.union ~traces ttl1.taints ttl2.taints;
-            shape = Shape.union_sites ttl1.shape ttl2.shape;
+            shape = Shape.union_sites ~traces ttl1.shape ttl2.shape;
             guards = Effect_guard.compose_or ttl1.guards ttl2.guards }
     | ToSinkInCall c1, ToSinkInCall c2 ->
         let fuse_arg (a1 : (Taints.t * Shape.shape) IL.argument)
@@ -1059,9 +2210,10 @@ end = struct
            * [Signature] equality. *)
           match (a1, a2) with
           | IL.Unnamed (t1, s1), IL.Unnamed (t2, s2) ->
-              IL.Unnamed (Taints.union ~traces t1 t2, Shape.union_sites s1 s2)
+              IL.Unnamed (Taints.union ~traces t1 t2, Shape.union_sites ~traces s1 s2)
           | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, s2)) ->
-              IL.Named (id1, (Taints.union ~traces t1 t2, Shape.union_sites s1 s2))
+              IL.Named
+                (id1, (Taints.union ~traces t1 t2, Shape.union_sites ~traces s1 s2))
           | (IL.Unnamed _ | IL.Named _), _ ->
               a1 (* unreachable: identity-equal args have equal shape *)
         in
@@ -1435,15 +2587,40 @@ let map_closures (f : Shape.closure -> Shape.closure)
 
 (* Rewrites the references of the closure environments in an effect's
    shapes. *)
-let map_closure_refs (f : T.lval -> T.lval) (eff : Effect.t) : Effect.t =
+let map_closure_refs ~(traces : T.kept_traces) (f : T.lval -> T.lval)
+    (eff : Effect.t) : Effect.t =
   let rec map_shape (shape : Shape.shape) : Shape.shape =
     match shape with
     | Shape.Bot
-    | Shape.Rec _
     | Shape.Arg _ ->
         shape
     | Shape.Obj ({ fields; _ } as node) ->
         Shape.Obj { node with fields = Fields.map map_cell fields }
+    | Shape.Graph g ->
+        let map_target (target : Shape.target) : Shape.target =
+          match target with
+          | Shape.Node _ -> target
+          | Shape.Leaf shape -> Shape.Leaf (map_shape shape)
+        in
+        let map_node (node : Shape.node) : Shape.node =
+          match Shape.map_targets map_target node with
+          | Shape.Object _ as node -> node
+          | Shape.Closures (c, cs) ->
+              let map_refs (closure : Shape.graph_closure) : Shape.graph_closure =
+                {
+                  closure with
+                  env =
+                    List_.map
+                      (fun ((x, entry) as binding : IL.name * Shape.graph_env_entry) ->
+                        match entry with
+                        | Shape.Ref lval -> (x, (Shape.Ref (f lval) : Shape.graph_env_entry))
+                        | Shape.Val _ -> binding)
+                      closure.env;
+                }
+              in
+              Shape.Closures (map_refs c, List_.map map_refs cs)
+        in
+        Shape.minimise ~traces (Array.map map_node g.nodes) (Shape.Node g.root)
     | Shape.Fun (c, cs) ->
         let c, cs =
           map_closures
@@ -1484,11 +2661,33 @@ let exists_closure_ref (p : T.lval -> bool) (eff : Effect.t) : bool =
   let rec in_shape (shape : Shape.shape) : bool =
     match shape with
     | Shape.Bot
-    | Shape.Rec _
     | Shape.Arg _ ->
         false
     | Shape.Obj { fields; _ } ->
         Fields.exists (fun _ (Shape.Cell (_, shape)) -> in_shape shape) fields
+    | Shape.Graph g ->
+        Shape.preorder (Array.map Shape.successors g.nodes) g.root
+        |> List.exists (fun (i : int) ->
+               let node = g.nodes.(i) in
+               List.exists
+                 (fun (edge : Shape.edge) ->
+                   match edge.target with
+                   | Shape.Leaf shape -> in_shape shape
+                   | Shape.Node _ -> false)
+                 (Shape.node_edges node)
+               ||
+               match node with
+               | Shape.Object _ -> false
+               | Shape.Closures (c, cs) ->
+                   List.exists
+                     (fun (closure : Shape.graph_closure) ->
+                       List.exists
+                         (fun ((_, entry) : IL.name * Shape.graph_env_entry) ->
+                           match entry with
+                           | Shape.Ref lval -> p lval
+                           | Shape.Val _ -> false)
+                         closure.env)
+                     (c :: cs))
     | Shape.Fun (c, cs) ->
         List.exists
           (fun (closure : Shape.closure) ->

@@ -1,0 +1,13 @@
+rules:
+  - id: cyclic_record_written_into_field_3_4_python
+    message: a record built in a loop with a cycle of 4 objects, written into a field of one with a cycle of 3 objects, reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

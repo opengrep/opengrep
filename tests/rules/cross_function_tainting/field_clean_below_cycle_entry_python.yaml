@@ -1,0 +1,13 @@
+rules:
+  - id: field_clean_below_cycle_entry_python
+    message: a field that the caller cleans below a tainted field, read through a parameter joined with a loop-built record, does not reach the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,13 @@
+rules:
+  - id: branch_join_of_cyclic_records_3_4_python
+    message: a record built in a loop with a cycle of 3 objects, joined at a branch with one of 4 objects, reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

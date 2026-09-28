@@ -1,0 +1,13 @@
+rules:
+  - id: parameter_read_below_leafless_cycle_python
+    message: a read through a parameter joined with a loop-built record whose cycle has no leaf reaches the sink with the taint of the caller's field
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

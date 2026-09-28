@@ -54,6 +54,7 @@ depends: [
   "visitors" {= "20260520"}
   "re"
   "ocamlgraph"
+  "fix"
   "semver"
   "timedesc" {>= "2.0.0"}
   "lsp" {= "1.27.0"}
