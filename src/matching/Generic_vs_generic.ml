@@ -3499,7 +3499,24 @@ and m_parameter a b =
       m_parameter_classic a2 b2
   | G.ParamPattern (a1, a2), B.ParamPattern (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_parameter_classic a2 b2
-  | G.ParamReceiver a1, B.ParamReceiver b1 -> m_parameter_classic a1 b1
+  (* The Rust Reference, Associated items, "Shorthand": [&self] is [self: &Self],
+     [&mut self] is [self: &mut Self], [self] is [self: Self]. *)
+  | G.ParamReceiver a1, B.ParamReceiver b1 ->
+      with_lang (fun lang ->
+          match (lang, a1.G.ptype, b1.B.ptype) with
+          | Lang.Rust, Some a_type, Some b_type
+            when Parse_rust_tree_sitter.is_shorthand_receiver a1 -> (
+              match (a_type.G.t, b_type.B.t) with
+              | G.TyRef (a_borrow, _), B.TyRef (b_borrow, b_self)
+                when Parse_rust_tree_sitter.is_self_type b_self ->
+                  m_tok a_borrow b_borrow >>= fun () ->
+                  m_parameter_classic_with ~types_accepted:true
+                    ~target_attributes:(b_type.B.t_attrs @ b1.B.pattrs) a1 b1
+              | G.TyN _, B.TyN _ when Parse_rust_tree_sitter.is_self_type b_type ->
+                  m_parameter_classic_with ~types_accepted:true
+                    ~target_attributes:(b_type.B.t_attrs @ b1.B.pattrs) a1 b1
+              | _ -> m_parameter_classic a1 b1)
+          | _ -> m_parameter_classic a1 b1)
   | G.OtherParam (a1, a2), B.OtherParam (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
   | G.ParamEllipsis a1, B.ParamEllipsis b1 -> m_tok a1 b1
@@ -3513,6 +3530,13 @@ and m_parameter a b =
       fail ()
 
 and m_parameter_classic a b =
+  m_parameter_classic_with ~types_accepted:false ~target_attributes:b.B.pattrs a
+    b
+
+(* [types_accepted]: the caller has already accepted the written types.
+   [target_attributes]: the target attributes the pattern's must be among. *)
+and m_parameter_classic_with ~(types_accepted : bool)
+    ~(target_attributes : G.attribute list) a b =
   match (a, b) with
   (* bugfix: when we use a metavar to match a parameter, as in foo($X): ...
    * and later we use $X again to match a name, the $X is first an ident and
@@ -3520,20 +3544,23 @@ and m_parameter_classic a b =
    * make $X an expression early on
    *)
   | ( { G.pname = Some a1; pdefault = a2; ptype = a3; pattrs = a4; pinfo = a5 },
-      { B.pname = Some b1; pdefault = b2; ptype = b3; pattrs = b4; pinfo = b5 }
-    ) ->
+      { B.pname = Some b1; pdefault = b2; ptype = b3; pattrs = _; pinfo = b5 } )
+    ->
       m_ident_and_id_info (a1, a5) (b1, b5) >>= fun () ->
       (m_option_none_can_match_some m_expr) a2 b2 >>= fun () ->
-      (m_type_option_with_hook b1) a3 b3 >>= fun () ->
-      m_list_in_any_order ~less_is_ok:true m_attribute a4 b4
+      (if types_accepted then return () else (m_type_option_with_hook b1) a3 b3)
+      >>= fun () ->
+      m_list_in_any_order ~less_is_ok:true m_attribute a4 target_attributes
   (* boilerplate *)
   | ( { G.pname = a1; pdefault = a2; ptype = a3; pattrs = a4; pinfo = a5 },
-      { B.pname = b1; pdefault = b2; ptype = b3; pattrs = b4; pinfo = b5 } ) ->
+      { B.pname = b1; pdefault = b2; ptype = b3; pattrs = _; pinfo = b5 } ) ->
       (m_option m_ident) a1 b1 >>= fun () ->
       (m_option m_expr) a2 b2 >>= fun () ->
-      (m_option_none_can_match_some m_type_) a3 b3 >>= fun () ->
-      m_list_in_any_order ~less_is_ok:true m_attribute a4 b4 >>= fun () ->
-      m_id_info a5 b5
+      (if types_accepted then return ()
+       else (m_option_none_can_match_some m_type_) a3 b3)
+      >>= fun () ->
+      m_list_in_any_order ~less_is_ok:true m_attribute a4 target_attributes
+      >>= fun () -> m_id_info a5 b5
 
 (* ------------------------------------------------------------------------- *)
 (* Variable definition *)

@@ -1,7 +1,5 @@
 open Types
 
-let self_type_name : string = "Self"
-
 let imported_bindings ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes) (fi : file_info)
     : Scope_binding.positioned_binding list =
@@ -84,7 +82,8 @@ let build
     List.concat_map
       (fun (entry : entry) ->
         Scope_binding.bindings_in_class entry (fun ~pos ~parent_path ->
-          [ Scope_binding.class_binding_of ~pos ~parent_path self_type_name
+          [ Scope_binding.class_binding_of ~pos ~parent_path
+              Parse_rust_tree_sitter.self_type_name
               (Scope_binding.class_qn_of_entry entry) ]))
       own_classes
   in

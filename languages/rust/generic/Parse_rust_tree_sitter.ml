@@ -56,6 +56,27 @@ let in_pattern env =
   | Target -> false
   | Pattern -> true
 
+let self_type_name : string = "Self"
+
+let is_self_type (ty : G.type_) : bool =
+  match ty.G.t with
+  | G.TyN (G.Id ((name, _), _)) -> String.equal name self_type_name
+  | _ -> false
+
+(* The shorthand is recognised because the front end types it with its own
+   name token (the [Self_param] arm below). *)
+let is_shorthand_receiver (receiver : G.parameter_classic) : bool =
+  match (receiver.G.pname, receiver.G.ptype) with
+  | ( Some (_, Tok.OriginTok own),
+      Some
+        ( { G.t = G.TyN (G.Id ((_, Tok.OriginTok written), _)); _ }
+        | {
+            G.t = G.TyRef (_, { G.t = G.TyN (G.Id ((_, Tok.OriginTok written), _)); _ });
+            _;
+          } ) ) ->
+      Tok.equal_location own written
+  | _ -> false
+
 (*****************************************************************************)
 (* Intermediate AST-like types *)
 (*****************************************************************************)
@@ -832,7 +853,7 @@ and map_anon_choice_param_2c23cdc (env : env) _outer_attrTODO
           v3
       in
       let self = ident env v4 (* "self" *) in
-      let self_type = G.TyN (H2.name_of_id ("Self", snd self)) |> G.t in
+      let self_type = G.TyN (H2.name_of_id self) |> G.t in
       let type_ =
         match borrow with
         | Some tok -> G.TyRef (tok, self_type) |> G.t

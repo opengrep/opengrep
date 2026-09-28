@@ -11,6 +11,7 @@
    pfff-lang_GENERIC-analyze
    pfff_lang_GENERIC_naming
    parser_javascript.ast ; for Ast_js.default_entity
+   parser_rust.ast_generic ; for the Rust receiver predicates
 
    semgrep_core
    semgrep_typing
