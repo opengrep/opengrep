@@ -2326,11 +2326,12 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let ss_captures =
         fdef.fcaptures.clist
         |> List.concat_map (fun (c : G.capture) ->
-               match c.cinit with
-               | None -> []
-               | Some init_gen ->
+               match c with
+               | G.CaptureEllipsis _
+               | G.Capture { cinit = None; _ } ->
+                   []
+               | G.Capture { cinit = Some init_gen; cname = id, id_info; _ } ->
                    let ss, init = expr env init_gen in
-                   let id, id_info = c.cname in
                    ss
                    @ [
                        mk_s
@@ -4858,9 +4859,11 @@ and function_definition env fdef : function_definition =
       cdefault = fdef.fcaptures.cdefault;
       clist =
         fdef.fcaptures.clist
-        |> List_.map (fun (c : G.capture) ->
-               let id, id_info = c.cname in
-               (var_of_id_info id id_info, c.cmode));
+        |> List_.filter_map (fun (c : G.capture) ->
+               match c with
+               | G.Capture { cname = id, id_info; cmode; _ } ->
+                   Some (var_of_id_info id id_info, cmode)
+               | G.CaptureEllipsis _ -> None);
     }
   in
   { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fcaptures; fbody }

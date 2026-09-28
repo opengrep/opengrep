@@ -500,12 +500,13 @@ let anonymous_function_use_clause (env : env)
     ((_v1, _v2, v3, v4, _v5, _v6) : CST.anonymous_function_use_clause) :
     G.capture list =
   let capture tok =
-    {
-      G.cmode = G.Capture_by_value;
-      cname = (str env tok, G.empty_id_info ());
-      cinit = None;
-      cattrs = [];
-    }
+    G.Capture
+      {
+        G.cmode = G.Capture_by_value;
+        cname = (str env tok, G.empty_id_info ());
+        cinit = None;
+        cattrs = [];
+      }
   in
   capture v3 :: List_.map (fun (_comma, tok) -> capture tok) v4
 

@@ -1302,7 +1302,15 @@ and vof_captures { cdefault; clist } =
       ("clist", OCaml.vof_list vof_capture clist);
     ]
 
-and vof_capture { cmode; cname; cinit; cattrs } =
+and vof_capture = function
+  | Capture v1 ->
+      let v1 = vof_capture_classic v1 in
+      OCaml.VSum ("Capture", [ v1 ])
+  | CaptureEllipsis v1 ->
+      let v1 = vof_tok v1 in
+      OCaml.VSum ("CaptureEllipsis", [ v1 ])
+
+and vof_capture_classic { cmode; cname; cinit; cattrs } =
   OCaml.VDict
     [
       ("cmode", vof_capture_mode cmode);

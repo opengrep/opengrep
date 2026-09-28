@@ -1177,12 +1177,13 @@ and map_capture_list_item (env : env) (x : CST.capture_list_item) :
     G.capture =
   let capture (id : G.ident) (cinit : G.expr option)
       (cattrs : G.attribute list) : G.capture =
-    {
-      G.cmode = G.Capture_by_value;
-      cname = (id, G.empty_id_info ());
-      cinit;
-      cattrs;
-    }
+    G.Capture
+      {
+        G.cmode = G.Capture_by_value;
+        cname = (id, G.empty_id_info ());
+        cinit;
+        cattrs;
+      }
   in
   match x with
   | `Self_exp tok -> (* "self" *) capture (str env tok) None []

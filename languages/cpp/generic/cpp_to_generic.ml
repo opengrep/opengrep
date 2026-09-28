@@ -1871,7 +1871,7 @@ and map_lambda_capture env = function
       Left G.Capture_by_reference
   | CaptureOther v1 ->
       let capture cmode cname cinit =
-        Some { G.cmode; cname; cinit; cattrs = [] }
+        Some (G.Capture { G.cmode; cname; cinit; cattrs = [] })
       in
       Right
         (match (map_expr env v1).G.e with
@@ -1884,6 +1884,7 @@ and map_lambda_capture env = function
             ({ e = G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }); _ }, _, init)
           ->
             capture G.Capture_by_reference (id, id_info) (Some init)
+        | G.Ellipsis tok -> Some (G.CaptureEllipsis tok)
         | _ -> None)
 
 and map_enum_definition env

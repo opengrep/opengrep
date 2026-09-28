@@ -3409,15 +3409,26 @@ and m_captures a b =
       m_option_none_can_match_some m_capture_mode a1 b1 >>= fun () ->
       match a2 with
       | [] -> return ()
-      | _ :: _ -> m_list_in_any_order ~less_is_ok:false m_capture a2 b2)
+      | _ :: _ ->
+          let has_ellipsis, a2 =
+            has_ellipsis_and_filter_ellipsis_gen
+              (function
+                | G.CaptureEllipsis _ -> true
+                | G.Capture _ -> false)
+              a2
+          in
+          m_list_in_any_order ~less_is_ok:has_ellipsis m_capture a2 b2)
 
 and m_capture a b =
   match (a, b) with
-  | ( { G.cmode = a1; cname = a2; cinit = a3; cattrs = a4 },
-      { B.cmode = b1; cname = b2; cinit = b3; cattrs = b4 } ) ->
+  | ( G.Capture { G.cmode = a1; cname = a2; cinit = a3; cattrs = a4 },
+      B.Capture { B.cmode = b1; cname = b2; cinit = b3; cattrs = b4 } ) ->
       m_capture_mode a1 b1 >>= fun () ->
       m_ident_and_id_info a2 b2 >>= fun () ->
       m_option m_expr a3 b3 >>= fun () -> m_attributes a4 b4
+  | G.Capture _, _
+  | G.CaptureEllipsis _, _ ->
+      fail ()
 
 and m_capture_mode a b =
   match (a, b) with

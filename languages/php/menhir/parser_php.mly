@@ -740,9 +740,7 @@ tand_any:
 lexical_vars:
  | (*empty*)  { None }
  | T_USE "(" non_empty_lexical_var_list ")" {
-     Some ($1, ($2, ($3 |> List.map (function
-     | Right info -> Right info
-     | Left (a,b) -> Left (LexicalVar (a,b)))), $4))
+     Some ($1, ($2, $3, $4))
    }
 
 non_empty_lexical_var_list:
@@ -756,7 +754,9 @@ non_empty_lexical_var_list_bis:
  | non_empty_lexical_var_list_bis "," lexical_var
      { $1 @ [Right $2; Left $3] }
 
-lexical_var: tand_any? variable  { ($1, DName $2) }
+lexical_var:
+ | tand_any? variable  { LexicalVar ($1, DName $2) }
+ | "..."               { Flag_parsing.sgrep_guard (LexicalVarEllipsis $1) }
 
 (*************************************************************************)
 (* Class declaration *)

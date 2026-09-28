@@ -1652,12 +1652,14 @@ class ['self] resolve_visitor env lang =
          value is computed there. *)
       let captures =
         x.fcaptures.clist
-        |> List_.map (fun (c : capture) ->
-               match c.cinit with
-               | None -> (c, lookup_scope_opt (fst c.cname) env)
-               | Some init ->
+        |> List_.filter_map (fun (entry : capture) ->
+               match entry with
+               | CaptureEllipsis _ -> None
+               | Capture ({ cinit = None; _ } as c) ->
+                   Some (c, lookup_scope_opt (fst c.cname) env)
+               | Capture ({ cinit = Some init; _ } as c) ->
                    self#visit_expr venv init;
-                   (c, None))
+                   Some (c, None))
       in
       let x = { x with fcaptures = no_captures } in
       Common.save_excursion_unsafe env.comprehension_depth 0 (fun () ->
@@ -1665,7 +1667,7 @@ class ['self] resolve_visitor env lang =
       with_new_context InFunction env (fun () ->
           with_new_function_scope new_params env.names (fun () ->
               captures
-              |> List.iter (fun ((c : capture), resolved) ->
+              |> List.iter (fun ((c : capture_classic), resolved) ->
                      let id, id_info = c.cname in
                      match (c.cinit, resolved) with
                      | None, Some resolved ->

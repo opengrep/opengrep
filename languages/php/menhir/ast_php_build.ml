@@ -768,8 +768,10 @@ and lambda_def env (l_use, ld) =
       | None -> []
       | Some (_, (_lp, xs, _rp)) ->
           comma_list xs
-          |> List_.map (function LexicalVar (is_ref, name) ->
-                 (is_ref <> None, dname name)));
+          |> List_.map (function
+               | LexicalVar (is_ref, name) ->
+                   A.LexicalVar (is_ref <> None, dname name)
+               | LexicalVarEllipsis tok -> A.LexicalVarEllipsis tok));
   }
 
 and short_lambda_def env def =

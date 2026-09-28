@@ -573,7 +573,7 @@ and is_ref = tok (* bool wrap ? *) option
 (* the f_name in func_def should be a fake name *)
 and lambda_def = lexical_vars option * func_def
 and lexical_vars = tok (* use *) * lexical_var comma_list paren
-and lexical_var = LexicalVar of is_ref * dname
+and lexical_var = LexicalVar of is_ref * dname | LexicalVarEllipsis of tok
 
 (* todo? could factorize with func_def, but this will require many
  * elements to be fake token, e.g. the parenthesis for parameters

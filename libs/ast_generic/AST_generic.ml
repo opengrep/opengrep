@@ -1926,7 +1926,9 @@ and captures = {
   clist : capture list;
 }
 
-and capture = {
+and capture = Capture of capture_classic | CaptureEllipsis of tok
+
+and capture_classic = {
   cmode : capture_mode;
   cname : ident * id_info;
   (* C++ and Swift [y = e]: a variable of the closure, set at creation *)

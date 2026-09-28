@@ -520,15 +520,18 @@ and expr e : G.expr =
                 | _ -> None);
               clist =
                 l_uses
-                |> List_.map (fun ((is_ref : bool), (v : var)) ->
-                       {
-                         G.cmode =
-                           (if is_ref then G.Capture_by_reference
-                            else G.Capture_by_value);
-                         cname = (var v, G.empty_id_info ());
-                         cinit = None;
-                         cattrs = [];
-                       });
+                |> List_.map (function
+                     | LexicalVar ((is_ref : bool), (v : var)) ->
+                         G.Capture
+                           {
+                             G.cmode =
+                               (if is_ref then G.Capture_by_reference
+                                else G.Capture_by_value);
+                             cname = (var v, G.empty_id_info ());
+                             cinit = None;
+                             cattrs = [];
+                           }
+                     | LexicalVarEllipsis tok -> G.CaptureEllipsis tok);
             }
           in
           let body = stmt body in
@@ -649,9 +652,11 @@ and func_def
   (* todo: transform in UseOuterDecl before first body stmt *)
   let _lusesTODO =
     list
-      (fun (v1, v2) ->
-        let _v1 = bool v1 and _v2 = var v2 in
-        ())
+      (function
+        | LexicalVar (v1, v2) ->
+            let _v1 = bool v1 and _v2 = var v2 in
+            ()
+        | LexicalVarEllipsis _ -> ())
       l_uses
   in
   let attrs = list attribute f_attrs in
