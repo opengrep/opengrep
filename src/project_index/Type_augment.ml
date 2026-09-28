@@ -258,7 +258,15 @@ let augment_return_types_from_bodies
                true ))
     ) (state, false) undeclared
   in
-  let final, (changes : int) = Fixpoint.run ~step type_state in
+  let final, (changes : int) =
+    Fixpoint.run ~max_steps:Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS ~step
+      type_state
+  in
+  if changes >= Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS then
+    Log.warn (fun m ->
+        m "Return-type fixpoint hit the %d-iteration cap without \
+           converging; inferred return types may be incomplete"
+          Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS);
   (final, changes > 0)
 
 let applicable_callees ~(lang : Lang.t) (table : Symbol_table.t)

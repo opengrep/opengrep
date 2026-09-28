@@ -1444,7 +1444,8 @@ let build_project_call_graph (caps : < Cap.fork >)
       file_infos
   in
   (* Cross-type inference fixpoint: alternate body-return-types and
-     self-assignment field-types until neither adds anything.  Rebuild
+     self-assignment field-types until neither adds anything or
+     projidx_CALL_GRAPH_MAX_PASSES changing passes have run.  Rebuild
      [caller_arg_types] between passes so fresh return types feed the next;
      end on a step that writes no [Type_state] key (the Hashtbl is derived). *)
   let (type_state, caller_arg_types), outer_iters =
@@ -1506,10 +1507,16 @@ let build_project_call_graph (caps : < Cap.fork >)
       in
       ((ts, car), returns_changed || fields_changed)
     in
-    Fixpoint.run ~step:outer_step (type_state, Hashtbl.create 0)
+    Fixpoint.run ~max_steps:Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES
+      ~step:outer_step (type_state, Hashtbl.create 0)
   in
   Log.debug (fun m -> m "Body-inferred type fixpoint: %d outer passes, %d caller-arg-types"
     outer_iters (Hashtbl.length caller_arg_types));
+  if outer_iters >= Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES then
+    Log.warn (fun m ->
+        m "Body-inferred type fixpoint hit the %d-pass cap without \
+           converging; inferred types may be incomplete"
+          Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES);
   let type_state =
     timed "call graph: module singletons and value types" @@ fun () ->
     Type_augment.add_value_type_annotations ~lang ~table_of_file

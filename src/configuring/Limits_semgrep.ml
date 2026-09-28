@@ -114,7 +114,19 @@ let taint_MAX_GUARD_CLAUSES = 64
 (* Project index (interfile call graph) *)
 (*****************************************************************************)
 
+(* Cap on the number of changing steps of the return-type fixpoint of
+ * Type_augment.augment_return_types_from_bodies. The loop ends by itself on a
+ * step that writes no return type the state did not hold; the cap stops it
+ * earlier, with a warning, when a chain of return types is deeper than the
+ * cap. *)
+let projidx_RETURN_TYPES_MAX_ITERS = 4
 (* Iteration cap on the projidx type-augmentation fixpoint of
  * stamp_var_types_from_bodies; the passes are monotone, the cap only bounds
  * how deep chains propagate. See 'src/project_index/Main.ml'. *)
 let projidx_OBJECT_MAPPINGS_MAX_ITERS = 5
+(* Cap on the number of changing steps of the outer type inference fixpoint
+ * of Project_index.build_project_call_graph. The loop ends by itself on a
+ * step that writes no return or field type the state did not hold; the cap
+ * stops it earlier, with a warning, when a chain of return or field types is
+ * deeper than the cap. *)
+let projidx_CALL_GRAPH_MAX_PASSES = 5
