@@ -1,3 +1,4 @@
+// ERROR:
 struct Point {
     public int X;
 }

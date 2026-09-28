@@ -3847,7 +3847,9 @@ and m_class_kind_bis a b =
   | G.Trait, B.Trait
   | G.Object, B.Object
   (* an extension adds members to a class: a class pattern matches it *)
-  | G.Class, B.Extension _ ->
+  | G.Class, B.Extension _
+  (* a struct is a value type: a class pattern matches it *)
+  | G.Class, B.Struct ->
       return ()
   | G.Extension a1, B.Extension b1 -> m_option_none_can_match_some m_type_ a1 b1
   | G.Class, _

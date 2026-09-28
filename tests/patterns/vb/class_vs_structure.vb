@@ -1,3 +1,4 @@
+' ERROR:
 Structure Point
     Public X As Integer
 End Structure
