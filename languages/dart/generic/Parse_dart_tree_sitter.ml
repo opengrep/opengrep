@@ -2354,15 +2354,6 @@ and map_super_formal_parameter (env : env)
 and map_switch_block (env : env) ((v1, v2, v3) : CST.switch_block) :
     case_and_body list =
   let _v1 = (* "{" *) token env v1 in
-  let v2 =
-    List_.map
-      (fun x ->
-        match x with
-        | `Switch_label x -> Either.Left (map_switch_label env x)
-        | `Stmt x -> Either.Right (map_statement env x))
-      v2
-  in
-  let _v3 = (* "}" *) token env v3 in
   let close (cases : case list) (rev_stmts : stmt list)
       (acc : case_and_body list) : case_and_body list =
     match rev_stmts with
@@ -2371,13 +2362,18 @@ and map_switch_block (env : env) ((v1, v2, v3) : CST.switch_block) :
   in
   let cases, rev_stmts, acc =
     List.fold_left
-      (fun (cases, rev_stmts, acc) either ->
-        match (either, rev_stmts) with
-        | Either.Left case, [] -> (case :: cases, [], acc)
-        | Either.Left case, _ :: _ -> ([ case ], [], close cases rev_stmts acc)
-        | Either.Right stmts, _ -> (cases, List.rev_append stmts rev_stmts, acc))
+      (fun (cases, rev_stmts, acc) x ->
+        match (x, cases, rev_stmts) with
+        | `Switch_label x, _, [] -> (map_switch_label env x :: cases, [], acc)
+        | `Switch_label x, _, _ :: _ ->
+            ([ map_switch_label env x ], [], close cases rev_stmts acc)
+        | `Stmt (`Exp_stmt (`Semg_ellips tok)), [], [] ->
+            ([], [], CaseEllipsis (token env tok) :: acc)
+        | `Stmt x, _, _ ->
+            (cases, List.rev_append (map_statement env x) rev_stmts, acc))
       ([], [], []) v2
   in
+  let _v3 = (* "}" *) token env v3 in
   List.rev (close cases rev_stmts acc)
 
 and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
