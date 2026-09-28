@@ -82,3 +82,9 @@ function parenthesised_call_first_tainted()
     -- ruleid: lua_call_results
     sink(a)
 end
+
+function two_results_second_tainted()
+    local a, b = clean_first()
+    -- ruleid: lua_call_results
+    sink(b)
+end

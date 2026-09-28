@@ -1314,6 +1314,9 @@ and m_entity_name a b =
   | G.EN (G.Id ((str, tok), _idinfoa)), B.EDynamic b1
     when Mvar.is_metavar_name str ->
       envf (str, tok) (MV.E b1)
+  | G.EN (G.Id ((str, tok), _idinfoa)), B.EPattern b1
+    when Mvar.is_metavar_name str ->
+      m_metavar_pattern (str, tok) b1
   (* boilerplate *)
   | G.EDynamic a, B.EDynamic b -> m_expr a b
   | G.EPattern a, B.EPattern b -> m_pattern a b
@@ -3071,6 +3074,14 @@ and m_other_stmt_with_stmt_operator a b =
 (*****************************************************************************)
 (* Pattern *)
 (*****************************************************************************)
+and m_metavar_pattern ((str, tok) : G.ident) (b : G.pattern) =
+  try
+    let e = H.pattern_to_expr b in
+    envf (str, tok) (MV.E e)
+    (* this can happen with PatAs in exception handler in Python *)
+  with
+  | H.NotAnExpr -> envf (str, tok) (MV.P b)
+
 and m_pattern a b =
   (* NOTE: We need this for things like destructuring in Elixir functions (and
    * general destructuring of lists), so that the pattern [..., $ARG, ...] works.
@@ -3091,13 +3102,8 @@ and m_pattern a b =
   | G.DisjPat (a1, a2), b -> m_pattern a1 b >||> m_pattern a2 b
   (* metavar: *)
   (* less: G.PatId vs B.PatId? Use MV.Id then ? *)
-  | G.PatId ((str, tok), _id_info), b2 when Mvar.is_metavar_name str -> (
-      try
-        let e2 = H.pattern_to_expr b2 in
-        envf (str, tok) (MV.E e2)
-        (* this can happen with PatAs in exception handler in Python *)
-      with
-      | H.NotAnExpr -> envf (str, tok) (MV.P b2))
+  | G.PatId ((str, tok), _id_info), b2 when Mvar.is_metavar_name str ->
+      m_metavar_pattern (str, tok) b2
   (* dots: *)
   | G.PatEllipsis _, _ -> return ()
   (* boilerplate *)
