@@ -183,58 +183,28 @@ let build_definitions_by_qn ~(entries : entry list)
   (with_reexports, companions)
 
 
-(* Maximum number of files processed per parallel work unit.  Batching
-   amortises Domainslib dispatch overhead over many small per-file tasks
-   while keeping [chunksize = 1] — one task per thread — so the
-   [Memprof_limits]-based memory limit and timeout stay sound (see the
-   warning on [Domainslib_.parmap]). *)
-(* Files are sorted by decreasing size before the edge pass, so a batch is
-   a run of similar-sized files; small batches let the pool balance the
-   heavy head of that order instead of handing one domain the 500 largest
-   files (on GitLab that left the pool one third busy). *)
-let per_file_batch_size =
-  match Sys.getenv_opt "OPENGREP_PROJIDX_BATCH" with
-  | Some s -> ( try int_of_string s with _ -> 32)
-  | None -> 32
+let reraise_if_fatal (exn : Exception.t) : unit =
+  match Exception.get_exn exn with
+  | Out_of_memory
+  | Memory_limit.ExceededMemoryLimit _ ->
+    Exception.reraise exn
+  | _ -> ()
 
-(* Split a list into chunks of at most [n] elements. *)
-let rec chunks (n : int) (xs : 'a list) : 'a list list =
-  match xs with
-  | [] -> []
-  | _ ->
-    let len = List.length xs in
-    let take = min n len in
-    let batch = List_.take_safe take xs in
-    let rest = List_.drop take xs in
-    batch :: chunks n rest
-
-(* Run [fn] on each batch of [per_file_batch_size] items, in parallel when
-   [ncores > 1] and there is more than one batch, sequentially otherwise;
-   one result per batch, in input order. *)
+(* Run [fn] on each batch that [Domainslib_.batches] makes of [items] by
+   [weight], in parallel when [ncores > 1] and there is more than one
+   batch, sequentially otherwise; one result per batch, in input order. *)
 let run_per_batch (caps : < Cap.fork >) ~(ncores : int)
-    (fn : 'a list -> 'b) (items : 'a list)
+    ~(weight : 'a -> int) (fn : 'a list -> 'b) (items : 'a list)
     : ('b, 'a list * Exception.t) Result.t list =
-  let batches = chunks per_file_batch_size items in
-  let n = List.length batches in
-  if ncores <= 1 || n <= 1 then
-    List_.map
-      (fun (batch : 'a list) ->
-        try Ok (fn batch)
-        with
-        | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
-          Exception.catch_and_reraise exn
-        | exn -> Error (batch, Exception.catch exn))
-      batches
-  else
-    Domainslib_.parmap caps
-      ~num_domains:(min ncores n) ~chunksize:1
-      ~exception_handler:(fun (batch : 'a list) (exn : Exception.t) ->
-        match Exception.get_exn exn with
-        | Out_of_memory | Memory_limit.ExceededMemoryLimit _ ->
-          Exception.reraise exn
-        | _ -> (batch, exn))
-      fn
-      batches
+  let item_batches = Domainslib_.batches ~weight ~num_domains:ncores items in
+  Log_interfile_timing.Log.debug (fun m ->
+      m "[interfile timing] project index: %d items in %d batches"
+        (List.length items) (List.length item_batches));
+  Domainslib_.parmap_batches caps ~ncores
+    ~exception_handler:(fun batch (exn : Exception.t) ->
+      reraise_if_fatal exn;
+      (batch, exn))
+    fn item_batches
 
 (* Run [fn] on each item, in parallel when [ncores > 1] and there is
    more than one batch, sequentially otherwise.  Each parallel work
@@ -242,7 +212,7 @@ let run_per_batch (caps : < Cap.fork >) ~(ncores : int)
    an [Error] for the caller to log and skip, while the fatal trio is
    re-raised. *)
 let run_per_file (caps : < Cap.fork >) ~(ncores : int)
-    (fn : 'a -> 'b) (items : 'a list)
+    ~(weight : 'a -> int) (fn : 'a -> 'b) (items : 'a list)
     : ('b, 'a * Exception.t) Result.t list =
   (* [fn] fixes the type: one [Ok]/[Error] per item; an [Error] carries the
      item so the caller can attribute (and surface) the failure. The whole
@@ -251,16 +221,19 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
   let run_one item =
     try Ok (fn item)
     with
-    | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
-      Exception.catch_and_reraise exn
-    | exn -> Error (item, Exception.catch exn)
+    | exn ->
+      let exn = Exception.catch exn in
+      reraise_if_fatal exn;
+      Error (item, exn)
   in
-  run_per_batch caps ~ncores (List_.map run_one) items
+  run_per_batch caps ~ncores ~weight (List_.map run_one) items
   |> List.concat_map (function
       | Ok batch_results -> batch_results
       (* A batch-level failure (thrown outside [run_one]) loses the
          per-item results; attribute it to every item. *)
       | Error (batch, exn) -> List_.map (fun item -> Error (item, exn)) batch)
+
+let line_count (fi : file_info) : int = fi.fi_line_count
 
 (* Wall-clock time of one phase, at info level under one tag so a log grep
    gives the phase table (see also Interfile_dispatch.timed). *)
@@ -1052,7 +1025,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let per_file_funcs =
     timed "call graph: functions per file" @@ fun () ->
-    run_per_file caps ~ncores phase1_per_file file_infos
+    run_per_file caps ~ncores ~weight:line_count phase1_per_file file_infos
   in
   let all_funcs =
     List.concat_map (function Ok (_, fs, _) -> fs | Error _ -> [])
@@ -1401,7 +1374,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let per_file_scopes =
     timed "call graph: scope tables" @@ fun () ->
-    run_per_file caps ~ncores
+    run_per_file caps ~ncores ~weight:line_count
       (fun (fi : file_info) -> (fi.fi_file, Pipeline.file_scope_of pipeline_ctx fi))
       file_infos
   in
@@ -1498,7 +1471,7 @@ let build_project_call_graph (caps : < Cap.fork >)
             | Error ((_ : Type_augment.calls_of_file list), (exn : Exception.t))
               ->
               Exception.reraise exn)
-          (run_per_batch caps ~ncores
+          (run_per_batch caps ~ncores ~weight:(Fun.const 1)
              (fun (batch : Type_augment.calls_of_file list) ->
                let memo = Class_table.create_memo () in
                ( List_.map
@@ -1574,6 +1547,10 @@ let build_project_call_graph (caps : < Cap.fork >)
   ) file_infos;
   (* Largest-first so megafiles don't stall the tail on one worker; the key
      is the line count parsing recorded. *)
+  (* Files are sorted by decreasing size before the edge pass, so a batch is
+     a run of similar-sized files; batches bounded by weight let the pool
+     balance the heavy head of that order instead of handing one domain the
+     500 largest files (on GitLab that left the pool one third busy). *)
   let file_infos =
     file_infos
     |> List_.map (fun (fi : file_info) -> (fi.fi_line_count, fi))
@@ -1582,7 +1559,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let per_file_edges =
     timed "call graph: edges per file" @@ fun () ->
-    run_per_file caps ~ncores edges_for_file file_infos
+    run_per_file caps ~ncores ~weight:line_count edges_for_file file_infos
   in
   (* The own memo of each file, its type-name memo included, is not
      returned by the edge stage: no later stage reads the project memo (the
@@ -1871,25 +1848,11 @@ let run_pipeline (caps : < Cap.fork >)
   in
   let results =
     timed (Printf.sprintf "parse + symbols (%d files)" n_total) @@ fun () ->
-    if ncores <= 1 then
-      List.map (fun file ->
-        try Ok (process file)
-        with
-        | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
-          Exception.catch_and_reraise exn
-        | exn -> Error (file, Exception.catch exn)
-      ) files
-    else
-      Domainslib_.parmap caps
-        ~num_domains:ncores
-        ~chunksize:1
-        ~exception_handler:(fun file exc ->
-          match Exception.get_exn exc with
-          | Out_of_memory | Memory_limit.ExceededMemoryLimit _ ->
-            Exception.reraise exc
-          | _ -> (file, exc))
-        process
-        files
+    Domainslib_.parmap_batches caps ~ncores
+      ~exception_handler:(fun (file : Fpath.t) (exn : Exception.t) ->
+        reraise_if_fatal exn;
+        (file, exn))
+      process files
   in
   let scanned, skipped, all_entries, all_files, all_skipped_tokens,
       parse_failures =

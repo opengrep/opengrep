@@ -167,9 +167,10 @@ declared in many files but only one is the "real" base.
 
 Phase 2 runs in parallel across `ncores` Domains via
 `Domainslib_.parmap` with `chunksize = 1`; each work unit is a batch
-of at most 500 files, which amortises Domainslib dispatch overhead
-while keeping one task per thread (so the `Memprof_limits`-based
-memory limit and timeout stay sound).  For each file the task calls
+from `Domainslib_.batches`: a contiguous run of files whose line counts
+sum to at most ceil(W / (8 p)), W the line count of all files and p the
+job count (`-j`), or one file whose line count exceeds that.  For each
+file the task calls
 `Pipeline.edges_for_file ctx fi` which:
 
 1. **Augments per-file object mappings** — turns `x = SomeClass()`

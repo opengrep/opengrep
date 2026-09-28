@@ -121,8 +121,10 @@ matches we extract `Function_id.t` lists for sources and sinks — the
 boundary that defines the relevant subgraph.
 
 Spec extraction is parallel: work items are `(rule, target chunk)`
-pairs, with chunks capped at 2000 targets, so one expensive rule
-spreads across domains.  Per-rule per-file `Formula_cache.t` is
+pairs, each rule's targets split on their own by `Domainslib_.batches`
+into contiguous chunks of at most ceil(n / (8 p)) targets, n the rule's
+target count and p the job count (`-j`), so one expensive rule spreads
+across domains.  Per-rule per-file `Formula_cache.t` is
 created fresh each time (the cache is a mutable `Hashtbl` and isn't
 thread-safe).
 

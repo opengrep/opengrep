@@ -23,5 +23,15 @@ val parmap :
     [e] is the caught exception.
 *)
 
+val parmap_batches :
+  < Cap.fork > ->
+  ncores:int ->
+  exception_handler:('b -> Exception.t -> 'c) ->
+  ('b -> 'd) ->
+  'b list ->
+  ('d, 'c) result list
+
+val batches : weight:('a -> int) -> num_domains:int -> 'a list -> 'a list list
+
 val get_cpu_count : unit -> int
 (** Return the number of domains, kept original name for compatibility. *)

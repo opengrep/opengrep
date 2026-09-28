@@ -41,6 +41,34 @@ let wrap_result f ~exception_handler x =
  * be less than the real number of CPUs. *)
 let get_cpu_count () = Domain.recommended_domain_count ()
 
+(* The factor of Domainslib's [parallel_for] default chunk size,
+   n_tasks / (8 * n_domains). *)
+let batches_per_domain = 8
+
+let batches ~(weight : 'a -> int) ~(num_domains : int) (items : 'a list)
+    : 'a list list =
+  let total =
+    List.fold_left (fun (sum : int) item -> sum + weight item) 0 items
+  in
+  (* The job count reaches the dispatch as given; zero or a negative value
+     runs sequentially, on one domain. *)
+  let divisor = batches_per_domain * Int.max 1 num_domains in
+  let target = (total + divisor - 1) / divisor in
+  let closed, current, _ =
+    List.fold_left
+      (fun (closed, current, (current_weight : int)) item ->
+        let item_weight = weight item in
+        match current with
+        | _ :: _ when current_weight + item_weight > target ->
+            (List.rev current :: closed, [ item ], item_weight)
+        | _ -> (closed, item :: current, current_weight + item_weight))
+      ([], [], 0) items
+  in
+  List.rev
+    (match current with
+    | [] -> closed
+    | _ :: _ -> List.rev current :: closed)
+
 (* WARNING: Do not pass any [f] that does not expect to be uniquely
  * executing in a [Thread.t] until it produces a result. For example,
  * do not pass [f] that makes use of [Domainslib] functions that create
@@ -81,4 +109,12 @@ let parmap _caps ?(chunksize=1) ~num_domains ~exception_handler f xs =
             ~chunk_size:chunksize
             ~body:(fun i -> res_array.(i) <- Some (f' xs_array.(i)))));
   Array.map Option.get res_array |> Array.to_list
+
+let parmap_batches (caps : < Cap.fork >) ~(ncores : int) ~exception_handler
+    fn batches =
+  let n = List.length batches in
+  if ncores <= 1 || n <= 1 then
+    List_.map (wrap_result fn ~exception_handler) batches
+  else
+    parmap caps ~num_domains:(min ncores n) ~exception_handler fn batches
 

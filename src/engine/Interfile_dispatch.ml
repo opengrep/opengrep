@@ -1231,38 +1231,13 @@ let run_rule (rs : rule_state) : PM.t list =
    Workers' results come back as one list per outcome: successes, and the
    values [on_exn] returned for the failed items. *)
 let run_parmap (caps : < Cap.fork >) ~(ncores : int) ~on_exn f items =
-  let n = List.length items in
-  let results =
-    if ncores <= 1 || n <= 1 then
-      List_.map
-        (Domainslib_.wrap_result f ~exception_handler:on_exn)
-        items
-    else
-      Domainslib_.parmap caps
-        ~num_domains:(min ncores n)
-        ~chunksize:1 ~exception_handler:on_exn
-        f items
-  in
-  List.partition_map
+  Log_interfile_timing.Log.debug (fun m ->
+      m "[interfile timing] %d work units" (List.length items));
+  Domainslib_.parmap_batches caps ~ncores ~exception_handler:on_exn f items
+  |> List.partition_map
     (function
       | Ok value -> Either.Left value
       | Error failure -> Either.Right failure)
-    results
-
-let parse_batch_size = 500
-
-let spec_extract_batch_size = 2000
-
-let chunks (n : int) (xs : 'a list) : 'a list list =
-  let rec loop done_chunks cur cur_len = function
-    | [] when cur_len = 0 -> List.rev done_chunks
-    | [] -> List.rev (List.rev cur :: done_chunks)
-    | item :: rest when cur_len < n ->
-      loop done_chunks (item :: cur) (cur_len + 1) rest
-    | item :: rest ->
-      loop (List.rev cur :: done_chunks) [item] 1 rest
-  in
-  loop [] [] 0 xs
 
 (* A parsed batch holds the ASTs by file, the skipped tokens of the files
    parsed here, and the files whose parse raised, each with its error. *)
@@ -1295,7 +1270,7 @@ let parse_file_batch
               (file, file_error ~file (Exception.catch exn)) :: failures)))
       ([], []) files
   in
-  (lang, tbl, skipped_tokens, failures)
+  (lang, tbl, List.rev skipped_tokens, List.rev failures)
 
 (* the batch failed outside the per-file parse: every file failed *)
 let failed_batch ((lang, batch) : Lang.t * Fpath.t list) (exn : Exception.t)
@@ -1396,7 +1371,7 @@ let parse_companion_files
         match Hashtbl.find_opt by_lang lang with
         | None -> []
         | Some files ->
-          chunks parse_batch_size files
+          Domainslib_.batches ~weight:(Fun.const 1) ~num_domains:ncores files
           |> List_.map (fun (batch : Fpath.t list) -> (lang, batch)))
         lang_contexts
     in
@@ -1676,7 +1651,7 @@ let build_rule_states
         List_.map (fun (target : interfile_target) -> target.abs_path)
           lc.lc_matching_targets
       in
-      chunks parse_batch_size files
+      Domainslib_.batches ~weight:(Fun.const 1) ~num_domains:ncores files
       |> List_.map (fun (batch : Fpath.t list) -> (lc.lc_lang, batch)))
       lang_contexts
   in
@@ -1815,7 +1790,8 @@ let build_rule_states
   let spec_chunk_items : (int * interfile_target list) list =
     spec_pairs |> Array.to_list
     |> List.mapi (fun i pair ->
-         chunks spec_extract_batch_size (rule_targets pair)
+         Domainslib_.batches ~weight:(Fun.const 1) ~num_domains:ncores
+           (rule_targets pair)
          |> List_.map (fun chunk -> (i, chunk)))
     |> List.concat
   in
@@ -1903,7 +1879,7 @@ let build_rule_states
              FpathSet.union specs.rs_target_files files,
              matches)
             acc)
-        IntMap.empty spec_partials
+        IntMap.empty (List.rev spec_partials)
     in
     spec_pairs |> Array.to_list
     |> List.mapi (fun i ((lc : lang_context), (rule : R.taint_rule)) ->
@@ -2021,7 +1997,7 @@ let build_rule_states
                 (List.length batch) (Exception.to_string exn));
           batch)
         (List_.filter_map lower)
-        (chunks parse_batch_size
+        (Domainslib_.batches ~weight:(Fun.const 1) ~num_domains:ncores
            (Hashtbl.fold (fun file rsgs acc -> (file, rsgs) :: acc)
               rsgs_by_file []))
     in
