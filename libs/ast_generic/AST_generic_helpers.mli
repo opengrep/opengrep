@@ -32,6 +32,9 @@ val object_or_collection_initializer_argument :
 val array_initializer_argument :
   AST_generic.tok -> AST_generic.expr -> AST_generic.argument
 
+val construction_initializer_of_argument :
+  AST_generic.argument -> construction_initializer option
+
 val exprs_of_construction_initializer :
   construction_initializer -> AST_generic.expr list
 

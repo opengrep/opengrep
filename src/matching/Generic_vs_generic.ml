@@ -1799,7 +1799,7 @@ and m_list__m_argument (xsa : G.argument list) (xsb : G.argument list) =
   match (xsa, xsb) with
   | [], [] -> return ()
   (* dots: ..., can also match no argument *)
-  | [ G.Arg { e = G.Ellipsis _i; _ } ], [] -> return ()
+  | G.Arg { e = G.Ellipsis _i; _ } :: xsa, [] -> m_list__m_argument xsa []
   (* dots: metavars: $...ARGS *)
   | G.Arg { e = G.N (G.Id ((s, tok), _idinfo)); _ } :: xsa, xsb
     when Mvar.is_metavar_ellipsis s ->
@@ -1856,6 +1856,13 @@ and m_list__m_argument (xsa : G.argument list) (xsb : G.argument list) =
   (* the general case *)
   | xa :: aas, xb :: bbs ->
       m_argument xa xb >>= fun () -> m_list__m_argument aas bbs
+  | [ (G.OtherArg _ as xa) ], [] -> (
+      match H.construction_initializer_of_argument xa with
+      | Some (H.Object_or_collection_initializer entries) ->
+          m_container_ordered_elements entries []
+      | Some (H.Array_initializer _)
+      | None ->
+          fail ())
   | [], xsb ->
       (* If the remaining arguments in the target code are all optional, it's
          a match. *)
@@ -1916,7 +1923,19 @@ and m_argument a b =
   | G.ArgKwdOptional (a1, a2), B.ArgKwdOptional (b1, b2) ->
       m_ident a1 b1 >>= fun () -> m_expr a2 b2
   | G.OtherArg (a1, a2), B.OtherArg (b1, b2) ->
-      m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
+      let m_kind =
+        match
+          ( H.construction_initializer_of_argument a,
+            H.construction_initializer_of_argument b )
+        with
+        (* an object initialiser pattern matches an array initialiser; an
+           array pattern matches arrays only *)
+        | ( Some (H.Object_or_collection_initializer _),
+            Some (H.Array_initializer _) ) ->
+            return ()
+        | _ -> m_todo_kind a1 b1
+      in
+      m_kind >>= fun () -> (m_list m_any) a2 b2
   | G.Arg _, _
   | G.ArgKwd _, _
   | G.ArgKwdOptional _, _
