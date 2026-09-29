@@ -1961,23 +1961,29 @@ end = struct
         return_tok = _;
         guards = _;
       } =
-    match Taints.compare data_taints1 data_taints2 with
+    (* [multiple_results] first: a constant-time comparison, ahead of the
+     * taint sets, whose comparison compares sources. *)
+    match Bool.compare multiple_results1 multiple_results2 with
     | 0 -> (
-        match Shape.compare_shape data_shape1 data_shape2 with
+        match Taints.compare data_taints1 data_taints2 with
         | 0 -> (
-            match Bool.compare multiple_results1 multiple_results2 with
+            match Shape.compare_shape data_shape1 data_shape2 with
             | 0 -> Taints.compare control_taints1 control_taints2
             | other -> other)
         | other -> other)
     | other -> other
 
+  (* Lexicographic on the lvalue, then the taints, then the shape: the
+   * lvalue comparison is cheap and separates most pairs, so the taint sets,
+   * whose comparison compares sources, are compared only between effects
+   * on the same lvalue. *)
   let compare_taints_to_lval
       { taints = ts1; shape = shape1; lval = lv1; guards = _ }
       { taints = ts2; shape = shape2; lval = lv2; guards = _ } =
-    match Taints.compare ts1 ts2 with
+    match T.compare_lval lv1 lv2 with
     | 0 -> (
-        match Shape.compare_shape shape1 shape2 with
-        | 0 -> T.compare_lval lv1 lv2
+        match Taints.compare ts1 ts2 with
+        | 0 -> Shape.compare_shape shape1 shape2
         | other -> other)
     | other -> other
 
@@ -2307,7 +2313,19 @@ end = struct
 end
 
 and Effects : sig
-  include Set.S with type elt = Effect.t
+  type elt = Effect.t
+  type t
+
+  val empty : t
+  val singleton : elt -> t
+  val cardinal : t -> int
+  val find_opt : elt -> t -> elt option
+  val fold : (elt -> 'acc -> 'acc) -> t -> 'acc -> 'acc
+  val filter : (elt -> bool) -> t -> t
+  val exists : (elt -> bool) -> t -> bool
+  val elements : t -> elt list
+  val equal : t -> t -> bool
+  val compare : t -> t -> int
 
   val equal_with_guards : t -> t -> bool
   (** Like [equal] but also requires the guards of identity-equal elements to
@@ -2326,15 +2344,46 @@ and Effects : sig
   val add_list : traces:Taint.kept_traces -> Effect.t list -> t -> t
   val union_list : traces:Taint.kept_traces -> t list -> t
 end = struct
-  include Set.Make (struct
+  (* A set keyed by an expensive total order does the least comparison work
+   * when an insertion walks the tree once and the order compares its
+   * cheapest, most discriminating component first (see
+   * [Effect.compare_taints_to_lval]). The set is therefore a map from the
+   * guard-less effect identity ([Effect.compare]) to the element carrying
+   * the guards, traces and shapes, so that an insertion that fuses is one
+   * [EffectMap.update]. The set operations are expressed over the map's
+   * values, in key order. *)
+  module EffectMap = Map.Make (struct
     type t = Effect.t
 
     let compare effect1 effect2 = Effect.compare effect1 effect2
   end)
 
+  type elt = Effect.t
+  type t = Effect.t EffectMap.t
+
+  let empty : t = EffectMap.empty
+  let singleton (e : elt) : t = EffectMap.singleton e e
+  let cardinal (s : t) : int = EffectMap.cardinal s
+  let find_opt (e : elt) (s : t) : elt option = EffectMap.find_opt e s
+  let fold f (s : t) acc = EffectMap.fold (fun _ e acc -> f e acc) s acc
+
+  let filter (p : elt -> bool) (s : t) : t =
+    EffectMap.filter (fun _ e -> p e) s
+
+  let exists (p : elt -> bool) (s : t) : bool =
+    EffectMap.exists (fun _ e -> p e) s
+
+  let elements (s : t) : elt list = EffectMap.bindings s |> List.map snd
+
+  let equal (s1 : t) (s2 : t) : bool =
+    EffectMap.equal (fun (_ : elt) (_ : elt) -> true) s1 s2
+
+  let compare (s1 : t) (s2 : t) : int =
+    EffectMap.compare (fun (_ : elt) (_ : elt) -> 0) s1 s2
+
   (* [Effect.compare] ignores guards, so the set holds one element per
    * guard-less effect identity. Every inserting operation below fuses the
-   * guards of colliding elements via [Effect.fuse_guards]. Letting [Set]
+   * guards of colliding elements via [Effect.fuse_guards]. Letting the map
    * keep one variant and discard the other's guard would be unsound: at
    * instantiation an effect whose guard folds to false is dropped, so at a
    * call site where the kept variant's guard folds to false the effect
@@ -2344,51 +2393,64 @@ end = struct
    * clause-set dedup), so the dataflow fixpoint still reaches a fixed
    * point; it compares every guard-bearing payload, not just the
    * effect-level guard — a refinement of only an item guard or a guarded taint's guard must
-   * not be discarded. *)
-  let add ~(traces : T.kept_traces) eff set =
-    match find_opt eff set with
-    | None -> add eff set
-    | Some existing -> (
-        let fused = Effect.fuse_guards ~traces existing eff in
-        match traces with
-        | T.One_trace_per_guard
-          when Effect.guards_equal fused existing
-               && Effect.traces_shared fused existing
-               && Effect.shapes_shared fused existing ->
-            set
-        | T.One_trace_per_guard
-        | T.All_traces ->
-            add fused (remove existing set))
+   * not be discarded. On that no-op [fuse_element] returns the existing
+   * element physically, and [EffectMap.update] then returns the map itself,
+   * physically (Stdlib [Map.S.update]). *)
+  let fuse_element ~(traces : T.kept_traces) (existing : elt) (eff : elt) : elt
+      =
+    let fused = Effect.fuse_guards ~traces existing eff in
+    match traces with
+    | T.One_trace_per_guard
+      when Effect.guards_equal fused existing
+           && Effect.traces_shared fused existing
+           && Effect.shapes_shared fused existing ->
+        existing
+    | T.One_trace_per_guard
+    | T.All_traces ->
+        fused
 
-  let union ~(traces : T.kept_traces) s1 s2 =
-    (* Fold the smaller set into the larger one. *)
-    if cardinal s1 >= cardinal s2 then fold (add ~traces) s2 s1
-    else fold (add ~traces) s1 s2
+  let add ~(traces : T.kept_traces) (eff : elt) (set : t) : t =
+    EffectMap.update eff
+      (fun (existing : elt option) ->
+        match existing with
+        | None -> Some eff
+        | Some existing -> Some (fuse_element ~traces existing eff))
+      set
 
-  let of_list ~(traces : T.kept_traces) elts =
-    List.fold_left (fun set e -> add ~traces e set) empty elts
+  let union ~(traces : T.kept_traces) (s1 : t) (s2 : t) : t =
+    (* Union the smaller set into the larger one: on a collision the larger
+     * set's element is the existing one. *)
+    let larger, smaller =
+      if cardinal s1 >= cardinal s2 then (s1, s2) else (s2, s1)
+    in
+    EffectMap.union
+      (fun _ (existing : elt) (eff : elt) ->
+        Some (fuse_element ~traces existing eff))
+      larger smaller
 
-  let map ~(traces : T.kept_traces) f s =
-    fold (fun e acc -> add ~traces (f e) acc) s empty
+  let of_list ~(traces : T.kept_traces) (elts : elt list) : t =
+    List.fold_left (fun (set : t) (e : elt) -> add ~traces e set) empty elts
 
-  let filter_map ~(traces : T.kept_traces) f s =
+  let map ~(traces : T.kept_traces) (f : elt -> elt) (s : t) : t =
+    fold (fun (e : elt) (acc : t) -> add ~traces (f e) acc) s empty
+
+  let filter_map ~(traces : T.kept_traces) (f : elt -> elt option) (s : t) : t
+      =
     fold
-      (fun e acc ->
+      (fun (e : elt) (acc : t) ->
         match f e with
         | Some e' -> add ~traces e' acc
         | None -> acc)
       s empty
 
-  (* [equal] gives identity-equal element pairs at the same position of both
-   * sorted element lists, so a parallel walk pairs each element with its
-   * counterpart. [Effect.guards_equal] covers every guard-bearing payload,
-   * not just the effect-level guard. *)
-  let equal_with_guards s1 s2 =
-    equal s1 s2
-    && List.for_all2 Effect.guards_equal (elements s1) (elements s2)
+  (* [EffectMap.equal] walks both maps in key order and pairs each element
+   * with its identity-equal counterpart. [Effect.guards_equal] covers every
+   * guard-bearing payload, not just the effect-level guard. *)
+  let equal_with_guards (s1 : t) (s2 : t) : bool =
+    EffectMap.equal Effect.guards_equal s1 s2
 
-  let show ?(truncate_guards = true) s =
-    s |> to_seq |> List.of_seq
+  let show ?(truncate_guards = true) (s : t) =
+    s |> elements
     |> List_.map (Effect.show ~truncate_guards)
     |> String.concat "; "
 
