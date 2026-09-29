@@ -1247,9 +1247,14 @@ let rec substitute_in_sig ~lang ~(substituted_signatures : substituted_signature
    * this pass).
    *
    * The [Fun] recursion descends a finite chain, not a cycle. A [Fun]
-   * shape only ever holds a signature obtained from [lookup_signature]
-   * (see [S.Fun fun_sig] in [Dataflow_tainting]), i.e. a finished, finite
-   * signature of an already-extracted function. A function is not in the
+   * shape only ever holds a signature from one of four producers: in
+   * [Dataflow_tainting], a fetched reference takes the signatures of the
+   * definitions its binding refers to ([lookup_bound_definitions]), C's
+   * [&f] takes those of [lookup_signature], and a lambda assignment takes
+   * the lambda's signature from the database; in [Builtin_models], a
+   * returning function model builds the signature of the function it
+   * returns. Each is a finished, finite signature, of an already-extracted
+   * function or of a model. A function is not in the
    * database while its own signature is being extracted, so it cannot
    * embed itself: e.g. [def f(): return f] yields an empty shape, not
    * [Fun (sig of f)]. The exception is Clojure's self-signature fixpoint,

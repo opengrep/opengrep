@@ -1,0 +1,13 @@
+rules:
+  - id: field-named-like-zero-argument-method
+    message: a field whose member has the name of a zero argument library method keeps its stored taint
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

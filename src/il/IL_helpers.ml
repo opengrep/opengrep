@@ -510,6 +510,19 @@ let is_class_name (name : name) =
 
 let lval_of_var var = { IL.base = Var var; rev_offset = [] }
 
+(* The name a function reference refers to: a bare name, or the member that
+   the last field access selects. *)
+let referenced_name (fun_exp : IL.exp) : IL.name option =
+  match fun_exp.e with
+  | Fetch { base = Var name; rev_offset = [] } -> Some name
+  | Fetch
+      {
+        base = Var _ | Mem _ | VarSpecial ((Self | This | Parent | Super), _);
+        rev_offset = { o = Dot member; _ } :: _;
+      } ->
+      Some member
+  | _ -> None
+
 let is_dots_offset offset =
   offset
   |> List.for_all (fun o ->

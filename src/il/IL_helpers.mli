@@ -84,6 +84,8 @@ val cond_partial_param_refs :
 
 val lval_of_var : IL.name -> IL.lval
 
+val referenced_name : IL.exp -> IL.name option
+
 val is_dots_offset : IL.offset list -> bool
 (** Test whether an offset is of the form .a_1. ... .a_N.  *)
 

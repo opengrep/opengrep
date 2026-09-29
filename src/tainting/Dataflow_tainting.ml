@@ -1110,11 +1110,22 @@ let poly_offset_bound env (fun_exp : IL.exp) : int =
   then Limits_semgrep.taint_MAX_POLY_OFFSET_FLAT
   else Shape.max_poly_offset env.taint_inst.lang
 
-let lookup_signature env fun_exp arity =
-  Log.debug (fun m ->
-      m "LOOKUP_SIG_ENTRY: Looking up %s with arity %d"
-        (Display_IL.string_of_exp fun_exp) arity);
-  let found = lookup_signature_with_object_context env fun_exp arity in
+(* The signatures of the definitions that the binding of [fun_exp]'s name
+   refers to. A builtin model describes a call of a library method and
+   gives no value its shape. *)
+let lookup_bound_definitions (env : env) (fun_exp : IL.exp) (arity : int) :
+    (Function_id.t * Signature.t) list =
+  match (env.signature_db, IL_helpers.referenced_name fun_exp) with
+  | Some db, Some name ->
+      signature_via_callee_definition
+        ~project_root:env.taint_inst.project_root db name.IL.id_info arity
+  | None, _
+  | _, None ->
+      []
+
+let with_self_signature (env : env) (fun_exp : IL.exp)
+    (found : (Function_id.t * Signature.t) list) :
+    (Function_id.t * Signature.t) list =
   let is_analysed_function (def : Function_id.t) : bool =
     match env.func.name with
     | Some self_name -> (
@@ -1133,6 +1144,14 @@ let lookup_signature env fun_exp arity =
       found
   then found
   else found @ Option.to_list (self_sig_if_recursive env fun_exp)
+
+let lookup_signature (env : env) (fun_exp : IL.exp) (arity : int) :
+    (Function_id.t * Signature.t) list =
+  Log.debug (fun m ->
+      m "LOOKUP_SIG_ENTRY: Looking up %s with arity %d"
+        (Display_IL.string_of_exp fun_exp) arity);
+  with_self_signature env fun_exp
+    (lookup_signature_with_object_context env fun_exp arity)
 
 (*****************************************************************************)
 (* Lambdas *)
@@ -1898,17 +1917,13 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
             let shape =
               match S.unfold shape with
               | S.Fun _ -> shape
-              | _ ->
-                  let is_temp_var =
-                    match lval.base with
-                    | Var name -> String.starts_with ~prefix:"_tmp" (fst name.ident)
-                    | _ -> false
-                  in
-                  if is_temp_var then shape
-                  else
-                    (match lookup_signature env exp arity with
-                    | [] -> shape
-                    | found -> fun_shape_of_definitions env found)
+              | _ -> (
+                  match
+                    with_self_signature env exp
+                      (lookup_bound_definitions env exp arity)
+                  with
+                  | [] -> shape
+                  | found -> fun_shape_of_definitions env found)
             in
             (taints, shape, lval_env)
         | __else__ ->
