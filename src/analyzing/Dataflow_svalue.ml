@@ -487,6 +487,8 @@ and do_lambdas lang ~(write_svalues : bool) lambdas in_env node =
   | NInstr { i = AssignAnon (lval, Lambda _); _ } -> (
       match LV.lval_is_lambda lambdas lval with
       | Some (_name, lambda_cfg) ->
+          (* Each nesting level runs under its own iteration budget, so the visits of
+           * nested lambdas are bounded by the product of the levels' budgets. *)
           let mapping =
             fixpoint_with_env lang ~write_svalues in_env lambda_cfg
           in
@@ -524,14 +526,21 @@ and do_lambdas lang ~(write_svalues : bool) lambdas in_env node =
 
 and fixpoint_with_env lang ~(write_svalues : bool) enter_env fun_cfg =
   let flow = fun_cfg.cfg in
-  DataflowX.fixpoint ~eq_env:(Var_env.eq_env Eval.eq)
-    ~strategy:
-      (D.Recomputation
-         { max_visits_per_node = Limits_semgrep.svalue_MAX_VISITS_PER_NODE })
-    ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
-    ~trans:(transfer ~lang ~write_svalues ~enter_env ~fun_cfg)
-      (* svalue is a forward analysis! *)
-    ~flow
+  let mapping, timeout =
+    DataflowX.fixpoint ~eq_env:(Var_env.eq_env Eval.eq)
+      ~strategy:
+        (D.Recomputation
+           { visits_per_node = Limits_semgrep.svalue_MAX_VISITS_PER_NODE })
+      ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
+      ~trans:(transfer ~lang ~write_svalues ~enter_env ~fun_cfg)
+        (* svalue is a forward analysis! *)
+      ~flow
+  in
+  (match timeout with
+  | `Ok -> ()
+  | `Timeout ->
+      Log.warn (fun m -> m "Fixpoint timeout while performing svalue-propagation"));
+  mapping
 
 (*****************************************************************************)
 (* Entry point *)

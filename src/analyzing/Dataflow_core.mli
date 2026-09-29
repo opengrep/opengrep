@@ -38,14 +38,19 @@ type 'env transfn = 'env mapping -> nodei -> 'env inout
  * - [Recomputation]: the initial value is the top of the lattice. Every
  *   visit recomputes a node's IN from its predecessors' OUT as the transfer
  *   does, nothing is joined with a previous value, and a node visited more
- *   than [max_visits_per_node] times keeps its value and schedules nothing.
+ *   than [visits_per_node] times keeps its value and schedules nothing.
  *   An unvisited predecessor contributes top, and a head's value is
  *   recovered on the visit after its back edge is computed. Client: svalue
  *   propagation, whose empty environment is [NotCst] for every variable.
+ *
+ * Under both strategies [fixpoint] stops after
+ * [min 100000 (number of nodes * visits_per_node)] visits and returns the
+ * mapping reached with [`Timeout]; the client uses that mapping as its
+ * result and logs the timeout.
  *)
 type 'env iteration_strategy =
-  | Ascending of { join : 'env -> 'env -> 'env }
-  | Recomputation of { max_visits_per_node : int }
+  | Ascending of { join : 'env -> 'env -> 'env; visits_per_node : int }
+  | Recomputation of { visits_per_node : int }
 
 (* helpers *)
 val ns_to_str : NodeiSet.t -> string
@@ -69,7 +74,7 @@ module Make (F : Flow) : sig
     init:'env mapping ->
     trans:'env transfn ->
     flow:F.flow ->
-    'env mapping
+    'env mapping * [ `Ok | `Timeout ]
 
   val new_node_array : F.flow -> 'a -> 'a array
 

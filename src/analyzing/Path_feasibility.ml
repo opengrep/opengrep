@@ -14,6 +14,7 @@
  *)
 module G = AST_generic
 module H = AST_generic_helpers
+module Log = Log_analyzing.Log
 module D = Dataflow_core
 module Var_env = Dataflow_var_env
 module VarMap = Var_env.VarMap
@@ -618,11 +619,22 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
         in
         { D.in_env = in_state; out_env = out_state }
       in
-      let mapping =
-        Product.fixpoint ~eq_env:equal_state ~strategy:(D.Ascending { join })
+      let mapping, timeout =
+        Product.fixpoint ~eq_env:equal_state
+          ~strategy:
+            (D.Ascending
+               {
+                 join;
+                 visits_per_node = Limits_semgrep.taint_FIXPOINT_VISITS_PER_NODE;
+               })
           ~init:(Product.new_node_array product { D.in_env = Unreachable; out_env = Unreachable })
           ~trans ~flow:product
       in
+      (match timeout with
+      | `Ok -> ()
+      | `Timeout ->
+          Log.warn (fun m ->
+              m "Fixpoint timeout while performing path feasibility analysis"));
       let state_at (i : int) : state option =
         List.fold_left
           (fun (acc : state option) (k : int) ->

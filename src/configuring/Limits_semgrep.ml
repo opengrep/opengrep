@@ -21,6 +21,16 @@ let svalue_LATTICE_HEIGHT = 3
  * settle. *)
 let svalue_MAX_VISITS_PER_NODE = 1 + svalue_LATTICE_HEIGHT
 
+(* The visits per node of the iteration budget of the taint fixpoint and of
+ * the product fixpoint of path feasibility ('Dataflow_core.Ascending'): the
+ * budget is this number times the number of nodes, at most 100000. The taint
+ * lattice has finite height, but no constant follows from it: the height
+ * grows with the numbers of variables, allocation sites, field keys, taint
+ * identities and guard clauses. The join at the component heads ends the
+ * iteration; the budget is an insurance bound, with the measured value 4.
+ * When it runs out, the partial mapping is the result and the run is logged. *)
+let taint_FIXPOINT_VISITS_PER_NODE = 4
+
 (*****************************************************************************)
 (* Taint analysis *)
 (*****************************************************************************)
