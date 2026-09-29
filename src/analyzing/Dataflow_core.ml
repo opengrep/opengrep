@@ -117,6 +117,10 @@ let (inout_to_str : ('env -> string) -> 'env inout -> string) =
  *)
 type 'env transfn = 'env mapping -> nodei -> 'env inout
 
+type 'env iteration_strategy =
+  | Ascending of { join : 'env -> 'env -> 'env }
+  | Recomputation of { max_visits_per_node : int }
+
 module Make (F : Flow) = struct
   let mapping_to_str (f : F.flow) env_to_str mapping =
     array_fold_left_idx
@@ -135,15 +139,39 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
-  let fixpoint_worker eq_env join mapping trans (flow : F.flow) workset =
+  let fixpoint_worker eq_env strategy mapping trans (flow : F.flow) workset =
     let max_nodei = Array.length mapping - 1 in
-    (* A component head of the weak topological order joins each new IN and
-     * OUT with its previous ones from its second visit on, so its values
-     * only grow. Every cycle passes through a head, so the iteration ends
-     * once the heads stop changing, after at most as many changes as the
-     * height of the lattice. The first visit is not joined, because the
-     * initial mapping is not the bottom of every lattice. *)
+    (* With [Ascending], a component head of the weak topological order joins
+     * each new IN and OUT with its previous ones from its second visit on,
+     * so its values only grow. Every cycle passes through a head, so the
+     * iteration ends once the heads stop changing, after at most as many
+     * changes as the height of the lattice. The first visit is not joined:
+     * the initial mapping is the bottom, the identity of the join.
+     * With [Recomputation], every visit stores the transfer's result, and a
+     * node visited more than [max_visits_per_node] times is skipped, so the
+     * iteration ends after at most that bound times the number of nodes. *)
     let visit_counts = Array.make (max_nodei + 1) 0 in
+    let exceeds_bound, next_value =
+      match strategy with
+      | Ascending { join } ->
+          ( (fun (_ : nodei) -> false),
+            fun (ni : nodei) old computed ->
+              if CFG.is_component_head flow ni && visit_counts.(ni) > 1 then
+                {
+                  in_env = join old.in_env computed.in_env;
+                  out_env = join old.out_env computed.out_env;
+                }
+              else computed )
+      | Recomputation { max_visits_per_node } ->
+          ( (fun (ni : nodei) ->
+              if visit_counts.(ni) > max_visits_per_node then (
+                Log.debug (fun m ->
+                    m "node %d exceeds the bound of %d visits and keeps its value"
+                      ni max_visits_per_node);
+                true)
+              else false),
+            fun (_ : nodei) _old computed -> computed )
+    in
     let add_succ (work : NodeiSet.t) ((succ, _) : nodei * _) : NodeiSet.t =
       let pos = flow.order_index.(succ) in
       if pos < 0 then work else NodeiSet.add pos work
@@ -159,39 +187,33 @@ module Make (F : Flow) = struct
         let ni = flow.weak_topological_order.(pos) in
         let work' = NodeiSet.remove pos work in
         visit_counts.(ni) <- visit_counts.(ni) + 1;
-        let old = mapping.(ni) in
-        let computed = trans mapping ni in
-        let new_ =
-          if CFG.is_component_head flow ni && visit_counts.(ni) > 1 then
-            {
-              in_env = join old.in_env computed.in_env;
-              out_env = join old.out_env computed.out_env;
-            }
-          else computed
-        in
-        let work'' =
-          if eq_inout eq_env old new_ then work'
-          else (
-            mapping.(ni) <- new_;
-            add_succs ni work')
-        in
-        loop work''
+        if exceeds_bound ni then loop work'
+        else
+          let old = mapping.(ni) in
+          let new_ = next_value ni old (trans mapping ni) in
+          let work'' =
+            if eq_inout eq_env old new_ then work'
+            else (
+              mapping.(ni) <- new_;
+              add_succs ni work')
+          in
+          loop work''
     in
     loop (NodeiSet.map (fun (ni : nodei) -> flow.order_index.(ni)) workset)
 
   let (fixpoint :
         eq_env:('env -> 'env -> bool) ->
-        join:('env -> 'env -> 'env) ->
+        strategy:'env iteration_strategy ->
         init:'env mapping ->
         trans:'env transfn ->
         flow:F.flow ->
         'env mapping) =
-   fun ~eq_env ~join ~init ~trans ~flow ->
+   fun ~eq_env ~strategy ~init ~trans ~flow ->
     let work =
       (* This prevents dead code from getting analyzed. *)
       flow.reachable
     in
-    fixpoint_worker eq_env join init trans flow work
+    fixpoint_worker eq_env strategy init trans flow work
 
   (*****************************************************************************)
   (* Helpers *)

@@ -25,6 +25,28 @@ and 'env inout = { in_env : 'env; out_env : 'env }
  *)
 type 'env transfn = 'env mapping -> nodei -> 'env inout
 
+(* The iteration strategy of [fixpoint]. The client states it, because the
+ * choice depends on where the client's lattice starts:
+ *
+ * - [Ascending]: the initial value is the bottom of the lattice, the
+ *   identity of [join]. A component head of the weak topological order
+ *   joins its new IN and OUT with the previous ones from its second visit
+ *   on, and the iteration ends when the heads stop changing. Clients: the
+ *   taint fixpoint (initial empty [Lval_env]) and the product fixpoint of
+ *   [Path_feasibility] (initial [Unreachable]).
+ *
+ * - [Recomputation]: the initial value is the top of the lattice. Every
+ *   visit recomputes a node's IN from its predecessors' OUT as the transfer
+ *   does, nothing is joined with a previous value, and a node visited more
+ *   than [max_visits_per_node] times keeps its value and schedules nothing.
+ *   An unvisited predecessor contributes top, and a head's value is
+ *   recovered on the visit after its back edge is computed. Client: svalue
+ *   propagation, whose empty environment is [NotCst] for every variable.
+ *)
+type 'env iteration_strategy =
+  | Ascending of { join : 'env -> 'env -> 'env }
+  | Recomputation of { max_visits_per_node : int }
+
 (* helpers *)
 val ns_to_str : NodeiSet.t -> string
 
@@ -43,7 +65,7 @@ module Make (F : Flow) : sig
   (* main entry point *)
   val fixpoint :
     eq_env:('env -> 'env -> bool) ->
-    join:('env -> 'env -> 'env) ->
+    strategy:'env iteration_strategy ->
     init:'env mapping ->
     trans:'env transfn ->
     flow:F.flow ->

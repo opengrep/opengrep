@@ -1,0 +1,7 @@
+rules:
+  - id: constprop-loop-head-python
+    languages:
+      - python
+    message: Test
+    pattern: sink("a")
+    severity: WARNING

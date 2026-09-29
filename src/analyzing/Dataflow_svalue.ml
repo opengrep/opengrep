@@ -524,7 +524,10 @@ and do_lambdas lang ~(write_svalues : bool) lambdas in_env node =
 
 and fixpoint_with_env lang ~(write_svalues : bool) enter_env fun_cfg =
   let flow = fun_cfg.cfg in
-  DataflowX.fixpoint ~eq_env:(Var_env.eq_env Eval.eq) ~join:union_env
+  DataflowX.fixpoint ~eq_env:(Var_env.eq_env Eval.eq)
+    ~strategy:
+      (D.Recomputation
+         { max_visits_per_node = Limits_semgrep.svalue_MAX_VISITS_PER_NODE })
     ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
     ~trans:(transfer ~lang ~write_svalues ~enter_env ~fun_cfg)
       (* svalue is a forward analysis! *)

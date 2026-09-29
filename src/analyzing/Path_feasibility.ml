@@ -619,7 +619,7 @@ let check (lang : Lang.t) (fun_cfg : IL.fun_cfg) (ix : index)
         { D.in_env = in_state; out_env = out_state }
       in
       let mapping =
-        Product.fixpoint ~eq_env:equal_state ~join
+        Product.fixpoint ~eq_env:equal_state ~strategy:(D.Ascending { join })
           ~init:(Product.new_node_array product { D.in_env = Unreachable; out_env = Unreachable })
           ~trans ~flow:product
       in

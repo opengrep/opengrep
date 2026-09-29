@@ -6,6 +6,21 @@
  * a cycle check. See 'Dataflow_svalue.no_cycles_in_svalue'. *)
 let svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK = 1000
 
+(* The height of the svalue lattice: a literal, then [Cst] of its type, then
+ * [Cst Cany], then [NotCst] ('Eval_il_partial.union' and 'union_ctype'); a
+ * symbolic value joins to [NotCst] directly. *)
+let svalue_LATTICE_HEIGHT = 3
+
+(* The visit bound of svalue propagation ('Dataflow_core.Recomputation').
+ * The first visit computes a value; a variable whose value in the loop
+ * depends on no other variable of the loop moves down the lattice at most
+ * once per later visit, so it settles within the height. A chain of copies
+ * longer than the height is truncated at the bound. The bound also stops
+ * the iteration under a transfer that is not monotone (the refinement of a
+ * stored symbolic value, 'Eval_il_partial.refine'), under which it need not
+ * settle. *)
+let svalue_MAX_VISITS_PER_NODE = 1 + svalue_LATTICE_HEIGHT
+
 (*****************************************************************************)
 (* Taint analysis *)
 (*****************************************************************************)

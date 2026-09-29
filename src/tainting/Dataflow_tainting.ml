@@ -4452,9 +4452,14 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
         env.did_self_recurse := false;
         let end_mapping =
           DataflowX.fixpoint ~eq_env:Lval_env.equal
-            ~join:
-              (Lval_env.union_at_loop_head ~traces:taint_inst.traces
-                 ~lang:taint_inst.lang) ~init:init_mapping
+            ~strategy:
+              (D.Ascending
+                 {
+                   join =
+                     Lval_env.union_at_loop_head ~traces:taint_inst.traces
+                       ~lang:taint_inst.lang;
+                 })
+            ~init:init_mapping
             ~trans:(transfer env ~fun_cfg ~copied) ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -4488,9 +4493,14 @@ and fixpoint_aux taint_inst shared_tables func ?(needed_vars = IL.NameSet.empty)
       run_to_sig_fixpoint 0
     else
       DataflowX.fixpoint ~eq_env:Lval_env.equal
-        ~join:
-          (Lval_env.union_at_loop_head ~traces:taint_inst.traces
-             ~lang:taint_inst.lang) ~init:init_mapping
+        ~strategy:
+          (D.Ascending
+             {
+               join =
+                 Lval_env.union_at_loop_head ~traces:taint_inst.traces
+                   ~lang:taint_inst.lang;
+             })
+        ~init:init_mapping
         ~trans:(transfer env ~fun_cfg ~copied) ~flow
   in
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
