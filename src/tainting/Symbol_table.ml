@@ -6,6 +6,7 @@
    its fields. *)
 
 module G = AST_generic
+module Log = Log_call_graph.Log
 module SMap = Common.SMap
 module SId_tbl = Class_table.SId_tbl
 module Scope_tbl = Class_table.Scope_tbl
@@ -2509,10 +2510,6 @@ and referent_class_of_values (t : t) ~(caller : Function_id.t option)
       Of_class cls
   | _ -> Of_unknown_class
 
-let receiver_of_name (t : t) ~(caller : Function_id.t option) (name : G.name) :
-    receiver_class =
-  receiver_of_name_from t ~caller ~visited:[] name
-
 let exact (receiver : receiver_class) : receiver_class =
   match receiver with
   | Class cls -> Exact cls
@@ -2614,8 +2611,21 @@ let position_of_member (e : G.expr) : int option =
       | Error _ -> None)
   | _ -> None
 
+let within_depth_bound (depth : int) : bool =
+  let within = depth < Limits_semgrep.taint_MAX_INFER_CLASS_DEPTH in
+  if not within then
+    Log.debug (fun m ->
+        m "receiver typing reached the depth bound %d; the receiver is unknown"
+          Limits_semgrep.taint_MAX_INFER_CLASS_DEPTH);
+  within
+
+(* Name resolution and receiver typing call each other: a member access
+   types its receiver, and a call is typed by what its callee returns. One
+   visited set of bindings is carried through both, so every step adds a
+   binding to it or descends into a sub-expression; bindings are finite, so
+   the recursion terminates. [depth] counts the hand-offs between the two. *)
 let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
-    ~(visited : G.SId.t list) (name : G.name) : lookup_result =
+    ~(visited : G.SId.t list) ~(depth : int) (name : G.name) : lookup_result =
   let info = id_info_of_name name in
   match !(info.G.id_resolved) with
   | Some (G.TypeName, sid) -> (
@@ -2646,10 +2656,11 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
           | (_ :: _ as assigned), _ ->
               join_selections
                 (List.map
-                   (resolve_expr t ~caller ~use ~visited:(sid :: visited))
+                   (resolve_expr t ~caller ~use ~visited:(sid :: visited)
+                      ~depth)
                    assigned)
           | [], Some (G.Sym value) ->
-              resolve_expr t ~caller ~use ~visited:(sid :: visited) value
+              resolve_expr t ~caller ~use ~visited:(sid :: visited) ~depth value
           | [], (Some _ | None) ->
               static_selection (Defined [])))
   | Some (G.EnumConstant, _) -> static_selection (Defined [])
@@ -2661,18 +2672,22 @@ let rec resolve_name (t : t) ~(caller : Function_id.t option) ~(use : use)
   | None -> static_selection External
 
 and resolve_expr (t : t) ~(caller : Function_id.t option) ~(use : use)
-    ~(visited : G.SId.t list) (e : G.expr) : lookup_result =
+    ~(visited : G.SId.t list) ~(depth : int) (e : G.expr) : lookup_result =
   match (e.G.e, member_access t e) with
   | (G.N name | G.Ref (_, { G.e = G.N name; _ })), _ ->
-      resolve_name t ~caller ~use ~visited name
+      resolve_name t ~caller ~use ~visited ~depth name
   | _, Some (receiver, member) ->
       let root, prefix = receiver_chain t receiver in
       resolve_member_access t
         ~program_point:{ from = caller; at = position_of_member e }
         ~receiver ~member ~prefix
-        ~root_class:(lazy (receiver_class t ~caller root))
+        ~root_class:
+          (lazy
+            (if within_depth_bound depth then
+               receiver_class_from t ~caller ~visited ~depth:(depth + 1) root
+             else Unknown))
   | G.ArrayAccess (indexed, _), None ->
-      resolve_expr t ~caller ~use ~visited indexed
+      resolve_expr t ~caller ~use ~visited ~depth indexed
   | G.IdSpecial (G.Super, _), None ->
       static_selection
         (match self_receiver t ~caller with
@@ -2718,10 +2733,10 @@ and resolve_member_access (t : t) ~(program_point : program_point)
           resolve_path t ~program_point root_receiver (prefix @ [ member ]))
 
 (* The class an expression denotes as a receiver, when this file knows it. *)
-and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
-    receiver_class =
+and receiver_class_from (t : t) ~(caller : Function_id.t option)
+    ~(visited : G.SId.t list) ~(depth : int) (e : G.expr) : receiver_class =
   match e.G.e with
-  | G.DeRef (_, inner) -> receiver_class t ~caller inner
+  | G.DeRef (_, inner) -> receiver_class_from t ~caller ~visited ~depth inner
   | G.IdSpecial (G.Self, _) when Lang_config.self_is_defining_class t.lang ->
       exact (self_receiver t ~caller)
   | G.IdSpecial ((G.This | G.Self | G.LateStatic), _) -> self_receiver t ~caller
@@ -2741,8 +2756,10 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
       | Top_level_object
       | Unknown ->
           Unknown)
-  | G.N name -> receiver_of_name t ~caller name
-  | G.Await (_, inner) -> receiver_class t ~caller inner
+  (* A value of the name whose binding is visited is not followed again:
+     'referent_class_of_values' gives the referent an unknown class. *)
+  | G.N name -> receiver_of_name_from t ~caller ~visited name
+  | G.Await (_, inner) -> receiver_class_from t ~caller ~visited ~depth inner
   | G.Cast (ty, _, _) -> class_of_type t ~context:(self_scope t ~caller) ty
   | G.New (_, ty, _, _) ->
       exact (class_of_type t ~context:(self_scope t ~caller) ty)
@@ -2754,11 +2771,11 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
           name
       with
       | Some cls -> Exact cls
-      | None -> returned_by t ~caller callee)
+      | None -> returned_by t ~caller ~visited ~depth callee)
   | G.Call ({ G.e = G.DotAccess (receiver, _, G.FN name); _ }, _)
   | G.DotAccess (receiver, _, G.FN name)
     when constructs_by_method t (fst (last_ident_of_name name)) -> (
-      match receiver_class t ~caller receiver with
+      match receiver_class_from t ~caller ~visited ~depth receiver with
       | Class_object cls -> Exact cls
       | External_class -> External_class
       | Class _
@@ -2768,12 +2785,14 @@ and receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
       | Top_level_object
       | Unknown ->
           Unknown)
-  | G.Call (callee, _) -> returned_by t ~caller callee
+  | G.Call (callee, _) -> returned_by t ~caller ~visited ~depth callee
   | G.DotAccess _
   | G.ArrayAccess _ -> (
       match member_access t e with
       | Some (inner, field) ->
-          member_receiver t (receiver_class t ~caller inner) field
+          member_receiver t
+            (receiver_class_from t ~caller ~visited ~depth inner)
+            field
       | None -> Unknown)
   | _ -> Unknown
 
@@ -2789,12 +2808,13 @@ and member_receiver (t : t) (receiver : receiver_class) (field : string) :
       (Class _ | Exact _ | Class_object _ | Ancestors_of _ | Top_level_object | Unknown) ) ->
       Unknown
 
-and member_call (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
+and member_call (t : t) ~(caller : Function_id.t option)
+    ~(visited : G.SId.t list) ~(depth : int) (callee : G.expr) :
     (receiver_class * string * lookup_result Lazy.t) option =
   match (callee.G.e, member_access t callee) with
   | G.DotAccess _, Some (receiver, member) ->
       let root, prefix = receiver_chain t receiver in
-      let root_class = receiver_class t ~caller root in
+      let root_class = receiver_class_from t ~caller ~visited ~depth root in
       Some
         ( List.fold_left (member_receiver t) root_class prefix,
           member,
@@ -2805,15 +2825,26 @@ and member_call (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
                ~root_class:(Lazy.from_val root_class)) )
   | _ -> None
 
-and returned_by (t : t) ~(caller : Function_id.t option) (callee : G.expr) :
+and returned_by (t : t) ~(caller : Function_id.t option)
+    ~(visited : G.SId.t list) ~(depth : int) (callee : G.expr) :
     receiver_class =
   let declared, resolved =
-    match member_call t ~caller callee with
+    match member_call t ~caller ~visited ~depth callee with
     | Some (receiver, member, resolved) ->
         ( member_type t receiver (fun (owner : Class_table.cls) ->
               Type_state.method_return t.types owner member),
           resolved )
-    | None -> (None, lazy (resolve_expr t ~caller ~use:Called ~visited:[] callee))
+    (* A callee whose binding is visited is not followed again: 'resolve_name'
+       returns [Defined []] for it and the call types as [Unknown]. Past the
+       depth bound the callee resolves to [Defined []] too, so no other file
+       is searched. *)
+    | None ->
+        ( None,
+          lazy
+            (if within_depth_bound depth then
+               resolve_expr t ~caller ~use:Called ~visited ~depth:(depth + 1)
+                 callee
+             else static_selection (Defined [])) )
   in
   match declared with
   | Some cls -> Class cls
@@ -2839,13 +2870,17 @@ and returned_by_functions (t : t) (funcs : Func_info.t list) : receiver_class =
   | _ :: _ :: _ ->
       Unknown
 
+let receiver_class (t : t) ~(caller : Function_id.t option) (e : G.expr) :
+    receiver_class =
+  receiver_class_from t ~caller ~visited:[] ~depth:0 e
+
 let resolve_callee (t : t) ~(caller : Function_id.t option) (e : G.expr) :
     lookup_result =
-  resolve_expr t ~caller ~use:Called ~visited:[] e
+  resolve_expr t ~caller ~use:Called ~visited:[] ~depth:0 e
 
 let resolve_reference (t : t) ~(caller : Function_id.t option) (e : G.expr) :
     lookup_result =
-  resolve_expr t ~caller ~use:Referenced ~visited:[] e
+  resolve_expr t ~caller ~use:Referenced ~visited:[] ~depth:0 e
 
 (* The constructors [new T(...)] reaches: those of the class [T] binds, or
    the function [T] binds, called as a constructor. *)
@@ -2988,4 +3023,4 @@ let class_of_member_call (t : t) ~(caller : Function_id.t option)
           (resolved : lookup_result Lazy.t)) ->
       ( class_of_receiver receiver,
         lazy (or_across_files t ~caller callee (Lazy.force resolved)) ))
-    (member_call t ~caller callee)
+    (member_call t ~caller ~visited:[] ~depth:0 callee)

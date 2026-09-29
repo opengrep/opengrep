@@ -1,0 +1,13 @@
+rules:
+  - id: resolution_cycle_through_call_lua
+    message: a call resolves through a binding whose value calls the same binding
+    languages:
+      - lua
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

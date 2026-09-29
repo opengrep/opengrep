@@ -31,6 +31,17 @@ let svalue_MAX_VISITS_PER_NODE = 1 + svalue_LATTICE_HEIGHT
  * When it runs out, the partial mapping is the result and the run is logged. *)
 let taint_FIXPOINT_VISITS_PER_NODE = 4
 
+(* The nesting bound of receiver typing within name resolution in
+ * 'Symbol_table': each hand-off from resolving a member access into typing
+ * its receiver, or from typing a call into resolving its callee, counts one.
+ * Termination does not depend on it: the visited bindings give it. The cost
+ * along a chain of bindings with several reaching values each is exponential
+ * and nothing is memoised; the bound caps the nesting of hand-offs on such a
+ * chain. Past the bound the receiver is unknown and the event is logged. The
+ * value is main's 'Callee_resolution.infer_class_max_depth', which has no
+ * derivation and no recorded measurement: an insurance bound. *)
+let taint_MAX_INFER_CLASS_DEPTH = 8
+
 (*****************************************************************************)
 (* Taint analysis *)
 (*****************************************************************************)
