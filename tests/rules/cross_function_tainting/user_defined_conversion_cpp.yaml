@@ -1,0 +1,13 @@
+rules:
+  - id: user-defined-conversion
+    message: a call reaches the function whose parameter a user-defined conversion accepts
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

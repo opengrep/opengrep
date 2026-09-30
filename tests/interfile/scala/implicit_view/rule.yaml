@@ -1,0 +1,12 @@
+rules:
+  - id: implicit-view
+    languages: [scala]
+    message: a call reaches the method whose parameter an implicit view accepts
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

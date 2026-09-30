@@ -3837,7 +3837,13 @@ and map_operator_cast (env : env) ((v1, v2, v3) : CST.operator_cast) : name =
   let v1 = token env v1 (* "operator" *) in
   let t, _specs = map_declaration_specifiers env v2 in
   let v3 = map_abstract_declarator env v3 in
-  let t = v3 t in
+  (* The declarator holds the conversion function's parameter list; the
+     conversion-type-id is the type the function returns ([class.conv.fct]). *)
+  let t =
+    match v3 t with
+    | _, TFunction { ft_ret; _ } -> ft_ret
+    | declared -> declared
+  in
   let id_or_op = IdConverter (v1, t) in
   (None, [], id_or_op)
 

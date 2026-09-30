@@ -1379,12 +1379,31 @@ let order (t : t) (cls : Class_table.cls) :
     Class_table.cls Member_lookup.lookup_order =
   Class_table.order t.classes cls
 
+(* Whether this table holds every part of the declaration of [cls], so that
+   no declaration outside it adds a supertype or a member. The project table
+   groups the parts of a class, but a table does not carry whether it is
+   the project table. *)
+let declaration_parts_decided (t : t) (cls : Class_table.cls) : bool =
+  match Lang_config.supertype_declarations t.lang with
+  | Lang_config.In_the_type_declaration -> true
+  | Lang_config.In_partial_type_declarations ->
+      not
+        (List.exists
+           (fun (scope : class_scope) -> scope.Class_table.reopens)
+           (Class_table.scopes cls))
+  | Lang_config.Outside_the_type_declaration -> false
+
+(* A complete lookup order lists every supertype of [cls] only when every
+   part of its declaration is in this table. *)
+let supertypes_decided (t : t) (cls : Class_table.cls) : bool =
+  (order t cls).Member_lookup.complete && declaration_parts_decided t cls
+
 let is_subclass (t : t) (sub : Class_table.cls) (super : Class_table.cls) :
     bool option =
   let lookup_order = order t sub in
   if List.exists (Class_table.same super) lookup_order.Member_lookup.order then
     Some true
-  else if lookup_order.Member_lookup.complete then Some false
+  else if supertypes_decided t sub then Some false
   else None
 
 let own_members (t : t) (cls : Class_table.cls) (name : string) :
@@ -3006,11 +3025,91 @@ let accepts_external (t : t) (cls : Class_table.cls) (path : string list) :
         lookup_order.Member_lookup.order
   in
   if List.exists (List.equal String.equal path) implicit then Some true
-  else if
-    supertypes.Lang_config.user_defined_conversions
-    || not lookup_order.Member_lookup.complete
+  else
+    match Lang_config.user_defined_conversions t.lang with
+    | Lang_config.Declared_in_source_or_target_class
+    | Lang_config.Views_searched_as_implicit_parameters ->
+        None
+    | Lang_config.No_user_defined_conversions ->
+        if supertypes_decided t cls then Some false else None
+
+type source_or_target_type =
+  | Written_type of {
+      written : G.type_;
+      written_in : Function_id.t option;
+    }
+  | Declaring_class of Class_table.cls
+
+type implicit_conversion = {
+  source : source_or_target_type;
+  target : source_or_target_type;
+}
+
+let implicit_conversions (t : t) (cls : Class_table.cls) :
+    implicit_conversion list option =
+  let declarations = Lang_config.conversion_declarations t.lang in
+  let conversions_of (ancestor : Class_table.cls)
+      (declaration : Lang_config.conversion_declaration) :
+      implicit_conversion list =
+    let written (func : Func_info.t) (ty : G.type_) : source_or_target_type =
+      Written_type { written = ty; written_in = node_of_function func }
+    in
+    let parameter_type (func : Func_info.t) : source_or_target_type option =
+      match Tok.unbracket func.Func_info.fdef.G.fparams with
+      | G.Param { G.ptype = Some ty; _ } :: _ -> Some (written func ty)
+      | _ -> None
+    in
+    let return_type (func : Func_info.t) : source_or_target_type option =
+      Option.map (written func) func.Func_info.fdef.G.frettype
+    in
+    let declared =
+      match Lang_config.conversion_member_name declaration with
+      | None -> Class_table.constructor_functions ancestor
+      | Some name ->
+          List_.map
+            (fun (definition : Class_table.definition) ->
+              definition.Class_table.func)
+            (own_members t ancestor name)
+    in
+    List.filter_map
+      (fun (func : Func_info.t) ->
+        if
+          Lang_config.defines_implicit_conversion declaration
+            func.Func_info.entity func.Func_info.fdef
+        then
+          match declaration with
+          | Lang_config.Converting_constructor ->
+              Option.map
+                (fun (source : source_or_target_type) ->
+                  { source; target = Declaring_class ancestor })
+                (parameter_type func)
+          | Lang_config.Conversion_function ->
+              Option.map
+                (fun (target : source_or_target_type) ->
+                  { source = Declaring_class ancestor; target })
+                (return_type func)
+          | Lang_config.Conversion_operator ->
+              Option.bind (parameter_type func)
+                (fun (source : source_or_target_type) ->
+                  Option.map
+                    (fun (target : source_or_target_type) -> { source; target })
+                    (return_type func))
+        else None)
+      declared
+  in
+  let lookup_order = order t cls in
+  if
+    (not lookup_order.Member_lookup.complete)
+    || not
+         (List.for_all (declaration_parts_decided t)
+            lookup_order.Member_lookup.order)
   then None
-  else Some false
+  else
+    Some
+      (List.concat_map
+         (fun (ancestor : Class_table.cls) ->
+           List.concat_map (conversions_of ancestor) declarations)
+         lookup_order.Member_lookup.order)
 
 let this_class (t : t) ~(caller : Function_id.t option) :
     Class_table.cls option =

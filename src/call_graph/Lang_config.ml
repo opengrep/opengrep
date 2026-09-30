@@ -861,14 +861,11 @@ type class_declaration =
 type implicit_supertypes = {
   of_every_class : string list list;
   of_declaration : class_declaration -> string list list;
-  user_defined_conversions : bool;
 }
 
 let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
   let none (_ : class_declaration) : string list list = [] in
-  let unknown =
-    { of_every_class = []; of_declaration = none; user_defined_conversions = true }
-  in
+  let unknown = { of_every_class = []; of_declaration = none } in
   match lang with
   | Lang.Java ->
       {
@@ -892,7 +889,6 @@ let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
           | Plain_class
           | Struct_class ->
               []);
-        user_defined_conversions = false;
       }
   | Lang.Kotlin ->
       {
@@ -913,14 +909,8 @@ let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
           | Record_class
           | Struct_class ->
               []);
-        user_defined_conversions = false;
       }
-  | Lang.Apex ->
-      {
-        of_every_class = [ [ "Object" ] ];
-        of_declaration = none;
-        user_defined_conversions = false;
-      }
+  | Lang.Apex -> { of_every_class = [ [ "Object" ] ]; of_declaration = none }
   | Lang.Csharp ->
       {
         of_every_class =
@@ -933,7 +923,6 @@ let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
           | Record_class
           | Annotation_class ->
               []);
-        user_defined_conversions = true;
       }
   | Lang.Scala ->
       {
@@ -963,17 +952,267 @@ let implicit_supertypes (lang : Lang.t) : implicit_supertypes =
           | Annotation_class
           | Struct_class ->
               []);
-        user_defined_conversions = true;
       }
-  | Lang.Swift ->
-      {
-        of_every_class = [ [ "Any" ]; [ "AnyObject" ] ];
-        of_declaration = none;
-        user_defined_conversions = true;
-      }
-  | Lang.Cpp ->
-      { of_every_class = []; of_declaration = none; user_defined_conversions = true }
+  | Lang.Swift -> { of_every_class = [ [ "Any" ]; [ "AnyObject" ] ]; of_declaration = none }
+  | Lang.Cpp -> { of_every_class = []; of_declaration = none }
   | _ -> unknown
+
+(* Where a program can declare a user-defined implicit conversion, which
+   makes an argument applicable to a parameter of another type. *)
+type user_defined_conversions =
+  | No_user_defined_conversions
+  | Declared_in_source_or_target_class
+  | Views_searched_as_implicit_parameters
+
+let user_defined_conversions (lang : Lang.t) : user_defined_conversions =
+  match lang with
+  (* JLS 5.3: an invocation context converts by identity, widening,
+     boxing and unboxing only. Kotlin converts a function literal to a
+     functional interface (SAM conversion), Apex widens Integer to Long,
+     Double and Decimal and converts between Id and String; no
+     declaration in either converts a value to another type. *)
+  | Lang.Java
+  | Lang.Kotlin
+  | Lang.Apex ->
+      No_user_defined_conversions
+  (* A literal initialises a type that conforms to a standard library
+     literal protocol; no declaration converts a value to another type. *)
+  | Lang.Swift -> No_user_defined_conversions
+  (* C++: converting constructors of the target class ([class.conv.ctor])
+     and conversion functions of the source class ([class.conv.fct]).
+     C# 10.5.2 and VB.NET conversion operators: the operator converts
+     from or to its containing type. *)
+  | Lang.Cpp
+  | Lang.Csharp
+  | Lang.Vb ->
+      Declared_in_source_or_target_class
+  (* Rust: deref coercion by the [Deref] implementation of the source
+     type. PHP: [__toString] of the source class, for a [string]
+     parameter in coercive typing mode. Dart: the implicit tear-off of
+     the source class's [call] method for a function type. Crystal:
+     [to_unsafe] of the source type, for a parameter of a C function. *)
+  | Lang.Rust
+  | Lang.Php
+  | Lang.Dart
+  | Lang.Crystal ->
+      Declared_in_source_or_target_class
+  (* Scala 7.3: a view is an implicit value of function type, or an
+     implicit method, found as an implicit parameter is (7.2): among the
+     identifiers accessible without a prefix, which include imports, and
+     among the implicit members of the companion modules of the classes
+     associated with the type (the implicit scope). *)
+  | Lang.Scala -> Views_searched_as_implicit_parameters
+  (* C 6.5.2.2 converts an argument as if by assignment (6.5.16.1). Go
+     assignability, OCaml, Hack, Julia (whose [convert] is not applied to
+     arguments; a [ccall] argument is converted to the C argument type),
+     TypeScript's structural assignability, Solidity, Circom and Move have
+     no declared implicit conversion. *)
+  | Lang.C
+  | Lang.Go
+  | Lang.Ocaml
+  | Lang.Hack
+  | Lang.Julia
+  | Lang.Ts
+  | Lang.Solidity
+  | Lang.Circom
+  | Lang.Move_on_sui
+  | Lang.Move_on_aptos ->
+      No_user_defined_conversions
+  (* Cairo: whether deref coercion (Cairo Book 12.3) applies to a
+     function's arguments is not confirmed from the specification. *)
+  | Lang.Cairo -> No_user_defined_conversions
+  (* Dynamically typed: a parameter's annotation, where the language has
+     one, does not convert an argument (Python 8.7: annotations do not
+     change the semantics of a function). *)
+  | Lang.Bash
+  | Lang.Clojure
+  | Lang.Elixir
+  | Lang.Js
+  | Lang.Jsonnet
+  | Lang.Lisp
+  | Lang.Lua
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3
+  | Lang.R
+  | Lang.Ruby
+  | Lang.Scheme
+  | Lang.Vue ->
+      No_user_defined_conversions
+  (* No functions with parameters. *)
+  | Lang.Dockerfile
+  | Lang.Html
+  | Lang.Json
+  | Lang.Promql
+  | Lang.Protobuf
+  | Lang.Ql
+  | Lang.Terraform
+  | Lang.Xml
+  | Lang.Yaml ->
+      No_user_defined_conversions
+
+(* Where the supertypes of a type are declared. *)
+type supertype_declarations =
+  | In_the_type_declaration
+  | In_partial_type_declarations
+  | Outside_the_type_declaration
+
+let supertype_declarations (lang : Lang.t) : supertype_declarations =
+  match lang with
+  (* JLS 8.1.4, 8.1.5: the [extends] and [implements] clauses of the class
+     declaration. Kotlin specification, "Classifier declaration": the
+     supertype specifiers of the declaration. Scala 5.1: the parents of the
+     template. C++ [class.derived.general]: the base-clause of the class
+     definition. *)
+  | Lang.Java
+  | Lang.Kotlin
+  | Lang.Scala
+  | Lang.Cpp ->
+      In_the_type_declaration
+  (* C# 15.2.7: the base interfaces of a partial type are the union of those
+     of its parts. VB.NET partial types: not confirmed from the
+     specification. *)
+  | Lang.Csharp
+  | Lang.Vb ->
+      In_partial_type_declarations
+  (* Swift, "Adding Protocol Conformance with an Extension": an extension
+     adopts a protocol for an existing type. Rust Reference,
+     "Implementations": a trait implementation is written anywhere in the
+     crate of the trait or of the type. *)
+  | Lang.Swift
+  | Lang.Rust ->
+      Outside_the_type_declaration
+  (* Not confirmed from the specification: Ruby and Crystal classes reopened
+     with an [include], Go methods declared anywhere in the package,
+     TypeScript declaration merging, a JavaScript prototype set by
+     [Object.setPrototypeOf], Elixir and Clojure protocol
+     implementations, Cairo trait implementations. *)
+  | Lang.Ruby
+  | Lang.Crystal
+  | Lang.Go
+  | Lang.Ts
+  | Lang.Js
+  | Lang.Vue
+  | Lang.Elixir
+  | Lang.Clojure
+  | Lang.Cairo ->
+      Outside_the_type_declaration
+  (* Not confirmed from the specification: the class, contract or struct
+     declaration lists its supertypes (Apex, PHP, Dart, Python, Hack,
+     Julia, Solidity, Move), or the language declares no supertypes. *)
+  | Lang.Apex
+  | Lang.Php
+  | Lang.Dart
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3
+  | Lang.Hack
+  | Lang.Julia
+  | Lang.Solidity
+  | Lang.Move_on_sui
+  | Lang.Move_on_aptos
+  | Lang.C
+  | Lang.Ocaml
+  | Lang.Circom
+  | Lang.Bash
+  | Lang.Jsonnet
+  | Lang.Lisp
+  | Lang.Lua
+  | Lang.R
+  | Lang.Scheme
+  | Lang.Dockerfile
+  | Lang.Html
+  | Lang.Json
+  | Lang.Promql
+  | Lang.Protobuf
+  | Lang.Ql
+  | Lang.Terraform
+  | Lang.Xml
+  | Lang.Yaml ->
+      In_the_type_declaration
+
+(* The declarations that define a user-defined implicit conversion:
+   a C++ converting constructor ([class.conv.ctor]), a C++ conversion
+   function ([class.conv.fct]), a C# conversion operator (15.10.4). *)
+type conversion_declaration =
+  | Converting_constructor
+  | Conversion_function
+  | Conversion_operator
+
+(* The forms the front ends give these declarations. A converting
+   constructor is found among the class's constructors. A C++ conversion
+   function carries the identifier [operator], its conversion-function-id
+   without the type, which is its return type; a C# [implicit operator]
+   carries the reserved member name [op_Implicit]. No other front end
+   gives a declared conversion a form listed here. *)
+let conversion_declarations (lang : Lang.t) : conversion_declaration list =
+  match lang with
+  | Lang.Cpp -> [ Converting_constructor; Conversion_function ]
+  | Lang.Csharp -> [ Conversion_operator ]
+  | _ -> []
+
+let conversion_member_name (declaration : conversion_declaration) :
+    string option =
+  match declaration with
+  | Converting_constructor -> None
+  | Conversion_function -> Some "operator"
+  | Conversion_operator -> Some "op_Implicit"
+
+(* An [explicit] constructor or conversion function takes no part in the
+   copy-initialisation of a parameter ([over.match.copy]); a converting
+   constructor takes part when it is callable with the single argument
+   that copy-initialisation from one expression supplies ([over.match.copy]). *)
+let defines_implicit_conversion (declaration : conversion_declaration)
+    (entity : AST_generic.entity option)
+    (fdef : AST_generic.function_definition) : bool =
+  let has (keyword : AST_generic.keyword_attribute) : bool =
+    match entity with
+    | Some (entity : AST_generic.entity) ->
+        AST_generic_helpers.has_keyword_attr keyword entity.AST_generic.attrs
+    | None -> false
+  in
+  let callable_with_a_single_argument (parameters : AST_generic.parameter list)
+      : bool =
+    match parameters with
+    | AST_generic.Param _ :: rest ->
+        List.for_all
+          (fun (parameter : AST_generic.parameter) ->
+            match parameter with
+            | AST_generic.Param { AST_generic.pdefault = Some _; _ } -> true
+            | _ -> false)
+          rest
+    | _ -> false
+  in
+  (not (has AST_generic.Explicit))
+  &&
+  match declaration with
+  | Converting_constructor ->
+      has AST_generic.Ctor
+      && callable_with_a_single_argument (Tok.unbracket fdef.AST_generic.fparams)
+  | Conversion_function
+  | Conversion_operator ->
+      true
+
+(* C++ [basic.fundamental] and C 6.2.5: bool, the character types, the
+   integer and the floating point types are the arithmetic types, and an
+   implicit conversion exists between any two of them ([conv.integral],
+   [conv.double], [conv.fpint], [conv.bool]; C 6.3.1). *)
+let standard_conversions_between_arithmetic_types (lang : Lang.t) : bool =
+  match lang with
+  | Lang.C
+  | Lang.Cpp ->
+      true
+  | _ -> false
+
+(* C++ [over.ics.rank], ranking implicit conversion sequences: a standard
+   conversion sequence is a better conversion sequence than a user-defined
+   conversion sequence. C# ranks two conversions by exact match (12.6.4.6)
+   and then by the better conversion target (12.6.4.7), not by their
+   kind. *)
+let ranks_implicit_conversion_sequences (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Cpp -> true
+  | _ -> false
 
 let member_lookup (lang : Lang.t) : Member_lookup.strategy =
   let single_inheritance (superclass : Member_lookup.superclass)

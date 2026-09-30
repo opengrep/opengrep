@@ -721,6 +721,8 @@ and map_keyword_attribute = function
   | Rethrows -> Left `Rethrows
   | Lazy -> Left `Lazy
   | KeywordOnly -> Right "keyword_only"
+  | Explicit -> Right "explicit"
+  | Implicit -> Right "implicit"
   | RecordClass -> Left `RecordClass
   | AnnotationClass -> Left `AnnotationClass
   | EnumClass -> Left `EnumClass

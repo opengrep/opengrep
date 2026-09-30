@@ -1,0 +1,12 @@
+rules:
+  - id: implicit-operator
+    languages: [csharp]
+    message: a call reaches the method whose parameter an implicit conversion operator accepts
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: Source()
+    pattern-sinks:
+      - pattern: Sink(...)

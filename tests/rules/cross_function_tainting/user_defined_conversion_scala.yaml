@@ -1,0 +1,13 @@
+rules:
+  - id: user-defined-conversion
+    message: a call reaches the method whose parameter a view accepts
+    languages:
+      - scala
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

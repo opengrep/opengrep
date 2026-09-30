@@ -145,6 +145,23 @@ val external_type_path :
   string list option
 
 val accepts_external : t -> Class_table.cls -> string list -> bool option
+
+type source_or_target_type =
+  | Written_type of {
+      written : AST_generic.type_;
+      written_in : Function_id.t option;
+    }
+  | Declaring_class of Class_table.cls
+
+type implicit_conversion = {
+  source : source_or_target_type;
+  target : source_or_target_type;
+}
+
+(* The implicit conversions a class and its ancestors declare, [None] when
+   the class's lookup order is incomplete or a part of the declaration of a
+   class in it may lie outside this table. *)
+val implicit_conversions : t -> Class_table.cls -> implicit_conversion list option
 val this_class : t -> caller:Function_id.t option -> Class_table.cls option
 val class_of_function : t -> Func_info.t -> Class_table.cls option
 val constructors : t -> class_scope -> resolution

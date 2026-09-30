@@ -209,15 +209,13 @@ and map_ident_or_op (env : env) = function
       let t1 = map_tok env v1 and s, t2 = map_ident env v2 in
       let id = (Tok.content_of_tok t1 ^ s, Tok.combine_toks t1 [ t2 ]) in
       (id, None)
-  | IdConverter (v1, v2) ->
-      let v1 = map_tok env v1 and v2 = map_type_ env v2 in
-      let ii = AST_generic_helpers.ii_of_any (G.T v2) in
-      let s = v1 :: ii |> List_.map Tok.content_of_tok |> String.concat "" in
-      let t = Tok.combine_toks v1 ii in
-      let id = (s, t) in
-      (id, None)
+  (* The conversion-type-id is the definition's return type
+     ([class.conv.fct]), see [with_conversion_type]; the identifier is the
+     keyword [operator]. *)
+  | IdConverter (v1, _) ->
+      let v1 = map_tok env v1 in
+      ((Tok.content_of_tok v1, v1), None)
   | IdDeref (v1, v2) ->
-      (* Just copying the above. *)
       let v1 = map_tok env v1 and v2 = map_expr env v2 in
       let ii = AST_generic_helpers.ii_of_any (G.E v2) in
       let s = v1 :: ii |> List_.map Tok.content_of_tok |> String.concat "" in
@@ -276,12 +274,30 @@ and map_typeC env x : G.type_ =
   | TPrimitive v1 ->
       let v1 = map_wrap env (map_primitive_type env) v1 in
       G.ty_builtin v1
-  | TSized (v1, v2) ->
+  (* [dcl.type.simple]: the specifiers of a sized type ([unsigned long int])
+     together denote one fundamental type, carried as one type name. *)
+  | TSized (v1, v2) -> (
       let v1 = map_of_list (map_sized_type env) v1
       and v2 = map_of_option (map_type_ env) v2 in
       let allt = v1 @ Option.to_list v2 in
-      G.OtherType (("TSized", G.fake ""), allt |> List_.map (fun t -> G.T t))
-      |> G.t
+      let words =
+        List.filter_map
+          (fun (ty : G.type_) ->
+            match ty.G.t with
+            | G.TyN (G.Id (id, _)) -> Some id
+            | _ -> None)
+          allt
+      in
+      match words with
+      | (_, first) :: rest when Int.equal (List.length words) (List.length allt)
+        ->
+          G.ty_builtin
+            ( String.concat " " (List_.map fst words),
+              Tok.combine_toks first (List_.map snd rest) )
+      | _ ->
+          G.OtherType
+            (("TSized", G.fake ""), allt |> List_.map (fun t -> G.T t))
+          |> G.t)
   | TPointer (v1, v2, v3) ->
       let v1 = map_tok env v1
       and v2 = map_type_ env v2
@@ -1708,15 +1724,23 @@ and ctor_attrs (ent : entity) (def : function_definition) : G.attribute list =
       [ G.KeywordAttr (G.Ctor, tok) ]
   | _ -> []
 
+(* A conversion function returns its conversion-type-id ([class.conv.fct]),
+ * which the parser leaves in the name and not in the function type. *)
+and with_conversion_type (env : env) (ent : entity) (def : G.function_definition) :
+    G.function_definition =
+  match ent.name with
+  | _, _, IdConverter (_, ty) -> { def with G.frettype = Some (map_type_ env ty) }
+  | _ -> def
+
 and map_func_definition env (v1, v2) : G.definition =
   let env = { env with in_scope = InFunction } in
   let ctor = ctor_attrs v1 v2 in
-  let v1 = map_entity env v1 and v2 = map_function_definition env v2 in
-  ({ v1 with G.attrs = v1.G.attrs @ ctor }, FuncDef v2)
+  let ent = map_entity env v1 and def = map_function_definition env v2 in
+  ({ ent with G.attrs = ent.G.attrs @ ctor }, FuncDef (with_conversion_type env v1 def))
 and map_method_definition env (v1, v2) : G.definition =
   let ctor = ctor_attrs v1 v2 in
-  let v1 = map_entity env v1 and v2 = map_function_definition env v2 in
-  ({ v1 with G.attrs = v1.G.attrs @ ctor }, FuncDef v2)
+  let ent = map_entity env v1 and def = map_function_definition env v2 in
+  ({ ent with G.attrs = ent.G.attrs @ ctor }, FuncDef (with_conversion_type env v1 def))
 
 
 and map_function_definition env
@@ -2094,10 +2118,14 @@ and map_modifier env = function
   | MsCall v1 ->
       let v1 = map_wrap env map_of_string v1 in
       G.unhandled_keywordattr v1
-  | Explicit (v1, v2) ->
+  | Explicit (v1, None) -> G.attr G.Explicit (map_tok env v1)
+  (* [dcl.fct.spec]: the function is explicit if and only if the condition
+     evaluates to true, which the generic AST cannot decide, so the
+     condition is kept and [G.Explicit] is not claimed. *)
+  | Explicit (v1, Some v2) ->
       let v1 = map_tok env v1
-      and _v2 = map_of_option (map_paren env (map_expr env)) v2 in
-      G.unhandled_keywordattr ("explicit", v1)
+      and l, cond, r = map_paren env (map_expr env) v2 in
+      G.OtherAttribute (("ExplicitSpecifier", v1), [ G.Tk l; G.E cond; G.Tk r ])
   | AlignAs (tk, (l, arg, r)) ->
       let arg = map_argument env arg in
       OtherAttribute (("AlignAs", tk), [ G.Tk l; G.Ar arg; G.Tk r ])

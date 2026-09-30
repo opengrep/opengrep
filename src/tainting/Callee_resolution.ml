@@ -119,6 +119,8 @@ type static_typing = {
   external_type_path :
     written_in:Function_id.t option -> G.type_ -> string list option;
   accepts_external : Class_table.cls -> string list -> bool option;
+  implicit_conversions :
+    Class_table.cls -> Symbol_table.implicit_conversion list option;
   caller : Function_id.t option;
   type_of_call : G.expr -> static_type option;
   this_type : static_type option Lazy.t;
@@ -198,35 +200,84 @@ let is_numeric (builtin : Type.builtin_type) : bool =
   | Type.OtherBuiltins _ ->
       false
 
-let rejection_only (decision : bool option) : bool option =
-  match decision with
-  | Some false -> decision
-  | Some true
-  | None ->
-      None
+let is_arithmetic (builtin : Type.builtin_type) : bool =
+  match builtin with
+  | Type.Int
+  | Type.Float
+  | Type.Number
+  | Type.Bool ->
+      true
+  | Type.String
+  | Type.OtherBuiltins _ ->
+      false
 
-let accepts
+(* The kind of the implicit conversion sequence from an argument to a
+   parameter ([over.best.ics]); [Undecided] when the types do not decide
+   it. *)
+type conversion_sequence =
+  | Identity_or_subtype
+  | Standard_conversion
+  | User_defined_conversion
+  | No_implicit_conversion
+  | Undecided
+
+let of_subtyping (decision : bool option) : conversion_sequence =
+  match decision with
+  | Some true -> Identity_or_subtype
+  | Some false -> No_implicit_conversion
+  | None -> Undecided
+
+let rejection_only (conversion : conversion_sequence) : conversion_sequence =
+  match conversion with
+  | No_implicit_conversion -> conversion
+  | Identity_or_subtype
+  | Standard_conversion
+  | User_defined_conversion
+  | Undecided ->
+      Undecided
+
+let is_rejected (conversion : conversion_sequence) : bool =
+  match conversion with
+  | No_implicit_conversion -> true
+  | Identity_or_subtype
+  | Standard_conversion
+  | User_defined_conversion
+  | Undecided ->
+      false
+
+let is_standard_conversion_sequence (conversion : conversion_sequence) : bool =
+  match conversion with
+  | Identity_or_subtype
+  | Standard_conversion ->
+      true
+  | User_defined_conversion
+  | No_implicit_conversion
+  | Undecided ->
+      false
+
+let accepts ~(lang : Lang.t)
     ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
     (argument : static_type option) (parameter : static_type option) :
-    bool option =
+    conversion_sequence =
   match (argument, parameter) with
   | Some (Declared_class argument), Some (Declared_class parameter) ->
-      is_subclass argument parameter
+      of_subtyping (is_subclass argument parameter)
   | ( Some (Declared_class argument | Parameterised_class argument),
       Some (Declared_class parameter | Parameterised_class parameter) ) ->
-      rejection_only (is_subclass argument parameter)
+      rejection_only (of_subtyping (is_subclass argument parameter))
   | Some (Builtin_type argument), Some (Builtin_type parameter) ->
-      if is_numeric argument && is_numeric parameter then None
-      else Some (Type.equal_builtin_type argument parameter)
+      if
+        Lang_config.standard_conversions_between_arithmetic_types lang
+        && is_arithmetic argument && is_arithmetic parameter
+      then Standard_conversion
+      else if is_numeric argument && is_numeric parameter then Undecided
+      else of_subtyping (Some (Type.equal_builtin_type argument parameter))
   | Some (Declared_class _ | Parameterised_class _), Some (Builtin_type _)
   | Some (Builtin_type _), Some (Declared_class _ | Parameterised_class _) ->
-      Some false
+      No_implicit_conversion
   | None, _
   | _, None ->
-      None
-
-let is_decided (expected : bool) (decision : bool option) : bool =
-  Option.equal Bool.equal (Some expected) decision
+      Undecided
 
 let call_parameters ~(lang : Lang.t) (f : func_info) : G.parameter list =
   let is_method = Receiver.is_method f.fdef in
@@ -249,15 +300,74 @@ let static_type_of_parameter (parameter : parameter_type) : static_type option =
   | Untyped ->
       None
 
-let applies ~(typing : static_typing) (argument : static_type option)
-    (parameter : parameter_type) : bool option =
+let class_of_static_type (static : static_type) : Class_table.cls option =
+  match static with
+  | Declared_class cls
+  | Parameterised_class cls ->
+      Some cls
+  | Builtin_type _ -> None
+
+(* A user-defined conversion sequence: a standard conversion sequence to
+   the source type of a declared conversion, then from its target type
+   ([over.ics.user], C# 10.5.4). A built-in type declares no conversion. *)
+let user_defined_conversion ~(lang : Lang.t) ~(typing : static_typing)
+    (argument : static_type) (parameter : static_type) : conversion_sequence =
+  match Lang_config.user_defined_conversions lang with
+  | Lang_config.No_user_defined_conversions -> No_implicit_conversion
+  | Lang_config.Views_searched_as_implicit_parameters -> Undecided
+  | Lang_config.Declared_in_source_or_target_class -> (
+      let declared (static : static_type) :
+          Symbol_table.implicit_conversion list option =
+        match class_of_static_type static with
+        | Some cls -> typing.implicit_conversions cls
+        | None -> Some []
+      in
+      let static_of (declared_type : Symbol_table.source_or_target_type) :
+          static_type option =
+        match declared_type with
+        | Symbol_table.Written_type { written; written_in } ->
+            static_type_of_type ~lang ~typing ~written_in written
+        | Symbol_table.Declaring_class cls -> Some (Declared_class cls)
+      in
+      let admits (from_type : static_type option) (to_type : static_type option)
+          : bool =
+        not
+          (is_rejected
+             (accepts ~lang ~is_subclass:typing.is_subclass from_type to_type))
+      in
+      match (declared argument, declared parameter) with
+      | Some from_argument, Some from_parameter ->
+          if
+            List.exists
+              (fun (conversion : Symbol_table.implicit_conversion) ->
+                admits (Some argument) (static_of conversion.Symbol_table.source)
+                && admits (static_of conversion.Symbol_table.target)
+                     (Some parameter))
+              (from_argument @ from_parameter)
+          then User_defined_conversion
+          else No_implicit_conversion
+      | None, _
+      | _, None ->
+          Undecided)
+
+let applies ~(lang : Lang.t) ~(typing : static_typing)
+    (argument : static_type option) (parameter : parameter_type) :
+    conversion_sequence =
   match (argument, parameter) with
   | Some (Declared_class cls), External_type path ->
-      typing.accepts_external cls path
+      of_subtyping (typing.accepts_external cls path)
   | Some (Parameterised_class cls), External_type path ->
-      rejection_only (typing.accepts_external cls path)
+      rejection_only (of_subtyping (typing.accepts_external cls path))
+  | Some argument, Typed parameter -> (
+      match
+        accepts ~lang ~is_subclass:typing.is_subclass (Some argument)
+          (Some parameter)
+      with
+      | No_implicit_conversion ->
+          user_defined_conversion ~lang ~typing argument parameter
+      | conversion -> conversion)
   | _, (Typed _ | External_type _ | Untyped) ->
-      accepts ~is_subclass:typing.is_subclass argument
+      accepts ~lang ~is_subclass:typing.is_subclass argument
         (static_type_of_parameter parameter)
 
 let parameter_types ~(lang : Lang.t) ~(typing : static_typing)
@@ -281,36 +391,69 @@ let parameter_types ~(lang : Lang.t) ~(typing : static_typing)
 type applicable_overload = {
   candidate : func_info;
   parameters : static_type option list;
-  decided : bool;
+  conversions : conversion_sequence list;
 }
 
-let more_specific
+let is_identity_or_subtype (conversion : conversion_sequence) : bool =
+  match conversion with
+  | Identity_or_subtype -> true
+  | Standard_conversion
+  | User_defined_conversion
+  | No_implicit_conversion
+  | Undecided ->
+      false
+
+let more_specific ~(lang : Lang.t)
     ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
     (left : static_type option list) (right : static_type option list) : bool =
   List.for_all2
     (fun (left : static_type option) (right : static_type option) ->
-      is_decided true (accepts ~is_subclass left right))
+      is_identity_or_subtype (accepts ~lang ~is_subclass left right))
     left right
 
-let most_specific
+(* An overload with a user-defined conversion sequence on some argument is
+   not the best viable function when another overload is viable by
+   standard conversion sequences on every argument: its conversion on that
+   argument is worse ([over.match.best], [over.ics.rank]). *)
+let most_specific ~(lang : Lang.t)
     ~(is_subclass : Class_table.cls -> Class_table.cls -> bool option)
     (overloads : applicable_overload list) : func_info list =
   let strictly_more_specific (left : applicable_overload)
       (right : applicable_overload) : bool =
-    more_specific ~is_subclass left.parameters right.parameters
-    && not (more_specific ~is_subclass right.parameters left.parameters)
+    more_specific ~lang ~is_subclass left.parameters right.parameters
+    && not (more_specific ~lang ~is_subclass right.parameters left.parameters)
   in
   let decided =
-    List.filter (fun (overload : applicable_overload) -> overload.decided)
+    List.filter
+      (fun (overload : applicable_overload) ->
+        List.for_all is_identity_or_subtype overload.conversions)
       overloads
+  in
+  let standard_overload_exists =
+    Lang_config.ranks_implicit_conversion_sequences lang
+    && List.exists
+         (fun (overload : applicable_overload) ->
+           List.for_all is_standard_conversion_sequence overload.conversions)
+         overloads
+  in
+  let is_user_defined (conversion : conversion_sequence) : bool =
+    match conversion with
+    | User_defined_conversion -> true
+    | Identity_or_subtype
+    | Standard_conversion
+    | No_implicit_conversion
+    | Undecided ->
+        false
   in
   List.filter_map
     (fun (overload : applicable_overload) ->
       if
-        List.exists
-          (fun (other : applicable_overload) ->
-            strictly_more_specific other overload)
-          decided
+        (standard_overload_exists
+        && List.exists is_user_defined overload.conversions)
+        || List.exists
+             (fun (other : applicable_overload) ->
+               strictly_more_specific other overload)
+             decided
       then None
       else Some overload.candidate)
     overloads
@@ -324,17 +467,19 @@ let narrow_by_argument_types ~(lang : Lang.t) ~(typing : static_typing)
     List.filter_map
       (fun (f : func_info) ->
         let parameters = parameter_types ~lang ~typing arguments f in
-        let decisions = List.map2 (applies ~typing) arguments parameters in
-        if List.exists (is_decided false) decisions then None
+        let conversions =
+          List.map2 (applies ~lang ~typing) arguments parameters
+        in
+        if List.exists is_rejected conversions then None
         else
           Some
             {
               candidate = f;
               parameters = List_.map static_type_of_parameter parameters;
-              decided = List.for_all (is_decided true) decisions;
+              conversions;
             })
       candidates
-    |> most_specific ~is_subclass:typing.is_subclass
+    |> most_specific ~lang ~is_subclass:typing.is_subclass
 
 let narrow_by_arguments ~(lang : Lang.t) ~(typing : static_typing)
     (call_args : G.argument list option)
@@ -409,6 +554,7 @@ let table_typing ~(lang : Lang.t) ~(table : Symbol_table.t)
       is_subclass = Symbol_table.is_subclass table;
       external_type_path = Symbol_table.external_type_path table;
       accepts_external = Symbol_table.accepts_external table;
+      implicit_conversions = Symbol_table.implicit_conversions table;
       caller;
       type_of_call =
         (fun (e : G.expr) -> type_of_call ~lang ~table ~resolve ~typing e);

@@ -1,0 +1,12 @@
+rules:
+  - id: converting-constructor
+    languages: [cpp]
+    message: a call reaches the function whose parameter a converting constructor accepts
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

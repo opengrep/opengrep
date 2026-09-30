@@ -830,7 +830,7 @@ and v_modifier_kind = function
   | Abstract -> Either.Left G.Abstract
   | Final -> Either.Left G.Final
   | Sealed -> Either.Left G.SealedClass
-  | Implicit -> Either.Right "implicit"
+  | Implicit -> Either.Left G.Implicit
   | Lazy -> Either.Left G.Lazy
   | Private v1 ->
       let _v1TODO = v_option (v_bracket v_ident_or_this) v1 in

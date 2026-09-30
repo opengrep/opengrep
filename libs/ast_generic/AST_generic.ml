@@ -1770,6 +1770,11 @@ and keyword_attribute =
   (* for parameters: a Ruby keyword parameter 'sep:' takes a named
    * argument only, never a positional one *)
   | KeywordOnly
+  (* C++ 'explicit' on a constructor or a conversion function: it defines
+   * no implicit conversion ([class.conv.ctor], [class.conv.fct]) *)
+  | Explicit
+  (* Scala 'implicit' on a definition, a class or a parameter clause *)
+  | Implicit
 
 (* By name application in Scala, via => T, in parameter *)
 
