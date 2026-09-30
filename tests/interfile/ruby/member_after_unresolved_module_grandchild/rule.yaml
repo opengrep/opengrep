@@ -1,0 +1,9 @@
+rules:
+  - id: member-after-unresolved-module-grandchild
+    languages: [ruby]
+    severity: ERROR
+    message: taint reaches a method a subclass inherits past an unresolved module of its superclass
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources: [{pattern: "source()"}]
+    pattern-sinks: [{pattern: "sink(...)"}]

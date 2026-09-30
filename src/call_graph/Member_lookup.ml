@@ -52,11 +52,23 @@ type 'c base =
 type 'c level =
   | Candidates of 'c candidate list
   | Base_subobjects of 'c base list
+  | Partially_ordered of 'c candidate list
   | Unknown_classes
+  | External_member
+
+type 'c element =
+  | Class of 'c
+  | Unresolved_parent of 'c * int
+  | Unknown_tail of 'c
+
+(* The sequences the linearisation continues with after an incomplete
+   [order]: each is a subsequence of what follows [order]. *)
+type 'c remainder = 'c element list list
 
 type 'c lookup_order = {
   order : 'c list;
   complete : bool;
+  remainder : 'c remainder;
   levels : 'c level list;
   super_levels : 'c level list;
 }
@@ -66,11 +78,6 @@ type ('c, 'a) selection =
   | Ambiguous
   | Undefined
   | Unknown
-
-type 'c element =
-  | Class of 'c
-  | Unresolved_parent of 'c * int
-  | Unknown_tail of 'c
 
 type merge_outcome =
   | Merged
@@ -142,47 +149,55 @@ let rec has_unknown_base : type c. c base list -> bool =
 
 let level_classes (type c) (level : c level) : c list =
   match level with
-  | Candidates candidates ->
+  | Candidates candidates
+  | Partially_ordered candidates ->
       List.map (fun (candidate : c candidate) -> candidate.cls) candidates
   | Base_subobjects bases -> base_classes bases
-  | Unknown_classes -> []
+  | Unknown_classes
+  | External_member ->
+      []
 
 let single_candidate (type c) (cls : c) : c candidate = { cls; hides = []; paths = 1 }
 
 let is_unknown (type c) (level : c level) : bool =
   match level with
-  | Unknown_classes -> true
+  | Unknown_classes
+  | External_member ->
+      true
   | Candidates _
+  | Partially_ordered _
   | Base_subobjects _ ->
       false
-
-let truncated (type c) (levels : c level list) : c level list =
-  let rec keep (remaining : c level list) : c level list =
-    match remaining with
-    | [] -> []
-    | Unknown_classes :: _ -> [ Unknown_classes ]
-    | ((Candidates _ | Base_subobjects _) as level) :: rest -> level :: keep rest
-  in
-  keep levels
 
 (* The levels after the one holding [cls]; when no level holds it, the lookup
    reaches only what the levels leave unknown. *)
 let levels_after (type c) ~(equal : c -> c -> bool) (cls : c) (levels : c level list) :
     c level list =
-  let holds (level : c level) : bool =
-    match level with
-    | Candidates candidates ->
-        List.exists
-          (fun (candidate : c candidate) -> equal candidate.cls cls)
-          candidates
-    | Base_subobjects _
-    | Unknown_classes ->
-        false
+  let holds (candidates : c candidate list) : bool =
+    List.exists (fun (candidate : c candidate) -> equal candidate.cls cls) candidates
   in
   let rec drop (remaining : c level list) : c level list =
     match remaining with
     | [] -> if List.exists is_unknown levels then [ Unknown_classes ] else []
-    | level :: rest -> if holds level then rest else drop rest
+    | Candidates candidates :: rest when holds candidates -> rest
+    (* In a partially ordered level, the classes that may follow [cls] are
+       the unknown ones and the candidates that do not certainly precede it. *)
+    | Partially_ordered candidates :: rest when holds candidates -> (
+        match
+          List.filter
+            (fun (candidate : c candidate) ->
+              not (equal candidate.cls cls || List.exists (equal cls) candidate.hides))
+            candidates
+        with
+        | [] -> Unknown_classes :: rest
+        | following -> Unknown_classes :: Partially_ordered following :: rest)
+    | ( Candidates _
+      | Partially_ordered _
+      | Base_subobjects _
+      | Unknown_classes
+      | External_member )
+      :: rest ->
+        drop rest
   in
   drop levels
 
@@ -325,25 +340,65 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
       (unknown : bool) : (c, a) selection =
     match (definer, visible, blocked) with
     | Some definer, _ :: _, _ -> Selected (definer, visible)
-    | _, _, _ :: _ -> Ambiguous
+    | _, _, _ :: _ -> if unknown then Unknown else Ambiguous
     | _ -> if unknown then Unknown else Undefined
   in
+  let defining_candidates (earlier : a list Key_map.t)
+      (candidates : c candidate list) : (int * c candidate * a list) list =
+    List.concat
+      (List.mapi
+         (fun (position : int) (candidate : c candidate) ->
+           match
+             List.filter
+               (fun (found : a) -> not (overridden_earlier earlier found))
+               (defines candidate.cls)
+           with
+           | [] -> []
+           | found -> [ (position, candidate, found) ])
+         candidates)
+  in
+  let unhidden_candidates (defining : (int * c candidate * a list) list) :
+      (int * c candidate * a list) list =
+    List.map
+      (fun ((position : int), (candidate : c candidate), (found : a list)) ->
+        ( position,
+          candidate,
+          List.filter
+            (fun (farther : a) ->
+              not
+                (List.exists
+                   (fun ((other : int), (hiding : c candidate),
+                         (nearer : a list)) ->
+                     (not (Int.equal other position))
+                     && List.exists (equal candidate.cls) hiding.hides
+                     && overridden nearer farther)
+                   defining))
+            found ))
+      defining
+  in
+  let first_definer (definer : c option) (selected : (c * a) list) : c option =
+    match (definer, selected) with
+    | Some _, _ -> definer
+    | None, (first, _) :: _ -> Some first
+    | None, [] -> None
+  in
   let rec walk (definer : c option) (visible : a list) (blocked : a list)
-      (earlier : a list Key_map.t) (remaining : c level list) :
+      (earlier : a list Key_map.t) (unknown : bool) (remaining : c level list) :
       (c, a) selection =
     match remaining with
-    | [] -> finish definer visible blocked false
-    | Unknown_classes :: _ -> finish definer visible blocked true
+    | [] -> finish definer visible blocked unknown
+    | Unknown_classes :: rest -> walk definer visible blocked earlier true rest
+    | External_member :: _ -> finish definer visible blocked true
     | Base_subobjects bases :: rest -> (
         let next (definer : c option) (visible : a list) (blocked : a list)
             (found : a list) =
           if accumulate then
-            walk definer visible blocked (indexed earlier found) rest
-          else finish definer visible blocked false
+            walk definer visible blocked (indexed earlier found) unknown rest
+          else finish definer visible blocked unknown
         in
         match subobject_lookup ~equal ~defines bases with
-        | Nothing_found -> walk definer visible blocked earlier rest
-        | Unknown_set -> finish definer visible blocked true
+        | Nothing_found -> walk definer visible blocked earlier unknown rest
+        | Unknown_set -> walk definer visible blocked earlier true rest
         | Found { declaring_class; defs; subobjects } -> (
             match subobjects with
             | _ :: _ :: _ when not (List.for_all is_static_member defs) ->
@@ -355,38 +410,28 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
                   | None -> Some declaring_class)
                   (visible @ defs) blocked defs)
         | Invalid { defs; _ } -> next definer visible (blocked @ defs) defs)
+    (* Two defining candidates neither of which certainly precedes the other
+       are two possible selections, not an ill formed program. *)
+    | Partially_ordered candidates :: rest -> (
+        let selected =
+          List.concat_map
+            (fun ((_ : int), (candidate : c candidate), (found : a list)) ->
+              List.map (fun (found : a) -> (candidate.cls, found)) found)
+            (unhidden_candidates (defining_candidates earlier candidates))
+        in
+        let definer = first_definer definer selected in
+        let visible = visible @ List.map snd selected in
+        match selected with
+        | [] -> walk definer visible blocked earlier unknown rest
+        | _ :: _ ->
+            if accumulate then
+              walk definer visible blocked
+                (indexed earlier (List.map snd selected))
+                unknown rest
+            else finish definer visible blocked unknown)
     | Candidates candidates :: rest -> (
-        let defining =
-          List.concat
-            (List.mapi
-               (fun (position : int) (candidate : c candidate) ->
-                 match
-                   List.filter
-                     (fun (found : a) -> not (overridden_earlier earlier found))
-                     (defines candidate.cls)
-                 with
-                 | [] -> []
-                 | found -> [ (position, candidate, found) ])
-               candidates)
-        in
-        let unhidden =
-          List.map
-            (fun ((position : int), (candidate : c candidate), (found : a list)) ->
-              ( position,
-                candidate,
-                List.filter
-                  (fun (farther : a) ->
-                    not
-                      (List.exists
-                         (fun ((other : int), (hiding : c candidate),
-                               (nearer : a list)) ->
-                           (not (Int.equal other position))
-                           && List.exists (equal candidate.cls) hiding.hides
-                           && overridden nearer farther)
-                         defining))
-                  found ))
-            defining
-        in
+        let defining = defining_candidates earlier candidates in
+        let unhidden = unhidden_candidates defining in
         let conflicts (position : int) (candidate : c candidate) (found : a) :
             bool =
           (candidate.paths > 1 && not (declared_only found))
@@ -413,25 +458,20 @@ let select (type c a) ~(equal : c -> c -> bool) ~(defines : c -> a list)
                 ambiguous @ clashing ))
             ([], []) unhidden
         in
-        let definer =
-          match (definer, selected) with
-          | Some _, _ -> definer
-          | None, (first, _) :: _ -> Some first
-          | None, [] -> None
-        in
+        let definer = first_definer definer selected in
         let visible = visible @ List.map snd selected in
         let blocked = blocked @ ambiguous in
         match (selected, ambiguous) with
-        | [], [] -> walk definer visible blocked earlier rest
+        | [], [] -> walk definer visible blocked earlier unknown rest
         | _ :: _, _
         | _, _ :: _ ->
             if accumulate then
               walk definer visible blocked
                 (indexed (indexed earlier (List.map snd selected)) ambiguous)
-                rest
-            else finish definer visible blocked false)
+                unknown rest
+            else finish definer visible blocked unknown)
   in
-  walk None [] [] Key_map.empty levels
+  walk None [] [] Key_map.empty false levels
 
 let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
     ~(hash : c -> int) ~(parents : c -> c parent list list)
@@ -463,28 +503,43 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         false
   in
   let rec known_prefix (prefix : c list) (elements : c element list) :
-      c list * bool =
+      c list * c element list =
     match elements with
     | Class cls :: rest -> known_prefix (cls :: prefix) rest
-    | (Unresolved_parent _ | Unknown_tail _) :: _ -> (List.rev prefix, false)
-    | [] -> (List.rev prefix, true)
+    | (Unresolved_parent _ | Unknown_tail _) :: _
+    | [] ->
+        (List.rev prefix, elements)
   in
   let unknown_suffix (complete : bool) : c level list =
     if complete then [] else [ Unknown_classes ]
   in
+  let unknown_remainder (cls : c) (complete : bool) : c remainder =
+    if complete then [] else [ [ Unknown_tail cls ] ]
+  in
+  let of_levels (cls : c) (order : c list) (complete : bool)
+      (remainder : c remainder) (levels : c level list) : c lookup_order =
+    {
+      order;
+      complete;
+      remainder;
+      levels;
+      super_levels = levels_after ~equal cls levels;
+    }
+  in
+  let order_levels (order : c list) : c level list =
+    List.map (fun (found : c) -> Candidates [ single_candidate found ]) order
+  in
   let of_order (cls : c) (order : c list) (complete : bool) :
       c lookup_order =
-    let levels =
-      List.map (fun (found : c) -> Candidates [ single_candidate found ]) order
-      @ unknown_suffix complete
-    in
-    { order; complete; levels; super_levels = levels_after ~equal cls levels }
+    of_levels cls order complete
+      (unknown_remainder cls complete)
+      (order_levels order @ unknown_suffix complete)
   in
   (* A lookup that finds a definition among the known candidates of a level
      selects it: an unbound class of the same level cannot hide it, since its
      ancestors hold no known class, and a second definition there would make
      the program ill formed. A name the known candidates do not define is
-     unknown. *)
+     looked up in the levels after the unknown one. *)
   let known_then_unknown (known : c candidate list) (complete : bool) :
       c level list =
     (match known with
@@ -492,9 +547,24 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
     | _ :: _ -> [ Candidates known ])
     @ unknown_suffix complete
   in
+  (* The entries after an unknown one keep their order: the classes the
+     unknown one brings in go between it and them. *)
+  let levels_of_elements (elements : c element list) : c level list =
+    List.fold_right
+      (fun (element : c element) (levels : c level list) ->
+        match (element, levels) with
+        | Class found, _ -> Candidates [ single_candidate found ] :: levels
+        | (Unresolved_parent _ | Unknown_tail _), Unknown_classes :: _ -> levels
+        | (Unresolved_parent _ | Unknown_tail _), _ -> Unknown_classes :: levels)
+      elements []
+  in
   let of_elements (cls : c) (elements : c element list) : c lookup_order =
-    let order, complete = known_prefix [] elements in
-    of_order cls order complete
+    let order, rest = known_prefix [] elements in
+    of_levels cls order (List.is_empty rest)
+      (match rest with
+      | [] -> []
+      | _ :: _ -> [ rest ])
+      (levels_of_elements elements)
   in
   let of_class_only (cls : c) : c lookup_order =
     of_order cls [ cls ] true
@@ -538,6 +608,7 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
             {
               order = [ cls ];
               complete = false;
+              remainder = unknown_remainder cls false;
               levels = [ Candidates [ single_candidate cls ]; Unknown_classes ];
               super_levels = [ Unknown_classes ];
             }
@@ -565,8 +636,25 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
     | Resolved (_, cls) ->
         let found = lookup_order_of active cls in
         List.map (fun (known : c) -> Class known) found.order
-        @ if found.complete then [] else [ Unknown_tail cls ]
+        @ List.concat found.remainder
     | Unresolved _ -> [ Unresolved_parent (owner, index) ]
+  (* A parent whose merge stopped enters the merge as its known prefix
+     followed by each sequence of its remainder. Every completion of the
+     unknown bases respects the known sequences, so it gives the parent a
+     linearisation that holds each of these as a subsequence, and C3 keeps
+     that linearisation as a subsequence of the child's: the child's merge
+     takes no order that some completion does not have. *)
+  and parent_sequences (active : c list) (owner : c) (index : int)
+      (parent : c parent) : c element list list =
+    match parent with
+    | Resolved (_, cls) -> (
+        let found = lookup_order_of active cls in
+        let prefix = List.map (fun (known : c) -> Class known) found.order in
+        match found.remainder with
+        | [] -> [ prefix ]
+        | remainder ->
+            List.map (fun (sequence : c element list) -> prefix @ sequence) remainder)
+    | Unresolved _ -> [ [ Unresolved_parent (owner, index) ] ]
   and c3 (active : c list) (cls : c) ~(bases_listed_most_base_first : bool) :
       c lookup_order =
     let in_tail (sequences : c element list list) (element : c element) : bool
@@ -636,9 +724,9 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
         sequences
     in
     let rec merge (merged : c list) (sequences : c element list list) :
-        c list * merge_outcome =
+        c list * merge_outcome * c element list list =
       match sequences with
-      | [] -> (List.rev merged, Merged)
+      | [] -> (List.rev merged, Merged, [])
       | _ :: _ -> (
           let head =
             List.find_map
@@ -651,11 +739,40 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
           match head with
           | Some (Class found as head) when certain sequences head ->
               merge (found :: merged) (remove head sequences)
-          | Some _ -> (List.rev merged, Uncertain)
+          | Some _ -> (List.rev merged, Uncertain, sequences)
           | None ->
               ( List.rev merged,
-                if List.for_all (List.for_all is_known) sequences then Rejected
-                else Uncertain ))
+                (if List.for_all (List.for_all is_known) sequences then Rejected
+                 else Uncertain),
+                sequences ))
+    in
+    (* After the merge stops, a candidate hides the known classes that follow
+       it in the transitive closure of the remaining sequences: they follow it
+       in every completion of the unknown elements. *)
+    let partially_ordered_levels (remaining : c element list list) :
+        c level list =
+      let known (elements : c element list) : c list =
+        List.filter_map
+          (fun (element : c element) ->
+            match element with
+            | Class found -> Some found
+            | Unresolved_parent _
+            | Unknown_tail _ ->
+                None)
+          elements
+      in
+      match
+        List.map
+          (fun (found : c) ->
+            {
+              cls = found;
+              hides = known (followers remaining (Class found));
+              paths = 1;
+            })
+          (List_.uniq_by equal (known (List.concat remaining)))
+      with
+      | [] -> [ Unknown_classes ]
+      | candidates -> [ Unknown_classes; Partially_ordered candidates ]
     in
     let _, written =
       List.fold_left_map
@@ -668,13 +785,13 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
                   | Resolved (_, parent) -> Class parent
                   | Unresolved _ -> Unresolved_parent (cls, next + index)
                 in
-                (element, elements active cls (next + index) parent))
+                (element, parent_sequences active cls (next + index) parent))
               (if bases_listed_most_base_first then List.rev sequence
                else sequence) ))
         0 (parents cls)
     in
     let sequences =
-      List.concat_map (List.map snd) written
+      List.concat_map (List.concat_map snd) written
       @ List.map (List.map fst) written
       |> List.filter (fun (sequence : c element list) ->
              match sequence with
@@ -682,10 +799,13 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
              | _ :: _ -> true)
     in
     match merge [] sequences with
-    | _, Rejected -> of_class_only cls
-    | merged, Merged -> of_order cls (List_.uniq_by equal (cls :: merged)) true
-    | merged, Uncertain ->
-        of_order cls (List_.uniq_by equal (cls :: merged)) false
+    | _, Rejected, _ -> of_class_only cls
+    | merged, Merged, _ -> of_order cls (List_.uniq_by equal (cls :: merged)) true
+    | merged, Uncertain, remaining ->
+        let order = List_.uniq_by equal (cls :: merged) in
+        of_levels cls order false
+          (List_.uniq_by (List.equal same) remaining)
+          (order_levels order @ partially_ordered_levels remaining)
   and scala (active : c list) (cls : c) : c lookup_order =
     let written =
       List.mapi (elements active cls) (List.concat (parents cls))
@@ -778,7 +898,7 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       | Some (Unresolved _) -> [ Unknown_classes ]
       | None -> []
     in
-    truncated (own @ applied @ inherited)
+    own @ applied @ inherited
   and chain_parts (cls : c) ~(superclass : superclass) ~(mixins : mixins) :
       (c level list * c level list * c parent option) option =
     let written = List.concat (parents cls) in
@@ -902,24 +1022,26 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
                  })
         in
         let interface_levels =
-          if
-            List.exists is_unknown chain
-            || not (interface_bodies_inherited || is_interface cls)
-          then []
+          if not (interface_bodies_inherited || is_interface cls) then []
           else known_then_unknown interfaces complete
         in
         let super_levels =
           if is_interface cls then []
           else
-            truncated
-              (applied
-              @
-              match superclass_parent with
-              | Some (Resolved (_, parent)) -> (lookup_order_of active parent).levels
-              | Some (Unresolved _) -> [ Unknown_classes ]
-              | None -> [])
+            applied
+            @
+            match superclass_parent with
+            | Some (Resolved (_, parent)) -> (lookup_order_of active parent).levels
+            | Some (Unresolved _) -> [ Unknown_classes ]
+            | None -> []
         in
-        { order; complete; levels = chain @ interface_levels; super_levels }
+        {
+          order;
+          complete;
+          remainder = unknown_remainder cls complete;
+          levels = chain @ interface_levels;
+          super_levels;
+        }
   and bases_of (active : c list) (cls : c) : c base list =
     match Memo.find_opt bases_memo cls with
     | Some found -> found
@@ -958,9 +1080,11 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       | [] -> []
       | _ :: _ -> [ Base_subobjects bases ]
     in
+    let complete = not (has_unknown_base bases) in
     {
       order = List_.uniq_by equal (cls :: base_classes bases);
-      complete = not (has_unknown_base bases);
+      complete;
+      remainder = unknown_remainder cls complete;
       levels = Candidates [ single_candidate cls ] :: base_levels;
       super_levels = base_levels;
     }
@@ -1044,8 +1168,10 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
           []
     in
     let levels =
-      truncated
-        ((Candidates [ single_candidate cls ] :: implemented) @ inherited @ dereferenced)
+      (Candidates [ single_candidate cls ] :: implemented) @ inherited @ dereferenced
+    in
+    let complete =
+      impls_complete && not (List.exists is_unknown (implemented @ inherited))
     in
     {
       order =
@@ -1054,8 +1180,8 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
           :: List.concat_map
                (fun (level : c level) -> level_classes level)
                (implemented @ inherited));
-      complete =
-        impls_complete && not (List.exists is_unknown (implemented @ inherited));
+      complete;
+      remainder = unknown_remainder cls complete;
       levels;
       super_levels = [];
     }
@@ -1073,20 +1199,16 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       else next @ [ (parent, paths) ]
     in
     let rec by_depth (seen : c list) (at_depth : (c * int) list)
-        (levels : c level list) (known : bool) (unknown_here : bool) :
-        c list * bool * c level list =
+        (levels : c level list) (unknown_here : bool) : c list * c level list =
       let levels =
-        if known then
-          levels
-          @ known_then_unknown
-              (List.map
-                 (fun ((found : c), (paths : int)) ->
-                   { cls = found; hides = []; paths })
-                 at_depth)
-              (not unknown_here)
-        else levels
+        levels
+        @ known_then_unknown
+            (List.map
+               (fun ((found : c), (paths : int)) ->
+                 { cls = found; hides = []; paths })
+               at_depth)
+            (not unknown_here)
       in
-      let known = known && not unknown_here in
       let next, unbound =
         List.fold_left
           (fun (((next : (c * int) list), (unbound : bool)))
@@ -1103,10 +1225,11 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
           ([], false) at_depth
       in
       match (next, unbound) with
-      | [], false -> (seen, known, levels)
-      | _ -> by_depth (seen @ List.map fst next) next levels known unbound
+      | [], false -> (seen, levels)
+      | _ -> by_depth (seen @ List.map fst next) next levels unbound
     in
-    let order, complete, levels = by_depth [ cls ] [ (cls, 1) ] [] true false in
+    let order, levels = by_depth [ cls ] [ (cls, 1) ] [] false in
+    let complete = not (List.exists is_unknown levels) in
     (* The method set of an interface is the union of the sets it embeds: a
        method reached along two embeddings is one method. *)
     if is_interface cls then of_order cls order complete
@@ -1114,6 +1237,7 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       {
         order;
         complete;
+        remainder = unknown_remainder cls complete;
         levels;
         super_levels =
           (match levels with

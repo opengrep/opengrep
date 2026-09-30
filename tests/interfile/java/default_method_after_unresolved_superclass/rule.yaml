@@ -1,0 +1,9 @@
+rules:
+  - id: default-method-after-unresolved-superclass
+    languages: [java]
+    severity: ERROR
+    message: taint reaches an interface default method past an unresolved superclass
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources: [{pattern: "source()"}]
+    pattern-sinks: [{pattern: "sink(...)"}]

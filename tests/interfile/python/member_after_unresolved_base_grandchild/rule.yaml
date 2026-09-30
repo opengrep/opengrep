@@ -1,0 +1,9 @@
+rules:
+  - id: member-after-unresolved-base-grandchild
+    languages: [python]
+    severity: ERROR
+    message: taint reaches a method a grandchild inherits past an unresolved base of its parent
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources: [{pattern: "source()"}]
+    pattern-sinks: [{pattern: "sink(...)"}]

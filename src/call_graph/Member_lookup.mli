@@ -52,11 +52,16 @@ type 'c base =
 type 'c level =
   | Candidates of 'c candidate list
   | Base_subobjects of 'c base list
+  | Partially_ordered of 'c candidate list
   | Unknown_classes
+  | External_member
+
+type 'c remainder
 
 type 'c lookup_order = {
   order : 'c list;
   complete : bool;
+  remainder : 'c remainder;
   levels : 'c level list;
   super_levels : 'c level list;
 }

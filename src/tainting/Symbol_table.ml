@@ -1432,9 +1432,9 @@ let mixins_of (t : t) (cls : Class_table.cls) : Class_table.cls list =
           None)
     (Class_table.parent_clauses t.classes cls)
 
-(* A member import from a source the project does not hold may define the
-   name: after the level of a class with such an import, the lookup is
-   unknown. *)
+(* A member import from a source the project does not hold defines the
+   member outside the project: the lookup stops after the level of a class
+   with such an import. *)
 let with_unknown_imports (t : t) (name : string)
     (levels : Class_table.cls Member_lookup.level list) :
     Class_table.cls Member_lookup.level list =
@@ -1451,7 +1451,7 @@ let with_unknown_imports (t : t) (name : string)
   List.concat_map
     (fun (level : Class_table.cls Member_lookup.level) ->
       if List.exists imports_unknown (Member_lookup.level_classes level) then
-        [ level; Member_lookup.Unknown_classes ]
+        [ level; Member_lookup.External_member ]
       else [ level ])
     levels
 
@@ -1501,7 +1501,7 @@ and imported_members (t : t) ~(importing : Class_table.cls list)
                      })
                    (mixins_of t cls));
             ]
-        | Class_table.Imported_from_unknown -> [ Member_lookup.Unknown_classes ]
+        | Class_table.Imported_from_unknown -> [ Member_lookup.External_member ]
       in
       match
         (first_definitions t ~importing side levels imported)
@@ -1537,7 +1537,18 @@ and first_definitions (t : t) ~(importing : Class_table.cls list)
                       candidate.Member_lookup.paths ))
                   candidates
             | Member_lookup.Base_subobjects bases -> base_key 0 bases
-            | Member_lookup.Unknown_classes -> [])
+            | Member_lookup.Partially_ordered candidates ->
+                (-2, 0)
+                :: List.concat_map
+                     (fun (candidate : Class_table.cls Member_lookup.candidate) ->
+                       (Class_table.index candidate.Member_lookup.cls, 0)
+                       :: List.map
+                            (fun (hidden : Class_table.cls) ->
+                              (Class_table.index hidden, -3))
+                            candidate.Member_lookup.hides)
+                     candidates
+            | Member_lookup.Unknown_classes -> [ (-1, 0) ]
+            | Member_lookup.External_member -> [ (-1, -1) ])
           levels;
     }
   in
@@ -1969,7 +1980,9 @@ let visible_levels (t : t) ~(program_point : program_point) (receiver : Class_ta
                then [ Member_lookup.Unknown_classes ]
                else [])
           | Member_lookup.Base_subobjects _
-          | Member_lookup.Unknown_classes ->
+          | Member_lookup.Partially_ordered _
+          | Member_lookup.Unknown_classes
+          | Member_lookup.External_member ->
               [ level ])
         levels
   | Member_lookup.C3 _
@@ -2087,27 +2100,34 @@ and select_by_lookup_order (t : t) ~(program_point : program_point)
    members of the modules that class extends, the last extended first. *)
 let select_on_class_side (t : t) (cls : Class_table.cls) (name : string) :
     resolution =
-  let rec select_in_levels (levels : Class_table.cls Member_lookup.level list) : resolution =
+  let ambiguous (unknown : bool) : resolution =
+    if unknown then External else Defined []
+  in
+  let rec select_in_levels (unknown : bool)
+      (levels : Class_table.cls Member_lookup.level list) : resolution =
     match levels with
-    | [] -> top_level_object_resolution t name
-    | Member_lookup.Unknown_classes :: _ -> External
-    | ((Member_lookup.Candidates _ | Member_lookup.Base_subobjects _) as level)
+    | [] -> if unknown then External else top_level_object_resolution t name
+    | Member_lookup.Unknown_classes :: rest -> select_in_levels true rest
+    | Member_lookup.External_member :: _ -> External
+    | (( Member_lookup.Candidates _
+       | Member_lookup.Partially_ordered _
+       | Member_lookup.Base_subobjects _ ) as level)
       :: rest -> (
+        let parents () : Class_table.cls option list =
+          List.concat_map
+            (Class_table.class_side_parents t.classes)
+            (Member_lookup.level_classes level)
+        in
         match first_definitions_on_side t Class_parents.Class_side [ level ] name with
         | Member_lookup.Selected (_, defined) -> Defined defined
-        | Member_lookup.Ambiguous -> Defined []
-        | Member_lookup.Undefined
-        | Member_lookup.Unknown ->
-            extended
-              (List.concat_map
-                 (Class_table.class_side_parents t.classes)
-                 (Member_lookup.level_classes level))
-              rest)
-  and extended (parents : Class_table.cls option list)
+        | Member_lookup.Ambiguous -> ambiguous unknown
+        | Member_lookup.Undefined -> extended unknown (parents ()) rest
+        | Member_lookup.Unknown -> extended true (parents ()) rest)
+  and extended (unknown : bool) (parents : Class_table.cls option list)
       (rest : Class_table.cls Member_lookup.level list) : resolution =
     match parents with
-    | [] -> select_in_levels rest
-    | None :: _ -> External
+    | [] -> select_in_levels unknown rest
+    | None :: others -> extended true others rest
     | Some mixin :: others -> (
         let mixin_order = order t mixin in
         match
@@ -2115,12 +2135,12 @@ let select_on_class_side (t : t) (cls : Class_table.cls) (name : string) :
             mixin_order.Member_lookup.levels name
         with
         | Member_lookup.Selected (_, defined) -> Defined defined
-        | Member_lookup.Ambiguous -> Defined []
-        | Member_lookup.Undefined -> extended others rest
-        | Member_lookup.Unknown -> External)
+        | Member_lookup.Ambiguous -> ambiguous unknown
+        | Member_lookup.Undefined -> extended unknown others rest
+        | Member_lookup.Unknown -> extended true others rest)
   in
   let object_fields = Class_table.object_fields cls [ name ] in
-  match (select_in_levels (order t cls).Member_lookup.levels, object_fields) with
+  match (select_in_levels false (order t cls).Member_lookup.levels, object_fields) with
   | Defined defined, _ ->
       Defined (distinct_definitions (defined @ object_fields))
   | External, [] -> External

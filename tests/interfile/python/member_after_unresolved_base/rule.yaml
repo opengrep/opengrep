@@ -1,0 +1,9 @@
+rules:
+  - id: member-after-unresolved-base
+    languages: [python]
+    severity: ERROR
+    message: taint reaches a method inherited past an unresolved base
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources: [{pattern: "source()"}]
+    pattern-sinks: [{pattern: "sink(...)"}]

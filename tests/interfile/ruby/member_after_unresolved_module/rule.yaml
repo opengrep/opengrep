@@ -1,0 +1,9 @@
+rules:
+  - id: member-after-unresolved-module
+    languages: [ruby]
+    severity: ERROR
+    message: taint reaches a method inherited past an unresolved module
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources: [{pattern: "source()"}]
+    pattern-sinks: [{pattern: "sink(...)"}]
