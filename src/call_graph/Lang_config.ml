@@ -993,7 +993,7 @@ let member_lookup (lang : Lang.t) : Member_lookup.strategy =
         ~interface_bodies_inherited:true
         ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Kotlin ->
-      single_inheritance Member_lookup.Carrying_constructor_arguments
+      single_inheritance Member_lookup.Class_supertype_specifier
         ~interface_bodies_inherited:true
         ~mixins:Member_lookup.Applied_in_the_chain
   | Lang.Swift ->

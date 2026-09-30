@@ -15,7 +15,7 @@ type 'c parent =
 
 type superclass =
   | Written_as_extends
-  | Carrying_constructor_arguments
+  | Class_supertype_specifier
   | First_parent_if_class
 
 type mixins =
@@ -934,16 +934,14 @@ let lookup_order (type c) (strategy : strategy) ~(equal : c -> c -> bool)
       c parent list =
     match superclass with
     | Written_as_extends -> List.filter is_extends written
-    | Carrying_constructor_arguments ->
+    | Class_supertype_specifier ->
         List.filter
           (fun (parent : c parent) ->
-            match relation_of parent with
-            | Extends { constructed; _ } -> constructed
-            | Implements
-            | Mixin
-            | Embedded
-            | Included
-            | Prepended ->
+            match parent with
+            | Resolved (Extends _, parent) -> not (is_interface parent)
+            | Unresolved (Extends { constructed; _ }) -> constructed
+            | Resolved ((Implements | Mixin | Embedded | Included | Prepended), _)
+            | Unresolved (Implements | Mixin | Embedded | Included | Prepended) ->
                 false)
           written
     | First_parent_if_class -> (

@@ -1,0 +1,12 @@
+rules:
+  - id: superclass_without_constructor_arguments_kotlin
+    languages: [kotlin]
+    message: taint reaches the definition the language selects
+    severity: ERROR
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

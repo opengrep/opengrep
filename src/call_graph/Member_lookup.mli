@@ -15,7 +15,7 @@ type 'c parent =
 
 type superclass =
   | Written_as_extends
-  | Carrying_constructor_arguments
+  | Class_supertype_specifier
   | First_parent_if_class
 
 type mixins =
