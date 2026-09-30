@@ -643,7 +643,7 @@ excepthandler:
    * that syntax was deprecated in python2 and removed in python3; the
    * `as` form (`except Type as name:`) works in python 2.6+ and all of
    * python3. *)
-  | EXCEPT test "," list_sep(test, ",") ":" suite
+  | EXCEPT test "," list_sep_term(test, ",") ":" suite
       { ExceptHandler ($1, Some (tuple_expr (Tup ($2 :: $4))), None, $6) }
 
 with_stmt:

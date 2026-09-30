@@ -107,3 +107,15 @@ try:
     pass
 except ValueError, get_error():
     pass
+
+# Trailing comma (valid in Python 3.14)
+try:
+    pass
+except ValueError, TypeError,:
+    pass
+
+# Trailing comma with three types
+try:
+    pass
+except ValueError, TypeError, RuntimeError,:
+    pass
