@@ -226,9 +226,8 @@ let cmdline_term : conf Term.t =
            checkout *)
         autofix = false;
         output_conf;
-        (* unused: the status bar is created in run_scan_conf, and ci
-           calls Scan_subcommand.check_targets_with_rules directly, so it
-           never has one. That's also why ci has no --no-progress-bar. *)
+        (* unused: the status line is created in run_scan_conf, which ci
+           does not call, so ci has no --no-progress-bar *)
         no_progress_bar = SC.default.no_progress_bar;
         incremental_output = false;
         incremental_output_postprocess = false;

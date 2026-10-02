@@ -31,8 +31,8 @@ val run_scan_conf :
 (* internal: also used in CI *)
 val rules_from_rules_source :
   ?skip_invalid_configs:bool ->
-  (* the line the spinner animates while the rules are fetched, erased
-     when they are in; the skin decides whether there is one *)
+  (* the line that the spinner animates while the rules are fetched, erased
+     once they are loaded; None when the skin shows no such line *)
   ?status:string ->
   rewrite_rule_ids:bool ->
   strict:bool ->
@@ -46,7 +46,7 @@ val core_errors_of_fatal_rule_errors : Rule_error.t list -> Core_error.t list
 (* internal: also used in CI. text_message is what text mode reports (it
  * raises Semgrep_error with it); the other formats output the errors. *)
 val output_and_exit_from_fatal_core_errors_exn :
-  (* the bar the caller started, which this stops before it prints *)
+  (* the status line that the caller started, stopped before printing *)
   ?status_bar:Status_bar.t ->
   text_message:string ->
   exit_code:Exit_code.t ->
@@ -82,7 +82,6 @@ val get_targets_or_exit :
  *)
 val check_targets_with_rules :
   ?print_summary:bool ->
-  (* the bar the caller started, which this stops before it prints *)
   ?status_bar:Status_bar.t ->
   (* caps - network *)
   < Cap.stdout

@@ -789,7 +789,9 @@ type scan_work_error =
 
 let report_progress (config : Core_scan_config.t)
     (p : Core_scan_config.progress) : unit =
-  config.progress_hook |> Option.iter (fun h -> h p)
+  match config.progress_hook with
+  | Some (hook : Core_scan_config.progress -> unit) -> hook p
+  | None -> ()
 
 let handle_work_item
     (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
@@ -798,9 +800,9 @@ let handle_work_item
     (item : scan_work_item) : scan_work_result =
   match item with
   | Per_target (target, file_size, rules) ->
-    (* Counted here rather than from [file_match_hook]: a target that raises
+    (* Counted here rather than in [file_match_hook]: a target that raises
        or is skipped never reaches that hook, and interfile matches reach it
-       for files that are not units of work of their own. *)
+       for files that are not work items. *)
     let result, target_opt =
       Common.protect
         ~finally:(fun () -> report_progress config Core_scan_config.Target_done)
@@ -1036,9 +1038,9 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   in
   let equivs = parse_equivalences config.equivalences_file in
   let report_progress = report_progress config in
-  (* The graph build below runs before any target is visited and, on a large
-     project, takes most of the scan. Say so, but only when there is a graph
-     to build: otherwise the phase would flip twice with nothing between. *)
+  (* The graph build runs before any target and can take most of the scan on
+     a large project. Reported only when there is a graph to build, so that
+     the phase does not change twice with nothing in between. *)
   let interfile_rule_ids =
     Interfile_dispatch.interfile_taint_rule_ids
       ~taint_interfile:config.taint_interfile valid_rules

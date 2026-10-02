@@ -1,42 +1,40 @@
-(* A line at the bottom of the terminal saying what the scan is doing, with
-   a spinner and a progress bar once the scan reaches its targets.
-
-   It is drawn by a thread of its own, the only writer to the terminal while
-   the bar is up: log messages are queued and written between two frames,
-   and the thread writes to a copy of stderr, so that a capture of stderr
-   never sees a frame. The caller stops it before printing the report. *)
+(* A status line at the bottom of the terminal: the phase of the scan, a
+   spinner, and a progress bar once the scan reaches its targets. While it
+   is drawn, the log messages written to stderr appear above it. The caller
+   stops it before printing the report. *)
 
 type phase =
   | Loading_rules
   | Analyzing_targets
   | Building_interfile_graph
-  (* the baseline replay of a differential scan; see Status_bar.ml *)
+  (* the baseline scan of a --baseline-commit scan *)
   | Comparing_with_baseline
-  (* targets and interfile rules counted as one; see Status_bar.ml *)
+  (* [total] counts targets and interfile rules together *)
   | Scanning of { total : int; completed : int Atomic.t }
 
 type t
 
-(* None off a terminal, where there is nothing to animate and a redrawn line
-   would only pile up, and when the thread that draws it cannot be started.
-   Until [finish], the messages of the Logs reporter that writes to stderr
-   go to the bar's queue (see Logs_.divert_stderr).
-   While the bar is up, SIGINT, SIGTERM, SIGHUP and SIGQUIT erase it and
-   show the cursor before they kill the process as they would have, and
-   Ctrl-Z (SIGTSTP) puts it away for the rest of the scan before the
-   process stops. A signal the process was started with ignored stays
-   ignored. *)
+(* None when stderr is not a terminal that can redraw a line, in CI, and
+   when the drawing thread cannot be started. Until [finish], the messages
+   of the Logs reporter that writes to stderr go to the status line's queue
+   (see Logs_.redirect_stderr).
+   While the status line is drawn, SIGINT, SIGTERM, SIGHUP and SIGQUIT erase
+   it and show the cursor before they end the process as they would
+   otherwise, and Ctrl-Z (SIGTSTP) stops the drawing for the rest of the scan
+   before the process stops. A signal that was ignored when the process
+   started stays ignored. *)
 val create : phase -> t option
 
 val set_phase : t -> phase -> unit
 
-(* One more unit of work finished, target or interfile rule alike; ignored
+(* Counts one completed work item, a target or an interfile rule; ignored
    outside the scanning phase, and safe to call from any domain. *)
 val notify_work_item_done : t -> unit
 
-(* Stops the thread, writes the messages still queued, clears the line and
-   puts back the signal handlers that [create] replaced; from then on log
-   messages go to stderr again. Calling it more than once is harmless; only
-   the first call does the work, and a run that ends by [exit] calls it
-   then. *)
+val progress_hook : t option -> Core_scan_config.progress -> unit
+
+(* Stops the drawing thread, writes the messages still queued, clears the
+   line and restores the signal handlers that [create] replaced; later log
+   messages go to stderr again. Only the first call has an effect; a run
+   that ends by [exit] calls it from at_exit. *)
 val finish : t -> unit

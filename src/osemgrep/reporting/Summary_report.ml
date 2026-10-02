@@ -165,8 +165,6 @@ let summary_of_skipped ~respect_gitignore ~is_git_repo
   { Skin_model.Summary.limited; skipped = out_skipped;
     partially_analyzed = out_partial; unplaced_warnings }
 
-(* The heading is printed whether or not anything was left out, so a clean
-   scan still shows an empty block. *)
 let pp_summary ppf (summary : Skin_model.Summary.t) : unit =
   let str = Skin_model.string_of_phrase in
   Fmt_.pp_heading ppf "Scan Summary";

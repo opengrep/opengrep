@@ -26,17 +26,13 @@ let show_spinner delay_ms : unit =
       Unix.sleepf (Float.of_int delay_ms /. Float.of_int (1000 * 100))
     done
 
-(* Only the spinner's line is cleared, and the cursor is left at its start so
-   the next output takes the line over. Erasing below here would take
-   whatever the caller had printed under it. *)
+(* Clears only the spinner's line and leaves the cursor at its start, so that
+   the next output overwrites it. Erasing below the cursor would also erase
+   what the caller printed under it. *)
 let erase_spinner () : unit =
   ANSITerminal.move_bol ();
   ANSITerminal.erase ANSITerminal.Eol
 
-(* The spinner animates the line the caller has just printed: the glyph is
-   drawn in its first column and the whole line is erased when the spinner
-   stops, so it reads as a status of what is happening rather than a record
-   of what happened. *)
 let spinner_async () : 'a Lwt.t =
   (* nosemgrep *)
   ANSITerminal.(print_string [] "\027[?25l");
@@ -45,7 +41,9 @@ let spinner_async () : 'a Lwt.t =
   let print_frame ~frame_index:i : unit Lwt.t =
     let spinner = spinner.(i mod Array.length spinner) in
     ANSITerminal.move_bol ();
+    (* ensure we update only the progress indicator *)
     if !jump_y then (
+      (* jump to the line above to add the indicator *)
       ANSITerminal.move_cursor 0 (-1);
       jump_y := false);
     (* the glyph's colour follows $NO_COLOR like every other output *)

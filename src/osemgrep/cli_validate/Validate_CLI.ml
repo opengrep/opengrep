@@ -32,8 +32,7 @@ type conf = {
    * output document, as they are for a scan *)
   json : bool;
   (* the output configuration of the scan that asked for the validation, so
-   * that the document goes where -o/--output names, and the skin that states
-   * the plan of the scan of the rule files *)
+   * that the document goes where -o/--output names *)
   output_conf : Output.conf;
   (* --force-color, which wins over $NO_COLOR like it does for a scan *)
   force_color : bool;

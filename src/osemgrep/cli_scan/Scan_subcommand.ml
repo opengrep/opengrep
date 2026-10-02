@@ -87,8 +87,8 @@ let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
   |> List_.map (fun (e : Rule_error.t) -> Core_error.error_of_rule_error e)
 
 (* we require stdout here to give the proper output, such as with --json *)
-(* The bar is stopped first: it redraws its line on stderr until then, and
-   on a terminal that is also where the document goes. *)
+(* The status line is stopped first: until then it is redrawn on stderr,
+   which on a terminal shares the screen with the output. *)
 let output_and_exit_from_fatal_core_errors_exn
     ?(status_bar : Status_bar.t option) ~(text_message : string)
     ~(exit_code : Exit_code.t) (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
@@ -386,12 +386,9 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >) :
 let rules_from_rules_source ?(skip_invalid_configs = false)
     ?(status : string option) ~rewrite_rule_ids ~strict caps
     (source : Rule_fetching.source) =
-  (* The status line, which a skin gives only on a terminal (legacy's
-     comes with the banner). Where the spinner runs, it animates the line
-     and erases it when the rules are in; where it does not -- Windows --
-     the line stays. *)
+  (* Where the spinner runs, it animates the [status] line and erases it once
+     the rules are loaded; where it does not (Windows), the line stays. *)
   Option.iter (fun (text : string) -> Logs.app (fun m -> m "%s" text)) status;
-  (* a skin that shows no status gets no spinner either *)
   let spinner_ls =
     match status with
     | Some _ when Console_Spinner.should_show_spinner () ->
@@ -454,6 +451,22 @@ let adjust_nosemgrep_and_autofix (res : Core_runner.result) :
     Core_runner.result =
   let matches = res.core.results |> List_.map trim_core_match_fix in
   { res with core = { res.core with results = matches } }
+
+let tally_of_cli_output ~(rules_ran : int) (cli_output : Out.cli_output) :
+    Skin_model.Result.tally =
+  {
+    Skin_model.Result.rules_ran;
+    rules_with_findings =
+      cli_output.results
+      |> List_.map (fun (m : Out.cli_match) -> Rule_ID.to_string m.check_id)
+      |> List_.deduplicate |> List.length;
+    files_scanned = List.length cli_output.paths.scanned;
+    files_with_findings =
+      cli_output.results
+      |> List_.map (fun (m : Out.cli_match) -> m.path)
+      |> List_.deduplicate |> List.length;
+    findings = List.length cli_output.results;
+  }
 
 (*****************************************************************************)
 (* Yet another check targets with rules *)
@@ -563,10 +576,10 @@ let check_targets_with_rules ?(print_summary = true)
       let output_format, file_match_hook =
         choose_output_format_and_match_hook (caps :> < Cap.stdout >) conf rules
       in
-      (* Incremental streams findings to stdout as they are found, so
-         nothing may be drawing over them. The conf flag is not the only
-         way in: --develop selects it for a text report too, which is why
-         this looks at the format chosen rather than at the flag. *)
+      (* Incremental output writes findings to stdout during the scan, so no
+         status line may be drawn over them. --develop also selects
+         Incremental for a text report, hence the test on the chosen format
+         rather than on the flag. *)
       let status_bar =
         match output_format with
         | Output_format.Incremental ->
@@ -574,7 +587,7 @@ let check_targets_with_rules ?(print_summary = true)
             None
         | _else_ -> status_bar
       in
-      (* chrome, not built while logging is off: see Skin.S.on_plan *)
+      (* the plan is not built while logging is off: see Skin.S.on_plan *)
       let on_plan : (Skin_model.Plan.t -> unit) option =
         if Skin_emit.stderr_is_shown () then
           Some
@@ -582,23 +595,8 @@ let check_targets_with_rules ?(print_summary = true)
               Skin_emit.emit (Sk.on_plan skin_ctx plan))
         else None
       in
-      let progress_hook (progress : Core_scan_config.progress) : unit =
-        Option.iter
-          (fun (bar : Status_bar.t) ->
-            match progress with
-            | Core_scan_config.Target_done
-            | Core_scan_config.Interfile_rule_done ->
-                Status_bar.notify_work_item_done bar
-            | Core_scan_config.Analyzing_targets ->
-                Status_bar.set_phase bar Status_bar.Analyzing_targets
-            | Core_scan_config.Building_interfile_graph ->
-                Status_bar.set_phase bar Status_bar.Building_interfile_graph
-            | Core_scan_config.Scanning_started { targets; interfile_rules } ->
-                Status_bar.set_phase bar
-                  (Status_bar.Scanning
-                     { total = targets + interfile_rules;
-                       completed = Atomic.make 0 }))
-          status_bar
+      let progress_hook : Core_scan_config.progress -> unit =
+        Status_bar.progress_hook status_bar
       in
       (match (output_format, conf.output_conf.output) with
       | Output_format.Incremental, Some _ ->
@@ -613,9 +611,9 @@ let check_targets_with_rules ?(print_summary = true)
             (List.length selected));
       Logs.info (fun m -> m "running the opengrep engine");
       let (result_or_exn : Core_result.result_or_exn) =
-        (* The bar lives for the engine run and no longer: stopping it here
-           puts the cursor back and clears the line whatever the run did,
-           and leaves the report to print on a clean screen. *)
+        (* The status line is stopped when the engine run ends, however it
+           ends, so that the report prints on a cleared line with the cursor
+           shown. *)
         Common.protect
           ~finally:(fun () -> Option.iter Status_bar.finish status_bar)
         @@ fun () ->
@@ -633,10 +631,10 @@ let check_targets_with_rules ?(print_summary = true)
         | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
-            (* [baseline] runs are the replay against the baseline commit.
-               They say so and send no progress of their own: their counts
-               are a second pass over the same files, and letting them
-               through would restart the bar from zero. *)
+            (* A [baseline] run is the baseline scan. It sets its own phase
+               and reports no progress: it is a second pass over the same
+               files, and its counts would restart the progress bar from
+               zero. *)
             let mk_diff_scan_func ?file_match_hook ?(baseline = false) () :
                 Diff_scan.diff_scan_func =
              fun ?explicit_targets ~scanning_roots targets rules ->
@@ -649,9 +647,9 @@ let check_targets_with_rules ?(print_summary = true)
                 if baseline then fun (_ : Core_scan_config.progress) -> ()
                 else progress_hook
               in
-              (* The replay states a plan of its own, and has to say which
-                 scan it belongs to: it is a second pass over the same
-                 paths and frequently has nothing to look at there. *)
+              (* The baseline scan reports a plan of its own, marked as the
+                 baseline's: it is a second pass over the same paths and
+                 often finds no targets there. *)
               let on_plan =
                 on_plan
                 |> Option.map (fun on_plan (plan : Scan_plan.t) ->
@@ -829,8 +827,7 @@ let check_targets_with_rules ?(print_summary = true)
           let skipped_groups = Skipped_report.group_skipped skipped in
           let (result_view : Skin_model.Result.t) =
             {
-              (* chrome, not built while logging is off: see
-                 Skin.S.on_result *)
+              (* not built while logging is off: see Skin.S.on_result *)
               summary =
                 (if not (Skin_emit.stderr_is_shown ()) then
                    Skin_model.Summary.empty
@@ -859,26 +856,13 @@ let check_targets_with_rules ?(print_summary = true)
               tally =
                 (if print_summary then
                    Some
-                     {
-                       Skin_model.Result.rules_ran = num_rules_ran;
-                       rules_with_findings =
-                         cli_output.results
-                         |> List_.map (fun (m : Out.cli_match) ->
-                                Rule_ID.to_string m.check_id)
-                         |> List_.deduplicate |> List.length;
-                       files_scanned = List.length cli_output.paths.scanned;
-                       files_with_findings =
-                         cli_output.results
-                         |> List_.map (fun (m : Out.cli_match) -> m.path)
-                         |> List_.deduplicate |> List.length;
-                       findings = List.length cli_output.results;
-                     }
+                     (tally_of_cli_output ~rules_ran:num_rules_ran cli_output)
                  else None);
             }
           in
-          (* The skin decides what the report is made of and in which order;
-             the findings, and the diagnostics that belong with them, are
-             written where it placed Skin.Findings. *)
+          (* The skin sets the parts of the report and their order; the
+             findings, and the diagnostics that belong with them, are written
+             at the position of Skin.Findings. *)
           let on_findings () : unit =
             Logs.info (fun m -> m "reporting matches if any");
             (* outputting the result on stdout! in JSON/Text/... depending on
@@ -998,13 +982,32 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
             (spf "Error: exception %s" (Printexc.to_string e))
             (Exit_code.fatal ~__LOC__))
 
+(* The status line covers the whole run, rule fetching included: fetching a
+   large ruleset over the network can take long enough to look like a hang.
+   There is none when logging is off, nor at --verbose or --debug, whose
+   messages scroll past and would wait in an unbounded queue while the
+   status line is drawn. The level checked is the one in force, which
+   Logs_.setup can take from the environment, not the one the flags
+   request. *)
+let draws_status_bar (conf : Scan_CLI.conf) : bool =
+  let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
+  let level_allows =
+    match Logs.level () with
+    | Some (Logs.App | Logs.Error | Logs.Warning) -> true
+    | Some (Logs.Info | Logs.Debug)
+    | None ->
+        false
+  in
+  (not conf.no_progress_bar) && (not conf.incremental_output) && level_allows
+  && Sk.shows_status_bar
+
 let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
     (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
   let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
   let skin_ctx = Output.skin_ctx conf.output_conf in
-  (* classifying the source reads nothing; it only says what the banner
-     below should call the rules *)
+  (* reads no file and no network; the banner below uses it to describe the
+     rule source *)
   let source = Rule_fetching.classify conf.rules_source in
   (* Draw the banner ASAP to minimize time to first meaningful content paint *)
   let (start : Skin_model.Start.t) =
@@ -1024,32 +1027,15 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
 
   Core_profiling.profiling := conf.core_runner_conf.time_flag;
 
-  (* The bar covers the whole run, rule fetching included: a large ruleset
-     comes over the network and the wait is long enough that silence reads
-     as a hang. The skins that show no status of their own say so through
-     wants_status_bar. A run whose logging is off keeps its terminal quiet,
-     and one at --verbose or --debug has no bar either: its messages scroll
-     past anyway, and while the bar is up they wait in a queue with no
-     bound. Both by the level in force, not the one the flags asked for,
-     since Logs_.setup lets the environment override it. *)
-  let bar_level =
-    match Logs.level () with
-    | Some (Logs.App | Logs.Error | Logs.Warning) -> true
-    | Some (Logs.Info | Logs.Debug)
-    | None ->
-        false
-  in
   let status_bar =
-    if
-      conf.no_progress_bar || conf.incremental_output || (not bar_level)
-      || not Sk.wants_status_bar
-    then None
-    else Status_bar.create Status_bar.Loading_rules
+    if draws_status_bar conf then Status_bar.create Status_bar.Loading_rules
+    else None
   in
-  (* Whatever prints to stdout stops it first: check_targets_with_rules
-     before the report, output_and_exit_from_fatal_core_errors_exn before
-     an error document. This is the net for every other path, an exception
-     among them. Stopping twice is harmless. *)
+  (* Every path that prints to stdout stops the status line first:
+     check_targets_with_rules before the report,
+     output_and_exit_from_fatal_core_errors_exn before an error output. This
+     [finally] is a fallback for every other path, an exception included; a
+     second stop has no effect. *)
   Common.protect ~finally:(fun () -> Option.iter Status_bar.finish status_bar)
   @@ fun () ->
   (* step1: getting the rules *)
@@ -1059,9 +1045,9 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
         rules_from_rules_source
           (caps :> < Cap.network ; Cap.tmp >)
           ~skip_invalid_configs:conf.skip_invalid_configs
-          (* The status line comes with a spinner, which would fight the
-             bar over the terminal; when there is a bar, it says what is
-             happening. *)
+          (* The rules status line comes with a spinner, which would draw on
+             the terminal at the same time as Status_bar; when Status_bar
+             draws, it shows the phase instead. *)
           ?status:
             (match status_bar with
             | None -> Sk.rules_status skin_ctx start
@@ -1081,9 +1067,8 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
   (* but with no fatal rule errors, we can proceed with the scan! *)
   | [] -> (
       (* step2: getting the targets *)
-      (* the rules are in; on a large repo the walk below is the slowest
-         thing before the scan, and calling it "Loading rules" would name
-         the wrong phase *)
+      (* the rules are loaded; on a large repository the target walk below
+         takes longest before the scan *)
       status_bar
       |> Option.iter (fun (bar : Status_bar.t) ->
              Status_bar.set_phase bar Status_bar.Analyzing_targets);

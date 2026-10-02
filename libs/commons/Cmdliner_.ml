@@ -173,15 +173,10 @@ let float_opt_with_env ~(env : string) ~(doc : string) (options : string list)
   in
   Term.cli_parse_result Term.(const combine $ value)
 
-(* A value chosen from a fixed set, which can also come from an environment
-   variable. The command line wins, and warns about it when it overrides
-   an env var.
-
-   [env] is not handed to Arg.info, so cmdliner neither reads the variable
-   nor lists it under ENVIRONMENT: the helper reads it itself, through
-   Opengrep_env, which is what honours the OPENGREP_/SEMGREP_ alias that
-   cmdliner knows nothing about. The doc string names the variable in its
-   place. Same bargain as the other *_with_env helpers here. *)
+(* [env] is not passed to Arg.info: the helper reads the variable through
+   Opengrep_env, which accepts both the OPENGREP_ and the SEMGREP_ prefix.
+   Cmdliner therefore does not list the variable under ENVIRONMENT, and the
+   doc string refers to it instead, as for the other *_with_env helpers. *)
 let enum_with_env ~(env : string) ~(doc : string) ~(default : 'a)
     ~(names : (string * 'a) list) (options : string list) : 'a Term.t =
   let value =
@@ -200,8 +195,8 @@ let enum_with_env ~(env : string) ~(doc : string) ~(default : 'a)
             | Some (v : 'a) -> Ok v
             | None ->
                 Error
-                  (* quoted: this is an error message, not a doc string,
-                     so it must not carry cmdliner's $(b,...) markup *)
+                  (* An error message, not a doc string: quoted, without
+                     cmdliner's $(b,...) markup. *)
                   (env_value_error ~var:name ~value:str
                      (Arg.doc_alts ~quoted:true (List_.map fst names)))))
   in

@@ -1,11 +1,9 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* The skins --skin can select.
- *
- * The signature and the name live in osemgrep_core, low enough for the
- * drivers and the core runner to see them; the skins themselves live here,
- * where the rendering machinery is.
+(* The skins that --skin selects. The signature and Skin.name are in
+ * osemgrep_core, which the drivers and the core runner depend on; the skins
+ * are here, with the rendering code.
  *)
 
 let resolve (name : Skin.name) : (module Skin.S) =

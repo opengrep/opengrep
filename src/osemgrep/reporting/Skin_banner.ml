@@ -1,18 +1,15 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* The wordmark, for the skins that open with one.
- *
- * The mark is drawn with box characters, three rows of the same width so
- * that the name, the tagline and the version line up in a column beside it.
+(* The wordmark of the skins that start with a banner: three rows of box
+ * characters of equal width, beside which the name, the tagline and the
+ * version form a column.
  *)
 
-(* each row padded to the width of the widest, so the text column is square *)
+(* every row has the same width, so that the text column is aligned *)
 let mark = [ " ╭┮┭╮"; "┌┼┼┼┘"; "╰┶┵╯ " ]
 let tagline = "the open source static code analysis engine"
 
-(* Only the name is picked out; the mark and the lines beside it are plain,
-   so the banner does not compete with the report under it. *)
 let pp ~(margin : string) ppf : unit =
   let row (glyphs : string) (pp_text : Format.formatter -> unit) : unit =
     Fmt.pf ppf "%s%s %t@." margin glyphs pp_text

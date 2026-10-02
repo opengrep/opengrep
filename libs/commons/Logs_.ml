@@ -168,36 +168,35 @@ let create_formatter opt_file =
 (* The "reporter" *)
 (*****************************************************************************)
 
-(* Where the reporter that writes to stderr sends its messages instead,
-   while something else owns the terminal: see [divert_stderr]. Only read
-   and written with logs_mutex held, which Logs holds around every
-   message. *)
+(* The sink of [redirect_stderr]. Read and written only with logs_mutex
+   held, which Logs holds around every message. *)
 let stderr_sink : (string -> unit) option ref = ref None
 
-let divert_stderr (sink : string -> unit) : unit =
+let redirect_stderr (sink : string -> unit) : unit =
   Mutex.protect logs_mutex (fun () -> stderr_sink := Some sink)
 
-let undivert_stderr (flush : unit -> unit) : unit =
+let restore_stderr (flush : unit -> unit) : unit =
   Mutex.protect logs_mutex (fun () ->
       stderr_sink := None;
       flush ())
 
-(* A formatter that renders as [dst] does -- the same colour setting and
-   geometry -- into a buffer, and the function that hands what it holds to
-   [sink]. *)
-let buffer_like (dst : Format.formatter) (sink : string -> unit) :
-    Format.formatter * (unit -> unit) =
-  let buf = Buffer.create 256 in
-  let ppf = Format.formatter_of_buffer buf in
-  Fmt.set_style_renderer ppf (Fmt.style_renderer dst);
+(* Empties [buf] and gives [ppf] the colour setting and geometry of [from].
+   Called before each redirected message: a message that raised leaves its
+   text behind, and the settings of [from] can change after the reporter is
+   created. *)
+let reset_like ~(from : Format.formatter) (ppf : Format.formatter)
+    (buf : Buffer.t) : unit =
+  Format.pp_print_flush ppf ();
+  Buffer.clear buf;
+  Fmt.set_style_renderer ppf (Fmt.style_renderer from);
   UFormat.pp_set_geometry ppf
-    ~max_indent:(UFormat.pp_get_max_indent dst ())
-    ~margin:(UFormat.pp_get_margin dst ());
-  let hand_over () =
-    Format.pp_print_flush ppf ();
-    if Buffer.length buf > 0 then sink (Buffer.contents buf)
-  in
-  (ppf, hand_over)
+    ~max_indent:(UFormat.pp_get_max_indent from ())
+    ~margin:(UFormat.pp_get_margin from ())
+
+let flush_to_sink (ppf : Format.formatter) (buf : Buffer.t)
+    (sink : string -> unit) : unit =
+  Format.pp_print_flush ppf ();
+  if Buffer.length buf > 0 then sink (Buffer.contents buf)
 
 (* This code was copy-pasted and derived from the example in the Logs library.
    The Logs library interface makes us write this code that is frankly
@@ -207,8 +206,8 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = [])
     ?(to_terminal = false) ~dst ~require_one_of_these_tags
     ~read_tags_from_env_vars:(env_vars : string list) ~highlight () =
   (* additional_reporters: the copy of the logs to a file, see setup.
-     to_terminal: the reporter writes to stderr, and its messages are
-     diverted with it (see divert_stderr). *)
+     to_terminal: the reporter writes to stderr, and [redirect_stderr]
+     redirects its messages. *)
   let require_one_of_these_tags =
     match read_comma_sep_strs_from_env_vars env_vars with
     | Some tags -> tags
@@ -217,6 +216,10 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = [])
   (* Each debug message is implicitly tagged with "all". *)
   let select_all_debug_messages = List.mem "all" require_one_of_these_tags in
 
+  (* Every redirected message reuses one buffer: the reporter runs under
+     logs_mutex. *)
+  let buf = Buffer.create 256 in
+  let buf_ppf = Format.formatter_of_buffer buf in
   let report src level ~over k msgf =
     let src_name = Logs.Src.name src in
     let is_default_src = src_name = "application" in
@@ -228,15 +231,16 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = [])
           ((fun _ppf _style -> ()), "", "")
     in
     let k _ = k () in
-    (* The whole message, style reset included, goes to one place: stderr,
-       or the sink while stderr is diverted. A debug message the tags
-       filter out produces no text, and so hands nothing over. *)
-    let dst, hand_over =
-      match !stderr_sink with
-      | Some sink when to_terminal -> buffer_like dst sink
-      | Some _
-      | None ->
-          (dst, fun () -> ())
+    (* The whole message, style reset included, goes to stderr, or to the
+       sink while stderr is redirected. A debug message that the tag filter
+       drops produces no text and reaches no sink. *)
+    let sink = if to_terminal then !stderr_sink else None in
+    let dst =
+      match sink with
+      | Some _ ->
+          reset_like ~from:dst buf_ppf buf;
+          buf_ppf
+      | None -> dst
     in
     let r =
       msgf (fun ?header ?(tags = default_tag_set) fmt ->
@@ -271,10 +275,11 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = [])
                 Format.ikfprintf k dst fmt)
     in
     Format.fprintf dst "%a" pp_style style_off;
-    hand_over ();
-    (* [over] once the message is out, and not on an exception: Logs.report
-       calls it then, and calling it here too would unlock the mutex
-       twice. *)
+    (match sink with
+    | Some (sink : string -> unit) -> flush_to_sink buf_ppf buf sink
+    | None -> ());
+    (* Not on an exception: Logs.report calls [over] then, and a second call
+       would unlock the mutex twice. *)
     over ();
     r
   in

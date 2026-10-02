@@ -3,19 +3,16 @@ module OutJ = Semgrep_output_v1_t
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* A report that uses colour to be read faster.
+(* A report that uses colour: a stripe in the colour of the severity runs
+ * down every finding, the line numbers are in a band of their own, and the
+ * matched span has a background colour rather than bold text. No box
+ * surrounds the code, so a line too wide to fit breaks no border.
  *
- * A solid stripe in the severity's colour runs the full height of every
- * finding, so severity is legible from the edge of the page without reading
- * a word. Nothing boxes the code, so a line too wide to fit cannot break a
- * frame. The line numbers sit in a band of their own and the matched span is
- * tinted rather than merely emboldened.
+ * With $NO_COLOR, off a terminal, or in a file, the stripe remains as a
+ * character and the bands disappear; the structure of the report stays
+ * readable.
  *
- * Everything here degrades: with $NO_COLOR, off a terminal, or in a file,
- * the stripe stays as a character and the bands simply vanish, which leaves
- * the report readable on its structure alone.
- *
- * Only the look is here: Skin_common draws the report with it.
+ * This module defines the look; Skin_common draws the report with it.
  *)
 
 module M = Skin_model
@@ -24,14 +21,14 @@ module M = Skin_model
 (* Measurements *)
 (*****************************************************************************)
 
-(* The report sits at the left edge: the banner, the file names, the scan
-   lines and the summary all start there. Only the findings are inset, so a
-   file's contents read as belonging to the name above them. *)
+(* The banner, the file paths, the scan lines and the summary start at the
+   left edge; only the findings are indented, under the path of their
+   file. *)
 let finding_margin = "  "
 let stripe_glyph = "▌"
 
-(* A trace explains the match rather than standing beside it: it keeps the
-   match's own bar, and hangs off it as a tree, one branch per step. *)
+(* A trace keeps the stripe of its match and is drawn under it as a tree,
+   one branch per step. *)
 let trace_inset = "  "
 
 (* "  " ^ "▌" ^ " " *)
@@ -40,8 +37,7 @@ let prefix_width = 4
 (* the spaces around the line number inside its band *)
 let band_padding = 2
 
-(* the band the line numbers of a finding sit in, for numbers [digits]
-   wide *)
+(* the width of the band of the line numbers, for numbers [digits] wide *)
 let band_width (digits : int) : int = digits + (2 * band_padding)
 
 (*****************************************************************************)
@@ -83,11 +79,9 @@ let severity_word (severity : OutJ.match_severity) : string =
   | `Experiment ->
       "NOTE"
 
-(* Every badge is as wide as the longest severity word, so that the filled
-   rectangles line up down the page and the id after them starts at one
-   column whatever the severity.
-   coupling: a severity added to [severity_word] belongs here too, or a
-   badge of that severity will be the one that sticks out. *)
+(* Every badge is as wide as the longest severity word, so that the badges
+   align and the rule id starts at the same column for every severity.
+   coupling: a severity added to [severity_word] must be added here too. *)
 let severity_field_width : int =
   [ `Critical; `Error; `High; `Warning; `Medium; `Info; `Low; `Inventory;
     `Experiment ]
@@ -96,18 +90,19 @@ let severity_field_width : int =
          max acc (String.length (severity_word s)))
        0
 
-(* A light foreground on a dark band, so that the band reads on a light
-   terminal as well as a dark one. *)
+(* A light foreground on a dark background, readable on both light and dark
+   terminals. *)
 let band_style : Fmt.style list = [ `Bg (`Hi `Black); `Fg (`Hi `White) ]
 
 let styles (xs : Fmt.style list) (pp : 'a Fmt.t) : 'a Fmt.t =
   List.fold_left (fun acc style -> Fmt.styled style acc) pp xs
 
-(* every line of a finding opens with the stripe, in the severity's colour *)
+(* the stripe that starts every line of a finding, in the colour of its
+   severity *)
 let pp_stripe (color : tone) ppf : unit =
   Fmt.pf ppf "%s%a " finding_margin Fmt.(styled (`Fg color) string) stripe_glyph
 
-(* the stripe carrying on across a gap, with no trailing space *)
+(* the stripe on an empty line, without a trailing space *)
 let pp_blank_stripe (color : tone) ppf : unit =
   Fmt.pf ppf "%s%a@." finding_margin Fmt.(styled (`Fg color) string) stripe_glyph
 
@@ -118,12 +113,12 @@ let pp_band ppf (label : string) : unit =
 (* A finding *)
 (*****************************************************************************)
 
-(* A line of the match. The number sits in a band of its own; the matched
-   span is tinted in the severity's colour rather than emboldened. *)
+(* A line of the match, its number in a band and the matched span with a
+   background in the colour of the severity. *)
 let pp_code_line (color : tone) ~(digits : int) ~(width : int) ppf
     (line : Findings_layout.code_line) : unit =
   let text, offset_of = Findings_layout.munge_whitespace_with_offsets line.text in
-  (* the tinted range of the match, moved as the whitespace is *)
+  (* the coloured range of the match, adjusted for the expanded whitespace *)
   let moved (x : int) : int = offset_of.(max 0 (min (String.length line.text) x)) in
   let tint_start = moved line.match_start and tint_end = moved line.match_end in
   Findings_layout.fill_chunks ~filler:Textwrap ~width ~initial_indent:0
@@ -143,9 +138,8 @@ let pp_code_line (color : tone) ~(digits : int) ~(width : int) ppf
            (styles [ `Bg color; `Fg (`Hi `White) ] Fmt.string)
            b c)
 
-(* The trace keeps the stripe: it opens every line the trace prints, so it
-   is handed over already rendered, with the numbers in the same band as
-   the code's. *)
+(* Every line of the trace starts with the stripe, so it is passed already
+   rendered, with the line numbers in the same band as those of the code. *)
 let trace (color : tone) ppf ~(digits : int) : Skin_common.trace_look =
   let bar =
     Fmt.str_like ppf "%s%a" finding_margin
@@ -165,8 +159,8 @@ let trace (color : tone) ppf ~(digits : int) : Skin_common.trace_look =
     highlight = [ `Bg color; `Fg (`Hi `White) ];
   }
 
-(* Every line of a finding opens with the stripe: the heading, a filled
-   badge and the id; the message; the code; the sources; the fix. *)
+(* Every line of a finding starts with the stripe: the heading (a filled
+   badge and the rule id), the message, the code, the sources and the fix. *)
 let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
   let color = severity_color severity in
   {
@@ -199,11 +193,10 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
 (* Around the findings *)
 (*****************************************************************************)
 
-(* "a.py ──────────────": a name with a rule running out to the width of
-   the report. A deep path is wrapped rather than shortened: it is what a
-   reader opens, and the report has no other copy of it. The rule closes
-   the last line, so the header still reads as one band however many lines
-   it took. *)
+(* "a.py ──────────────": a title followed by a horizontal line up to the
+   width of the report. A long path is wrapped rather than shortened, since
+   the reader opens it and the report prints it only here. The horizontal
+   line ends the last line of the title. *)
 let pp_section (ctx : Skin.ctx) ppf (name : string) : unit =
   let width = Findings_layout.safe_width (ctx.width - 1) in
   let lines =
@@ -231,14 +224,13 @@ let pp_file_header (ctx : Skin.ctx) ppf (path : string) : unit =
   pp_section ctx ppf path;
   Fmt.pf ppf "@."
 
-(* The heading of a ci section: nothing is repeated on every finding, as
-   the section it sits in already says which kind it is. The heading
-   outweighs the file rules beneath it by carrying a badge rather than a
-   second rule. *)
+(* The heading of a ci section; the findings under it carry no blocking
+   mark of their own. The blocking heading has a badge rather than a
+   horizontal line, to stand out from the file headers below it. *)
 let pp_ci_section ppf ~(badge : bool) (label : string)
     (style : Fmt.style list) (count : int) : unit =
-  (* the padding belongs to a filled badge, which has a background to put
-     it on; plain text would only gain a stray space either side *)
+  (* only a filled badge is padded: on plain text the padding would be stray
+     spaces *)
   let text = if badge then Printf.sprintf " %s " label else label in
   Fmt.pf ppf "%a %a@.@."
     (styles style Fmt.string)
@@ -246,7 +238,7 @@ let pp_ci_section ppf ~(badge : bool) (label : string)
     Fmt.(styled `Faint string)
     (Printf.sprintf "· %s" (String_.unit_str count "finding"))
 
-(* what 'opengrep ci' runs in, under a rule of its own *)
+(* the environment of an 'opengrep ci' run, under its own header *)
 let pp_ci_environment (ctx : Skin.ctx) ppf (env : M.Start.ci_env) : unit =
   pp_section ctx ppf "Debugging info";
   Fmt.pf ppf "@.";
@@ -261,8 +253,8 @@ let pp_ci_environment (ctx : Skin.ctx) ppf (env : M.Start.ci_env) : unit =
     Fmt.(styled `Bold string)
     env.event_name
 
-(* A --baseline-commit scan states its plan twice; the second is the
-   replay, and says so. *)
+(* A --baseline-commit scan prints two plans; the second, of the baseline
+   scan, starts with "Baseline". *)
 let pp_plan (run : M.Plan.run) ppf (counts : (string * string) option) : unit
     =
   let nothing, scanning =
@@ -279,7 +271,7 @@ let pp_plan (run : M.Plan.run) ppf (counts : (string * string) option) : unit
         Fmt.(styled `Bold string)
         rules
 
-(* "in 0 files" says nothing; a clean scan just says so *)
+(* "No findings" rather than "0 findings in 0 files" *)
 let pp_tally ppf (t : M.Result.tally) : unit =
   if Int.equal t.findings 0 then
     Fmt.pf ppf "%a." Fmt.(styled `Bold string) "No findings"
@@ -322,4 +314,4 @@ let on_plan = Skin_common.on_plan look
 let on_result = Skin_common.on_result look
 let pp_findings = Skin_common.pp_findings look
 let pp_matches = Skin_common.pp_by_file look
-let wants_status_bar = true
+let shows_status_bar = true

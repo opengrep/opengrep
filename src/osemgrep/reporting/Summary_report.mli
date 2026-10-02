@@ -9,7 +9,7 @@ val cli_errors_to_report :
   Semgrep_output_v1_t.cli_error list ->
   Semgrep_output_v1_t.cli_error list
 
-(* The files a scan left out or could not finish, counted and worded.
+(* The files that a scan skipped or did not finish, as counts and phrases.
    Reads the filesystem to tell an ignored directory from an ignored file. *)
 val summary_of_skipped :
   respect_gitignore:bool ->
@@ -22,8 +22,8 @@ val summary_of_skipped :
   unit ->
   Skin_model.Summary.t
 
-(* The legacy rendering of the above: the "Scan Summary" heading, which is
-   printed even when nothing was left out, then the block of counts. *)
+(* The legacy rendering of a summary: the "Scan Summary" heading, printed
+   even when nothing was skipped, then the counts. *)
 val pp_summary : Skin_model.Summary.t Fmt.t
 
 (* The timeouts of the scan, one warning per file with the ids of the rules

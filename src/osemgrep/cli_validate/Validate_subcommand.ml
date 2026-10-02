@@ -315,8 +315,7 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
       conf.rules_source
   in
 
-  (* step2: checking the rules, by a scan of the rule files that states its
-     plan as any scan does, in the skin asked for *)
+  (* step2: checking the rules *)
   let on_plan : (Scan_plan.t -> unit) option =
     if Skin_emit.stderr_is_shown () then
       Some

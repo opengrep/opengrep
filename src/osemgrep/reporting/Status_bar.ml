@@ -1,76 +1,66 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* A line at the bottom of the terminal saying what the scan is doing, with a
- * spinner and, once the scan reaches its targets, a progress bar.
+(* A thread of its own draws the status line, so that it animates while the
+ * scan runs, and is the only writer to the terminal while the status line
+ * is drawn:
  *
- * It is drawn by a thread of its own, which is what lets it animate while
- * the scan works, and while the bar is up that thread is the only writer to
- * the terminal:
+ *  - a log message is not written by the thread that logs it. Logs_ passes
+ *    it as text to the sink of [Logs_.redirect_stderr], which queues it, and
+ *    the drawing thread writes it between two redraws: the status line
+ *    erased, the messages, the status line again. A redraw never cuts a
+ *    message in half, and a message is at most one redraw interval late
+ *    while the terminal reads; a terminal that has stopped reading holds the
+ *    messages back until it reads again (see [draw]).
+ *  - the drawing thread writes to a duplicate of the stderr descriptor taken
+ *    at [create], so a capture of stderr (UCmd, around a git command)
+ *    receives neither a redraw nor a log line.
  *
- *  - a log message is not written by whoever logs it. Logs_ hands it over
- *    as text (Logs_.divert_stderr), it is queued, and the thread writes it
- *    between two frames: the bar erased, the messages, the bar again. A
- *    message is never cut in half by a redraw, and is at most a frame late
- *    while the terminal takes what is written; one that has stopped
- *    reading holds the messages up until it reads again (see [draw]).
- *  - the thread writes to a copy of stderr taken when the bar starts, so a
- *    capture of stderr (UCmd, around a git command) sees neither a frame
- *    nor one of our log lines.
- *  - the findings must not be printed over it. The caller stops the bar
- *    before the report; under --incremental-output, where findings reach
- *    stdout while the scan runs, there is no bar at all.
- *
- * Output that does not go through Logs -- the OCaml runtime's, a C
- * library's -- is not covered, and lands on the bar's line.
+ * Output that does not go through Logs, such as the OCaml runtime's or a C
+ * library's, is not redirected and lands on the status line.
  *)
 
 type phase =
-  (* fetching a large ruleset over the network takes long enough that
-     without this the app looks wedged *)
+  (* fetching a large ruleset over the network can take long enough to look
+     like a hung scan *)
   | Loading_rules
   | Analyzing_targets
   | Building_interfile_graph
-  (* the second engine run of a --baseline-commit scan, which re-scans the
-     changed paths at the baseline commit only to work out which findings
-     are new. It reports no count of its own: it is a different pass over
-     the same files, and a counter restarting from zero would read as the
-     scan having gone backwards. *)
+  (* No count: the baseline scan is a second pass over the same files, and a
+     count restarting from zero would look like the scan going backwards. *)
   | Comparing_with_baseline
-  (* Targets and interfile rules are counted as one, though a rule is by far
-     the longer unit: they run together in one pool from the start, so any
-     split leaves whichever half is not on show looking stalled. One count
-     advances unevenly, but the unevenness is there between one interfile
-     rule and the next anyway. *)
+  (* Targets and interfile rules are counted together, although one
+     interfile rule takes far longer than one target: they run in one pool
+     from the start, so a count that is not shown would look stalled. The
+     single count advances unevenly, as a count of interfile rules alone
+     would. *)
   | Scanning of { total : int; completed : int Atomic.t }
 
 type t = {
-  (* replaced whole by [set_phase], so that the domains finishing work read
-     either the old phase or the new one *)
   phase : phase Atomic.t;
   stop : bool Atomic.t;
-  (* a Ctrl-Z, which the loop serves between two frames *)
+  (* set by the SIGTSTP handler; [handle_suspension] acts on it between two
+     redraws *)
   suspend_requested : bool Atomic.t;
-  (* Whether the frames are drawn: false once the bar is put away for good,
-     by a Ctrl-Z or a signal ending the scan. Messages are still written
-     after a Ctrl-Z, with no bar under them. *)
+  (* False once [stop_drawing] has run, after a Ctrl-Z or a signal that ends
+     the scan. Messages are still written after a Ctrl-Z, without a status
+     line under them. *)
   drawing : bool Atomic.t;
-  (* the log messages waiting for the next frame, each whole lines *)
+  (* log messages waiting for the next redraw, each one or more complete
+     lines *)
   messages : string Saturn.Single_consumer_queue.t;
-  (* $COLUMNS, if set: see [columns_from_env] *)
   columns_from_env : int option;
-  (* held around every write to [terminal], so that a signal handler can let
-     one already under way finish *)
+  (* held around every write to [terminal], so that a signal handler can wait
+     for a write in progress to finish *)
   write_mutex : Mutex.t;
-  (* A copy of stderr as it was when the bar started, which reaches the
-     terminal even while stderr is redirected into a capture. Never closed:
-     a signal handler already running on another thread could otherwise
-     write to it after [finish], by then perhaps another file's descriptor.
-     It is one descriptor per run, and not inherited by commands. *)
+  (* A duplicate of the stderr descriptor taken at [create], which reaches
+     the terminal even while stderr is redirected into a capture. Never
+     closed: a signal handler running on another thread could otherwise write
+     to it after [finish], when the number may refer to another file. One
+     descriptor per run, not inherited by child processes. *)
   terminal : Unix.file_descr;
   mutable thread : Thread.t;
-  (* the behaviours of the signals the bar handles while it is up, from
-     before it started; put back by [finish] *)
+  (* the signal behaviours that [create] replaced, restored by [finish] *)
   mutable previous_signals : (int * Sys.signal_behavior) list;
 }
 
@@ -85,53 +75,45 @@ let show_cursor_str = "\027[?25h"
 let bold_str = "\027[1m"
 let faint_str = "\027[2m"
 
-(* "normal intensity": closes bold and faint alike *)
+(* normal intensity: ends both bold and faint *)
 let normal_str = "\027[22m"
 
-(* A bar only means something once there are enough targets for it to move;
- * below that it would jump from empty to full and read as a flicker. *)
+(* Below this total the progress bar would jump from empty to full, so only
+ * the counts are shown. *)
 let min_targets_for_bar = 200
 
-(* Dots read as a row of beads rather than as a filled rule, so the track
- * shows where it ends without brackets around it, and carries its meaning
- * with fewer cells than a solid bar needs. *)
 let bar_width = 30
 let filled_dot = "●"
 let empty_dot = "·"
 
-(* The spinner and the space after it, which render_frame puts before
-   everything below. *)
+(* the spinner and the space after it, which [render_frame] puts before the
+   text *)
 let spinner_cols = 2
 
-(* Narrower than this and nothing the bar can say is worth saying, so a
-   width below it is taken for a terminal that does not know its own size
-   rather than for a very small one. A pty whose size was never set reports
-   zero, and COLUMNS=0 turns up in CI and under script(1). *)
+(* A width below this is taken as unknown rather than as a very narrow
+   terminal: a pty whose size was never set reports zero, and COLUMNS=0
+   occurs in CI and under script(1). *)
 let min_sensible_columns = 10
 
-(* How long [finish] gives a terminal behind on its reading to take the
-   sequence that puts the cursor back. Long enough for a pane that is
-   catching up, short enough not to read as a hang. *)
+(* Seconds [finish] waits for a terminal that is behind on reading to accept
+   the sequence that shows the cursor again. *)
 let cursor_restore_wait = 2.0
 
-(* The width of the terminal, asked of whichever descriptor will answer.
-   The bar draws on stderr, but nothing we depend on will report the size
-   of a descriptor we name: Terminal_size asks about stdout, ANSITerminal
-   about stdin. With stdout redirected -- > out, | less -- the first has
-   nothing to say, and the bar would then draw at its full width and wrap
-   a narrower window, which the one-row erase cannot clean up. Stdin is
-   still the terminal in that case, and is the same terminal as stderr in
-   any arrangement worth serving, so it answers for it.
+(* The width of the terminal, from whichever descriptor reports it. The
+   status line is drawn on stderr, but no library in use reports the size of
+   a given descriptor: Terminal_size queries stdout, ANSITerminal stdin. With
+   stdout redirected (> out, | less) the first returns nothing, and the
+   status line would be drawn at full width and wrap in a narrower window,
+   which the one-row erase does not clear. Stdin is still the terminal in
+   that case, and the same terminal as stderr when a person runs the scan.
 
-   The real width, not Findings_layout.text_width, which floors at 40 and so
-   would claim room a narrow terminal does not have. Read for every frame,
-   so that resizing a window is picked up without watching for SIGWINCH;
-   $COLUMNS, [from_env], wins when it is set, and is read once, by
-   [columns_from_env]. [None] means "no idea", which costs the dotted bar
-   but not the counts; see [counter]. *)
+   The actual width, not Findings_layout.text_width, which has a floor of
+   40. Read on every redraw, so that a resized window takes effect without a
+   SIGWINCH handler; [from_env], from $COLUMNS, takes precedence when set.
+   [None] means unknown, which drops the dotted progress bar but not the
+   counts; see [counter]. *)
 let terminal_columns ~(from_env : int option) : int option =
-  (* raises, rather than returning an option, when stdin is not a terminal
-     and on a platform its stub cannot serve *)
+  (* raises when stdin is not a terminal and on an unsupported platform *)
   let from_stdin () : int option =
     match ANSITerminal.size () with
     | width, _height -> Some width
@@ -149,21 +131,20 @@ let terminal_columns ~(from_env : int option) : int option =
   | Some w when w >= min_sensible_columns -> Some w
   | _ -> None
 
-(* $COLUMNS, read when the bar starts rather than for every frame: the
-   environment does not change during the run, and the lookup goes through
-   Str (Opengrep_env's alias of SEMGREP_ names), which the loop must not
-   use. Str keeps the last match in state its domain shares with every
-   thread on it, and the main thread's own "search, then read the groups"
-   -- Common.(=~) then Common.matched1 -- would find it overwritten. *)
+(* $COLUMNS, read once at [create] rather than on every redraw: the lookup
+   goes through Str (the SEMGREP_ alias in Opengrep_env), which the drawing
+   thread must not use. Str keeps the last match in state shared by every
+   thread of a domain, so a match on the drawing thread would overwrite the
+   groups that the main thread reads between Common.(=~) and
+   Common.matched1. *)
 let columns_from_env () : int option =
   Opengrep_env.getenv_opt "COLUMNS"
   |> Option.map String.trim
   |> Fun.flip Option.bind int_of_string_opt
 
-(* $NO_COLOR and --force-color are resolved once into the console's
-   highlight setting; the bar follows it as the rest of the report does.
-   Only the styling goes: the erase and the spinner are not colour, and a
-   reader who turned colour off still wants to see that work is happening. *)
+(* The console's highlight setting, which resolves $NO_COLOR and
+   --force-color. With highlighting off only the styling is dropped: the
+   erase and the spinner remain. *)
 let styling_on () : bool =
   match Console.get_highlight () with
   | Console.On -> true
@@ -193,25 +174,23 @@ let progress_bar ~(width : int) ~(filled : int) ~(total : int) : string =
 let titled (s : string) : string =
   if styling_on () then bold_str ^ s ^ normal_str else s
 
-(* A line wider than the terminal wraps, and the erase before each frame
-   clears one row, so the rows above it would be left behind as the bar
-   redrew. Hence three widths: the bar, then the counts alone, then the
-   counts clipped -- the numbers are what carry the meaning. *)
+(* A line wider than the terminal wraps, and the erase before each redraw
+   clears only one row, so the rows above would remain on screen. Hence
+   three widths: the progress bar with the counts, the counts alone, and the
+   counts clipped. *)
 let counter ~(title : string) ~(with_bar : bool) ~(done_ : int) ~(total : int)
     ~(columns : int option) : string =
   let pct = if total > 0 then done_ * 100 / total else 0 in
   let numbers = Printf.sprintf "%d/%d (%d%%)" done_ total pct in
   let room_for (cols : int) : bool =
     match columns with
-    | None -> true (* no terminal to ask: behave as it always did *)
+    | None -> true (* unknown width: the counts are not clipped *)
     | Some available -> cols <= available
   in
-  (* The bar is the widest of the three and the one worth giving up when
-     nothing will say how wide the terminal is. The counts are short enough
-     to risk; a wrapped bar is not, since the row it spills onto outlives
-     the one-row erase and stays on the screen. Every ordinary run answers
-     through one descriptor or another, so this is the redirected-stdout,
-     redirected-stdin case and no other. *)
+  (* The progress bar is drawn only at a known width: a wrapped progress bar
+     leaves a row that the one-row erase does not clear, while the counts
+     alone are short enough to risk. The width is unknown when both stdout
+     and stdin are redirected. *)
   let known_room_for (cols : int) : bool =
     Option.is_some columns && room_for cols
   in
@@ -232,8 +211,8 @@ let counter ~(title : string) ~(with_bar : bool) ~(done_ : int) ~(total : int)
           (min (String.length numbers) (max 0 (available - spinner_cols)))
     | None -> numbers
 
-(* Clipped before the escapes go on, so that a narrow terminal never cuts
-   one in half. *)
+(* Clipped before the escapes are added, so that clipping never cuts an
+   escape sequence. *)
 let label ~(columns : int option) (s : string) : string =
   let s =
     match columns with
@@ -251,9 +230,9 @@ let phase_to_string ~(columns : int option) (phase : phase) : string =
   | Comparing_with_baseline -> label ~columns "Comparing with baseline..."
   | Scanning { total; completed } ->
       let done_ = Atomic.get completed in
-      (* Every unit of work is done, but the engine is still gathering what
-         they found, which with many findings takes a while: a bar held at
-         100% would read as a hang. *)
+      (* Every work item is done, but the engine still collects the results,
+         which takes time with many findings; a progress bar held at 100%
+         would look like a hang. *)
       if total > 0 && done_ >= total then label ~columns "Processing results..."
       else if total > 0 then
         counter ~title:"Scanning:"
@@ -274,11 +253,10 @@ let render_frame ~(frame_index : int) ~(columns : int option) (phase : phase) :
 (* Writing *)
 (*****************************************************************************)
 
-(* All of [s], or as much as the terminal took before failing. It never
-   raises: a terminal that has gone away -- a closed window, a dropped ssh
-   session -- makes the write fail, and losing the bar, or a message that
-   had nowhere to go, costs nothing next to a scan stopped by it. A signal
-   interrupting the write does not cut it short. *)
+(* Writes all of [s], or as much as the terminal accepts before an error,
+   and never raises: a terminal that has gone away (a closed window, a
+   dropped ssh session) makes the write fail, and the scan must not stop for
+   it. A write interrupted by a signal is resumed. *)
 let write_all (terminal : Unix.file_descr) (s : string) : unit =
   let rec write_from (from : int) : unit =
     if from < String.length s then
@@ -291,17 +269,18 @@ let write_all (terminal : Unix.file_descr) (s : string) : unit =
   try write_from 0 with
   | Unix.Unix_error _ -> ()
 
-(* [s] if the terminal can take it within [wait] seconds, else nothing.
+(* Writes [s] if the terminal accepts it within [wait] seconds, else
+   nothing.
 
-   A frame is dropped when the terminal cannot take it. A pty whose reader
-   has stopped -- Ctrl-S, a paused tmux pane, a stalled ssh link -- fills
-   its buffer, and a write then blocks; [finish] would join a thread that
-   never wakes, and a decorative line would have stopped the scan. A
-   dropped frame costs nothing: the next one redraws the whole line.
+   A redraw is dropped when the terminal is not ready. A pty whose reader
+   has stopped (Ctrl-S, a paused tmux pane, a stalled ssh link) fills its
+   buffer, and a write then blocks; [finish] would join a thread that never
+   returns, and the status line would stop the scan. A dropped redraw is
+   harmless: the next one redraws the whole line.
 
-   The cursor is put back through here too, with a wait, so that a terminal
-   briefly behind on its reading still gets it, while one that has stopped
-   reading for good costs a bounded pause and not a scan that never ends. *)
+   The sequence that shows the cursor again also goes through here, with a
+   wait, so that a terminal briefly behind on reading still receives it,
+   while one that has stopped reading costs a bounded pause. *)
 let write_if_ready ?(wait : float = 0.) (terminal : Unix.file_descr)
     (s : string) : unit =
   match Unix.select [] [ terminal ] [] wait with
@@ -309,17 +288,17 @@ let write_if_ready ?(wait : float = 0.) (terminal : Unix.file_descr)
   | _, [], _ -> ()
   | exception Unix.Unix_error _ -> ()
 
-(* The messages queued since the last frame, in the order they were
-   logged. The loop is the queue's only consumer, then [finish], once the
-   loop has stopped. *)
+(* The messages queued since the last redraw, in the order they were
+   logged. The drawing thread is the queue's only consumer until it stops,
+   and [finish] after. *)
 let rec take_messages (bar : t) (taken : string list) : string list =
   match Saturn.Single_consumer_queue.pop_opt bar.messages with
   | Some message -> take_messages bar (message :: taken)
   | None -> List.rev taken
 
-(* The bar off the screen for good: erased, [messages] written in its place,
-   and the cursor shown again. Called with [write_mutex] held. *)
-let put_away (bar : t) ~(wait : float) (messages : string list) : unit =
+(* Erases the status line for good, writes [messages] in its place and shows
+   the cursor again. Called with [write_mutex] held. *)
+let stop_drawing (bar : t) ~(wait : float) (messages : string list) : unit =
   let was_drawing = Atomic.exchange bar.drawing false in
   write_all bar.terminal
     ((if was_drawing then erase_line_str else "") ^ String.concat "" messages);
@@ -329,27 +308,29 @@ let put_away (bar : t) ~(wait : float) (messages : string list) : unit =
 (* The loop *)
 (*****************************************************************************)
 
-(* Ctrl-Z. The signal handler only asks, and the loop answers between two
-   frames, when no frame can be half written: it puts the bar away with the
-   messages queued until then, and stops the process as the signal would
-   have. The scan goes on after fg or bg, its messages still written but
-   with no bar under them: in the background the bar would draw over the
-   shell, and nothing here can tell the two apart. *)
-let serve_suspension (bar : t) : unit =
+(* Ctrl-Z. The SIGTSTP handler only sets [suspend_requested]; the drawing
+   thread acts on it between two redraws, when no redraw is half written:
+   it stops drawing, writes the messages queued until then, and stops the
+   process as the signal would have. After fg or bg the scan continues and
+   its messages are written without a status line: in the background the
+   status line would be drawn over the shell, and the process cannot tell
+   the two cases apart. *)
+let handle_suspension (bar : t) : unit =
   if Atomic.exchange bar.suspend_requested false then begin
     Mutex.protect bar.write_mutex (fun () ->
-        put_away bar ~wait:0.5 (take_messages bar []));
+        stop_drawing bar ~wait:0.5 (take_messages bar []));
     Sys.set_signal Sys.sigtstp Sys.Signal_default;
     ignore (Thread.sigmask Unix.SIG_UNBLOCK [ Sys.sigtstp ] : int list);
     Unix.kill (Unix.getpid ()) Sys.sigtstp
   end
 
-(* One frame: the messages queued since the last, then the bar. The
-   messages are never dropped: the loop waits for the terminal to take
-   them. A terminal that has stopped reading (Ctrl-S, a paused pane) holds
-   up the bar, the messages queued behind these, and [finish], which joins
-   the loop -- but not the scan, as whoever logs only queues. Writing the
-   messages directly would block the scan instead. *)
+(* One redraw: the messages queued since the last one, then the status line.
+   Messages are never dropped: the drawing thread waits for the terminal to
+   accept them. A terminal that has stopped reading (Ctrl-S, a paused pane)
+   holds back the status line, the messages queued after these, and
+   [finish], which joins the drawing thread, but not the scan, since a
+   thread that logs only queues. Writing the messages directly would block
+   the scan instead. *)
 let draw (bar : t) ~(frame_index : int) : unit =
   let messages = take_messages bar [] in
   let frame =
@@ -361,7 +342,7 @@ let draw (bar : t) ~(frame_index : int) : unit =
     else None
   in
   Mutex.protect bar.write_mutex (fun () ->
-      (* read again: a signal may have put the bar away meanwhile *)
+      (* read again: a signal handler may have stopped the drawing meanwhile *)
       let frame = if Atomic.get bar.drawing then frame else None in
       match messages with
       | [] -> Option.iter (write_if_ready bar.terminal) frame
@@ -377,7 +358,7 @@ let render_loop (bar : t) : unit =
       if Atomic.get bar.drawing then write_if_ready bar.terminal hide_cursor_str);
   let rec loop (frame_index : int) : unit =
     if not (Atomic.get bar.stop) then begin
-      serve_suspension bar;
+      handle_suspension bar;
       draw bar ~frame_index;
       Thread.delay 0.05;
       loop (frame_index + 1)
@@ -389,55 +370,50 @@ let render_loop (bar : t) : unit =
 (* Entry points *)
 (*****************************************************************************)
 
-(* A terminal that says it cannot move the cursor, or says nothing: every
-   terminal emulator on Unix sets $TERM, so a pty without it is not one.
-   Emacs's shell and compilation buffers, and some CI runners, run the scan
-   on such a pty, which would show every frame as a line of its own,
-   escapes and all.
+(* $TERM unset, "dumb" or "unknown". Every terminal emulator on Unix sets
+   $TERM, so a pty without it is not a terminal emulator. Emacs's shell and
+   compilation buffers, and some CI runners, run the scan on such a pty,
+   which would show every redraw as a separate line, escapes included.
    python: rich's Console.is_dumb_terminal, which is the first case *)
 let is_dumb_terminal () : bool =
   match Opengrep_env.getenv_opt "TERM" with
   | Some term -> List.mem (String.lowercase_ascii term) [ "dumb"; "unknown" ]
   | None -> true
 
-(* $CI, which CI services set, and some of them on a pty: the convention
-   for "no one is watching, do not animate". "false" and "0" are how it is
-   turned off by hand. *)
+(* $CI, which CI services set, some of them on a pty. The values "false" and
+   "0" disable it. *)
 let is_ci () : bool =
   match Opengrep_env.getenv_opt "CI" with
   | Some value -> not (List.mem (String.lowercase_ascii value) [ "false"; "0" ])
   | None -> false
 
-(* The bar is drawn on stderr, so it needs a terminal there, one that can
- * redraw a line, in a run someone is watching. Not on Windows, where the
- * classic console prints the escapes as text unless the program turns
- * their processing on, which nothing here does. *)
+(* stderr must be a terminal that can redraw a line, outside CI. Not on
+ * Windows, where the classic console prints the escapes as text unless the
+ * program enables their processing, which opengrep does not. *)
 let should_enable () : bool =
   Sys.unix
   && !ANSITerminal.isatty Unix.stderr
   && (not (is_dumb_terminal ()))
   && not (is_ci ())
 
-(* Ctrl-C, SIGTERM, a closed terminal (SIGHUP) and Ctrl-\ (SIGQUIT) kill
-   the process where it stands, and with it the [finish] that would erase
-   the bar and show the cursor again: the shell's prompt would come back
-   with no cursor, after the last frame. While the bar is up they do that
-   much themselves, and then kill the process as the signal would have, so
-   that a shell still sees an interrupted scan. The messages still queued
-   are dropped: the scan is being interrupted. That is a frame's worth
-   while the terminal reads, and everything held up by one that has
-   stopped, which could not have been written either.
+(* Ctrl-C, SIGTERM, a closed terminal (SIGHUP) and Ctrl-\ (SIGQUIT) end the
+   process at once, without the [finish] that erases the status line and
+   shows the cursor: the shell prompt would return without a cursor, after
+   the last redraw. While the status line is drawn, the handler does both,
+   then kills the process with the same signal, so that the shell still sees
+   an interrupted scan. The messages still queued are dropped: at most one
+   redraw interval of messages while the terminal reads, and everything held
+   back by one that has stopped, which could not be written either.
 
-   The loop keeps drawing on another thread, so the bar is put away first,
-   and a write already under way is let finish by waiting for
-   [write_mutex], which is then kept so that nothing is written after the
-   sequence. Both waits are bounded, the one for the mutex and the one for
-   the terminal to take the sequence: the thread the signal interrupted may
-   be the one holding the mutex, and a terminal that has stopped reading
+   The drawing thread runs on, so the handler first stops the drawing, then
+   waits for a write in progress by taking [write_mutex], which it keeps so
+   that nothing is written after the sequence. Both waits are bounded, for
+   the mutex and for the terminal to accept the sequence: the interrupted
+   thread may hold the mutex, and a terminal that has stopped reading
    (Ctrl-S, a paused pane) must not keep a signal from ending the scan.
 
-   Each signal comes with the status a shell reports for a process it
-   killed, 128 plus its number. *)
+   Each signal comes with the exit status a shell reports for a process it
+   killed, 128 plus the signal number. *)
 let signals_ending_the_scan =
   [ (Sys.sighup, 129); (Sys.sigint, 130); (Sys.sigquit, 131); (Sys.sigterm, 143) ]
 
@@ -457,26 +433,24 @@ let restore_terminal_on (bar : t) ((signal : int), (killed_status : int)) :
         write_if_ready ~wait:0.5 bar.terminal (erase_line_str ^ show_cursor_str);
       Sys.set_signal signal Sys.Signal_default;
       (* the signal is blocked on the thread that handles it, which may be
-         the only one that could take it *)
+         the only thread that can receive it *)
       ignore (Thread.sigmask Unix.SIG_UNBLOCK [ signal ] : int list);
       Unix.kill (Unix.getpid ()) signal;
-      (* The signal ends the process, but not always before [kill] returns
-         to this thread, which must not carry on meanwhile: it may hold the
-         mutex that its own loop is about to take. A process still here a
-         second later ends with the status the signal would have given.
-         Not exit: from a signal handler it must not run the at_exit
-         handlers, [finish] among them. *)
+      (* The signal does not always end the process before [kill] returns,
+         and this thread must not continue meanwhile: it may hold the mutex
+         that its own loop is about to take. A process still alive a second
+         later exits with the status the signal would have given. Not
+         [exit]: a signal handler must not run the at_exit handlers, [finish]
+         among them. *)
       Unix.sleepf 1.0;
       (* nosemgrep: forbid-exit *)
       Unix._exit killed_status)
 
-(* A signal the process was started with ignored stays ignored: a scan run
-   in the background by a shell without job control, or under nohup, is
-   meant to survive it. [Sys.signal] reports a behaviour only by replacing
-   it, so the ignore goes in first. A signal arriving in the moment before
-   the handler replaces the ignore is lost rather than handled, which is
-   the safe side to err on. The behaviour replaced is returned, for [finish]
-   to put back. *)
+(* [Sys.signal] returns the previous behaviour only by replacing it, so
+   Signal_ignore goes in first; a signal that arrives before the handler
+   replaces it is ignored. A signal ignored at startup stays ignored, as a
+   scan run under nohup or by a shell without job control expects. Returns
+   the replaced behaviour, which [finish] restores. *)
 let install_unless_ignored ((signal : int), (behavior : Sys.signal_behavior))
     : (int * Sys.signal_behavior) option =
   match Sys.signal signal Sys.Signal_ignore with
@@ -485,26 +459,23 @@ let install_unless_ignored ((signal : int), (behavior : Sys.signal_behavior))
       Sys.set_signal signal behavior;
       Some (signal, previous)
 
-(* Stopping joins the thread, so the work happens once however often this
- * is called: the caller stops the bar before printing its report, and an
- * enclosing handler stops it again on the way out. *)
 let finish (bar : t) : unit =
   if not (Atomic.exchange bar.stop true) then begin
     Thread.join bar.thread;
-    (* Diverting stops, and what is left is written, under the log mutex:
-       a message from another thread comes either before, queued and
-       written here, or after, straight to stderr on a line the bar has
-       left. *)
-    Logs_.undivert_stderr (fun () ->
+    (* The redirection ends and the remaining messages are written under the
+       log mutex: a message from another thread comes either before, queued
+       and written here, or after, directly to stderr on a line that the
+       status line no longer occupies. *)
+    Logs_.restore_stderr (fun () ->
         Mutex.protect bar.write_mutex (fun () ->
-            put_away bar ~wait:cursor_restore_wait (take_messages bar [])));
-    (* last, so that a signal arriving until now still finds the terminal
-       put back *)
+            stop_drawing bar ~wait:cursor_restore_wait (take_messages bar [])));
+    (* last, so that a signal that arrives before this point still restores
+       the terminal *)
     bar.previous_signals
     |> List.iter (fun ((signal : int), (behavior : Sys.signal_behavior)) ->
            Sys.set_signal signal behavior);
-    (* a Ctrl-Z the loop stopped before serving: there is no bar left to
-       put away, so the process only has to stop *)
+    (* a Ctrl-Z that the drawing thread did not handle before it stopped:
+       there is no status line left to erase, so the process only stops *)
     if Atomic.exchange bar.suspend_requested false then begin
       ignore (Thread.sigmask Unix.SIG_UNBLOCK [ Sys.sigtstp ] : int list);
       Unix.kill (Unix.getpid ()) Sys.sigtstp
@@ -527,12 +498,12 @@ let create (initial_phase : phase) : t option =
             columns_from_env = columns_from_env ();
             write_mutex = Mutex.create ();
             terminal;
-            (* replaced below; Thread.t has no other neutral value *)
+            (* replaced below; Thread.t has no placeholder value *)
             thread = Thread.self ();
             previous_signals = [];
           }
         in
-        (* before the loop starts, whose first frame hides the cursor *)
+        (* installed before the drawing thread starts and hides the cursor *)
         bar.previous_signals <-
           ( Sys.sigtstp,
             Sys.Signal_handle
@@ -541,38 +512,38 @@ let create (initial_phase : phase) : t option =
              |> List_.map (fun ((signal : int), (status : int)) ->
                     (signal, restore_terminal_on bar (signal, status))))
           |> List_.filter_map install_unless_ignored;
-        Logs_.divert_stderr (Saturn.Single_consumer_queue.push bar.messages);
+        Logs_.redirect_stderr (Saturn.Single_consumer_queue.push bar.messages);
         match Thread.create render_loop bar with
         | thread ->
             bar.thread <- thread;
-            (* For a run that ends by [exit], without the callers' finally.
-               [finish] takes the log mutex, so an exit while logging -- in
-               a printer, or under Logs_.logs_mutex -- would fail here;
-               nothing exits there. *)
+            (* For a run that ends by [exit], which skips the callers'
+               finally. [finish] takes the log mutex, so an exit while
+               logging (in a printer, or under Logs_.logs_mutex) would fail
+               here; no code exits there. *)
             Stdlib.at_exit (fun () -> finish bar);
             Some bar
-        (* A process at its limit of threads costs the bar, not the scan.
-           Thread.create raises Out_of_memory rather than Sys_error when the
-           cause is ENOMEM. *)
+        (* A process at its thread limit runs without a status line.
+           Thread.create raises Out_of_memory rather than Sys_error on
+           ENOMEM. *)
         | exception ((Sys_error _ | Out_of_memory) as exn) ->
-            (* what was logged meanwhile is written as it would have been
-               without a bar *)
-            Logs_.undivert_stderr (fun () ->
+            (* the messages logged meanwhile are written as without a status
+               line *)
+            Logs_.restore_stderr (fun () ->
                 write_all terminal (String.concat "" (take_messages bar [])));
             bar.previous_signals
             |> List.iter
                  (fun ((signal : int), (behavior : Sys.signal_behavior)) ->
                    Sys.set_signal signal behavior);
             Logs.debug (fun m ->
-                m "no status bar, its thread did not start: %s"
+                m "no status line, its thread did not start: %s"
                   (Printexc.to_string exn));
             None)
 
 let set_phase (bar : t) (new_phase : phase) : unit =
   Atomic.set bar.phase new_phase
 
-(* Called from whichever domain finished the unit of work. A tick landing
-   on a phase about to be replaced is one frame's worth of undercount. *)
+(* A count that reaches a phase about to be replaced is lost, which shows
+   for at most one redraw interval. *)
 let notify_work_item_done (bar : t) : unit =
   match Atomic.get bar.phase with
   | Scanning { completed; _ } -> Atomic.incr completed
@@ -581,3 +552,19 @@ let notify_work_item_done (bar : t) : unit =
   | Building_interfile_graph
   | Comparing_with_baseline ->
       ()
+
+let progress_hook (bar : t option) : Core_scan_config.progress -> unit =
+  match bar with
+  | None -> fun (_ : Core_scan_config.progress) -> ()
+  | Some (bar : t) -> (
+      function
+      | Core_scan_config.Target_done
+      | Core_scan_config.Interfile_rule_done ->
+          notify_work_item_done bar
+      | Core_scan_config.Analyzing_targets -> set_phase bar Analyzing_targets
+      | Core_scan_config.Building_interfile_graph ->
+          set_phase bar Building_interfile_graph
+      | Core_scan_config.Scanning_started { targets; interfile_rules } ->
+          set_phase bar
+            (Scanning
+               { total = targets + interfile_rules; completed = Atomic.make 0 }))

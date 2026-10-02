@@ -1,5 +1,5 @@
 (*
-   Unit tests for the lock of our Logs_ module and for diverting its stderr
+   Unit tests for the lock of our Logs_ module and for redirecting its stderr
    reporter.
 *)
 

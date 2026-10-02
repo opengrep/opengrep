@@ -3,15 +3,15 @@ module OutJ = Semgrep_output_v1_t
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* A plain report: the shape of the vivid one without its bars and its
- * colour.
+(* A plain report: the structure of the vivid one without its bars and most
+ * of its colour.
  *
- * A file is named once above its findings; a finding is a severity, a rule
- * and a message, with the code under them in a thin gutter. Colour marks
- * only the severity and the rule id, and the code sits four columns from
- * the margin rather than twelve.
+ * Each file is printed once above its findings; a finding is a severity, a
+ * rule id and a message, with the code under them in a thin gutter. Colour
+ * marks only the severity and the rule id, and the code starts four columns
+ * from the margin rather than twelve.
  *
- * Only the look is here: Skin_common draws the report with it.
+ * This module defines the look; Skin_common draws the report with it.
  *)
 
 module M = Skin_model
@@ -20,28 +20,26 @@ module M = Skin_model
 (* Measurements *)
 (*****************************************************************************)
 
-(* The message and the gutter start here. Findings_layout.chunk_indentation
-   already adds two columns of its own (the ones rich added in the python
-   wrapper), so an indent of 0 there lands exactly here. *)
+(* The column of the message and the gutter. Findings_layout.chunk_indentation
+   adds two columns of its own (those rich added in the python wrapper), so
+   an indent of 0 there starts here. *)
 let indent_size = 2
 let indent = String.make indent_size ' '
 
-(* The code and everything that belongs to it — the snippet, its trace, the
-   fix — sit one level deeper than the heading and the message. *)
+(* The code and its parts (the snippet, its trace, the fix) are one level
+   deeper than the heading and the message. *)
 let body_size = indent_size + 2
 let body = String.make body_size ' '
 
-(* Findings_layout.chunk_indentation adds console_indent_size columns of its
-   own, so a gutter asking for this much lands at body_size. *)
+(* Findings_layout.chunk_indentation adds console_indent_size columns, so a
+   gutter with this indent starts at body_size. *)
 let gutter_indent = body_size - Findings_layout.console_indent_size
 
-(* " │ " between the line number and the code *)
 let separator = " │ "
 
-(* A located line of a trace sits under the file name that introduces it,
-   which Findings_layout.esc_prefix indents by two columns. *)
+(* A located line of a trace is under the path printed before it, which
+   Findings_layout.esc_prefix indents by two columns. *)
 let trace_number_indent = "  "
-(* derived, so that changing [separator] moves the gutter with it *)
 let separator_width = Utf8.length separator
 
 let from_label = "from: "
@@ -96,7 +94,6 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
     pp_more_lines =
       (fun ~digits:_ ppf (txt : string) ->
         Fmt.pf ppf "%a@." Fmt.(styled (`Fg `Cyan) string) txt);
-    (* labelled as the fix is, so the two read as the same kind of aside *)
     pp_from_label = (fun ppf -> Fmt.string ppf from_label);
     from_label_width = String.length from_label;
     trace =
@@ -118,8 +115,8 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
 (* Around the findings *)
 (*****************************************************************************)
 
-(* A deep path is wrapped rather than shortened: it is what a reader opens,
-   and the report has no other copy of it. *)
+(* A long path is wrapped rather than shortened, since the reader opens it
+   and the report prints it only here. *)
 let pp_file_header (ctx : Skin.ctx) ppf (path : string) : unit =
   Findings_layout.wrap_lines ~filler:Textwrap
     ~width:(Findings_layout.safe_width ctx.width) ~initial_indent:0
@@ -128,8 +125,8 @@ let pp_file_header (ctx : Skin.ctx) ppf (path : string) : unit =
          Fmt.pf ppf "%a@." Fmt.(styled `Bold string) txt);
   Fmt.pf ppf "@."
 
-(* the heading of a ci section: nothing is repeated on every finding, as
-   the section it sits in already says which kind it is *)
+(* the heading of a ci section; the findings under it carry no blocking
+   mark of their own *)
 let pp_section ppf (title : string) (style : Fmt.style) (count : int) : unit =
   Fmt.pf ppf "%a %a@.@."
     Fmt.(styled style string)
@@ -137,13 +134,13 @@ let pp_section ppf (title : string) (style : Fmt.style) (count : int) : unit =
     Fmt.(styled `Faint string)
     (Printf.sprintf "· %s" (String_.unit_str count "finding"))
 
-(* what 'opengrep ci' runs in, stated in one line rather than a block *)
+(* the environment of an 'opengrep ci' run, on one line *)
 let pp_ci_environment (_ctx : Skin.ctx) ppf (env : M.Start.ci_env) : unit =
   Fmt.pf ppf "opengrep %s on OCaml %s · %s · %s@." env.version
     env.ocaml_version env.environment env.event_name
 
-(* A --baseline-commit scan states its plan twice; the second is the
-   replay, and says so. *)
+(* A --baseline-commit scan prints two plans; the second, of the baseline
+   scan, starts with "baseline". *)
 let pp_plan (run : M.Plan.run) ppf (counts : (string * string) option) : unit
     =
   let prefix =
@@ -155,7 +152,7 @@ let pp_plan (run : M.Plan.run) ppf (counts : (string * string) option) : unit
   | None -> Fmt.pf ppf "%snothing to scan" prefix
   | Some (files, rules) -> Fmt.pf ppf "%s%s · %s" prefix files rules
 
-(* "in 0 files" says nothing; a clean scan just says so *)
+(* "no findings" rather than "0 findings in 0 files" *)
 let pp_tally ppf (t : M.Result.tally) : unit =
   if Int.equal t.findings 0 then Fmt.pf ppf "no findings"
   else
@@ -184,11 +181,11 @@ let look : Skin_common.look =
 (* The skin *)
 (*****************************************************************************)
 
-let doc = "A plain report: no boxes, and colour only where it names things."
+let doc = "A plain report: no boxes, and little colour."
 let on_start = Skin_common.on_start look
 let rules_status = Skin_common.rules_status
 let on_plan = Skin_common.on_plan look
 let on_result = Skin_common.on_result look
 let pp_findings = Skin_common.pp_findings look
 let pp_matches = Skin_common.pp_by_file look
-let wants_status_bar = true
+let shows_status_bar = true

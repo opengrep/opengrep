@@ -157,6 +157,7 @@ let tests (caps : Cap.all_caps) =
       Unit_jsonnet.tests (caps :> < Cap.time_limit >);
       Unit_metachecking.tests (caps :> Core_scan.caps);
       Unit_interfile.tests (caps :> Core_scan.caps);
+      Unit_core_scan.tests (caps :> Core_scan.caps);
       (* osemgrep unit tests *)
       Unit_LS.tests (caps :> Session.caps);
       (* Unit_Login.tests caps; *)
@@ -232,9 +233,8 @@ let main (caps : Cap.all_caps) : unit =
   (* Don't read ~/.gitconfig since it varies from one developer to another,
      resulting in variable output *)
   Unix.putenv "GIT_CONFIG_NOGLOBAL" "true";
-  (* The expected outputs below are the legacy report. Pinning the skin here
-     rather than on each scan keeps every test on it, including ones added
-     later, and leaves --skin free for a test that wants another. *)
+  (* The expected outputs are in the legacy skin. The variable applies to
+     every test, and a test can still select another skin with --skin. *)
   Unix.putenv "OPENGREP_SKIN" "legacy";
   Testutil_files.with_chdir project_root (fun () ->
       (* coupling: partial copy of the content of CLI.main() *)

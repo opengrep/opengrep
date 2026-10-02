@@ -107,8 +107,6 @@ let fix_head_if_github_action (caps : < Cap.exec >)
               "The GitHub event reports a pull request but no head commit; \
                leaving the checkout as it is")
 
-(* The environment the run is part of, handed to the skin rather than
-   printed here, so that --skin decides how it looks. *)
 let report_scan_environment (output_conf : Output.conf)
     (meta : Git_metadata.meta_t) : unit =
   let module Sk = (val Skins.resolve output_conf.skin : Skin.S) in

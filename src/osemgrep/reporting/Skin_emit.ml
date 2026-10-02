@@ -1,21 +1,16 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* Draws what a skin asked for.
- *
- * The skin decided the order; this only writes each piece. The chrome goes
- * through Logs, so that --quiet and --verbose keep deciding what is shown
- * and the level keeps its prefix, and so that while the status bar is up
- * it is written between two of its frames.
+(* Writes the chunks that a skin returns, in its order. The report header
+ * and footer go through Logs, so that --quiet and --verbose control what is
+ * shown, the level keeps its prefix, and while the status line is drawn
+ * they are written between two redraws.
  *)
 
-(* Whether a chunk can be shown at all. Logs drops every message
-   while logging is off, as --quiet turns it, so what only such a chunk
-   would show need not be built. *)
+(* False while logging is off (--quiet): Logs then drops every message, so a
+   chunk need not be built. *)
 let stderr_is_shown () : bool = Option.is_some (Logs.level ())
 
-(* [on_findings] runs where the skin placed Skin.Findings, i.e. where the
- * report's findings and the diagnostics that go with them belong. *)
 let emit ?(on_findings : unit -> unit = fun () -> ())
     (chunks : Skin.chunk list) : unit =
   chunks

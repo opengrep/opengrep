@@ -50,7 +50,6 @@ type conf = {
   skipped_files : bool;
   (* alt: in CLI_common.conf *)
   max_log_list_entries : int;
-  (* which skin renders the report; --skin *)
   skin : Skin.name;
   (* true for 'opengrep ci': the Text format then keeps blocking and
    * non-blocking findings in separate groups and appends the
@@ -233,8 +232,8 @@ let setup_stdout (conf : conf) : unit =
   Fmt.set_style_renderer Format.std_formatter
     (if text_colour conf ~dest:None then `Ansi_tty else `None)
 
-(* What the skins draw on. The colours and the tty were decided once, by
- * CLI_common.setup_logging, for every output of the run. *)
+(* No colour setting: CLI_common.setup_logging sets the colours and the tty
+ * once, for every output of the run. *)
 let skin_ctx ?(interfile_dedup_by = Core_match.Sink)
     ?(is_interfile = fun (_ : Rule_ID.t) -> false) (conf : conf) : Skin.ctx =
   {
@@ -261,8 +260,8 @@ let render (conf : conf) (profiler : Profiler.t)
   | Incremental -> None
   | Text ->
       let module Sk = (val Skins.resolve conf.skin : Skin.S) in
-      (* a buffer formatter carries no style renderer, which is what keeps
-         the escapes out of a file *)
+      (* a buffer formatter has no style renderer, so a file receives no
+         escapes *)
       Some
         (Fmt_.with_buffer_to_string (fun (ppf : Format.formatter) ->
              Fmt.set_style_renderer ppf

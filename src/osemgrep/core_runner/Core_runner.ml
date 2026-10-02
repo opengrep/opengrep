@@ -495,8 +495,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
     *)
     let lang_jobs = split_jobs_by_language targeting_conf valid_rules targets in
     (* the targets are those tracked by git only when git listed them and
-       its exclusions were respected; the plan is built only for a caller
-       that asks for it *)
+       its exclusions were respected *)
     on_plan
     |> Option.iter (fun (on_plan : Scan_plan.t -> unit) ->
            on_plan

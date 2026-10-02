@@ -49,7 +49,6 @@ type conf = {
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
   output_conf : Output.conf;
-  (* --no-progress-bar *)
   no_progress_bar : bool;
   incremental_output : bool;
   incremental_output_postprocess : bool;
@@ -317,7 +316,7 @@ let o_no_progress_bar : bool Term.t =
   let info =
     Arg.info [ "no-progress-bar" ]
       ~doc:
-        {|Do not draw the status bar that reports what the scan is doing.
+        {|Do not draw the status line that shows the progress of the scan.
 It is drawn only on a terminal, and not when $(b,TERM) is unset, $(b,dumb)
 or $(b,unknown), when $(b,CI) is set, on Windows, or with
 $(b,--incremental-output).|}

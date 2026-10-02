@@ -28,7 +28,6 @@ type conf = {
    * in the log output.
    *)
   max_log_list_entries : int;
-  (* which skin renders the report; --skin *)
   skin : Skin.name;
   (* true for 'opengrep ci': the Text format then keeps blocking and
    * non-blocking findings in separate groups and appends the
@@ -39,8 +38,8 @@ type conf = {
 
 val default : conf
 
-(* What a skin draws on for this run: the colours, the width and the
-   rendering options of the text report. *)
+(* The settings that a skin renders the text report with: the width and the
+   options of the text format. *)
 val skin_ctx :
   ?interfile_dedup_by:Core_match.interfile_dedup_by ->
   ?is_interfile:(Rule_ID.t -> bool) ->
@@ -65,9 +64,9 @@ val setup_stdout : conf -> unit
  *)
 val keeps_ignores : conf -> bool
 
-(* The findings and errors of a scan, made suitable for the user: nosem
-   filtering, messages, fingerprints, and the profiling times. Computes
-   nothing about the terminal, so a caller is free to render it later. *)
+(* The findings and errors of a scan in the output format: nosem filtering,
+   messages, fingerprints and profiling times. Independent of the terminal,
+   so a caller can render it later. *)
 val cli_output_of_result :
   keep_ignored:bool ->
   conf ->

@@ -7,7 +7,7 @@ val should_show_spinner : unit -> bool
   We show each frame for 1/100th of the total delay.
 *)
 val show_spinner : int -> unit
-(* Animates the line the caller has just printed, and erases it when it
-   stops, so that it reads as a status of what is happening. *)
+(* Animates the line that the caller has just printed, and erases it when
+   it stops. *)
 val spinner_async : unit -> 'a Lwt.t
 val erase_spinner : unit -> unit

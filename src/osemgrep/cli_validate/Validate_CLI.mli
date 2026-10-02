@@ -11,7 +11,7 @@ type conf = {
   core_runner_conf : Core_runner.conf;
   json : bool;
   (* the output configuration of the scan that asked for the validation, so
-   * that the document goes where -o/--output names, and the skin that states
+   * that the document goes where -o/--output names, and the skin that prints
    * the plan of the scan of the rule files *)
   output_conf : Output.conf;
   (* --force-color, which wins over $NO_COLOR like it does for a scan *)

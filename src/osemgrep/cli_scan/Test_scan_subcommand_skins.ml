@@ -2,7 +2,7 @@
 
 let t = Testo.create
 
-(* the baseline test drives git itself, which a scan does not need *)
+(* the baseline test runs git itself *)
 type caps = < Scan_subcommand.caps ; Cap.exec >
 
 module F = Testutil_files
@@ -14,23 +14,23 @@ open Test_scan_helpers
 (*****************************************************************************)
 (* End-to-end tests of the skins other than 'legacy'.
  *
- * The rest of the suite pins OPENGREP_SKIN=legacy (see Test.ml), which
- * leaves the skin a scan actually uses by default untested. These snapshots
- * are what covers 'simple' and 'vivid': the sections they emit, how they
- * group findings, and what they do with a dataflow trace.
+ * The rest of the suite sets OPENGREP_SKIN=legacy (see Test.ml), which
+ * leaves the default skin untested. These snapshots cover 'simple' and
+ * 'vivid': the sections they print, how they group findings, and their
+ * dataflow traces.
  *
  * Under Testo the captured streams are regular files, so the style renderer
- * is off and a snapshot holds no escape sequence. Colour is therefore
+ * is off and a snapshot contains no escape sequence. Colour is therefore
  * checked separately, by assertion, together with the requirement that
- * 'vivid' stay readable on structure alone once colour is gone.
+ * 'vivid' remains readable without colour.
  *)
 
 (*****************************************************************************)
 (* Fixtures *)
 (*****************************************************************************)
 
-(* Two severities, and one rule that matches twice in one file, so that a
-   skin's grouping by file and by rule both show up. *)
+(* Two severities, and one rule that matches twice in one file, so that the
+   grouping by file and by rule both appear. *)
 let two_rules =
   {|
 rules:
@@ -54,8 +54,8 @@ def g(x):
     return x == x
 |}
 
-(* a.py as it stood at the baseline commit: one of the two findings, so the
-   replay has a file to look at and its plan is not the empty one *)
+(* a.py at the baseline commit, with one of the two findings, so that the
+   baseline scan has a target and its plan is not empty *)
 let a_py_baseline = {|
 def f(a, b):
     return a + b == a + b
@@ -88,9 +88,9 @@ def go():
     sink(y)
 |}
 
-(* A -e/--pattern run builds a rule with the id "-" and the pattern text as
-   its message; neither belongs in the report. Kept to one file and one
-   match, so the snapshot is about the heading that is not there. *)
+(* A -e/--pattern run builds a rule with the id "-" and the pattern as its
+   message; the report prints neither. One file and one match, so that the
+   snapshot shows only the absence of the heading. *)
 let pattern_py = {|
 def h(y):
     print(y)
@@ -112,12 +112,12 @@ let pattern_files : F.t list = [ F.File ("p.py", pattern_py) ]
 (* Helpers *)
 (*****************************************************************************)
 
-(* The rule drawn after a file name in 'vivid' runs to the width of the
-   terminal, which Findings_layout reads once at start-up: under 'make test'
-   that is whatever window the suite was launched from. Only the presence of
-   the rule is checked, so that the snapshot is of the report and not of the
-   developer's terminal. The fixtures are short enough that nothing else
-   wraps at the narrowest width the layout allows. *)
+(* The horizontal line after a file path in 'vivid' extends to the width of
+   the terminal, which Findings_layout reads once at start-up: under 'make
+   test' that is the terminal the suite runs in. The mask keeps only the
+   presence of the line, so that the snapshot does not depend on that
+   terminal. The fixtures are short enough that nothing else wraps at the
+   narrowest width the layout allows. *)
 let mask_header_rule =
   Testo.mask_pcre_pattern ~replace:(fun (_ : string) -> "<RULE>") {|(?:\xe2\x94\x80){2,}|}
 
@@ -131,18 +131,18 @@ let normalize =
     mask_header_rule;
   ]
 
-(* [Testutil_git.mask_temp_git_hash] masks the root commit's line only, so a
-   test that commits again needs this too. It is wider than that mask and
-   subsumes it, which is why it is not in the list above: every snapshot
-   there would lose the "(root-commit)" that names the line.
+(* [Testutil_git.mask_temp_git_hash] masks only the line of the root commit,
+   so a test that commits again needs this mask too. It is wider and includes
+   the first, so it is not in the list above: every snapshot there would lose
+   the "(root-commit)" marker of the line.
    coupling: Test_scan_subcommand.normalize_multi_commit *)
 let normalize_multi_commit =
   normalize @ [ Testo.mask_line ~after:"[main " ~before:"]" () ]
 
-(* The skin comes from the environment rather than from --skin: Test.ml sets
-   OPENGREP_SKIN for the whole suite, and the flag would win over it with a
-   warning that would then be part of every snapshot. One test below covers
-   the flag, and that precedence, on its own. *)
+(* The skin is set through the environment rather than --skin: Test.ml sets
+   OPENGREP_SKIN for the whole suite, and the flag would take precedence over
+   it with a warning that every snapshot would then contain. One test below
+   covers the flag and its precedence. *)
 let with_skin (skin : string) (f : unit -> 'a) : 'a =
   Semgrep_envvars.with_envvar "OPENGREP_SKIN" skin f
 
@@ -172,10 +172,10 @@ let test_traces (caps : Scan_subcommand.caps) (skin : string) () =
       Exit_code.Check.ok
         (scan caps ~files:taint_files [ "--dataflow-traces" ]))
 
-(* --baseline-commit runs the scan twice, and each run states a plan. The
-   second is the replay against the baseline commit, and says which scan it
-   belongs to: it covers the same paths as they stood then, so its counts
-   read as a contradiction of the first without that. *)
+(* --baseline-commit runs the scan twice, and each run prints a plan. The
+   second, of the baseline scan, is marked as such: it covers the same paths
+   at the baseline commit, and without the mark its counts would appear to
+   contradict the first. *)
 let test_baseline_plan (caps : caps) (skin : string) () =
   let git (args : string list) : string =
     Git_wrapper.command (caps :> < Cap.exec >) args
@@ -217,28 +217,27 @@ let has_escapes (output : string) : bool = String_.contains ~term:"\027[" output
 (* Tests *)
 (*****************************************************************************)
 
-(* The plan's hard requirement for 'vivid': with colour off, the severity
-   stripe must survive as a character, so that the report is still readable
-   on structure alone. *)
+(* With colour off, the severity stripe of 'vivid' remains as a character,
+   so that the report stays readable. *)
 let test_vivid_degrades (caps : Scan_subcommand.caps) () =
   let plain = captured caps ~skin:"vivid" [] in
   let coloured = captured caps ~skin:"vivid" [ "--force-color" ] in
   Alcotest.(check bool) "no colour off a terminal" false (has_escapes plain);
   Alcotest.(check bool) "colour with --force-color" true (has_escapes coloured);
   Alcotest.(check bool)
-    "the stripe survives without colour" true
+    "the stripe remains without colour" true
     (String_.contains ~term:"\u{258C}" plain)
 
-(* --skin wins over OPENGREP_SKIN, which is what lets a single test ask for
-   another skin while the suite pins one. *)
+(* --skin takes precedence over OPENGREP_SKIN, so that a single test can
+   select another skin while the suite sets one. *)
 let test_flag_beats_env (caps : Scan_subcommand.caps) () =
   let output = captured caps ~skin:"legacy" [ "--skin"; "simple" ] in
   Alcotest.(check bool)
     "the legacy severity arrows are gone" false
     (String_.contains ~term:"\u{276F}\u{2771}" output)
 
-(* A skin renders the text report and nothing else. Each run gets its own
-   temporary repository, so the comparison is of the masked output. *)
+(* A skin renders only the text report. Each run has its own temporary
+   repository, so the masked outputs are compared. *)
 let test_json_unaffected (caps : Scan_subcommand.caps) () =
   let mask = Test_scan_helpers.mask_test_temp_paths () in
   let json (skin : string) = mask (captured caps ~skin [ "--json" ]) in
@@ -246,10 +245,9 @@ let test_json_unaffected (caps : Scan_subcommand.caps) () =
   Alcotest.(check string) "simple matches legacy" legacy (json "simple");
   Alcotest.(check string) "vivid matches legacy" legacy (json "vivid")
 
-(* The rule a -e/--pattern run synthesises has the id "-" and carries the
-   pattern as its message. Heading a finding with either says nothing and
-   reads as a rule the user never wrote, so no skin prints them -- while
-   the finding itself still has to be reported. *)
+(* The rule of a -e/--pattern run has the id "-" and the pattern as its
+   message. No skin prints either as a heading, which would look like a rule
+   the user never wrote, but every skin reports the finding. *)
 let test_pattern_has_no_heading (caps : Scan_subcommand.caps) () =
   [ "legacy"; "simple"; "vivid" ]
   |> List.iter (fun (skin : string) ->

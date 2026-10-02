@@ -1,10 +1,8 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* Builds the Skin_model.Plan.t the report states before the scan runs.
- *
- * The counting is done here, so that a skin receives numbers rather than
- * rules and jobs.
+(* Builds the Skin_model.Plan.t that the report prints before the scan
+ * runs, so that a skin receives counts rather than rules and jobs.
  *
  * Partially translated from semgrep_main.py (print_scan_status()) and from
  * core_runner.py (print()).
@@ -12,9 +10,8 @@
 
 module P = Skin_model.Plan
 
-(* What this module builds, named here so that a caller taking one -- the
-   core runner, whose business is not the report -- can say [Scan_plan.t]
-   rather than reach into the skins' model for it. *)
+(* An alias, so that the core runner can refer to [Scan_plan.t] rather than
+   to the skins' model. *)
 type t = P.t
 
 (*****************************************************************************)
@@ -69,11 +66,13 @@ let origin_rows (rules : Rule.t list) : P.origin_row list =
          | cmp -> cmp)
 
 (* one row per language, counting the distinct files a job scans and the
-   distinct rules it runs; sorted by files desc, rules desc, language asc *)
+   distinct rules it runs *)
 let lang_rows (lang_jobs : Lang_job.t list) : P.lang_row list =
   lang_jobs
+  (* Unpack each job, transforming xlang into its mapped language key *)
   |> List_.map (fun Lang_job.{ xlang; targets; rules } ->
          (xlang_label xlang, rules, targets))
+  (* Merge jobs by mapped language key *)
   |> Assoc.group_by (fun (xlang, _, _) -> xlang)
   |> List_.map (fun (language, xxs) ->
          let files =
@@ -89,6 +88,7 @@ let lang_rows (lang_jobs : Lang_job.t list) : P.lang_row list =
            |> Assoc.group_by Fun.id |> List.length
          in
          { P.language; rules; files })
+  (* Sort by files desc, rules desc, lang asc *)
   |> List.sort (fun (a : P.lang_row) (b : P.lang_row) ->
          match Int.compare b.files a.files with
          | 0 -> (
@@ -131,8 +131,7 @@ let of_lang_jobs ~(rules : Rule.t list) ~(num_targets : int)
     languages = languages_of lang_jobs;
     lang_rows = lang_rows lang_jobs;
     origin_rows = origin_rows rules;
-    (* The engine runs the same way for either; it is the driver that
-       knows it is replaying a baseline, and marks the plan as it goes
-       past. *)
+    (* The engine runs the same way for both scans; Scan_subcommand marks
+       the plan of the baseline scan. *)
     run = P.Current;
   }

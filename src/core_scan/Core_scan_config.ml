@@ -42,18 +42,14 @@ let pp_rule_source (fmt : Format.formatter) (x : rule_source) : unit =
 type target_source = Target_file of Fpath.t | Targets of Target.t list
 [@@deriving show]
 
-(* This is mostly the flags of the semgrep-core program.
- * LATER: should delete or merge with osemgrep Core_runner.conf
- *)
-(* What the scan is doing, for a caller that reports progress. Only the
- * engine knows how many units of work a scan really has: a target the
- * language jobs selected still drops out if no rule's [paths:] accepts it,
- * and one file can be several units when several analyzers claim it. So the
- * counts travel with [Scanning_started] rather than being guessed earlier.
+(* The phases of a scan and its completed work items, for a caller that
+ * reports progress. The counts come with [Scanning_started] because only
+ * the engine computes the number of work items: a target that the language
+ * jobs selected still drops out if no rule's [paths:] accepts it, and one
+ * file is several work items when several analyzers select it.
  *
- * Targets and interfile rules are counted apart because they are not
- * comparable units: they run in the same pool, but one interfile rule can
- * outlast every target put together. *)
+ * Targets and interfile rules are counted separately: they run in the same
+ * pool, but one interfile rule can take longer than all targets together. *)
 type progress =
   | Analyzing_targets
   | Building_interfile_graph
@@ -61,6 +57,9 @@ type progress =
   | Target_done
   | Interfile_rule_done
 
+(* This is mostly the flags of the semgrep-core program.
+ * LATER: should delete or merge with osemgrep Core_runner.conf
+ *)
 type t = {
   (* Main flags, input *)
   rule_source : rule_source;
@@ -88,14 +87,9 @@ type t = {
    * This is also now used in Runner_service.ml and Git_remote.ml.
    *)
   file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;
-  (* Called as the scan moves through its phases and once per unit of work
-   * it finishes.
-   *
-   * [Target_done] and [Interfile_rule_done] arrive from whichever domain
-   * ran the unit, so the hook must be safe to call concurrently. It must
-   * not raise either: those two are sent from the [finally] of the work
-   * item, where an exception would become [Finally_raised] and fail the
-   * unit. Counting into an atomic is the shape this expects. *)
+  (* Called at each phase change and once per completed work item. A
+   * completion is reported from the domain that finished the work item, so
+   * the hook must be safe to call concurrently, and must not raise. *)
   progress_hook : (progress -> unit) option;
   (* Limits *)
   (* maximum time to spend running a rule on a single file *)

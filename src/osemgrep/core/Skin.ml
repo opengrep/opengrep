@@ -1,19 +1,20 @@
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* What a skin is: the module that decides what a scan's report looks like.
+(* The interface of a skin: the module that renders the text report of a
+ * scan.
  *
- * A skin owns the structure of the report, not just its glyphs and colours,
- * so the driver cannot call it back for a fixed list of sections in a fixed
- * order. Instead the driver hands it data at the points of the scan where
- * something is known, and the skin answers with the pieces it wants drawn,
- * in the order it wants them. An empty list draws nothing, so a skin is free
- * to drop a section, merge two, or keep everything until the end.
+ * A skin determines the structure of the report, not only its glyphs and
+ * colours, so the driver does not call it for a fixed list of sections in a
+ * fixed order. The driver passes it data at the points of the scan where
+ * the data is available, and the skin returns the chunks to write, in its
+ * own order. An empty list writes nothing, so a skin can drop a section,
+ * merge two, or defer everything to the end.
  *
- * The pieces are documents, not effects: the driver renders them. That
- * keeps a skin a pure function of the data, which is also what lets the
- * file destinations reuse it. Repainting the terminal while the scan runs
- * is the status bar's job, which a skin asks for with wants_status_bar.
+ * The chunks are printers that the driver runs. A skin is therefore a pure
+ * function of the data, which also lets the file destinations reuse it.
+ * Redrawing the terminal while the scan runs is the job of Status_bar,
+ * which a skin enables with [shows_status_bar].
  *)
 
 (*****************************************************************************)
@@ -21,23 +22,21 @@
 (*****************************************************************************)
 
 type chunk =
-  (* A piece of the chrome around the findings, written to stderr through
-     Logs at this level, so that --quiet and --verbose keep deciding what is
-     shown; Logs.App is the level that prints without a "[LEVEL]" prefix.
+  (* Part of the report header or footer, written to stderr through Logs at
+     this level, so that --quiet and --verbose still control what is shown;
+     Logs.App prints without a "[LEVEL]" prefix.
 
-     The document is rendered inside the log message, with the log mutex
-     held. So it must not log, nor call anything that does -- which a
-     document has no reason to do, being a rendering of data the builder
-     already gathered. *)
+     The printer runs inside the log message, with the log mutex held, so it
+     must not log or call anything that logs. *)
   | Line of Logs.level * (Format.formatter -> unit)
-  (* Where the findings belong. The driver renders them at this point, in
-     whichever format was asked for, together with the diagnostics that
-     accompany them. A skin that leaves it out reports no findings at all. *)
+  (* The position of the findings. The driver renders them here, in the
+     requested format, with their diagnostics; a skin without it reports no
+     findings. *)
   | Findings
 
-(* What a skin needs to know about the terminal it draws on. *)
+(* The terminal and report settings that a skin renders with. *)
 type ctx = {
-  (* the columns the report draws within, already clamped *)
+  (* the width of the report in columns, already clamped *)
   width : int;
   (* --max-chars-per-line and --max-lines-per-finding *)
   max_chars_per_line : int;
@@ -46,11 +45,11 @@ type ctx = {
   (* 'opengrep ci' keeps blocking and non-blocking findings in separate
    * groups and appends the "RULES FIRED" sections *)
   is_ci_invocation : bool;
-  (* how findings that share a sink are grouped, which decides whether a
-     finding stands alone or heads a group listing its sources *)
+  (* how findings that share a sink are grouped, which determines whether a
+     finding stands alone or heads a group that lists its sources *)
   interfile_dedup_by : Core_match.interfile_dedup_by;
-  (* whether a rule runs across files, which is what makes the sources of a
-     shared sink worth listing *)
+  (* whether a rule runs across files; only then are the sources of a shared
+     sink listed *)
   is_interfile : Rule_ID.t -> bool;
 }
 
@@ -59,58 +58,53 @@ type ctx = {
 (*****************************************************************************)
 
 module type S = sig
-  (* what --skin says this skin looks like; Scan_CLI builds its help from
-     these, so a skin describes itself in one place only *)
+  (* the description of this skin in the --skin help, which Skin_CLI builds
+     from these *)
   val doc : string
 
-  (* before the rules are fetched: the banner, and what the rules come from *)
+  (* before the rules are fetched: the banner and the rule source *)
   val on_start : ctx -> Skin_model.Start.t -> chunk list
 
-  (* The line shown while the rules are fetched, which the spinner animates
-     and erases when the fetch ends, where there is a spinner. None for a
-     skin that shows no such line, and then there is no spinner either;
-     None off a terminal too, where nothing would erase it. *)
+  (* The line shown while the rules are fetched, which the spinner, where it
+     runs, animates and erases when the fetch ends. None for a skin without
+     such a line, and then there is no spinner; None also off a terminal,
+     where nothing would erase it. *)
   val rules_status : ctx -> Skin_model.Start.t -> string option
 
-  (* Once targeting and rule loading have paired files with rules. The
-     plan is chrome, and costs a walk of every job to build: it is not
-     built, and this is not called, while logging is off (--quiet). *)
+  (* Called once targeting and rule loading have paired targets with rules.
+     Building the plan walks every job, so it is not built, and this is not
+     called, while logging is off (--quiet). *)
   val on_plan : ctx -> Skin_model.Plan.t -> chunk list
 
-  (* The end of the scan: where the findings go, and what follows them.
-     The summary is chrome too, and stats every ignored path to build: it
-     is Summary.empty while logging is off. *)
+  (* At the end of the scan: the position of the findings and what follows
+     them. Building the summary calls stat on every ignored path, so it is
+     Summary.empty while logging is off. *)
   val on_result : ctx -> Skin_model.Result.t -> chunk list
 
-  (* The findings themselves, in the text format. Called where the skin put
-     Skin.Findings, and again for a -o/--text-output file. *)
+  (* The findings in the text format, written at Skin.Findings and again
+     for a -o/--text-output file. *)
   val pp_findings : ctx -> Semgrep_output_v1_t.cli_output Fmt.t
 
   (* The matches of one file, printed while the scan runs, for
      --incremental-output. *)
   val pp_matches : ctx -> Semgrep_output_v1_t.cli_match list Fmt.t
 
-  (* Whether this skin wants the status bar the scan draws while it works.
-     A skin that keeps the terminal quiet says no. *)
-  val wants_status_bar : bool
+  val shows_status_bar : bool
 end
 
 (*****************************************************************************)
-(* Naming *)
+(* The values of --skin *)
 (*****************************************************************************)
 
-(* A plain variant rather than a first-class module, so that it can sit in
- * the conf records, which derive show. Skins.resolve turns it into the
- * module. *)
+(* A variant rather than a first-class module, so that the conf records that
+ * carry it can derive show. Skins.resolve maps it to the module. *)
 type name =
   | Legacy
   | Simple
   | Vivid
 [@@deriving show]
 
-(* The skin a scan uses when nothing asks for another. *)
 let default : name = Simple
 
-(* what --skin accepts *)
 let all_names : (string * name) list =
   [ ("legacy", Legacy); ("simple", Simple); ("vivid", Vivid) ]

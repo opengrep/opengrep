@@ -293,9 +293,9 @@ let test_location_highlighted_per_line () =
     "dedented" "2|x = [source(]\n |    [1,]\n |[)]\n"
     (render_location ~contents:ends_left (pp ~dedent:true ()) (2, 9) (4, 6))
 
-(* The legacy report prints what pysemgrep did, the arithmetic included:
-   the highlight is cut out of the joined lines, and a location it cannot
-   be cut out of is left out. *)
+(* The legacy report prints what pysemgrep printed, including its column
+   arithmetic: the highlight is cut out of the joined lines, and a location
+   where the cut fails is not printed. *)
 let test_legacy_location_cut_from_joined_lines () =
   let pp =
     Findings_layout.pp_joined_location ~prefix:"" ~gutter ~gutter_blank
@@ -322,8 +322,8 @@ let findings_layout_tests =
 (* Skin_simple *)
 (*****************************************************************************)
 
-(* An indented paragraph of a message fills the same width as a flush one,
-   its indent taken off the width once. *)
+(* An indented paragraph of a message fills the same width as an unindented
+   one, its indentation subtracted from the width. *)
 let test_simple_indented_paragraph_fills_the_width () =
   let ctx = { (Output.skin_ctx Output.default) with Skin.width = 60 } in
   let message =
@@ -362,7 +362,7 @@ let ci_env : M.Start.ci_env =
     event_name = "push";
   }
 
-(* between them, every branch a skin's chunks take on the data *)
+(* together, these cover every branch of the chunks of a skin *)
 let starts : M.Start.t list =
   [
     {
@@ -440,7 +440,6 @@ let results : M.Result.t list =
         Some
           { tally with rules_with_findings = 0; files_with_findings = 0; findings = 0 };
     };
-    (* 'opengrep ci' *)
     { summary = empty; tally = None };
   ]
 
@@ -460,10 +459,10 @@ let with_all_logs_on (f : unit -> 'a) : 'a =
              Logs.Src.set_level src (Some Logs.Debug));
       f ())
 
-(* A chunk is rendered with the log mutex held, so a log call anywhere
-   under it fails on the mutex. Most sources are off unless LOG_SRCS names
-   them, which hides such a call from a plain --debug run; here every
-   source is on.
+(* A chunk is rendered with the log mutex held, so a log call under it fails
+   on the mutex. Most log sources are disabled unless LOG_SRCS lists them,
+   which hides such a call in a plain --debug run; here every source is
+   enabled.
    coupling: the contract on Skin.chunk *)
 let test_chunks_render_with_all_logs_on (name : Skin.name) () =
   let module Sk = (val Skins.resolve name : Skin.S) in

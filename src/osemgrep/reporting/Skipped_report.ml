@@ -33,9 +33,8 @@ type skipped_targets_grouped = {
 (* Helpers *)
 (*****************************************************************************)
 
-(* What a list cut short by --max-log-list-entries says instead; the rules
-   report uses it too. Here rather than in Output, which the reports must
-   not depend on: the skins do, and Output renders with them. *)
+(* Here rather than in Output: the skins depend on the reports, and Output
+   on the skins. *)
 let too_much_data =
   "<SKIPPED DATA (too many entries; adjust with --max-log-list-entries)>"
 

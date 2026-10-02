@@ -1,17 +1,10 @@
 open Common
 
 (*****************************************************************************)
-(* Prelude *)
-(*****************************************************************************)
-(* The --skin flag, shared by the subcommands that print a text report. *)
-
-(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
 let o_skin : Skin.name Cmdliner.Term.t =
-  (* Each skin describes itself, so that the help cannot say one thing
-     while the report does another. *)
   let skins =
     Skin.all_names
     |> List_.map (fun ((label : string), (name : Skin.name)) ->

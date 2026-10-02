@@ -2,8 +2,7 @@
 (* Prelude *)
 (*****************************************************************************)
 (* The legacy report: the text output of pysemgrep, byte for byte, which
- * the end-to-end tests pin. Every chunk below is one line of it, in its
- * order. It is chosen with --skin legacy; see Skin.default.
+ * the end-to-end tests check. Each chunk below is one line of it, in order.
  *)
 
 module M = Skin_model
@@ -32,7 +31,7 @@ let logo =
 └──────────────┘
 |}
 
-(* one chunk per line of the report, written as Logs.app writes it *)
+(* one chunk per line of the report, at the Logs.App level *)
 let app (f : Format.formatter -> unit) : Skin.chunk =
   Skin.Line (Logs.App, f)
 
@@ -42,10 +41,10 @@ let app_str (s : string) : Skin.chunk = app (fun ppf -> Fmt.pf ppf "%s" s)
 (* The skin *)
 (*****************************************************************************)
 
-let doc = "The report opengrep has always printed."
+let doc = "The report layout of earlier opengrep releases."
 
-(* 'opengrep ci' states the environment it runs in whether or not there is a
-   banner, so this is not under the banner test below. *)
+(* 'opengrep ci' prints its environment with or without a banner, so this
+   is outside the banner test below. *)
 let ci_environment (env : M.Start.ci_env) : Skin.chunk list =
   [
     app (fun ppf -> Fmt_.pp_heading ppf "Debugging Info");
@@ -96,8 +95,8 @@ let on_start (_ctx : Skin.ctx) (start : M.Start.t) : Skin.chunk list =
     in
     app_str logo :: features
 
-(* The spinner draws on this line and erases it when the rules are in, so
-   the scan says what it is doing while it does it. *)
+(* The spinner draws on this line and erases it once the rules are
+   loaded. *)
 let rules_status (_ctx : Skin.ctx) (start : M.Start.t) : string option =
   if not start.banner then None
   else
@@ -144,5 +143,5 @@ let pp_matches (ctx : Skin.ctx) ppf
     ~interfile_dedup_by:ctx.interfile_dedup_by ~is_interfile:ctx.is_interfile
     ppf matches
 
-(* the report opengrep has always printed, which had no status bar *)
-let wants_status_bar = false
+(* the earlier report had no status line *)
+let shows_status_bar = false

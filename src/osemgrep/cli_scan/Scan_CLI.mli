@@ -26,7 +26,7 @@ type conf = {
   core_runner_conf : Core_runner.conf;
   output_conf : Output.conf;
   (* osemgrep-only: *)
-  (* --no-progress-bar: the status bar the scan draws while it works *)
+  (* --no-progress-bar: no status line during the scan *)
   no_progress_bar : bool;
   incremental_output : bool;
   incremental_output_postprocess : bool;
