@@ -168,10 +168,47 @@ let rec rewrite depth match_depths prev_bound = function
 let rewrite_match_case toks = rewrite 0 [] true toks
 
 (*****************************************************************************)
+(* Soft keyword: type (PEP 695 'type' statement)                             *)
+(*****************************************************************************)
+(* Mirrors rewrite_match_case above: rewrite NAME("type") to TYPE only when
+ * it unambiguously heads a `type X = ...` statement (not `type(x)`,
+ * `type = 5`, or the unsupported generic `type X[T] = ...`).
+ *)
+
+let starts_type_alias xs =
+  match skip_trivia xs with
+  | T.NAME _ :: xs -> (
+      match skip_trivia xs with
+      | T.EQ _ :: _ -> true
+      | _ -> false)
+  | _ -> false
+
+let rec rewrite_type_alias_aux prev_bound = function
+  | [] -> []
+  | (T.NAME ("type", ii) as t) :: xs when prev_bound ->
+      if starts_type_alias xs then T.TYPE ii :: rewrite_type_alias_aux false xs
+      else t :: rewrite_type_alias_aux false xs
+  | t :: xs ->
+      let prev_bound' =
+        if is_trivia t then prev_bound
+        else
+          match t with
+          (* `suite` allows a same-line simple_stmt after the colon (e.g.
+           * `if cond: type Alias = int`), so a colon opens a statement
+           * here too, not just NEWLINE/INDENT/DEDENT/";". *)
+          | T.COLON _ -> true
+          | _ -> is_stmt_boundary t
+      in
+      t :: rewrite_type_alias_aux prev_bound' xs
+
+let rewrite_type_alias toks = rewrite_type_alias_aux true toks
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 let fix_tokens toks =
   let toks = rewrite_match_case toks in
+  let toks = rewrite_type_alias toks in
   let rec aux indent xs =
     match xs with
     | [ T.NEWLINE ii; T.EOF _ ] -> add_dedent indent ii xs

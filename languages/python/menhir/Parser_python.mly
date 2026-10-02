@@ -141,6 +141,8 @@ let match_tuple xs =
   * out of NAME("match")/NAME("case") only in match-statement contexts
   * so that plain identifiers "match"/"case" remain valid names. *)
  MATCH CASE
+ (* python3.12+: another soft keyword, handled the same way as MATCH/CASE. *)
+ TYPE
  (* python2: *)
  PRINT EXEC
 
@@ -488,6 +490,8 @@ small_stmt:
   | global_stmt { [$1] }
   | nonlocal_stmt { [$1] }
   | assert_stmt { [$1] }
+  (* python3.12+: *)
+  | type_alias_stmt { [$1] }
   (* python2: *)
   | print_stmt { [$1] }
   | exec_stmt { [$1] }
@@ -553,7 +557,10 @@ assert_stmt:
   | ASSERT test          { Assert ($1, $2, None) }
   | ASSERT test "," test { Assert ($1, $2, Some $4) }
 
-
+(* python3.12+ (PEP 695): 'type' statement. No generics ('type X[T] = ...')
+ * yet; see Parsing_hacks_python for how TYPE gets synthesized. *)
+type_alias_stmt:
+  | TYPE NAME "=" test { TypeAlias ($1, $2, $4) }
 
 compound_stmt:
   | if_stmt     { $1 }

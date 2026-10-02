@@ -390,6 +390,9 @@ type stmt =
   (* should be allowed just at the toplevel *)
   | FunctionDef of function_definition
   | ClassDef of class_definition
+  (* python3.12: 'type' statement (PEP 695), e.g. 'type IntList = list[int]'.
+   * No support yet for the generic form 'type X[T] = ...'. *)
+  | TypeAlias of tok (* 'type' *) * name (* alias *) * type_ (* value *)
 
 and case_and_body =
   | CasesAndBody of case list * stmt list

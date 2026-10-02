@@ -829,6 +829,14 @@ and stmt_aux env x =
   | ImportFrom (t, v1, v2) ->
       let v1 = module_name env v1 and v2 = list (alias env) v2 in
       [ G.DirectiveStmt (G.ImportFrom (t, v1, v2) |> G.d) |> G.s ]
+  | TypeAlias (t, v1, v2) ->
+      let v1 = name env v1 and v2 = type_ env v2 in
+      let ent = G.basic_entity v1 in
+      let st = G.DefStmt (ent, G.TypeDef { G.tbody = G.AliasType v2 }) |> G.s in
+      (* The 'type' keyword is not otherwise part of the generic AST, so set
+       * the range explicitly to cover the whole statement. *)
+      st.s_range <- H.range_of_any_opt (G.Anys [ G.Tk t; G.T v2 ]);
+      [ st ]
   | Global (t, v1)
   | NonLocal (t, v1) ->
       let v1 = list (name env) v1 in
