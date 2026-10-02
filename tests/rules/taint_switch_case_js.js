@@ -32,3 +32,28 @@ function scrutineeStillFlows() {
       break;
   }
 }
+
+// A bare name labels the case: compared, not bound; later cases reachable.
+function bareNameCaseKeepsLaterCases(mode) {
+  var q = "";
+  switch (mode) {
+    case A:
+      q = "safe";
+      break;
+    case B:
+      q = taint_source();
+      // ruleid: taint-switch-case-js
+      sink(q);
+      break;
+  }
+}
+
+function bareNameCaseIsNotABindingTarget() {
+  var y = taint_source();
+  switch (y) {
+    case RED:
+      break;
+  }
+  // ok: taint-switch-case-js
+  sink(RED);
+}

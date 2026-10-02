@@ -30,3 +30,29 @@ function listAssignBindsLvals($o) {
   // ok: taint-switch-case-php
   sink($o->b);
 }
+
+// A constant labels the case (DVWA's `case MYSQL:` / `case SQLITE:`):
+// compared, not bound, so the second branch's query keeps its taint.
+function bareNameCaseKeepsLaterCases($db) {
+  $id = taint_source();
+  switch ($db) {
+    case MYSQL:
+      $query = "SELECT a FROM t WHERE id = '$id'";
+      break;
+    case SQLITE:
+      $query = "SELECT a FROM t WHERE id = '$id'";
+      // ruleid: taint-switch-case-php
+      sink($query);
+      break;
+  }
+}
+
+function bareNameCaseIsNotABindingTarget() {
+  $y = taint_source();
+  switch ($y) {
+    case RED:
+      break;
+  }
+  // ok: taint-switch-case-php
+  sink(RED);
+}

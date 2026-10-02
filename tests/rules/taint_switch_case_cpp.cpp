@@ -21,3 +21,29 @@ void caseLabelIsNotABindingTarget() {
   // ruleid: taint-switch-case-cpp
   sink(y);
 }
+
+// A bare name labels the case (an enumerator): compared, not bound, so the
+// later cases stay reachable.
+void bareNameCaseKeepsLaterCases(int mode) {
+  int q = 0;
+  switch (mode) {
+    case A:
+      q = 1;
+      break;
+    case B:
+      q = taint_source();
+      // ruleid: taint-switch-case-cpp
+      sink(q);
+      break;
+  }
+}
+
+void bareNameCaseIsNotABindingTarget() {
+  int y = taint_source();
+  switch (y) {
+    case RED:
+      break;
+  }
+  // ok: taint-switch-case-cpp
+  sink(RED);
+}
