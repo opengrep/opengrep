@@ -787,24 +787,9 @@ type scan_work_error =
   | Target_error of Target.t * Core_error.t
   | Interfile_error of Rule_ID.t * Core_error.t
 
-(* The hook belongs to a caller, and [Target_done]/[Interfile_rule_done]
-   reach it from the [finally] of a work item, where an exception becomes
-   [Finally_raised]: it would fail the unit, and where the unit was already
-   unwinding it would put a fault from the progress display in place of the
-   one that mattered. So the engine contains it rather than leaving a
-   reporting fault free to become a scan error.
-   Nothing is logged in its place: this runs once per target in every
-   domain, so a hook that fails would say so thousands of times. The
-   contract in Core_scan_config stands; this is its backstop, not leave to
-   ignore it.
-   A critical exception (see Exception.is_critical) is not the hook's
-   failure, and is let through. *)
 let report_progress (config : Core_scan_config.t)
     (p : Core_scan_config.progress) : unit =
-  config.progress_hook
-  |> Option.iter (fun h ->
-         try h p with
-         | exn when not (Exception.is_critical exn) -> ())
+  config.progress_hook |> Option.iter (fun h -> h p)
 
 let handle_work_item
     (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
