@@ -755,18 +755,30 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
   add_ident_to_its_scope id resolved env.names;
   set_resolved env id_info resolved
 
-let declare_func env lang (id : ident) id_info (frettype : type_ option) =
+let declare_func env lang ~attrs (id : ident) id_info (frettype : type_ option) =
   let resolved =
-    match current_scope_entry env FuncName id with
-    | Some resolved -> resolved
-    | None ->
-        let entname =
-          ( resolved_name_kind env lang,
-            SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) )
-        in
-        let resolved = { entname; enttype = frettype } in
-        add_func_ident_current_scope id resolved env.names;
-        resolved
+    if Lang.equal lang Lang.Kotlin
+       && (H.has_keyword_attr Getter attrs || H.has_keyword_attr Setter attrs)
+    then
+      (* Kotlin accessors have generated names such as [get_foo], anchored
+         at the [get]/[set] token. Give each its own identity without binding
+         a name that could shadow an ordinary function in the source. *)
+      let sid =
+        SId.of_tok ~name:(fst id) ~binding:(fresh_binding env)
+          ~file:env.file (snd id)
+      in
+      { entname = (resolved_name_kind env lang, sid); enttype = frettype }
+    else
+      match current_scope_entry env FuncName id with
+      | Some resolved -> resolved
+      | None ->
+          let entname =
+            ( resolved_name_kind env lang,
+              SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) )
+          in
+          let resolved = { entname; enttype = frettype } in
+          add_func_ident_current_scope id resolved env.names;
+          resolved
   in
   set_resolved env id_info resolved
 
@@ -781,9 +793,9 @@ let declare_class_members env lang (c : class_definition) : unit =
                  VarDef { vinit; vtype; vtok = _ } ) ->
                declare_var env lang id id_info ~explicit:true vinit vtype
            | DefStmt
-               ({ name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ })
+               ({ name = EN (Id (id, id_info)); attrs; _ }, FuncDef { frettype; _ })
              when has_function_namespace lang ->
-               declare_func env lang id id_info frettype
+               declare_func env lang ~attrs id id_info frettype
            | _ -> ())
 
 let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
@@ -1001,7 +1013,7 @@ class ['self] resolve_visitor env lang =
         when is_resolvable_name_ctx env lang ->
           super#visit_definition venv x;
           self#visit_pattern venv pat
-      | { name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ }
+      | { name = EN (Id (id, id_info)); attrs; _ }, FuncDef { frettype; _ }
         when is_resolvable_name_ctx env lang ->
           (* A function definition resolves to a sid that carries the def's
            * site, [(name, file, line, col)], the key [Function_id] uses, so
@@ -1033,7 +1045,7 @@ class ['self] resolve_visitor env lang =
            *   semgrep-rules/python/django/security/audit/raw-query.py.
            * But do we need a special scope for imported functions? *)
           (if has_function_namespace lang then
-             declare_func env lang id id_info frettype
+             declare_func env lang ~attrs id id_info frettype
            else if is_resolvable_name_ctx env lang then (
               (* The scope a definition binds its name in: the file's imported
                  scope at the top level (see above), else the enclosing block,
