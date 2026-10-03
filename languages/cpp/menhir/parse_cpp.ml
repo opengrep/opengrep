@@ -170,12 +170,9 @@ let parse_fuzzy file =
  * can also be used to try to extract the macros defined in the file
  * that we try to parse *)
 let extract_macros file =
-  Common.save_excursion Flag.verbose_lexing false (fun () ->
-      let toks =
-        tokens (* todo: ~profile:false *) (Parsing_helpers.file !!file)
-      in
-      let toks = Parsing_hacks_define.fix_tokens_define toks in
-      Pp_token.extract_macros toks)
+  let toks = tokens (* todo: ~profile:false *) (Parsing_helpers.file !!file) in
+  let toks = Parsing_hacks_define.fix_tokens_define toks in
+  Pp_token.extract_macros toks
 [@@profiling]
 
 (* We used to have also a init_defs_builtins() so that we could use a

@@ -151,6 +151,9 @@ local semgrep_rules = [
       any: [
        'UCommon.pr2 ...',
        'UCommon.pr2_gen ...',
+       'UCommon.pr2_once ...',
+       'Common2.pr2 ...',
+       'Common2.pr2_gen ...',
        #'pr2_gen ...', needed?
        ],
     },

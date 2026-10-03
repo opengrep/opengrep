@@ -41,9 +41,7 @@ exception Lexical of string
 let error s =
   if !Flag_php.strict_lexer
   then raise (Lexical s)
-  else
-    if Domain.DLS.get Flag.verbose_lexing
-    then UCommon.pr2 ("LEXER: " ^ s)
+  else Log_parser_php.Log.debug (fun m -> m "LEXER: %s" s)
 
 (* pad: hack around ocamllex to emulate the yyless() of flex. The semantic
  * is not exactly the same than yyless(), so I use yyback() instead.

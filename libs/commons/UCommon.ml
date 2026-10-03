@@ -117,9 +117,9 @@ let main_boilerplate f =
                 try f () with
                 (* <---- here it is *)
                 | UUnix.Unix_error (e, fm, argm) ->
-                    pr2
-                      (spf "exn Unix_error: %s %s %s\n" (Unix.error_message e)
-                         fm argm);
+                    Log_commons.Log.debug (fun m ->
+                        m "exn Unix_error: %s %s %s" (Unix.error_message e) fm
+                          argm);
                     raise (UUnix.Unix_error (e, fm, argm))))
           (fun () ->
             !before_exit |> List.iter (fun f -> f ());

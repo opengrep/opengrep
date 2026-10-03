@@ -173,6 +173,35 @@ let float_opt_with_env ~(env : string) ~(doc : string) (options : string list)
   in
   Term.cli_parse_result Term.(const combine $ value)
 
+(* [env] is not passed to Arg.info: the helper reads the variable through
+   Opengrep_env, which accepts both the OPENGREP_ and the SEMGREP_ prefix.
+   Cmdliner therefore does not list the variable under ENVIRONMENT, and the
+   doc string refers to it instead, as for the other *_with_env helpers. *)
+let enum_with_env ~(env : string) ~(doc : string) ~(default : 'a)
+    ~(names : (string * 'a) list) (options : string list) : 'a Term.t =
+  let value =
+    Arg.(value (opt (some (enum names)) None (Arg.info options ~doc)))
+  in
+  let combine (value : 'a option) : ('a, [ `Msg of string ]) result =
+    match value with
+    | Some (v : 'a) ->
+        warn_env_ignored ~vars:[ env ] options;
+        Ok v
+    | None -> (
+        match Opengrep_env.getenv_with_name_opt env with
+        | None -> Ok default
+        | Some ((name : string), (str : string)) -> (
+            match List.assoc_opt str names with
+            | Some (v : 'a) -> Ok v
+            | None ->
+                Error
+                  (* An error message, not a doc string: quoted, without
+                     cmdliner's $(b,...) markup. *)
+                  (env_value_error ~var:name ~value:str
+                     (Arg.doc_alts ~quoted:true (List_.map fst names)))))
+  in
+  Term.cli_parse_result Term.(const combine $ value)
+
 (* A single-valued option whose value can also come from one of several
    environment variables (cmdliner supports only one per option). The
    first set variable wins; the command line wins over the environment. *)

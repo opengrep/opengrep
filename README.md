@@ -263,6 +263,24 @@ run and its directory is created. Nothing is written when the variable is
 not set. A path that cannot be written produces a warning and the run
 continues without the copy.
 
+## Text report
+
+`--skin` selects the layout of the text report: `simple` (the default),
+`vivid`, or `legacy` (the layout of earlier releases). The `OPENGREP_SKIN`
+environment variable sets it too; `--skin` takes precedence over it.
+
+```sh
+opengrep scan --skin vivid -f rules code
+OPENGREP_SKIN=legacy opengrep scan -f rules code
+```
+
+While a scan runs on a terminal, a status line on stderr shows the phase of
+the scan and, once the targets are known, a progress count. It is not drawn
+when stderr is not a terminal, when `TERM` is unset, `dumb` or `unknown`,
+when `CI` is set to a value other than `false` or `0`, on Windows, with
+`--quiet`, `--verbose` or `--debug`, with `--incremental-output`, or with
+`--skin legacy`. `--no-progress-bar` turns it off.
+
 ## Colour
 
 Colour is on when stderr is a terminal. `NO_COLOR` turns it off;

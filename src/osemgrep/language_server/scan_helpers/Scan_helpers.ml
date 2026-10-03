@@ -92,7 +92,11 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
         let res_or_exn =
           (fun () ->
             (* the session's targets do not say whether git listed them *)
-            core_run_func.run ~git_repo:false ~scanning_roots:[] runner_conf
+            core_run_func.run ~git_repo:false ~scanning_roots:[]
+              ~on_plan:(fun (plan : Scan_plan.t) ->
+                (* the scan status in the language server's log *)
+                Logs.app (fun m -> m "%a" Status_report.pp_status plan))
+              runner_conf
               (* TODO: when running with LSP, could the config of matching be needed? *)
               Find_targets.default_conf Match_patterns.default_matching_conf
               (rules, [])

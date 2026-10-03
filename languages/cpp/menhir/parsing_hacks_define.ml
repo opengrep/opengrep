@@ -62,7 +62,7 @@ module Hack = Parsing_hacks_lib
 (*****************************************************************************)
 (* Wrappers *)
 (*****************************************************************************)
-let pr2, _pr2_once = Common2.mk_pr2_wrappers Flag.verbose_lexing
+module Log = Log_parser_cpp.Log
 
 (*****************************************************************************)
 (* Helpers  *)
@@ -100,7 +100,7 @@ let rec define_line_1 acc xs =
       let line = Tok.line_of_tok ii in
       define_line_2 (x :: acc) line ii xs
   | TCppEscapedNewline ii :: xs ->
-      pr2 (spf "WEIRD: a \\ outside a #define at %s" (pos ii));
+      Log.debug (fun m -> m "WEIRD: a \\ outside a #define at %s" (pos ii));
       define_line_1 ((* fresh_tok*) TCommentSpace ii :: acc) xs
   | x :: xs -> define_line_1 (x :: acc) xs
 
@@ -109,7 +109,7 @@ and define_line_2 acc line lastinfo xs =
   match xs with
   | [] ->
       (* should not happened, should meet EOF before *)
-      pr2 "PB: WEIRD in Parsing_hack_define.define_line_2";
+      Log.debug (fun m -> m "PB: WEIRD in Parsing_hack_define.define_line_2");
       List.rev (mark_end_define lastinfo :: acc)
   | x :: xs -> (
       let line' = TH.line_of_tok x in
@@ -118,7 +118,7 @@ and define_line_2 acc line lastinfo xs =
       match x with
       | EOF ii -> define_line_1 (EOF ii :: mark_end_define lastinfo :: acc) xs
       | TCppEscapedNewline ii ->
-          if line' <> line then pr2 "PB: WEIRD: not same line number";
+          if line' <> line then Log.debug (fun m -> m "PB: WEIRD: not same line number");
           define_line_2
             ((* fresh_tok*) TCommentSpace ii :: acc)
             (line + 1) info xs
@@ -156,7 +156,7 @@ let define_ident xs =
             in
             aux acc' xs
         | _ ->
-            pr2 (spf "WEIRD #define body, at %s" (pos ii));
+            Log.debug (fun m -> m "WEIRD #define body, at %s" (pos ii));
             aux (x :: acc) xs)
     | x :: xs -> aux (x :: acc) xs
   in

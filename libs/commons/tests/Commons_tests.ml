@@ -12,4 +12,5 @@ let tests =
       Unit_Utf8.tests;
       Unit_List_.tests;
       Unit_File.tests;
+      Unit_Logs_.tests;
     ]

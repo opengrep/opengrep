@@ -48,7 +48,7 @@ open Parser_cpp
 (*****************************************************************************)
 (* Some debugging functions  *)
 (*****************************************************************************)
-let pr2, _pr2_once = Common2.mk_pr2_wrappers Flag.verbose_parsing
+module Log = Log_parser_cpp.Log
 
 (*****************************************************************************)
 (* Types *)
@@ -167,13 +167,13 @@ let rec mk_parameters extras acc_before_sep xs =
   match xs with
   | [] ->
       (* maybe because of #ifdef which "opens" '(' in 2 branches *)
-      pr2 "PB: not found closing paren in fuzzy parsing";
+      Log.debug (fun m -> m "PB: not found closing paren in fuzzy parsing");
       ([ List.rev acc_before_sep ], List.rev extras, [])
   | x :: xs -> (
       match x.t with
       (* synchro *)
       | xx when TH.is_obrace xx && x.col =|= 0 ->
-          pr2 "PB: found synchro point } in paren";
+          Log.debug (fun m -> m "PB: found synchro point } in paren");
           ([ List.rev acc_before_sep ], List.rev extras, x :: xs)
       | xx when TH.is_cpar xx ->
           ([ List.rev acc_before_sep ], List.rev (x :: extras), xs)
@@ -226,7 +226,7 @@ let rec mk_braceised xs =
           let body, endbrace, xs = mk_braceised_aux [] xs in
           Braceised (body, x, endbrace) :: mk_braceised xs
       | xx when TH.is_cbrace xx ->
-          pr2 "PB: found closing brace alone in fuzzy parsing";
+          Log.debug (fun m -> m "PB: found closing brace alone in fuzzy parsing");
           BToken x :: mk_braceised xs
       | _ -> BToken x :: mk_braceised xs)
 
@@ -235,7 +235,7 @@ and mk_braceised_aux acc xs =
   match xs with
   | [] ->
       (* maybe because of #ifdef which "opens" '(' in 2 branches *)
-      pr2 "PB: not found closing brace in fuzzy parsing";
+      Log.debug (fun m -> m "PB: not found closing brace in fuzzy parsing");
       ([ List.rev acc ], None, [])
   | x :: xs -> (
       match x.t with
@@ -280,7 +280,7 @@ and mk_ifdef_parameters extras acc_before_sep xs =
        * I might take with me a #endif if this one is mixed on a line
        * with some "normal" tokens.
        *)
-      pr2 "PB: not found closing ifdef in fuzzy parsing";
+      Log.debug (fun m -> m "PB: not found closing ifdef in fuzzy parsing");
       ([ List.rev acc_before_sep ], List.rev extras, [])
   | x :: xs -> (
       match x.t with
@@ -398,7 +398,7 @@ let rec mk_body_function_grouped xs =
           | { t = TCBrace _; col = 0; _ } :: xs ->
               BodyFunction body :: mk_body_function_grouped xs
           | [] ->
-              pr2 "PB:not found closing brace in fuzzy parsing";
+              Log.debug (fun m -> m "PB:not found closing brace in fuzzy parsing");
               [ NotBodyLine body ]
           | _ -> raise Impossible)
       | _ ->

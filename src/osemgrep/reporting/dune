@@ -15,6 +15,11 @@
    ; for Console_spinner
    lwt
    lwt_platform
+   ;; for Status_bar's render loop and its queue of messages
+   threads.posix
+   saturn
+   ;; for Skin_CLI
+   cmdliner
 
    murmur3
    osemgrep_configuring

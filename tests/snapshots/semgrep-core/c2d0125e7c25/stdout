@@ -1,0 +1,22 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 16 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 t.py
+t.py
+
+  error  taint-flow
+  tainted data reaches a sink
+
+    5 │ sink(y)
+    │
+    ├─ Taint comes from:
+    │    3 │ x = source()
+    │
+    ├─ Taint flows through these intermediate variables:
+    │    3 │ x = source()
+    │    4 │ y = x
+    │
+    └─ This is how taint reaches the sink:
+         5 │ sink(y)
+

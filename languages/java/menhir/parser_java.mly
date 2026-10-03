@@ -144,8 +144,8 @@ let expr_to_typename expr =
     | NameId id -> [id]
     | Dot (e, _, id) -> aux e @ [id]
     | _ ->
-        UCommon.pr2 "cast_expression pb";
-        UCommon.pr2_gen expr;
+        Log_parser_java.Log.debug (fun m ->
+            m "cast_expression pb: %s" (Dumper.dump expr));
         raise Todo
    in
    let xs = aux expr in

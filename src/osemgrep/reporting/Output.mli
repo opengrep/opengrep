@@ -28,6 +28,7 @@ type conf = {
    * in the log output.
    *)
   max_log_list_entries : int;
+  skin : Skin.name;
   (* true for 'opengrep ci': the Text format then keeps blocking and
    * non-blocking findings in separate groups and appends the
    * "RULES FIRED" sections *)
@@ -37,8 +38,14 @@ type conf = {
 
 val default : conf
 
-(* used with max_log_list_entries *)
-val too_much_data : string
+(* The settings that a skin renders the text report with: the width and the
+   options of the text format. *)
+val skin_ctx :
+  ?interfile_dedup_by:Core_match.interfile_dedup_by ->
+  ?is_interfile:(Rule_ID.t -> bool) ->
+  conf ->
+  Skin.ctx
+
 
 val is_interfile_rule_id :
   taint_interfile:bool -> Rule.hrules -> Rule_ID.t -> bool
@@ -56,6 +63,28 @@ val setup_stdout : conf -> unit
  * Only SARIF wants them, as it reports them as suppressed.
  *)
 val keeps_ignores : conf -> bool
+
+(* The findings and errors of a scan in the output format: nosem filtering,
+   messages, fingerprints and profiling times. Independent of the terminal,
+   so a caller can render it later. *)
+val cli_output_of_result :
+  keep_ignored:bool ->
+  conf ->
+  Profiler.t ->
+  Core_runner.result ->
+  Out.cli_output
+
+(* Writes the output: the primary format on stdout (or its -o file), and
+   every --<format>-output destination. *)
+val dispatch :
+  < Cap.stdout > ->
+  Profiler.t ->
+  conf ->
+  Out.cli_output ->
+  Rule.hrules ->
+  interfile_dedup_by:Core_match.interfile_dedup_by ->
+  is_interfile:(Rule_ID.t -> bool) ->
+  unit
 
 (* Output the core results on stdout (and in the files given by
  * -o/--output and --<format>-output) depending on flags in conf.

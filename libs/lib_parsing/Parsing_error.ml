@@ -59,8 +59,7 @@ exception Other_error of string * Tok.t
 let lexical_error msg lexbuf =
   let info = Tok.tok_of_lexbuf lexbuf in
   if !Flag_parsing.exn_when_lexical_error then raise (Lexical_error (msg, info))
-  else if Domain.DLS.get Flag_parsing.verbose_lexing then UCommon.pr2_once ("LEXER: " ^ msg)
-  else ()
+  else Log_lib_parsing.Log.debug (fun m -> m "LEXER: %s" msg)
 
 (****************************************************************************)
 (* Exception printers for Printexc.to_string *)
