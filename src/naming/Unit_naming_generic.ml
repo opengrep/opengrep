@@ -126,6 +126,45 @@ let check_single_binding ast name =
 let tests parse_program =
   Testo.categorize "naming generic"
     [
+      t "hidden functions keep their name bindings" (fun () ->
+          let open AST_generic in
+          let tok = Tok.unsafe_fake_tok "helper" in
+          List.iter
+            (fun (lang, attrs) ->
+              let def_info = empty_id_info ~hidden:true () in
+              let use_info = empty_id_info () in
+              let ent =
+                {
+                  name = EN (Id (("helper", tok), def_info));
+                  attrs;
+                  tparams = None;
+                }
+              in
+              let fdef =
+                {
+                  fkind = (Function, tok);
+                  fparams = Tok.unsafe_fake_bracket [];
+                  frettype = None;
+                  fbody = FBDecl tok;
+                }
+              in
+              let call =
+                Call
+                  ( N (Id (("helper", tok), use_info)) |> e,
+                    Tok.unsafe_fake_bracket [] )
+                |> e
+              in
+              Naming_AST.resolve lang
+                [ DefStmt (ent, FuncDef fdef) |> s; exprstmt call ];
+              match (!(def_info.id_resolved), !(use_info.id_resolved)) with
+              | Some (_, def_sid), Some (_, use_sid) ->
+                  Alcotest.(check bool)
+                    (Lang.to_string lang) true
+                    (SId.equal def_sid use_sid)
+              | _ -> Alcotest.fail "hidden function did not bind its call")
+            [
+              (Lang.Kotlin, []); (Lang.Java, []); (Lang.Csharp, [ attr Getter tok ]);
+            ]);
       t "regression files" (fun () ->
           let dir = Filename.concat tests_path "naming/python" in
           let files1 = Common2.glob (spf "%s/*.py" dir) in
