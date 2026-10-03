@@ -31,6 +31,10 @@ type conf = {
   effect_guards : bool;
   taint_interfile : bool;
   taint_interfile_depth : int;
+  (* override taint_intrafile/taint_interfile and the rule options of the
+   * same names *)
+  disable_intrafile : bool;
+  disable_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
@@ -69,6 +73,20 @@ type func = {
 }
 
 val default_conf : conf
+
+(* The (taint_intrafile, taint_interfile) pair left after applying
+   [disable_intrafile] and [disable_interfile]. Interfile implies intrafile,
+   and disabling intrafile disables interfile too. *)
+val effective_taint_modes :
+  disable_intrafile:bool ->
+  disable_interfile:bool ->
+  intrafile:bool ->
+  interfile:bool ->
+  bool * bool
+
+(* The rules with their taint_intrafile/taint_interfile options restricted
+   by [conf.disable_intrafile] and [conf.disable_interfile]. *)
+val restrict_rule_taint_modes : conf -> Rule.rules -> Rule.rules
 
 (* builder *)
 val mk_result :

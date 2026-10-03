@@ -518,6 +518,7 @@ let check_targets_with_rules ?(print_summary = true)
   (* TODO: we should probably warn the user about rules using the same id *)
   let rules =
     rules
+    |> Core_runner.restrict_rule_taint_modes conf.core_runner_conf
     |> List_.deduplicate_gen_with_warning
         ~get_key:(fun r -> Rule_ID.to_string (fst r.Rule.id))
         ~warning:(fun r ->

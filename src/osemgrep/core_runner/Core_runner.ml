@@ -55,6 +55,10 @@ type conf = {
   effect_guards : bool;
   taint_interfile : bool;
   taint_interfile_depth : int;
+  (* override taint_intrafile/taint_interfile and the rule options of the
+   * same names *)
+  disable_intrafile : bool;
+  disable_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
@@ -133,11 +137,34 @@ let default_conf : conf =
     effect_guards = false;
     taint_interfile = false;
     taint_interfile_depth = 3;
+    disable_intrafile = false;
+    disable_interfile = false;
     interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
     nosem = true;
     strict = false;
     engine_config = Engine_config.default;
   }
+
+let effective_taint_modes ~disable_intrafile ~disable_interfile ~intrafile
+    ~interfile : bool * bool =
+  ( (intrafile || interfile) && not disable_intrafile,
+    interfile && not (disable_intrafile || disable_interfile) )
+
+let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
+  if not (conf.disable_intrafile || conf.disable_interfile) then rules
+  else
+    List_.map
+      (fun (rule : Rule.t) ->
+        match rule.options with
+        | None -> rule
+        | Some (opts : Rule_options.t) ->
+            let taint_intrafile, taint_interfile =
+              effective_taint_modes ~disable_intrafile:conf.disable_intrafile
+                ~disable_interfile:conf.disable_interfile
+                ~intrafile:opts.taint_intrafile ~interfile:opts.taint_interfile
+            in
+            { rule with options = Some { opts with taint_intrafile; taint_interfile } })
+      rules
 
 (*************************************************************************)
 (* Metrics and reporting *)
@@ -378,6 +405,9 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    effect_guards;
    taint_interfile;
    taint_interfile_depth;
+   (* already applied to the taint flags and the rules *)
+   disable_intrafile = _;
+   disable_interfile = _;
    interfile_dedup_by;
    nosem = _TODO;
    strict;
