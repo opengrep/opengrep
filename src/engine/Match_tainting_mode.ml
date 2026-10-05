@@ -318,21 +318,31 @@ let get_arity params info lang =
   Receiver.arity lang ~is_method:(Receiver.is_method info.fdef)
     ~is_static:info.is_static params
 
-(* Drop implicit-receiver IL params; G and IL param lists share length/order. *)
+(* Drop implicit-receiver IL params. The IL params start with one per G param,
+   in the same order; any further ones are synthetic (the block a Ruby or
+   Crystal method yields to without declaring it) and are kept. *)
 let filter_implicit_receiver_params (lang : Lang.t) (info : fun_info)
     (g_params : G.parameter list) (il_params : IL.param list)
     : IL.param list =
   match info.class_name_str with
   | None -> il_params
   | Some _ ->
-    List.combine g_params il_params
-    |> List.filteri
-         (fun i ((gp, ip) : G.parameter * IL.param) ->
-            match ip with
-            (* Keep IL.ParamReceiver — extractor maps it to BThis without consuming an arg index. *)
-            | IL.ParamReceiver _ -> true
-            | _ -> not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
-    |> List.map snd
+    let rec keep (i : int) (il_params : IL.param list)
+        (g_params : G.parameter list) : IL.param list =
+      match (il_params, g_params) with
+      | [], _ -> []
+      | _, [] -> il_params
+      | (ip : IL.param) :: il_rest, (gp : G.parameter) :: g_rest -> (
+          let kept = keep (i + 1) il_rest g_rest in
+          match ip with
+          (* IL.ParamReceiver is kept: the extractor maps it to BThis without
+             consuming an arg index. *)
+          | IL.ParamReceiver _ -> ip :: kept
+          | _ when is_implicit_receiver lang ~is_first:(Int.equal i 0) info gp ->
+              kept
+          | _ -> ip :: kept)
+    in
+    keep 0 il_params g_params
 
 (* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
 let build_info_map
