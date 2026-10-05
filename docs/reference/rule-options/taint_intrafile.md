@@ -12,7 +12,7 @@ related: [flag-taint-intrafile, opt-taint_interfile, key-mode-taint]
 <!-- BEGIN GENERATED: facts -->
 - **Value:** `true` or `false`
 - **Default:** `false`
-- **See also:** [`--taint-intrafile`](../flags/taint-intrafile.md), [`taint_interfile`](taint_interfile.md), [`mode: taint`](../rule-syntax/taint-mode.md), [`--dataflow-traces`](../flags/dataflow-traces.md), [`--guarded-taint-signatures`](../flags/guarded-taint-signatures.md), [`guarded_taint_signatures`](guarded_taint_signatures.md)
+- **See also:** [`--taint-intrafile`](../flags/taint-intrafile.md), [`taint_interfile`](taint_interfile.md), [`mode: taint`](../rule-syntax/taint-mode.md), [`--dataflow-traces`](../flags/dataflow-traces.md), [`--disable-intrafile`](../flags/disable-intrafile.md), [`--guarded-taint-signatures`](../flags/guarded-taint-signatures.md), [`guarded_taint_signatures`](guarded_taint_signatures.md)
 <!-- END GENERATED: facts -->
 
 By default a [taint rule](../rule-syntax/taint-mode.md) analyses each function

@@ -21,9 +21,7 @@ call: a Python decorator `@route("/admin")`, or a Java annotation
 arguments of the attribute then count as inside a call, so
 `pattern-inside: route(...)` covers them.
 
-With `attr_expr: false`, attributes are not matched as calls. A Python
-decorator with a dotted name, such as `@app.route(...)`, is the exception: it
-is matched as a call whatever this option says.
+With `attr_expr: false`, attributes are not matched as calls.
 
 ## Examples
 

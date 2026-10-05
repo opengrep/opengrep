@@ -19,8 +19,8 @@ Writes the text report to FILE, in addition to what the run prints on standard
 output. A scan can print JSON for a program and leave the readable report in a
 file for a person.
 
-The file never contains colour codes, even with
-[`--force-color`](force-color.md). Give the flag several times to write
+The file contains colour codes only when colour is forced, by
+[`--force-color`](force-color.md) or `OPENGREP_FORCE_COLOR`. Give the flag several times to write
 several copies. When the scan finds nothing, the file is written and empty.
 [`--output`](output.md) describes the rules that all output files follow.
 
@@ -45,7 +45,7 @@ eval(1)
 
 **Command and result:**
 ```console
-$ opengrep scan --config rule.yaml --json --force-color --text-output report.txt app.py 2>/dev/null | jq .
+$ opengrep scan --config rule.yaml --json --text-output report.txt app.py 2>/dev/null | jq .
 {
   "version": "X.Y.Z",
   "results": [
@@ -93,7 +93,10 @@ app.py
     1 │ eval(1)
 $ grep -c $'\x1b' report.txt
 0
+$ opengrep scan --config rule.yaml --force-color --text-output report.txt app.py > /dev/null 2>&1
+$ grep -c $'\x1b' report.txt
+3
 ```
 
-The last command counts the lines with a colour code in the file: none, despite
-`--force-color`.
+The `grep` commands count the lines with a colour code in the file: none at
+first, and three once colour is forced.

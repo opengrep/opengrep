@@ -23,8 +23,8 @@ as long as the event that triggered the run is named EVENT. This runs a rule
 set over a repository without failing the job while the findings are being
 triaged.
 
-The event name is the one `ci` prints in its `SCAN ENVIRONMENT` block, such as
-`push` or `pull_request` on GitHub Actions. Outside a CI provider it is
+The event name is the one `ci` prints at the end of the first line on standard
+error, such as `push` or `pull_request` on GitHub Actions. Outside a CI provider it is
 `unknown`. Repeat the flag to name several events, or set
 `OPENGREP_AUDIT_ON` to a whitespace-separated list.
 

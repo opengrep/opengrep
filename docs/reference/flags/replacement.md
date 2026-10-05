@@ -12,7 +12,7 @@ related: [flag-pattern, flag-autofix, flag-dryrun, key-fix]
 <!-- BEGIN GENERATED: facts -->
 - **Accepted by:** [`opengrep scan`](../commands/scan.md)
 - **Value:** `EXPRESSION`
-- **See also:** [`--pattern`](pattern.md), [`--autofix`](autofix.md), [`--dryrun`](dryrun.md), `fix`
+- **See also:** [`--pattern`](pattern.md), [`--autofix`](autofix.md), [`--dryrun`](dryrun.md), [`fix`](../rule-syntax/fix.md)
 <!-- END GENERATED: facts -->
 
 Gives a fix for the pattern passed with [`-e`/`--pattern`](pattern.md), the
@@ -40,13 +40,9 @@ print(2)
 $ opengrep scan -e 'eval($X)' -l python --replacement 'safe($X)' --autofix --dryrun app.py
 app.py
 
-  error  -
-  eval(1)
-
     1 │ safe(1)
 
     fix: safe(1)
-
 $ cat app.py
 eval(1)
 print(2)

@@ -2,7 +2,7 @@
 id: flag-allow-local-builds
 kind: flag
 name: --allow-local-builds
-summary: Let opengrep build the project to work out its dependencies; it has nothing to act on today.
+summary: Let opengrep build the project to work out its dependencies; it has nothing to act on in opengrep.
 commands: [scan, ci]
 related: [flag-config]
 -->

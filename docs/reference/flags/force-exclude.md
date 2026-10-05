@@ -16,12 +16,9 @@ related: [flag-exclude, flag-include]
 [`--exclude`](exclude.md) and [`--include`](include.md) filter the files
 opengrep finds by walking a directory. A file named on the command line is
 scanned whatever those patterns say, on the grounds that you asked for it.
-`--force-exclude` applies the patterns to those files too, which is what a
-pre-commit hook or a script passing a list of changed files wants.
-
-In 1.30.0 this works for patterns that match the file's name, such as `*.py`
-or `gen.py`. A pattern naming a parent directory, or the file's whole path,
-still has no effect on a file named on the command line.
+`--force-exclude` applies the patterns that match a file's name, such as
+`*.py` or `gen.py`, to those files too, which is what a pre-commit hook or a
+script passing a list of changed files wants.
 
 ## Examples
 

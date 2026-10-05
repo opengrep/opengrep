@@ -4,13 +4,9 @@ kind: internal
 name: Internal and debugging interfaces
 summary: Interfaces meant for opengrep's own development and tests.
 ignore: [key-match, key-taint, key-sources, key-sinks, key-sanitizers, key-propagators, key-all, key-any, key-not, key-inside, key-anywhere, key-as, key-where, key-focus]
-covers: [flag-develop, flag-dump-ast, flag-profile, flag-x-ls, flag-x-ls-long, flag-x-ignore-semgrepignore-files, env-OPENGREP_IN_TEST, env-OPENGREP_IN_DOCKER, env-OPENGREP_PROJIDX_BATCH, env-OPENGREP_FAIL_OPEN_URL, env-OPENGREP_GHA_MIN_FETCH_DEPTH, env-PYTEST_*, env-GITHUB_*, env-GH_TOKEN, env-GITLAB_CI, env-CI_*, env-CIRCLECI, env-CIRCLE_*, env-BUILDKITE, env-BUILDKITE_*, env-TRAVIS, env-TRAVIS_*, env-JENKINS_URL, env-GIT_URL, env-GIT_URL_1, env-GIT_BRANCH, env-GIT_COMMIT, env-BUILD_*, env-BITBUCKET_*, env-SYSTEM_*, key-semgrep-internal-*, key-r2c-internal-*]
+covers: [flag-develop, flag-dump-ast, flag-profile, flag-test-ignore-todo, flag-x-ls, flag-x-ls-long, flag-x-ignore-semgrepignore-files, env-OPENGREP_IN_TEST, env-OPENGREP_IN_DOCKER, env-OPENGREP_PROJIDX_BATCH, env-OPENGREP_FAIL_OPEN_URL, env-OPENGREP_GHA_MIN_FETCH_DEPTH, env-PYTEST_*, env-GITHUB_*, env-GH_TOKEN, env-GITLAB_CI, env-CI_*, env-CIRCLECI, env-CIRCLE_*, env-BUILDKITE, env-BUILDKITE_*, env-TRAVIS, env-TRAVIS_*, env-JENKINS_URL, env-GIT_URL, env-GIT_URL_1, env-GIT_BRANCH, env-GIT_COMMIT, env-BUILD_*, env-BITBUCKET_*, env-SYSTEM_*, key-semgrep-internal-*, key-r2c-internal-*, opt-taint_fixpoint_timeout, env-OPENGREP_BRANCH, env-OPENGREP_COMMIT, env-OPENGREP_JOB_URL, env-OPENGREP_PR_TITLE, env-OPENGREP_REPO_DISPLAY_NAME, env-OPENGREP_REPO_URL]
 -->
 # Internal and debugging interfaces
-
-<!-- BEGIN GENERATED: stamp -->
-> Reference for **opengrep 1.30.0** (commit `d094c70bb`).
-<!-- END GENERATED: stamp -->
 
 These interfaces exist for opengrep's own development, tests, and packaging.
 They are listed so the reference is complete, and they may change or disappear
@@ -18,8 +14,8 @@ in any release.
 
 ## `opengrep --core`
 
-The opengrep binary also contains the low-level engine CLI, historically called
-`semgrep-core` and later `opengrep-core`. It runs when the first argument is
+The opengrep binary also contains the low-level engine CLI. It runs when the
+first argument is
 `--core`, and `opengrep --core -help` lists its options. The `opengrep`
 commands build on the same engine, and this reference does not document the
 engine CLI. The engine CLI appends the whitespace-separated words of
@@ -40,6 +36,7 @@ describes their arguments.
 | `--develop` | Enables features under development. |
 | `--dump-ast` | Prints the AST of the target instead of scanning (with `-e`/`--lang`). |
 | `--profile` | Collects and prints profiling information. |
+| `--test-ignore-todo`, `--no-test-ignore-todo` | For `opengrep test`: concerns the `todoruleid:` annotations of test files. |
 | `--x-ls`, `--x-ls-long` | Lists the files a scan would consider, instead of scanning. |
 | `--x-ignore-semgrepignore-files` | Ignores `.semgrepignore` files. |
 
@@ -52,8 +49,15 @@ describes their arguments.
 | `OPENGREP_PROJIDX_BATCH` | Batch size of the project index. Read only under this name, with no `SEMGREP_` alias. |
 | `OPENGREP_FAIL_OPEN_URL` | Not used: its only mention in the sources is commented out. |
 | `OPENGREP_GHA_MIN_FETCH_DEPTH` | Deprecated: minimum git fetch depth for `opengrep ci` on GitHub Actions. |
+| `OPENGREP_BRANCH`, `OPENGREP_COMMIT`, `OPENGREP_JOB_URL`, `OPENGREP_PR_TITLE`, `OPENGREP_REPO_DISPLAY_NAME`, `OPENGREP_REPO_URL`, and their `SEMGREP_` names | For `opengrep ci`: the branch, commit, CI job URL, pull request title, repository display name and repository URL, recorded in the metadata of the scan. |
 | `PYTEST_OPENGREP_LOG_*`, `PYTEST_SEMGREP_LOG_*` | Log settings for test runners that clear the environment except `PYTEST_*`. They take precedence over [`OPENGREP_LOG_LEVEL`](env/OPENGREP_LOG_LEVEL.md) and the related variables. |
 | `GITHUB_*`, `GH_TOKEN`, `GITLAB_CI`, `CI_*`, `CIRCLECI`, `CIRCLE_*`, `BUILDKITE`, `BUILDKITE_*`, `TRAVIS`, `TRAVIS_*`, `JENKINS_URL`, `GIT_URL`, `GIT_URL_1`, `GIT_BRANCH`, `GIT_COMMIT`, `BUILD_*`, `BITBUCKET_*`, `SYSTEM_*` | Set by CI providers. `opengrep ci` reads them to detect the provider, the repository, the branch and the pull request. |
+
+## Rule options
+
+| Option | Purpose |
+|---|---|
+| `taint_fixpoint_timeout` | For taint rules: concerns the time spent on the analysis of one function. |
 
 ## Rule keys
 

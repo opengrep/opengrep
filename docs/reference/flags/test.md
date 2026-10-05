@@ -4,13 +4,13 @@ kind: flag
 name: --test
 summary: Run the rule tests and scan nothing; the older spelling of the test command.
 commands: [scan]
-related: [cmd-test, flag-validate, flag-test-ignore-todo]
+related: [cmd-test, flag-validate]
 -->
 # `--test`
 
 <!-- BEGIN GENERATED: facts -->
 - **Accepted by:** [`opengrep scan`](../commands/scan.md)
-- **See also:** [`opengrep test`](../commands/test.md), [`--validate`](validate.md), [`--test-ignore-todo`](test-ignore-todo.md)
+- **See also:** [`opengrep test`](../commands/test.md), [`--validate`](validate.md)
 <!-- END GENERATED: facts -->
 
 Runs the rule tests instead of scanning, exactly as

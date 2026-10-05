@@ -70,8 +70,5 @@ settings.conf
 
     1 │ debug = true
 
-  warn  debug-on-default
-  debug mode is on
-
     2 │ # debug = true
 ```

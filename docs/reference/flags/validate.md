@@ -38,7 +38,11 @@ rules:
 **Command and result:**
 ```console
 $ opengrep scan --validate --config rule.yaml 2>&1 >/dev/null
+1 file · 6 rules
+
 Configuration is valid - found 0 fatal errors, 0 skippable error(s), and 1 rule(s).
 $ opengrep validate rule.yaml 2>&1 >/dev/null
+1 file · 6 rules
+
 Configuration is valid - found 0 fatal errors, 0 skippable error(s), and 1 rule(s).
 ```

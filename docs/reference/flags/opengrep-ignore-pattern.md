@@ -55,11 +55,7 @@ app.py
 
     2 │ eval(2)  # noscan
 
-  warn  find-eval
-  found eval
-
     3 │ eval(3)
-
 $ opengrep scan --config rule.yaml --opengrep-ignore-pattern=noscan app.py
 app.py
 

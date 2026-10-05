@@ -15,7 +15,7 @@ related: [flag-taint-interfile, flag-taint-interfile-depth, opt-taint_interfile_
 - **Also spelled:** `interfile`
 - **Value:** `true` or `false`
 - **Default:** `false`
-- **See also:** [`--taint-interfile`](../flags/taint-interfile.md), [`--taint-interfile-depth`](../flags/taint-interfile-depth.md), [`taint_interfile_depth`](taint_interfile_depth.md), [`--interfile-timeout`](../flags/interfile-timeout.md), [`taint_intrafile`](taint_intrafile.md), [`mode: taint`](../rule-syntax/taint-mode.md)
+- **See also:** [`--taint-interfile`](../flags/taint-interfile.md), [`--taint-interfile-depth`](../flags/taint-interfile-depth.md), [`taint_interfile_depth`](taint_interfile_depth.md), [`--interfile-timeout`](../flags/interfile-timeout.md), [`taint_intrafile`](taint_intrafile.md), [`mode: taint`](../rule-syntax/taint-mode.md), [`--disable-interfile`](../flags/disable-interfile.md), [`--interfile-dedup-by`](../flags/interfile-dedup-by.md)
 <!-- END GENERATED: facts -->
 
 With `taint_interfile: true`, a [taint rule](../rule-syntax/taint-mode.md)
@@ -82,6 +82,8 @@ util.py
   user input reaches os.system
 
     4 │ os.system(cmd)
+
+    from: main.py:3  input()
 ```
 
 ### Both names set

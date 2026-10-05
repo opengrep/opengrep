@@ -58,19 +58,15 @@ eval(2)
 ```console
 $ git init -q && git add . && git commit -qm init
 $ opengrep ci --config rule.yaml --subdir sub
+blocking · 1 finding
 
+sub/other.py
 
-┌─────────────────────────┐
-│ 1 Blocking Code Finding │
-└─────────────────────────┘
+  warn  find-eval
+  found eval
 
-    sub/other.py
-    ❯❱ find-eval
-          found eval
+    1 │ eval(2)
 
-            1┆ eval(2)
-
-
-  BLOCKING CODE RULES FIRED:
-    find-eval
+blocking rules fired
+  find-eval
 ```

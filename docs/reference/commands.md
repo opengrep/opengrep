@@ -1,9 +1,5 @@
 # Commands
 
-<!-- BEGIN GENERATED: stamp -->
-> Reference for **opengrep 1.30.0** (commit `d094c70bb`).
-<!-- END GENERATED: stamp -->
-
 Opengrep is run as `opengrep <command> [flags] [arguments]`. When the first
 argument is not a command, `scan` is assumed, so `opengrep --config rule.yaml .`
 is `opengrep scan --config rule.yaml .`. The flags `--experimental`, `--debug`

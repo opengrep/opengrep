@@ -18,10 +18,8 @@ the same top level as the [SAST report](gitlab-sast.md) — `$schema`,
 `version`, `scan` and `vulnerabilities` — and the vulnerabilities carry
 category `secret_detection`.
 
-The flag changes the shape of the report, not which rules run: every finding
-of the scan appears in it, whether or not the rule looks for a secret. Point
-it at rules that find secrets, or the report will describe them as such
-wrongly.
+The flag changes the shape of the report, not which rules run: use it with
+rules that find secrets.
 
 [`--gitlab-secrets-output`](gitlab-secrets-output.md) writes the same document
 to a file. Only one format goes to standard output at a time.

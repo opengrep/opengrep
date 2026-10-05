@@ -8,7 +8,7 @@ related: [cmd-scan, flag-audit-on, flag-suppress-errors, flag-subdir, flag-basel
 # `opengrep ci`
 
 <!-- BEGIN GENERATED: facts -->
-- **See also:** [`opengrep scan`](scan.md), [`--audit-on`](../flags/audit-on.md), [`--suppress-errors`](../flags/suppress-errors.md), [`--subdir`](../flags/subdir.md), [`--baseline-commit`](../flags/baseline-commit.md), [`opengrep install-ci`](install-ci.md), [`--error`](../flags/error.md), [`OPENGREP_BRANCH`](../env/OPENGREP_BRANCH.md), [`OPENGREP_COMMIT`](../env/OPENGREP_COMMIT.md), [`OPENGREP_JOB_URL`](../env/OPENGREP_JOB_URL.md), [`OPENGREP_PR_ID`](../env/OPENGREP_PR_ID.md), [`OPENGREP_PR_TITLE`](../env/OPENGREP_PR_TITLE.md), [`OPENGREP_REPO_DISPLAY_NAME`](../env/OPENGREP_REPO_DISPLAY_NAME.md), [`OPENGREP_REPO_NAME`](../env/OPENGREP_REPO_NAME.md), [`OPENGREP_REPO_URL`](../env/OPENGREP_REPO_URL.md)
+- **See also:** [`opengrep scan`](scan.md), [`--audit-on`](../flags/audit-on.md), [`--suppress-errors`](../flags/suppress-errors.md), [`--subdir`](../flags/subdir.md), [`--baseline-commit`](../flags/baseline-commit.md), [`opengrep install-ci`](install-ci.md), [`--error`](../flags/error.md), [`OPENGREP_PR_ID`](../env/OPENGREP_PR_ID.md), [`OPENGREP_REPO_NAME`](../env/OPENGREP_REPO_NAME.md)
 <!-- END GENERATED: facts -->
 
 ```
@@ -29,19 +29,19 @@ What `ci` adds to a scan:
 
 - **Repository metadata.** It works out the CI provider from the environment
   (GitHub Actions, GitLab CI, CircleCI, Jenkins, Bitbucket, Azure Pipelines,
-  Buildkite, Travis; otherwise plain git) and reports what it found in a
-  `SCAN ENVIRONMENT` block on standard error. Variables such as
-  `OPENGREP_REPO_NAME` and `OPENGREP_BRANCH` are accepted for compatibility
-  with semgrep, but only [`OPENGREP_PR_ID`](../env/OPENGREP_PR_ID.md) changes
-  what `ci` does in general; see [Environment variables](../environment.md).
+  Buildkite, Travis; otherwise plain git). The first line it prints on
+  standard error names the provider and the event that triggered the run,
+  such as `git · unknown` or `gitlab-ci · push`. Variables such as
+  [`OPENGREP_PR_ID`](../env/OPENGREP_PR_ID.md) can set parts of the metadata;
+  see [Environment variables](../environment.md).
 - **A baseline.** The baseline comes from that metadata, so in a pull or merge
   request only findings that the request introduces are reported.
   [`--baseline-commit`](../flags/baseline-commit.md) overrides it.
 - **Blocking findings.** A finding is blocking or not according to its rule's
-  metadata. `ci` prints the blocking ones under `BLOCKING CODE RULES FIRED:`
-  and exits 1 when there is at least one, without needing `--error`.
-  [`--audit-on`](../flags/audit-on.md) turns that status back into 0 for a
-  given CI event.
+  metadata. `ci` lists the rules of the blocking ones under
+  `blocking rules fired` and exits 1 when there is at least one, without
+  needing `--error`. [`--audit-on`](../flags/audit-on.md) turns that status
+  back into 0 for a given CI event.
 - **Suppressed errors.** By default any other failure becomes exit status 0,
   so a broken rule file does not fail the build. See
   [`--suppress-errors`](../flags/suppress-errors.md).
@@ -59,14 +59,16 @@ What `ci` adds to a scan:
 <!-- BEGIN GENERATED: flags -->
 | Flag | Summary |
 |---|---|
-| [`--allow-local-builds`](../flags/allow-local-builds.md) | Let opengrep build the project to work out its dependencies; it has nothing to act on today. |
+| [`--allow-local-builds`](../flags/allow-local-builds.md) | Let opengrep build the project to work out its dependencies; it has nothing to act on in opengrep. |
 | [`--allow-rule-timeout-control`](../flags/allow-rule-timeout-control.md) | Let rules set their own time limits, which opengrep otherwise ignores. |
 | [`--audit-on`](../flags/audit-on.md) | Report blocking findings but exit 0 when the CI event has one of these names. |
 | [`--baseline-commit`](../flags/baseline-commit.md) | Report only the findings that are not already present in the given commit. |
 | [`--config`](../flags/config.md) | Load rules from a file, a directory, a URL, a git repository or the Semgrep registry. |
 | [`--dataflow-traces`](../flags/dataflow-traces.md) | Show how a value reaches the finding, for taint rules. |
 | [`--debug`](../flags/debug.md) | Log everything --verbose does and the engine's own diagnostics as well. |
-| `--develop` | *not yet documented* |
+| `--develop` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
+| [`--disable-interfile`](../flags/disable-interfile.md) | Keep every taint rule within single files, even rules that ask to follow taint across files. |
+| [`--disable-intrafile`](../flags/disable-intrafile.md) | Keep every taint rule within single functions, even rules that ask to follow calls. |
 | [`--dynamic-timeout`](../flags/dynamic-timeout.md) | Scale each rule's time limit with the size of the file being scanned. |
 | [`--dynamic-timeout-max-multiplier`](../flags/dynamic-timeout-max-multiplier.md) | The ceiling on how much a file's size may stretch the timeout. |
 | [`--dynamic-timeout-unit-kb`](../flags/dynamic-timeout-unit-kb.md) | The file size, in KB, that counts as one step when scaling the timeout. |
@@ -86,6 +88,7 @@ What `ci` adds to a scan:
 | [`--gitlab-secrets-output`](../flags/gitlab-secrets-output.md) | Also write the findings as a GitLab secret detection report to a file. |
 | [`--include`](../flags/include.md) | Scan only the files whose path matches one of these patterns. |
 | [`--inline-metavariables`](../flags/inline-metavariables.md) | Replace metavariables in a rule's metadata with what they matched. |
+| [`--interfile-dedup-by`](../flags/interfile-dedup-by.md) | Whether a sink that several sources reach across files is one finding or one per source. |
 | [`--interfile-timeout`](../flags/interfile-timeout.md) | Time a rule may spend on the cross-file analysis. |
 | [`--jobs`](../flags/jobs.md) | How many cores run rules in parallel. |
 | [`--json`](../flags/json.md) | Print the findings as a JSON document instead of the text report. |
@@ -102,12 +105,13 @@ What `ci` adds to a scan:
 | [`--opengrep-ignore-pattern`](../flags/opengrep-ignore-pattern.md) | Recognise one more comment prefix that silences findings on a line. |
 | [`--optimizations`](../flags/optimizations.md) | Turn the engine's optimizations, chiefly the prefilter, on or off. |
 | [`--output`](../flags/output.md) | Write the findings to a file instead of standard output. |
-| `--profile` | *not yet documented* |
+| `--profile` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--quiet`](../flags/quiet.md) | Print the findings and nothing else. |
 | [`--rewrite-rule-ids`](../flags/rewrite-rule-ids.md) | Whether a rule loaded from a directory gets its path as a prefix; on by default. |
 | [`--sarif`](../flags/sarif.md) | Print the findings as a SARIF 2.1.0 document. |
 | [`--sarif-output`](../flags/sarif-output.md) | Also write the findings as SARIF to a file, suppressed findings included. |
 | [`--scan-unknown-extensions`](../flags/scan-unknown-extensions.md) | Scan a file named on the command line even when its extension names no language. |
+| [`--skin`](../flags/skin.md) | Which layout the text report uses. |
 | [`--subdir`](../flags/subdir.md) | Scan only this directory, while the repository still provides the CI metadata. |
 | [`--suppress-errors`](../flags/suppress-errors.md) | Whether an error fails opengrep ci; on by default, so errors exit 0. |
 | [`--taint-interfile`](../flags/taint-interfile.md) | Follow taint across files, for every taint rule. |
@@ -147,28 +151,23 @@ eval(1)
 ```console
 $ git init -q && git add . && git commit -qm init
 $ opengrep ci --config rule.yaml
+blocking · 1 finding
 
+app.py
 
-┌─────────────────────────┐
-│ 1 Blocking Code Finding │
-└─────────────────────────┘
+  warn  find-eval
+  found eval
 
-    app.py
-    ❯❱ find-eval
-          found eval
+    1 │ eval(1)
 
-            1┆ eval(1)
-
-
-  BLOCKING CODE RULES FIRED:
-    find-eval
-
+blocking rules fired
+  find-eval
 $ opengrep ci --config rule.yaml > /dev/null 2>&1; echo "exit status: $?"
 exit status: 1
 ```
 
-The progress, the `SCAN ENVIRONMENT` block and the closing count go to
-standard error:
+The line naming the provider and the event, the counts and the closing
+summary go to standard error:
 
 **Command and result:**
 ```console

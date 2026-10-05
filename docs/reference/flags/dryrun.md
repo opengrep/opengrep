@@ -14,7 +14,7 @@ related: [flag-autofix, cmd-install-ci]
 - **Accepted by:** [`opengrep scan`](../commands/scan.md), [`opengrep install-ci`](../commands/install-ci.md)
 - **Also spelled:** `-n`, `--dry-run`, `--no-dryrun`
 - **Default:** `false`
-- **See also:** [`--autofix`](autofix.md), [`opengrep install-ci`](../commands/install-ci.md), [`--replacement`](replacement.md)
+- **See also:** [`--autofix`](autofix.md), [`opengrep install-ci`](../commands/install-ci.md), [`--replacement`](replacement.md), [`fix`](../rule-syntax/fix.md)
 <!-- END GENERATED: facts -->
 
 The two commands that take this flag use it for different things.

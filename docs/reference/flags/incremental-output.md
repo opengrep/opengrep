@@ -11,7 +11,7 @@ related: [flag-json, flag-output, flag-jobs]
 
 <!-- BEGIN GENERATED: facts -->
 - **Accepted by:** [`opengrep scan`](../commands/scan.md)
-- **See also:** [`--json`](json.md), [`--output`](output.md), [`--jobs`](jobs.md)
+- **See also:** [`--json`](json.md), [`--output`](output.md), [`--jobs`](jobs.md), [`--no-progress-bar`](no-progress-bar.md)
 <!-- END GENERATED: facts -->
 
 Opengrep normally collects every finding and prints the report when the scan
@@ -24,9 +24,8 @@ its own line: newline-delimited JSON, which a reader must parse line by line.
 The wrapper fields of a normal JSON run — `version`, `errors`, `paths` — are
 not part of the stream.
 
-`--incremental-output-postprocess` applies the post-processing steps to that
-stream. It is documented as requiring `--incremental-output`; given on its
-own it is ignored rather than refused.
+Together with `--incremental-output`, `--incremental-output-postprocess`
+applies the post-processing steps to that stream.
 
 ## Examples
 

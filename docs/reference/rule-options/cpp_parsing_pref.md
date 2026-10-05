@@ -25,25 +25,13 @@ option chooses how a pattern like `foo $X(...);` is read:
 - `as_fundef`: as a function declaration, which matches `foo bar(x);` in a
   class body.
 
-A rule without an `options:` key reads `foo $X(...);` as a declaration. A rule
-with an `options:` key, even one that sets only another option, reads it as a
-variable, since `as_vardef_with_ctor` is the option's default.
-
-In this version, a pattern whose type is `std::string` or `string` matches
-nothing when read with `as_vardef_with_ctor`.
-
 ## Examples
 
-### One pattern, three readings
+### One pattern, two readings
 
 **`ctor.yaml`**
 ```yaml title="ctor.yaml"
 rules:
-  - id: foo-default
-    pattern: foo $X(...);
-    message: foo $X
-    languages: [cpp]
-    severity: INFO
   - id: foo-ctor
     pattern: foo $X(...);
     message: foo $X
@@ -58,22 +46,15 @@ rules:
     severity: INFO
     options:
       cpp_parsing_pref: as_fundef
-  - id: foo-other-option
-    pattern: foo $X(...);
-    message: foo $X
-    languages: [cpp]
-    severity: INFO
-    options:
-      symbolic_propagation: true
 ```
 
 **`ctor.cpp`**
 ```cpp title="ctor.cpp"
 class Widget {
-  // ruleid: foo-default, foo-fundef
+  // ruleid: foo-fundef
   foo bar(x);
   void build() {
-    // ruleid: foo-ctor, foo-other-option
+    // ruleid: foo-ctor
     foo obj(1);
   }
 };
@@ -82,9 +63,6 @@ class Widget {
 **Command and result:**
 ```console
 $ opengrep test .
-4/4: ✓ All tests passed
+2/2: ✓ All tests passed
 No tests for fixes found.
 ```
-
-`foo-other-option` does not mention `cpp_parsing_pref`, but its `options:` key
-gives it the default reading, as a variable.

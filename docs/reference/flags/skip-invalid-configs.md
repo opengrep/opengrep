@@ -25,7 +25,8 @@ valid: naming a broken file and asking for it to be skipped would leave
 nothing to run.
 
 To find out which files are the problem, run
-[`opengrep validate`](../commands/validate.md) over the directory.
+[`opengrep validate`](../commands/validate.md) over the directory: it names
+each file that is not a valid rule config, as in the example below.
 
 ## Examples
 
@@ -56,6 +57,17 @@ eval(1)
 ```console
 $ opengrep scan --config rules/ app.py > /dev/null 2>&1; echo "exit status: $?"
 exit status: 7
+$ opengrep validate rules/ 2>&1 >/dev/null
+[00.00][WARNING]: rules/workflow.yml:2:1: Invalid YAML
+  --> rules/workflow.yml:2
+1 | name: CI
+2 | on: push
+  | ^
+Not a valid key value pair
+1 file · 6 rules
+
+Configuration is invalid - found 1 fatal errors, 0 skippable error(s), and 1 rule(s).
+[00.00][ERROR]: Please fix the above errors and try again.
 $ opengrep scan --config rules/ --skip-invalid-configs app.py
 app.py
 

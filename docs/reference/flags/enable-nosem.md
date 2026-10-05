@@ -56,7 +56,6 @@ app.py
   found eval
 
     2 │ eval(2)
-
 $ opengrep scan --config rule.yaml --disable-nosem app.py
 app.py
 
@@ -64,9 +63,6 @@ app.py
   found eval
 
     1 │ eval(1)  # nosem
-
-  warn  find-eval
-  found eval
 
     2 │ eval(2)
 ```

@@ -5,7 +5,8 @@
       Print the user-visible surface found in the binary and the sources.
   reference.py index [--stamp]
       Regenerate the generated blocks of every page. --stamp also records the
-      version of bin/opengrep and the current commit as the documented state.
+      version of bin/opengrep and the current commit as the documented state,
+      in scripts/docs/stamp (never in the pages).
   reference.py stamp
       Print the version and commit the reference is written for.
   reference.py check [--only ID] [--actual] [--no-examples] [--strict]
@@ -30,6 +31,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs" / "reference"
 BIN = REPO / "bin" / "opengrep"
+# the version and commit the reference was written for; kept out of the pages,
+# which describe opengrep and never a release of it
+STAMP = REPO / "scripts" / "docs" / "stamp"
 
 # kind -> (directory of the entry pages, id prefix, index page)
 KINDS = {
@@ -336,17 +340,22 @@ def facts_block(page, entries, inv):
     return "".join(f"- **{k}:** {v}\n" for k, v in lines)
 
 
-def command_flags_block(page, entries, inv):
+def command_flags_block(page, entries, inv, internal):
     cmd = page.meta["name"].split()[-1]
     flag_ids = sorted(
         (i for i, info in inv.items() if info["kind"] == "flag" and cmd in info["commands"]),
         key=lambda i: i[len("flag-"):],
     )
-    rows = [
-        f"| {ref(page.path, i, entries, inv)} | "
-        f"{entries[i].meta['summary'] if i in entries else '*not yet documented*'} |"
-        for i in flag_ids
-    ]
+    internal_link = f"[Internal and debugging interfaces]({rel_link(page.path, internal.path)}#flags)"
+
+    def summary(id_):
+        if id_ in entries:
+            return entries[id_].meta["summary"]
+        if any(fnmatch.fnmatchcase(id_, pat) for pat in internal.meta.get("covers", [])):
+            return f"Listed in {internal_link}."
+        return "*not yet documented*"
+
+    rows = [f"| {ref(page.path, i, entries, inv)} | {summary(i)} |" for i in flag_ids]
     return "| Flag | Summary |\n|---|---|\n" + "".join(r + "\n" for r in rows)
 
 
@@ -410,33 +419,30 @@ def index_block(kind, index_path, entries, internal, inv):
 
 
 def read_stamp():
-    m = re.search(
-        r"opengrep (\S+)\*\* \(commit `(\w+)`\)", (DOCS / "README.md").read_text()
-    )
-    return (m.group(1), m.group(2)) if m else (None, None)
+    """(version, commit) the reference was written for, from scripts/docs/stamp."""
+    try:
+        version, commit = STAMP.read_text().split()
+        return version, commit
+    except (FileNotFoundError, ValueError):
+        return None, None
 
 
-def stamp_block(version, commit):
-    return f"> Reference for **opengrep {version}** (commit `{commit}`).\n"
-
-
-def generate(entries, internal, inv, stamp):
+def generate(entries, internal, inv):
     """path -> regenerated text, for every page with generated blocks."""
     out = {}
     for page in entries.values():
         text = label_examples(page.text)
         text = replace_block(text, "facts", facts_block(page, entries, inv))
         if page.meta["kind"] == "command":
-            text = replace_block(text, "flags", command_flags_block(page, entries, inv))
+            text = replace_block(text, "flags", command_flags_block(page, entries, inv, internal))
         out[page.path] = text
     for kind, (_, _, index) in KINDS.items():
         path = DOCS / index
         text = label_examples(path.read_text())
-        text = replace_block(text, "index", index_block(kind, path, entries, internal, inv))
-        out[path] = replace_block(text, "stamp", stamp_block(*stamp))
+        out[path] = replace_block(text, "index", index_block(kind, path, entries, internal, inv))
     for name in ("README.md", "internal.md"):
         path = DOCS / name
-        out[path] = replace_block(label_examples(path.read_text()), "stamp", stamp_block(*stamp))
+        out[path] = label_examples(path.read_text())
     return out
 
 
@@ -551,46 +557,19 @@ def normalize(text, work):
 
 ENV_DROP = re.compile(
     r"^(OPENGREP_|SEMGREP_|PYTEST_|LOG_|GIT_|GITHUB_|GITLAB_|CI_|CIRCLE|BUILDKITE|"
-    r"TRAVIS|JENKINS|BITBUCKET_|NO_COLOR$|COLUMNS$|XDG_CONFIG_HOME$|CI$)"
+    r"TRAVIS|JENKINS|BITBUCKET_|NO_COLOR$|COLUMNS$|XDG_CONFIG_HOME$|CI$|"
+    r"(HTTPS?|ALL|NO)_PROXY$|(https?|all|no)_proxy$)"
 )
 
 
-# The examples are written for the simple skin, which prints the findings
-# alone. Until that is what 'scan' does by default, the examples run through
-# this wrapper, which adds the flag to the scan commands. Once the default
-# changes, delete the wrapper and the bin directory it lives in.
-SKIN_WRAPPER = """#!/bin/sh
-# The caller's own choice of skin wins.
-for arg in "$@"; do
-  case "$arg" in --skin|--skin=*) exec {bin} "$@" ;; esac
-done
-# The subcommand is the first argument that is not one of the flags the CLI
-# accepts before it; with none, 'scan' is what runs.
-cmd=""
-for arg in "$@"; do
-  case "$arg" in
-    --experimental|--debug|--profile) ;;
-    *) cmd="$arg"; break ;;
-  esac
-done
-case "$cmd" in
-  "" | ci | test | validate | show | lsp | install-ci | --core) exec {bin} "$@" ;;
-  *) exec {bin} "$@" --skin simple ;;
-esac
-"""
+EXAMPLE_TIMEOUT = 300
 
 
-def write_skin_wrapper(bindir):
-    wrapper = bindir / "opengrep"
-    wrapper.write_text(SKIN_WRAPPER.format(bin=BIN))
-    wrapper.chmod(0o755)
-
-
-def example_env(home, bindir):
+def example_env(home):
     env = {k: v for k, v in os.environ.items() if not ENV_DROP.match(k)}
     env.update(
         HOME=str(home),
-        PATH=f"{bindir}{os.pathsep}{BIN.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        PATH=f"{BIN.parent}{os.pathsep}{os.environ.get('PATH', '')}",
         GIT_CONFIG_GLOBAL=os.devnull,
         GIT_CONFIG_NOSYSTEM="1",
         GIT_AUTHOR_NAME="Example",
@@ -607,12 +586,10 @@ def run_example(page, title, blocks, show_actual, bless=False):
     what their commands really print."""
     failures, rewrites = [], []
     with tempfile.TemporaryDirectory() as tmp:
-        work, home, bindir = Path(tmp) / "work", Path(tmp) / "home", Path(tmp) / "bin"
+        work, home = Path(tmp) / "work", Path(tmp) / "home"
         work.mkdir()
         home.mkdir()
-        bindir.mkdir()
-        write_skin_wrapper(bindir)
-        env = example_env(home, bindir)
+        env = example_env(home)
         for info, body in blocks:
             lang, attrs, flags = parse_info(info)
             if lang in CONSOLE_LANGS:
@@ -620,10 +597,17 @@ def run_example(page, title, blocks, show_actual, bless=False):
                     continue
                 new_body, block_failed = [], False
                 for cmd, expected in parse_console(body):
-                    r = subprocess.run(
-                        ["bash", "-c", cmd], cwd=work, env=env,
-                        capture_output=True, text=True, timeout=300,
-                    )
+                    try:
+                        r = subprocess.run(
+                            ["bash", "-c", cmd], cwd=work, env=env,
+                            capture_output=True, text=True, timeout=EXAMPLE_TIMEOUT,
+                        )
+                    except subprocess.TimeoutExpired:
+                        # bless keeps what the page says for a command that
+                        # printed nothing it could record
+                        new_body += [f"$ {cmd}", *expected]
+                        failures.append(f"$ {cmd}\ntimed out after {EXAMPLE_TIMEOUT} seconds")
+                        continue
                     actual = normalize(r.stdout, work)
                     new_body += [f"$ {cmd}", *shown(r.stdout, work)]
                     if show_actual:
@@ -667,7 +651,7 @@ def cmd_stamp(args):
     """The version and commit the reference is written for, for scripts."""
     version, commit = read_stamp()
     if not version:
-        print("no stamp found in docs/reference/README.md", file=sys.stderr)
+        print(f"no stamp found in {STAMP.relative_to(REPO)}", file=sys.stderr)
         return 1
     print(f"{version} {commit}")
     return 0
@@ -679,14 +663,14 @@ def cmd_index(args):
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    stamp = read_stamp()
     if args.stamp:
         commit = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=REPO, capture_output=True, text=True, check=True,
         ).stdout.strip()
-        stamp = (run_bin("--version").strip(), commit)
-    for path, text in generate(entries, internal, inventory(), stamp).items():
+        STAMP.write_text(f"{run_bin('--version').strip()} {commit}\n")
+        print(f"updated {STAMP.relative_to(REPO)}")
+    for path, text in generate(entries, internal, inventory()).items():
         if path.read_text() != text:
             path.write_text(text)
             print(f"updated {path.relative_to(REPO)}")
@@ -738,6 +722,11 @@ def cmd_check(args):
     # by blanking them rather than removing them.
     tooling = [r"(?i)\bchecker\b", r"(?i)\bno-check\b", r"(?i)reference\.py", r"(?i)update-reference",
                r"(?i)SKILL\.md", r"(?i)\bBUG\.md\b", r"(?i)\bnot run by\b", r"(BEGIN|END) GENERATED"]
+    # nor versions, commits or wording tied to a point in time
+    dated = [r"(?i)\b(?:in|since|before|until|as of|from) (?:opengrep )?v?\d+\.\d+(?:\.\d+)?\b",
+             r"(?i)\bopengrep v?\d+\.\d+", r"(?i)\b(?:this|the current|a future|a later) (?:version|release)\b",
+             r"(?i)\bcurrently\b", r"(?i)\bat the moment\b", r"(?i)\bfor now\b", r"(?i)\btoday\b",
+             r"(?i)\bcommit `?[0-9a-f]{7,40}\b"]
     blank = lambda m: "\n" * m.group(0).count("\n")
     for path in all_doc_files():
         text = re.sub(r"<!--.*?-->", blank, path.read_text(), flags=re.S)
@@ -747,11 +736,15 @@ def cmd_check(args):
                 if found := re.search(word, line):
                     errors.append(f"{path.relative_to(DOCS)}:{lineno}: the text mentions the tooling "
                                   f"({found.group(0)!r}); readers must not see it")
+            for word in dated:
+                if found := re.search(word, line):
+                    errors.append(f"{path.relative_to(DOCS)}:{lineno}: the text dates itself "
+                                  f"({found.group(0)!r}); the reference describes opengrep, not a release of it")
 
     # generated blocks and stamp
     stamp = read_stamp()
     if not errors:
-        stale = [p for p, t in generate(entries, internal, inv, stamp).items() if p.read_text() != t]
+        stale = [p for p, t in generate(entries, internal, inv).items() if p.read_text() != t]
         if stale:
             errors.append("generated blocks are out of date, run: scripts/docs/reference.py index")
     version = run_bin("--version").strip()

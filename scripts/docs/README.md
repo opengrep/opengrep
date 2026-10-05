@@ -23,8 +23,9 @@ related: [opt-timeout]
 Ids are `cmd-`, `flag-`, `key-`, `opt-` or `env-` followed by the name. Blocks
 between `BEGIN GENERATED` and `END GENERATED` markers are rewritten by
 `reference.py index` from the metadata of all pages: the indexes, the facts
-under each title, the flag list of each command, and the version stamp. The
-same command writes the label above each example block, from the block's
+under each title, and the flag list of each command. The version and commit
+the reference was written for live in `scripts/docs/stamp`, never in the pages;
+`reference.py index --stamp` updates that file. The same command writes the label above each example block, from the block's
 `title="..."` attribute, and it replaces any bold-only line that stands
 directly above a block under `## Examples`.
 
@@ -52,12 +53,6 @@ goes in an HTML comment above the block's label, where readers do not see it:
 <!-- not run: needs an authenticated GitHub CLI and a repository on GitHub -->
 **Command:**
 ```
-
-The examples show the output of the simple skin, which prints the findings
-alone, and they do not pass `--skin`. While `scan` still defaults to another
-skin, `check` runs them through a wrapper that adds `--skin simple` to the
-scan commands. Delete that wrapper from `reference.py` once the default has
-changed.
 
 ## Updating
 

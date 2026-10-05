@@ -10,7 +10,7 @@ related: [opt-taint_interfile, flag-taint-interfile-depth, flag-interfile-timeou
 
 <!-- BEGIN GENERATED: facts -->
 - **Accepted by:** [`opengrep scan`](../commands/scan.md), [`opengrep ci`](../commands/ci.md)
-- **See also:** [`taint_interfile`](../rule-options/taint_interfile.md), [`--taint-interfile-depth`](taint-interfile-depth.md), [`--interfile-timeout`](interfile-timeout.md), [`--taint-intrafile`](taint-intrafile.md), [`mode: taint`](../rule-syntax/taint-mode.md)
+- **See also:** [`taint_interfile`](../rule-options/taint_interfile.md), [`--taint-interfile-depth`](taint-interfile-depth.md), [`--interfile-timeout`](interfile-timeout.md), [`--taint-intrafile`](taint-intrafile.md), [`--disable-interfile`](disable-interfile.md), [`--interfile-dedup-by`](interfile-dedup-by.md), [`mode: taint`](../rule-syntax/taint-mode.md)
 <!-- END GENERATED: facts -->
 
 Follows taint through calls into functions defined in other files, for every
@@ -71,4 +71,6 @@ util.py
   input reaches os.system
 
     4 │ os.system(cmd)
+
+    from: main.py:3  input()
 ```

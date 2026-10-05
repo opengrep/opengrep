@@ -37,9 +37,9 @@ the output closed the pipe.
 | Flag | Summary |
 |---|---|
 | [`--debug`](../flags/debug.md) | Log everything --verbose does and the engine's own diagnostics as well. |
-| `--develop` | *not yet documented* |
+| `--develop` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--experimental`](../flags/experimental.md) | Accepted for compatibility; opengrep has only the one implementation. |
-| `--profile` | *not yet documented* |
+| `--profile` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--quiet`](../flags/quiet.md) | Print the findings and nothing else. |
 | [`--verbose`](../flags/verbose.md) | Log what the scan is doing, at the info level. |
 <!-- END GENERATED: flags -->

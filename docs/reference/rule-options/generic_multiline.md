@@ -19,16 +19,15 @@ With [`generic_engine: aliengrep`](generic_engine.md), an ellipsis `...` or a
 metavariable ellipsis `$...X` may span lines. With `generic_multiline: false`,
 they stay within one line.
 
-In that line mode, the long ellipsis `....`, and `$....X`, may still cross line
-breaks, though in this version not after text on a line: `begin....end`
-matches `begin` followed by `x end` on the next line, but not `begin`, `x` and
-`end` on three lines.
+In that line mode, the long ellipsis `....`, and `$....X`, may still cross a
+line break: `begin....end` matches `begin` followed by `x end` on the next
+line.
 
 The option has no effect with the default engine, spacegrep.
 
 ## Examples
 
-### Three ellipses on two blocks
+### Three ellipses on one block
 
 **`blocks.yaml`**
 ```yaml title="blocks.yaml"
@@ -62,9 +61,6 @@ rules:
 ```text title="blocks.txt"
 begin
 x end
-begin
-x
-end
 ```
 
 **Command and result:**
@@ -122,31 +118,6 @@ $ opengrep scan --config blocks.yaml --json blocks.txt 2>/dev/null | jq .
         "validation_state": "NO_VALIDATOR",
         "engine_kind": "OSS"
       }
-    },
-    {
-      "check_id": "dots-default",
-      "path": "blocks.txt",
-      "start": {
-        "line": 3,
-        "col": 1,
-        "offset": 12
-      },
-      "end": {
-        "line": 5,
-        "col": 4,
-        "offset": 23
-      },
-      "extra": {
-        "metavars": {},
-        "message": "block",
-        "metadata": {},
-        "severity": "INFO",
-        "fingerprint": "0da745f4f1aba903ca3655fb40bac322a3dcc6d8f50c64e0e8ec04ec35dbe7a3b5388ad4344cce39a65c8a509294d32e497d0bdfde9f0359219a4ec80f2d0992_1",
-        "lines": "begin\nx\nend",
-        "is_ignored": false,
-        "validation_state": "NO_VALIDATOR",
-        "engine_kind": "OSS"
-      }
     }
   ],
   "errors": [],
@@ -160,5 +131,5 @@ $ opengrep scan --config blocks.yaml --json blocks.txt 2>/dev/null | jq .
 }
 ```
 
-`dots-default` finds both blocks. In line mode, `dots` finds neither, and
-`long-dots` finds the two-line block but not the three-line one.
+`dots-default` finds the block. In line mode, `dots` does not, and
+`long-dots` does.

@@ -8,7 +8,7 @@ related: [cmd-scan, flag-config]
 # `opengrep test`
 
 <!-- BEGIN GENERATED: facts -->
-- **See also:** [`opengrep scan`](scan.md), [`--config`](../flags/config.md), [`opengrep validate`](validate.md), [`--autofix`](../flags/autofix.md), [`--matching-diagnosis`](../flags/matching-diagnosis.md), [`--test-ignore-todo`](../flags/test-ignore-todo.md), [`--test`](../flags/test.md)
+- **See also:** [`opengrep scan`](scan.md), [`--config`](../flags/config.md), [`opengrep validate`](validate.md), [`--autofix`](../flags/autofix.md), [`--matching-diagnosis`](../flags/matching-diagnosis.md), [`--test`](../flags/test.md), [`fix`](../rule-syntax/fix.md)
 <!-- END GENERATED: facts -->
 
 ```
@@ -46,8 +46,8 @@ same line. The comment is written in the target language, for example `#`,
 Several rule ids can be given, separated by commas: `# ruleid: rule-a, rule-b`.
 The test fails when a rule misses a `ruleid:` line ("missed lines") or reports
 a line that no `ruleid:` annotation names ("incorrect lines"). A `todoruleid:`
-or `todook:` line never fails a test, whichever way the rule behaves on it;
-see [`--test-ignore-todo`](../flags/test-ignore-todo.md). The `deepok:`,
+or `todook:` line never fails a test, whichever way the rule behaves on it.
+The `deepok:`,
 `deepruleid:`, `prook:` and `proruleid:` prefixes are accepted for
 compatibility and are ignored.
 
@@ -69,18 +69,18 @@ file.
 |---|---|
 | [`--config`](../flags/config.md) | Load rules from a file, a directory, a URL, a git repository or the Semgrep registry. |
 | [`--debug`](../flags/debug.md) | Log everything --verbose does and the engine's own diagnostics as well. |
-| `--develop` | *not yet documented* |
+| `--develop` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--experimental`](../flags/experimental.md) | Accepted for compatibility; opengrep has only the one implementation. |
 | [`--force-color`](../flags/force-color.md) | Style the output even when it is not going to a terminal. |
 | [`--json`](../flags/json.md) | Print the findings as a JSON document instead of the text report. |
 | [`--matching-diagnosis`](../flags/matching-diagnosis.md) | Explain why a failing rule test did not match. |
 | [`--max-memory`](../flags/max-memory.md) | Memory a single file's analysis may use before it is abandoned. |
 | [`--opengrep-ignore-pattern`](../flags/opengrep-ignore-pattern.md) | Recognise one more comment prefix that silences findings on a line. |
-| `--profile` | *not yet documented* |
+| `--profile` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--quiet`](../flags/quiet.md) | Print the findings and nothing else. |
 | [`--strict`](../flags/strict.md) | Fail the run when a file could not be parsed or another warning-level error occurred. |
 | [`--taint-intrafile`](../flags/taint-intrafile.md) | Follow taint through calls to functions defined in the same file, for every taint rule. |
-| [`--test-ignore-todo`](../flags/test-ignore-todo.md) | Documented as ignoring todoruleid annotations; in 1.30.0 it changes nothing. |
+| `--test-ignore-todo` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--timeout`](../flags/timeout.md) | Maximum time in seconds for one rule on one file; 0 means no limit. |
 | [`--timeout-threshold`](../flags/timeout-threshold.md) | How many rules may time out on a file before opengrep gives up on that file. |
 | [`--verbose`](../flags/verbose.md) | Log what the scan is doing, at the info level. |

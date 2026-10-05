@@ -10,7 +10,7 @@ related: [opt-taint_intrafile, key-mode-taint, flag-taint-interfile, flag-guarde
 
 <!-- BEGIN GENERATED: facts -->
 - **Accepted by:** [`opengrep scan`](../commands/scan.md), [`opengrep ci`](../commands/ci.md), [`opengrep test`](../commands/test.md)
-- **See also:** [`taint_intrafile`](../rule-options/taint_intrafile.md), [`mode: taint`](../rule-syntax/taint-mode.md), [`--taint-interfile`](taint-interfile.md), [`--guarded-taint-signatures`](guarded-taint-signatures.md)
+- **See also:** [`taint_intrafile`](../rule-options/taint_intrafile.md), [`mode: taint`](../rule-syntax/taint-mode.md), [`--taint-interfile`](taint-interfile.md), [`--guarded-taint-signatures`](guarded-taint-signatures.md), [`--disable-intrafile`](disable-intrafile.md)
 <!-- END GENERATED: facts -->
 
 A [taint rule](../rule-syntax/taint-mode.md) analyses one function at a time:

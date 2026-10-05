@@ -16,7 +16,7 @@ related: [flag-pattern, flag-skip-invalid-configs, flag-rewrite-rule-ids, cmd-te
 - **Also spelled:** `-c`, `-f`
 - **Value:** `SOURCE`, repeatable
 - **Environment:** [`OPENGREP_RULES`](../env/OPENGREP_RULES.md)
-- **See also:** [`--pattern`](pattern.md), [`--skip-invalid-configs`](skip-invalid-configs.md), [`--rewrite-rule-ids`](rewrite-rule-ids.md), [`opengrep test`](../commands/test.md), [`opengrep scan`](../commands/scan.md), [`opengrep validate`](../commands/validate.md), [`--allow-local-builds`](allow-local-builds.md), [`--exclude-rule`](exclude-rule.md), [`--severity`](severity.md), [`--validate`](validate.md), [`GIT_SSH_COMMAND`](../env/GIT_SSH_COMMAND.md), [`OPENGREP_URL`](../env/OPENGREP_URL.md)
+- **See also:** [`--pattern`](pattern.md), [`--skip-invalid-configs`](skip-invalid-configs.md), [`--rewrite-rule-ids`](rewrite-rule-ids.md), [`opengrep test`](../commands/test.md), [`opengrep scan`](../commands/scan.md), [`opengrep validate`](../commands/validate.md), [`--allow-local-builds`](allow-local-builds.md), [`--exclude-rule`](exclude-rule.md), [`--severity`](severity.md), [`--validate`](validate.md), [`rules`](../rule-syntax/rules.md), [`GIT_SSH_COMMAND`](../env/GIT_SSH_COMMAND.md), [`OPENGREP_URL`](../env/OPENGREP_URL.md)
 <!-- END GENERATED: facts -->
 
 Each `--config` names one source of rules. Repeat the flag to combine sources:

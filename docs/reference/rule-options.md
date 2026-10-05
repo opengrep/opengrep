@@ -1,9 +1,5 @@
 # Rule options
 
-<!-- BEGIN GENERATED: stamp -->
-> Reference for **opengrep 1.30.0** (commit `d094c70bb`).
-<!-- END GENERATED: stamp -->
-
 The `options:` key of a rule tunes how that rule matches. Options apply to the
 rule that sets them only.
 
@@ -60,7 +56,6 @@ that enables it.
 | [`taint_assume_safe_functions`](rule-options/taint_assume_safe_functions.md) | Assume that a call returns clean data, even when its arguments are tainted. |
 | [`taint_assume_safe_indexes`](rule-options/taint_assume_safe_indexes.md) | Assume that a tainted index does not taint the element it selects. |
 | [`taint_assume_safe_numbers`](rule-options/taint_assume_safe_numbers.md) | Assume that a number is clean, even when it was computed from tainted data. |
-| [`taint_fixpoint_timeout`](rule-options/taint_fixpoint_timeout.md) | Meant to limit the time spent on the taint analysis of one function; has no effect. |
 | [`taint_focus_on`](rule-options/taint_focus_on.md) | Report a taint finding at the source instead of at the sink. |
 | [`taint_interfile`](rule-options/taint_interfile.md) | Follow taint across files, through calls to functions defined in other files. |
 | [`taint_interfile_depth`](rule-options/taint_interfile_depth.md) | How many calls deep this rule's cross-file taint analysis follows a chain. |
@@ -105,6 +100,3 @@ $ opengrep scan --config rule.yaml app.py 2>&1 | sed 's/ while expecting.*//'
 $ opengrep scan --config rule.yaml app.py > /dev/null 2>&1; echo "exit status: $?"
 exit status: 2
 ```
-
-The rest of the message names the type opengrep expected, in its own
-`Rule_options.atd`.

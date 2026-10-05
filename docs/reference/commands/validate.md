@@ -8,7 +8,7 @@ related: [cmd-test, cmd-scan, flag-config]
 # `opengrep validate`
 
 <!-- BEGIN GENERATED: facts -->
-- **See also:** [`opengrep test`](test.md), [`opengrep scan`](scan.md), [`--config`](../flags/config.md), [`--skip-invalid-configs`](../flags/skip-invalid-configs.md), [`--strict`](../flags/strict.md), [`--validate`](../flags/validate.md)
+- **See also:** [`opengrep test`](test.md), [`opengrep scan`](scan.md), [`--config`](../flags/config.md), [`--skip-invalid-configs`](../flags/skip-invalid-configs.md), [`--strict`](../flags/strict.md), [`--validate`](../flags/validate.md), [`rules`](../rule-syntax/rules.md)
 <!-- END GENERATED: facts -->
 
 ```
@@ -36,6 +36,8 @@ are parsed but not metachecked, and `validate` warns when that leaves nothing
 to metacheck.
 
 Everything `validate` prints, the verdict included, goes to standard error.
+Before the verdict comes the count of the metachecks' scan: the rule files and
+the metacheck rules run on them, such as `1 file · 6 rules`.
 
 ## Exit status
 
@@ -56,11 +58,12 @@ Everything `validate` prints, the verdict included, goes to standard error.
 | Flag | Summary |
 |---|---|
 | [`--debug`](../flags/debug.md) | Log everything --verbose does and the engine's own diagnostics as well. |
-| `--develop` | *not yet documented* |
+| `--develop` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--experimental`](../flags/experimental.md) | Accepted for compatibility; opengrep has only the one implementation. |
 | [`--force-color`](../flags/force-color.md) | Style the output even when it is not going to a terminal. |
-| `--profile` | *not yet documented* |
+| `--profile` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--quiet`](../flags/quiet.md) | Print the findings and nothing else. |
+| [`--skin`](../flags/skin.md) | Which layout the text report uses. |
 | [`--verbose`](../flags/verbose.md) | Log what the scan is doing, at the info level. |
 <!-- END GENERATED: flags -->
 
@@ -81,6 +84,8 @@ rules:
 **Command and result:**
 ```console
 $ opengrep validate good.yaml 2>&1 >/dev/null
+1 file · 6 rules
+
 Configuration is valid - found 0 fatal errors, 0 skippable error(s), and 1 rule(s).
 $ opengrep validate good.yaml > /dev/null 2>&1; echo "exit status: $?"
 exit status: 0
@@ -102,15 +107,17 @@ rules:
 **Command and result:**
 ```console
 $ opengrep validate bad.yaml 2>&1 >/dev/null
-[00.04][WARNING]: bad.yaml:3:5: Invalid rule schema in rule broken
+[00.00][WARNING]: bad.yaml:3:5: Invalid rule schema in rule broken
   --> bad.yaml:3
 2 |   - id: broken
 3 |     patterns:
   |     ^^^^^^^^
 4 |       - pattern-not: eval("...")
 you need at least one positive term (not just negations or conditions)
+1 file · 6 rules
+
 Configuration is invalid - found 0 fatal errors, 1 skippable error(s), and 0 rule(s).
-[00.12][ERROR]: Please fix the above errors and try again.
+[00.00][ERROR]: Please fix the above errors and try again.
 $ opengrep validate bad.yaml > /dev/null 2>&1; echo "exit status: $?"
 exit status: 4
 ```

@@ -51,7 +51,7 @@ eval(1)
 $ opengrep scan --config rule.yaml script.unknown 2>&1 >/dev/null
 nothing to scan
 
-0 files · 0 findings
+no findings
 $ opengrep scan --config rule.yaml --scan-unknown-extensions script.unknown
 script.unknown
 

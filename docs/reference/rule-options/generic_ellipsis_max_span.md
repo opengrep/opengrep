@@ -68,9 +68,6 @@ blocks.txt
 
     1 │ begin x end
 
-  info  block-default
-  a block
-
     2 │ begin
     3 │ x
     4 │ end

@@ -54,16 +54,18 @@ error.
 <!-- BEGIN GENERATED: flags -->
 | Flag | Summary |
 |---|---|
-| [`--allow-local-builds`](../flags/allow-local-builds.md) | Let opengrep build the project to work out its dependencies; it has nothing to act on today. |
+| [`--allow-local-builds`](../flags/allow-local-builds.md) | Let opengrep build the project to work out its dependencies; it has nothing to act on in opengrep. |
 | [`--allow-rule-timeout-control`](../flags/allow-rule-timeout-control.md) | Let rules set their own time limits, which opengrep otherwise ignores. |
 | [`--autofix`](../flags/autofix.md) | Apply the fixes rules suggest, rewriting your files. |
 | [`--baseline-commit`](../flags/baseline-commit.md) | Report only the findings that are not already present in the given commit. |
 | [`--config`](../flags/config.md) | Load rules from a file, a directory, a URL, a git repository or the Semgrep registry. |
 | [`--dataflow-traces`](../flags/dataflow-traces.md) | Show how a value reaches the finding, for taint rules. |
 | [`--debug`](../flags/debug.md) | Log everything --verbose does and the engine's own diagnostics as well. |
-| `--develop` | *not yet documented* |
+| `--develop` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
+| [`--disable-interfile`](../flags/disable-interfile.md) | Keep every taint rule within single files, even rules that ask to follow taint across files. |
+| [`--disable-intrafile`](../flags/disable-intrafile.md) | Keep every taint rule within single functions, even rules that ask to follow calls. |
 | [`--dryrun`](../flags/dryrun.md) | Show what would be changed without changing it; the two commands mean different things by it. |
-| `--dump-ast` | *not yet documented* |
+| `--dump-ast` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--dynamic-timeout`](../flags/dynamic-timeout.md) | Scale each rule's time limit with the size of the file being scanned. |
 | [`--dynamic-timeout-max-multiplier`](../flags/dynamic-timeout-max-multiplier.md) | The ceiling on how much a file's size may stretch the timeout. |
 | [`--dynamic-timeout-unit-kb`](../flags/dynamic-timeout-unit-kb.md) | The file size, in KB, that counts as one step when scaling the timeout. |
@@ -88,6 +90,7 @@ error.
 | [`--incremental-output`](../flags/incremental-output.md) | Print each finding as it is produced instead of all of them at the end. |
 | [`--incremental-output-postprocess`](../flags/incremental-output.md) | *not yet documented* |
 | [`--inline-metavariables`](../flags/inline-metavariables.md) | Replace metavariables in a rule's metadata with what they matched. |
+| [`--interfile-dedup-by`](../flags/interfile-dedup-by.md) | Whether a sink that several sources reach across files is one finding or one per source. |
 | [`--interfile-timeout`](../flags/interfile-timeout.md) | Time a rule may spend on the cross-file analysis. |
 | [`--jobs`](../flags/jobs.md) | How many cores run rules in parallel. |
 | [`--json`](../flags/json.md) | Print the findings as a JSON document instead of the text report. |
@@ -102,12 +105,13 @@ error.
 | [`--max-match-per-file`](../flags/max-match-per-file.md) | How many findings one file may have, across all rules, before they are all dropped. |
 | [`--max-memory`](../flags/max-memory.md) | Memory a single file's analysis may use before it is abandoned. |
 | [`--max-target-bytes`](../flags/max-target-bytes.md) | Skip files larger than this when walking a directory. |
+| [`--no-progress-bar`](../flags/no-progress-bar.md) | Do not draw the line that shows the progress of a scan on the terminal. |
 | [`--opengrep-ignore-pattern`](../flags/opengrep-ignore-pattern.md) | Recognise one more comment prefix that silences findings on a line. |
 | [`--optimizations`](../flags/optimizations.md) | Turn the engine's optimizations, chiefly the prefilter, on or off. |
 | [`--output`](../flags/output.md) | Write the findings to a file instead of standard output. |
 | [`--output-enclosing-context`](../flags/output-enclosing-context.md) | Record which function or class each finding sits in. |
 | [`--pattern`](../flags/pattern.md) | Search with a single pattern given on the command line, instead of a rule file. |
-| `--profile` | *not yet documented* |
+| `--profile` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--project-root`](../flags/project-root.md) | Treat this folder as the project root, so its ignore files are read. |
 | [`--quiet`](../flags/quiet.md) | Print the findings and nothing else. |
 | [`--replacement`](../flags/replacement.md) | The fix for a command-line pattern, as a rule's fix key would give it. |
@@ -125,7 +129,7 @@ error.
 | [`--taint-interfile-depth`](../flags/taint-interfile-depth.md) | How many calls deep the cross-file taint analysis follows a chain. |
 | [`--taint-intrafile`](../flags/taint-intrafile.md) | Follow taint through calls to functions defined in the same file, for every taint rule. |
 | [`--test`](../flags/test.md) | Run the rule tests and scan nothing; the older spelling of the test command. |
-| [`--test-ignore-todo`](../flags/test-ignore-todo.md) | Documented as ignoring todoruleid annotations; in 1.30.0 it changes nothing. |
+| `--test-ignore-todo` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--text`](../flags/text.md) | Print the human-readable report, which is what a scan does anyway. |
 | [`--text-output`](../flags/text-output.md) | Also write the text report to a file. |
 | [`--time`](../flags/time.md) | Report how long the scan took, per rule and per file. |
@@ -137,9 +141,9 @@ error.
 | [`--version`](../flags/version.md) | Print the opengrep version and exit. |
 | [`--vim`](../flags/vim.md) | Print one line per finding, in the form Vim quickfix lists parse. |
 | [`--vim-output`](../flags/vim-output.md) | Also write the findings in Vim quickfix format to a file. |
-| `--x-ignore-semgrepignore-files` | *not yet documented* |
-| `--x-ls` | *not yet documented* |
-| `--x-ls-long` | *not yet documented* |
+| `--x-ignore-semgrepignore-files` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
+| `--x-ls` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
+| `--x-ls-long` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 <!-- END GENERATED: flags -->
 
 ## Examples

@@ -12,7 +12,7 @@ related: [flag-exclude-rule, flag-error, flag-config]
 <!-- BEGIN GENERATED: facts -->
 - **Accepted by:** [`opengrep scan`](../commands/scan.md)
 - **Value:** `INFO`, `WARNING` or `ERROR`, repeatable
-- **See also:** [`--exclude-rule`](exclude-rule.md), [`--error`](error.md), [`--config`](config.md)
+- **See also:** [`--exclude-rule`](exclude-rule.md), [`--error`](error.md), [`--config`](config.md), [`severity`](../rule-syntax/severity.md)
 <!-- END GENERATED: facts -->
 
 Keeps only the findings whose rule carries one of the named severities, and

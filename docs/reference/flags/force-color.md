@@ -20,7 +20,8 @@ related: [env-NO_COLOR, flag-skin]
 Opengrep styles its output only when it is writing to a terminal, so a report
 sent through a pipe or into a file arrives as plain text. `--force-color`
 keeps the colour anyway, which is what a pager or a CI log viewer that
-understands ANSI codes wants. `--no-force-color` turns it back off.
+understands ANSI codes wants. It also styles the text reports written to files
+by [`--text-output`](text-output.md) and [`--output`](output.md). `--no-force-color` turns it back off.
 
 It wins over [`NO_COLOR`](../env/NO_COLOR.md) and
 `OPENGREP_FORCE_NO_COLOR`. The same thing can be asked for with

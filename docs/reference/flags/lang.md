@@ -42,8 +42,5 @@ eval(1)
 $ opengrep scan -e 'eval(...)' -l js app.js
 app.js
 
-  error  -
-  eval(...)
-
     1 │ eval(1)
 ```

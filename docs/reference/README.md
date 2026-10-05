@@ -1,9 +1,5 @@
 # Opengrep reference
 
-<!-- BEGIN GENERATED: stamp -->
-> Reference for **opengrep 1.30.0** (commit `d094c70bb`).
-<!-- END GENERATED: stamp -->
-
 This reference covers the command line and the rule format of opengrep.
 
 - [Commands](commands.md): `opengrep scan`, `opengrep test` and the other subcommands.
@@ -14,21 +10,20 @@ This reference covers the command line and the rule format of opengrep.
 - [Internal and debugging interfaces](internal.md): interfaces meant for opengrep's
   own development, listed but not documented in detail.
 
-## Reading an entry
+## Further reading
 
-Each entry has its own page. Below the title, a short list of facts gives the
-commands that accept a flag, its default, the environment variable that has
-the same effect, and related entries.
+The [Opengrep wiki](https://github.com/opengrep/opengrep/wiki) on GitHub goes
+deeper into parts of the taint analysis than this reference does. Its pages are
+tutorials with worked examples, and notes on how the analysis works inside:
 
-The examples at the end of a page are complete. Create the files shown, run
-the command in the same directory, and you will see the output shown. Every
-block in an example is labelled: with the name of the file to create, or with
-**Command and result:** for the commands to run and what they print. Only
-standard output is shown unless the command redirects standard error
-(`2>&1`). Opengrep prints its progress and summary on standard error.
-
-In example targets, a `# ruleid: <id>` comment marks the next line as one that
-rule `<id>` must report, and `# ok: <id>` marks one it must not report.
-[`opengrep test`](commands/test.md) checks these annotations, so an example
-that runs `opengrep test` and prints `✓ All tests passed` shows exactly where
-the rule matches.
+- [Intrafile taint tracking](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial):
+  following tainted data from function to function within one file, with
+  `--taint-intrafile`.
+- [Taint tracking in higher-order functions](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial):
+  taint carried through callbacks such as `map` and `forEach`.
+- [Built-in methods that taint](https://github.com/opengrep/opengrep/wiki/Methods-that-taint):
+  the standard library methods, such as `list.add` and `map.get`, that carry
+  taint into and out of a collection, language by language.
+- [Guarded taint signatures](https://github.com/opengrep/opengrep/wiki/Guarded-taint-signatures):
+  an experimental refinement that drops a finding when the condition leading to
+  the sink can never hold for a call.

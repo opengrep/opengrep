@@ -17,10 +17,9 @@ related: [flag-version]
 - **See also:** [`--version`](version.md)
 <!-- END GENERATED: facts -->
 
-Semgrep asks a server whether a newer release exists, and these flags turned
-that on and off. Opengrep never makes the request, so neither spelling changes
-anything: they are accepted so that scripts and CI configurations written for
-semgrep keep working.
+Opengrep never asks a server whether a newer release exists, so neither
+spelling changes anything: they are accepted so that existing scripts and CI
+configurations that pass them keep working.
 
 Nothing here reaches the network. The registry is the only thing opengrep
 fetches, and only when [`--config`](config.md) asks for it.

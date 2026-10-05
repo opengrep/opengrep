@@ -14,7 +14,7 @@ related: [flag-dryrun, flag-replacement, key-fix, cmd-test]
 - **Accepted by:** [`opengrep scan`](../commands/scan.md)
 - **Also spelled:** `-a`, `--no-autofix`
 - **Default:** `false`
-- **See also:** [`--dryrun`](dryrun.md), [`--replacement`](replacement.md), `fix`, [`opengrep test`](../commands/test.md)
+- **See also:** [`--dryrun`](dryrun.md), [`--replacement`](replacement.md), [`fix`](../rule-syntax/fix.md), [`opengrep test`](../commands/test.md), [`fix-regex`](../rule-syntax/fix-regex.md)
 <!-- END GENERATED: facts -->
 
 A rule with a `fix:` key says what its finding should become.

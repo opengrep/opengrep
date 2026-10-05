@@ -23,19 +23,11 @@ positional argument names another one, as a path or as `owner/repo`.
 Only GitHub Actions is supported; see [`--env`](../flags/env.md).
 
 The command drives the [GitHub CLI](https://cli.github.com/), `gh`, which must
-be installed and authenticated. Without `gh` on the `PATH`, it fails with
-`failed to set git_protocol as ssh` and exit status 2. It asks `gh` whether the
-workflow already exists, writes the file, commits it, and opens a pull request.
+be installed and authenticated. It asks `gh` whether the workflow already
+exists, writes the file, commits it, and opens a pull request.
 An existing workflow is left alone unless [`--update`](../flags/update.md) is
 given, and [`--dryrun`](../flags/dryrun.md) reports what would happen without
 running any of it.
-
-In 1.30.0 the command reports `SUCCESS Installed opengrep workflow for this
-repository` whatever happened, including after `--dryrun` and when it wrote
-nothing. In a repository with no GitHub remote, `gh` answers `no git remotes
-found`, which the command reads as the workflow already being present, so it
-writes no file and still reports success. Check that
-`.github/workflows/opengrep.yml` exists before believing the message.
 
 ## Exit status
 
@@ -48,11 +40,11 @@ pipe.
 | Flag | Summary |
 |---|---|
 | [`--debug`](../flags/debug.md) | Log everything --verbose does and the engine's own diagnostics as well. |
-| `--develop` | *not yet documented* |
+| `--develop` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--dryrun`](../flags/dryrun.md) | Show what would be changed without changing it; the two commands mean different things by it. |
 | [`--env`](../flags/env.md) | The CI system to install a workflow for; only GitHub Actions is supported. |
 | [`--experimental`](../flags/experimental.md) | Accepted for compatibility; opengrep has only the one implementation. |
-| `--profile` | *not yet documented* |
+| `--profile` | Listed in [Internal and debugging interfaces](../internal.md#flags). |
 | [`--quiet`](../flags/quiet.md) | Print the findings and nothing else. |
 | [`--repo`](../flags/repo.md) | The repository to add the workflow to, as a path or as owner/repo. |
 | [`--update`](../flags/update.md) | Replace a workflow that is already there instead of leaving it alone. |

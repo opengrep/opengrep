@@ -9,7 +9,7 @@ related: [opt-taint_intrafile, opt-taint_interfile, flag-taint-intrafile, flag-t
 # `mode: taint`
 
 <!-- BEGIN GENERATED: facts -->
-- **See also:** [`taint_intrafile`](../rule-options/taint_intrafile.md), [`taint_interfile`](../rule-options/taint_interfile.md), [`--taint-intrafile`](../flags/taint-intrafile.md), [`--taint-interfile`](../flags/taint-interfile.md), [`--dataflow-traces`](../flags/dataflow-traces.md), [`--guarded-taint-signatures`](../flags/guarded-taint-signatures.md), [`taint_assume_safe_functions`](../rule-options/taint_assume_safe_functions.md), [`taint_focus_on`](../rule-options/taint_focus_on.md)
+- **See also:** [`taint_intrafile`](../rule-options/taint_intrafile.md), [`taint_interfile`](../rule-options/taint_interfile.md), [`--taint-intrafile`](../flags/taint-intrafile.md), [`--taint-interfile`](../flags/taint-interfile.md), [`--dataflow-traces`](../flags/dataflow-traces.md), [`--guarded-taint-signatures`](../flags/guarded-taint-signatures.md), [`mode`](mode.md), [`taint_assume_safe_functions`](../rule-options/taint_assume_safe_functions.md), [`taint_focus_on`](../rule-options/taint_focus_on.md)
 <!-- END GENERATED: facts -->
 
 ```yaml

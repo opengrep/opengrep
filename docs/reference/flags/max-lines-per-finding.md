@@ -55,7 +55,6 @@ app.py
     1 │ eval(
     2 │   1
     3 │ )
-
 $ opengrep scan --config rule.yaml --max-lines-per-finding 1 app.py
 app.py
 
@@ -63,5 +62,5 @@ app.py
   found eval of 1
 
     1 │ eval(
-    … 2 lines more
+    … 2 lines more, adjust with --max-lines-per-finding
 ```

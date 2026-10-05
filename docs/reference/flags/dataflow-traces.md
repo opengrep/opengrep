@@ -57,12 +57,12 @@ app.py
     3 │ eval(y)
     │
     ├─ Taint comes from:
-    │  1 │ x = input()
+    │    1 │ x = input()
     │
     ├─ Taint flows through these intermediate variables:
-    │  1 │ x = input()
-    │  2 │ y = x
+    │    1 │ x = input()
+    │    2 │ y = x
     │
     └─ This is how taint reaches the sink:
-       3 │ eval(y)
+         3 │ eval(y)
 ```

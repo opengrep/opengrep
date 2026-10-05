@@ -16,8 +16,7 @@ related: [flag-json, flag-dataflow-traces, key-patterns]
 Adds an `explanations` array to the [JSON output](json.md), recording how the
 parts of a rule matched: each operator of the rule, what it matched, and what
 its children contributed. This is for working out why a rule fires where it
-does, or why it does not fire at all, and it is the information behind the
-rule playground on semgrep.dev.
+does, or why it does not fire at all.
 
 It changes the JSON output only. The flag costs time and makes the document
 considerably larger, so it is meant for debugging a rule rather than for a

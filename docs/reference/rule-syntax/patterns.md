@@ -8,7 +8,7 @@ related: [key-pattern, key-pattern-either, key-pattern-inside, key-pattern-not, 
 # `patterns`
 
 <!-- BEGIN GENERATED: facts -->
-- **See also:** `pattern`, `pattern-either`, `pattern-inside`, `pattern-not`, `pattern-not-inside`, `pattern-regex`, `focus-metavariable`, `metavariable-regex`, [`--matching-explanations`](../flags/matching-explanations.md), [`--pattern`](../flags/pattern.md)
+- **See also:** [`pattern`](pattern.md), [`pattern-either`](pattern-either.md), [`pattern-inside`](pattern-inside.md), [`pattern-not`](pattern-not.md), [`pattern-not-inside`](pattern-not-inside.md), [`pattern-regex`](pattern-regex.md), [`focus-metavariable`](focus-metavariable.md), [`metavariable-regex`](metavariable-regex.md), [`--matching-explanations`](../flags/matching-explanations.md), [`--pattern`](../flags/pattern.md), [`metavariable-analysis`](metavariable-analysis.md), [`metavariable-comparison`](metavariable-comparison.md), [`metavariable-pattern`](metavariable-pattern.md), [`metavariable-type`](metavariable-type.md)
 <!-- END GENERATED: facts -->
 
 `patterns` takes a list of conditions and matches the code that satisfies all

@@ -39,7 +39,7 @@ Other limits:
   options. A rule's options have no effect when `--timeout` is `0`.
 
 [`OPENGREP_TIMEOUT`](../env/OPENGREP_TIMEOUT.md) sets the value for `scan` and
-`ci` when the flag is not given. `opengrep test` does not read it.
+`ci` when the flag is not given.
 
 ## Examples
 

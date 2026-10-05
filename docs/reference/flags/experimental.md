@@ -13,10 +13,9 @@ related: [flag-version]
 - **See also:** [`--version`](version.md)
 <!-- END GENERATED: facts -->
 
-Semgrep shipped two implementations of its command line, a Python one and an
-OCaml one, and this flag chose the OCaml one. Opengrep has only the OCaml
-implementation, so the flag changes nothing. It is accepted so that scripts
-and CI configurations written for semgrep keep working.
+Opengrep has a single implementation of its command line, written in OCaml,
+so this flag changes nothing. It is accepted so that existing scripts and CI
+configurations that pass it keep working.
 
 It is one of the three flags that may come before the command, as in
 `opengrep --experimental scan …`, the others being `--debug` and `--profile`.

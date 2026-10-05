@@ -36,8 +36,8 @@ files matching one of its patterns. A rule's own [`paths`](../rule-syntax/paths.
 narrow the files further for that rule.
 
 Files named on the command line are scanned even when they match. With
-`--force-exclude`, the patterns apply to them too, but currently only the
-patterns that match the file name, such as `*.py` or `gen.py`, do so.
+`--force-exclude`, the patterns that match the file name, such as `*.py` or
+`gen.py`, apply to them too.
 
 ## Examples
 

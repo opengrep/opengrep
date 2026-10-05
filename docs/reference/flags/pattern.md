@@ -14,7 +14,7 @@ related: [flag-lang, flag-replacement, flag-config, key-patterns]
 - **Accepted by:** [`opengrep scan`](../commands/scan.md)
 - **Also spelled:** `-e`
 - **Value:** `PATTERN`
-- **See also:** [`--lang`](lang.md), [`--replacement`](replacement.md), [`--config`](config.md), [`patterns`](../rule-syntax/patterns.md)
+- **See also:** [`--lang`](lang.md), [`--replacement`](replacement.md), [`--config`](config.md), [`patterns`](../rule-syntax/patterns.md), [`pattern`](../rule-syntax/pattern.md)
 <!-- END GENERATED: facts -->
 
 Runs one pattern without writing a rule, which is what you want when grepping
@@ -26,7 +26,8 @@ parsed as some language. Without `-l`, opengrep stops with
 `-e/--pattern and -l/--lang must both be specified` and exit status 2.
 
 A finding from a command-line pattern has no rule behind it, so it is reported
-with `-` as its rule id, the pattern as its message, and error severity.
+with `-` as its rule id, the pattern as its message, and error severity. The
+text report leaves those out and shows the matched lines alone.
 [`--replacement`](replacement.md) adds a fix to it.
 
 ## Examples
@@ -44,11 +45,7 @@ print(2)
 $ opengrep scan -e 'eval(...)' -l python app.py
 app.py
 
-  error  -
-  eval(...)
-
     1 │ eval(1)
-
 $ opengrep scan -e 'eval(...)' app.py 2>&1 >/dev/null | tail -1
-[00.04][ERROR]: -e/--pattern and -l/--lang must both be specified
+[00.00][ERROR]: -e/--pattern and -l/--lang must both be specified
 ```

@@ -18,11 +18,7 @@ With [`--allow-rule-timeout-control`](../flags/allow-rule-timeout-control.md),
 may spend that many seconds on each file, whether that is more or less than
 the scan's limit. Without the flag, the option is ignored.
 
-Two cases differ from the flag:
-
-- `--timeout 0` removes every time limit, and the option then has no effect.
-- A rule's `timeout: 0`, or a negative value, does not remove the limit: the
-  rule times out on every file at once.
+`--timeout 0` removes every time limit, and the option then has no effect.
 
 With [`dynamic_timeout`](dynamic_timeout.md), the value is the base that the
 size of the file multiplies.

@@ -48,7 +48,7 @@ eval(1)
 $ opengrep scan --config rule.yaml app.py 2>&1 >/dev/null
 1 file · 1 rule
 
-1 file · 1 finding
+1 finding in 1 file
 $ opengrep scan --config rule.yaml --quiet app.py 2>&1 >/dev/null
 $ opengrep scan --config rule.yaml --quiet app.py
 app.py

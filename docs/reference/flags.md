@@ -1,9 +1,5 @@
 # Flags
 
-<!-- BEGIN GENERATED: stamp -->
-> Reference for **opengrep 1.30.0** (commit `d094c70bb`).
-<!-- END GENERATED: stamp -->
-
 A flag is documented once, even when several commands accept it. The
 *Accepted by* column lists those commands. Flags may come before or after the
 targets. A flag with a value takes it either as `--flag=VALUE` or as
@@ -16,7 +12,7 @@ flag wins and opengrep logs a warning naming the ignored variable. See
 <!-- BEGIN GENERATED: index -->
 | Flag | Accepted by | Environment | Summary |
 |---|---|---|---|
-| [`--allow-local-builds`](flags/allow-local-builds.md) | scan, ci |  | Let opengrep build the project to work out its dependencies; it has nothing to act on today. |
+| [`--allow-local-builds`](flags/allow-local-builds.md) | scan, ci |  | Let opengrep build the project to work out its dependencies; it has nothing to act on in opengrep. |
 | [`--allow-rule-timeout-control`](flags/allow-rule-timeout-control.md) | scan, ci |  | Let rules set their own time limits, which opengrep otherwise ignores. |
 | [`--audit-on`](flags/audit-on.md) | ci | `OPENGREP_AUDIT_ON` | Report blocking findings but exit 0 when the CI event has one of these names. |
 | [`--autofix`](flags/autofix.md) | scan |  | Apply the fixes rules suggest, rewriting your files. |
@@ -24,6 +20,8 @@ flag wins and opengrep logs a warning naming the ignored variable. See
 | [`--config`](flags/config.md) | scan, ci, test | `OPENGREP_RULES` | Load rules from a file, a directory, a URL, a git repository or the Semgrep registry. |
 | [`--dataflow-traces`](flags/dataflow-traces.md) | scan, ci |  | Show how a value reaches the finding, for taint rules. |
 | [`--debug`](flags/debug.md) | scan, ci, test, validate, show, lsp, install-ci |  | Log everything --verbose does and the engine's own diagnostics as well. |
+| [`--disable-interfile`](flags/disable-interfile.md) | scan, ci |  | Keep every taint rule within single files, even rules that ask to follow taint across files. |
+| [`--disable-intrafile`](flags/disable-intrafile.md) | scan, ci |  | Keep every taint rule within single functions, even rules that ask to follow calls. |
 | [`--dryrun`](flags/dryrun.md) | scan, install-ci |  | Show what would be changed without changing it; the two commands mean different things by it. |
 | [`--dynamic-timeout`](flags/dynamic-timeout.md) | scan, ci |  | Scale each rule's time limit with the size of the file being scanned. |
 | [`--dynamic-timeout-max-multiplier`](flags/dynamic-timeout-max-multiplier.md) | scan, ci |  | The ceiling on how much a file's size may stretch the timeout. |
@@ -50,6 +48,7 @@ flag wins and opengrep logs a warning naming the ignored variable. See
 | [`--include`](flags/include.md) | scan, ci |  | Scan only the files whose path matches one of these patterns. |
 | [`--incremental-output`](flags/incremental-output.md) | scan |  | Print each finding as it is produced instead of all of them at the end. |
 | [`--inline-metavariables`](flags/inline-metavariables.md) | scan, ci |  | Replace metavariables in a rule's metadata with what they matched. |
+| [`--interfile-dedup-by`](flags/interfile-dedup-by.md) | scan, ci |  | Whether a sink that several sources reach across files is one finding or one per source. |
 | [`--interfile-timeout`](flags/interfile-timeout.md) | scan, ci |  | Time a rule may spend on the cross-file analysis. |
 | [`--jobs`](flags/jobs.md) | scan, ci |  | How many cores run rules in parallel. |
 | [`--json`](flags/json.md) | scan, ci, test, show |  | Print the findings as a JSON document instead of the text report. |
@@ -65,6 +64,7 @@ flag wins and opengrep logs a warning naming the ignored variable. See
 | [`--max-match-per-file`](flags/max-match-per-file.md) | scan, ci |  | How many findings one file may have, across all rules, before they are all dropped. |
 | [`--max-memory`](flags/max-memory.md) | scan, ci, test |  | Memory a single file's analysis may use before it is abandoned. |
 | [`--max-target-bytes`](flags/max-target-bytes.md) | scan, ci |  | Skip files larger than this when walking a directory. |
+| [`--no-progress-bar`](flags/no-progress-bar.md) | scan |  | Do not draw the line that shows the progress of a scan on the terminal. |
 | [`--opengrep-ignore-pattern`](flags/opengrep-ignore-pattern.md) | scan, ci, test |  | Recognise one more comment prefix that silences findings on a line. |
 | [`--optimizations`](flags/optimizations.md) | scan, ci |  | Turn the engine's optimizations, chiefly the prefilter, on or off. |
 | [`--output`](flags/output.md) | scan, ci |  | Write the findings to a file instead of standard output. |
@@ -81,7 +81,7 @@ flag wins and opengrep logs a warning naming the ignored variable. See
 | [`--semgrepignore-filename`](flags/semgrepignore-filename.md) | scan |  | Read the list of skipped paths from a differently named file. |
 | [`--severity`](flags/severity.md) | scan |  | Report only the findings of rules with these severities. |
 | [`--show-supported-languages`](flags/show-supported-languages.md) | scan |  | Print the languages opengrep can parse, and exit. |
-| [`--skin`](flags/skin.md) | scan |  | Which layout the text report uses. |
+| [`--skin`](flags/skin.md) | scan, ci, validate | `OPENGREP_SKIN` | Which layout the text report uses. |
 | [`--skip-invalid-configs`](flags/skip-invalid-configs.md) | scan |  | Skip files in a rules directory that are not rule configs, instead of stopping. |
 | [`--strict`](flags/strict.md) | scan, test |  | Fail the run when a file could not be parsed or another warning-level error occurred. |
 | [`--subdir`](flags/subdir.md) | ci |  | Scan only this directory, while the repository still provides the CI metadata. |
@@ -90,7 +90,6 @@ flag wins and opengrep logs a warning naming the ignored variable. See
 | [`--taint-interfile-depth`](flags/taint-interfile-depth.md) | scan, ci |  | How many calls deep the cross-file taint analysis follows a chain. |
 | [`--taint-intrafile`](flags/taint-intrafile.md) | scan, ci, test |  | Follow taint through calls to functions defined in the same file, for every taint rule. |
 | [`--test`](flags/test.md) | scan |  | Run the rule tests and scan nothing; the older spelling of the test command. |
-| [`--test-ignore-todo`](flags/test-ignore-todo.md) | scan, test |  | Documented as ignoring todoruleid annotations; in 1.30.0 it changes nothing. |
 | [`--text`](flags/text.md) | scan, ci |  | Print the human-readable report, which is what a scan does anyway. |
 | [`--text-output`](flags/text-output.md) | scan, ci |  | Also write the text report to a file. |
 | [`--time`](flags/time.md) | scan, ci |  | Report how long the scan took, per rule and per file. |
