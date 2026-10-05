@@ -1,0 +1,13 @@
+rules:
+  - id: ruby-yield-in-method
+    message: Taint analysis of a file whose methods yield to an implicit block
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
