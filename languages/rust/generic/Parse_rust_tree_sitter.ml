@@ -129,6 +129,13 @@ let rec macro_items_to_anys ~calls (xs : rust_macro_item list) : G.any list =
      expressions, so that a nested macro is converted once, either here or
      by the fallback below, and not by both.
   *)
+  let rec split_operand acc = function
+    | ( MacAny (G.Tk (Tok.OriginTok { str = ","; _ })) :: _
+      | MacAny (G.I ("as", _)) :: _
+      | [] ) as after ->
+        (List.rev acc, after)
+    | x :: xs -> split_operand (x :: acc) xs
+  in
   let rec try_as_normal_exprs (acc : (unit -> G.expr) option) macros :
       (unit -> G.expr) list option =
     match (acc, macros) with
@@ -170,6 +177,11 @@ let rec macro_items_to_anys ~calls (xs : rust_macro_item list) : G.any list =
                G.Call (e (), (l, List_.map (fun arg -> G.Arg (arg ())) args, r))
                |> G.e))
           rest
+    (* x as T *)
+    | Some e, MacAny (G.I ("as", tas)) :: MacAny (G.I ty) :: rest when calls ->
+        try_as_normal_exprs
+          (Some (fun () -> G.Cast (G.ty_builtin ty, tas, e ()) |> G.e))
+          rest
     (* nested macro, e.g. format!(...) inside vec![...] *)
     | ( None,
         MacAny (G.I (s, i1))
@@ -193,6 +205,9 @@ let rec macro_items_to_anys ~calls (xs : rust_macro_item list) : G.any list =
         :: MacAny (G.I ("mut", _))
         :: rest ) ->
         try_as_normal_exprs None (amp :: rest)
+    (* mut x, likewise *)
+    | None, MacAny (G.I ("mut", _)) :: (_ :: _ as rest) ->
+        try_as_normal_exprs None rest
     (* For the prefix case, however, we must only handle this if we haven't
        seen an entry, because this should start off the prefix.
     *)
@@ -208,20 +223,17 @@ let rec macro_items_to_anys ~calls (xs : rust_macro_item list) : G.any list =
            as in, with &* as a single token. So let's just not deal with
            that for now.
         *)
-        (* We need to do the rest of it first, so we can ensure that the
-           prefix operator happens last.
+        (* The operator applies to its operand only, which stops at a comma
+           or a cast: `*p as u8` casts the dereference.
         *)
-        let* args = try_as_normal_exprs None rest in
-        match args with
-        | [] -> None
-        | e :: es ->
-            let* e =
-              match str with
-              | "&" -> Some (fun () -> Ref (tk, e ()) |> G.e)
-              | "*" -> Some (fun () -> DeRef (tk, e ()) |> G.e)
-              | _ -> None
-            in
-            Some (e :: es))
+        let operand, after = split_operand [] rest in
+        let* args = try_as_normal_exprs None operand in
+        match (args, str) with
+        | [ e ], "&" ->
+            try_as_normal_exprs (Some (fun () -> Ref (tk, e ()) |> G.e)) after
+        | [ e ], "*" ->
+            try_as_normal_exprs (Some (fun () -> DeRef (tk, e ()) |> G.e)) after
+        | _ -> None)
     | None, mac :: rest ->
         let* expr = macro_item_to_expr mac in
         let* args = try_as_normal_exprs (Some (fun () -> expr)) rest in
