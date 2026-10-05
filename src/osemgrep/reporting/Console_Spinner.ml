@@ -26,10 +26,12 @@ let show_spinner delay_ms : unit =
       Unix.sleepf (Float.of_int delay_ms /. Float.of_int (1000 * 100))
     done
 
+(* Clears only the spinner's line and leaves the cursor at its start, so that
+   the next output overwrites it. Erasing below the cursor would also erase
+   what the caller printed under it. *)
 let erase_spinner () : unit =
-  ANSITerminal.set_cursor 1 (-1);
   ANSITerminal.move_bol ();
-  ANSITerminal.erase ANSITerminal.Below
+  ANSITerminal.erase ANSITerminal.Eol
 
 let spinner_async () : 'a Lwt.t =
   (* nosemgrep *)
@@ -43,8 +45,7 @@ let spinner_async () : 'a Lwt.t =
     if !jump_y then (
       (* jump to the line above to add the indicator *)
       ANSITerminal.move_cursor 0 (-1);
-      jump_y := false)
-    else ();
+      jump_y := false);
     (* the glyph's colour follows $NO_COLOR like every other output *)
     let style =
       match Console.get_highlight () with

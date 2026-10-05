@@ -15,6 +15,9 @@ type skipped_targets_grouped = {
   errors : Semgrep_output_v1_t.skipped_target list;
 }
 
+(* the text that replaces a list cut short by --max-log-list-entries *)
+val too_much_data : string
+
 (* one entry per error on a scan target; an error raised while a rule is
    loaded points at the rule file, which no scan analysed, and is left out *)
 val errors_to_skipped :

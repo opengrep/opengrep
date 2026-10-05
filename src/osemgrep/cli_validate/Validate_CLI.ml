@@ -62,7 +62,7 @@ let o_args : string list Term.t =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common force_color =
+  let combine args common force_color skin =
     let rules_source =
       match args with
       | [] -> Error.abort "Nothing to validate, pass a directory or rule file"
@@ -75,14 +75,15 @@ let cmdline_term : conf Term.t =
       rules_source;
       core_runner_conf;
       json = false;
-      output_conf = Output.default;
+      output_conf = { Output.default with skin };
       force_color;
       common;
     }
   in
   Term.(
     const combine $ o_args $ CLI_common.o_common
-    $ CLI_common.o_force_color ~default:Output.default.force_color)
+    $ CLI_common.o_force_color ~default:Output.default.force_color
+    $ Skin_CLI.o_skin)
 
 let doc = "validating the rules"
 

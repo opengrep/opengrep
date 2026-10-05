@@ -37,7 +37,7 @@ depends: [
   "terminal_size"
   "uucp"
   "uutf"
-  "logs"
+  "logs" {>= "0.10.0"}
   "atdgen"
   "yojson" {>= "2.0.0"}
   "yaml"

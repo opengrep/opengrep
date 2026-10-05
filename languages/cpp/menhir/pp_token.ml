@@ -61,7 +61,7 @@ open Token_views_cpp
 (*****************************************************************************)
 (* Wrappers *)
 (*****************************************************************************)
-let pr2, _pr2_once = Common2.mk_pr2_wrappers Flag.verbose_parsing
+module Log = Log_parser_cpp.Log
 
 (*****************************************************************************)
 (* Types *)
@@ -128,7 +128,7 @@ let apply_macro_defs defs xs =
         Hack.pr2_pp ("MACRO: found known macro = " ^ s);
         (match Hashtbl.find defs s with
         | Either.Left (), bodymacro ->
-            pr2 ("macro without param used before parenthize, wierd: " ^ s);
+            Log.debug (fun m -> m "macro without param used before parenthize, wierd: %s" s);
             (* ex: PRINTP("NCR53C400 card%s detected\n" ANDP(((struct ... *)
             Hack.set_as_comment Token_cpp.CppMacroExpanded id;
             id.new_tokens_before <- bodymacro
@@ -144,7 +144,7 @@ let apply_macro_defs defs xs =
               id.new_tokens_before <-
                 cpp_engine (Common2.zip params xxs') bodymacro
             else (
-              pr2 ("macro with wrong number of arguments, wierd: " ^ s);
+              Log.debug (fun m -> m "macro with wrong number of arguments, wierd: %s" s);
               id.new_tokens_before <- bodymacro);
             (* important to do that after have apply the macro, otherwise
              * will pass as argument to the macro some tokens that
@@ -158,7 +158,7 @@ let apply_macro_defs defs xs =
         Hack.pr2_pp ("MACRO: found known macro = " ^ s);
         (match Hashtbl.find defs s with
         | Either.Right _params, _bodymacro ->
-            pr2 ("macro with params but no parens found, wierd: " ^ s);
+            Log.debug (fun m -> m "macro with params but no parens found, wierd: %s" s);
             (* dont apply the macro, perhaps a redefinition *)
             ()
         | Either.Left (), bodymacro -> (

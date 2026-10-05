@@ -131,18 +131,6 @@ let push_mode state mode = Stack_.push mode state.mode
 let pop_mode state = ignore(Stack_.pop state.mode)
 let set_mode state mode = begin pop_mode state; push_mode state mode end
 
-let pr_mode mode = UCommon.pr2 (match mode with
-  | STATE_TOKEN -> "token"
-  | STATE_OFFSET -> "offset"
-  | STATE_UNDERSCORE_TOKEN -> "_token"
-  | STATE_IN_FSTRING_SINGLE _ -> "f'"
-  | STATE_IN_FSTRING_DOUBLE _ -> "f\""
-  | STATE_IN_FSTRING_TRIPLE_SINGLE _ -> "f'''"
-  | STATE_IN_FSTRING_TRIPLE_DOUBLE _ -> "f\"\"\""
-)
-
-let pr_state state = List.iter pr_mode !(state.mode)
-
 (* This used to be 8, but tests/python/parsing/eof_comment.py was not parsing.
  * This maybe should be a command-line parameter? Or we should fix
  * eof_comment.py in another way?

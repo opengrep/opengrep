@@ -168,14 +168,46 @@ let create_formatter opt_file =
 (* The "reporter" *)
 (*****************************************************************************)
 
+(* The sink of [redirect_stderr]. Read and written only with logs_mutex
+   held, which Logs holds around every message. *)
+let stderr_sink : (string -> unit) option ref = ref None
+
+let redirect_stderr (sink : string -> unit) : unit =
+  Mutex.protect logs_mutex (fun () -> stderr_sink := Some sink)
+
+let restore_stderr (flush : unit -> unit) : unit =
+  Mutex.protect logs_mutex (fun () ->
+      stderr_sink := None;
+      flush ())
+
+(* Empties [buf] and gives [ppf] the colour setting and geometry of [from].
+   Called before each redirected message: a message that raised leaves its
+   text behind, and the settings of [from] can change after the reporter is
+   created. *)
+let reset_like ~(from : Format.formatter) (ppf : Format.formatter)
+    (buf : Buffer.t) : unit =
+  Format.pp_print_flush ppf ();
+  Buffer.clear buf;
+  Fmt.set_style_renderer ppf (Fmt.style_renderer from);
+  UFormat.pp_set_geometry ppf
+    ~max_indent:(UFormat.pp_get_max_indent from ())
+    ~margin:(UFormat.pp_get_margin from ())
+
+let flush_to_sink (ppf : Format.formatter) (buf : Buffer.t)
+    (sink : string -> unit) : unit =
+  Format.pp_print_flush ppf ();
+  if Buffer.length buf > 0 then sink (Buffer.contents buf)
+
 (* This code was copy-pasted and derived from the example in the Logs library.
    The Logs library interface makes us write this code that is frankly
    incomprehensible and excessively complicated given how little it provides.
 *)
-let mk_reporter ?(additional_reporters : Logs.reporter list = []) ~dst
-    ~require_one_of_these_tags ~read_tags_from_env_vars:(env_vars : string list)
-    ~highlight () =
-  (* additional_reporters: the copy of the logs to a file, see setup *)
+let mk_reporter ?(additional_reporters : Logs.reporter list = [])
+    ?(to_terminal = false) ~dst ~require_one_of_these_tags
+    ~read_tags_from_env_vars:(env_vars : string list) ~highlight () =
+  (* additional_reporters: the copy of the logs to a file, see setup.
+     to_terminal: the reporter writes to stderr, and [redirect_stderr]
+     redirects its messages. *)
   let require_one_of_these_tags =
     match read_comma_sep_strs_from_env_vars env_vars with
     | Some tags -> tags
@@ -184,6 +216,10 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = []) ~dst
   (* Each debug message is implicitly tagged with "all". *)
   let select_all_debug_messages = List.mem "all" require_one_of_these_tags in
 
+  (* Every redirected message reuses one buffer: the reporter runs under
+     logs_mutex. *)
+  let buf = Buffer.create 256 in
+  let buf_ppf = Format.formatter_of_buffer buf in
   let report src level ~over k msgf =
     let src_name = Logs.Src.name src in
     let is_default_src = src_name = "application" in
@@ -195,41 +231,57 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = []) ~dst
           ((fun _ppf _style -> ()), "", "")
     in
     let k _ = k () in
-    Fun.protect ~finally:over (fun () ->
-      let r =
-        msgf (fun ?header ?(tags = default_tag_set) fmt ->
-            let pp_w_time ~tags =
-              let current = now () in
-              (* Add a header that will look like [00.02][ERROR](lib):
-               * coupling: if you modify the format, please update
-               * the Testutil_logs.mask* regexps. *)
-              Format.kfprintf k dst
-                ("@[[%05.2f]%a%a%s: " ^^ fmt ^^ "@]@.")
-                (current -. time_program_start)
-                Logs_fmt.pp_header (level, header) pp_tags tags
-                (if is_default_src then "" else "(" ^ src_name ^ ")")
-            in
-            match level with
-            | App ->
-                (* App level: no timestamp, tags, or other decorations *)
-                Format.kfprintf k dst (fmt ^^ "@.")
-            | Error
-            | Warning
-            | Info ->
-                (* Print no tags for levels other than Debug since we can't
-                   filter these messages by tag. *)
-                pp_w_time ~tags:Logs.Tag.empty
-            | Debug ->
-                (* Tag-based filtering *)
-                if
-                  select_all_debug_messages
-                  || has_nonempty_intersection require_one_of_these_tags tags
-                then pp_w_time ~tags
-                else (* print nothing *)
-                  Format.ikfprintf k dst fmt)
-      in
-      Format.fprintf dst "%a" pp_style style_off;
-      r)
+    (* The whole message, style reset included, goes to stderr, or to the
+       sink while stderr is redirected. A debug message that the tag filter
+       drops produces no text and reaches no sink. *)
+    let sink = if to_terminal then !stderr_sink else None in
+    let dst =
+      match sink with
+      | Some _ ->
+          reset_like ~from:dst buf_ppf buf;
+          buf_ppf
+      | None -> dst
+    in
+    let r =
+      msgf (fun ?header ?(tags = default_tag_set) fmt ->
+          let pp_w_time ~tags =
+            let current = now () in
+            (* Add a header that will look like [00.02][ERROR](lib):
+             * coupling: if you modify the format, please update
+             * the Testutil_logs.mask* regexps. *)
+            Format.kfprintf k dst
+              ("@[[%05.2f]%a%a%s: " ^^ fmt ^^ "@]@.")
+              (current -. time_program_start)
+              Logs_fmt.pp_header (level, header) pp_tags tags
+              (if is_default_src then "" else "(" ^ src_name ^ ")")
+          in
+          match level with
+          | App ->
+              (* App level: no timestamp, tags, or other decorations *)
+              Format.kfprintf k dst (fmt ^^ "@.")
+          | Error
+          | Warning
+          | Info ->
+              (* Print no tags for levels other than Debug since we can't
+                 filter these messages by tag. *)
+              pp_w_time ~tags:Logs.Tag.empty
+          | Debug ->
+              (* Tag-based filtering *)
+              if
+                select_all_debug_messages
+                || has_nonempty_intersection require_one_of_these_tags tags
+              then pp_w_time ~tags
+              else (* print nothing *)
+                Format.ikfprintf k dst fmt)
+    in
+    Format.fprintf dst "%a" pp_style style_off;
+    (match sink with
+    | Some (sink : string -> unit) -> flush_to_sink buf_ppf buf sink
+    | None -> ());
+    (* Not on an exception: Logs.report calls [over] then, and a second call
+       would unlock the mutex twice. *)
+    over ();
+    r
   in
   (* Copied directly from the Logs.mli docs. Just calls a bunch of reporters in
      a row *)
@@ -276,7 +328,7 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 let _ =
   let lock () = Mutex.lock logs_mutex
   and unlock () = Mutex.unlock logs_mutex in
-Logs.set_reporter_mutex ~lock ~unlock
+  Logs.set_reporter_mutex ~lock ~unlock
 
 (* We previously used use a re-entrant mutex above because otherwise tests
  * using [make core-test] raise an error when trying to lock the already locked
@@ -289,7 +341,8 @@ Logs.set_reporter_mutex ~lock ~unlock
 let setup_basic ?(level = Some Logs.Warning) () =
   Logs.set_level ~all:true level;
   Logs.set_reporter
-    (mk_reporter ~dst:UFormat.err_formatter ~require_one_of_these_tags:[]
+    (mk_reporter ~to_terminal:true ~dst:UFormat.err_formatter
+       ~require_one_of_these_tags:[]
        ~read_tags_from_env_vars:[] ~highlight:false ());
   ()
 
@@ -357,7 +410,9 @@ let setup ?(highlight_setting = Console.get_highlight_setting ())
   Fmt.set_style_renderer dst style_renderer;
   Logs.set_level ~all:true level;
   Logs.set_reporter
-    (mk_reporter ~additional_reporters ~dst ~require_one_of_these_tags
+    (mk_reporter ~additional_reporters
+       ~to_terminal:(Option.is_none opt_file)
+       ~dst ~require_one_of_these_tags
        ~read_tags_from_env_vars ~highlight ());
   Logs.debug (fun m ->
       m "setup_logging: highlight_setting=%s, highlight=%B"

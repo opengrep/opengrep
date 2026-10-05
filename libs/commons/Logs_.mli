@@ -177,3 +177,18 @@ val array : ('a -> string) -> 'a array -> string
 (* The mutex used for logging, exposed so it can
  * be shared by pretty-printing functions. *)
 val logs_mutex : Mutex.t
+
+(* While the status line occupies the terminal (Status_bar), the reporter
+   that writes to stderr passes each message to the sink instead, as the
+   complete text it would have written, colours included. The log file still
+   receives its copy; a debug message that the tag filter drops reaches no
+   sink.
+
+   [restore_stderr flush] ends the redirection and runs [flush], which writes
+   out what the sink still holds, before any later message can reach stderr.
+
+   Both take [logs_mutex], so a message is either wholly redirected or wholly
+   written. Neither may be called while logging, and neither the sink nor
+   [flush] may log: the mutex is not re-entrant. *)
+val redirect_stderr : (string -> unit) -> unit
+val restore_stderr : (unit -> unit) -> unit

@@ -9,7 +9,9 @@ val cli_errors_to_report :
   Semgrep_output_v1_t.cli_error list ->
   Semgrep_output_v1_t.cli_error list
 
-val pp_summary :
+(* The files that a scan skipped or did not finish, as counts and phrases.
+   Reads the filesystem to tell an ignored directory from an ignored file. *)
+val summary_of_skipped :
   respect_gitignore:bool ->
   is_git_repo:bool ->
   is_baseline_scan:bool ->
@@ -17,9 +19,12 @@ val pp_summary :
   max_target_bytes:int ->
   skipped_groups:Skipped_report.skipped_targets_grouped ->
   unplaced_warnings:int ->
-  Format.formatter ->
   unit ->
-  unit
+  Skin_model.Summary.t
+
+(* The legacy rendering of a summary: the "Scan Summary" heading, printed
+   even when nothing was skipped, then the counts. *)
+val pp_summary : Skin_model.Summary.t Fmt.t
 
 (* The timeouts of the scan, one warning per file with the ids of the rules
    that timed out, and whether --timeout-threshold stopped the file.

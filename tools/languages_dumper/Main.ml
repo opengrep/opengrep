@@ -113,7 +113,6 @@ let options () =
     (*e: [[Main.options]] main cases *);
   ]
   (*s: [[Main.options]] concatenated flags *)
-  @ Flag_parsing.cmdline_flags_verbose ()
   @ Flag_parsing.cmdline_flags_debugging ()
   @ Flag_parsing_cpp.cmdline_flags_debugging ()
   @ Flag_parsing_php.cmdline_flags_pp ()
@@ -152,19 +151,6 @@ let main () =
   in
   (* does side effect on many global flags *)
   let args = Arg_.parse_options (options ()) usage_msg Sys.argv in
-
-  if List.mem "-no_verbose_parsing" args then begin
-    Domain.DLS.set Flag_parsing.verbose_parsing false;
-  end;
-
-  if List.mem "-no_verbose_lexing" args then begin
-    Domain.DLS.set Flag_parsing.verbose_lexing false;
-  end;
-
-  let args =
-    List.filter (fun x -> x <> "-no_verbose_parsing" && x <> "-no_verbose_lexing")
-      args
-  in
 
   (* must be done after Arg.parse, because Common.profile is set by it *)
   Profiling.profile_code "Main total" (fun () ->
