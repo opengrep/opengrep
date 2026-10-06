@@ -1,0 +1,16 @@
+rules:
+  - id: lambda-sig-ruby-reanalysis
+    message: Unscoped find with user input
+    languages: [ruby]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: params[...]
+    pattern-sinks:
+      - patterns:
+          - pattern: $MODEL.find(...)
+          - metavariable-regex:
+              metavariable: $MODEL
+              regex: '[A-Z]\S+'

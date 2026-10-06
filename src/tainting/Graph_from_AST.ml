@@ -78,18 +78,17 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
     | G.LambdaKind | G.Arrow -> true
     | _ -> false
   in
+  (* All lambdas (named [cb = lambda x: ...] or anonymous) share one identity
+     scheme: the lambda's own definition position; the binding variable is an
+     alias, not a distinct callable. An anonymous function that is not a
+     lambda expression (a method of an object literal inside a function, a
+     function expression) is identified the same way. *)
+  let lambda_id () =
+    Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
+  in
   match opt_ent with
-  | _ when is_lambda ->
-      (* All lambdas (named [cb = lambda x: ...] or anonymous) share one
-         identity scheme: the lambda's own definition position. The binding
-         variable is treated as an alias, not a distinct callable. *)
-      Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
-  | None ->
-      Log.warn (fun m ->
-          m "fn_id_of_entity: anonymous non-lambda function definition \
-             at %s; falling back to lambda-style identity"
-            (Tok.stringpos_of_tok (snd fdef.fkind)));
-      Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
+  | _ when is_lambda -> lambda_id ()
+  | None -> lambda_id ()
   | Some ent ->
       (match AST_to_IL.name_of_entity ent with
       | Some name ->
@@ -850,7 +849,18 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       | Some ((ent : G.entity), (fdef : G.function_definition)) ->
           self#attribute_ranges_to_function (G.E e) ent fdef env
             (fun env' -> super#visit_expr env' e)
-      | None -> super#visit_expr env e
+      | None -> (
+          match e.G.e with
+          | G.Record (_, fields, _) when not (List.is_empty (snd env)) ->
+              (* The methods of an object literal inside a function are
+                 closures of that function, as lambdas are: what they contain
+                 is the function's. *)
+              fields
+              |> List.iter (function
+                   | G.F { s = G.DefStmt (_, G.FuncDef fdef); _ } ->
+                       self#visit_function_definition env fdef
+                   | field -> self#visit_field env field)
+          | _ -> super#visit_expr env e)
   end in
 
   visitor#visit_program (None, []) ast;

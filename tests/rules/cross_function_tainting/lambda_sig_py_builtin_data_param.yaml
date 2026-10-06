@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-py-builtin-data-param
+    message: A source reaches a sink through map
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

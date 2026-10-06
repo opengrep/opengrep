@@ -384,6 +384,27 @@ let add_this_field_to_lval_env env lval_env offset taints =
 let is_own_param (env : env) (var : IL.name) : bool =
   List.exists (G.SId.equal var.IL.sid) env.func.param_sids
 
+(* The [Taint.arg] of a formal parameter of this function: its name and its
+   index among the parameters, the receiver taking none. *)
+let own_param_arg (env : env) (var : IL.name) : T.arg option =
+  env.func.il_params
+  |> List.filter (function IL.ParamReceiver _ -> false | _ -> true)
+  |> List.find_mapi (fun index param ->
+         match IL_helpers.pname_of_param param with
+         | Some pname when G.SId.equal pname.IL.sid var.IL.sid ->
+             Some { T.name = fst var.ident; index }
+         | _ -> None)
+
+(* A callee's write to a variable, as an effect of this function too: a
+   write to a module-level variable or to a variable passed in is one, unless
+   the variable is a parameter of this function (those are reported by
+   [effects_from_arg_updates_at_exit]). *)
+let record_callee_write env (var : IL.name) offset taints guards =
+  if not (is_own_param env var) then
+    record_effects env
+      [ Effect.ToLval
+          { taints; lval = { base = Taint.BGlob var; offset }; guards } ]
+
 let mk_param_sids (params : IL.param list) : G.SId.t list =
   List.filter_map
     (fun p ->
@@ -640,6 +661,36 @@ let bound_sink_items (taints_with_traces : Effect.taint_to_sink_item list) :
 
 let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
     Effect.t list =
+  (* A base reaching the sink along more than [Shape.max_poly_width] paths
+     of two or more fields keeps one field of each: [arg(x).a.b.c] then
+     stands for every path through [x.a], the field and everything under it.
+     The depth cap on an offset bounds the length of such paths, not their
+     number: through signature instantiation around a recursion the same
+     base reaches a sink along fields^depth of them otherwise, each a sink
+     effect of its own. Concrete sources are kept as they are: a finding is
+     reported per source. *)
+  let taints_with_traces =
+    let widened =
+      Shape.bound_poly_width_by
+        (fun { Effect.taint; _ } -> taint)
+        (fun item taint -> { item with Effect.taint })
+        taints_with_traces
+    in
+    if phys_equal widened taints_with_traces then taints_with_traces
+    else
+      widened
+      |> List.fold_left
+           (fun acc ({ Effect.taint; guard; _ } as item) ->
+             if
+               List.exists
+                 (fun { Effect.taint = t; guard = g; _ } ->
+                   Taint.compare_taint t taint =*= 0 && Effect_guard.equal g guard)
+                 acc
+             then acc
+             else item :: acc)
+         []
+    |> List.rev
+  in
   match bound_sink_items taints_with_traces with
   | [] -> []
   | _ :: _ as taints_with_traces -> (
@@ -750,6 +801,7 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
            effects_of_tainted_sink env taints_with_traces sink)
 
 let effects_of_tainted_return env taints shape return_tok : Effect.t list =
+  let taints = Shape.bound_poly_width taints in
   let control_taints = get_control_taints_to_return env in
   let relevant_data = Shape.taints_and_shape_are_relevant taints shape in
   let has_ctrl = not (Taints.is_empty control_taints) in
@@ -807,10 +859,20 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
     in
     data_returns @ ctrl_return
 
+(* A method call on a function value ([callback.apply] in Java,
+   [callback.call] in Ruby) invokes the value: a parameter, or a variable a
+   lambda captured. *)
+let is_invoke_method env (e : IL.exp) =
+  match e.e with
+  | Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
+      List.mem (fst name.ident)
+        (Lang_config.get env.taint_inst.lang).invoke_methods
+  | _ -> false
+
 (* If a 'fun_exp' has no known taint signature, then it should have a polymorphic
  * shape and we record its effects with an "effect variable" (that's kind of what
- * 'ToSinkInCall' does). *)
-let effects_of_call_func_arg fun_exp fun_shape args_taints =
+ * 'ToSinkInCall' does); likewise when it is a variable a lambda captured. *)
+let effects_of_call_func_arg fun_exp fun_shape fun_taints args_taints =
   Log.debug (fun m ->
       m "HOF_DISPATCH: callee=%s shape=%s"
         (Display_IL.string_of_exp fun_exp)
@@ -824,7 +886,7 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
              Effect.ToSinkInCall
                {
                  callee = fun_exp;
-                 arg = fun_arg;
+                 arg = Effect.Param fun_arg;
                  arg_offset;
                  args_taints;
                  guards = Effect_guard.top;
@@ -834,7 +896,23 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
           m "Function (?) %s has shape %s"
             (Display_IL.string_of_exp fun_exp)
             (S.show_shape fun_shape));
-      []
+      (* A call of a variable captured by the lambda being lifted: bound
+         where the closure is formed ([Sig_inst.close_over]). Not a call of a
+         method of a captured object: an unknown method stays unknown. *)
+      Taints.to_taint_list fun_taints
+      |> List_.filter_map (fun (taint : T.taint) ->
+             match taint.orig with
+             | Var { base = BCaptured var; offset = [] } ->
+                 Some
+                   (Effect.ToSinkInCall
+                      {
+                        callee = fun_exp;
+                        arg = Effect.Captured var;
+                        arg_offset = [];
+                        args_taints;
+                        guards = Effect_guard.top;
+                      })
+             | _ -> None)
 
 (* Fast path via [id_callee_definition] sid (= sig DB key), skipping the edge
    scan.
@@ -1171,6 +1249,65 @@ let lookup_signature env fun_exp arity =
   | Some _ as r -> r
   | None -> self_sig_if_recursive env fun_exp
 
+(* A sink effect whose taints are all sources is a finding, not something a
+   use of the lambda that has it instantiates. *)
+let is_concrete_sink (eff : Effect.t) =
+  match eff with
+  | ToSink { taints_with_precondition = items, _; _ } ->
+      (not (List.is_empty items))
+      && List.for_all
+           (fun (item : Effect.taint_to_sink_item) ->
+             match item.taint.orig with
+             | Src _ -> true
+             | Var _ | Shape_var _ | Control -> false)
+           items
+  | ToReturn _
+  | ToLval _
+  | ToSinkInCall _ ->
+      false
+
+(* A closed lambda signature without its findings, and its findings: they are
+   reported once, where the closure is formed or used, rather than carried by
+   its [Fun] shape into every use and every enclosing signature. *)
+let split_findings (sig_ : Signature.t) : Signature.t * Effect.t list =
+  let findings, effects =
+    Effects.elements sig_.effects |> List.partition is_concrete_sink
+  in
+  ({ sig_ with effects = Effects.of_list effects }, findings)
+
+(* A lambda's signature closed where the closure is formed, and its
+   findings. *)
+let close_lambda ~lang lval_env (lambda_sig : Signature.t) =
+  Sig_inst.close_over ~lang lval_env lambda_sig |> split_findings
+
+(* The lifted signature of the lambda [name] binds, if any, closed here and
+   its findings reported here. *)
+let close_named_lambda env (name : IL.name) : Signature.t option =
+  let* db = env.signature_db in
+  Shape_and_sig.find_lambda_sig db (Function_id.of_il_name name)
+  |> Option.map (fun lambda_sig ->
+         let closed, findings =
+           close_lambda ~lang:env.taint_inst.lang env.lval_env lambda_sig
+         in
+         record_effects env findings;
+         closed)
+
+(* The signature of a callee: from the database; else the [Fun] shape the
+   variable being called holds, e.g. a closure formed earlier; else, with
+   [closing], the lifted signature of the lambda the variable names, closed
+   here. *)
+let callee_signature ~closing env fun_exp arity =
+  match lookup_signature env fun_exp arity with
+  | Some _ as r -> r
+  | None -> (
+      match fun_exp.e with
+      | Fetch { base = Var name; rev_offset = [] } -> (
+          match Lval_env.find_var env.lval_env name with
+          | Some (S.Cell (_, S.Fun fun_sig)) -> Some fun_sig
+          | _ when closing -> close_named_lambda env name
+          | _ -> None)
+      | _ -> None)
+
 (*****************************************************************************)
 (* Lambdas *)
 (*****************************************************************************)
@@ -1204,17 +1341,6 @@ let lambdas_to_analyze_in_node env lambdas node =
     if IL.NameSet.mem lname env.func.used_lambdas then None else Some lambda
   in
   Option.to_list unused_lambda_def @ lambdas_used_in_node lambdas node
-
-(* Collect ALL lambdas recursively from a fun_cfg, in innermost-first order.
-   This ensures nested lambda signatures are extracted before their parents. *)
-let rec collect_all_lambdas_innermost_first (fun_cfg : IL.fun_cfg)
-    : (IL.name * IL.fun_cfg) list =
-  IL.NameMap.fold (fun name lcfg results ->
-    (* First collect nested lambdas from this lambda *)
-    let nested = collect_all_lambdas_innermost_first lcfg in
-    (* Then add this lambda after its nested ones *)
-    results @ nested @ [(name, lcfg)]
-  ) fun_cfg.lambdas []
 
 (*****************************************************************************)
 (* Miscellaneous *)
@@ -1977,6 +2103,78 @@ let check_tainted_var env (var : IL.name) : Taints.t * S.shape * Lval_env.t =
   in
   (taints, shape, lval_env)
 
+(* The call effects of an instantiation, applied: sink effects recorded
+   under [rebound_guards] (the guard on the call itself), writes made in
+   [lval_env] and recorded, deferred calls handed to [deferred]; the taints
+   and shape of the result are the join of the returns, so that a clean
+   field of one does not hide the whole taint of another. The returned and
+   written taints carry their guards, so a later sink sees them as item
+   guards. *)
+let apply_call_effects env ~rebound_guards ~deferred
+    (taints_acc, shape_acc, lval_env) (call_effects : Sig_inst.call_effects) =
+  let lang = env.taint_inst.lang in
+  let conj g = Effect_guard.compose_and rebound_guards g in
+  List.fold_left
+    (fun (taints_acc, shape_acc, lval_env) (ce : Sig_inst.call_effect) ->
+      match ce with
+      | ToSink
+          { taints_with_precondition = incoming_taints, requires; sink; guards; _ }
+        ->
+          let guards = conj guards in
+          effects_of_tainted_sink env incoming_taints sink
+          |> List.map (function
+               | Effect.ToSink eff ->
+                   Effect.ToSink
+                     {
+                       eff with
+                       taints_with_precondition =
+                         (fst eff.taints_with_precondition, requires);
+                       guards = Effect_guard.compose_and eff.guards guards;
+                     }
+               | other -> other)
+          |> record_effects env;
+          (taints_acc, shape_acc, lval_env)
+      | ToReturn
+          { data_taints = taints; data_shape = shape; control_taints; guards; _ }
+        ->
+          let taints = Taints.conjoin_guard (conj guards) taints in
+          let (S.Cell (xtaint, shape)) =
+            Shape.unify_cell ~lang
+              (S.Cell (Xtaint.of_taints taints, shape))
+              (S.Cell (Xtaint.of_taints taints_acc, shape_acc))
+          in
+          ( Xtaint.to_taints xtaint,
+            shape,
+            Lval_env.add_control_taints lval_env control_taints )
+      | ToLval { taints; var; offset; guards } ->
+          let guards = conj guards in
+          record_callee_write env var offset taints guards;
+          let taints = Taints.conjoin_guard guards taints in
+          (taints_acc, shape_acc, Lval_env.add lang var offset taints lval_env)
+      | ToLvalCaptured { taints; var; offset; guards } ->
+          (* A write to a parameter of this function is an effect of it,
+             as a write of the function's own body is at its exit: a
+             closure's side effects at its definition do not reach the
+             environment of what follows (see [do_lambdas]). *)
+          let guards = conj guards in
+          (match own_param_arg env var with
+          | Some arg ->
+              record_effects env
+                [ Effect.ToLval { taints; lval = { base = BArg arg; offset }; guards } ]
+          | None -> ());
+          let taints = Taints.conjoin_guard guards taints in
+          (taints_acc, shape_acc, Lval_env.add lang var offset taints lval_env)
+      | ToLvalThis { taints; offset; guards } ->
+          let guards = conj guards in
+          record_this_field_write env taints offset guards;
+          let taints = Taints.conjoin_guard guards taints in
+          (taints_acc, shape_acc, add_this_field_to_lval_env env lval_env offset taints)
+      | ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ->
+          deferred ~callee ~arg ~arg_offset ~args_taints ~guards:(conj guards)
+            (taints_acc, shape_acc, lval_env))
+    (taints_acc, shape_acc, lval_env)
+    call_effects
+
 (* A [Sig_inst.call_effect.ToSinkInCall] bubbling out of instantiation means
  * the callback's signature could not be resolved inside [Sig_inst]. This
  * helper gives it one more chance at the use site by name-looking-up the
@@ -2003,7 +2201,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
       match callee_name_opt with
       | Some callee_name ->
           let arity = List.length args_taints in
-          (match lookup_signature env callee arity with
+          (match callee_signature ~closing:false env callee arity with
           | Some callee_sig ->
               Log.debug (fun m ->
                   m "Resolving ToSinkInCall for '%s' at use site"
@@ -2013,9 +2211,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 ~max_offset:(poly_offset_bound env callee)
                 ~outer_params:env.func.il_params
                 env.lval_env callee_sig ~callee ~args:None args_taints
-                ~lookup_sig:(fun exp _depth ->
-                  let arity = List.length args_taints in
-                  lookup_signature env exp arity)
+                ~lookup_sig:(callee_signature ~closing:true env)
                 ()
           | None ->
               Log.debug (fun m ->
@@ -2034,110 +2230,13 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
   in
   match resolved_call_effects with
   | Some resolved_effects ->
-      List.fold_left
-        (fun (taints_acc, shape_acc, lval_env)
-             (resolved_effect : Sig_inst.call_effect) ->
-          match resolved_effect with
-          | ToSink
-              {
-                taints_with_precondition = incoming_taints, requires;
-                sink;
-                guards = inner_guards;
-                _;
-              } ->
-              let combined_guards =
-                Effect_guard.compose_and rebound_guards inner_guards
-              in
-              let sink_effects =
-                effects_of_tainted_sink env incoming_taints sink
-              in
-              let corrected_sink_effects =
-                sink_effects
-                |> List.map (function
-                     | Effect.ToSink eff ->
-                         Effect.ToSink
-                           {
-                             eff with
-                             taints_with_precondition =
-                               (fst eff.taints_with_precondition, requires);
-                             guards =
-                               Effect_guard.compose_and eff.guards
-                                 combined_guards;
-                           }
-                     | other -> other)
-              in
-              record_effects env corrected_sink_effects;
-              (taints_acc, shape_acc, lval_env)
-          | ToReturn
-              {
-                data_taints = taints;
-                data_shape = shape;
-                control_taints;
-                guards = inner_guards;
-                _;
-              } ->
-              (* Gate the returned taints by the guards, like the sibling
-                 [ToSink]/[ToSinkInCall] arms above: [rebound_guards] is the
-                 guard on the [ToSinkInCall] being resolved (it gates every
-                 effect from this resolution) and [inner_guards] is the guard
-                 on the resolved return. The main-handler [ToReturn] arm in
-                 [check_function_call] conjoins [inner_guards] the same way. *)
-              let taints =
-                Taints.conjoin_guard
-                  (Effect_guard.compose_and rebound_guards inner_guards)
-                  taints
-              in
-              ( Taints.union taints taints_acc,
-                Shape.unify_shape ~lang:env.taint_inst.lang shape shape_acc,
-                Lval_env.add_control_taints lval_env control_taints )
-          | ToLval { taints; var; offset; guards } ->
-              if not (is_own_param env var) then
-                record_effects env
-                  [ Effect.ToLval
-                      { taints;
-                        lval = { base = Taint.BGlob var; offset };
-                        guards } ];
-              (* As in the main [ToLval] arm: the written taints carry the
-               * guard, conjoined with [rebound_guards] like the sibling
-               * arms of this resolution. *)
-              let taints =
-                Taints.conjoin_guard
-                  (Effect_guard.compose_and rebound_guards guards)
-                  taints
-              in
-              ( taints_acc,
-                shape_acc,
-                lval_env |> Lval_env.add env.taint_inst.lang var offset taints )
-          | ToLvalThis { taints; offset; guards } ->
-              let guards = Effect_guard.compose_and rebound_guards guards in
-              record_this_field_write env taints offset guards;
-              (* Mirror the sibling [ToLval] arm: conjoin the guard, then also
-                 reflect the write in the local [lval_env]. *)
-              let taints = Taints.conjoin_guard guards taints in
-              ( taints_acc,
-                shape_acc,
-                add_this_field_to_lval_env env lval_env offset taints )
-          | ToSinkInCall
-              {
-                callee;
-                arg;
-                arg_offset;
-                args_taints;
-                guards = inner_guards;
-              } ->
-              record_effects env
-                [
-                  Effect.ToSinkInCall
-                    {
-                      callee;
-                      arg;
-                      arg_offset;
-                      args_taints;
-                      guards =
-                        Effect_guard.compose_and rebound_guards inner_guards;
-                    };
-                ];
-              (taints_acc, shape_acc, lval_env))
+      (* A deferred call the resolution leaves is recorded again, for a
+         caller one level up to resolve. *)
+      apply_call_effects env ~rebound_guards
+        ~deferred:(fun ~callee ~arg ~arg_offset ~args_taints ~guards acc ->
+          record_effects env
+            [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ];
+          acc)
         (taints_acc, shape_acc, lval_env)
         resolved_effects
   | None ->
@@ -2154,13 +2253,38 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
         ];
       (taints_acc, shape_acc, lval_env)
 
-(* This function is consuming the taint signature of a function to determine
-   a few things:
-   1) What is the status of taint in the current environment, after the function
-      call occurs?
-   2) Are there any effects that occur within the function due to taints being
-      input into the function body, from the calling context?
-*)
+(* Apply [fun_sig] at a use of [fun_exp] with these [args]: instantiate it
+   against the current environment, record its sink effects, and return the
+   taint and shape of the result with the environment its writes leave. *)
+let apply_signature env fun_exp (fun_sig : Signature.t)
+    ~(args : IL.exp argument list option)
+    (args_taints : (Taints.t * S.shape) argument list) :
+    (Taints.t * S.shape * Lval_env.t) option =
+  Log.debug (fun m ->
+      m "SIG_FOUND: %s -> %s"
+        (Display_IL.string_of_exp fun_exp)
+        (Signature.show fun_sig));
+  let invoke_inst () =
+    Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
+      ~max_offset:(poly_offset_bound env fun_exp)
+      ~outer_params:env.func.il_params env.lval_env fun_sig
+      ~callee:fun_exp ~args args_taints
+      ~lookup_sig:(callee_signature ~closing:true env) ()
+  in
+  let* call_effects = invoke_inst () in
+  Log.debug (fun m ->
+      m "INSTANTIATE_SIG: %s returned %d call_effects: %s"
+        (Display_IL.string_of_exp fun_exp)
+        (List.length call_effects)
+        (Sig_inst.show_call_effects call_effects));
+  Some
+    (apply_call_effects env ~rebound_guards:Effect_guard.top
+       ~deferred:(fun ~callee ~arg ~arg_offset ~args_taints ~guards acc ->
+         resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
+           ~args_taints ~rebound_guards:guards acc)
+       (Taints.empty, Bot, env.lval_env)
+       call_effects)
+
 let check_function_call env fun_exp args
     (args_taints : (Taints.t * S.shape) argument list) () :
     (Taints.t * S.shape * Lval_env.t) option =
@@ -2238,152 +2362,15 @@ let check_function_call env fun_exp args
           | _ -> None)
     else None
   in
+  let sig_result =
+    match (sig_result, fun_exp.e) with
+    | None, Fetch { base = Var name; rev_offset = [] }
+      when env.taint_inst.options.taint_intrafile ->
+        close_named_lambda env name
+    | _ -> sig_result
+  in
   match sig_result with
-  | Some fun_sig ->
-      Log.debug (fun m ->
-          m "SIG_FOUND: %s -> %s"
-            (Display_IL.string_of_exp fun_exp)
-            (Signature.show fun_sig));
-      (* Callback lookup in both modes; effects-explosion hazard contained by [Sig_inst.preserve_effect]. *)
-      let invoke_inst () =
-        Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
-          ~max_offset:(poly_offset_bound env fun_exp)
-          ~outer_params:env.func.il_params env.lval_env fun_sig
-          ~callee:fun_exp ~args:(Some args) args_taints
-          ~lookup_sig:(lookup_signature env) ()
-      in
-      let* call_effects = invoke_inst () in
-      Log.debug (fun m ->
-          m "INSTANTIATE_SIG: %s returned %d call_effects"
-            (Display_IL.string_of_exp fun_exp)
-            (List.length call_effects));
-      List.iteri (fun i eff ->
-        match eff with
-        | Sig_inst.ToReturn { data_taints; _ } ->
-            Log.debug (fun m ->
-                m "INSTANTIATE_SIG: Effect[%d] ToReturn with %d taints: %s"
-                  i
-                  (Taint.Taint_set.cardinal data_taints)
-                  (Taint.show_taints data_taints))
-        | Sig_inst.ToSink { taints_with_precondition = (taints, _); _ } ->
-            Log.debug (fun m ->
-                m "INSTANTIATE_SIG: Effect[%d] ToSink with %d taint items"
-                  i
-                  (List.length taints))
-        | Sig_inst.ToLval { taints; _ } ->
-            Log.debug (fun m ->
-                m "INSTANTIATE_SIG: Effect[%d] ToLval with %d taints"
-                  i
-                  (Taint.Taint_set.cardinal taints))
-        | Sig_inst.ToLvalThis { taints; _ } ->
-            Log.debug (fun m ->
-                m "INSTANTIATE_SIG: Effect[%d] ToLvalThis with %d taints"
-                  i
-                  (Taint.Taint_set.cardinal taints))
-        | Sig_inst.ToSinkInCall { args_taints; arg; arg_offset; _ } ->
-            Log.debug (fun m ->
-                m "INSTANTIATE_SIG: Effect[%d] ToSinkInCall arg=%s offset=%s args=%s"
-                  i (T.show_arg arg) (T.show_offset_list arg_offset)
-                  (Effect.show_args_taints args_taints))
-      ) call_effects;
-      Some
-        (call_effects
-        |> List.fold_left
-             (fun (taints_acc, shape_acc, lval_env)
-                  (call_effect : Sig_inst.call_effect) ->
-               match call_effect with
-               | ToSink
-                   {
-                     taints_with_precondition = incoming_taints, requires;
-                     sink;
-                     guards = rebound_guards;
-                     _;
-                   } ->
-                   (* Call effects_of_tainted_sink to get proper taint traces, then fix the requires condition *)
-                   let sink_effects =
-                     effects_of_tainted_sink env incoming_taints sink
-                   in
-                   let corrected_sink_effects =
-                     sink_effects
-                     |> List.map (function
-                          | Effect.ToSink eff ->
-                              Effect.ToSink
-                                {
-                                  eff with
-                                  taints_with_precondition =
-                                    (fst eff.taints_with_precondition, requires);
-                                  guards =
-                                    Effect_guard.compose_and eff.guards
-                                      rebound_guards;
-                                }
-                          | other -> other)
-                   in
-                   record_effects env corrected_sink_effects;
-                   (taints_acc, shape_acc, lval_env)
-               | ToReturn
-                   {
-                     data_taints = taints;
-                     data_shape = shape;
-                     control_taints;
-                     guards = inner_guards;
-                     _;
-                   } ->
-                   (* Conjoin the callee's rebound guard onto each per-taint
-                    * bundle. The bundles travel with the value through the
-                    * outer's storage; at outer's later emission sites
-                    * ([effects_of_tainted_return], [record_effects],
-                    * [effects_from_arg_updates_at_exit]) one effect emerges
-                    * per bundle, each carrying its own guard. Fan-in of
-                    * disjoint inner branches is preserved as separate
-                    * bundles in [Taint_set] and fused via [compose_or] at
-                    * joins — the smart-constructor complement rule then
-                    * folds [G or not G] to [top]. *)
-                   let taints = Taints.conjoin_guard inner_guards taints in
-                   (* One ToReturn per return statement: fold them as the
-                    * join of the returned values, so a Clean field of one
-                    * does not hide the whole taint of another. *)
-                   let (S.Cell (xtaint, shape)) =
-                     Shape.unify_cell ~lang:env.taint_inst.lang
-                       (S.Cell (Xtaint.of_taints taints, shape))
-                       (S.Cell (Xtaint.of_taints taints_acc, shape_acc))
-                   in
-                   ( Xtaint.to_taints xtaint,
-                     shape,
-                     Lval_env.add_control_taints lval_env control_taints )
-               | ToLval { taints; var; offset; guards } ->
-                   if not (is_own_param env var) then
-                     record_effects env
-                       [ Effect.ToLval
-                           { taints;
-                             lval = { base = Taint.BGlob var; offset };
-                             guards } ];
-                   (* The written taints carry the (possibly deferred) guard
-                    * into the environment, so a later sink sees it as the
-                    * item guard. *)
-                   let taints = Taints.conjoin_guard guards taints in
-                   ( taints_acc,
-                     shape_acc,
-                     lval_env
-                     |> Lval_env.add env.taint_inst.lang var offset taints )
-               | ToLvalThis { taints; offset; guards } ->
-                   record_this_field_write env taints offset guards;
-                   (* Mirror the sibling [ToLval] arm's local write. *)
-                   let taints = Taints.conjoin_guard guards taints in
-                   ( taints_acc,
-                     shape_acc,
-                     add_this_field_to_lval_env env lval_env offset taints )
-               | ToSinkInCall
-                   {
-                     callee;
-                     arg;
-                     arg_offset;
-                     args_taints;
-                     guards = rebound_guards;
-                   } ->
-                   resolve_preserved_to_sink_in_call env ~callee ~arg
-                     ~arg_offset ~args_taints ~rebound_guards
-                     (taints_acc, shape_acc, lval_env))
-             (Taints.empty, Bot, env.lval_env))
+  | Some fun_sig -> apply_signature env fun_exp fun_sig ~args:(Some args) args_taints
   | None ->
       Log.debug (fun m ->
           m "CHECK_FUNCTION_CALL: No signature found for %s, returning None"
@@ -2465,144 +2452,34 @@ let call_with_intrafile lval_opt e env args instr =
              rname None
        | _ -> false)
     in
-    (* Detect Ruby/Scala/Kotlin implicit block pattern:
-     * When a call has a single lambda argument (as a Fetch of a lambda lval),
-     * and the callee is a Call expression, treat it as calling the inner method
-     * with the lambda as an implicit block *)
-    let implicit_lambda_call =
-      if resolves_to_constructor then None
-      else
-      (match args with
-      | [ arg ] ->
-          (match arg with
-          | IL.Unnamed ({ e = Fetch lval; _ } as lambda_exp) ->
-              (* Single Fetch argument - check if it's a lambda by looking at its shape *)
-              (match
-                 Lval_env.find_lval env.taint_inst.lang env.lval_env lval
-               with
-              | Some (S.Cell (_, shape)) ->
-                  (match shape with
-                  | S.Fun _fun_sig ->
-                      (* It's a function/lambda! *)
-                      Some (e, lambda_exp)
-                  | _ -> None)
-              | None -> None)
-          | _ -> None)
-      | _ -> None)
+    (* The implicit-block call of Ruby, Scala and Kotlin, [arr.map { }]: the
+       callee is a function value, the result of [arr.map()], applied to the
+       block, whose argument carries the receiver's taints stored with that
+       value. A call of an unknown method with one lambda argument is an
+       ordinary call. *)
+    let fun_value (exp : IL.exp) =
+      match exp.e with
+      | Fetch lval -> (
+          match Lval_env.find_lval env.taint_inst.lang lval_env lval with
+          | Some (S.Cell (taints, S.Fun fun_sig)) -> Some (taints, fun_sig)
+          | Some _ | None -> None)
+      | _ -> None
     in
-    (* Handle implicit lambda pattern FIRST, before trying constructor *)
+    let implicit_lambda_call =
+      match args with
+      | [ IL.Unnamed lambda_exp ] when not resolves_to_constructor -> (
+          match (fun_value e, fun_value lambda_exp) with
+          | Some (var_taints, fun_sig), Some (_, lambda_sig) ->
+              Some (var_taints, fun_sig, lambda_exp, S.Fun lambda_sig)
+          | _ -> None)
+      | _ -> None
+    in
     match implicit_lambda_call with
-    | Some (inner_e, lambda_exp) ->
-        (* Trace back to find the original call expression that was assigned to inner_e.
-         * For Ruby, inner_e is typically _tmp:N which was assigned from arr.map().
-         * We need to use arr.map (not _tmp) for signature lookup. *)
-        (* For Ruby implicit blocks, inner_e is typically Fetch(_tmp) where _tmp
-         * has a Fun shape from calling arr.map(). We need to directly instantiate
-         * that Fun shape instead of doing signature database lookup. *)
-        (match inner_e.e with
-        | Fetch lval ->
-            (* Check the shape of this lval to see if it has a Fun signature *)
-            (match
-               Lval_env.find_lval env.taint_inst.lang env.lval_env lval
-             with
-            | Some (S.Cell (var_taints, S.Fun fun_sig)) ->
-                (* The variable has a Fun shape. Instantiate it directly instead of
-                 * doing signature database lookup. *)
-                let lambda_arg = IL.Unnamed lambda_exp in
-                (* Get the taints from the array (BThis) which were stored when arr.map() was called.
-                 * These are in var_taints (the xtaint of _tmp). *)
-                let callback_arg_taints = Xtaint.to_taints var_taints in
-                (* Get the lambda's Fun shape from the lval_env *)
-                let lambda_shape =
-                  (match lambda_exp.e with
-                  | Fetch lval ->
-                      (match
-                         Lval_env.find_lval env.taint_inst.lang env.lval_env
-                           lval
-                       with
-                      | Some (S.Cell (_, shape)) -> shape
-                      | None -> S.Bot)
-                  | _ -> S.Bot)
-                in
-                let lambda_arg_taint = IL.Unnamed (callback_arg_taints, lambda_shape) in
-                let args_taints = [lambda_arg_taint] in
-                (* Callback lookup in both modes; hazard contained by [preserve_effect]. *)
-                (match
-                   Sig_inst.instantiate_function_signature
-                     ~lang:env.taint_inst.lang
-                     ~max_offset:(poly_offset_bound env inner_e)
-                     ~outer_params:env.func.il_params env.lval_env
-                     fun_sig ~callee:inner_e
-                     ~args:(Some [ lambda_arg ]) args_taints
-                     ~lookup_sig:(lookup_signature env) ()
-                 with
-                | Some call_effects ->
-                    (* ToSinkInCall effects should have been recursively instantiated by Sig_inst,
-                     * so we just need to process the resulting effects *)
-                    (* Process the call effects to get taints and shape *)
-                    let call_taints, shape, lval_env =
-                      List.fold_left
-                        (fun (taints_acc, shape_acc, lval_env) (call_effect : Sig_inst.call_effect) ->
-                          match call_effect with
-                          | ToSink { taints_with_precondition = incoming_taints, _; sink; _ } ->
-                              let sink_effects = effects_of_tainted_sink env incoming_taints sink in
-                              record_effects env sink_effects;
-                              (taints_acc, shape_acc, lval_env)
-                          | ToReturn { data_taints; data_shape; _ } ->
-                              (Taints.union taints_acc data_taints,
-                               data_shape,  (* Just use the latest shape *)
-                               lval_env)
-                          | ToLval { taints; var = lval_name; offset; _ } ->
-                              let lval_env =
-                                Lval_env.add env.taint_inst.lang lval_name
-                                  offset taints lval_env
-                              in
-                              (taints_acc, shape_acc, lval_env)
-                          | ToLvalThis { taints; offset; guards } ->
-                              record_this_field_write env taints offset guards;
-                              (* Mirror the sibling [ToLval] arm's local write
-                                 (no guard conjoin here, as in the sibling). *)
-                              ( taints_acc,
-                                shape_acc,
-                                add_this_field_to_lval_env env lval_env offset
-                                  taints )
-                          | ToSinkInCall
-                              {
-                                callee;
-                                arg;
-                                arg_offset;
-                                args_taints;
-                                guards = rebound_guards;
-                              } ->
-                              resolve_preserved_to_sink_in_call env ~callee
-                                ~arg ~arg_offset ~args_taints ~rebound_guards
-                                (taints_acc, shape_acc, lval_env))
-                        (Taints.empty, S.Bot, env.lval_env)
-                        call_effects
-                    in
-                    (call_taints, shape, lval_env)
-                | None -> (all_args_taints, S.Bot, lval_env))
-            | Some (S.Cell (_, _)) ->
-                (* Try signature lookup instead *)
-                (match check_function_call { env with lval_env } inner_e args args_taints () with
-                | Some (call_taints, shape, lval_env) ->
-                    (call_taints, shape, lval_env)
-                | None ->
-                    (all_args_taints, S.Bot, lval_env))
-            | None ->
-                (* Try signature lookup instead *)
-                (match check_function_call { env with lval_env } inner_e args args_taints () with
-                | Some (call_taints, shape, lval_env) ->
-                    (call_taints, shape, lval_env)
-                | None ->
-                    (all_args_taints, S.Bot, lval_env)))
-        | _ ->
-            (* Try signature lookup instead *)
-            (match check_function_call { env with lval_env } inner_e args args_taints () with
-            | Some (call_taints, shape, lval_env) ->
-                (call_taints, shape, lval_env)
-            | None ->
-                (all_args_taints, S.Bot, lval_env)))
+    | Some (var_taints, fun_sig, lambda_exp, lambda_shape) ->
+        apply_signature { env with lval_env } e fun_sig
+          ~args:(Some [ IL.Unnamed lambda_exp ])
+          [ IL.Unnamed (Xtaint.to_taints var_taints, lambda_shape) ]
+        |> Option.value ~default:(all_args_taints, S.Bot, lval_env)
     | None ->
         (* When taint flows through a constructor (e.g., `obj = Foo(tainted)`),
          * the constructor signature may contain ToLval(BThis.field, taint)
@@ -2708,12 +2585,9 @@ let call_with_intrafile lval_opt e env args instr =
                    * In this case we return empty taints - the callback's return will be handled
                    * when the ToSinkInCall effect is instantiated. *)
                   let is_method_callback_invoke =
-                    (* Check if this is a method call on a callback parameter
-                     * via a configured invoke method (e.g. .apply, .call, .run). *)
-                    match e_obj, e.e with
-                    | `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
-                        let invoke_methods = (Lang_config.get env.taint_inst.lang).invoke_methods in
-                        List.mem (fst name.ident) invoke_methods
+                    (* An invoke method on a callback parameter. *)
+                    match e_obj with
+                    | `Obj (_, S.Arg _) -> is_invoke_method env e
                     | _ -> false
                   in
                   Log.debug (fun m ->
@@ -2735,7 +2609,14 @@ let call_with_intrafile lval_opt e env args instr =
                     | `Obj (_, (S.Arg _ as shape)) -> shape
                     | _ -> e_shape
                   in
-                  effects_of_call_func_arg e callee_shape args_taints
+                  (* Invoking a function value through a method ([callback.call]
+                     in Ruby): the value is the object, whatever it holds. *)
+                  let callee_taints =
+                    match e_obj with
+                    | `Obj (obj_taints, _) when is_invoke_method env e -> obj_taints
+                    | _ -> e_taints
+                  in
+                  effects_of_call_func_arg e callee_shape callee_taints args_taints
                   |> record_effects { env with lval_env };
                   (* If the callee IS a callback parameter, return empty taints - the callback's
                    * return value will be handled when the ToSinkInCall effect is instantiated.
@@ -2846,11 +2727,18 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
     | AssignAnon (lval, anon_entity) -> (
         match anon_entity with
         | Lambda _ -> (
-            (* For lambdas, look up their signature from the signature database *)
+            (* The closure is formed here: the lambda's signature, closed over
+               the variables it captures as they are now. *)
             match (lval.base, env.signature_db, anon_entity) with
             | Var lambda_name, Some db, Lambda fdef ->
                 let arity = List.length fdef.fparams in
-                (match Shape_and_sig.lookup_signature db (Function_id.of_il_name lambda_name) arity with
+                (match
+                   match close_named_lambda env lambda_name with
+                   | Some _ as closed -> closed
+                   | None ->
+                       Shape_and_sig.lookup_signature db
+                         (Function_id.of_il_name lambda_name) arity
+                 with
                 | Some sig_ ->
                     let fun_shape = S.Fun sig_ in
                     Log.debug (fun m ->
@@ -2931,13 +2819,11 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                     else (
                       (* Check if this is a call to a function parameter (either direct or via method) *)
                       (match e_obj with
-                      | `Obj (_obj_taints, S.Arg _) ->
-                          (* This is a method call on a function parameter (e.g., callback.apply in Java,
-                           * callback.call in Ruby). Treat it as invoking the callback. *)
-                          effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
+                      | `Obj (obj_taints, (S.Arg _ as shape)) ->
+                          effects_of_call_func_arg e shape obj_taints args_taints
                           |> record_effects { env with lval_env }
                       | _ ->
-                          effects_of_call_func_arg e e_shape args_taints
+                          effects_of_call_func_arg e e_shape e_taints args_taints
                           |> record_effects { env with lval_env });
                       (* If this is a method call, `o.method(...)`, then we fetch the
                        * taint of the callee object `o`. This is a conservative worst-case
@@ -3100,7 +2986,10 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
                         let lval =
                           { lval with offset = lval.offset @ offset }
                         in
-                        let new_taints = Taints.diff exit_taints enter_taints in
+                        let new_taints =
+                          Taints.diff exit_taints enter_taints
+                          |> Shape.bound_poly_width
+                        in
                         (* TODO: Also report if taints are _cleaned_. *)
                         if not (Taints.is_empty new_taints) then
                           Some
@@ -3314,6 +3203,228 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
     | _ -> acc
   in
   List.rev (go [] pat [])
+
+(* The [Src] taints of the sources matching a token: a parameter that is
+   itself a source has no IL instruction to bind it. *)
+let source_taints_of_tok (taint_inst : TRI.t) (tok : Tok.t) : Taints.t =
+  match
+    taint_inst.preds.is_source (G.Tk tok)
+    |> List_.map (fun (tm : Rule.taint_source TM.t) -> (tm.spec_pm, tm.spec))
+  with
+  | [] -> Taints.empty
+  | pms -> T.taints_of_pms ~incoming:Taints.empty pms
+
+(* The input environment of a function with these parameters: each holds its
+   [BArg] placeholder with an [Arg] shape, the leaves of a destructuring
+   pattern theirs at their offsets, the receiver [BThis], and a parameter
+   whose token a source matches its [Src] taints. *)
+let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
+    Lval_env.t =
+  let lang = taint_inst.lang in
+  let add (name : IL.name) (arg : T.arg) offset env =
+    let taints =
+      Taints.add_taint
+        { orig = Var { base = BArg arg; offset }; tokens = [] }
+        (source_taints_of_tok taint_inst (snd name.ident))
+    in
+    Lval_env.add_lval_shape lang (LV.lval_of_var name) taints
+      (S.Arg (arg, [ offset ]))
+      env
+  in
+  params
+  |> List.fold_left
+       (fun (i, env) (param : IL.param) ->
+         match param with
+         | Param { pname; _ }
+         | ParamRest { pname; _ }
+         | ParamKwd { pname; _ }
+         | ParamPattern ({ pname; _ }, _) ->
+             let arg : T.arg = { name = fst pname.ident; index = i } in
+             let env = add pname arg [] env in
+             let env =
+               match param with
+               | ParamPattern (_, pat) ->
+                   pattern_leaves_with_offsets ~lang pat
+                   |> List.fold_left
+                        (fun env (leaf, offset) -> add leaf arg offset env)
+                        env
+               | _ -> env
+             in
+             (i + 1, env)
+         | ParamReceiver { pname; _ } ->
+             (* The receiver is not a call-site argument. *)
+             ( i,
+               Lval_env.add_lval lang (LV.lval_of_var pname)
+                 (Taints.singleton
+                    { orig = Var { base = BThis; offset = [] }; tokens = [] })
+                 env )
+         | ParamFixme -> (i + 1, env))
+       (0, Lval_env.empty)
+  |> snd
+
+(* The lvals a function's body reads or writes; with [nested], those of the
+   lambdas nested in it too. *)
+let lvals_of_cfg ~nested (fun_cfg : IL.fun_cfg) : IL.lval Seq.t =
+  (* [LV.reachable_nodes] includes the nodes of the lambdas nested in the
+     function; [CFG.reachable_nodes] the function's own. *)
+  (if nested then LV.reachable_nodes fun_cfg
+   else CFG.reachable_nodes fun_cfg.cfg)
+  |> Seq.concat_map (fun (node : IL.node) ->
+         let written =
+           match node.n with
+           | NInstr instr -> Option.to_list (LV.lval_of_instr_opt instr)
+           | _ -> []
+         in
+         List.to_seq (LV.rlvals_of_node node.n @ written))
+
+(* A name resolved to a variable of this module: a local, a parameter, or a
+   module-level binding (a lambda at the top level captures it like a
+   local). An imported name is another module's; an unresolved one is not a
+   variable (in Ruby it is a method call). *)
+let is_local_variable (var : IL.name) =
+  match !(var.id_info.id_resolved) with
+  | Some ((G.ImportedEntity _ | G.ImportedModule _), _)
+  | None ->
+      false
+  | Some _ -> true
+
+(* The variables among these lvals. *)
+let vars_of_lvals ~(init : IL.NameSet.t) (lvals : IL.lval Seq.t) : IL.NameSet.t =
+  Seq.fold_left
+    (fun vars (lval : IL.lval) ->
+      match lval.base with
+      | Var var when is_local_variable var -> IL.NameSet.add var vars
+      | Var _ | VarSpecial _ | Mem _ -> vars)
+    init lvals
+
+(* The variables of a function: its parameters, with the names a
+   parameter pattern binds (a Rust [x: String] is one), and the variables
+   its own body mentions, not those of the lambdas nested in it. *)
+let vars_of_cfg ~(lang : Lang.t) (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
+  let params =
+    fun_cfg.params
+    |> List.concat_map (fun (param : IL.param) ->
+           Option.to_list (IL_helpers.pname_of_param param)
+           @
+           match param with
+           | IL.ParamPattern (_, pat) ->
+               pattern_leaves_with_offsets ~lang pat |> List.map fst
+           | IL.Param _
+           | IL.ParamRest _
+           | IL.ParamKwd _
+           | IL.ParamReceiver _
+           | IL.ParamFixme ->
+               [])
+    |> IL.NameSet.of_list
+  in
+  vars_of_lvals ~init:params (lvals_of_cfg ~nested:false fun_cfg)
+
+(* The variables a lambda and the lambdas nested in it mention. *)
+let vars_of_subtree (lambda_cfg : IL.fun_cfg) : IL.NameSet.t =
+  vars_of_lvals ~init:IL.NameSet.empty (lvals_of_cfg ~nested:true lambda_cfg)
+
+(* All lambdas of a function, innermost first, so that a nested lambda's
+   signature is extracted before its parent's, each with the variables of
+   the functions enclosing it: those their own bodies mention and those the
+   lambda's siblings mention (a variable declared without a value, assigned
+   in one lambda and read in another, has no node of its own). *)
+let rec collect_all_lambdas_innermost_first ~(lang : Lang.t)
+    ~(outer_vars : IL.NameSet.t) (fun_cfg : IL.fun_cfg) :
+    (IL.name * IL.fun_cfg * IL.NameSet.t) list =
+  let own = IL.NameSet.union outer_vars (vars_of_cfg ~lang fun_cfg) in
+  let subtrees = IL.NameMap.map vars_of_subtree fun_cfg.lambdas in
+  (* The number of lambdas mentioning each variable: one mentioned by any
+     lambda other than [name] is mentioned by two, or by one that is not
+     [name]. *)
+  let mentions =
+    IL.NameMap.fold
+      (fun _ vars mentions ->
+        IL.NameSet.fold
+          (fun var -> IL.NameMap.update var (fun n -> Some (1 + Option.value n ~default:0)))
+          vars mentions)
+      subtrees IL.NameMap.empty
+  in
+  IL.NameMap.fold
+    (fun name lcfg rev_results ->
+      let mine = IL.NameMap.find name subtrees in
+      let siblings =
+        IL.NameMap.fold
+          (fun var n acc ->
+            if n >= 2 || not (IL.NameSet.mem var mine) then IL.NameSet.add var acc
+            else acc)
+          mentions IL.NameSet.empty
+      in
+      let outer_vars = IL.NameSet.union own siblings in
+      let nested =
+        collect_all_lambdas_innermost_first ~lang ~outer_vars lcfg
+      in
+      (name, lcfg, outer_vars) :: List.rev_append nested rev_results)
+    fun_cfg.lambdas []
+  |> List.rev
+
+(* The environment a lambda's signature is extracted in, lifting the lambda
+   out of the functions enclosing it: every variable of those functions
+   ([outer_vars]) that the lambda, or a lambda nested in it, reads or writes
+   holds a [BCaptured] placeholder, bound where the closure is formed
+   ([Sig_inst.close_over]). A field of the receiver, e.g. a Ruby
+   [@x], is read where the lambda is used, see [apply_lambda_signature], as
+   is the control taint, e.g. the condition of the [if] it is applied
+   under. *)
+let captured_var_assumptions lang ~(outer_vars : IL.NameSet.t)
+    (lambda_cfg : IL.fun_cfg) : Lval_env.t =
+  let own_params =
+    lambda_cfg.params
+    |> List.filter_map IL_helpers.pname_of_param
+    |> IL.NameSet.of_list
+  in
+  let captured (var : IL.name) =
+    IL.NameSet.mem var outer_vars && not (IL.NameSet.mem var own_params)
+  in
+  let placeholder_on lval (taint_lval : Taint.lval) env =
+    Lval_env.add_lval lang lval
+      (Taints.singleton { orig = Var taint_lval; tokens = [] })
+      env
+  in
+  let control_env =
+    Lval_env.add_control_taints Lval_env.empty
+      (Taints.singleton { orig = Control; tokens = [] })
+  in
+  (* In Ruby, a call of a bare unresolved name is a call of a method of the
+     receiver, and [user] for [def user; @user ||= ...; end] reads the field
+     it memoises: the name is read as the receiver's field of that name, as
+     in the environment [this.x] is [x] ([Taint_lval_env.normalize_lval]). *)
+  let bare_calls_env =
+    match lang with
+    | Lang.Ruby ->
+        LV.reachable_nodes lambda_cfg
+        |> Seq.fold_left
+             (fun env (node : IL.node) ->
+               match node.n with
+               | NInstr
+                   { i = Call (_, { e = Fetch { base = Var m; rev_offset = [] }; _ }, _); _ }
+                 when Option.is_none !(m.id_info.id_resolved) ->
+                   placeholder_on (LV.lval_of_var m)
+                     { base = BThis; offset = [ Ofld m ] }
+                     env
+               | _ -> env)
+             control_env
+    | _ -> control_env
+  in
+  lvals_of_cfg ~nested:true lambda_cfg
+  |> Seq.fold_left
+       (fun env (lval : IL.lval) ->
+         match (lval.base, List.rev lval.rev_offset) with
+         | Var var, _ when captured var ->
+             placeholder_on (LV.lval_of_var var)
+               { base = BCaptured var; offset = [] }
+               env
+         | VarSpecial ((This | Self), _), first :: _ ->
+             placeholder_on
+               { lval with rev_offset = [ first ] }
+               { base = BThis; offset = [ Taint.offset_of_IL lang first ] }
+               env
+         | _ -> env)
+       bare_calls_env
 
 let mk_lambda_in_env env lcfg =
   (* We do some processing of the lambda parameters but it's mainly
@@ -3588,12 +3699,8 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         (Lval_env.to_string in') (Lval_env.to_string out'));
   { D.in_env = in'; out_env = out' }
 
-(* In OSS, lambdas are mostly treated like statement blocks, that is, we
- * check the body of the lambda at the place where it is called, but we
- * do not "connect" actual arguments with formals, nor we track if the
- * lambda returns any taint.
- *
- * TODO: In Pro we should do inter-procedural analysis here. *)
+(* The lambdas a node uses, applied: by their lifted signature when they
+ * have one, as a block whose body is checked here otherwise. *)
 and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   let node_is_call =
     (* See 'out_env' below. *)
@@ -3623,12 +3730,15 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   let effects_lambdas, out_envs_lambdas =
     lambdas_to_analyze
     |> List_.map (fun (lambda_name, lambda_cfg) ->
-           let lambda_in_env = mk_lambda_in_env env lambda_cfg in
-           fixpoint_lambda env.taint_inst env.func env.needed_vars lambda_name
-             lambda_cfg lambda_in_env ?signature_db:env.signature_db
-             ?builtin_signature_db:env.builtin_signature_db
-             ?call_graph:env.call_graph
-             ~call_graph_caller:env.call_graph_caller ())
+           match lambda_signature env lambda_name with
+           | Some lambda_sig -> apply_lambda_signature env lambda_name lambda_cfg lambda_sig
+           | None ->
+               let lambda_in_env = mk_lambda_in_env env lambda_cfg in
+               fixpoint_lambda env.taint_inst env.func env.needed_vars lambda_name
+                 lambda_cfg lambda_in_env ?signature_db:env.signature_db
+                 ?builtin_signature_db:env.builtin_signature_db
+                 ?call_graph:env.call_graph
+                 ~call_graph_caller:env.call_graph_caller ())
     |> List_.split
   in
   let effects = Effects.union_list effects_lambdas in
@@ -3678,6 +3788,59 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
       env.lval_env
   in
   (effects, out_env)
+
+(* The signature extracted for [lambda_name] in this file, if any, closed
+   over the variables it captures: where the closure was formed, from its
+   [Fun] shape, or else as they are here. *)
+and lambda_signature env lambda_name : Signature.t option =
+  if not env.taint_inst.options.taint_intrafile then None
+  else
+    match Lval_env.find_var env.lval_env lambda_name with
+    | Some (S.Cell (_, S.Fun closed)) -> Some closed
+    | _ -> close_named_lambda env lambda_name
+
+(* What analysing the lambda at this use gives, from its signature: each
+   parameter is tainted only if it is itself a source, as in
+   [mk_lambda_in_env], and every captured variable reads its taint here.
+   The sink effects are recorded by [apply_signature]. *)
+and apply_lambda_signature env lambda_name (lambda_cfg : IL.fun_cfg)
+    (lambda_sig : Signature.t) : Effects.t * Lval_env.t =
+  let param_taints (var : IL.name) =
+    let lval_env =
+      Lval_env.clean env.taint_inst.lang env.lval_env (LV.lval_of_var var)
+    in
+    let taints, shape, _ = check_tainted_var { env with lval_env } var in
+    IL.Unnamed (taints, shape)
+  in
+  let args_taints =
+    lambda_cfg.params
+    |> List.filter_map (fun (param : IL.param) ->
+           match param with
+           | ParamReceiver _ -> None
+           | ParamFixme -> Some (IL.Unnamed (Taints.empty, S.Bot))
+           | Param { pname; _ }
+           | ParamRest { pname; _ }
+           | ParamKwd { pname; _ }
+           | ParamPattern ({ pname; _ }, _) ->
+               Some (param_taints pname))
+  in
+  (* Applied as a method of this frame's receiver, so that its [BThis]
+     placeholders read that receiver here ([this.x] is [x] in the
+     environment whatever the receiver is called). *)
+  let lambda_exp : IL.exp =
+    {
+      e =
+        Fetch
+          {
+            base = VarSpecial (IL.Self, Tok.unsafe_fake_tok "self");
+            rev_offset = [ { o = Dot lambda_name; oorig = NoOrig } ];
+          };
+      eorig = NoOrig;
+    }
+  in
+  match apply_signature env lambda_exp lambda_sig ~args:None args_taints with
+  | Some (_, _, lval_env) -> (Effects.empty, lval_env)
+  | None -> (Effects.empty, env.lval_env)
 
 and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
     ?signature_db ?builtin_signature_db ?call_graph
@@ -3888,9 +4051,6 @@ and (fixpoint :
       | None -> in_env
     else in_env
   in
-  (* Extract signatures for all lambdas in the function for HOF support.
-     We collect ALL lambdas (including nested ones) in innermost-first order,
-     so nested lambda signatures are available when processing their parents. *)
   let best_matches =
     (* Here we compute the "canonical" or "best" source/sanitizer/sink matches,
      * for each source/sanitizer/sink we check whether there is a "best match"
@@ -3931,283 +4091,65 @@ and (fixpoint :
       used_lambdas;
     }
   in
-  (* The lambdas whose signature can be consumed: a [Fun] shape is only
-     read when the lambda is handed to a callee that has a signature (so
-     [Sig_inst] may instantiate it), called through its variable, or used
-     in any other way (kept, conservatively).  A lambda only ever passed to
-     callees without a signature -- RSpec's [describe]/[it] blocks, Rails
-     DSL blocks -- never has its signature looked up, and extracting it (a
-     dataflow per lambda per enclosing fixpoint, nested blocks repeatedly)
-     was most of the interfile epilogue on GitLab. *)
-  let needed_lambdas (all_lambdas : (IL.name * IL.fun_cfg) list) : IL.NameSet.t
-      =
-    let lambda_names =
-      List.fold_left
-        (fun s (n, _) -> IL.NameSet.add n s)
-        IL.NameSet.empty all_lambdas
+  (* A lambda's signature, from [start_env] for what it reads from outside.
+     The source, sink and sanitizer matches are those chosen over the whole
+     function, as where the lambda is analysed in place. *)
+  let extract_lambda_sig ~start_env acc_db lambda_name (lambda_cfg : IL.fun_cfg)
+      : Signature.t =
+    let params = Signature.of_IL_params lambda_cfg.params in
+    let lambda_func =
+      {
+        name = Some lambda_name;
+        sig_params = params;
+        il_params = lambda_cfg.params;
+        param_sids = mk_param_sids lambda_cfg.params;
+        best_matches = func.best_matches;
+        used_lambdas = IL.NameSet.empty;
+      }
     in
-    if IL.NameSet.is_empty lambda_names then lambda_names
-    else
-      let probe_env =
-        {
-          taint_inst;
-          func;
-          in_lambda = None;
-          needed_vars = IL.NameSet.empty;
-          lval_env = enhanced_in_env;
-          effects_acc = ref Effects.empty;
-          did_self_recurse = ref false;
-          signature_db;
-          builtin_signature_db;
-          call_graph;
-          call_graph_caller = name;
-          class_name;
-        }
-      in
-      let callee_has_sig_memo : (string * int, bool) Hashtbl.t =
-        Hashtbl.create 16
-      in
-      let callee_has_sig (callee : IL.exp) (arity : int) : bool =
-        let key = (Display_IL.string_of_exp callee, arity) in
-        match Hashtbl.find_opt callee_has_sig_memo key with
-        | Some b -> b
-        | None ->
-            let b = Option.is_some (lookup_signature probe_env callee arity) in
-            Hashtbl.replace callee_has_sig_memo key b;
-            b
-      in
-      let lambda_var_of_lval (lv : IL.lval) : IL.name option =
-        match lv with
-        | { base = Var v; rev_offset = [] } when IL.NameSet.mem v lambda_names ->
-            Some v
-        | _ -> None
-      in
-      let lambda_var_of_exp (e : IL.exp) : IL.name option =
-        match e.e with
-        | Fetch lv -> lambda_var_of_lval lv
-        | _ -> None
-      in
-      let count v xs =
-        List.length
-          (List.filter (fun x -> Int.equal (IL.NameOrdered.compare x v) 0) xs)
-      in
-      LV.reachable_nodes fun_cfg
-      |> Seq.fold_left
-           (fun (needed : IL.NameSet.t) (node : IL.node) ->
-             let mentioned =
-               LV.rlvals_of_node node.n |> List.filter_map lambda_var_of_lval
-             in
-             match mentioned with
-             | [] -> needed
-             | _ -> (
-                 match node.n with
-                 | NInstr { i = Call (_, callee, args); _ } ->
-                     let bare_args =
-                       List.filter_map
-                         (function
-                           | Unnamed e | Named (_, e) -> lambda_var_of_exp e)
-                         args
-                     in
-                     let arity = List.length args in
-                     let callee_needs = callee_has_sig callee arity in
-                     List.fold_left
-                       (fun needed v ->
-                         (* needed unless its only uses here are as a bare
-                            argument to a callee without a signature *)
-                         if
-                           (not callee_needs)
-                           && Int.equal (count v mentioned) (count v bare_args)
-                         then needed
-                         else IL.NameSet.add v needed)
-                       needed mentioned
-                 | _ ->
-                     List.fold_left
-                       (fun needed v -> IL.NameSet.add v needed)
-                       needed mentioned))
-           IL.NameSet.empty
+    let effects, _mapping =
+      (* Lambda body's call_graph_caller is the enclosing named function, not the lambda: projidx emits closure calls as edges to the enclosing method (skip_anon), so the lambda-as-caller misses every edge. *)
+      fixpoint_aux taint_inst lambda_func
+        ~enter_lval_env:
+          (Lval_env.union ~lang:taint_inst.lang start_env
+             (mk_param_assumptions ~taint_inst lambda_cfg.params))
+        ~in_lambda:(Some lambda_name) ~class_name:None
+        ~signature_db:acc_db ?builtin_signature_db ?call_graph
+        ~call_graph_caller:name lambda_cfg
+    in
+    { Signature.params; params_il = lambda_cfg.params; effects }
   in
-  let signature_db_with_lambdas =
+  (* Every lambda of the function gets a lifted signature, which
+     [do_lambdas] applies where the lambda is used: nested lambdas are never
+     re-analysed inside each analysis of what encloses them. *)
+  let signature_db =
     Taint_timing.accum "eager lambda signature extraction" @@ fun () ->
     if taint_intrafile_ then
       match signature_db with
       | Some db ->
-          (* Collect all lambdas recursively, innermost first *)
-          let all_lambdas_list = collect_all_lambdas_innermost_first fun_cfg in
-          let needed = needed_lambdas all_lambdas_list in
+          (* The variables of the function's input environment, module-level
+             ones included, are its variables too: a lambda captures them. *)
           let all_lambdas_list =
-            List.filter
-              (fun (n, _) -> IL.NameSet.mem n needed)
-              all_lambdas_list
+            collect_all_lambdas_innermost_first ~lang:taint_inst.lang
+              ~outer_vars:
+                (Lval_env.seq_of_tainted in_env |> Seq.map fst
+               |> IL.NameSet.of_seq)
+              fun_cfg
           in
-          List.fold_left
-            (fun acc_db (lambda_name, lambda_cfg) ->
-              let fn_id = Function_id.of_il_name lambda_name in
-              if Shape_and_sig.FunctionMap.mem fn_id acc_db.Shape_and_sig.signatures then
-                (* An earlier extraction (e.g. [Match_tainting_mode]'s outer
-                   extraction for top-level lambdas) already added a sig at
-                   this key. Adding here would put a second sig in the same
-                   [SignatureSet], which [find_by_arity] cannot disambiguate
-                   when both share an arity. *)
-                acc_db
-              else
-              try
-                   Log.debug (fun m ->
-                       m "Extracting signature for lambda %s"
-                         (IL.str_of_name lambda_name));
-                   let params = Signature.of_IL_params lambda_cfg.params in
-                   (* Create assumptions for lambda parameters using Fold_IL_params.
-                    * [fold_top_level] yields one entry per declared parameter;
-                    * the loop index [i] must line up with actual call-site args,
-                    * which rules out enumerating destructured leaves here. *)
-                   let param_assumptions =
-                     let _, env =
-                       lambda_cfg.params
-                       |> List.fold_left
-                            (fun (i, env) param ->
-                              match param with
-                              | IL.Param { pname; _ }
-                              | IL.ParamRest { pname; _ }
-                              | IL.ParamKwd { pname; _ }
-                              | IL.ParamPattern ({ pname; _ }, _) ->
-                                  let var = pname in
-                                  let il_lval : IL.lval =
-                                    { base = Var var; rev_offset = [] }
-                                  in
-                                  let taint_arg : Taint.arg =
-                                    { name = fst var.ident; index = i }
-                                  in
-                                  let taint_lval : Taint.lval =
-                                    { base = BArg taint_arg; offset = [] }
-                                  in
-                                  let generic_taint =
-                                    Taint.{ orig = Var taint_lval; tokens = [] }
-                                  in
-                                  let taint_set =
-                                    Taint.Taint_set.singleton generic_taint
-                                  in
-                                  (* Give the parameter an Arg shape so it can be used in HOF *)
-                                  let param_shape = S.Arg (taint_arg, [ [] ]) in
-                                  let env =
-                                    Lval_env.add_lval_shape taint_inst.lang
-                                      il_lval taint_set param_shape env
-                                  in
-                                  (* Destructuring ParamPattern: also seed
-                                   * each leaf with both a
-                                   * [Var (BArg taint_arg, offset)] taint
-                                   * (so body references propagate taint
-                                   * conservatively) and an
-                                   * [Arg (taint_arg, offset_path)] shape
-                                   * (so the shape system can project the
-                                   * caller's actual argument down to the
-                                   * leaf at HOF call-site instantiation). *)
-                                  let env =
-                                    match param with
-                                    | IL.ParamPattern (_, pat) ->
-                                        pattern_leaves_with_offsets
-                                          ~lang:taint_inst.lang pat
-                                        |> List.fold_left
-                                             (fun env (leaf_name, offset) ->
-                                               let leaf_lval : IL.lval =
-                                                 {
-                                                   base = Var leaf_name;
-                                                   rev_offset = [];
-                                                 }
-                                               in
-                                               let leaf_shape =
-                                                 S.Arg (taint_arg, [ offset ])
-                                               in
-                                               let leaf_taint_lval : Taint.lval
-                                                   =
-                                                 { base = BArg taint_arg; offset }
-                                               in
-                                               let leaf_taint =
-                                                 Taint.
-                                                   {
-                                                     orig = Var leaf_taint_lval;
-                                                     tokens = [];
-                                                   }
-                                               in
-                                               let leaf_taints =
-                                                 Taint.Taint_set.singleton
-                                                   leaf_taint
-                                               in
-                                               Lval_env.add_lval_shape
-                                                 taint_inst.lang leaf_lval
-                                                 leaf_taints leaf_shape env)
-                                             env
-                                    | _ -> env
-                                  in
-                                  (i + 1, env)
-                              | IL.ParamFixme -> (i + 1, env)
-                              (* Receivers aren't call-site args. *)
-                              | IL.ParamReceiver _ -> (i, env))
-                            (0, Lval_env.empty)
-                     in
-                     env
+          (* A lifted signature keeps its concrete sinks: they are reported
+             where the lambda is closed ([close_lambda]), through
+             [record_effects], so not at an unreachable point. *)
+          all_lambdas_list
+          |> List.fold_left
+               (fun acc_db (lambda_name, lambda_cfg, outer_vars) ->
+                 try
+                   let start_env =
+                     captured_var_assumptions taint_inst.lang ~outer_vars
+                       lambda_cfg
                    in
-                   let combined_env =
-                     Lval_env.union ~lang:taint_inst.lang enhanced_in_env
-                       param_assumptions
-                   in
-                   (* Run fixpoint on lambda to get its effects *)
-                   let lambda_best_matches =
-                     lambda_cfg
-                     |> TM.best_matches_in_nodes ~sub_matches_of_orig:(fun orig ->
-                            let sources =
-                              orig_is_source taint_inst orig
-                              |> List.to_seq
-                              |> Seq.filter (fun (m : R.taint_source TM.t) ->
-                                     m.spec.source_exact)
-                              |> Seq.map (fun m -> TM.Any m)
-                            in
-                            let sanitizers =
-                              orig_is_sanitizer taint_inst orig
-                              |> List.to_seq
-                              |> Seq.filter (fun (m : R.taint_sanitizer TM.t) ->
-                                     m.spec.sanitizer_exact)
-                              |> Seq.map (fun m -> TM.Any m)
-                            in
-                            let sinks =
-                              orig_is_sink taint_inst orig
-                              |> List.to_seq
-                              |> Seq.filter (fun (m : R.taint_sink TM.t) ->
-                                     m.spec.sink_exact)
-                              |> Seq.map (fun m -> TM.Any m)
-                            in
-                            sources |> Seq.append sanitizers |> Seq.append sinks)
-                   in
-                   let lambda_func =
-                     {
-                       name = Some lambda_name;
-                       sig_params =
-                         Signature.of_IL_params lambda_cfg.params;
-                       il_params = lambda_cfg.params;
-                       param_sids = mk_param_sids lambda_cfg.params;
-                       best_matches = lambda_best_matches;
-                       used_lambdas = IL.NameSet.empty;
-                     }
-                   in
-                   let lambda_effects, _lambda_mapping =
-                     (* Lambda body's call_graph_caller is the enclosing named function, not the lambda: projidx emits closure calls as edges to the enclosing method (skip_anon), so the lambda-as-caller misses every edge. *)
-                     fixpoint_aux taint_inst lambda_func
-                       ~enter_lval_env:combined_env
-                       ~in_lambda:(Some lambda_name) ~class_name:None
-                       ~signature_db:acc_db ?builtin_signature_db
-                       ?call_graph
-                       ~call_graph_caller:name lambda_cfg
-                   in
-                   let signature =
-                     {
-                       Signature.params;
-                       params_il = lambda_cfg.params;
-                       effects = lambda_effects;
-                     }
-                   in
-                   let arity =
-                     Shape_and_sig.Arity_exact (List.length lambda_cfg.params)
-                   in
-                   Shape_and_sig.add_signature acc_db (Function_id.of_il_name lambda_name)
-                     { sig_ = signature; arity }
+                   Shape_and_sig.add_lambda_sig acc_db
+                     (Function_id.of_il_name lambda_name)
+                     (extract_lambda_sig ~start_env acc_db lambda_name lambda_cfg)
                  with
                  | e ->
                      Log.warn (fun m ->
@@ -4215,7 +4157,7 @@ and (fixpoint :
                            (IL.str_of_name lambda_name)
                            (Printexc.to_string e));
                      acc_db)
-            db all_lambdas_list
+               db
           |> Option.some
       | None -> signature_db
     else signature_db
@@ -4224,7 +4166,7 @@ and (fixpoint :
   let effects, mapping =
     Taint_timing.accum "main dataflow pass" @@ fun () ->
     fixpoint_aux taint_inst func ~enter_lval_env:enhanced_in_env ~in_lambda:None
-      ~class_name ?signature_db:signature_db_with_lambdas ?builtin_signature_db ?call_graph
+      ~class_name ?signature_db ?builtin_signature_db ?call_graph
       ~call_graph_caller:name fun_cfg
   in
   (* If this was a constructor, store the instance variable taint for other methods *)

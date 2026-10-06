@@ -334,6 +334,13 @@ end = struct
   }
   [@@deriving show, eq, ord, hash, sexp]
 
+  (* [identity] first: names compared during an analysis mostly share
+     [file], whose comparison walks the whole path. *)
+  let compare a b =
+    match compare_identity a.identity b.identity with
+    | 0 -> String.compare a.file b.file
+    | c -> c
+
   (* Caller supplies the real [file] (single-file lowered program); a placeless
      [Error] token still gets the real file with zeroed position. *)
   let site_of_tok ?name tok =

@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-go-captured-param
+    message: Tainted data reaches a sink through a closure
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

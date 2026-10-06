@@ -18,10 +18,19 @@ type call_effect =
       var : IL.name;
       offset : Taint.offset list;
       guards : Effect_guard.t;
-          (** Guard on the global/captured-local write, rebound into the
-              outer (caller's) parameter namespace. Carried so the caller
-              re-emits the effect under the same condition rather than
-              unconditionally. *)
+          (** Guard on the write, rebound into the outer (caller's)
+              parameter namespace. Carried so the caller re-emits the effect
+              under the same condition rather than unconditionally. *)
+    }
+  | ToLvalCaptured of {
+      taints : Taint.taints;
+      var : IL.name;
+      offset : Taint.offset list;
+      guards : Effect_guard.t;
+          (** A write to a variable the callee captured, a local of some
+              enclosing function: it updates the caller's environment when
+              the caller owns the variable, and is never an effect of the
+              caller. *)
     }
   | ToLvalThis of {
       taints : Taint.taints;
@@ -32,7 +41,7 @@ type call_effect =
     }
   | ToSinkInCall of {
       callee : IL.exp;
-      arg : Taint.arg;
+      arg : Shape_and_sig.Effect.callee;
       arg_offset : Taint.offset list;
       args_taints : Shape_and_sig.Effect.args_taints;
       guards : Effect_guard.t;
@@ -42,6 +51,8 @@ type call_effect =
     }
 
 type call_effects = call_effect list
+
+val show_call_effects : call_effects -> string
 
 type sig_inst_cache
 
@@ -56,6 +67,23 @@ val merge_dispatch_signatures :
  * global variable (a BGlob base). The second argument is the interface
  * signature, returned unchanged when there are no impls. On incompatible
  * params the first signature is returned. *)
+
+val close_over :
+  lang:Lang.t ->
+  Taint_lval_env.t ->
+  Shape_and_sig.Signature.t ->
+  Shape_and_sig.Signature.t
+(** Closes a lifted lambda signature where the closure is formed: each
+    [BCaptured] variable takes its value in the given environment, the
+    environment of the enclosing function at the definition. A read becomes
+    the variable's taints; a call becomes a call of what it holds (a deferred
+    call on the enclosing parameter it is, or the effects of the function it
+    holds); a write stays a write to the variable, and is also a write to the
+    parameter of the enclosing function the variable holds, for a closure that
+    leaves the function. A variable the environment does not know stays a
+    [BCaptured] placeholder, bound where the closure is called if that is in
+    the function owning the variable. The lambda's own parameters, the receiver
+    and the control taint are bound where the closure is called. *)
 
 val instantiate_function_signature :
   lang:Lang.t ->

@@ -92,6 +92,8 @@ let compare_metavar_env env1 env2 =
   Metavariable.compare_bindings env1 env2
 
 let compare_matches pm1 pm2 =
+  if phys_equal pm1 pm2 then 0
+  else
   match
     String.compare
       (Rule_ID.to_string pm1.PM.rule_id.id)
@@ -131,7 +133,15 @@ let rec show_call_trace show_thing = function
 (*****************************************************************************)
 
 type arg = { name : string; index : int } [@@deriving eq, ord]
-type base = BGlob of IL.name | BThis | BArg of arg [@@deriving ord]
+type base =
+  | BGlob of IL.name
+  | BThis
+  | BArg of arg
+  | BCaptured of IL.name
+      (** A variable of an enclosing function that a lambda uses: a
+          placeholder in the lambda's signature until the closure is formed,
+          see [Sig_inst.close_over]. *)
+[@@deriving ord]
 
 (* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple
  * scrutinee starting at index [n]. Reading element [k] of a slice
@@ -161,6 +171,7 @@ let show_base base =
   | BGlob name -> fst name.ident
   | BThis -> "this"
   | BArg arg -> show_arg arg
+  | BCaptured name -> Printf.sprintf "captured(%s)" (fst name.ident)
 
 let show_offset offset =
   match offset with
@@ -345,7 +356,7 @@ let compare_orig orig1 orig2 =
 let compare_taint taint1 taint2 =
   (* THINK: Right now we disregard the trace because we just want to keep one
    * potential path. *)
-  compare_orig taint1.orig taint2.orig
+  if phys_equal taint1 taint2 then 0 else compare_orig taint1.orig taint2.orig
 
 let rec show_precondition = function
   | R.PLabel str -> str
@@ -452,8 +463,10 @@ module Taint_set = struct
   (* Equality/order on the taint identities (keys) only, matching the
      previous [Set.Make] over taint-only bundle compare: guards and
      trace details do not participate. *)
-  let equal set1 set2 = Taints.equal (fun _ _ -> true) set1 set2
-  let compare set1 set2 = Taints.compare (fun _ _ -> 0) set1 set2
+  let equal set1 set2 = phys_equal set1 set2 || Taints.equal (fun _ _ -> true) set1 set2
+
+  let compare set1 set2 =
+    if phys_equal set1 set2 then 0 else Taints.compare (fun _ _ -> 0) set1 set2
   let to_seq set = Taints.to_seq set |> Seq.map snd
   let elements set = set |> to_seq |> List.of_seq
 
@@ -530,6 +543,8 @@ module Taint_set = struct
   and pick_best_taint taint1 taint2 =
     (* Here we assume that 'compare taint1 taint2 = 0' so we could keep any
        * of them, but we want "the best" one, e.g. the one with the shortest trace. *)
+    if phys_equal taint1 taint2 then taint2
+    else
     match (taint1.orig, taint2.orig) with
     | Var _, Var _
     | Shape_var _, Shape_var _

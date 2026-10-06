@@ -28,7 +28,7 @@ module Sig_store = struct
     | None -> SignatureSet.empty
 
   let set (n : Function_id.t) (s : lattice) (db : db) : db =
-    { Shape_and_sig.signatures =
+    { db with Shape_and_sig.signatures =
         FunctionMap.add n s db.Shape_and_sig.signatures }
 end
 

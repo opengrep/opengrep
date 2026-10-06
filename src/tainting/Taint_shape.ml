@@ -157,6 +157,70 @@ let compose_offset ?(max : int option) ~(lang : Lang.t)
   in
   go (List.rev base) (List.length base) offset
 
+(* Polymorphic taints bounded in width: a base extended by more than
+   [max_poly_width] taints of two or more fields, e.g. [arg(x).a.b],
+   [arg(x).a.c], [arg(x).d.e] and so on, keeps of each its first field: the
+   field itself ([Var]) and everything under it ([Shape_var]). The cap on an
+   offset's length bounds the depth of the extensions, not their number:
+   joined round after round of a fixpoint, and each extended again, they
+   multiply without bound otherwise. *)
+let max_poly_width = 16
+
+module BaseMap = Map.Make (struct
+  type t = T.base
+
+  let compare = T.compare_base
+end)
+
+(* [xs] with the deep taints of each wide base widened, [taint_of] reading
+   the taint of an element and [with_taint] replacing it; [xs] itself when
+   no base is wide. *)
+let bound_poly_width_by (taint_of : 'a -> T.taint) (with_taint : 'a -> T.taint -> 'a)
+    (xs : 'a list) : 'a list =
+  let deep_base (taint : T.taint) =
+    match taint.orig with
+    | Var { base; offset = _ :: _ :: _ } | Shape_var { base; offset = _ :: _ :: _ } ->
+        Some base
+    | Var _ | Shape_var _ | Src _ | Control -> None
+  in
+  let widths =
+    List.fold_left
+      (fun widths x ->
+        match deep_base (taint_of x) with
+        | Some base ->
+            BaseMap.update base
+              (fun n -> Some (1 + Option.value n ~default:0))
+              widths
+        | None -> widths)
+      BaseMap.empty xs
+  in
+  if BaseMap.for_all (fun _ n -> n <= max_poly_width) widths then xs
+  else
+    xs
+    |> List.concat_map (fun x ->
+           let taint = taint_of x in
+           match taint.orig with
+           | (Var { base; offset = first :: _ :: _ }
+             | Shape_var { base; offset = first :: _ :: _ })
+             when BaseMap.find base widths > max_poly_width ->
+               let prefix = { T.base; offset = [ first ] } in
+               [ with_taint x { taint with orig = Var prefix };
+                 with_taint x { taint with orig = Shape_var prefix } ]
+           | Var _ | Shape_var _ | Src _ | Control -> [ x ])
+
+let bound_poly_width (taints : Taints.t) : Taints.t =
+  if Taints.cardinal taints <= max_poly_width then taints
+  else
+  let bundles = Taints.elements taints in
+  let widened =
+    bound_poly_width_by
+      (fun (b : T.guarded_taint) -> b.taint)
+      (fun b taint -> { b with taint })
+      bundles
+  in
+  if phys_equal widened bundles then taints else Taints.of_list widened
+
+(* The taints extended by [offset], bounded in depth and width. *)
 let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
     taints =
   let type_of_offset o =
@@ -233,10 +297,12 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
                     | Control ->
                         taint))
        taints
+  |> bound_poly_width
 
 (* A read of [offset] on a parameter's shape 'Arg (arg, base_offsets)', whose
  * value carries [taints]: the polymorphic taints extended by [offset], under
  * the shape extended the same way. 'None' when [offset] is a method call. *)
+
 let find_in_arg ?max ~lang ~taints offset arg base_offsets =
   (* Mirror the method-vs-field discriminator from
    * [fix_poly_taint_with_offset]: when any offset segment has a

@@ -41,7 +41,12 @@ type base =
   | BGlob of IL.name  (** A global variable or a static class field. *)
   | BThis  (** The 'this' or 'self' object. *)
   | BArg of arg  (** A formal parameter in a function/method definition. *)
+  | BCaptured of IL.name
+      (** A variable of an enclosing function that a lambda uses: a
+          placeholder in the lambda's signature until the closure is formed,
+          see [Sig_inst.close_over]. *)
 
+val compare_base : base -> base -> int
 val show_base : base -> string
 
 (** Offset of an 'lval'. *)
