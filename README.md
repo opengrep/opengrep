@@ -1,78 +1,42 @@
 <br />
 <p align="center">
-  <a href="https://github.com/opengrep">
+  <a href="https://opengrep.dev/">
     <picture>
-      <source media="(prefers-color-scheme: light)" srcset="images/opengrep-github-banner.svg">
-      <source media="(prefers-color-scheme: dark)" srcset="images/opengrep-github-banner.svg">
-      <img src="https://raw.githubusercontent.com/opengrep/opengrep/main/images/opengrep-github-banner.svg" width="100%" alt="Opengrep logo"/>
+      <source media="(prefers-color-scheme: light)" srcset="images/opengrep-logo-light.svg">
+      <source media="(prefers-color-scheme: dark)" srcset="images/opengrep-logo-dark.svg">
+      <img src="https://raw.githubusercontent.com/opengrep/opengrep/main/images/opengrep-logo-light.svg" width="40%" alt="Opengrep logo"/>
     </picture>
   </a>
 </p>
+<br />
 
-### Welcome to Opengrep, a fork of Semgrep, under the LGPL 2.1 license
+Welcome to Opengrep! Opengrep is the most advanced open-source Static Application Security Testing (SAST) engine.
 
-**Opengrep is the most advanced open source SAST engine.**
+Opengrep is backed by a consortium of AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Kodem](https://www.kodemsecurity.com/), and [Orca Security](https://orca.security/).
 
-Let's make secure software development a shared standard. Opengrep provides every developer and organisation with open and advanced static code analysis.
+More information: [opengrep.dev](https://opengrep.dev/)
 
-Opengrep is backed by a consortium of AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Kodem](https://www.kodemsecurity.com/), and [Orca Security](https://orca.security/). To learn more, read the manifesto at [opengrep.dev](https://opengrep.dev/).
+<p align="center">
+  <img src="images/opengrep-interfile-screenshot.png" width="100%" alt="Opengrep scan output: a command injection traced from src/server.js through a function in src/utils.js"/>
+</p>
 
-## Why Opengrep?
+## About
 
-Opengrep was created when Semgrep moved critical features behind a commercial licence. We believe advanced static analysis should remain open and accessible to all.
+- Support for 30+ languages
+- Semantic and type-aware matching
+- Cross-function and cross-file taint tracking
+- Advanced dataflow analysis: higher-order functions, field sensitivity, and more
+- Superior performance: multicore parallelism with OCaml 5
+- Self-contained, Cosign-signed binaries for Linux, macOS, and Windows
+- Output formats: SARIF, JSON, and more
+- Fine-grained memory and time limits
+- Compatible with Semgrep rules
 
-**Key advantages:**
-- **Compatible with Semgrep rules** - your existing rules and rulesets work unchanged
-- **Standard outputs** - JSON and SARIF formats for easy integration
-- **Open governance** - contributions accepted on merit, not commercial interest
-- **Long-term assurance** - committed to open-source under LGPL 2.1
-
-## Key Improvements
-
-Opengrep has introduced significant improvements since the fork. Highlights include:
-
-**Superior Taint Analysis** (`--taint-intrafile`):
-- Constructor and field assignment tracking
-- Inter-method taint flow
-- Higher-order function support across 12 languages
-- Collection method tainting (map, filter, reduce, etc.)
-
-See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial) and [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial) for details.
-
-**Cross-file Taint Analysis** (`--enable-interfile`):
-- Follows taint from a source in one file to a sink in another, through a project-wide call graph built in-process
-- Applies to the taint rules whose `options` set `interfile: true` or `taint_interfile: true`, and only when `--enable-interfile` is given; without the flag those rules run as if the option were absent, and `scan`, `ci` and `test` print a warning that lists them
-- `--interfile-depth N` bounds the length of the call chains followed (default 3)
-- `opengrep test` and `opengrep scan --test` take both flags too, as well as `--disable-intrafile`; the language server does not run interfile
-
-```sh
-opengrep scan --enable-interfile --config rules.yaml path/to/project
-```
-
-See [docs/interfile](docs/interfile/README.md) for details.
-
-**Language Support:**
-- **Visual Basic** - not available in Semgrep CE or Pro
-- **Apex, Elixir** - not in Semgrep CE
-- **Improved**: Clojure (tainting support), PHP 8.4, C# 14
-
-**Distribution:**
-- Self-contained binaries compiled from OCaml
-- Signed releases with Cosign
-
-See [OPENGREP.md](OPENGREP.md) for the full list of improvements since the fork.
-
-# Opengrep: Fast and Powerful Code Pattern Search
-
-Opengrep is an ultra-fast static analysis tool for searching code patterns with the power of semantic grep. Analyze large code bases at the speed of thought with intuitive pattern matching and customizable rules. Find and fix security vulnerabilities, fast – ship more secure code.
-
-Opengrep supports 30+ languages, including:
-
-Apex · Bash · C · C++ · C# · Clojure · Crystal · Dart · Dockerfile · Elixir · Go · HTML · Java · JavaScript · JSON · Jsonnet · JSX · Julia · Kotlin · Lisp · Lua · OCaml · PHP · Python · R · Ruby · Rust · Scala · Scheme · Solidity · Swift · Terraform · TSX · TypeScript · Visual Basic · XML · YAML · Generic (ERB, Jinja, etc.)
+**Supported Languages:** Apex · Bash · C · C++ · C# · Clojure · Crystal · Dart · Dockerfile · Elixir · Go · HTML · Java · JavaScript · JSON · Jsonnet · JSX · Julia · Kotlin · Lisp · Lua · OCaml · PHP · Python · R · Ruby · Rust · Scala · Scheme · Solidity · Swift · Terraform · TSX · TypeScript · Visual Basic · XML · YAML · Generic (ERB, Jinja, etc.)
 
 ## Installation
 
-### Quick Install (Recommended)
+### Quick install (recommended)
 
 #### Linux / macOS
 
@@ -98,221 +62,28 @@ Or with a specific version:
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/opengrep/opengrep/main/install.ps1))) -Version v1.16.0
 ```
 
-### Manual Install
+### Manual install
 
 Binaries are available on the [releases page](https://github.com/opengrep/opengrep/releases).
 
 On Windows, the package holds `opengrep.exe` and the DLLs it needs; keep them
 together in the directory you install them to.
 
-## Getting started
+## For Agents
 
-Create `rules/demo-rust-unwrap.yaml` with the following content:
-
-```yml
-rules:
-- id: unwrapped-result
-  pattern: $VAR.unwrap()
-  message: "Unwrap detected - potential panic risk"
-  languages: [rust]
-  severity: WARNING
-```
-
-and `code/rust/main.rs` with the following content (that contains a risky unwrap):
-
-```rust
-fn divide(a: i32, b: i32) -> Result<i32, String> {
-    if b == 0 {
-        return Err("Division by zero".to_string());
-    }
-    Ok(a / b)
-}
-
-fn main() {
-    let result = divide(10, 0).unwrap(); // Risky unwrap!
-    println!("Result: {}", result);
-}
-```
-
-You should now have: 
-
-``` shell
-.
-├── code
-│   └── rust
-│       └── main.rs
-└── rules
-    └── demo-rust-unwrap.yaml
-```
-
-Now run: 
-
-```bash
-❯ opengrep scan -f rules code/rust
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-
-Scanning 1 file (only git-tracked) with 1 Code rule:
-
-  CODE RULES
-  Scanning 1 file.
-
-  PROGRESS
-
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
-
-
-┌────────────────┐
-│ 1 Code Finding │
-└────────────────┘
-
-    code/rust/main.rs
-    ❯❯ rules.unwrapped-result
-          Unwrap detected - potential panic risk
-
-            9┆ let result = divide(10, 0).unwrap(); // Risky unwrap!
-
-
-
-┌──────────────┐
-│ Scan Summary │
-└──────────────┘
-
-Ran 1 rule on 1 file: 1 finding.
-```
-
-To obtain SARIF output: 
-
-```bash
-❯ opengrep scan --sarif-output=sarif.json -f rules code
-  ...
-❯ cat sarif.json | jq
-{
-  "version": "2.1.0",
-  "runs": [
-    {
-      "invocations": [
-        {
-          "executionSuccessful": true,
-          "toolExecutionNotifications": []
-        }
-      ],
-      "results": [
-        {
-          "fingerprints": {
-            "matchBasedId/v1": "a0ff5ed82149206a74ee7146b075c8cb9e79c4baf86ff4f8f1c21abea6ced504e3d33bb15a7e7dfa979230256603a379edee524cf6a5fd000bc0ab29043721d8_0"
-          },
-          "locations": [
-            {
-              "physicalLocation": {
-                "artifactLocation": {
-                  "uri": "code/rust/main.rs",
-                  "uriBaseId": "%SRCROOT%"
-                },
-                "region": {
-                  "endColumn": 40,
-                  "endLine": 9,
-                  "snippet": {
-                    "text": "    let result = divide(10, 0).unwrap(); // Risky unwrap!"
-                  },
-                  "startColumn": 18,
-                  "startLine": 9
-                }
-              }
-            }
-          ],
-          "message": {
-            "text": "Unwrap detected - potential panic risk"
-          },
-          "properties": {},
-          "ruleId": "rules.unwrapped-result"
-        }
-      ],
-      "tool": {
-        "driver": {
-          "name": "Opengrep OSS",
-          "rules": [
-            {
-              "defaultConfiguration": {
-                "level": "warning"
-              },
-              "fullDescription": {
-                "text": "Unwrap detected - potential panic risk"
-              },
-              "help": {
-                "markdown": "Unwrap detected - potential panic risk",
-                "text": "Unwrap detected - potential panic risk"
-              },
-              "id": "rules.unwrapped-result",
-              "name": "rules.unwrapped-result",
-              "properties": {
-                "precision": "very-high",
-                "tags": []
-              },
-              "shortDescription": {
-                "text": "Opengrep Finding: rules.unwrapped-result"
-              }
-            }
-          ],
-          "semanticVersion": "1.100.0"
-        }
-      }
-    }
-  ],
-  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
-}
-```
-
-## Log file
-
-Set `OPENGREP_LOG_FILE` (or `SEMGREP_LOG_FILE`) to a path to get a copy of
-what Opengrep prints on stderr, at the same level: warnings and errors by
-default, more with `--verbose` or `--debug`. The file is truncated on each
-run and its directory is created. Nothing is written when the variable is
-not set. A path that cannot be written produces a warning and the run
-continues without the copy.
-
-## Text report
-
-`--skin` selects the layout of the text report: `simple` (the default),
-`vivid`, or `legacy` (the layout of earlier releases). The `OPENGREP_SKIN`
-environment variable sets it too; `--skin` takes precedence over it.
-
-```sh
-opengrep scan --skin vivid -f rules code
-OPENGREP_SKIN=legacy opengrep scan -f rules code
-```
-
-While a scan runs on a terminal, a status line on stderr shows the phase of
-the scan and, once the targets are known, a progress count. It is not drawn
-when stderr is not a terminal, when `TERM` is unset, `dumb` or `unknown`,
-when `CI` is set to a value other than `false` or `0`, on Windows, with
-`--quiet`, `--verbose` or `--debug`, with `--incremental-output`, or with
-`--skin legacy`. `--no-progress-bar` turns it off.
-
-## Colour
-
-Colour is on when stderr is a terminal. `NO_COLOR` turns it off;
-`--force-color` turns it on.
+- [Skill](https://github.com/opengrep/skills/blob/main/skills/opengrep/SKILL.md) - install, write rules, run scans (`npx skills add opengrep/skills`)
 
 ## Documentation
 
 - [Wiki](https://github.com/opengrep/opengrep/wiki) - tutorials and language guides
 - [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial)
 - [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial)
-- [C# Support](https://github.com/opengrep/opengrep/wiki/Support-for-C%23) (C# 12/13/14)
-- [PHP Support](https://github.com/opengrep/opengrep/wiki/Support-for-Php) (PHP 7.1-8.4)
-- [Visual Basic Support](https://github.com/opengrep/opengrep/wiki/Support-for-Visual-Basic)
 
 ## Community
 
 - [X / Twitter](https://x.com/opengrep)
 - [Reddit](https://www.reddit.com/r/opengrep)
-- [Manifesto](https://opengrep.dev/) - why we forked
-- [Open roadmap sessions](https://lu.ma/opengrep) - join the conversation
+- [opengrep.dev](https://opengrep.dev/) - more information
 
 ## More
 
