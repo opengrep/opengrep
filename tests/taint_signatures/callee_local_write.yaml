@@ -1,0 +1,12 @@
+rules:
+  - id: callee-local-write
+    message: x
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: sourceA()
+    pattern-sinks:
+      - pattern: sink(...)

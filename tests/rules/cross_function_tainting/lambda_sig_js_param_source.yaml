@@ -1,0 +1,17 @@
+rules:
+  - id: lambda-sig-js-param-source
+    message: Redirect to a URL taken from a function parameter
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function ... (..., $PROP, ...) { ... }
+          - focus-metavariable: $PROP
+    pattern-sinks:
+      - patterns:
+          - pattern: window.location.href = $SINK
+          - focus-metavariable: $SINK

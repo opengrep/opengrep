@@ -8,17 +8,12 @@ type java_props_cache
 
 val mk_empty_java_props_cache : unit -> java_props_cache
 
-val pattern_leaves_with_offsets :
-  lang:Lang.t ->
-  AST_generic.pattern ->
-  (IL.name * Taint.offset list) list
-(** Walk a [ParamPattern]'s inner pattern and enumerate each leaf with
-    its offset path from the enclosing implicit binder. Used by taint
-    env setup paths (in [mk_lambda_in_env], the lambda signature
-    builder, and [Taint_signature_extractor.mk_param_assumptions]) to
-    seed each leaf with a [Shape.Arg (taint_arg, offset_path)] shape
-    without emitting IL Assigns. Pattern shapes without a clean
-    structural projection path contribute no leaves. *)
+val mk_param_assumptions :
+  taint_inst:Taint_rule_inst.t -> IL.param list -> Taint_lval_env.t
+(** The input environment of a function with these parameters: each holds
+    its [BArg] placeholder with an [Arg] shape, the leaves of a destructuring
+    pattern theirs at their offsets, and the sources matching a parameter's
+    token its [Src] taints. *)
 
 val fixpoint :
   Taint_rule_inst.t ->

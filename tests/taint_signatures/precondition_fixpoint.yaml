@@ -1,0 +1,16 @@
+rules:
+  - id: precondition-fixpoint
+    message: A and B reach the sink
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - label: A
+        pattern: sourceA()
+      - label: B
+        pattern: sourceB()
+    pattern-sinks:
+      - requires: A and B
+        pattern: sink(...)

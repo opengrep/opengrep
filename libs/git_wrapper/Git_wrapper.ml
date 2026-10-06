@@ -316,10 +316,11 @@ let command_with_config (_caps : < Cap.exec >)
   UCmd.log_command cmd;
   let result =
     UCmd.capture_and_log_stderr (fun () ->
+        let program = UCmd.resolve_program cmd in
         (* nosemgrep: forbid-exec *)
-        let out = Cmd.bos_apply (Bos.OS.Cmd.run_out ~env) cmd in
+        let out = Result.map (Bos.OS.Cmd.run_out ~env) program in
         (* nosemgrep: forbid-exec *)
-        Bos.OS.Cmd.out_string ~trim:true out)
+        Result.bind out (Bos.OS.Cmd.out_string ~trim:true))
   in
   match result with
   | Ok (str, (_, `Exited 0)) -> str

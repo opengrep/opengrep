@@ -1,0 +1,17 @@
+rules:
+  - id: lambda-sig-ruby-ivar-block
+    message: Taint reaches a redirect inside a block through the receiver's fields
+    languages: [ruby]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: params
+      - patterns:
+          - pattern: $MODEL.$X(...)
+          - metavariable-regex:
+              metavariable: $X
+              regex: ^(new|find|find_by!)$
+    pattern-sinks:
+      - pattern: redirect_to(...)

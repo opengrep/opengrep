@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-object-methods
+    message: Stringified data used as an object key
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: JSON.stringify(...)
+    pattern-sinks:
+      - pattern: $OBJECT[...]

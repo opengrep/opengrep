@@ -4602,7 +4602,7 @@ and function_definition env fdef : function_definition =
    * parameter_classic's implicit binder is the signature's Arg slot,
    * and each leaf of the pattern is pre-seeded at taint-env setup
    * time with shape [Arg (taint_arg, offset_path)]. See
-   * [Taint_signature_extractor.mk_param_assumptions]. No IL
+   * [Dataflow_tainting.mk_param_assumptions]. No IL
    * instructions are needed here — the shape system handles the
    * projection from caller's argument to leaf at call-site
    * signature instantiation. This avoids the destructive overwrite

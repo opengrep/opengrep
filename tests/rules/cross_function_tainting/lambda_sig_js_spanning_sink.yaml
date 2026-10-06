@@ -1,0 +1,18 @@
+rules:
+  - id: lambda-sig-js-spanning-sink
+    message: Remote property injection
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function ... ($REQ, $RES) {...}
+          - pattern: $REQ.body
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: $OBJ[...] = ...
+          - pattern: $INDEX
+          - pattern-not: |
+              "..." + $INDEX

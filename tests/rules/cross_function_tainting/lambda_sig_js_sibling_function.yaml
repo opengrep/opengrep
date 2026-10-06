@@ -1,0 +1,22 @@
+rules:
+  - id: lambda-sig-js-sibling-function
+    message: RegExp built from a caller's parameter
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function ... (..., $ARG, ...) { ... }
+          - focus-metavariable: $ARG
+          - metavariable-regex:
+              metavariable: $ARG
+              regex: ^color$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: new RegExp($ARG, ...)
+              - pattern: RegExp($ARG, ...)
+          - pattern-not: new RegExp("...", ...)

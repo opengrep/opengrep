@@ -66,20 +66,22 @@ let generate_ograph_xxx g filename =
 (* Visualization *)
 (*****************************************************************************)
 
-(* TODO: switch from cmd_to_list to UCmd.status_of_run with
- * properly built Cmd, or even switch to CapExec!
- *)
-let launch_png_cmd (caps : < Cap.exec >) filename =
-  CapExec.cmd_to_list caps#exec (spf "dot -Tpng -Gdpi=300 %s -o %s.png" filename filename)
-  |> ignore;
-  CapExec.cmd_to_list caps#exec (spf "open %s.png" filename) |> ignore;
+let run_or_fail (caps : < Cap.exec >) (cmd : Cmd.t) : unit =
+  match CapExec.status_of_run caps#exec cmd with
+  | Ok (`Exited 0) -> ()
+  | Ok (`Exited _ | `Signaled _) ->
+      failwith (spf "command failed: %s" (Cmd.to_string cmd))
+  | Error (`Msg msg) -> failwith msg
+
+let launch_png_cmd (caps : < Cap.exec >) (filename : string) =
+  run_or_fail caps
+    (Cmd.Name "dot", [ "-Tpng"; "-Gdpi=300"; filename; "-o"; filename ^ ".png" ]);
+  run_or_fail caps (Cmd.Name "open", [ filename ^ ".png" ]);
   ()
 
-let launch_gv_cmd (caps : < Cap.exec >) filename =
-  CapExec.cmd_to_list caps#exec
-    ("dot " ^ filename ^ " -Tps  -o " ^ filename ^ ".ps;")
-  |> ignore;
-  CapExec.cmd_to_list caps#exec ("gv " ^ filename ^ ".ps") |> ignore;
+let launch_gv_cmd (caps : < Cap.exec >) (filename : string) =
+  run_or_fail caps (Cmd.Name "dot", [ filename; "-Tps"; "-o"; filename ^ ".ps" ]);
+  run_or_fail caps (Cmd.Name "gv", [ filename ^ ".ps" ]);
   (* weird: I needed this when I launch the program with '&' via eshell,
    * otherwise 'gv' did not get the chance to be launched
    * Unix.sleep 1;

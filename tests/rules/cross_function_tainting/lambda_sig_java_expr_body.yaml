@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-java-expr-body
+    message: A source reaches a sink through a lambda
+    languages: [java]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
