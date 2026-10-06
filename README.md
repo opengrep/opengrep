@@ -9,54 +9,43 @@
   </a>
 </p>
 
-### Welcome to Opengrep, a fork of Semgrep, under the LGPL 2.1 license
-
-**Opengrep is the most advanced open source SAST engine.**
+### Welcome to Opengrep, the most advanced open source SAST engine
 
 Let's make secure software development a shared standard. Opengrep provides every developer and organisation with open and advanced static code analysis.
 
-Opengrep is backed by a consortium of AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Kodem](https://www.kodemsecurity.com/), and [Orca Security](https://orca.security/). To learn more, read the manifesto at [opengrep.dev](https://opengrep.dev/).
+Opengrep is backed by a consortium of AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Kodem](https://www.kodemsecurity.com/), and [Orca Security](https://orca.security/). For more information, go to [opengrep.dev](https://opengrep.dev/).
 
-## Why Opengrep?
+# Overview
 
-Opengrep was created when Semgrep moved critical features behind a commercial licence. We believe advanced static analysis should remain open and accessible to all.
+Opengrep finds code by its structure and meaning, not just its text. Rules look like the code they match, so they are quick to write and read, and they run across large codebases in seconds. Use them to find and fix security vulnerabilities before they ship.
 
-**Key advantages:**
-- **Compatible with Semgrep rules** - your existing rules and rulesets work unchanged
-- **Standard outputs** - JSON and SARIF formats for easy integration
-- **Open governance** - contributions accepted on merit, not commercial interest
-- **Long-term assurance** - committed to open-source under LGPL 2.1
+**Analysis**
+- **Semantic pattern matching** - metavariables and ellipses let a single pattern match code written in many different ways
+- **Taint analysis across functions** (`--taint-intrafile`) - follows untrusted data through constructors, fields, method calls, higher-order functions and collection methods such as `map`, `filter` and `reduce` (see the [Intrafile Tainting](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial) and [Higher-Order Functions](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial) tutorials)
+- **Taint analysis across files** (`--taint-interfile`) - builds a call graph of the whole project and follows data from a source in one file to a sink in another
 
-## Key Improvements
-
-Opengrep has introduced significant improvements since the fork. Highlights include:
-
-**Superior Taint Analysis** (`--taint-intrafile`):
-- Constructor and field assignment tracking
-- Inter-method taint flow
-- Higher-order function support across 12 languages
-- Collection method tainting (map, filter, reduce, etc.)
-
-See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial) and [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial) for details.
-
-**Language Support:**
-- **Visual Basic** - not available in Semgrep CE or Pro
-- **Apex, Elixir** - not in Semgrep CE
-- **Improved**: Clojure (tainting support), PHP 8.4, C# 14
-
-**Distribution:**
-- Self-contained binaries compiled from OCaml
-- Signed releases with Cosign
-
-See [OPENGREP.md](OPENGREP.md) for the full list of improvements since the fork.
-
-# Opengrep: Fast and Powerful Code Pattern Search
-
-Opengrep is an ultra-fast static analysis tool for searching code patterns with the power of semantic grep. Analyze large code bases at the speed of thought with intuitive pattern matching and customizable rules. Find and fix security vulnerabilities, fast – ship more secure code.
-
-Opengrep supports 30+ languages, including:
+**Languages**
+- 30+ languages, including Visual Basic and Crystal, which no other Semgrep-compatible engine supports
+- Cross-function taint analysis for 20+ languages
+- Up-to-date syntax, such as PHP 8.5 and C# 14
 
 Apex · Bash · C · C++ · C# · Clojure · Crystal · Dart · Dockerfile · Elixir · Go · HTML · Java · JavaScript · JSON · Jsonnet · JSX · Julia · Kotlin · Lisp · Lua · OCaml · PHP · Python · R · Ruby · Rust · Scala · Scheme · Solidity · Swift · Terraform · TSX · TypeScript · Visual Basic · XML · YAML · Generic (ERB, Jinja, etc.)
+
+**Rules and output**
+- **Your Semgrep rules work as they are** - bring your existing rules and rulesets
+- **Standard outputs** - text, JSON and SARIF, with metavariable values, fingerprints and, on request, the enclosing class or function of each match
+- **Fine-grained control** - per-rule timeouts, timeouts that scale with file size, per-file match limits and custom ignore annotations
+
+**Distribution**
+- **Self-contained binaries** for Linux, macOS and Windows, with no Python or other runtime to install
+- **Multicore scanning** with OCaml 5, on every platform
+- **Signed releases** with Cosign
+
+**Open source**
+- **Open governance** - contributions are accepted on merit
+- **LGPL 2.1** - open source for good
+
+See [OPENGREP.md](OPENGREP.md) for a detailed list of features and fixes.
 
 ## Installation
 
@@ -137,39 +126,16 @@ Now run:
 
 ```bash
 ❯ opengrep scan -f rules code/rust
+1 file · 1 rule
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
+code/rust/main.rs
 
+  warn  rules.unwrapped-result
+  Unwrap detected - potential panic risk
 
-Scanning 1 file (only git-tracked) with 1 Code rule:
+    9 │ let result = divide(10, 0).unwrap(); // Risky unwrap!
 
-  CODE RULES
-  Scanning 1 file.
-
-  PROGRESS
-
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
-
-
-┌────────────────┐
-│ 1 Code Finding │
-└────────────────┘
-
-    code/rust/main.rs
-    ❯❯ rules.unwrapped-result
-          Unwrap detected - potential panic risk
-
-            9┆ let result = divide(10, 0).unwrap(); // Risky unwrap!
-
-
-
-┌──────────────┐
-│ Scan Summary │
-└──────────────┘
-
-Ran 1 rule on 1 file: 1 finding.
+1 finding in 1 file
 ```
 
 To obtain SARIF output: 
@@ -263,43 +229,20 @@ run and its directory is created. Nothing is written when the variable is
 not set. A path that cannot be written produces a warning and the run
 continues without the copy.
 
-## Text report
-
-`--skin` selects the layout of the text report: `simple` (the default),
-`vivid`, or `legacy` (the layout of earlier releases). The `OPENGREP_SKIN`
-environment variable sets it too; `--skin` takes precedence over it.
-
-```sh
-opengrep scan --skin vivid -f rules code
-OPENGREP_SKIN=legacy opengrep scan -f rules code
-```
-
-While a scan runs on a terminal, a status line on stderr shows the phase of
-the scan and, once the targets are known, a progress count. It is not drawn
-when stderr is not a terminal, when `TERM` is unset, `dumb` or `unknown`,
-when `CI` is set to a value other than `false` or `0`, on Windows, with
-`--quiet`, `--verbose` or `--debug`, with `--incremental-output`, or with
-`--skin legacy`. `--no-progress-bar` turns it off.
-
-## Colour
-
-Colour is on when stderr is a terminal. `NO_COLOR` turns it off;
-`--force-color` turns it on.
-
 ## Documentation
 
 - [Wiki](https://github.com/opengrep/opengrep/wiki) - tutorials and language guides
 - [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial)
 - [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial)
 - [C# Support](https://github.com/opengrep/opengrep/wiki/Support-for-C%23) (C# 12/13/14)
-- [PHP Support](https://github.com/opengrep/opengrep/wiki/Support-for-Php) (PHP 7.1-8.4)
+- [PHP Support](https://github.com/opengrep/opengrep/wiki/Support-for-Php) (PHP 7.1-8.5)
 - [Visual Basic Support](https://github.com/opengrep/opengrep/wiki/Support-for-Visual-Basic)
 
 ## Community
 
 - [X / Twitter](https://x.com/opengrep)
 - [Reddit](https://www.reddit.com/r/opengrep)
-- [Manifesto](https://opengrep.dev/) - why we forked
+- [opengrep.dev](https://opengrep.dev/) - more information
 - [Open roadmap sessions](https://lu.ma/opengrep) - join the conversation
 
 ## More
