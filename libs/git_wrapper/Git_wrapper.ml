@@ -883,7 +883,7 @@ let add ?cwd ?(force = false) files =
   | _ -> raise (Error "Error running git add")
 
 let commit ?cwd msg =
-  let cmd = (git, cd cwd @ [ "commit"; "-m"; msg ]) in
+  let cmd = (git, cd cwd @ [ "commit"; "-m"; msg; "--no-verify" ]) in
   match UCmd.status_of_run cmd with
   | Ok (`Exited 0) -> ()
   | Ok (`Exited i) ->
