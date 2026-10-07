@@ -1161,7 +1161,7 @@ and convert_case env st_case_only : G.case list * stmt_or_decl list =
       and v2 = map_expr env v2
       and _v3 = map_tok env v3
       and other_cases, sts = map_case_body env v1 v4 in
-      let case1 = G.Case (v1, H.expr_to_pattern v2) in
+      let case1 = G.CaseEqualExpr (v1, v2) in
       (case1 :: other_cases, sts)
   | CaseRange (v1, v2, v3, v4, v5, v6) ->
       let v1 = map_tok env v1

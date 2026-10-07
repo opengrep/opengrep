@@ -10,3 +10,8 @@ rules:
   message: Tainted value reaches sink
   severity: WARNING
   languages: [go]
+- id: switch-case-constant-propagation-go
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [go]

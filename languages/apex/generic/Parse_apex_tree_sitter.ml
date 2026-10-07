@@ -2887,7 +2887,7 @@ and switch_label (env : env) ((v1, v2) : CST.switch_label) : G.case list =
         List.map (fun (w1, w2, w3) ->
           let tok = (* "," *) token env w1 in
           let t = Option.map (unannotated_type env) w2 in
-          let i = identifier env v2 in
+          let i = identifier env w3 in
           tok, t, i) v3
       in
       List.map
@@ -2895,8 +2895,8 @@ and switch_label (env : env) ((v1, v2) : CST.switch_label) : G.case list =
         ((t1, t, i) :: tis)
   | `Exp_rep_COMMA_exp x ->
       let c1, cs = anon_exp_rep_COMMA_exp_0bb260c env x in
-      G.Case (t1, H2.expr_to_pattern c1) ::
-        List.map (fun (t, e) -> G.Case (t, H2.expr_to_pattern e)) cs
+      G.CaseEqualExpr (t1, c1) ::
+        List.map (fun (t, e) -> G.CaseEqualExpr (t, e)) cs
   | `Pat_else x ->
       let else_token = token env x in
       [G.Default (Tok.combine_toks t1 [else_token])]
@@ -2904,10 +2904,13 @@ and switch_label (env : env) ((v1, v2) : CST.switch_label) : G.case list =
 (* AUX *)
 and make_switch_label_obj (env : env) (tok : G.tok) (t : G.type_kind option) (i : G.ident)
     : G.case =
-  let pat = G.PatId (i, empty_id_info ()) in
   match t with
-  | Some t -> G.Case (tok, G.PatTyped (pat, t |> G.t))
-  | None -> G.Case (tok, pat)
+  | Some t ->
+      (* An sObject type followed by a name introduces a branch binding;
+       * an untyped name is an enum value and must resolve as a use. *)
+      let pat = G.PatId (i, empty_id_info ()) in
+      G.Case (tok, G.PatTyped (pat, t |> G.t))
+  | None -> G.CaseEqualExpr (tok, G.N (G.Id (i, empty_id_info ())) |> G.e)
 
 (* NEW *)
 and switch_rule (env : env) (x : CST.switch_rule) : G.case_and_body =

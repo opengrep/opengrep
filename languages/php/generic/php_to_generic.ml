@@ -252,7 +252,7 @@ and opt_expr_to_label_ident = function
 and case = function
   | Case (t, v1, v2) ->
       let v1 = expr v1 and v2 = list stmt v2 in
-      G.CasesAndBody ([ G.Case (t, H.expr_to_pattern v1) ], G.stmt1 v2)
+      G.CasesAndBody ([ G.CaseEqualExpr (t, v1) ], G.stmt1 v2)
   | Default (t, v1) ->
       let v1 = list stmt v1 in
       G.CasesAndBody ([ G.Default t ], G.stmt1 v1)
@@ -548,8 +548,7 @@ and match_ = function
         List_.map
           (fun case ->
             let case = expr case in
-            (* TODO extend G.case_of_pat_and_expr to handle multiple cases? *)
-            G.Case (G.fake "case", H.expr_to_pattern case))
+            G.CaseEqualExpr (G.fake "case", case))
           cases
       in
       let e = expr e in

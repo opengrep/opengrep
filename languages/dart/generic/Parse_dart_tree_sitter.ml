@@ -2382,7 +2382,7 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
         let v1 = (* case_builtin *) token env v1 in
         let v2 = map_expression env v2 in
         let _v3 = (* ":" *) token env v3 in
-        Case (v1, H2.expr_to_pattern v2)
+        CaseEqualExpr (v1, v2)
     | `Defa_COLON (v1, v2) ->
         let v1 = (* "default" *) token env v1 in
         let _v2 = (* ":" *) token env v2 in

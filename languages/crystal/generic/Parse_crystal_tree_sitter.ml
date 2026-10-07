@@ -1010,7 +1010,7 @@ and map_exhaustive_case env (tok, cond, ins, _end) =
 and map_when env (tok, first, rest, _then, body) =
   let cases =
     first :: List_.map snd rest
-    |> List_.map (fun x -> G.Case (token env tok, GH.expr_to_pattern (map_case_expr env x)))
+    |> List_.map (fun x -> G.CaseEqualExpr (token env tok, map_case_expr env x))
   in
   let body = G.Block (fb (Option.value ~default:[] (Option.map (map_statements env) body))) |> G.s in
   G.CasesAndBody (cases, body)
@@ -1028,7 +1028,7 @@ and map_case_else env (tok, body) =
 and map_in_case env (tok, first, rest, _then, body) =
   let cases =
     first :: List_.map snd rest
-    |> List_.map (fun x -> G.Case (token env tok, GH.expr_to_pattern (map_case_expr env x)))
+    |> List_.map (fun x -> G.CaseEqualExpr (token env tok, map_case_expr env x))
   in
   let body = G.Block (fb (Option.value ~default:[] (Option.map (map_statements env) body))) |> G.s in
   G.CasesAndBody (cases, body)

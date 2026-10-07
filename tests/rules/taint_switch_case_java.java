@@ -1,8 +1,19 @@
-// Same regression guard as taint_switch_case_js.js, for a frontend that
-// builds its case labels with AST_generic_helpers.expr_to_pattern too.
-// `Colors.RED` is a DotAccess, `Colors.RED` in a case label must not be
-// assigned the scrutinee.
+// Qualified and bare case labels read values, without binding the
+// scrutinee to the constant or enum member.
 class SwitchCase {
+  static final int CMD = 7;
+  void test(int mode) {
+    // ruleid: switch-case-constant-propagation-java
+    exec(CMD);
+    switch (mode) {
+      case CMD:
+        // ruleid: switch-case-constant-propagation-java
+        exec(CMD);
+        break;
+    }
+    // ruleid: switch-case-constant-propagation-java
+    exec(CMD);
+  }
 
   void caseLabelIsNotABindingTarget() {
     String x = taint_source();

@@ -126,6 +126,42 @@ let check_single_binding ast name =
 let tests parse_program =
   Testo.categorize "naming generic"
     [
+      t "switch value labels preserve the constant binding" (fun () ->
+          [
+            ("c", "c");
+            ("cpp", "cpp");
+            ("java", "java");
+            ("js", "js");
+            ("ts", "ts");
+            ("php", "php");
+            ("go", "go");
+            ("dart", "dart");
+            ("apex", "cls");
+            ("crystal", "cr");
+          ]
+          |> List.iter (fun (lang, ext) ->
+              let file =
+                Fpath.v
+                  (spf "%s/rules/taint_switch_case_%s.%s"
+                     tests_path lang ext)
+              in
+              let ast = parse_program file in
+              Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+              match
+                (def_sid_of_name ast "CMD", resolutions_of_name ast "CMD")
+              with
+              | Some def_sid, a :: b :: c :: d :: _ ->
+                  (* Before, label, branch and after must all use the
+                   * declaration. Later uses may explicitly shadow it. *)
+                  [ a; b; c; d ]
+                  |> List.iter (function
+                    | Some (_, sid) ->
+                        Alcotest.(check bool)
+                          ("constant binding in " ^ ext)
+                          true
+                          (AST_generic.SId.equal def_sid sid)
+                    | None -> Alcotest.failf "unresolved CMD in %s" ext)
+              | _ -> Alcotest.failf "missing declaration or CMD uses in %s" ext));
       t "regression files" (fun () ->
           let dir = Filename.concat tests_path "naming/python" in
           let files1 = Common2.glob (spf "%s/*.py" dir) in

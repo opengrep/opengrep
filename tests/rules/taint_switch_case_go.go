@@ -1,17 +1,22 @@
 package p
 
-// A bare name labels the case (a constant): it is compared with the
-// scrutinee and binds nothing, so the later cases stay reachable.
-func bareNameCaseKeepsLaterCases(mode int) {
+const CMD = 7
+
+func test(mode int) {
 	q := ""
+	// ruleid: switch-case-constant-propagation-go
+	exec(CMD)
 	switch mode {
-	case A:
-		q = "safe"
+	case CMD:
+		// ruleid: switch-case-constant-propagation-go
+		exec(CMD)
 	case B:
 		q = taint_source()
 		// ruleid: taint-switch-case-go
 		sink(q)
 	}
+	// ruleid: switch-case-constant-propagation-go
+	exec(CMD)
 }
 
 func bareNameCaseIsNotABindingTarget() {
@@ -21,4 +26,24 @@ func bareNameCaseIsNotABindingTarget() {
 	}
 	// ok: taint-switch-case-go
 	sink(RED)
+}
+
+func conditionOnlySwitch() {
+	flag := taint_source()
+	switch {
+	case flag:
+		// ruleid: taint-switch-case-go
+		sink(taint_source())
+		// ruleid: taint-switch-case-go
+		sink(flag)
+	}
+}
+
+func typeSwitchKeepsLaterCases(mode interface{}) {
+	switch mode.(type) {
+	case int:
+	case string:
+		// ruleid: taint-switch-case-go
+		sink(taint_source())
+	}
 }

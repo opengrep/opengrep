@@ -1,8 +1,28 @@
 <?php
-// Regression guard for the `expr_to_pattern` fallback in AST_to_IL; see
-// taint_switch_case_cpp.cpp. PHP's `Foo::BAR` case label reaches `pattern`
-// as an OtherPat("ExprToPattern", ...) and must not be bound to the
-// scrutinee.
+const CMD = 7;
+function test($mode) {
+  // ruleid: switch-case-constant-propagation-php
+  exec(CMD);
+  switch ($mode) {
+    case CMD:
+      // ruleid: switch-case-constant-propagation-php
+      exec(CMD);
+      break;
+  }
+  // ruleid: switch-case-constant-propagation-php
+  exec(CMD);
+}
+
+function matchConstant($mode) {
+  $q = match ($mode) {
+    // ruleid: switch-case-constant-propagation-php
+    CMD => exec(CMD),
+    default => 0,
+  };
+}
+
+// Qualified and bare case labels read values, without binding the
+// scrutinee to the constant.
 function caseLabelIsNotABindingTarget() {
   $y = taint_source();
   switch ($y) {
@@ -20,7 +40,7 @@ function caseLabelIsNotABindingTarget() {
   sink($y);
 }
 
-// The destructuring-assignment side of the same code path still binds.
+// Destructuring assignments still bind their targets.
 function listAssignBindsLvals($o) {
   list($o->a, $o->b) = array(taint_source(), 1);
 
@@ -55,4 +75,25 @@ function bareNameCaseIsNotABindingTarget() {
   }
   // ok: taint-switch-case-php
   sink(RED);
+}
+
+function matchArmsKeepLaterValues($db) {
+  $q = match ($db) {
+    MYSQL => "safe",
+    // ruleid: taint-switch-case-php
+    SQLITE => sink(taint_source()),
+    default => "safe",
+  };
+}
+
+function matchLabelsAreNotBound() {
+  $y = taint_source();
+  $q = match ($y) {
+    RED => "safe",
+    default => "safe",
+  };
+  // ok: taint-switch-case-php
+  sink(RED);
+  // ok: taint-switch-case-php
+  sink($q);
 }

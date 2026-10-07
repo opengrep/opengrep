@@ -471,7 +471,9 @@ and for_header = function
 and case = function
   | Case (t, v1, v2) ->
       let v1 = expr v1 and v2 = stmt v2 in
-      G.CasesAndBody ([ G.Case (t, H.expr_to_pattern v1) ], v2)
+      (* A case label reads a value. Turning it into a pattern would declare
+       * a new binding during naming, before constant propagation and IL. *)
+      G.CasesAndBody ([ G.CaseEqualExpr (t, v1) ], v2)
   | Default (t, v1) ->
       let v1 = stmt v1 in
       G.CasesAndBody ([ G.Default t ], v1)

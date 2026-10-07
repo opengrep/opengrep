@@ -545,7 +545,7 @@ and stmts v = list stmt_aux v |> List_.flatten
 and case = function
   | Case (t, v1) ->
       let v1 = expr v1 in
-      G.Case (t, H.expr_to_pattern v1)
+      G.CaseEqualExpr (t, v1)
   | Default t -> G.Default t
 
 and cases v = list case v

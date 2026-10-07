@@ -3818,25 +3818,6 @@ and no_switch_fallthrough : Lang.t -> bool = function
       true
   | _ -> false
 
-(* Languages whose case labels are values compared with the switch
- * expression, never patterns that bind: `case RED:` (a Java enum member),
- * `case MYSQL:` (a PHP constant), `case A:` in C, Go or JavaScript. Their
- * translators still give a bare name as [PatId], and lowering that as a
- * binding made the case always match (cond `true`, every later case
- * unreachable for the dataflow) and assigned the scrutinee to the name:
- * taint assigned in a later case was lost. Such a [PatId] is compared like
- * [CaseEqualExpr] and binds nothing. *)
-and case_labels_are_values : Lang.t -> bool = function
-  | C
-  | Cpp
-  | Java
-  | Js
-  | Ts
-  | Php
-  | Go ->
-      true
-  | _ -> false
-
 and break_continue_labels env tok : stmts * stmts * env =
   let cont_label = fresh_label env ~label:"__loop_continue" tok in
   let break_label = fresh_label env ~label:"__loop_break" tok in
@@ -4343,16 +4324,6 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                 eorig = related_tok tok;
               }
               :: es )
-        | G.Case (tok, G.PatId (id, id_info))
-          when case_labels_are_values env.lang ->
-            (* A constant or enum member: see [case_labels_are_values]. *)
-            let c_ss, c' = expr env (G.N (G.Id (id, id_info)) |> G.e) in
-            ( ss @ c_ss,
-              {
-                e = Operator ((G.Eq, tok), [ Unnamed c'; Unnamed switch_expr ]);
-                eorig = related_tok tok;
-              }
-              :: es )
         | G.Case
             (_tok, (G.OtherPat ((("<" | "<=" | ">" | ">="), _), [ E _ ]) as pat))
           ->
@@ -4461,9 +4432,6 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
        *)
       let pat_stmts =
         match switch_expr_opt, cases with
-        | Some _, [ G.Case (_, G.PatId _) ] when case_labels_are_values env.lang
-          ->
-            []
         | Some cond, [ G.Case (_tok, pat) ] ->
             (* TODO: Need break_label here, if we are to handle PatWhen.
              * See comments below. *)
