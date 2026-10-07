@@ -842,11 +842,10 @@ and class_def env c =
     A.c_braces = (t1, (), t2);
   }
 
-and class_type _env = function
+and class_type env = function
   | ClassRegular tok -> ((A.Class, tok), [])
-  | ClassFinal (tokf, tok) -> ((A.Class, tok), [ (Final, tokf) ])
-  | ClassAbstract (toka, tok) -> ((A.Class, tok), [ (Abstract, toka) ])
-  | ClassReadonly (tokr, tok) -> ((A.Class, tok), [ (Readonly, tokr) ])
+  | ClassModified (mods, tok) ->
+      ((A.Class, tok), List_.map (modifier env) mods)
   | Interface tok -> ((A.Interface, tok), [])
   | Trait tok -> ((A.Trait, tok), [])
   | Enum tok -> ((A.Enum, tok), [])

@@ -816,10 +816,21 @@ unticked_class_declaration:
 
 
 class_entry_type:
- | T_CLASS                    { ClassRegular $1 }
- | T_ABSTRACT T_CLASS         { ClassAbstract ($1, $2) }
- | T_FINAL    T_CLASS         { ClassFinal ($1, $2) }
- | T_READONLY T_CLASS         { ClassReadonly ($1, $2) }
+ | T_CLASS                         { ClassRegular $1 }
+ | class_entry_modifier+ T_CLASS   { ClassModified ($1, $2) }
+
+(* Inlined, so that 'final readonly class' and a method pattern such as
+ * 'final public function' share their states up to 'class' or 'function'.
+ *)
+%inline class_entry_modifier:
+ | class_modifier { $1 }
+ | T_READONLY     { Readonly, $1 }
+
+(* PHP 8.3: an anonymous class can be readonly, and no other modifier is
+ * allowed on it *)
+%inline anon_class_entry_type:
+ | T_CLASS            { ClassRegular $1, $1 }
+ | T_READONLY T_CLASS { ClassModified ([ (Readonly, $1) ], $2), $2 }
 
 
 visibility_modifier:
@@ -1318,10 +1329,11 @@ call_expr:
   * not need the parentheses, since its own brackets come before the body:
   * both 'new class {}->m()' and 'new class () {}->m()' are valid.
   *)
- | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
+ | T_NEW ioption(attributes) anon_class_entry_type arguments? extends_from implements_list
    "{" member_declaration* "}"
-     { let class_ =
-         { c_type = ClassRegular $3; c_name = Name ("!ANON!", $3);
+     { let c_type, tok = $3 in
+       let class_ =
+         { c_type; c_name = Name ("!ANON!", tok);
            c_extends = $5; c_tparams = None;
            c_implements = $6; c_body = $7, $8, $9;
            c_attrs = $2; c_enum_type = None; }
@@ -1496,10 +1508,11 @@ static_scalar_primary:
  | T_NEW T_SELF arguments?   { New ($1, Id (Self $2), $3) }
  | T_NEW T_PARENT arguments? { New ($1, Id (Parent $2), $3) }
  | T_NEW T_STATIC arguments? { New ($1, Id (LateStatic $2), $3) }
- | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
+ | T_NEW ioption(attributes) anon_class_entry_type arguments? extends_from implements_list
    "{" member_declaration* "}"
-     { let class_ =
-         { c_type = ClassRegular $3; c_name = Name ("!ANON!", $3);
+     { let c_type, tok = $3 in
+       let class_ =
+         { c_type; c_name = Name ("!ANON!", tok);
            c_extends = $5; c_tparams = None;
            c_implements = $6; c_body = $7, $8, $9;
            c_attrs = $2; c_enum_type = None; }
