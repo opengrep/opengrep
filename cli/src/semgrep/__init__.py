@@ -1,2 +1,2 @@
-__VERSION__ = "1.30.1"
+__VERSION__ = "1.30.2"
 __SEMGREP_VERSION__ = "1.100.0"
