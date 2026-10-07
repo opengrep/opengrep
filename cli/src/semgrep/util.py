@@ -1,7 +1,9 @@
+import errno
 import functools
 import itertools
 import operator
 import os
+import shutil
 import subprocess
 import sys
 from io import TextIOWrapper
@@ -166,7 +168,26 @@ def sub_check_output(cmd: Sequence[Union[str, Path]], **kwargs: Any) -> Any:
         kwargs = {**kwargs, "stderr": subprocess.DEVNULL}
 
     # nosemgrep: python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use
-    return subprocess.check_output(cmd, **kwargs)
+    return subprocess.check_output(with_program_path(cmd), **kwargs)
+
+
+def find_program(name: str) -> Optional[str]:
+    if os.path.dirname(name):
+        return shutil.which(name)
+    candidates = (
+        shutil.which(os.path.join(entry, name))
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if os.path.isabs(entry)
+    )
+    return next((path for path in candidates if path is not None), None)
+
+
+def with_program_path(cmd: Sequence[Union[str, Path]]) -> List[Union[str, Path]]:
+    program = str(cmd[0])
+    path = find_program(program)
+    if path is None:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), program)
+    return [path, *cmd[1:]]
 
 
 def manually_search_file(path: str, search_term: str, suffix: str) -> Optional[str]:

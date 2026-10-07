@@ -16,6 +16,7 @@ from typing import Sequence
 
 from semgrep.state import get_state
 from semgrep.util import manually_search_file
+from semgrep.util import with_program_path
 from semgrep.verbose_logging import getLogger
 
 
@@ -55,7 +56,7 @@ def _git_check_output(
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use
         return subprocess.check_output(
-            command,
+            with_program_path(command),
             stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
@@ -266,7 +267,7 @@ class BaselineHandler:
             cmd += ["--"]
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use
             raw_output = subprocess.run(
-                cmd,
+                with_program_path(cmd),
                 timeout=env.git_command_timeout,
                 capture_output=True,
                 encoding="utf-8",
@@ -283,7 +284,7 @@ class BaselineHandler:
                 status_cmd += ["--"]
                 # nosemgrep: python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use
                 raw_output = subprocess.run(
-                    status_cmd,
+                    with_program_path(status_cmd),
                     timeout=env.git_command_timeout,
                     capture_output=True,
                     encoding="utf-8",

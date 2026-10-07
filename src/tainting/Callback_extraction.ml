@@ -264,7 +264,7 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
   let callbacks = ref [] in
   let v =
     object
-      inherit [_] G.iter as super
+      inherit [_] G.iter_no_id_info as super
       method! visit_expr env e =
         (match e.G.e with
         (* Ruby/Crystal/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).

@@ -17,6 +17,11 @@ exception Fallback
 (*************************************************************************)
 
 let exec (caps : < Cap.exec >) prog argv =
+  let prog =
+    match UCmd.resolve_program (Cmd.Name prog, []) with
+    | Ok cmd -> Bos.Cmd.get_line_tool cmd
+    | Error (`Msg _) -> raise (Unix.Unix_error (Unix.ENOENT, "exec", prog))
+  in
   if Sys.os_type = "Win32" then
     let pid = CapUnix.create_process caps#exec prog argv Unix.stdin Unix.stdout Unix.stderr in
     let _pid, process_status = CapUnix.waitpid caps#exec [Unix.WUNTRACED] pid in

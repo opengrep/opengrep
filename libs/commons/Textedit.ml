@@ -170,6 +170,13 @@ let apply_edits_to_text path text edits =
 
 let apply_edits ~dryrun edits =
   let edits_by_file = partition_edits_by_file edits in
+  Hashtbl.filter_map_inplace
+    (fun (path : Fpath.t) file_edits ->
+      if UFile.is_lnk path then (
+        Log.warn (fun m -> m "skipping %s" !!path);
+        None)
+      else Some file_edits)
+    edits_by_file;
   let all_conflicting_edits = ref [] in
   Hashtbl.iter
     (fun (path : Fpath.t) file_edits ->

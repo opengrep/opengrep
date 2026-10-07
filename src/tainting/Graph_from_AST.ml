@@ -116,7 +116,7 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
   in
   let v =
     object (self)
-      inherit [_] G.iter as super
+      inherit [_] G.iter_no_id_info as super
 
       method! visit_expr env e =
         match e.G.e with
@@ -215,7 +215,7 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs 
 
   let v =
     object
-      inherit [_] G.iter as super
+      inherit [_] G.iter_no_id_info as super
 
       method! visit_expr env e =
         match e.G.e with

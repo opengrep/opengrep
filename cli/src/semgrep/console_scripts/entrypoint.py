@@ -29,7 +29,23 @@
 # if you want to test the change under `pipenv shell`.
 
 # Should be done before requests is imported...
+import os
 import sys
+
+
+def _drop_current_directory_from_sys_path() -> None:
+    try:
+        cwd = os.path.normcase(os.path.realpath(os.getcwd()))
+    except OSError:
+        return
+    sys.path[:] = [
+        entry
+        for entry in sys.path
+        if entry and os.path.normcase(os.path.realpath(entry)) != cwd
+    ]
+
+
+_drop_current_directory_from_sys_path()
 
 IS_NUITKA = False
 
@@ -49,14 +65,13 @@ if __name__ == "__main__":
         pass
 
 import importlib.resources
-import os
-import shutil
 import sysconfig
 import warnings
 import subprocess
 import semgrep.main
 import semgrep.cli
 from semgrep.constants import IS_WINDOWS
+from semgrep.util import find_program
 # from semgrep import tracing
 
 # alt: you can also add '-W ignore::DeprecationWarning' after the python3 above,
@@ -116,7 +131,7 @@ def find_semgrep_core_path():
     # /usr/local/bin (or in a bin/ folder in the PATH). In those cases,
     # there is no /.../site-packages/semgrep-xxx/bin/semgrep-core.
     # In those cases, we want to grab semgrep-core from the PATH instead.
-    path = shutil.which(core)
+    path = find_program(core)
     if path is not None:
         return path
 
