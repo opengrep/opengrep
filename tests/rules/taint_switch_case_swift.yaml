@@ -1,0 +1,25 @@
+rules:
+- id: taint-switch-case-swift
+  mode: taint
+  pattern-sources:
+  - pattern: taint_source()
+  - pattern: taint_choice_source()
+  pattern-sinks:
+  - pattern: sink(...)
+  message: Tainted value reaches sink
+  severity: WARNING
+  languages: [swift]
+- id: switch-case-swift-binding
+  pattern: |
+    switch $VALUE {
+      case let $BOUND:
+        sink($BOUND)
+    }
+  message: Explicit value binding remains a pattern
+  severity: WARNING
+  languages: [swift]
+- id: switch-case-constant-propagation-swift
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [swift]

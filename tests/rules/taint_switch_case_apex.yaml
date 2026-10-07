@@ -1,0 +1,23 @@
+rules:
+- id: taint-switch-case-apex
+  mode: taint
+  pattern-sources:
+    - pattern: taint_source()
+  pattern-sinks:
+    - pattern: sink(...)
+  message: Tainted value reaches sink
+  severity: WARNING
+  languages: [apex]
+- id: switch-case-apex-labels
+  pattern: |
+    switch on $VALUE {
+      when A, B { ... }
+    }
+  message: Both enum labels must match
+  severity: WARNING
+  languages: [apex]
+- id: switch-case-constant-propagation-apex
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [apex]

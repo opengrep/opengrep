@@ -252,7 +252,7 @@ and opt_expr_to_label_ident = function
 and case = function
   | Case (t, v1, v2) ->
       let v1 = expr v1 and v2 = list stmt v2 in
-      G.CasesAndBody ([ G.Case (t, H.expr_to_pattern v1) ], G.stmt1 v2)
+      G.CasesAndBody ([ G.CaseEqualExpr (t, v1) ], G.stmt1 v2)
   | Default (t, v1) ->
       let v1 = list stmt v1 in
       G.CasesAndBody ([ G.Default t ], G.stmt1 v1)
@@ -539,6 +539,12 @@ and expr e : G.expr =
           |> G.e)
   | Match (tok, e, matches) ->
       let e = expr e in
+      (* A match default is a fallback even when written before other arms.
+       * The generic switch lowering expects that fallback at the end. *)
+      let defaults, matches =
+        List.partition (function MDefault _ -> true | _ -> false) matches
+      in
+      let matches = matches @ defaults in
       let matches = List_.map match_ matches in
       G.StmtExpr (G.Switch (tok, Some (G.Cond e), matches) |> G.s) |> G.e
 
@@ -548,8 +554,7 @@ and match_ = function
         List_.map
           (fun case ->
             let case = expr case in
-            (* TODO extend G.case_of_pat_and_expr to handle multiple cases? *)
-            G.Case (G.fake "case", H.expr_to_pattern case))
+            G.CaseEqualExpr (G.fake "case", case))
           cases
       in
       let e = expr e in

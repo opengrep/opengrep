@@ -1,35 +1,35 @@
 const CMD = 7;
 const COMMAND = "rm";
 
-function test(mode, commandMode) {
+function test(mode: number, commandMode: string) {
   var q = "";
-  // ruleid: switch-case-constant-propagation-js
+  // ruleid: switch-case-constant-propagation-ts
   exec(CMD);
   switch (mode) {
     case CMD:
-      // ruleid: switch-case-constant-propagation-js
+      // ruleid: switch-case-constant-propagation-ts
       exec(CMD);
       break;
     case B:
       q = taint_source();
-      // ruleid: taint-switch-case-js
+      // ruleid: taint-switch-case-ts
       sink(q);
       break;
   }
-  // ruleid: switch-case-constant-propagation-js
+  // ruleid: switch-case-constant-propagation-ts
   exec(CMD);
   switch (commandMode) {
     case COMMAND:
-      // ruleid: switch-case-command-constant-js
+      // ruleid: switch-case-command-constant-ts
       exec(COMMAND);
       break;
   }
 }
 
-function explicitShadowing(mode, CMD) {
+function explicitShadowing(mode: number, CMD: number) {
   switch (mode) {
     case CMD:
-      // ok: switch-case-constant-propagation-js
+      // ok: switch-case-constant-propagation-ts
       exec(CMD);
   }
 }
@@ -45,10 +45,10 @@ function caseLabelIsNotABindingTarget() {
       break;
   }
 
-  // ok: taint-switch-case-js
+  // ok: taint-switch-case-ts
   sink(Colors.RED);
 
-  // ok: taint-switch-case-js
+  // ok: taint-switch-case-ts
   sink(Colors);
 }
 
@@ -57,7 +57,7 @@ function scrutineeStillFlows() {
   var y = taint_source();
   switch (y) {
     case 1:
-      // ruleid: taint-switch-case-js
+      // ruleid: taint-switch-case-ts
       sink(y);
       break;
   }
@@ -69,18 +69,6 @@ function bareNameCaseIsNotABindingTarget() {
     case RED:
       break;
   }
-  // ok: taint-switch-case-js
+  // ok: taint-switch-case-ts
   sink(RED);
-}
-
-function caseReadsExistingTaint(mode) {
-  const value = taint_source();
-  switch (mode) {
-    case value:
-      // ruleid: taint-switch-case-js
-      sink(value);
-      break;
-  }
-  // ruleid: taint-switch-case-js
-  sink(value);
 }

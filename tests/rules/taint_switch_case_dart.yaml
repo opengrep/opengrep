@@ -1,17 +1,15 @@
 rules:
-- id: taint-switch-case-java
+- id: taint-switch-case-dart
   mode: taint
   pattern-sources:
-    - pattern: |
-        taint_source()
+    - pattern: taint_source()
   pattern-sinks:
-    - pattern: |
-        sink(...)
+    - pattern: sink(...)
   message: Tainted value reaches sink
   severity: WARNING
-  languages: [java]
-- id: switch-case-constant-propagation-java
+  languages: [dart]
+- id: switch-case-constant-propagation-dart
   pattern: exec(7)
   message: Case labels preserve the constant binding
   severity: WARNING
-  languages: [java]
+  languages: [dart]

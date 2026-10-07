@@ -757,6 +757,11 @@ and pattern env pat : stmts * lval * stmts =
   | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
     when env.lang =*= Lang.Elixir ->
     pattern env inner
+  | G.OtherPat ((("let" | "var"), _), [ G.P inner ])
+    when env.lang =*= Lang.Swift ->
+    (* Swift's binding marker changes mutability, not how the inner
+     * pattern receives the scrutinee. Keep its binding assignments. *)
+    pattern env inner
   | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) -> (
     (* expr_to_pattern fallback: the expression couldn't be statically
      * converted to a known pattern. This is how an assignment target that
@@ -1000,15 +1005,21 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) | G.PatTyped (inner, _) ->
       pattern_match_cond env scrutinee inner
+  | G.OtherPat ((("let" | "var"), _), [ G.P inner ])
+    when env.lang =*= Lang.Swift ->
+      pattern_match_cond env scrutinee inner
   | G.PatWhen (inner, _guardTODO) ->
       pattern_match_cond env scrutinee inner
-  | G.PatLiteral _ ->
+  | G.PatLiteral _
+  | G.OtherPat (("ExprToPattern", _), [ G.E _ ]) ->
+      (* An expression nested in a tuple pattern compares with that slot;
+       * it must not turn into a binding or an unsupported condition. *)
       let g_exp = AST_generic_helpers.pattern_to_expr pat in
-      let ss, lit_il = expr env g_exp in
+      let ss, value_il = expr env g_exp in
       ( ss,
         mk_e
           (Operator
-             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed lit_il ]))
+             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed value_il ]))
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
@@ -3588,12 +3599,13 @@ and stmt_expr env ?g_expr st : stmts * exp =
       (* Switch used as an expression (e.g. Elixir `case`).
        * Mirror the stmt-context Switch handler but lower each case body with
        * stmt_expr so the branch value is captured into a fresh variable. *)
+      let comparison = if env.lang =*= Lang.Php then G.PhysEq else G.Eq in
       let ss, translate_cases, switch_expr_opt' =
         match switch_expr_opt with
         | Some switch_expr ->
             let ss, switch_expr' = cond env switch_expr in
             ( ss,
-              switch_expr_and_cases_to_exp tok
+              switch_expr_and_cases_to_exp ~comparison tok
                 (H.cond_to_expr switch_expr)
                 switch_expr',
               Some switch_expr' )
@@ -3608,7 +3620,14 @@ and stmt_expr env ?g_expr st : stmts * exp =
         let assign =
           mk_s (Instr (mk_i (Assign (fresh, e_val)) (related_tok tok)))
         in
-        pre_ss @ [ assign ]
+        (* PHP match selects one arm with strict equality and returns its
+         * value. Falling into the next arm would overwrite that value and
+         * lose its taint. Ordinary PHP switch statements keep fallthrough. *)
+        let exit_arm =
+          if env.lang =*= Lang.Php then [ mk_s (Goto (tok, break_label)) ]
+          else []
+        in
+        pre_ss @ [ assign ] @ exit_arm
       in
       let jumps, bodies =
         cases_and_bodies_to_stmts switch_env switch_expr_opt' tok break_label
@@ -3814,7 +3833,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Crystal
   | Rust
   | Clojure
-  | Elixir ->
+  | Elixir
+  | Swift ->
       true
   | _ -> false
 
@@ -4211,6 +4231,10 @@ and stmt_aux env st : stmts =
   | G.Throw (tok, e, _) ->
       let ss, e = expr env e in
       ss @ [ mk_s (Throw (tok, e)) ]
+  | G.OtherStmt (G.OS_Fallthrough, _) ->
+      (* cases_and_bodies_to_stmts keeps the next body reachable for this
+       * marker. There is no separate instruction to emit here. *)
+      []
   | G.OtherStmt (G.OS_Go, [G.E call]) ->
       expr_stmt env call G.sc
   | G.OtherStmt (G.OS_ThrowNothing, [ G.Tk tok ]) ->
@@ -4306,7 +4330,8 @@ and for_each env tok (pat, tok2, e) st : stmts =
   @ break_label_s
 
 (* TODO: Maybe this and the following function could be merged *)
-and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : stmts * exp =
+and switch_expr_and_cases_to_exp ?(comparison = G.Eq) tok switch_expr_orig
+    switch_expr env cases : stmts * exp =
   (* If there is a scrutinee, the cases are expressions we need to check for equality with the scrutinee  *)
   let ss, es =
     List.fold_left
@@ -4316,7 +4341,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
               {
                 e =
                   Operator
-                    ( (G.Eq, tok),
+                    ( (comparison, tok),
                       [
                         Unnamed { e = Literal l; eorig = related_tok tok };
                         Unnamed switch_expr;
@@ -4340,7 +4365,9 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
             let c_ss, c' = expr env c in
             ( ss @ c_ss,
               {
-                e = Operator ((G.Eq, tok), [ Unnamed c'; Unnamed switch_expr ]);
+                e =
+                  Operator
+                    ((comparison, tok), [ Unnamed c'; Unnamed switch_expr ]);
                 eorig = related_tok tok;
               }
               :: es )
@@ -4453,6 +4480,19 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
         if hoist_cond_side_effects then (pat_stmts, []) else ([], pat_stmts)
       in
 
+      let last_stmt =
+        match body.G.s with
+        | G.Block (_, statements, _) -> (
+            match List.rev statements with
+            | last :: _ -> Some last
+            | [] -> None)
+        | _ -> Some body
+      in
+      let has_fallthrough =
+        match last_stmt with
+        | Some { G.s = G.OtherStmt (G.OS_Fallthrough, _); _ } -> true
+        | _ -> false
+      in
       let new_stmts = lower_body body in
 
       let body = [ mk_s (Label label) ] @ body_pat_stmts @ new_stmts in
@@ -4464,7 +4504,8 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
         | _ -> false
       in
       let break_if_no_fallthrough =
-        if no_switch_fallthrough env.lang && not is_guarded_pat then
+        if no_switch_fallthrough env.lang && not is_guarded_pat
+           && not has_fallthrough then
           (* TODO: Now, this instruction must be emitted conditionally
            * in the translation of PatWhen, in the true branch of the If. *)
           [ mk_s (Goto (tok, break_label)) ]

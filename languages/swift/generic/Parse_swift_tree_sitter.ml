@@ -30,7 +30,11 @@ module R = Raw_tree
 (* Helpers *)
 (*****************************************************************************)
 
-type context = Program | Pattern
+type mode = Program | Pattern
+(* Tuple items share one grammar production: case (a, b) reads values,
+ * while let (a, b) and case let (a, b) declare names. Keep that context
+ * while descending into nested items. *)
+type context = { mode : mode; binds_names : bool }
 type env = context H.env
 
 let token = H.token
@@ -62,7 +66,7 @@ let associate_statement_semis (fst_stmt : 'a) (stmts : ('b * 'a) list)
   (fst_stmt, semi) :: lst
 
 let in_pattern env =
-  match env.H.extra with
+  match env.H.extra.mode with
   | Program -> false
   | Pattern -> true
 
@@ -1093,7 +1097,17 @@ and map_binding_pattern_with_expr (env : env)
     | `Bind_pat x -> map_binding_pattern env x
     | `Exp x ->
         let e = map_expression env x in
-        H2.expr_to_pattern e
+        (match e.G.e with
+        | _ when env.H.extra.binds_names -> H2.expr_to_pattern e
+        | G.L _ | G.Ellipsis _ -> H2.expr_to_pattern e
+        | G.N (G.Id ((name, _), _))
+          when in_pattern env && G.is_metavar_name name ->
+            H2.expr_to_pattern e
+        | _ ->
+            (* Expression patterns read existing values, including inside
+             * tuples. Binding contexts keep PatId leaves so declarations
+             * and case let tuples can shadow those values. *)
+            G.OtherPat (("ExprToPattern", G.fake ""), [ G.E e ]))
   in
   (* As elsewhere, it looks like this question mark isn't important right now.
      See `map_expression`.
@@ -2258,6 +2272,7 @@ and map_tuple_pattern (env : env) ((v1, v2, v3, v4) : CST.tuple_pattern) :
 
 and map_no_expr_pattern_already_bound (env : env)
     ((v1, v2) : CST.no_expr_pattern_already_bound) : G.pattern =
+  let env = { env with H.extra = { env.H.extra with binds_names = true } } in
   let v1 =
     match v1 with
     | `Univ_allo_pat x -> map_universally_allowed_pattern env x
@@ -2277,6 +2292,7 @@ and map_no_expr_pattern_already_bound (env : env)
 
 and map_binding_pattern_no_expr (env : env)
     ((v1, v2) : CST.binding_pattern_no_expr) =
+  let env = { env with H.extra = { env.H.extra with binds_names = true } } in
   let pat =
     match v1 with
     | `Univ_allo_pat x -> map_universally_allowed_pattern env x
@@ -2305,18 +2321,20 @@ and map_universally_allowed_pattern (env : env)
       let _v3TODO = (* dot_custom *) token env v3 in
       let id = map_bound_identifier env v4 in
       let id_info = G.empty_id_info () in
-      let pat_init = G.PatId (id, id_info) in
-      let add_pat_args name pat =
+      (* An enum case names a constructor even without associated values.
+       * PatId would bind that name and make the first case unconditional. *)
+      let name = G.Id (id, id_info) in
+      let pats =
         match Option.map (map_tuple_pattern env) v5 with
-        | None -> pat
-        | Some (_, pats, _) -> G.PatConstructor (name, pats)
+        | None -> []
+        | Some (_, pats, _) -> pats
       in
       let add_pat_type pat =
         match v2 with
         | Some x -> G.PatTyped (pat, map_user_type env x)
         | None -> pat
       in
-      pat_init |> add_pat_args (G.Id (id, id_info)) |> add_pat_type
+      G.PatConstructor (name, pats) |> add_pat_type
 
 and map_parameter (env : env) (x : CST.parameter) ?(attrs = []) default =
   match x with
@@ -2757,9 +2775,13 @@ and map_switch_entry (env : env) ((v1, v2, v3, v4, v5) : CST.switch_entry) =
     | `Defa_kw tok -> (* default_keyword *) G.Default (token env tok)
   in
   let _tcolon = (* ":" *) token env v3 in
-  let stmt = G.Block (Tok.unsafe_fake_bracket (map_statements env v4)) in
-  (* For now, don't deal with fallthrough. *)
-  let _TODO = Option.map (* "fallthrough" *) (token env) v5 in
+  let statements = map_statements env v4 in
+  let fallthrough =
+    v5 |> Option.map (fun tok ->
+      G.OtherStmt (G.OS_Fallthrough, [ G.Tk (token env tok) ]) |> G.s)
+    |> Option.to_list
+  in
+  let stmt = G.Block (Tok.unsafe_fake_bracket (statements @ fallthrough)) in
   G.CasesAndBody ([ case ], stmt |> G.s)
 
 and map_switch_pattern (env : env) (x : CST.switch_pattern) : G.pattern =
@@ -3286,7 +3308,13 @@ let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_swift.Parse.file !!file)
     (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = Program } in
+      let env =
+        {
+          H.file;
+          conv = H.line_col_to_pos file;
+          extra = { mode = Program; binds_names = false };
+        }
+      in
       match map_source_file env cst with
       | G.Pr xs -> xs
       | _ -> failwith "not a program")
@@ -3297,6 +3325,10 @@ let parse_pattern str =
     (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env =
-        { H.file; conv = H.line_col_to_pos_pattern str; extra = Pattern }
+        {
+          H.file;
+          conv = H.line_col_to_pos_pattern str;
+          extra = { mode = Pattern; binds_names = false };
+        }
       in
       map_source_file env cst)

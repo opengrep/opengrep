@@ -1,5 +1,5 @@
 rules:
-- id: taint-switch-case-java
+- id: taint-switch-case-ts
   mode: taint
   pattern-sources:
     - pattern: |
@@ -9,9 +9,14 @@ rules:
         sink(...)
   message: Tainted value reaches sink
   severity: WARNING
-  languages: [java]
-- id: switch-case-constant-propagation-java
+  languages: [ts]
+- id: switch-case-constant-propagation-ts
   pattern: exec(7)
   message: Case labels preserve the constant binding
   severity: WARNING
-  languages: [java]
+  languages: [ts]
+- id: switch-case-command-constant-ts
+  pattern: exec("rm")
+  message: Case labels preserve the command constant
+  severity: WARNING
+  languages: [ts]
