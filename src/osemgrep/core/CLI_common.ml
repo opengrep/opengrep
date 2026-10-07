@@ -234,7 +234,7 @@ let exits_scan : Cmd.Exit.info list =
   @ exits_of_invalid_rules
   @ [ exit_broken_pipe ]
 
-(* 'ci' returns the code of its scan; with --suppress-errors, the default,
+(* 'ci' returns the code of its scan; with --suppress-errors,
  * any code other than 0 and 1 becomes 0 *)
 let exits_ci : Cmd.Exit.info list = exits_scan
 

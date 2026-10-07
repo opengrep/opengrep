@@ -270,7 +270,7 @@ let test_unwritable_extra_output (caps : CLI.caps) () =
       Alcotest.(check int) "no document" 0 (List.length (documents out)))
 
 (* 'opengrep ci --json' prints the document of an error that aborts the run
-   before any result; the default --suppress-errors then makes it exit 0. *)
+   before any result; with --suppress-errors it makes it exit 0. *)
 let test_ci_json_fatal_error (caps : CLI.caps) () =
   Testutil_git.with_git_repo
     Testutil_files.[ File ("foo.py", eval_target); Dir ("norules", []) ]
@@ -285,6 +285,7 @@ let test_ci_json_fatal_error (caps : CLI.caps) () =
                 "--json";
                 "--config";
                 "norules";
+                "--suppress-errors";
               |])
       in
       Exit_code.Check.ok exit_code;

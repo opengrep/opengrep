@@ -224,7 +224,7 @@ let test_audit_env_list (caps : Ci_subcommand.caps) () =
 
 let test_subdir_outside_cwd_suppressed (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
-    ~extra_args:[ "--subdir"; "/etc" ] ()
+    ~extra_args:[ "--subdir"; "/etc"; "--suppress-errors" ] ()
 
 let test_subdir_outside_cwd_fatal (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
@@ -235,7 +235,7 @@ let test_subdir_outside_cwd_fatal (caps : Ci_subcommand.caps) () =
  * outside the current directory *)
 let test_subdir_nonexistent_suppressed (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
-    ~extra_args:[ "--subdir"; "no-such-dir" ]
+    ~extra_args:[ "--subdir"; "no-such-dir"; "--suppress-errors" ]
     ()
 
 let test_subdir_nonexistent_fatal (caps : Ci_subcommand.caps) () =
@@ -243,11 +243,11 @@ let test_subdir_nonexistent_fatal (caps : Ci_subcommand.caps) () =
     ~extra_args:[ "--subdir"; "no-such-dir"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
-(* a bad output destination is an error like any other: suppressed by
- * default, fatal with --no-suppress-errors *)
+(* a bad output destination is an error like any other: suppressed with
+ * --suppress-errors, fatal without it *)
 let test_output_conflict_suppressed (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
-    ~extra_args:[ "-o"; "out.json"; "--json-output=out.json" ]
+    ~extra_args:[ "-o"; "out.json"; "--json-output=out.json"; "--suppress-errors" ]
     ()
 
 let test_output_conflict_fatal (caps : Ci_subcommand.caps) () =
@@ -263,7 +263,7 @@ let test_output_conflict_fatal (caps : Ci_subcommand.caps) () =
  * names a path under a regular file *)
 let test_unwritable_output_suppressed (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
-    ~extra_args:[ "--json"; "--sarif-output"; "foo.py/x.sarif" ]
+    ~extra_args:[ "--json"; "--sarif-output"; "foo.py/x.sarif"; "--suppress-errors" ]
     ()
 
 let test_unwritable_output_fatal (caps : Ci_subcommand.caps) () =
@@ -273,7 +273,7 @@ let test_unwritable_output_fatal (caps : Ci_subcommand.caps) () =
     ~check:Exit_code.Check.fatal ()
 
 (* an explicit false in the environment must turn suppression off, exactly
- * like the --no-suppress-errors flag *)
+ * like the --no-suppress-errors flag (which is now the default) *)
 let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "SEMGREP_SUPPRESS_ERRORS" "false" (fun () ->
       run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
@@ -292,12 +292,12 @@ let test_suppress_errors_env_garbage (caps : Ci_subcommand.caps) () =
  * python: test_ci_reports_an_invalid_rule *)
 let test_invalid_rule_fatal (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:bad_rule_content ~target:clean_py_content
-    ~extra_args:[ "--no-suppress-errors" ]
     ~check:Exit_code.Check.missing_config ()
 
-(* the same rule error is suppressed by default: the run ends ok *)
+(* the same rule error can be suppressed with --suppress-errors: the run ends ok *)
 let test_invalid_rule_suppressed (caps : Ci_subcommand.caps) () =
-  run_ci caps ~rule:bad_rule_content ~target:clean_py_content ()
+  run_ci caps ~rule:bad_rule_content ~target:clean_py_content
+    ~extra_args:[ "--suppress-errors" ] ()
 
 (* the environment variable holds a whitespace-separated list of rule
  * sources; both files must be loaded and both rules fire *)

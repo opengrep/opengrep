@@ -53,7 +53,7 @@ let o_suppress_errors : bool Term.t =
   H.negatable_flag_with_env [ "suppress-errors" ]
     ~neg_options:[ "no-suppress-errors" ]
     ~env:"SEMGREP_SUPPRESS_ERRORS"
-    ~default:true
+    ~default:false
     ~doc:
       {|Configures how the CI command reacts when an error occurs.
 If true, encountered errors are suppressed and the exit code is zero (success).
