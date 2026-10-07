@@ -472,7 +472,11 @@ class Target:
         if self.baseline_handler is None:
             raise RuntimeError("Can't get git diff file list without a baseline commit")
         git_status = self.baseline_handler.status
-        return frozenset(git_status.added + git_status.modified)
+        return frozenset(
+            path
+            for path in git_status.added + git_status.modified
+            if self._is_valid_file(path)
+        )
 
     def files_from_git_ls(self) -> FrozenSet[Path]:
         """

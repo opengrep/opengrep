@@ -17,7 +17,7 @@ type edit_application_result =
     }
 
 (* Apply a list of edits, modifying the files in place. If dryrun, do everything
- * but write to the files.
+ * but write to the files. A file that is itself a symbolic link is skipped.
  *
  * Returns the list of modified files and the list of edits that were not
  * applied because they overlapped with others. *)
