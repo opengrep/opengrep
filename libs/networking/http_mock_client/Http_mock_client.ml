@@ -34,6 +34,7 @@ end
 
 module Make (M : S) : Cohttp_lwt.S.Client = struct
   open M
+  module IO = Cohttp_lwt_unix.Client.IO
 
   type ctx = unit
   type 'a with_context = ?ctx:ctx -> 'a
