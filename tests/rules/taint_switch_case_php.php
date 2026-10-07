@@ -97,3 +97,44 @@ function matchLabelsAreNotBound() {
   // ok: taint-switch-case-php
   sink($q);
 }
+
+function matchResultKeepsTaint($mode) {
+  $value = match ($mode) {
+    MYSQL => "safe",
+    SQLITE => taint_source(),
+    default => "safe",
+  };
+  // ruleid: taint-switch-case-php
+  sink($value);
+}
+
+function numericMatchResultKeepsTaint($mode) {
+  $value = match ($mode) {
+    1 => "safe",
+    2 => taint_source(),
+    default => "safe",
+  };
+  // ruleid: taint-switch-case-php
+  sink($value);
+}
+
+function matchDefaultCanComeFirst($mode) {
+  $value = match ($mode) {
+    default => "safe",
+    SQLITE => taint_source(),
+  };
+  // ruleid: taint-switch-case-php
+  sink($value);
+}
+
+function ordinarySwitchStillFallsThrough($mode) {
+  $value = "safe";
+  switch ($mode) {
+    case MYSQL:
+      $value = taint_source();
+    case SQLITE:
+      // ruleid: taint-switch-case-php
+      sink($value);
+      break;
+  }
+}

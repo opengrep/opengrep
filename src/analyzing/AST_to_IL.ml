@@ -3599,12 +3599,13 @@ and stmt_expr env ?g_expr st : stmts * exp =
       (* Switch used as an expression (e.g. Elixir `case`).
        * Mirror the stmt-context Switch handler but lower each case body with
        * stmt_expr so the branch value is captured into a fresh variable. *)
+      let comparison = if env.lang =*= Lang.Php then G.PhysEq else G.Eq in
       let ss, translate_cases, switch_expr_opt' =
         match switch_expr_opt with
         | Some switch_expr ->
             let ss, switch_expr' = cond env switch_expr in
             ( ss,
-              switch_expr_and_cases_to_exp tok
+              switch_expr_and_cases_to_exp ~comparison tok
                 (H.cond_to_expr switch_expr)
                 switch_expr',
               Some switch_expr' )
@@ -3619,7 +3620,14 @@ and stmt_expr env ?g_expr st : stmts * exp =
         let assign =
           mk_s (Instr (mk_i (Assign (fresh, e_val)) (related_tok tok)))
         in
-        pre_ss @ [ assign ]
+        (* PHP match selects one arm with strict equality and returns its
+         * value. Falling into the next arm would overwrite that value and
+         * lose its taint. Ordinary PHP switch statements keep fallthrough. *)
+        let exit_arm =
+          if env.lang =*= Lang.Php then [ mk_s (Goto (tok, break_label)) ]
+          else []
+        in
+        pre_ss @ [ assign ] @ exit_arm
       in
       let jumps, bodies =
         cases_and_bodies_to_stmts switch_env switch_expr_opt' tok break_label
@@ -4322,7 +4330,8 @@ and for_each env tok (pat, tok2, e) st : stmts =
   @ break_label_s
 
 (* TODO: Maybe this and the following function could be merged *)
-and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : stmts * exp =
+and switch_expr_and_cases_to_exp ?(comparison = G.Eq) tok switch_expr_orig
+    switch_expr env cases : stmts * exp =
   (* If there is a scrutinee, the cases are expressions we need to check for equality with the scrutinee  *)
   let ss, es =
     List.fold_left
@@ -4332,7 +4341,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
               {
                 e =
                   Operator
-                    ( (G.Eq, tok),
+                    ( (comparison, tok),
                       [
                         Unnamed { e = Literal l; eorig = related_tok tok };
                         Unnamed switch_expr;
@@ -4356,7 +4365,9 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
             let c_ss, c' = expr env c in
             ( ss @ c_ss,
               {
-                e = Operator ((G.Eq, tok), [ Unnamed c'; Unnamed switch_expr ]);
+                e =
+                  Operator
+                    ((comparison, tok), [ Unnamed c'; Unnamed switch_expr ]);
                 eorig = related_tok tok;
               }
               :: es )

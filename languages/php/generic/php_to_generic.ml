@@ -539,6 +539,12 @@ and expr e : G.expr =
           |> G.e)
   | Match (tok, e, matches) ->
       let e = expr e in
+      (* A match default is a fallback even when written before other arms.
+       * The generic switch lowering expects that fallback at the end. *)
+      let defaults, matches =
+        List.partition (function MDefault _ -> true | _ -> false) matches
+      in
+      let matches = matches @ defaults in
       let matches = List_.map match_ matches in
       G.StmtExpr (G.Switch (tok, Some (G.Cond e), matches) |> G.s) |> G.e
 
