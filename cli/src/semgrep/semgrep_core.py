@@ -1,11 +1,11 @@
 import importlib.resources
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import Optional
 from semgrep.constants import IS_WINDOWS
 
+from semgrep.util import find_program
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
@@ -40,7 +40,7 @@ def compute_executable_path(exec_name: str) -> Optional[str]:
     # jobs (at least by default), so this won't work when running pytest
     # tests.
     #
-    which_exec = shutil.which(exec_name)
+    which_exec = find_program(exec_name)
     if which_exec is not None:
         return which_exec
 

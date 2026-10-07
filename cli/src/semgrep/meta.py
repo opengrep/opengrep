@@ -25,6 +25,7 @@ from semgrep.git import git_check_output
 from semgrep.git import git_check_output_with_config
 from semgrep.git import git_supports_config_env
 from semgrep.state import get_state
+from semgrep.util import with_program_path
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
@@ -119,7 +120,7 @@ class GitMeta:
 
         # nosem: use-git-check-output-helper
         rev_parse = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            with_program_path(["git", "rev-parse", "--show-toplevel"]),
             capture_output=True,
             encoding="utf-8",
             timeout=env.git_command_timeout,
@@ -152,7 +153,7 @@ class GitMeta:
             # if the repo URL was not explicitly provided, try getting it from git
             # nosem: use-git-check-output-helper
             git_parse = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
+                with_program_path(["git", "remote", "get-url", "origin"]),
                 capture_output=True,
                 encoding="utf-8",
                 timeout=env.git_command_timeout,
@@ -553,7 +554,9 @@ class GithubMeta(GitMeta):
         try:  # check if both branches connect to the yet-unknown branch-off point now
             # nosem: use-git-check-output-helper
             process = subprocess.run(
-                ["git", "merge-base", self.base_branch_hash, self.head_branch_hash],
+                with_program_path(
+                    ["git", "merge-base", self.base_branch_hash, self.head_branch_hash]
+                ),
                 encoding="utf-8",
                 capture_output=True,
                 check=True,
