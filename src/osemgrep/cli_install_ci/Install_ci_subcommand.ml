@@ -318,6 +318,7 @@ let git_commit (caps : < Cap.exec >) : unit =
         "-m";
         "Add opengrep workflow";
         "--author=\"Opengrep CI Installer <opengrep@opengrep.dev>\"";
+        "--no-verify";
       ] )
   in
   match CapExec.status_of_run caps#exec cmd with
