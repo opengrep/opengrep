@@ -13,7 +13,9 @@ if [[ -z "$VERSION" ]]; then
   exit 1
 fi
 
-EXTRA_ARGS=()
+EXTRA_ARGS=(
+  --python-flag=-P
+)
 
 # On linux we only compile to --onefile if forced using FORCE_ONEFILE.
 # In that case, we fix the tempdir to a reasonable cache directory, for
