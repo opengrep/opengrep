@@ -757,6 +757,11 @@ and pattern env pat : stmts * lval * stmts =
   | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
     when env.lang =*= Lang.Elixir ->
     pattern env inner
+  | G.OtherPat ((("let" | "var"), _), [ G.P inner ])
+    when env.lang =*= Lang.Swift ->
+    (* Swift's binding marker changes mutability, not how the inner
+     * pattern receives the scrutinee. Keep its binding assignments. *)
+    pattern env inner
   | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) -> (
     (* expr_to_pattern fallback: the expression couldn't be statically
      * converted to a known pattern. This is how an assignment target that
@@ -1000,15 +1005,21 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) | G.PatTyped (inner, _) ->
       pattern_match_cond env scrutinee inner
+  | G.OtherPat ((("let" | "var"), _), [ G.P inner ])
+    when env.lang =*= Lang.Swift ->
+      pattern_match_cond env scrutinee inner
   | G.PatWhen (inner, _guardTODO) ->
       pattern_match_cond env scrutinee inner
-  | G.PatLiteral _ ->
+  | G.PatLiteral _
+  | G.OtherPat (("ExprToPattern", _), [ G.E _ ]) ->
+      (* An expression nested in a tuple pattern compares with that slot;
+       * it must not turn into a binding or an unsupported condition. *)
       let g_exp = AST_generic_helpers.pattern_to_expr pat in
-      let ss, lit_il = expr env g_exp in
+      let ss, value_il = expr env g_exp in
       ( ss,
         mk_e
           (Operator
-             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed lit_il ]))
+             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed value_il ]))
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
@@ -3814,7 +3825,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Crystal
   | Rust
   | Clojure
-  | Elixir ->
+  | Elixir
+  | Swift ->
       true
   | _ -> false
 
@@ -4211,6 +4223,10 @@ and stmt_aux env st : stmts =
   | G.Throw (tok, e, _) ->
       let ss, e = expr env e in
       ss @ [ mk_s (Throw (tok, e)) ]
+  | G.OtherStmt (G.OS_Fallthrough, _) ->
+      (* cases_and_bodies_to_stmts keeps the next body reachable for this
+       * marker. There is no separate instruction to emit here. *)
+      []
   | G.OtherStmt (G.OS_Go, [G.E call]) ->
       expr_stmt env call G.sc
   | G.OtherStmt (G.OS_ThrowNothing, [ G.Tk tok ]) ->
@@ -4453,6 +4469,19 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
         if hoist_cond_side_effects then (pat_stmts, []) else ([], pat_stmts)
       in
 
+      let last_stmt =
+        match body.G.s with
+        | G.Block (_, statements, _) -> (
+            match List.rev statements with
+            | last :: _ -> Some last
+            | [] -> None)
+        | _ -> Some body
+      in
+      let has_fallthrough =
+        match last_stmt with
+        | Some { G.s = G.OtherStmt (G.OS_Fallthrough, _); _ } -> true
+        | _ -> false
+      in
       let new_stmts = lower_body body in
 
       let body = [ mk_s (Label label) ] @ body_pat_stmts @ new_stmts in
@@ -4464,7 +4493,8 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
         | _ -> false
       in
       let break_if_no_fallthrough =
-        if no_switch_fallthrough env.lang && not is_guarded_pat then
+        if no_switch_fallthrough env.lang && not is_guarded_pat
+           && not has_fallthrough then
           (* TODO: Now, this instruction must be emitted conditionally
            * in the translation of PatWhen, in the true branch of the If. *)
           [ mk_s (Goto (tok, break_label)) ]

@@ -138,6 +138,7 @@ let tests parse_program =
             ("dart", "dart");
             ("apex", "cls");
             ("crystal", "cr");
+            ("swift", "swift");
           ]
           |> List.iter (fun (lang, ext) ->
               let file =

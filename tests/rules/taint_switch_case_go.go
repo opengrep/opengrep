@@ -47,3 +47,15 @@ func typeSwitchKeepsLaterCases(mode interface{}) {
 		sink(taint_source())
 	}
 }
+
+func explicitFallthrough(mode int) {
+	value := "safe"
+	switch mode {
+	case A:
+		value = taint_source()
+		fallthrough
+	case B:
+		// ruleid: taint-switch-case-go
+		sink(value)
+	}
+}
