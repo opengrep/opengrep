@@ -364,6 +364,8 @@ and expr e : G.expr =
   | List v1 ->
       let v1 = bracket (list expr) v1 in
       G.Container (G.List, v1) |> G.e
+  | PatternHole ->
+      G.OtherExpr (("PatternHole", Tok.unsafe_fake_tok ""), []) |> G.e
   | Arrow (v1, t, v2) ->
       let v1 = expr v1 and v2 = expr v2 in
       G.keyval v1 t v2

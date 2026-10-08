@@ -463,8 +463,7 @@ and expr env = function
   | CondExpr (e1, _, Some e2, _, e3) ->
       A.CondExpr (expr env e1, expr env e2, expr env e3)
   | AssignList (_, (t1, la, t2), tokeq, e) ->
-      let la = comma_list la in
-      let la = List_.fold_right (list_assign env) la [] in
+      let la = list_assigns env la in
       let e = expr env e in
       A.Assign (A.List (t1, la, t2), tokeq, e)
   | ArrayLong (_, (t1, apl, t2))
@@ -1085,6 +1084,7 @@ and encaps env = function
   | EncapsExpr (_, e, _) -> expr env e
 
 and array_pair env = function
+  | ArrayEmpty -> A.PatternHole
   | ArrayExpr e -> expr env e
   | ArrayUnpack (_, e) -> A.Unpack (expr env e)
   | ArrayRef (tok, lv) -> A.Ref (tok, lvalue env lv)
@@ -1123,10 +1123,7 @@ and foreach_pattern tok env pat =
   | ForeachVar v -> foreach_variable tok env v
   | ForeachArrow (v1, tok, v2) ->
       A.Arrow (foreach_pattern tok env v1, tok, foreach_pattern tok env v2)
-  | ForeachList (_, (t1, xs, t2)) ->
-      let xs = comma_list xs in
-      let xs = List_.fold_right (list_assign env) xs [] in
-      A.List (t1, xs, t2)
+  | ForeachList (_, (t1, xs, t2)) -> A.List (t1, list_assigns env xs, t2)
 
 and catch env (t, (_, (fq, dn), _), (lb, stdl, rb)) =
   let stdl = A.Block (lb, List_.fold_right (stmt_and_def env) stdl [], rb) in
@@ -1140,20 +1137,17 @@ and finally env (t, (lb, stdl, rb)) =
 
 and static_var env (x, e) = (dname x, opt static_scalar_affect env e)
 
-and list_assign env x acc =
+and list_assigns (env : _env) (la : list_assign comma_list) : A.expr list =
+  List_.map (list_assign env) (comma_list la)
+
+and list_assign (env : _env) (x : list_assign) : A.expr =
   match x with
-  | ListVar lv -> lvalue env lv :: acc
-  | ListRef (tok, lv) -> A.Ref (tok, lvalue env lv) :: acc
-  | ListArrow (k, tok, v) -> (
-      (* same shape as a keyed array element, see array_pair *)
-      match list_assign env v [] with
-      | [ v ] -> A.Arrow (expr env k, tok, v) :: acc
-      | _ -> acc)
-  | ListList (_, (t1, la, t2)) ->
-      let la = comma_list la in
-      let la = List_.fold_right (list_assign env) la [] in
-      A.List (t1, la, t2) :: acc
-  | ListEmpty -> acc
+  | ListVar lv -> lvalue env lv
+  | ListRef (tok, lv) -> A.Ref (tok, lvalue env lv)
+  (* same shape as a keyed array element, see array_pair *)
+  | ListArrow (k, tok, v) -> A.Arrow (expr env k, tok, list_assign env v)
+  | ListList (_, (t1, la, t2)) -> A.List (t1, list_assigns env la, t2)
+  | ListEmpty -> A.PatternHole
 
 and assignOp _env = function
   | AssignOpArith aop ->

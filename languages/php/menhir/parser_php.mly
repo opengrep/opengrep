@@ -1568,7 +1568,11 @@ assignment_list_element:
      { ListArrow ($1, $2, ListList ($3, ($4, $5, $6))) }
  | (*empty*)            { ListEmpty }
 
-array_pair_list: array_pair_list_rev { List.rev $1 }
+(* As in PHP, a trailing comma leaves no empty element behind. *)
+array_pair_list: array_pair_list_rev
+  { match $1 with
+    | Left ArrayEmpty :: xs -> List.rev xs
+    | xs -> List.rev xs }
 array_pair:
  | expr_or_dots                    { (ArrayExpr $1) }
  | tand_any expr               { (ArrayRef ($1,$2)) }
@@ -2039,11 +2043,6 @@ intersection_type_php_list:
 
 class_name_list: listc(class_name_no_array) { $1 }
 
-possible_comma:
- | (*empty*) { [] }
- | ","        { [Right $1] }
-
-
 function_call_argument_list:
  | (*empty*)                              { [] }
  | non_empty_function_call_argument_list      { $1 }
@@ -2053,14 +2052,13 @@ function_call_argument_list:
 %inline
 non_empty_function_call_argument_list: listc(function_call_argument) { $1 }
 
-assignment_list: listc(assignment_list_element) { $1 }
-
-non_empty_array_pair_list_rev:
- | array_pair { [Left $1] }
- (*s: repetitive non_empty_array_pair_list *)
- | non_empty_array_pair_list_rev "," array_pair  { Left $3::Right $2::$1 }
- (*e: repetitive non_empty_array_pair_list *)
+(* As in PHP, a trailing comma leaves no empty element behind. *)
+assignment_list: listc(assignment_list_element)
+  { match List.rev $1 with
+    | Left ListEmpty :: xs -> List.rev xs
+    | _ -> $1 }
 
 array_pair_list_rev:
- | (*empty*) { [] }
- | non_empty_array_pair_list_rev possible_comma { $2@$1 }
+ | ioption(array_pair) { [Left (Option.value ~default:ArrayEmpty $1)] }
+ | array_pair_list_rev "," ioption(array_pair)
+     { Left (Option.value ~default:ArrayEmpty $3) :: Right $2 :: $1 }

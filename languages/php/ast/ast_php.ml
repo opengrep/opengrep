@@ -75,7 +75,7 @@
  *    composite calls to Assign and Ref. Same for AssignList, AssignNew.
  *    Same for arguments passed by reference, no Arg, ArgRef, ArgUnpack.
  *    Same for refs in arrays, no ArrayRef, ArrayArrowRef. Also no ListVar,
- *    ListList, ListEmpty. No ForeachVar, ForeachList.
+ *    ListList. No ForeachVar, ForeachList.
  *    Array value are also decomposed in regular expr or Arrow, no
  *    ArrayArrowExpr, no ForeachArrow. More orthogonal.
 
@@ -188,6 +188,10 @@ type expr =
    * in foreach_pattern.
    *)
   | List of expr list bracket
+  (* A skipped element of a List or of a destructuring ConsArray, as in
+   * '[, $b] = $arr'. It keeps the later elements at their index.
+   *)
+  | PatternHole
   (* used only inside array_value or foreach_pattern, or for yield
    * (which is translated as a builtin and so a Call)
    *)

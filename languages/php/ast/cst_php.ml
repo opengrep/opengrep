@@ -358,6 +358,8 @@ and array_pair =
   | ArrayRef of tok (* & *) * lvalue
   | ArrayArrowExpr of expr * tok (* => *) * expr
   | ArrayArrowRef of expr * tok (* => *) * tok (* & *) * lvalue
+  (* a skipped element in destructuring, as in '[, $b] = $arr' *)
+  | ArrayEmpty
 
 and argument =
   | Arg of expr
