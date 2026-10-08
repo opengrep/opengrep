@@ -292,8 +292,7 @@ and stmt env st acc =
       A.Foreach (tok, e, tas, pat, cst) :: acc
   | Break (tok, e, _) -> A.Break (tok, opt expr env e) :: acc
   | Continue (tok, eopt, _) -> A.Continue (tok, opt expr env eopt) :: acc
-  | Label (id, tok, st) ->
-      A.Label (ident env id, tok, stmt1 tok (stmt env st [])) :: acc
+  | Label (id, tok) -> A.Label (ident env id, tok, stmt1 tok []) :: acc
   | Goto (tok, id, _) -> A.Goto (tok, ident env id) :: acc
   | Return (tok, eopt, _) -> A.Return (tok, opt expr env eopt) :: acc
   | Try (tok, (lb, stl, rb), cl, fl) ->

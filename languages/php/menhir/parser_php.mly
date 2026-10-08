@@ -422,7 +422,7 @@ statement:
  | T_BREAK    expr? ";" { Break($1,$2, $3) }
  | T_CONTINUE expr? ";" { Continue($1, $2, $3) }
 
- | ident ":" statement { Label (Name $1,$2,$3) }
+ | ident ":" { Label (Name $1, $2) }
  | T_GOTO ident ";" { Goto ($1,Name $2,$3) }
 
  | T_RETURN expr_or_dots? ";"  { Return ($1, $2, $3)}

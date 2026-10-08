@@ -454,7 +454,7 @@ and stmt =
    *)
   | Break of tok * expr option * tok
   | Continue of tok * expr option * tok
-  | Label of ident * tok (* : *) * stmt
+  | Label of ident * tok (* : *)
   | Goto of tok * ident * tok (* ; *)
   | Return of tok * expr option * tok
   | Try of tok * stmt_and_def list brace * catch list * finally list
