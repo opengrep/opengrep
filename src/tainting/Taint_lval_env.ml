@@ -186,11 +186,23 @@ let remove_some_lval_from_tainted_set tainted =
   |> NameMap.find_first_opt (fun var -> Tok.is_fake (snd var.ident))
   |> Option.map (function var, _ -> var, NameMap.remove var tainted)
 
+(* The variables tracked for their taint: one holding only a function's
+   shape is not one, and does not count against the limit. A function
+   holding a thousand functions holds a shape for each, and still tracks the
+   taint of its own temporaries. *)
+let tainted_cardinal tainted =
+  NameMap.fold
+    (fun _ (Cell (xtaint, shape)) n ->
+      match (xtaint, shape) with
+      | (`None | `Clean), Fun _ -> n
+      | _ -> n + 1)
+    tainted 0
+
 let check_tainted_lvals_limit tainted new_var =
   if
     (not (NameMap.mem new_var tainted))
     && !Flag_semgrep.max_tainted_vars > 0
-    && NameMap.cardinal tainted > !Flag_semgrep.max_tainted_vars
+    && tainted_cardinal tainted > !Flag_semgrep.max_tainted_vars
   then (
     match remove_some_lval_from_tainted_set tainted with
     | Some (dropped_var, tainted) ->
