@@ -575,7 +575,10 @@ and special (spec, tok) =
   | LateStatic -> G.IdSpecial (G.LateStatic, tok) |> G.e
   | FuncLike Empty -> G.N (G.Id (("empty", tok), G.empty_id_info ())) |> G.e
   | FuncLike Eval -> G.IdSpecial (G.Eval, tok) |> G.e
-  | FuncLike Exit -> G.N (G.Id (("exit", tok), G.empty_id_info ())) |> G.e
+  (* die converts to exit, so a pattern with either matches both; hidden keeps
+   * the prefilter from requiring 'exit' *)
+  | FuncLike Exit ->
+      G.N (G.Id (("exit", tok), G.empty_id_info ~hidden:true ())) |> G.e
   | FuncLike Isset -> G.IdSpecial (G.Defined, tok) |> G.e
   | FuncLike Unset -> G.N (G.Id (("unset", tok), G.empty_id_info ())) |> G.e
 
