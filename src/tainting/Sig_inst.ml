@@ -2702,9 +2702,11 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
      in that function, and a write to the parameter, where it leaves it. *)
   let param_held_by (var : IL.name) : T.arg option =
     let* taints, _ = value_of var in
-    match Taints.to_taint_list taints with
-    | [ { orig = Var { base = BArg arg; offset = [] }; _ } ] -> Some arg
-    | _ -> None
+    Taints.to_taint_list taints
+    |> List.find_map (fun (taint : T.taint) ->
+           match taint.orig with
+           | Var { base = BArg arg; offset = [] } -> Some arg
+           | _ -> None)
   in
   (* The effects of calling the function a captured variable holds, with
      the arguments the lambda calls it with: its sink and write effects are
