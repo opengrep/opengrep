@@ -1500,6 +1500,13 @@ static_scalar:
  | TMINUS static_scalar %prec T_INC { Unary((UnMinus,$1),$2) }
  | TBANG  static_scalar             { Unary((UnBang,$1),$2) }
  | TTILDE static_scalar             { Unary((UnTilde,$1),$2) }
+ (* Casts *)
+ | T_BOOL_CAST   static_scalar { Cast((BoolTy,$1),$2) }
+ | T_INT_CAST    static_scalar { Cast((IntTy,$1),$2) }
+ | T_DOUBLE_CAST static_scalar { Cast((DoubleTy,$1),$2) }
+ | T_STRING_CAST static_scalar { Cast((StringTy,$1),$2) }
+ | T_ARRAY_CAST  static_scalar { Cast((ArrayTy,$1),$2) }
+ | T_OBJECT_CAST static_scalar { Cast((ObjectTy,$1),$2) }
 
 static_scalar_primary:
  | constant { Sc (C $1) }
