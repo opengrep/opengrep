@@ -956,6 +956,7 @@ and modifier _env m =
   | Static -> (A.Static, tok)
   | Async -> (A.Async, tok)
   | Readonly -> (A.Readonly, tok)
+  | PublicSet -> (A.PublicSet, tok)
   | PrivateSet -> (A.PrivateSet, tok)
   | ProtectedSet -> (A.ProtectedSet, tok)
 

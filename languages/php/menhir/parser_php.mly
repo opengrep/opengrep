@@ -165,6 +165,7 @@ let str_of_info x = Tok.content_of_tok x
  T_ECHO  T_PRINT
  (* pad: was declared via right ... ??? mean token ? *)
  T_ASYNC T_STATIC  T_ABSTRACT  T_FINAL  T_PRIVATE T_PROTECTED T_PUBLIC T_READONLY
+ T_PUBLIC_SET T_PROTECTED_SET T_PRIVATE_SET
  T_UNSET T_ISSET T_EMPTY
  T_CLASS   T_INTERFACE  T_EXTENDS T_IMPLEMENTS
  T_TRAIT T_INSTEADOF
@@ -857,14 +858,9 @@ class_modifier:
 
 (* PHP 8.4 asymmetric visibility *)
 %inline set_visibility_modifier:
- | T_PRIVATE "(" T_IDENT ")"
-     { let (s, _) = $3 in
-       if s = "set" then PrivateSet, $1
-       else raise Parsing.Parse_error }
- | T_PROTECTED "(" T_IDENT ")"
-     { let (s, _) = $3 in
-       if s = "set" then ProtectedSet, $1
-       else raise Parsing.Parse_error }
+ | T_PUBLIC_SET    { PublicSet, $1 }
+ | T_PROTECTED_SET { ProtectedSet, $1 }
+ | T_PRIVATE_SET   { PrivateSet, $1 }
 
 
 extends_from:

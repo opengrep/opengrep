@@ -93,6 +93,7 @@ let modifierbis = function
   | Async -> G.Async
   | Readonly -> G.Const
   (* PHP 8.4 asymmetric visibility - handled separately *)
+  | PublicSet -> G.Public (* fallback, actual handling in modifier function *)
   | PrivateSet -> G.Private (* fallback, actual handling in modifier function *)
   | ProtectedSet -> G.Protected
 
@@ -713,10 +714,12 @@ and parameter_classic
   | _, Some tok -> G.OtherParam (("Ref", tok), [ G.Pa (G.Param pclassic) ])
   | Some tok, None -> G.ParamRest (tok, pclassic)
 
-(* PHP 8.4 asymmetric visibility: private(set) and protected(set)
-   are converted to OtherAttribute like Swift does *)
+(* PHP 8.4 asymmetric visibility: public(set), protected(set) and
+   private(set) are converted to OtherAttribute like Swift does *)
 and modifier_to_attr (m, tok) =
   match m with
+  | PublicSet ->
+      G.OtherAttribute (("public(set)", tok), [])
   | PrivateSet ->
       G.OtherAttribute (("private(set)", tok), [])
   | ProtectedSet ->

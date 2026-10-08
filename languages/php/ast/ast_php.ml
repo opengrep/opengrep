@@ -408,6 +408,7 @@ and keyword_modifier =
   | Async
   | Readonly
   (* PHP 8.4 asymmetric visibility *)
+  | PublicSet
   | PrivateSet
   | ProtectedSet
 

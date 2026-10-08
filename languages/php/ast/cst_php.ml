@@ -738,7 +738,8 @@ and modifier =
   | Async
   (* PHP 8.1 readonly properties, PHP 8.2 readonly classes *)
   | Readonly
-  (* PHP 8.4 asymmetric visibility: private(set), protected(set) *)
+  (* PHP 8.4 asymmetric visibility: public(set), protected(set), private(set) *)
+  | PublicSet
   | PrivateSet
   | ProtectedSet
 

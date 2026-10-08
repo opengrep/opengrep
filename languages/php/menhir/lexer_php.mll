@@ -396,6 +396,11 @@ let BOOL = (['T''t']['R''r']['U''u']['E''e']) | (['F''f']['A''a']['L''l']['S''s'
  * 'yield from' is recognised in a single match *)
 let YIELD = ['Y''y']['I''i']['E''e']['L''l']['D''d']
 let FROM = ['F''f']['R''r']['O''o']['M''m']
+(* likewise for the asymmetric visibility modifiers, as in 'private(set)' *)
+let PUBLIC = ['P''p']['U''u']['B''b']['L''l']['I''i']['C''c']
+let PROTECTED = ['P''p']['R''r']['O''o']['T''t']['E''e']['C''c']['T''t']['E''e']['D''d']
+let PRIVATE = ['P''p']['R''r']['I''i']['V''v']['A''a']['T''t']['E''e']
+let SET = ['S''s']['E''e']['T''t']
 (* the '_' of a numeric literal separator only ever sits between two digits,
  * as in '1_000' or '0x1_C'; leading, trailing and doubled ones are not
  * numbers. coupling: LNUM..ONUM in Zend's zend_language_scanner.l
@@ -726,6 +731,19 @@ rule st_in_scripting state = parse
         push_token state (TSpaces whiteinfo);
 
         T_YIELD kwdinfo
+      }
+
+    (* PHP 8.4 asymmetric visibility, read as one token so that the grammar
+     * does not have to tell 'private(set)' apart from a plain 'private'
+     * followed by a DNF type, as in 'private (A&B)|C $p'
+     *)
+    | ((PUBLIC | PROTECTED | PRIVATE) as kwd)
+      WHITESPACEOPT "(" WHITESPACEOPT SET WHITESPACEOPT ")" {
+        let info = tokinfo lexbuf in
+        match String.lowercase_ascii kwd with
+        | "public" -> T_PUBLIC_SET info
+        | "protected" -> T_PROTECTED_SET info
+        | _ -> T_PRIVATE_SET info
       }
 
     | LABEL
