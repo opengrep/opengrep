@@ -1009,16 +1009,23 @@ trait_precedence_rule:
  | qualified_name_for_traits "::" T_IDENT T_INSTEADOF class_name_list ";"
    { InsteadOf ($1, $2, Name $3, $4, $5, $6) }
 
+(* After a modifier the new name may be any keyword, as in
+ * 'as public foreach'. Without a modifier no keyword is accepted, since a
+ * modifier keyword there would read as the modifier.
+ *)
 trait_alias_rule:
- | trait_alias_rule_method T_AS member_modifier* T_IDENT ";"
-   { As ($1, $2, $3, Some (Name $4), $5) }
+ | trait_alias_rule_method T_AS T_IDENT ";"
+   { As ($1, $2, [], Some (Name $3), $4) }
 
- | trait_alias_rule_method T_AS member_modifier+ ";"
-   { As ($1, $2, $3, None, $4) }
+ | trait_alias_rule_method T_AS member_modifier ident_semi_reserved ";"
+   { As ($1, $2, [$3], Some (Name $4), $5) }
+
+ | trait_alias_rule_method T_AS member_modifier ";"
+   { As ($1, $2, [$3], None, $4) }
 
 trait_alias_rule_method:
  | qualified_name_for_traits "::" T_IDENT { Right ($1, $2, Name $3) }
- | T_IDENT { Left (Name $1) }
+ | ident_semi_reserved { Left (Name $1) }
 
 (*************************************************************************)
 (* Type definitions *)
@@ -1951,7 +1958,7 @@ use_keyword:
 
 namespace_name:
  | ident_in_name                           { [QI (Name $1)] }
- | namespace_name TANTISLASH ident_in_name { $1 @ [QITok $2; QI (Name $3)] }
+ | namespace_name TANTISLASH ident_semi_reserved { $1 @ [QITok $2; QI (Name $3)] }
 
 namespace_use_clause:
   TANTISLASH? namespace_name namespace_aliasing_clause?
