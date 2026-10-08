@@ -68,6 +68,9 @@ val merge_dispatch_signatures :
  * signature, returned unchanged when there are no impls. On incompatible
  * params the first signature is returned. *)
 
+val arg_bound : Shape_and_sig.Signature.t -> Taint.arg -> bool
+(** Whether the argument is one of the signature's own parameters. *)
+
 val close_over :
   lang:Lang.t ->
   Taint_lval_env.t ->

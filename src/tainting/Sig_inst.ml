@@ -1563,7 +1563,11 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
            so `this.x` in the taint signature of the callee corresponds to
            `this.x` in the caller. *)
         true
-    | __else__ -> false
+    | { e = Fetch { base = VarSpecial _; rev_offset = _ :: _ :: _ }; _ } ->
+        (* A method of a field of the receiver ([this.child.read()]): its
+           [this] is the field's. *)
+        false
+    | __else__ -> callee_on_enclosing_this fun_exp
   in
   match lval.base with
   | BArg _

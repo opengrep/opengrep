@@ -1284,7 +1284,7 @@ let close_lambda ~lang lval_env (lambda_sig : Signature.t) =
    its findings reported here. *)
 let close_named_lambda env (name : IL.name) : Signature.t option =
   let* db = env.signature_db in
-  Shape_and_sig.find_lambda_sig db (Function_id.of_il_name name)
+  Shape_and_sig.find_lambda_sig db name
   |> Option.map (fun lambda_sig ->
          let closed, findings =
            close_lambda ~lang:env.taint_inst.lang env.lval_env lambda_sig
@@ -2187,6 +2187,29 @@ let apply_call_effects env ~rebound_guards ~deferred
  * Nested [ToSinkInCall] effects returned by the resolver are re-recorded
  * with their own [callee/arg/arg_offset/args_taints]; the outer preserved
  * effect is only re-recorded when resolution fails outright. *)
+(* A deferred call left unresolved, recorded for a caller to resolve: one
+   on a parameter, at every caller; one on a captured variable only in a
+   lifted frame holding the variable's placeholder, where closing the lambda
+   binds it. Elsewhere the variable is a local of a function that has
+   returned. *)
+let record_deferred_call env ~callee ~arg ~arg_offset ~args_taints ~guards =
+  let keep =
+    match arg with
+    | Effect.Param _ -> true
+    | Effect.Captured var -> (
+        match Lval_env.find_var env.lval_env var with
+        | Some (S.Cell (`Tainted taints, _)) ->
+            Taints.to_taint_list taints
+            |> List.exists (fun (taint : T.taint) ->
+                   match taint.orig with
+                   | Var { base = BCaptured v; _ } -> IL.equal_name v var
+                   | _ -> false)
+        | _ -> false)
+  in
+  if keep then
+    record_effects env
+      [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ]
+
 let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
     ~args_taints ~rebound_guards (taints_acc, shape_acc, lval_env) =
   let resolved_call_effects =
@@ -2234,56 +2257,56 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
          caller one level up to resolve. *)
       apply_call_effects env ~rebound_guards
         ~deferred:(fun ~callee ~arg ~arg_offset ~args_taints ~guards acc ->
-          record_effects env
-            [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ];
+          record_deferred_call env ~callee ~arg ~arg_offset ~args_taints ~guards;
           acc)
         (taints_acc, shape_acc, lval_env)
         resolved_effects
   | None ->
-      record_effects env
-        [
-          Effect.ToSinkInCall
-            {
-              callee;
-              arg;
-              arg_offset;
-              args_taints;
-              guards = rebound_guards;
-            };
-        ];
+      record_deferred_call env ~callee ~arg ~arg_offset ~args_taints
+        ~guards:rebound_guards;
       (taints_acc, shape_acc, lval_env)
 
-(* Apply [fun_sig] at a use of [fun_exp] with these [args]: instantiate it
-   against the current environment, record its sink effects, and return the
-   taint and shape of the result with the environment its writes leave. *)
-let apply_signature env fun_exp (fun_sig : Signature.t)
+(* The call effects of [fun_sig] at a use of [fun_exp] with these [args],
+   instantiated against the current environment. *)
+let instantiate_signature env fun_exp (fun_sig : Signature.t)
     ~(args : IL.exp argument list option)
     (args_taints : (Taints.t * S.shape) argument list) :
-    (Taints.t * S.shape * Lval_env.t) option =
+    Sig_inst.call_effects option =
   Log.debug (fun m ->
       m "SIG_FOUND: %s -> %s"
         (Display_IL.string_of_exp fun_exp)
         (Signature.show fun_sig));
-  let invoke_inst () =
-    Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
-      ~max_offset:(poly_offset_bound env fun_exp)
-      ~outer_params:env.func.il_params env.lval_env fun_sig
-      ~callee:fun_exp ~args args_taints
-      ~lookup_sig:(callee_signature ~closing:true env) ()
-  in
-  let* call_effects = invoke_inst () in
-  Log.debug (fun m ->
-      m "INSTANTIATE_SIG: %s returned %d call_effects: %s"
-        (Display_IL.string_of_exp fun_exp)
-        (List.length call_effects)
-        (Sig_inst.show_call_effects call_effects));
-  Some
-    (apply_call_effects env ~rebound_guards:Effect_guard.top
-       ~deferred:(fun ~callee ~arg ~arg_offset ~args_taints ~guards acc ->
-         resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
-           ~args_taints ~rebound_guards:guards acc)
-       (Taints.empty, Bot, env.lval_env)
-       call_effects)
+  Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
+    ~max_offset:(poly_offset_bound env fun_exp)
+    ~outer_params:env.func.il_params env.lval_env fun_sig ~callee:fun_exp
+    ~args args_taints
+    ~lookup_sig:(callee_signature ~closing:true env) ()
+  |> Option.map (fun call_effects ->
+         Log.debug (fun m ->
+             m "INSTANTIATE_SIG: %s returned %d call_effects: %s"
+               (Display_IL.string_of_exp fun_exp)
+               (List.length call_effects)
+               (Sig_inst.show_call_effects call_effects));
+         call_effects)
+
+(* The call effects applied here: sink effects recorded, writes made, the
+   deferred calls resolved; the taint and shape of the result with the
+   environment the writes leave. *)
+let apply_effects env (call_effects : Sig_inst.call_effects) =
+  apply_call_effects env ~rebound_guards:Effect_guard.top
+    ~deferred:(fun ~callee ~arg ~arg_offset ~args_taints ~guards acc ->
+      resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
+        ~args_taints ~rebound_guards:guards acc)
+    (Taints.empty, Bot, env.lval_env)
+    call_effects
+
+(* Apply [fun_sig] at a use of [fun_exp] with these [args]. *)
+let apply_signature env fun_exp (fun_sig : Signature.t)
+    ~(args : IL.exp argument list option)
+    (args_taints : (Taints.t * S.shape) argument list) :
+    (Taints.t * S.shape * Lval_env.t) option =
+  instantiate_signature env fun_exp fun_sig ~args args_taints
+  |> Option.map (apply_effects env)
 
 let check_function_call env fun_exp args
     (args_taints : (Taints.t * S.shape) argument list) () :
@@ -3838,8 +3861,19 @@ and apply_lambda_signature env lambda_name (lambda_cfg : IL.fun_cfg)
       eorig = NoOrig;
     }
   in
-  match apply_signature env lambda_exp lambda_sig ~args:None args_taints with
-  | Some (_, _, lval_env) -> (Effects.empty, lval_env)
+  (* The lambda's own parameters are clean here: a deferred call on one of
+     them can bind nothing, and names no parameter of this frame. *)
+  match instantiate_signature env lambda_exp lambda_sig ~args:None args_taints with
+  | Some call_effects ->
+      let _, _, lval_env =
+        call_effects
+        |> List.filter (function
+             | Sig_inst.ToSinkInCall { arg = Effect.Param a; _ } ->
+                 not (Sig_inst.arg_bound lambda_sig a)
+             | _ -> true)
+        |> apply_effects env
+      in
+      (Effects.empty, lval_env)
   | None -> (Effects.empty, env.lval_env)
 
 and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
@@ -4147,10 +4181,10 @@ and (fixpoint :
                      captured_var_assumptions taint_inst.lang ~outer_vars
                        lambda_cfg
                    in
-                   Shape_and_sig.add_lambda_sig acc_db
-                     (Function_id.of_il_name lambda_name)
+                   Shape_and_sig.add_lambda_sig acc_db lambda_name
                      (extract_lambda_sig ~start_env acc_db lambda_name lambda_cfg)
                  with
+                 | (Stack_overflow | Out_of_memory) as e -> raise e
                  | e ->
                      Log.warn (fun m ->
                          m "Failed to extract signature for lambda %s: %s"
