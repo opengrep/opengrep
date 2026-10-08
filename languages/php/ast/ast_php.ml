@@ -417,6 +417,8 @@ and attribute = expr
 and constant_def = {
   cst_tok : tok;
   cst_name : ident;
+  (* PHP 8.3: class constant type *)
+  cst_type : hint_type option;
   (* normally a static scalar *)
   cst_body : expr;
   (* PHP 7.1: class constant visibility *)

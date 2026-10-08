@@ -1132,7 +1132,8 @@ and map_const_declaration_ ?(attrs = []) ?(modifiers = []) (env : env)
   let v5 = map_semicolon env v5 in
   List_.map
     (fun (name, expr) ->
-      { A.cst_tok = v2; A.cst_name = name; A.cst_body = expr;
+      (* this grammar's const_declaration carries no type *)
+      { A.cst_tok = v2; A.cst_name = name; A.cst_type = None; A.cst_body = expr;
         A.cst_modifiers = modifiers @ visibility; A.cst_attrs = attrs })
     (v3 :: v4)
 

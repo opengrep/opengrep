@@ -889,7 +889,7 @@ implements_list:
  *)
 member_declaration:
  | ioption(attributes) member_modifier*
-   T_CONST ioption(type_php) listc(class_constant_declaration)  ";"
+   T_CONST ioption(type_php_static) listc(class_constant_declaration)  ";"
      { ClassConstants($1, $2, $3, $4, $5, $6) }
 
 (* class variables (aka properties) *)
@@ -1109,15 +1109,24 @@ type_arg_list:
   | type_php                       { [Left $1]}
   | type_php "," type_arg_list     { (Left $1)::(Right $2):: $3 }
 
-(* 'static' is a type only in return position, so it is spelled out here
- * rather than in primary_type_php, where it would be ambiguous with the
- * 'static' modifier of a property or method.
- *)
 return_type:
- | ":" type_php     { $1, $2 }
+ | ":" type_php_static       { $1, $2 }
  | ":" bare_intersection_php { $1, $2 }
- | ":" T_STATIC     { $1, Hint (LateStatic $2, None) }
- | ":" "?" T_STATIC { $1, HintQuestion ($2, Hint (LateStatic $3, None)) }
+
+(* 'static' is a type only in return and class constant position, so these
+ * get a type_php of their own rather than 'static' joining primary_type_php,
+ * where it would be ambiguous with the 'static' modifier of a property or
+ * method.
+ *)
+type_php_static:
+ | type_php_static "::" primary_type_php { HintTypeConst ($1, $2, $3) }
+ | list_sep(primary_type_php_static, "|")
+    { match $1 with | [Left v] -> v | xs -> HintUnion xs }
+
+primary_type_php_static:
+ | primary_type_php { $1 }
+ | T_STATIC         { Hint (LateStatic $1, None) }
+ | "?" T_STATIC     { HintQuestion ($1, Hint (LateStatic $2, None)) }
 
 (*************************************************************************)
 (* Attributes *)

@@ -734,14 +734,16 @@ and attribute v =
   | _ -> raise Impossible
 
 (* see ast_php_build.ml *)
-and constant_def { cst_name; cst_body; cst_tok = tok; cst_modifiers; cst_attrs } =
+and constant_def
+    { cst_name; cst_type; cst_body; cst_tok = tok; cst_modifiers; cst_attrs } =
   let id = ident cst_name in
+  let typ = option hint_type cst_type in
   let body = expr cst_body in
   let modifiers = list modifier_to_attr cst_modifiers in
   let attrs = list attribute cst_attrs in
   let attr = (G.KeywordAttr (G.Const, tok) :: modifiers) @ attrs in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:attr in
-  (ent, { G.vinit = Some body; vtype = None; vtok = G.no_sc })
+  (ent, { G.vinit = Some body; vtype = typ; vtok = G.no_sc })
 
 and enum_type _tok { e_base; e_constraint } =
   let t = hint_type e_base in

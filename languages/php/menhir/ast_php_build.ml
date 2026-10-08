@@ -713,11 +713,12 @@ and hint_type env = function
 (* Definitions *)
 (* ------------------------------------------------------------------------- *)
 and constant_def env
-    { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _; cst_attrs } =
+    { cst_name; cst_val; cst_type; cst_toks = tok, _, _; cst_attrs } =
   let name = ident env cst_name in
   let value = expr env cst_val in
-  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [];
-    A.cst_attrs = attributes env cst_attrs }
+  { A.cst_tok = tok; A.cst_name = name;
+    A.cst_type = Option.map (hint_type env) cst_type; A.cst_body = value;
+    A.cst_modifiers = []; A.cst_attrs = attributes env cst_attrs }
 
 and comma_list_dots_params f xs =
   match xs with
@@ -878,15 +879,16 @@ and class_traits env x acc =
 
 and class_constants env st acc =
   match st with
-  | ClassConstants (attrs, mods, tok, _, cl, _) ->
+  | ClassConstants (attrs, mods, tok, ty, cl, _) ->
       let modifiers = List_.map (modifier env) mods in
       let attrs = attributes env attrs in
+      let ty = Option.map (hint_type env) ty in
       List_.fold_right
         (fun (n, ss) acc ->
           let body = static_scalar_affect env ss in
           let cst =
-            { A.cst_name = ident env n; cst_body = body; cst_tok = tok;
-              cst_modifiers = modifiers; cst_attrs = attrs }
+            { A.cst_name = ident env n; cst_type = ty; cst_body = body;
+              cst_tok = tok; cst_modifiers = modifiers; cst_attrs = attrs }
           in
           cst :: acc)
         (comma_list cl) acc
