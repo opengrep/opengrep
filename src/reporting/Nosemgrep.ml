@@ -87,9 +87,48 @@ let get_nosem_previous_line_re ?(config=Engine_config.default) () =
   let pattern_str = {|^[^a-zA-Z0-9]*\s*|} ^ "(?:" ^ get_nosem_pattern_choices ~config () ^ ")" in
   Pcre2_.regexp (pattern_str ^ rule_id_re_str) ~flags:[ `CASELESS ]
 
+(*
+   A justification may follow the annotation after "--", as with gosec's #nosec:
+     # nosemgrep: rule-id -- the input is validated upstream
+     # nosemgrep -- generated code
+   It is reported as the suppression's justification (e.g. in SARIF).
+   This regex captures everything after the annotation; see
+   [split_justification] for the "--" part.
+*)
+let get_nosem_justification_re ?(config=Engine_config.default) () =
+  let pattern_str = "(?:" ^ get_nosem_pattern_choices ~config () ^ ")(?P<rest>.*)" in
+  Pcre2_.regexp pattern_str ~flags:[ `CASELESS ]
+
+(* A closing "*/", "-->" or "*)" ends the comment, not the justification,
+   and the "--" of "-->" is not a separator. *)
+let justification_re =
+  lazy
+    (Pcre2_.regexp
+       {|^(?P<before>.*?)(?:^|\s)--(?!>)\s*(?P<justification>.*?)\s*(?:\*/|-->|\*\))?\s*$|})
+
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
+
+(*
+   Split "rule-a, rule-b -- some reason" into "rule-a, rule-b" and
+   "some reason", so that a justification is never read as rule IDs.
+*)
+let split_justification (s : string) : string * string option =
+  let rex = Lazy.force justification_re in
+  let group name subst =
+    match Pcre2_.get_named_substring_and_ofs rex name subst with
+    | Ok (Some (str, _)) -> str
+    | Ok None
+    | Error _ ->
+        ""
+  in
+  match Pcre2_.exec_noerr ~rex s with
+  | None -> (s, None)
+  | Some subst -> (
+      match group "justification" subst with
+      | "" -> (group "before" subst, None)
+      | justification -> (group "before" subst, Some justification))
 
 (*
    Try to recognise the [rex] (a regex) into the given [line] and returns an
@@ -107,6 +146,7 @@ let recognise_and_collect ~rex (line_num, line) =
       |> List.concat_map (fun subst ->
              match Pcre2_.get_named_substring_and_ofs rex "ids" subst with
              | Ok (Some (s, (begin_ofs, _end_ofs))) ->
+                 let s, _justification = split_justification s in
                  (* TODO: This will associate each ID with the range of the entire ID list.
                     Fix later.
                  *)
@@ -119,6 +159,13 @@ let recognise_and_collect ~rex (line_num, line) =
                  (* TODO: log something? *)
                  [ None ])
       |> Option.some
+
+(* check if the id specified by the user is the [rule_match]'s [rule_id]. *)
+let nosem_matches (pm : Core_match.t) id =
+  match Rule_ID.of_string_opt id with
+  | Some id -> Rule_ID.ends_with pm.rule_id.id ~suffix:id
+  (* If `id` isn't a valid identifier don't supress any rule. *)
+  | None -> false
 
 (*
    Try to recognize a possible [nosem] tag into the given [match].
@@ -187,13 +234,7 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
                  List.hd (String.split_on_char ' ' s) (* nosemgrep: list-hd *),
                  col ))
       in
-      (* check if the id specified by the user is the [rule_match]'s [rule_id]. *)
-      let nosem_matches id =
-        match Rule_ID.of_string_opt id with
-        | Some id -> Rule_ID.ends_with pm.rule_id.id ~suffix:id
-        (* If `id` isn't a valid identifier don't supress any rule. *)
-        | None -> false
-      in
+      let nosem_matches = nosem_matches pm in
       List.fold_left
         (fun (result, errors) (line_num, id, col) ->
           (* strip quotes from the beginning and end of the id. this allows
@@ -268,6 +309,57 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
           (nosem_matches id || result, errors))
         (false, []) ids
 
+(*
+   The justification of an ignored match, taken from the annotation that
+   ignores it: on the match's first line, or else on the line before. An
+   annotation applies if it names no rule or names the match's rule.
+*)
+let nosem_justification ~nosem_inline_re ~nosem_previous_line_re
+    ~nosem_justification_re (pm : Core_match.t) : string option =
+  let start, _ = pm.range_loc in
+  let line = start.pos.line in
+  let applies rex text =
+    match recognise_and_collect ~rex (line, text) with
+    | None -> false
+    | Some annotations ->
+        List.exists
+          (function
+            | None -> true
+            | Some (_, ids, _) ->
+                List.hd (String.split_on_char ' ' ids) (* nosemgrep: list-hd *)
+                |> Common2.strip '"' |> nosem_matches pm)
+          annotations
+  in
+  let justification text =
+    match Pcre2_.exec_noerr ~rex:nosem_justification_re text with
+    | None -> None
+    | Some subst -> (
+        match
+          Pcre2_.get_named_substring_and_ofs nosem_justification_re "rest"
+            subst
+        with
+        | Ok (Some (rest, _)) -> snd (split_justification rest)
+        | Ok None
+        | Error _ ->
+            None)
+  in
+  let current, previous =
+    match
+      UFile.lines_of_file_exn (max 0 (line - 1), line)
+        pm.path.internal_path_to_content
+      |> List.rev
+    with
+    | current :: previous :: _ -> (Some current, Some previous)
+    | [ current ] -> (Some current, None)
+    | [] -> (None, None)
+  in
+  [ (nosem_inline_re, current); (nosem_previous_line_re, previous) ]
+  |> List.find_map (fun (rex, text) ->
+         match text with
+         | Some text when applies rex text -> Some (justification text)
+         | _ -> None)
+  |> Option.join
+
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)
@@ -277,6 +369,7 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
   (* filters [rule_match]s by the [nosemgrep] tag. *)
   let nosem_inline_re = get_nosem_inline_re ~config () in
   let nosem_previous_line_re = get_nosem_previous_line_re ~config () in
+  let nosem_justification_re = get_nosem_justification_re ~config () in
   let matches, wide_errors =
     matches
     |> List_.map (fun (pm : Core_result.processed_match) ->
@@ -284,7 +377,13 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
              let is_ignored, errors =
                rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re pm.pm
              in
-             ({ pm with is_ignored }, errors)
+             let justification =
+               if is_ignored then
+                 nosem_justification ~nosem_inline_re ~nosem_previous_line_re
+                   ~nosem_justification_re pm.pm
+               else None
+             in
+             ({ pm with is_ignored; justification }, errors)
            with
            | (Common.ErrorOnFile _) as exn ->
                Exception.catch_and_reraise exn
