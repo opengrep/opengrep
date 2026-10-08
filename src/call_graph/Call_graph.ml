@@ -91,9 +91,20 @@ end
 
 module Dot = Graph.Graphviz.Dot (Display)
     
-(* OCamlgraph: Use built-in algorithms *)
-module Topo = Graph.Topological.Make (G)
-module SCC = Graph.Components.Make (G)
+(* The graph is hash-table backed, so its own vertex order follows the hash
+   of a [Function_id] key, which contains the file path: the order of two
+   functions with no edge between them would depend on the path. The
+   traversals below order vertices by [Function_id.compare] instead. *)
+module G_ordered = struct
+  include G
+
+  let sorted (vertices : V.t list) = List.sort Function_id.compare vertices
+  let iter_vertex f g = fold_vertex List.cons g [] |> sorted |> List.iter f
+  let iter_succ f g v = fold_succ List.cons g v [] |> sorted |> List.iter f
+end
+
+module Topo = Graph.Topological.Make_stable (G)
+module SCC = Graph.Components.Make (G_ordered)
 
 (** Helpers **)
 

@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-cs-query-lambdas
+    message: A query parameter reaches a command
+    languages: [csharp]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: Request.Query[...]
+    pattern-sinks:
+      - pattern: Exec(...)

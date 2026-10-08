@@ -625,14 +625,12 @@ end = struct
         | other -> other)
     | other -> other
 
-  (* A write's identity is the written lval alone: two writes to the same
-   * lval fuse into one carrying the union of their taints (see
-   * [fuse_guards]), so a signature holds one write per lval however many
-   * taint combinations reach it. *)
   let compare_taints_to_lval
-      { taints = _; lval = lv1; guards = _ }
-      { taints = _; lval = lv2; guards = _ } =
-    T.compare_lval lv1 lv2
+      { taints = ts1; lval = lv1; guards = _ }
+      { taints = ts2; lval = lv2; guards = _ } =
+    match Taints.compare ts1 ts2 with
+    | 0 -> T.compare_lval lv1 lv2
+    | other -> other
 
   let compare_arg (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
     let compare_taints_and_shape (taints1, shape1) (taints2, shape2) =
@@ -1147,10 +1145,12 @@ end
 
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
-  lambda_sigs : Signature.t FunctionMap.t;
-      (** The signatures of lambdas lifted out of their enclosing function:
-          the variables a lambda captures are [BCaptured] placeholders, bound
-          where the closure is formed (see [Sig_inst.close_over]). *)
+  lambda_sigs : Signature.t IL.NameMap.t;
+      (** The signatures of lambdas lifted out of their enclosing function,
+          by the lambda's IL name (a hoisted function's is the same at its
+          uses as at its definition): the variables a lambda captures are
+          [BCaptured] placeholders, bound where the closure is formed (see
+          [Sig_inst.close_over]). *)
 }
 
 (** Separate database for builtin function signatures.
@@ -1229,7 +1229,7 @@ let show_name (name_opt : IL.name option) =
   | None -> ""
 
 let empty_signature_database () : signature_database =
-  { signatures = FunctionMap.empty; lambda_sigs = FunctionMap.empty }
+  { signatures = FunctionMap.empty; lambda_sigs = IL.NameMap.empty }
 
 let lookup_signature (db : signature_database) (name : Function_id.t)
     (arity : int) : Signature.t option =
@@ -1244,8 +1244,8 @@ let lookup_all_signatures (db : signature_database) (name : Function_id.t)
   | Some sigs -> SignatureSet.elements sigs
   | None -> []
 
-(* The latest extraction replaces an equal signature ([Signature.compare]
-   identifies a write by its lval): in a fixpoint, the newest is wanted. *)
+(* The latest extraction replaces an equal signature: in a fixpoint, the
+   newest is wanted. *)
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =
@@ -1267,13 +1267,13 @@ let replace_signature (db : signature_database) (name : Function_id.t)
   in
   { db with signatures }
 
-let add_lambda_sig (db : signature_database) (name : Function_id.t)
+let add_lambda_sig (db : signature_database) (name : IL.name)
     (lambda_sig : Signature.t) : signature_database =
-  { db with lambda_sigs = FunctionMap.add name lambda_sig db.lambda_sigs }
+  { db with lambda_sigs = IL.NameMap.add name lambda_sig db.lambda_sigs }
 
-let find_lambda_sig (db : signature_database) (name : Function_id.t) :
+let find_lambda_sig (db : signature_database) (name : IL.name) :
     Signature.t option =
-  FunctionMap.find_opt name db.lambda_sigs
+  IL.NameMap.find_opt name db.lambda_sigs
 
 let show_func_key (key : func_key) : string =
   Function_id.show_debug key
