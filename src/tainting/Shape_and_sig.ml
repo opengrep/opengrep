@@ -39,9 +39,12 @@ module Fields = Map.Make (struct
     | Oint i1, Oint i2 -> Int.compare i1 i2
     | Oslice n1, Oslice n2 -> Int.compare n1 n2
     | Oany, Oany -> 0
-    | (Ofld _ | Ostr _), (Oint _ | Oslice _ | Oany) -> -1
-    | Oint _, (Oslice _ | Oany) -> -1
-    | Oslice _, Oany -> -1
+    | Ocall, Ocall -> 0
+    | (Ofld _ | Ostr _), (Oint _ | Oslice _ | Oany | Ocall) -> -1
+    | Oint _, (Oslice _ | Oany | Ocall) -> -1
+    | Oslice _, (Oany | Ocall) -> -1
+    | Oany, Ocall -> -1
+    | Ocall, (Ofld _ | Ostr _ | Oint _ | Oslice _ | Oany) -> 1
     | Oany, (Ofld _ | Ostr _ | Oint _ | Oslice _) -> 1
     | Oslice _, (Ofld _ | Ostr _ | Oint _) -> 1
     | Oint _, (Ofld _ | Ostr _) -> 1

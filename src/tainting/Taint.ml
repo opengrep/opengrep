@@ -154,6 +154,7 @@ type offset =
   | Ostr of string
   | Oslice of int
   | Oany
+  | Ocall
 [@@deriving eq, ord]
 
 type lval = { base : base; offset : offset list }
@@ -180,6 +181,7 @@ let show_offset offset =
   | Ostr s -> Printf.sprintf "[%s]" s
   | Oslice n -> Printf.sprintf "[%d..]" n
   | Oany -> "[*]"
+  | Ocall -> "()"
 
 let show_offset_list offset =
   offset |> List_.map show_offset |> String.concat ""
@@ -261,7 +263,7 @@ let rev_IL_offset_of_offset offset =
                  oorig = NoOrig;
                }
          | Oslice n -> Some IL.{ o = Slice n; oorig = NoOrig }
-         | Oany -> None)
+         | Oany | Ocall -> None)
   in
   os
   |> List.fold_left

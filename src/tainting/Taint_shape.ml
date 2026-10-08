@@ -277,7 +277,7 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
              * 'o@i', the call `o.getX()` would have taints '{o@i, o@i.x}'
              * when it should only have taints '{o@i.x}'. *)
             Taints.empty
-         | _, Oany ->
+         | _, (Oany | Ocall) ->
             (* Cannot handle this offset. *)
             taints
          | __any__, ((Ofld _ | Ostr _ | Oint _ | Oslice _) as o) ->
@@ -888,12 +888,17 @@ and find_in_shape_w_carry ?max ~lang ~taints offset shape =
               m "Could not find offset %s in polymorphic shape %s"
                 (debug_offset offset) (show_shape shape));
           not_found)
-  | Fun _ ->
-      (* This is an error, we just don't want to crash here. *)
-      Log.err (fun m ->
-          m "Could not find offset %s in function shape %s"
-            (debug_offset offset) (show_shape shape));
-      not_found
+  | Fun _ -> (
+      match offset with
+      (* A call of the function: what it returns is not in its shape, see
+         [Sig_inst.close_over]. *)
+      | Ocall :: _ -> not_found
+      | _ ->
+          (* This is an error, we just don't want to crash here. *)
+          Log.err (fun m ->
+              m "Could not find offset %s in function shape %s"
+                (debug_offset offset) (show_shape shape));
+          not_found)
 
 and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
   let not_found = `Not_found (taints, Obj obj, offset) in
@@ -940,7 +945,8 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
                   | Oint _
                   | Ofld _
                   | Ostr _
-                  | Oany ->
+                  | Oany
+                  | Ocall ->
                       None
                 in
                 match recur_offset with
@@ -958,6 +964,8 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
           with
           | None -> not_found
           | Some cell -> `Found cell)
+      (* An object is not called; [Oany] is not consulted for a call. *)
+      | Ocall -> not_found
       | Ofld _
       | Oint _
       | Ostr _ -> (
@@ -1073,9 +1081,11 @@ and update_offset_in_obj ~f offset obj =
                 | Oint _
                 | Ofld _
                 | Ostr _
-                | Oany ->
+                | Oany
+                | Ocall ->
                     Some cell)
               obj
+        | Ocall -> obj
         | Ofld _
         | Oint _
         | Ostr _ ->

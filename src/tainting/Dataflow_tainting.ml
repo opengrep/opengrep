@@ -2388,6 +2388,17 @@ let check_function_call_callee ~(arity : int) env e =
       let taints, shape, lval_env = check_tainted_expr ~arity env e in
       (`Fun, taints, shape, lval_env)
 
+(* The taints a call's result carries from its callee. A variable the lambda
+   captures, called at [call_offset] into it, carries the value the closure
+   binds to the variable, called ([T.Ocall], see [Sig_inst.close_over]). *)
+let called ~call_offset =
+  Taints.map_taint (fun (taint : T.taint) ->
+      match taint.orig with
+      | Var ({ base = BCaptured _; offset } as lval) ->
+          let offset = offset @ call_offset @ [ T.Ocall ] in
+          { taint with orig = Var { lval with offset } }
+      | Var _ | Shape_var _ | Src _ | Control -> taint)
+
 (* Test whether an instruction is tainted, and if it is also a sink,
  * report the effect too (by side effect). *)
 let call_with_intrafile lval_opt e env args instr =
@@ -2630,7 +2641,9 @@ let call_with_intrafile lval_opt e env args instr =
                     let call_taints =
                       match e_obj with
                       | `Fun -> call_taints
-                      | `Obj (obj_taints, _) -> call_taints |> Taints.union obj_taints
+                      | `Obj (obj_taints, _) ->
+                          call_taints
+                          |> Taints.union (called ~call_offset obj_taints)
                     in
                     (call_taints, Bot, lval_env)))))
   in
@@ -2638,7 +2651,7 @@ let call_with_intrafile lval_opt e env args instr =
   let all_call_taints =
     if env.taint_inst.options.taint_only_propagate_through_assignments then
       call_taints
-    else Taints.union e_taints call_taints
+    else Taints.union (called ~call_offset:[] e_taints) call_taints
   in
   let all_call_taints =
     check_type_and_drop_taints_if_bool_or_number env all_call_taints
