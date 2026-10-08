@@ -598,7 +598,7 @@ global_var:
 
 static_var:
  | variable                   { (DName $1, None) }
- | variable TEQ static_scalar { (DName $1, Some ($2, $3)) }
+ | variable TEQ expr { (DName $1, Some ($2, $3)) }
 
 unset_variable: expr_or_dots    { $1 }
 
