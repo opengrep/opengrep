@@ -36,7 +36,10 @@ module TH = Token_helpers_php
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-type env = { stack : ctx list; misc : unit }
+(* angles counts the '<' still open since the last '=', ';', '{' or '}', so
+ * that a '>>' is split only where it can close two type arguments, and not in
+ * an initializer such as 'const X = 4 >> 1;' *)
+type env = { stack : ctx list; angles : int }
 
 and ctx =
   | Toplevel
@@ -113,6 +116,13 @@ let rec is_variable toks =
   | [] -> false
   | T_VARIABLE _ :: _ -> true
   | x :: xs -> if TH.is_comment x then is_variable xs else false
+
+(* Looks to see if the previous token is '::' (ignoring comments) *)
+let rec is_after_colcol (acc : token list) : bool =
+  match acc with
+  | [] -> false
+  | TCOLCOL _ :: _ -> true
+  | x :: xs -> if TH.is_comment x then is_after_colcol xs else false
 
 (*
  * Find the next group of parenthesized tokens, being sure to balance parens.
@@ -355,9 +365,13 @@ let fix_tokens xs =
         (* type context, those are the only places where types allowed for
          * now, which makes the job easier than in parsing_hacks_java.ml
          *)
-        | (ClassHeader | ClassBody | TypeHeader | FunctionHeader) :: _ ->
+        | (ClassHeader | ClassBody | TypeHeader | FunctionHeader) :: _
+          when env.angles >= 2 ->
             let lhs, rhs = split_two_char_info ii in
-            aux env (TGREATER rhs :: TGREATER lhs :: acc) xs
+            aux
+              { env with angles = env.angles - 2 }
+              (TGREATER rhs :: TGREATER lhs :: acc)
+              xs
         | UserAttribute :: rest ->
             aux { env with stack = rest } (T_SR ii :: acc) xs
         | _ -> aux env (T_SR ii :: acc) xs)
@@ -416,7 +430,8 @@ let fix_tokens xs =
            * could be used in a different context as part of an XHP attribute
            * name, see ident_xhp_attr_name_atom rule in parser_php.mly
            *)
-          | (T_CLASS _ | T_TRAIT _ | T_INTERFACE _), Toplevel :: _rest ->
+          | (T_CLASS _ | T_TRAIT _ | T_INTERFACE _), Toplevel :: _rest
+            when not (is_after_colcol acc) ->
               ClassHeader :: env.stack
           | T_TYPE _, Toplevel :: _rest -> TypeHeader :: env.stack
           | T_FUNCTION _, (Toplevel | ClassHeader) :: _rest ->
@@ -441,7 +456,18 @@ let fix_tokens xs =
           (* default case *)
           | _, st -> st
         in
-        aux { env with stack } (x :: acc) xs
+        let angles =
+          match x with
+          | TSMALLER _ -> env.angles + 1
+          | TGREATER _ -> max 0 (env.angles - 1)
+          | TEQ _
+          | TSEMICOLON _
+          | TOBRACE _
+          | TCBRACE _ ->
+              0
+          | _ -> env.angles
+        in
+        aux { stack; angles } (x :: acc) xs
   in
-  aux { stack = [ Toplevel ]; misc = () } [] (fix_heredocs (split_ampersands xs))
+  aux { stack = [ Toplevel ]; angles = 0 } [] (fix_heredocs (split_ampersands xs))
 [@@profiling]

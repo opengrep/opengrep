@@ -1261,6 +1261,11 @@ expr:
  | T_UNSET_CAST  expr   { CastUnset($1,$2) }
 
  | T_EXIT exit_expr { Exit($1,$2) }
+ | T_EXIT "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Exit ($1, Some ($2, Some (Ellipsis $3), $4))
+       else FirstClassCallable (Id (XName [QI (Name (str_of_info $1, $1))]),
+                                $2, $3, $4) }
  | "@" expr           { At($1,$2) }
  | T_PRINT expr  { Print($1,$2) }
 
@@ -1784,7 +1789,7 @@ dim_offset:
 exit_expr:
  | (*empty*)    { None }
  | "(" ")"      { Some($1, None, $2) }
- | "(" expr_or_dots ")" { Some($1, Some $2, $3) }
+ | "(" expr ")" { Some($1, Some $2, $3) }
 
 
 (*************************************************************************)
