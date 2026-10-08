@@ -1478,7 +1478,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
           match tlval.offset with
           | Ofld var :: offset -> Some (var, offset, snd method_.ident)
           | []
-          | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ ->
+          | (Oint _ | Ostr _ | Oslice _ | Oany | Ocall) :: _ ->
               (* we have no 'var' to take here *)
               log_error ();
               None)
@@ -1620,7 +1620,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
             match offset with
             | [] -> Some (`Var var, offset)
             | Ofld var :: offset -> Some (`Var var, offset)
-            | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ -> None)
+            | (Oint _ | Ostr _ | Oslice _ | Oany | Ocall) :: _ -> None)
         | {
          e =
            Fetch
@@ -1634,7 +1634,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
              * receiver it reads fields of: [this.x] is the [x] there. *)
             match offset with
             | Ofld var :: offset -> Some (`Var var, offset)
-            | [] | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ -> None)
+            | [] | (Oint _ | Ostr _ | Oslice _ | Oany | Ocall) :: _ -> None)
         | __else__ -> None)
     | BGlob var
     | BCaptured var ->
@@ -2631,16 +2631,16 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
     let taints = Xtaint.to_taints xtaints in
     if names_own_param taints then None else Some (taints, shape)
   in
-  (* The value of a captured variable, at an offset into it; [None] when
-     the environment does not know the variable, which leaves the
-     placeholder for the owner of the variable. A variable the environment
-     knows but holds nothing at the offset is clean. *)
-  (* What a function the variable holds returns, called here without
-     arguments: in the lifted signature, the result of calling a captured
-     variable is read as the variable itself. *)
-  let return_of (var : IL.name) (fun_sig : Signature.t) =
+  (* What the function at an offset into a captured variable returns,
+     called without arguments (what the lambda calls it with is in the
+     deferred call, see [close_effect]). *)
+  let return_of (var : IL.name) (offset : T.offset list)
+      (fun_sig : Signature.t) =
     let callee : IL.exp =
-      { e = Fetch { base = Var var; rev_offset = [] }; eorig = NoOrig }
+      let rev_offset =
+        T.rev_IL_offset_of_offset offset |> Option.value ~default:[]
+      in
+      { e = Fetch { base = Var var; rev_offset }; eorig = NoOrig }
     in
     match
       instantiate_function_signature ~lang ~max_offset:max lval_env fun_sig
@@ -2659,18 +2659,49 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
                 (taints, shape))
           (Taints.empty, Bot) call_effects
   in
-  let value_at (var : IL.name) (offset : T.offset list) =
-    let* taints, shape = value_of var in
-    let taints, shape =
-      match shape with
-      | Fun fun_sig ->
-          let ret_taints, ret_shape = return_of var fun_sig in
-          (Taints.union taints ret_taints, ret_shape)
-      | Bot | Obj _ | Arg _ -> (taints, shape)
+  (* The value at an offset into a captured variable's, through the calls
+     ([Ocall]) in the offset. A call of a function the variable holds is
+     what it returns, with the function's own taints. A call of a value not
+     known to be a function is, as any call of an unknown function: a method
+     call carries its receiver's taints, a direct call its callee's, and a
+     direct call of a parameter of the enclosing function nothing (its
+     result is the deferred call's, as a parameter callback's). [None] when
+     the environment does not know the variable, which leaves the
+     placeholder for the owner of the variable. A variable the environment
+     knows but holds nothing at the offset is clean. *)
+  let rec at_offset (var : IL.name) ~(path : T.offset list) value
+      (offset : T.offset list) =
+    let rec split acc = function
+      | [] -> (List.rev acc, None)
+      | T.Ocall :: rest -> (List.rev acc, Some rest)
+      | o :: rest -> split (o :: acc) rest
     in
-    Some
-      (Shape.find_in_shape_poly ~max ~lang ~taints offset shape
-      |> Option.value ~default:(Taints.empty, Bot))
+    let find offset =
+      let taints, shape = value in
+      Shape.find_in_shape_poly ~max ~lang ~taints offset shape
+      |> Option.value ~default:(Taints.empty, Bot)
+    in
+    let prefix, called = split [] offset in
+    let taints, shape = find prefix in
+    match called with
+    | None -> (taints, shape)
+    | Some rest -> (
+        let path = path @ prefix in
+        match (shape, List.rev prefix) with
+        | Fun fun_sig, _ ->
+            let ret_taints, ret_shape = return_of var path fun_sig in
+            at_offset var ~path:(path @ [ Ocall ])
+              (Taints.union taints ret_taints, ret_shape)
+              rest
+        | (Bot | Obj _ | Arg _), _method :: rev_receiver ->
+            let taints, _ = find (List.rev rev_receiver) in
+            (taints, Bot)
+        | Arg _, [] -> (Taints.empty, Bot)
+        | (Bot | Obj _), [] -> (taints, Bot))
+  in
+  let value_at (var : IL.name) (offset : T.offset list) =
+    let* value = value_of var in
+    Some (at_offset var ~path:[] value offset)
   in
   let inst_lval (lval : T.lval) =
     match lval.base with
@@ -2697,16 +2728,19 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
       fix_token_trace_for_var = (fun ~var_tokens:_ tokens -> tokens);
     }
   in
-  (* A write to a captured variable that still holds a parameter of the
+  (* A write to a captured variable that still holds parameters of the
      enclosing function is a write to the variable, where the closure is used
-     in that function, and a write to the parameter, where it leaves it. *)
-  let param_held_by (var : IL.name) : T.arg option =
-    let* taints, _ = value_of var in
-    Taints.to_taint_list taints
-    |> List.find_map (fun (taint : T.taint) ->
-           match taint.orig with
-           | Var { base = BArg arg; offset = [] } -> Some arg
-           | _ -> None)
+     in that function, and a write to each of those parameters, where it
+     leaves it. *)
+  let params_held_by (var : IL.name) : T.arg list =
+    match value_of var with
+    | None -> []
+    | Some (taints, _) ->
+        Taints.to_taint_list taints
+        |> List_.filter_map (fun (taint : T.taint) ->
+               match taint.orig with
+               | Var { base = BArg arg; offset = [] } -> Some arg
+               | _ -> None)
   in
   (* The effects of calling the function a captured variable holds, with
      the arguments the lambda calls it with: its sink and write effects are
@@ -2732,11 +2766,15 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
   in
   let close_effect (eff : Effect.t) : Effect.t list =
     match eff with
-    | ToLval ({ lval = { base = BCaptured var; offset }; _ } as tolval) -> (
-        match param_held_by var with
-        | Some arg ->
-            [ eff; ToLval { tolval with lval = { base = BArg arg; offset } } ]
-        | None -> [ eff ])
+    (* A write into the result of a call is a write to nothing tracked. *)
+    | ToLval { lval = { base = BCaptured _; offset }; _ }
+      when List.mem T.Ocall offset ->
+        []
+    | ToLval ({ lval = { base = BCaptured var; offset }; _ } as tolval) ->
+        eff
+        :: (params_held_by var
+           |> List_.map (fun arg ->
+                  Effect.ToLval { tolval with lval = { base = BArg arg; offset } }))
     | ToSinkInCall
         ({ arg = Effect.Captured var; arg_offset; callee; args_taints; guards }
          as call) -> (
@@ -2758,12 +2796,9 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
         in
         match value_of var with
         | None -> [ eff ]
-        | Some (taints, shape) -> (
-            match
-              Shape.find_in_shape_poly ~max ~lang ~taints arg_offset shape
-            with
-            | Some (_, shape) -> callee_of shape
-            | None -> []))
+        | Some value ->
+            let _, shape = at_offset var ~path:[] value arg_offset in
+            callee_of shape)
     | ToReturn _
     | ToLval _
     | ToSink _
