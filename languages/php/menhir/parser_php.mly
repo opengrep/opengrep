@@ -1564,6 +1564,12 @@ static_scalar_primary:
  | T_PARENT "::" T_CLASS             { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name ("class",$3))])) }
  | qualified_class_name "::" ident   { ClassGet(Id $1,$2,Id (XName [QI (Name $3)])) }
  | qualified_class_name "::" T_CLASS { ClassGet(Id $1,$2,Id (XName [QI (Name ("class",$3))])) }
+ | T_SELF "::" "{" static_scalar "}"
+     { ClassGet(Id (Self $1), $2, BraceIdent ($3, $4, $5)) }
+ | T_PARENT "::" "{" static_scalar "}"
+     { ClassGet(Id (Parent $1), $2, BraceIdent ($3, $4, $5)) }
+ | qualified_class_name "::" "{" static_scalar "}"
+     { ClassGet(Id $1, $2, BraceIdent ($3, $4, $5)) }
  (* PHP 8.3: a property may be read in a constant expression, which is how an
   * enum case's name or value is used there: 'Suit::Hearts->value'. The
   * operand is any constant expression, as in '(new A)->prop'; PHP rejects
