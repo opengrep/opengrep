@@ -625,7 +625,7 @@ constant_declaration: ioption(attributes) unticked_constant_declaration
  * carries its own '='.
  *)
 unticked_constant_declaration:
-  T_CONST ioption(type_php) constant_declaration_elems ";"
+  T_CONST ioption(type_php_static) constant_declaration_elems ";"
    { $3 |> List.map (fun (name, eqtok, v) ->
        { cst_toks = ($1, eqtok, $4); cst_name = name; cst_val = v;
          cst_type = $2; cst_attrs = None }) }
@@ -1089,8 +1089,8 @@ primary_type_php:
  | "?" type_php
      { HintQuestion ($1, $2)  }
  (* PHP 8.1/8.2: intersection types (A&B) for DNF types *)
- | "(" intersection_type_php_list ")"
-     { HintIntersection ($1, $2, $3) }
+ | "(" intersection_elem_php tand_any intersection_type_php_list ")"
+     { HintIntersection ($1, Left $2 :: Right $3 :: $4, $5) }
  | "(" non_empty_type_php_list ")"
      { HintTuple ($1, $2, $3) }
  | "(" T_FUNCTION "(" type_php_or_dots_list ")" return_type ")"
@@ -1121,9 +1121,7 @@ type_arg_list:
   | type_php                       { [Left $1]}
   | type_php "," type_arg_list     { (Left $1)::(Right $2):: $3 }
 
-return_type:
- | ":" type_php_static       { $1, $2 }
- | ":" bare_intersection_php { $1, $2 }
+return_type: ":" type_php_static { $1, $2 }
 
 (* 'static' is a type only in return and class constant position, so these
  * get a type_php of their own rather than 'static' joining primary_type_php,
@@ -1134,6 +1132,7 @@ type_php_static:
  | type_php_static "::" primary_type_php { HintTypeConst ($1, $2, $3) }
  | list_sep(primary_type_php_static, "|")
     { match $1 with | [Left v] -> v | xs -> HintUnion xs }
+ | bare_intersection_php { $1 }
 
 primary_type_php_static:
  | primary_type_php { $1 }
@@ -2045,7 +2044,7 @@ param_type_php:
 (* no parentheses to record here, so the '&' stands in for them;
  * php_to_generic ignores those and folds on the real '&' tokens *)
 bare_intersection_php:
- | class_name tand_any intersection_type_php_list
+ | intersection_elem_php tand_any intersection_type_php_list
      { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
 
 (* the same, in the one position where a '&' could instead introduce a
@@ -2054,15 +2053,20 @@ bare_intersection_php:
  * in a pattern: '&$T' reads as the by-reference parameter it looks like.
  *)
 bare_intersection_param_php:
- | class_name TAND_NOT_VAR intersection_type_php_list_param
+ | intersection_elem_php TAND_NOT_VAR intersection_type_php_list_param
      { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
 
 intersection_type_php_list_param:
- | list_sep(class_name, TAND_NOT_VAR) { $1 }
+ | list_sep(intersection_elem_php, TAND_NOT_VAR) { $1 }
 
 (* PHP 8.1/8.2: intersection types use & separator, must have 2+ types *)
 intersection_type_php_list:
- | list_sep(class_name, tand_any) { $1 }
+ | list_sep(intersection_elem_php, tand_any) { $1 }
+
+intersection_elem_php:
+ | class_name { $1 }
+ | T_SELF     { Hint (Self $1, None) }
+ | T_PARENT   { Hint (Parent $1, None) }
 
 class_name_list: listc(class_name_no_array) { $1 }
 
