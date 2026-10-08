@@ -308,7 +308,7 @@ let token_to_intermediate_var token : Out.match_intermediate_var option =
    * Such variables are (re)using real tokens whose content has nothing to do with
    * the actual fake variables, simply because we need real tokens. The output we
    * get as intermediate variable is irrelevant and simply wrong for tooling that
-   * consumes intermediate variables. 
+   * consumes intermediate variables.
    * Tried to make the tokens Faketok / ExpandedTok earlier in the pipeline but
    * unfortunately it messed up tainting results. This hack, however ugly as it may
    * be, is not on a critical path so it should be otherwise harmless while doing
@@ -365,7 +365,8 @@ let taint_trace_to_dataflow_trace (traces : Taint_trace.item list) :
     }
 
 let unsafe_match_to_match ?(inline = false)
-    ({ pm = x; is_ignored; autofix_edit } : Core_result.processed_match) :
+    ({ pm = x; is_ignored; justification; autofix_edit } :
+      Core_result.processed_match) :
     Out.core_match =
   let min_loc, max_loc = x.range_loc in
   let startp, endp = OutUtils.position_range min_loc max_loc in
@@ -459,6 +460,7 @@ let unsafe_match_to_match ?(inline = false)
         fix =
           Option.map (fun edit -> edit.Textedit.replacement_text) autofix_edit;
         is_ignored;
+        justification = justification |> Option.map Utf8.sanitize;
         engine_kind = engine;
         validation_state = Some x.validation_state;
         historical_info;
