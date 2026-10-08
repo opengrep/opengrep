@@ -334,6 +334,10 @@ list_sep(X,Sep):
 %inline
 listc(X): list_sep(X, ",") { $1 }
 
+listc_trailing(X):
+ | listc(X)     { $1 }
+ | listc(X) "," { $1 @ [Right $2] }
+
 (* Like above, but skipping the separate tokens.
  * We deviate from pure CST towards an AST for a few constructs
  *)
@@ -453,7 +457,7 @@ statement:
  | T_GLOBAL listc(global_var) ";" { Globals($1,$2,$3) }
  | T_STATIC listc(static_var) ";" { StaticVars($1,$2,$3) }
 
- | T_UNSET "(" listc(unset_variable) ")" ";" { Unset($1,($2,$3,$4),$5) }
+ | T_UNSET "(" listc_trailing(unset_variable) ")" ";" { Unset($1,($2,$3,$4),$5) }
 
  | T_USE use_filename ";"         { Use($1,$2,$3) }
  | T_DECLARE  "(" listc(declare) ")" declare_statement
@@ -495,11 +499,12 @@ match_case_list:
 match_case:
     | match_conds T_ARROW expr {MCase($1, $3)}
 
-    | T_DEFAULT T_ARROW expr { MDefault($1, $3)}
+    | T_DEFAULT ioption(",") T_ARROW expr { MDefault($1, $4)}
 
 (* an arm may list several conditions, as in '1, 2 => "a"' *)
 match_conds:
     | expr { [$1] }
+    | expr "," { [$1] }
     | expr "," match_conds { $1 :: $3 }
 
 mellipse: "..." {MEllipsis $1} 
@@ -1284,7 +1289,7 @@ expr:
 
  | T_EVAL "(" expr_or_dots ")"         { Eval($1,($2,$3,$4)) }
 
- | T_ISSET "(" listc(expr_or_dots) ")" { Isset($1, ($2, $3, $4)) }
+ | T_ISSET "(" listc_trailing(expr_or_dots) ")" { Isset($1, ($2, $3, $4)) }
 
  | T_LIST "(" assignment_list ")" TEQ expr
      { AssignList($1,($2,$3,$4),$5,$6) }
@@ -1334,6 +1339,8 @@ call_expr:
   * 'clone($obj, ['p' => 1])->m()'.
   *)
  | T_CLONE "(" expr "," expr ")" { CloneWith($1, ($2, ($3, $4, $5), $6)) }
+ | T_CLONE "(" expr "," expr "," ")" { CloneWith($1, ($2, ($3, $4, $5), $7)) }
+ | T_CLONE "(" expr "," ")" { Clone($1, ParenExpr($2, $3, $5)) }
  (* An anonymous class is dereferencable too, and unlike a named class it does
   * not need the parentheses, since its own brackets come before the body:
   * both 'new class {}->m()' and 'new class () {}->m()' are valid.
@@ -1925,7 +1932,7 @@ namespace_use_declaration:
    { [NamespaceUse ($1, $2, $3, $4)] }
  | T_USE use_keyword?
    TANTISLASH? namespace_name TANTISLASH
-   "{" listc2(namespace_use_group_clause) "}"
+   "{" listc2(namespace_use_group_clause) ioption(",") "}"
   ";"
    { $7 |> List.map (fun (clause_kwd_opt, name, alias_opt) ->
        let full_name = (qiopt $3 $4) @ name in
@@ -1933,7 +1940,7 @@ namespace_use_declaration:
          | Some _ -> clause_kwd_opt
          | None -> $2
        in
-       NamespaceUse ($1, kwd_opt, [Left (full_name, alias_opt)], $9)
+       NamespaceUse ($1, kwd_opt, [Left (full_name, alias_opt)], $10)
       )
    }
 
