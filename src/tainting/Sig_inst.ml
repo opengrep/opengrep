@@ -2635,8 +2635,39 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
      the environment does not know the variable, which leaves the
      placeholder for the owner of the variable. A variable the environment
      knows but holds nothing at the offset is clean. *)
+  (* What a function the variable holds returns, called here without
+     arguments: in the lifted signature, the result of calling a captured
+     variable is read as the variable itself. *)
+  let return_of (var : IL.name) (fun_sig : Signature.t) =
+    let callee : IL.exp =
+      { e = Fetch { base = Var var; rev_offset = [] }; eorig = NoOrig }
+    in
+    match
+      instantiate_function_signature ~lang ~max_offset:max lval_env fun_sig
+        ~callee ~args:None [] ()
+    with
+    | None -> (Taints.empty, Bot)
+    | Some call_effects ->
+        List.fold_left
+          (fun (taints, shape) (ce : call_effect) ->
+            match ce with
+            | ToReturn { data_taints; data_shape; _ } ->
+                ( Taints.union taints data_taints,
+                  Shape.unify_shape ~lang shape data_shape )
+            | ToSink _ | ToLval _ | ToLvalCaptured _ | ToLvalThis _
+            | ToSinkInCall _ ->
+                (taints, shape))
+          (Taints.empty, Bot) call_effects
+  in
   let value_at (var : IL.name) (offset : T.offset list) =
     let* taints, shape = value_of var in
+    let taints, shape =
+      match shape with
+      | Fun fun_sig ->
+          let ret_taints, ret_shape = return_of var fun_sig in
+          (Taints.union taints ret_taints, ret_shape)
+      | Bot | Obj _ | Arg _ -> (taints, shape)
+    in
     Some
       (Shape.find_in_shape_poly ~max ~lang ~taints offset shape
       |> Option.value ~default:(Taints.empty, Bot))
