@@ -825,7 +825,7 @@ rule st_in_scripting state = parse
         push_mode state ST_BACKQUOTE;
         TBACKQUOTE(tokinfo lexbuf)
       }
-    | 'b'? "<<<" TABS_AND_SPACES (LABEL as s) NEWLINE {
+    | 'b'? "<<<" TABS_AND_SPACES ((LABEL as s) | '"' (LABEL as s) '"') NEWLINE {
         set_mode state (ST_START_HEREDOC s);
         set_bol state (tok lexbuf);
         T_START_HEREDOC (tokinfo lexbuf)
