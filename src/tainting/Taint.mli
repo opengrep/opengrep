@@ -62,7 +62,7 @@ type offset =
           [Oslice b :: Oslice a :: rest] to [Oslice (a+b) :: rest]. *)
   | Oany  (** An arbitrary non-constant index, `[*]` *)
   | Ocall
-      (** The result of calling the value the offset before it reaches, `()`.
+      (** The result of calling the value at the preceding offset, `()`.
           Only on a [BCaptured] placeholder: a lambda's call of a variable it
           captures, bound to what the function the variable holds returns
           where the closure is formed, see [Sig_inst.close_over]. *)

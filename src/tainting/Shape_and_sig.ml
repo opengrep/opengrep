@@ -1248,7 +1248,7 @@ let lookup_all_signatures (db : signature_database) (name : Function_id.t)
   | None -> []
 
 (* The latest extraction replaces an equal signature: in a fixpoint, the
-   newest is wanted. *)
+   newest is the one to keep. *)
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =

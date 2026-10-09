@@ -111,8 +111,8 @@ val find_in_cell_poly :
 
 val bound_poly_width : Taint.taints -> Taint.taints
 (** The polymorphic taints bounded in width: a base extended by more than
-    16 taints of two or more fields keeps of each its first field, as the
-    field ([Var]) and everything under it ([Shape_var]). *)
+    16 taints of two or more fields keeps only the first field of each, as
+    the field ([Var]) and everything under it ([Shape_var]). *)
 
 val bound_poly_width_by :
   ('a -> Taint.taint) -> ('a -> Taint.taint -> 'a) -> 'a list -> 'a list

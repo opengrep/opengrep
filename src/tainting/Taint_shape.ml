@@ -159,9 +159,9 @@ let compose_offset ?(max : int option) ~(lang : Lang.t)
 
 (* Polymorphic taints bounded in width: a base extended by more than
    [max_poly_width] taints of two or more fields, e.g. [arg(x).a.b],
-   [arg(x).a.c], [arg(x).d.e] and so on, keeps of each its first field: the
-   field itself ([Var]) and everything under it ([Shape_var]). The cap on an
-   offset's length bounds the depth of the extensions, not their number:
+   [arg(x).a.c], [arg(x).d.e] and so on, keeps only the first field of each:
+   the field itself ([Var]) and everything under it ([Shape_var]). The cap on
+   an offset's length bounds the depth of the extensions, not their number:
    joined round after round of a fixpoint, and each extended again, they
    multiply without bound otherwise. *)
 let max_poly_width = 16
@@ -302,7 +302,6 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
 (* A read of [offset] on a parameter's shape 'Arg (arg, base_offsets)', whose
  * value carries [taints]: the polymorphic taints extended by [offset], under
  * the shape extended the same way. 'None' when [offset] is a method call. *)
-
 let find_in_arg ?max ~lang ~taints offset arg base_offsets =
   (* Mirror the method-vs-field discriminator from
    * [fix_poly_taint_with_offset]: when any offset segment has a

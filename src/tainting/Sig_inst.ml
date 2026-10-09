@@ -88,7 +88,6 @@ let show_call_effect = function
 let show_call_effects call_effects =
   call_effects |> List_.map show_call_effect |> String.concat "; "
 
-(* The call effect under a guard composed onto its own. *)
 let conjoin_call_effect (g : Effect_guard.t) (ce : call_effect) : call_effect =
   let conj g' = Effect_guard.compose_and g g' in
   match ce with
@@ -100,7 +99,7 @@ let conjoin_call_effect (g : Effect_guard.t) (ce : call_effect) : call_effect =
   | ToSinkInCall c -> ToSinkInCall { c with guards = conj c.guards }
 
 (* The call effect as an effect of the caller, its written variable as the
-   lval it names in the caller's signature. *)
+   lval it refers to in the caller's signature. *)
 let effect_of_call_effect (ce : call_effect) : Effect.t =
   match ce with
   | ToSink tts -> Effect.ToSink tts
@@ -985,8 +984,8 @@ let arg_bound_in (params : Signature.params) (arg : T.arg) : bool =
   | Some Signature.Other -> String.equal arg.name ""
 
 (* The names a parameter binds: its variable's, and its pattern's for a
- * destructuring parameter (the extractor names the [BArg] after the
- * variable, [Signature.of_IL_params] after the pattern). *)
+ * destructuring parameter (the extractor gives the [BArg] the variable's
+ * name, [Signature.of_IL_params] the pattern's). *)
 let param_names (param : IL.param) : string list =
   Option.to_list (Option.map (fun (p : IL.name) -> fst p.ident) (IL_helpers.pname_of_param param))
   @ List.filter_map
@@ -1141,7 +1140,7 @@ let rec substitute_in_sig ~(partial : bool) ~lang
    *     [(IL.name, offset)] via [inst_var.inst_lval_to_name]; on None,
    *     drop the effect (no resolvable target).
    *   - [BGlob]: pass through unchanged via [inst_lval_to_name].
-   *   - [BCaptured]: keep verbatim — a write to a variable of an enclosing
+   *   - [BCaptured]: keep verbatim, as a write to a variable of an enclosing
    *     function is bound only where the closure is called, by the
    *     function owning the variable (see [Dataflow_tainting]). *)
   let walk_lval (lval : T.lval) : T.lval option =
@@ -1662,7 +1661,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
     base_shape
 
 (* What is the taint denoted by 'sig_lval'? A closed lambda's signature,
-   applied in the function that formed it ([outer_params]), may name that
+   applied in the function that formed it ([outer_params]), may refer to that
    function's parameters and receiver: those stay as they are. *)
 let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
     ~(outer_params : IL.param list) lval_env (taint_sig : Signature.t) fun_exp
@@ -1685,7 +1684,8 @@ let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
     match sig_lval.base with
     | T.BArg arg -> (
         match List.nth_opt fparams arg.index with
-        (* A model's placeholder on an unnamed slot names no frame. *)
+        (* A model's placeholder on an unnamed slot is not a parameter of the
+           enclosing function. *)
         | Some Signature.Other -> false
         | Some (Signature.P _ | Signature.POpt _ | Signature.PRest _ | Signature.PKwd _)
         | None ->
@@ -2616,7 +2616,7 @@ let effect_has_bglob_dependency (eff : Effect.t) : bool =
 let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
     : Signature.t =
   let max = Shape.max_poly_offset lang in
-  (* A value naming a parameter of the enclosing function with the (name,
+  (* A value referring to a parameter of the enclosing function with the (name,
      index) of one of the lambda's own ([def f(x): y = x; lambda x: y])
      cannot be told from that parameter once in the signature: the variable
      stays a placeholder, bound where the closure is called. *)
@@ -2730,9 +2730,9 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
     }
   in
   (* A write to a captured variable that still holds parameters of the
-     enclosing function is a write to the variable, where the closure is used
-     in that function, and a write to each of those parameters, where it
-     leaves it. *)
+     enclosing function is a write to the variable, for the uses of the
+     closure inside that function, and a write to each of those parameters,
+     for a closure that escapes the function. *)
   let params_held_by (var : IL.name) : T.arg list =
     match value_of var with
     | None -> []

@@ -506,7 +506,7 @@ let extract_and_check
     extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
       ~taint_inst ~ast info
   in
-  (* For closures, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
+  (* For closures, keep only ToSink effects with a concrete Src match; parameterised (BArg) taint is carried by the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
     match eff with
     | Effect.ToSink si ->
