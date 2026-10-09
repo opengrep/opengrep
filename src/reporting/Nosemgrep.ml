@@ -314,7 +314,7 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
    ignores it: on the match's first line, or else on the line before. An
    annotation applies if it names no rule or names the match's rule.
 *)
-let nosem_justification ~nosem_inline_re ~nosem_previous_line_re
+let nosem_justification ~file_lines ~nosem_inline_re ~nosem_previous_line_re
     ~nosem_justification_re (pm : Core_match.t) : string option =
   let start, _ = pm.range_loc in
   let line = start.pos.line in
@@ -343,17 +343,10 @@ let nosem_justification ~nosem_inline_re ~nosem_previous_line_re
         | Error _ ->
             None)
   in
-  let current, previous =
-    match
-      UFile.lines_of_file_exn (max 0 (line - 1), line)
-        pm.path.internal_path_to_content
-      |> List.rev
-    with
-    | current :: previous :: _ -> (Some current, Some previous)
-    | [ current ] -> (Some current, None)
-    | [] -> (None, None)
-  in
-  [ (nosem_inline_re, current); (nosem_previous_line_re, previous) ]
+  (* [file_lines] is [UFile.cat_array]: line N is at index N *)
+  let lines = file_lines pm.path.internal_path_to_content in
+  let line_at n = if n >= 1 && n < Array.length lines then Some lines.(n) else None in
+  [ (nosem_inline_re, line_at line); (nosem_previous_line_re, line_at (line - 1)) ]
   |> List.find_map (fun (rex, text) ->
          match text with
          | Some text when applies rex text -> Some (justification text)
@@ -370,6 +363,18 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
   let nosem_inline_re = get_nosem_inline_re ~config () in
   let nosem_previous_line_re = get_nosem_previous_line_re ~config () in
   let nosem_justification_re = get_nosem_justification_re ~config () in
+  (* Matches come grouped by file, so keeping the last file read is enough
+     to read each file once, while holding a single file in memory. *)
+  let file_lines =
+    let last = ref None in
+    fun path ->
+      match !last with
+      | Some (last_path, lines) when Fpath.equal last_path path -> lines
+      | _ ->
+          let lines = UFile.cat_array path in
+          last := Some (path, lines);
+          lines
+  in
   let matches, wide_errors =
     matches
     |> List_.map (fun (pm : Core_result.processed_match) ->
@@ -379,8 +384,8 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
              in
              let justification =
                if is_ignored then
-                 nosem_justification ~nosem_inline_re ~nosem_previous_line_re
-                   ~nosem_justification_re pm.pm
+                 nosem_justification ~file_lines ~nosem_inline_re
+                   ~nosem_previous_line_re ~nosem_justification_re pm.pm
                else None
              in
              ({ pm with is_ignored; justification }, errors)
