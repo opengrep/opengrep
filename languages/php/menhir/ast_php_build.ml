@@ -490,10 +490,10 @@ and expr env = function
       A.Call
         ( A.expr_id [ (A.builtin "clone", wrap tok) ],
           fb tok [ A.Arg (expr env e) ] )
-  | CloneWith (tok, (lp, (e1, _, e2), rp)) ->
+  | CloneCall (tok, (lp, args, rp)) ->
       A.Call
         ( A.expr_id [ (A.builtin "clone", wrap tok) ],
-          (lp, [ A.Arg (expr env e1); A.Arg (expr env e2) ], rp) )
+          (lp, List_.map (argument env) (comma_list args), rp) )
   | AssignRef (e1, tokeq, tokref, e2) ->
       let e1 = lvalue env e1 in
       let e2 = lvalue env e2 in

@@ -117,6 +117,23 @@ let rec is_variable toks =
   | T_VARIABLE _ :: _ -> true
   | x :: xs -> if TH.is_comment x then is_variable xs else false
 
+(* Looks to see if the next tokens are '(' '...' ')' (ignoring comments) *)
+let is_dots_in_parens (toks : token list) : bool =
+  let rec skip_comments (toks : token list) : token list =
+    match toks with
+    | x :: xs when TH.is_comment x -> skip_comments xs
+    | xs -> xs
+  in
+  match skip_comments toks with
+  | TOPAR _ :: xs -> (
+      match skip_comments xs with
+      | T_ELLIPSIS _ :: ys -> (
+          match skip_comments ys with
+          | TCPAR _ :: _ -> true
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
+
 (* Looks to see if the previous token is '::' (ignoring comments) *)
 let rec is_after_colcol (acc : token list) : bool =
   match acc with
@@ -375,6 +392,18 @@ let fix_tokens xs =
         | UserAttribute :: rest ->
             aux { env with stack = rest } (T_SR ii :: acc) xs
         | _ -> aux env (T_SR ii :: acc) xs)
+    (* PHP 8.5: 'clone(...)' is the first-class callable of the clone
+     * function. Read as an identifier it is the same as 'strlen(...)' to the
+     * grammar, whereas after the 'clone' keyword the '(...)' would be
+     * ambiguous with the operand of a prefix 'clone'. In a pattern the
+     * '(...)' means any arguments, so the keyword stays.
+     *)
+    | T_CLONE ii :: xs
+      when (not (Domain.DLS.get Flag_parsing.sgrep_mode))
+           && is_dots_in_parens xs ->
+        aux env
+          (T_IDENT (Lexer_php.case_str (Tok.content_of_tok ii), ii) :: acc)
+          xs
     (* This must be part of a lambda expression.
      * The parameters of a lambda expression are extremely difficult to parse
      * due to their similarity to standard expressions.

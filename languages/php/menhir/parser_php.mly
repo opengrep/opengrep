@@ -1341,13 +1341,22 @@ call_expr:
   * free, as in 'new Foo()->bar()' or 'new Foo()::CONST'.
   *)
  | T_NEW member_expr arguments { New ($1, $2, Some $3) }
- (* PHP 8.5 clone-with. It lives here rather than next to the prefix 'clone'
-  * so that the postfix rules apply to its result, as in
-  * 'clone($obj, ['p' => 1])->m()'.
+ (* PHP 8.5: clone is also a function, as in 'clone($obj, ['p' => 1])' or
+  * 'clone(object: $obj)'. It lives here rather than next to the prefix
+  * 'clone' so that the postfix rules apply to its result, as in
+  * 'clone($obj, ['p' => 1])->m()'. A single positional argument is left to
+  * the prefix 'clone', which reads the parentheses as part of the operand to
+  * the same effect.
   *)
- | T_CLONE "(" expr "," expr ")" { CloneWith($1, ($2, ($3, $4, $5), $6)) }
- | T_CLONE "(" expr "," expr "," ")" { CloneWith($1, ($2, ($3, $4, $5), $7)) }
- | T_CLONE "(" expr "," ")" { Clone($1, ParenExpr($2, $3, $5)) }
+ | T_CLONE "(" ")" { CloneCall ($1, ($2, [], $3)) }
+ | T_CLONE "(" expr "," function_call_argument_list ")"
+     { CloneCall ($1, ($2, Left (Arg $3) :: Right $4 :: $5, $6)) }
+ | T_CLONE "(" clone_argument_no_expr ")"
+     { CloneCall ($1, ($2, [ Left $3 ], $4)) }
+ | T_CLONE "(" clone_argument_no_expr "," function_call_argument_list ")"
+     { CloneCall ($1, ($2, Left $3 :: Right $4 :: $5, $6)) }
+ | TANTISLASH T_CLONE arguments
+     { CloneCall (Tok.combine_toks $1 [ $2 ], $3) }
  (* An anonymous class is dereferencable too, and unlike a named class it does
   * not need the parentheses, since its own brackets come before the body:
   * both 'new class {}->m()' and 'new class () {}->m()' are valid.
@@ -1622,6 +1631,10 @@ array_pair:
 (*----------------------------*)
 
 arguments: "(" function_call_argument_list ")" { ($1, $2, $3) }
+
+%inline clone_argument_no_expr:
+ | "..." expr { ArgUnpack ($1, $2) }
+ | ident_semi_reserved ":" expr_or_dots { ArgLabel (Name $1, $2, $3) }
 
 (* TODO: we want ... in primary_expr, but it leads to many conflicts. *)
 (* semgrep-ext: *)
