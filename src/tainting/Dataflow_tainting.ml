@@ -684,7 +684,8 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
              if
                List.exists
                  (fun { Effect.taint = t; guard = g; _ } ->
-                   Taint.compare_taint t taint =*= 0 && Effect_guard.equal g guard)
+                   Int.equal (Taint.compare_taint t taint) 0
+                   && Effect_guard.equal g guard)
                  acc
              then acc
              else item :: acc)
@@ -865,7 +866,8 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
 let is_invoke_method env (e : IL.exp) =
   match e.e with
   | Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
-      List.mem (fst name.ident)
+      List.exists
+        (String.equal (fst name.ident))
         (Lang_config.get env.taint_inst.lang).invoke_methods
   | _ -> false
 
