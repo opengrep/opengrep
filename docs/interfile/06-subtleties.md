@@ -406,7 +406,9 @@ carry this bare name?
   (`try_unique_callee`, `try_unique_method_call`) share one lookup
   path: `try_unique_by_distinct_key` → `funcs_with_bare_name` →
   `project_funcs_by_name` (project-wide, no visibility narrowing —
-  a uniqueness test needs the unfiltered set).
+  a uniqueness test needs the unfiltered set). `try_unique_method_call`
+  applies only to a receiver with no type information, and never
+  resolves a call to the calling function itself.
 
 `Func_lookup.t` therefore carries **two** name indexes:
 

@@ -50,7 +50,7 @@ type t = {
   invoke_methods : string list;
   dynamic_send_methods : string list;
   class_accessor_methods : string list;
-  (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
+  (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). The call graph then also records each call of a nested lambda as a call of its enclosing function. *)
   skip_nested_in_extract_calls : bool;
   (* A call of a bare name that resolves to nothing is a call of a method of
      the receiver ([user] for a [def user] in Ruby). *)

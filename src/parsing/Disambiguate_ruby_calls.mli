@@ -9,6 +9,9 @@
    After [Naming_AST.resolve] runs, local variables and parameters have
    [id_resolved = Some _].  This pass rewrites every remaining unresolved
    lowercase [N(Id(name, info))] into [Call(N(Id(name, info)), [])], matching
-   what Ruby's own parser would produce. *)
+   what Ruby's own parser would produce.
 
-val disambiguate : AST_generic.program -> AST_generic.program
+   Naming binds method definitions too, so a bare identifier whose binding is
+   a method definition of the program is rewritten the same way. *)
+
+val disambiguate : Lang.t -> AST_generic.program -> AST_generic.program

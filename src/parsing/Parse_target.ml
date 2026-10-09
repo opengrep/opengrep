@@ -112,7 +112,7 @@ let just_resolve_name lang ast =
   let ast =
     if Lang.equal lang Lang.Ruby || Lang.equal lang Lang.Crystal then
       Profiling.profile_code "Disambiguate_ruby_calls.disambiguate" (fun () ->
-          Disambiguate_ruby_calls.disambiguate ast)
+          Disambiguate_ruby_calls.disambiguate lang ast)
     else ast
   in
   run_analyses_after_name_resolution lang ast;
