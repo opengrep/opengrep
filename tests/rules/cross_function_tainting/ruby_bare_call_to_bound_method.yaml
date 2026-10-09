@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_bare_call_to_bound_method
+    message: taint returned by a method called without parentheses
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

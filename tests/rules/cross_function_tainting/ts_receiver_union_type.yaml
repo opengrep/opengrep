@@ -1,0 +1,13 @@
+rules:
+  - id: ts_receiver_union_type
+    message: taint from a method resolved through a union receiver type
+    languages:
+      - typescript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

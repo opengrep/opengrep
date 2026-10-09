@@ -302,6 +302,24 @@ type call_site_resolver =
   G.expr ->
   fn_id option
 
+let is_construction (lang : Lang.t) (e : G.expr) : bool =
+  match e.G.e with
+  | G.New _ -> true
+  | G.Call
+      ({ G.e = G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _))); _ }, _) ->
+      Option.equal String.equal (Lang_config.construction_method lang)
+        (Some method_name)
+  | _ -> false
+
+let has_type_information (lang : Lang.t) (info : G.id_info) : bool =
+  Option.is_some (Ty_bare_name.instance_or_declared_type info)
+  ||
+  match !(info.G.id_svalue) with
+  | Some (G.Sym (e : G.expr)) -> is_construction lang e
+  | Some _
+  | None ->
+      false
+
 (* Bare-name narrowing of [all_funcs] is required for tractability. *)
 let rec identify_callee ~(lang : Lang.t)
     ?(all_funcs = [])
@@ -491,13 +509,18 @@ let rec identify_callee ~(lang : Lang.t)
          pick_by_arity ~lang call_arity candidates)
   in
   let try_unique_method_call ~(method_name : string) : fn_id option =
-    try_unique_by_distinct_key
-      ~candidate_filter:(fun f ->
-        Option.is_some (Func_info.as_method f.fn_id))
-      ~distinct_key:(fun f ->
-        Option.map (fun (c, _) -> fst c.IL.ident)
-          (Func_info.as_method f.fn_id))
-      method_name
+    match
+      try_unique_by_distinct_key
+        ~candidate_filter:(fun f ->
+          Option.is_some (Func_info.as_method f.fn_id))
+        ~distinct_key:(fun f ->
+          Option.map (fun (c, _) -> fst c.IL.ident)
+            (Func_info.as_method f.fn_id))
+        method_name
+    with
+    | Some (fn_id : fn_id) when Func_info.equal_fn_id fn_id caller_parent_path ->
+        None
+    | (Some _ | None) as resolved -> resolved
   in
   let try_module_qn_call ~(base : string) ~(parts : string list)
       ~(method_name : string) : fn_id option =
@@ -769,24 +792,44 @@ let rec identify_callee ~(lang : Lang.t)
             let method_name_str = id in
             (* Receiver's instance class, published on [id_info] by projidx
                augment / intrafile broadcast, else its declared type. *)
-            let obj_class_opt =
-              Option.bind (Ty_bare_name.instance_or_declared_type obj_id_info)
-                Ty_bare_name.qualified_class_name_of_ty
+            let obj_class_names =
+              match Ty_bare_name.instance_or_declared_type obj_id_info with
+              | Some (ty : G.type_) -> Ty_bare_name.class_names_of_ty ty
+              | None -> []
             in
-            (match obj_class_opt with
-            | Some class_name ->
-                let class_name_str =
-                  Option.value (Ty_bare_name.bare_name_of_name class_name) ~default:""
+            let resolve_by_class (class_name : G.name) : fn_id option =
+              let class_name_str =
+                Option.value (Ty_bare_name.bare_name_of_name class_name) ~default:""
+              in
+              let method_matches =
+                Type_state.find_methods type_state ~fallback:all_funcs
+                  ~class_name:class_name_str ~method_name:method_name_str
+              in
+              resolve_class_method
+                ?qualifier:(Ty_bare_name.qualifier_of_name class_name)
+                ~class_name:class_name_str
+                ~method_name:method_name_str method_matches
+            in
+            (match obj_class_names with
+            | _ :: _ ->
+                (* A union type resolves only when one of its classes
+                   defines the method. *)
+                let resolved =
+                  List.fold_left
+                    (fun (acc : fn_id list) (class_name : G.name) ->
+                      match resolve_by_class class_name with
+                      | Some (fn_id : fn_id)
+                        when not (List.exists (Func_info.equal_fn_id fn_id) acc) ->
+                          fn_id :: acc
+                      | Some _
+                      | None ->
+                          acc)
+                    [] obj_class_names
                 in
-                let method_matches =
-                  Type_state.find_methods type_state ~fallback:all_funcs
-                    ~class_name:class_name_str ~method_name:method_name_str
-                in
-                resolve_class_method
-                  ?qualifier:(Ty_bare_name.qualifier_of_name class_name)
-                  ~class_name:class_name_str
-                  ~method_name:method_name_str method_matches
-            | None ->
+                (match resolved with
+                 | [ (fn_id : fn_id) ] -> Some fn_id
+                 | _ -> None)
+            | [] ->
                 let class_member_matches =
                   let from_class =
                     Type_state.find_methods type_state ~fallback:[]
@@ -822,8 +865,13 @@ let rec identify_callee ~(lang : Lang.t)
                          (match resolve_constructor ~lang ~all_funcs obj_name with
                           | Some _ as r -> r
                           | None ->
-                            (match try_unique_method_call
-                                     ~method_name:method_name_str with
+                            (match
+                               if not (has_type_information lang obj_id_info)
+                               then
+                                 try_unique_method_call
+                                   ~method_name:method_name_str
+                               else None
+                             with
                              | Some _ as r -> r
                              | None ->
                                try_dotted_definition ~base:obj_name ~parts:[]
@@ -834,14 +882,16 @@ let rec identify_callee ~(lang : Lang.t)
            Ruby/Crystal:        ClassName.new(args).method() *)
         | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) ->
             let receiver_chain = collect_dotted_chain receiver in
+            let try_dotted_definition_of_receiver () : fn_id option =
+              match receiver_chain with
+              | None -> None
+              | Some (base, parts) ->
+                try_dotted_definition ~base ~parts ~method_name
+            in
             let try_unique_method_or_dotted () : fn_id option =
               match try_unique_method_call ~method_name with
               | Some _ as r -> r
-              | None ->
-                (match receiver_chain with
-                 | None -> None
-                 | Some (base, parts) ->
-                   try_dotted_definition ~base ~parts ~method_name)
+              | None -> try_dotted_definition_of_receiver ()
             in
             let module_match =
               match receiver_chain with
@@ -897,7 +947,10 @@ let rec identify_callee ~(lang : Lang.t)
                 (match resolve_class_method ?qualifier:qualifier_hint
                          ~class_name ~method_name method_matches with
                  | Some _ as r -> r
-                 | None -> try_unique_method_or_dotted ())
+                 | None ->
+                     if is_construction lang receiver then
+                       try_dotted_definition_of_receiver ()
+                     else try_unique_method_or_dotted ())
             | None ->
               try_unique_method_or_dotted ()))
         | _ ->
