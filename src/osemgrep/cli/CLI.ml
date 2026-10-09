@@ -77,7 +77,6 @@ let known_subcommands =
     "lsp";
     "scan";
     (* osemgrep-only *)
-    "install-ci";
     "show";
     "test";
     "validate";
@@ -141,7 +140,6 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
       | "lsp" -> Lsp_subcommand.main caps subcmd_argv
       (* | "logout" ->
              Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
-      | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
       | "show" -> Show_subcommand.main caps subcmd_argv
       | "test" -> Test_subcommand.main caps subcmd_argv
       | "validate" -> Validate_subcommand.main caps subcmd_argv

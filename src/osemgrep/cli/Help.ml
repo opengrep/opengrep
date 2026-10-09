@@ -76,7 +76,6 @@ let print_semgrep_dashdash_help (stdout : Cap.Console.stdout) =
 
 @{<ul>Commands@}:
   @{<cyan>ci@}                   Run Opengrep on a git diff (for use in CI)
-  @{<cyan>install-ci@}           Add an Opengrep workflow to a git repository
   @{<cyan>lsp@}                  Start the Opengrep LSP server (useful for IDEs)
   @{<cyan>scan@}                 Run Opengrep rules on local folders or files
   @{<cyan>show@}                 Show various types of information
