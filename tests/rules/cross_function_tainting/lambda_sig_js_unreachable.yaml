@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-unreachable
+    message: A lambda at an unreachable point reports nothing, as the code around it
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

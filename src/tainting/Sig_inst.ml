@@ -43,6 +43,14 @@ type call_effect =
       offset : Taint.offset list;
       guards : Effect_guard.t;
     }
+  (* Write to a variable a lambda captured: a local of the function owning
+     it, updated in the caller's environment, never an effect of the caller. *)
+  | ToLvalCaptured of {
+      taints : Taint.taints;
+      var : IL.name;
+      offset : Taint.offset list;
+      guards : Effect_guard.t;
+    }
   (* Field write on enclosing receiver; kept [BThis] so it composes into the caller's own sig. *)
   | ToLvalThis of {
       taints : Taint.taints;
@@ -51,7 +59,7 @@ type call_effect =
     }
   | ToSinkInCall of {
       callee : IL.exp;
-      arg : Taint.arg;
+      arg : Effect.callee;
       arg_offset : Taint.offset list;
       args_taints : Effect.args_taints;
       guards : Effect_guard.t;
@@ -66,15 +74,45 @@ let show_call_effect = function
       Printf.sprintf "%s%s ----> %s%s" (T.show_taints taints)
         (Effect_guard.show_in_brackets guards) (IL.str_of_name var)
         (T.show_offset_list offset)
+  | ToLvalCaptured { taints; var; offset; guards } ->
+      Printf.sprintf "%s%s ----> captured(%s)%s" (T.show_taints taints)
+        (Effect_guard.show_in_brackets guards) (IL.str_of_name var)
+        (T.show_offset_list offset)
   | ToLvalThis { taints; offset; guards } ->
       Printf.sprintf "%s%s ----> this%s" (T.show_taints taints)
         (Effect_guard.show_in_brackets guards) (T.show_offset_list offset)
   | ToSinkInCall { callee; arg; _ } ->
       Printf.sprintf "ToSinkInCall(%s, %s)" (Display_IL.string_of_exp callee)
-        (T.show_arg arg)
+        (Effect.show_callee arg)
 
 let show_call_effects call_effects =
   call_effects |> List_.map show_call_effect |> String.concat "; "
+
+let conjoin_call_effect (g : Effect_guard.t) (ce : call_effect) : call_effect =
+  let conj g' = Effect_guard.compose_and g g' in
+  match ce with
+  | ToSink tts -> ToSink { tts with guards = conj tts.guards }
+  | ToReturn ttr -> ToReturn { ttr with guards = conj ttr.guards }
+  | ToLval tl -> ToLval { tl with guards = conj tl.guards }
+  | ToLvalCaptured tl -> ToLvalCaptured { tl with guards = conj tl.guards }
+  | ToLvalThis tl -> ToLvalThis { tl with guards = conj tl.guards }
+  | ToSinkInCall c -> ToSinkInCall { c with guards = conj c.guards }
+
+(* The call effect as an effect of the caller, its written variable as the
+   lval it refers to in the caller's signature. *)
+let effect_of_call_effect (ce : call_effect) : Effect.t =
+  match ce with
+  | ToSink tts -> Effect.ToSink tts
+  | ToReturn ttr -> Effect.ToReturn ttr
+  | ToLval { taints; var; offset; guards } ->
+      Effect.ToLval { taints; lval = { base = T.BGlob var; offset }; guards }
+  | ToLvalCaptured { taints; var; offset; guards } ->
+      Effect.ToLval
+        { taints; lval = { base = T.BCaptured var; offset }; guards }
+  | ToLvalThis { taints; offset; guards } ->
+      Effect.ToLval { taints; lval = { base = T.BThis; offset }; guards }
+  | ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ->
+      Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards }
 
 (* Callee is a method on the enclosing instance (self/this/super): its [BThis] must stay [BThis], not resolve to the receiver temp. *)
 let callee_on_enclosing_this (callee : IL.exp) : bool =
@@ -932,28 +970,60 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
   in
   walk cond
 
+(* A [Taint.arg] is bound in a signature with [params] iff its (name, index)
+ * names a slot of [params]: both the index points within range AND the name
+ * agrees with the slot at that index. See discussion in [Taint.arg] design
+ * notes. *)
+let arg_bound_in (params : Signature.params) (arg : T.arg) : bool =
+  match List.nth_opt params arg.index with
+  | None -> false
+  | Some
+      (Signature.P n | Signature.POpt n | Signature.PRest n | Signature.PKwd n)
+    ->
+      String.equal n arg.name
+  | Some Signature.Other -> String.equal arg.name ""
+
+(* The names a parameter binds: its variable's, and its pattern's for a
+ * destructuring parameter (the extractor gives the [BArg] the variable's
+ * name, [Signature.of_IL_params] the pattern's). *)
+let param_names (param : IL.param) : string list =
+  Option.to_list (Option.map (fun (p : IL.name) -> fst p.ident) (IL_helpers.pname_of_param param))
+  @ List.filter_map
+      (function
+        | Signature.P n | Signature.POpt n | Signature.PRest n | Signature.PKwd n ->
+            Some n
+        | Signature.Other -> None)
+      (Signature.of_IL_params [ param ])
+
+(* As [arg_bound_in], against the function's [IL.param]s: the receiver takes
+ * no index, as in [Signature.of_IL_params]. *)
+let arg_bound_in_il (params : IL.param list) (arg : T.arg) : bool =
+  let params =
+    List.filter (function IL.ParamReceiver _ -> false | _ -> true) params
+  in
+  match List.nth_opt params arg.index with
+  | None -> false
+  | Some param -> List.exists (String.equal arg.name) (param_names param)
+
+(* A [Taint.arg] bound in a signature: by its parameters, or by the names
+ * their IL parameters bind (see [param_names]). *)
+let arg_bound (sig_ : Signature.t) (arg : T.arg) : bool =
+  arg_bound_in sig_.params arg || arg_bound_in_il sig_.params_il arg
+
 (* Substitute the parameters of the function being applied (carried by
  * [inst_var]) into the effects of a nested [Signature.t] that appears
  * inside a [Fun] shape. Bound [BArg]s — those referring to [sig_]'s own
  * parameters — are kept verbatim and will be resolved when [sig_] is
  * itself applied later. Free [BArg]s that match the outer function's
  * parameters are substituted; free [BArg]s that match neither are kept
- * verbatim (they name a yet-deeper enclosing scope). *)
-let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
-    (sig_ : Signature.t) : Signature.t =
-  (* A [Taint.arg] is bound in [sig_] iff its (name, index) names a slot
-   * of [sig_.params]: both the index points within range AND the name
-   * agrees with the slot at that index. See discussion in [Taint.arg]
-   * design notes. *)
-  let bound_in_sig (arg : T.arg) : bool =
-    match List.nth_opt sig_.params arg.index with
-    | None -> false
-    | Some
-        (Signature.P n | Signature.POpt n | Signature.PRest n | Signature.PKwd n)
-      ->
-        String.equal n arg.name
-    | Some Signature.Other -> String.equal arg.name ""
-  in
+ * verbatim (they name a yet-deeper enclosing scope).
+ * [partial] makes this a partial substitution, as when a closure is formed
+ * ([close_over]): a taint or a written lval that [inst_var] does not resolve
+ * stays as it is, for a later binder, instead of being dropped. *)
+let rec substitute_in_sig ~(partial : bool) ~lang
+    (inst_var : inst_var) (inst_trace : inst_trace) (sig_ : Signature.t) :
+    Signature.t =
+  let bound_in_sig = arg_bound sig_ in
   (* Walk a guard's cond, substituting Fetches that name the outer
    * function's parameters. [g.param_refs] (the inner sig's own anchors)
    * is preserved unchanged: substitution touches only outer-anchored
@@ -980,8 +1050,9 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
    *   - Var/Shape_var on a bound [BArg]: keep verbatim.
    *   - Var/Shape_var on a free [BArg]: substitute via [instantiate_taint]
    *     if [inst_var.inst_lval] returns a match; else keep verbatim.
-   *   - Var/Shape_var on [BGlob]/[BThis]: substitute via [instantiate_taint]
-   *     (concrete bases are resolvable from the call site).
+   *   - Var/Shape_var on [BGlob]/[BThis]/[BCaptured]: substitute via
+   *     [instantiate_taint] (concrete bases are resolvable from the call
+   *     site); in a [partial] substitution, as a free [BArg].
    *   - [Src]/[Control]: substitute via [instantiate_taint]. *)
   let walk_taint (b : T.guarded_taint) : T.taints =
     let delegate () =
@@ -994,13 +1065,14 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     | T.Shape_var lval -> (
         match lval.base with
         | T.BArg arg when bound_in_sig arg -> keep ()
-        | T.BArg _ -> (
+        | (T.BGlob _ | T.BThis | T.BCaptured _) when not partial -> delegate ()
+        | T.BArg _
+        | T.BGlob _
+        | T.BThis
+        | T.BCaptured _ -> (
             match inst_var.inst_lval lval with
             | Some _ -> delegate ()
-            | None -> keep ())
-        | T.BGlob _
-        | T.BThis ->
-            delegate ())
+            | None -> keep ()))
     | T.Src _
     | T.Control ->
         delegate ()
@@ -1050,7 +1122,7 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
                 Shape.unify_shape ~lang acc (resolve_offset off))
               (resolve_offset first) rest)
     | Fun inner_sig ->
-        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
+        Fun (substitute_in_sig ~partial ~lang inst_var inst_trace inner_sig)
   and walk_xtaint xtaint shape =
     let xtaint =
       match xtaint with
@@ -1067,13 +1139,20 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
    *   - Free [BArg]/[BThis]: rewrite to the caller-side concrete
    *     [(IL.name, offset)] via [inst_var.inst_lval_to_name]; on None,
    *     drop the effect (no resolvable target).
-   *   - [BGlob]: pass through unchanged via [inst_lval_to_name]. *)
+   *   - [BGlob]: pass through unchanged via [inst_lval_to_name].
+   *   - [BCaptured]: keep verbatim, as a write to a variable of an enclosing
+   *     function is bound only where the closure is called, by the
+   *     function owning the variable (see [Dataflow_tainting]). *)
   let walk_lval (lval : T.lval) : T.lval option =
     match lval.base with
     | T.BArg arg when bound_in_sig arg -> Some lval
-    | _ -> (
+    | T.BCaptured _ -> Some lval
+    | T.BArg _
+    | T.BGlob _
+    | T.BThis -> (
         match inst_var.inst_lval_to_name lval with
         | Some (var, offset, _tok) -> Some { T.base = T.BGlob var; offset }
+        | None when partial -> Some lval
         | None -> None)
   in
   (* Walk a single effect. Returns [None] iff the effect should be
@@ -1209,7 +1288,9 @@ let instantiate_shape ~lang inst_var inst_trace shape =
          * actuals via [substitute_in_sig]; bound references to the
          * inner sig's own parameters stay intact for resolution when
          * the inner sig is itself applied later. *)
-        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
+        Fun
+          (substitute_in_sig ~partial:false ~lang inst_var inst_trace
+             inner_sig)
   and inst_xtaint xtaint shape =
     (* This may break INVARIANT(cell) but 'update_offset_in_cell' will restore it. *)
     let xtaint =
@@ -1352,7 +1433,9 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
         | Some r -> Some r)
   in
   match tlval.base with
-  | BGlob gvar -> Some (gvar, tlval.offset, snd gvar.ident)
+  | BGlob gvar
+  | BCaptured gvar ->
+      Some (gvar, tlval.offset, snd gvar.ident)
   | BArg pos -> (
       (*
           An actual argument from 'args_exps', e.g.
@@ -1396,7 +1479,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
           match tlval.offset with
           | Ofld var :: offset -> Some (var, offset, snd method_.ident)
           | []
-          | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ ->
+          | (Oint _ | Ostr _ | Oslice _ | Oany | Ocall) :: _ ->
               (* we have no 'var' to take here *)
               log_error ();
               None)
@@ -1481,10 +1564,16 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
            so `this.x` in the taint signature of the callee corresponds to
            `this.x` in the caller. *)
         true
-    | __else__ -> false
+    | { e = Fetch { base = VarSpecial _; rev_offset = _ :: _ :: _ }; _ } ->
+        (* A method of a field of the receiver ([this.child.read()]): its
+           [this] is the field's. *)
+        false
+    | __else__ -> callee_on_enclosing_this fun_exp
   in
   match lval.base with
-  | BArg _ -> lval_taints
+  | BArg _
+  | BCaptured _ ->
+      lval_taints
   | BThis when not is_method_in_this_class -> lval_taints
   | BGlob _
   | BThis
@@ -1532,9 +1621,25 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
             match offset with
             | [] -> Some (`Var var, offset)
             | Ofld var :: offset -> Some (`Var var, offset)
-            | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ -> None)
+            | (Oint _ | Ostr _ | Oslice _ | Oany | Ocall) :: _ -> None)
+        | {
+         e =
+           Fetch
+             {
+               base = VarSpecial ((This | Self), _);
+               rev_offset = [ { o = Dot _; _ } ];
+             };
+         _;
+        } -> (
+            (* A lambda applied where it is used, as a method of the
+             * receiver it reads fields of: [this.x] is the [x] there. *)
+            match offset with
+            | Ofld var :: offset -> Some (`Var var, offset)
+            | [] | (Oint _ | Ostr _ | Oslice _ | Oany | Ocall) :: _ -> None)
         | __else__ -> None)
-    | BGlob var -> Some (`Var var, offset)
+    | BGlob var
+    | BCaptured var ->
+        Some (`Var var, offset)
   in
   let* base_taints, base_shape =
     match base with
@@ -1555,30 +1660,59 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
   Shape.find_in_shape_poly ~max:max_offset ~lang ~taints:base_taints offset
     base_shape
 
-(* What is the taint denoted by 'sig_lval' ? *)
+(* What is the taint denoted by 'sig_lval'? A closed lambda's signature,
+   applied in the function that formed it ([outer_params]), may refer to that
+   function's parameters and receiver: those stay as they are. *)
 let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
-    lval_env fparams fun_exp
+    ~(outer_params : IL.param list) lval_env (taint_sig : Signature.t) fun_exp
     args_exps
     (args_taints : (Taints.t * shape) IL.argument list) (sig_lval : T.lval) =
+  let fparams = taint_sig.params in
   Log.debug (fun m ->
       m "INST_LVAL: resolving %s in args_taints=%d items, fparams=%s"
         (T.show_lval sig_lval) (List.length args_taints)
         (fparams |> List.map Signature.show_param |> String.concat ","));
+  let identity () =
+    let shape =
+      match sig_lval.base with
+      | T.BArg arg -> Arg (arg, [ sig_lval.offset ])
+      | T.BGlob _ | T.BThis | T.BCaptured _ -> Bot
+    in
+    Some (Taints.singleton { T.orig = Var sig_lval; tokens = [] }, shape)
+  in
+  let frame_param =
+    match sig_lval.base with
+    | T.BArg arg -> (
+        match List.nth_opt fparams arg.index with
+        (* A model's placeholder on an unnamed slot is not a parameter of the
+           enclosing function. *)
+        | Some Signature.Other -> false
+        | Some (Signature.P _ | Signature.POpt _ | Signature.PRest _ | Signature.PKwd _)
+        | None ->
+            (not (arg_bound taint_sig arg)) && arg_bound_in_il outer_params arg)
+    | T.BGlob _ | T.BThis | T.BCaptured _ -> false
+  in
+  if frame_param then identity ()
+  else
   match
     instantiate_lval_using_shape ~lang ~max_offset lval_env fparams fun_exp
       args_taints sig_lval
   with
   | Some (taints, shape) -> Some (taints, shape)
   | None -> (
-      match args_exps with
-      | None ->
+      match (args_exps, sig_lval.base) with
+      | None, T.BThis when callee_on_enclosing_this fun_exp ->
+          (* A closure applied in the frame forming it, as a method of that
+             frame's receiver: its [this] stays that receiver's. *)
+          identity ()
+      | None, _ ->
           Log.warn (fun m ->
               m
                 "Cannot find the taint&shape of %s because we lack the actual \
                  arguments"
                 (T.show_lval sig_lval));
           None
-      | Some args_exps ->
+      | Some args_exps, _ ->
           (* We want to know what's the taint carried by 'arg_exp.x1. ... .xN'.
            * TODO: We should not need this when we cover everything with shapes,
            *   see 'lval_of_sig_lval'.
@@ -1687,8 +1821,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
        So we will isolate this as a specific step to be applied as necessary.
     *)
     let opt_taints_shape =
-      instantiate_lval ~lang ~max_offset lval_env taint_sig.params callee
-        args args_taints lval
+      instantiate_lval ~lang ~max_offset
+        ~outer_params:(Option.value outer_params ~default:[])
+        lval_env taint_sig callee args args_taints lval
     in
     Log.debug (fun m ->
         m ~tags:sigs_tag "- Instantiating %s: %s -> %s"
@@ -1718,13 +1853,15 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   (* Lval-side resolver: maps a [T.lval] anchored in [taint_sig] to the
    * triple [(IL.name, offset, tok)] in the caller. Args=Some path goes
    * through [instantiate_lval_using_actual_exps]; args=None (recursive
-   * HOF, depth >= 1) only resolves [BGlob] verbatim since [BArg]/[BThis]
-   * need actuals. *)
+   * HOF, depth >= 1) resolves [BGlob] and [BCaptured] verbatim, since
+   * [BArg]/[BThis] need actuals. *)
   let inst_lval_to_name (lval : T.lval) =
     match args with
     | None -> (
         match lval.base with
-        | T.BGlob gvar -> Some (gvar, lval.offset, snd gvar.ident)
+        | T.BGlob gvar
+        | T.BCaptured gvar ->
+            Some (gvar, lval.offset, snd gvar.ident)
         | T.BArg _ | T.BThis -> None)
     | Some args ->
         instantiate_lval_using_actual_exps ~lang ~max_offset callee
@@ -1765,6 +1902,14 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     let taints = inst_taints taints in
     let shape = inst_shape shape in
     (taints, shape)
+  in
+  let inst_args_taints args_taints =
+    args_taints
+    |> List_.map (function
+         | IL.Unnamed (taints, shape) ->
+             IL.Unnamed (inst_taints_and_shape (taints, shape))
+         | IL.Named (ident, (taints, shape)) ->
+             IL.Named (ident, inst_taints_and_shape (taints, shape)))
   in
   (* Instatiate effects *)
   let inst_effect : Effect.t -> call_effect list =
@@ -1939,33 +2084,44 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                 { taints; offset = dst_sig_lval.offset; guards = out_guards } ]
         else
           let+ dst_var, dst_offset, tainted_tok =
-            match args with
-            | None -> (
-                (* depth>=1 HOF dispatch has no IL.exp args; only [BGlob] resolves, [BArg]/[BThis] drop. *)
-                match dst_sig_lval.base with
-                | T.BGlob gvar ->
-                    Some (gvar, dst_sig_lval.offset, snd gvar.ident)
-                | T.BArg _ | T.BThis ->
-                    Log.warn (fun m ->
-                        m
-                          "Cannot instantiate '%s' because we lack the actual \
-                           arguments"
-                          (T.show_lval dst_sig_lval));
-                    None)
-            | Some args ->
-                instantiate_lval_using_actual_exps ~lang ~max_offset callee
-                  taint_sig.params args dst_sig_lval
+            match inst_lval_to_name dst_sig_lval with
+            | Some _ as r -> r
+            | None ->
+                Log.warn (fun m ->
+                    m "Cannot instantiate the write to '%s'"
+                      (T.show_lval dst_sig_lval));
+                None
           in
           let taints = inst_taints tainted_tok in
           if Taints.is_empty taints then []
-          else
-            [ ToLval
-                { taints; var = dst_var; offset = dst_offset; guards = out_guards }
-            ]
+          else (
+            match dst_sig_lval.base with
+            | T.BCaptured _ ->
+                [ ToLvalCaptured
+                    { taints; var = dst_var; offset = dst_offset; guards = out_guards } ]
+            | T.BGlob _ | T.BArg _ | T.BThis ->
+                [ ToLval
+                    { taints; var = dst_var; offset = dst_offset; guards = out_guards } ])
     | Effect.ToSinkInCall
         {
           callee = fun_exp;
-          arg = fun_arg;
+          arg = Effect.Captured _ as held;
+          arg_offset = fun_arg_offset;
+          args_taints = fun_args_taints;
+          guards = _;
+        } ->
+        (* A call of a captured variable not bound where the closure was
+           formed: it stays, for the function owning the variable. *)
+        [ ToSinkInCall
+            { callee = fun_exp;
+              arg = held;
+              arg_offset = fun_arg_offset;
+              args_taints = inst_args_taints fun_args_taints;
+              guards = out_guards } ]
+    | Effect.ToSinkInCall
+        {
+          callee = fun_exp;
+          arg = Effect.Param fun_arg;
           arg_offset = fun_arg_offset;
           args_taints = fun_args_taints;
           guards = _;
@@ -2200,15 +2356,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         (T.show_arg fun_arg));
                   None)
         in
-        (* Instantiate the args_taints *)
-        let args_taints =
-          fun_args_taints
-          |> List_.map (function
-               | IL.Unnamed (taints, shape) ->
-                   IL.Unnamed (inst_taints_and_shape (taints, shape))
-               | IL.Named (ident, (taints, shape)) ->
-                   IL.Named (ident, inst_taints_and_shape (taints, shape)))
-        in
+        let args_taints = inst_args_taints fun_args_taints in
         (* Memoize per-callback ToSinkInCall keyed on the callee's structural
            identity ([fun_exp], [fun_arg_offset]) and [args_taints], so two
            syntactically identical but distinct callbacks (different sids) do
@@ -2262,22 +2410,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                   (* The callback invocation was itself guarded
                    * ([out_guards], e.g. a branch cond around [cb(x)]): the
                    * effects of resolving the callback apply only under it. *)
-                  call_effects
-                  |> List_.map (fun (ce : call_effect) ->
-                         let conj g =
-                           Effect_guard.compose_and out_guards g
-                         in
-                         match ce with
-                         | ToSink tts ->
-                             ToSink { tts with guards = conj tts.guards }
-                         | ToReturn ttr ->
-                             ToReturn { ttr with guards = conj ttr.guards }
-                         | ToLval tl ->
-                             ToLval { tl with guards = conj tl.guards }
-                         | ToLvalThis tl ->
-                             ToLvalThis { tl with guards = conj tl.guards }
-                         | ToSinkInCall c ->
-                             ToSinkInCall { c with guards = conj c.guards })
+                  List_.map (conjoin_call_effect out_guards) call_effects
              | None ->
                  (* Preserve the ToSinkInCall only if the actual callback maps to
                   * an enclosing param (BArg); else DROP — the inner [fun_arg]
@@ -2297,7 +2430,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                      updated_arg.index);
                                [ ToSinkInCall
                                    { callee = exp;
-                                     arg = updated_arg;
+                                     arg = Effect.Param updated_arg;
                                      arg_offset = fun_arg_offset;
                                      args_taints;
                                      guards = out_guards; } ]
@@ -2311,7 +2444,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                   | _ ->
                       [ ToSinkInCall
                           { callee = fun_exp;
-                            arg = fun_arg;
+                            arg = Effect.Param fun_arg;
                             arg_offset = fun_arg_offset;
                             args_taints;
                             guards = out_guards; } ]))
@@ -2343,7 +2476,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                          |> List.map (fun arg_offset ->
                                 ToSinkInCall
                                   { callee = exp;
-                                    arg = outer_arg;
+                                    arg = Effect.Param outer_arg;
                                     arg_offset;
                                     args_taints;
                                     guards = out_guards; })
@@ -2358,7 +2491,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     updated_arg.index);
                               [ ToSinkInCall
                                   { callee = exp;
-                                    arg = updated_arg;
+                                    arg = Effect.Param updated_arg;
                                     arg_offset = fun_arg_offset;
                                     args_taints;
                                     guards = out_guards; } ]
@@ -2372,7 +2505,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
              | _ ->
                  [ ToSinkInCall
                      { callee = fun_exp;
-                       arg = fun_arg;
+                       arg = Effect.Param fun_arg;
                        arg_offset = fun_arg_offset;
                        args_taints;
                        guards = out_guards; } ]))
@@ -2472,10 +2605,225 @@ let effect_has_bglob_dependency (eff : Effect.t) : bool =
           (match lval.T.base with T.BGlob _ -> true | _ -> false)
       | _ -> false)
 
+(* Close a lifted lambda signature where the closure is formed: its
+ * captured variables take their values in [lval_env]; its own parameters,
+ * the receiver and the control taint stay to be bound where the closure is
+ * called. A captured variable not in [lval_env] stays a [BCaptured]
+ * placeholder, bound where the closure is called if that is in the function
+ * owning the variable. A call of a captured variable becomes a call of what
+ * it holds: a parameter of the enclosing function, or the effects of the
+ * function it holds. *)
+let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
+    : Signature.t =
+  let max = Shape.max_poly_offset lang in
+  (* A value referring to a parameter of the enclosing function with the (name,
+     index) of one of the lambda's own ([def f(x): y = x; lambda x: y])
+     cannot be told from that parameter once in the signature: the variable
+     stays a placeholder, bound where the closure is called. *)
+  let refers_to_own_param (taints : Taints.t) =
+    Taints.to_taint_list taints
+    |> List.exists (fun (taint : T.taint) ->
+           match taint.orig with
+           | Var { base = BArg arg; _ } | Shape_var { base = BArg arg; _ } ->
+               arg_bound lifted arg
+           | Var _ | Shape_var _ | Src _ | Control -> false)
+  in
+  let value_of (var : IL.name) =
+    let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
+    let taints = Xtaint.to_taints xtaints in
+    if refers_to_own_param taints then None else Some (taints, shape)
+  in
+  (* What the function at an offset into a captured variable returns,
+     called without arguments (what the lambda calls it with is in the
+     deferred call, see [close_effect]). *)
+  let return_of (var : IL.name) (offset : T.offset list)
+      (fun_sig : Signature.t) =
+    let callee : IL.exp =
+      let rev_offset =
+        T.rev_IL_offset_of_offset offset |> Option.value ~default:[]
+      in
+      { e = Fetch { base = Var var; rev_offset }; eorig = NoOrig }
+    in
+    match
+      instantiate_function_signature ~lang ~max_offset:max lval_env fun_sig
+        ~callee ~args:None [] ()
+    with
+    | None -> (Taints.empty, Bot)
+    | Some call_effects ->
+        List.fold_left
+          (fun (taints, shape) (ce : call_effect) ->
+            match ce with
+            | ToReturn { data_taints; data_shape; _ } ->
+                ( Taints.union taints data_taints,
+                  Shape.unify_shape ~lang shape data_shape )
+            | ToSink _ | ToLval _ | ToLvalCaptured _ | ToLvalThis _
+            | ToSinkInCall _ ->
+                (taints, shape))
+          (Taints.empty, Bot) call_effects
+  in
+  (* The value of captured [var] at [offset], from [value], the variable's
+     value where the closure is formed; [path] is the part of the offset
+     already walked. Each [Ocall] in [offset] is a call the lambda makes, and
+     the rest of the offset applies to its result. A call of a function the
+     variable holds gives what the function returns, plus the taints of the
+     function value. A call of any other value gives, as a call of an
+     unknown function does, the receiver's taints for a method call and the
+     callee's for a direct call. An offset holding nothing is clean. *)
+  let rec at_offset (var : IL.name) ~(path : T.offset list) value
+      (offset : T.offset list) =
+    let rec split acc = function
+      | [] -> (List.rev acc, None)
+      | T.Ocall :: rest -> (List.rev acc, Some rest)
+      | o :: rest -> split (o :: acc) rest
+    in
+    let find offset =
+      let taints, shape = value in
+      Shape.find_in_shape_poly ~max ~lang ~taints offset shape
+      |> Option.value ~default:(Taints.empty, Bot)
+    in
+    let prefix, called = split [] offset in
+    let taints, shape = find prefix in
+    match called with
+    | None -> (taints, shape)
+    | Some rest -> (
+        let path = path @ prefix in
+        match (shape, List.rev prefix) with
+        | Fun fun_sig, _ ->
+            let ret_taints, ret_shape = return_of var path fun_sig in
+            at_offset var ~path:(path @ [ Ocall ])
+              (Taints.union taints ret_taints, ret_shape)
+              rest
+        | (Bot | Obj _ | Arg _), _method :: rev_receiver ->
+            let taints, _ = find (List.rev rev_receiver) in
+            (taints, Bot)
+        | (Bot | Obj _ | Arg _), [] -> (taints, Bot))
+  in
+  (* [None] when [lval_env] has no binding for [var]: the placeholder stays
+     for the function owning the variable. *)
+  let value_at (var : IL.name) (offset : T.offset list) =
+    let* value = value_of var in
+    Some (at_offset var ~path:[] value offset)
+  in
+  let inst_lval (lval : T.lval) =
+    match lval.base with
+    | T.BCaptured var -> value_at var lval.offset
+    | T.BGlob _
+    | T.BThis
+    | T.BArg _ ->
+        None
+  in
+  let inst_var =
+    {
+      inst_lval;
+      inst_ctrl = (fun () -> Taints.singleton { T.orig = Control; tokens = [] });
+      inst_lval_to_name = (fun _ -> None);
+      f_params = [];
+      f_params_il = [];
+      f_resolve_arg = (fun _ -> None);
+      inst_guard = (fun g -> Some g);
+    }
+  in
+  let inst_trace =
+    {
+      add_call_to_trace_for_src = (fun _ _ -> None);
+      fix_token_trace_for_var = (fun ~var_tokens:_ tokens -> tokens);
+    }
+  in
+  (* A write to a captured variable that still holds parameters of the
+     enclosing function is a write to the variable, for the uses of the
+     closure inside that function, and a write to each of those parameters,
+     for a closure that escapes the function. *)
+  let params_held_by (var : IL.name) : T.arg list =
+    match value_of var with
+    | None -> []
+    | Some (taints, _) ->
+        Taints.to_taint_list taints
+        |> List_.filter_map (fun (taint : T.taint) ->
+               match taint.orig with
+               | Var { base = BArg arg; offset = [] } -> Some arg
+               | _ -> None)
+  in
+  (* The effects of calling the function a captured variable holds, with
+     the arguments the lambda calls it with: its sink and write effects are
+     the lambda's. Its return is not: what the lambda returns is the
+     lambda's own return effect. A deferred call on one of its own
+     parameters is not rebound to the lambda's (no actuals here) and is
+     dropped. *)
+  let effects_of_calling (fun_sig : Signature.t) ~callee ~args_taints ~guards
+      : Effect.t list =
+    match
+      instantiate_function_signature ~lang ~max_offset:max lval_env fun_sig
+        ~callee ~args:None args_taints ()
+    with
+    | None -> []
+    | Some call_effects ->
+        call_effects
+        |> List.filter (function
+             | ToReturn _ | ToSinkInCall { arg = Effect.Param _; _ } -> false
+             | ToSink _ | ToLval _ | ToLvalCaptured _ | ToLvalThis _
+             | ToSinkInCall { arg = Effect.Captured _; _ } ->
+                 true)
+        |> List_.map (fun ce -> effect_of_call_effect (conjoin_call_effect guards ce))
+  in
+  let close_effect (eff : Effect.t) : Effect.t list =
+    match eff with
+    (* A write into the result of a call is a write to nothing tracked. *)
+    | ToLval { lval = { base = BCaptured _; offset }; _ }
+      when List.exists (T.equal_offset T.Ocall) offset ->
+        []
+    | ToLval ({ lval = { base = BCaptured var; offset }; _ } as tolval) ->
+        eff
+        :: (params_held_by var
+           |> List_.map (fun arg ->
+                  Effect.ToLval { tolval with lval = { base = BArg arg; offset } }))
+    | ToSinkInCall
+        ({ arg = Effect.Captured var; arg_offset; callee; args_taints; guards }
+         as call) -> (
+        (* The call of what the variable holds: a parameter of the enclosing
+           function, called where that function is called; a function, called
+           here; or nothing known, left for the owner of the variable. *)
+        let callee_of (shape : shape) : Effect.t list =
+          match shape with
+          | Arg (held, offsets) ->
+              offsets
+              |> List_.map (fun offset ->
+                     Effect.ToSinkInCall
+                       { call with arg = Effect.Param held; arg_offset = offset })
+          | Fun fun_sig ->
+              effects_of_calling fun_sig ~callee ~args_taints ~guards
+          | Bot
+          | Obj _ ->
+              []
+        in
+        match value_of var with
+        | None -> [ eff ]
+        | Some value ->
+            let _, shape = at_offset var ~path:[] value arg_offset in
+            callee_of shape)
+    | ToReturn _
+    | ToLval _
+    | ToSink _
+    | ToSinkInCall _ ->
+        [ eff ]
+  in
+  let closed = substitute_in_sig ~partial:true ~lang inst_var inst_trace lifted in
+  {
+    closed with
+    effects =
+      Effects.elements closed.effects |> List.concat_map close_effect
+      |> Effects.of_list;
+  }
+
 let remap_lval_barg (remap_fn : T.arg -> T.arg) (lval : T.lval) : T.lval =
   match lval.base with
   | T.BArg arg -> { lval with base = T.BArg (remap_fn arg) }
-  | T.BGlob _ | T.BThis -> lval
+  | T.BGlob _ | T.BThis | T.BCaptured _ -> lval
+
+let remap_callee_barg (remap_fn : T.arg -> T.arg) (callee : Effect.callee) :
+    Effect.callee =
+  match callee with
+  | Effect.Param arg -> Effect.Param (remap_fn arg)
+  | Effect.Captured _ -> callee
 
 let rec remap_taint_barg (remap_fn : T.arg -> T.arg) (taint : T.taint)
     : T.taint =
@@ -2555,7 +2903,7 @@ and remap_effect_barg (remap_fn : T.arg -> T.arg) (eff : Effect.t)
           lval = remap_lval_barg remap_fn lval;
           guards }
   | Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ->
-      let arg = remap_fn arg in
+      let arg = remap_callee_barg remap_fn arg in
       let args_taints =
         List.map
           (function

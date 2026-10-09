@@ -1,0 +1,14 @@
+rules:
+  - id: lambda-sig-js-spanning-sink
+    message: A sink match spanning a lambda's definition is reported at the expression inside the lambda
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: $X[...] = ...
+          - pattern: $I

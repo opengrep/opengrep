@@ -41,7 +41,12 @@ type base =
   | BGlob of IL.name  (** A global variable or a static class field. *)
   | BThis  (** The 'this' or 'self' object. *)
   | BArg of arg  (** A formal parameter in a function/method definition. *)
+  | BCaptured of IL.name
+      (** A variable of an enclosing function that a lambda uses: a
+          placeholder in the lambda's signature until the closure is formed,
+          see [Sig_inst.close_over]. *)
 
+val compare_base : base -> base -> int
 val show_base : base -> string
 
 (** Offset of an 'lval'. *)
@@ -56,6 +61,11 @@ type offset =
           [Oint k :: Oslice n :: rest] to [Oint (n+k) :: rest] and
           [Oslice b :: Oslice a :: rest] to [Oslice (a+b) :: rest]. *)
   | Oany  (** An arbitrary non-constant index, `[*]` *)
+  | Ocall
+      (** The result of calling the value at the preceding offset, `()`.
+          Only on a [BCaptured] placeholder: a lambda's call of a variable it
+          captures, bound to what the function the variable holds returns
+          where the closure is formed, see [Sig_inst.close_over]. *)
 
 val compare_offset : offset -> offset -> int
 val equal_offset : offset -> offset -> bool

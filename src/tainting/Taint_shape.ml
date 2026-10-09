@@ -157,6 +157,70 @@ let compose_offset ?(max : int option) ~(lang : Lang.t)
   in
   go (List.rev base) (List.length base) offset
 
+(* Polymorphic taints bounded in width: a base extended by more than
+   [max_poly_width] taints of two or more fields, e.g. [arg(x).a.b],
+   [arg(x).a.c], [arg(x).d.e] and so on, keeps only the first field of each:
+   the field itself ([Var]) and everything under it ([Shape_var]). The cap on
+   an offset's length bounds the depth of the extensions, not their number:
+   joined round after round of a fixpoint, and each extended again, they
+   multiply without bound otherwise. *)
+let max_poly_width = 16
+
+module BaseMap = Map.Make (struct
+  type t = T.base
+
+  let compare = T.compare_base
+end)
+
+(* [xs] with the deep taints of each wide base widened, [taint_of] reading
+   the taint of an element and [with_taint] replacing it; [xs] itself when
+   no base is wide. *)
+let bound_poly_width_by (taint_of : 'a -> T.taint) (with_taint : 'a -> T.taint -> 'a)
+    (xs : 'a list) : 'a list =
+  let deep_base (taint : T.taint) =
+    match taint.orig with
+    | Var { base; offset = _ :: _ :: _ } | Shape_var { base; offset = _ :: _ :: _ } ->
+        Some base
+    | Var _ | Shape_var _ | Src _ | Control -> None
+  in
+  let widths =
+    List.fold_left
+      (fun widths x ->
+        match deep_base (taint_of x) with
+        | Some base ->
+            BaseMap.update base
+              (fun n -> Some (1 + Option.value n ~default:0))
+              widths
+        | None -> widths)
+      BaseMap.empty xs
+  in
+  if BaseMap.for_all (fun _ n -> n <= max_poly_width) widths then xs
+  else
+    xs
+    |> List.concat_map (fun x ->
+           let taint = taint_of x in
+           match taint.orig with
+           | (Var { base; offset = first :: _ :: _ }
+             | Shape_var { base; offset = first :: _ :: _ })
+             when BaseMap.find base widths > max_poly_width ->
+               let prefix = { T.base; offset = [ first ] } in
+               [ with_taint x { taint with orig = Var prefix };
+                 with_taint x { taint with orig = Shape_var prefix } ]
+           | Var _ | Shape_var _ | Src _ | Control -> [ x ])
+
+let bound_poly_width (taints : Taints.t) : Taints.t =
+  if Taints.cardinal taints <= max_poly_width then taints
+  else
+  let bundles = Taints.elements taints in
+  let widened =
+    bound_poly_width_by
+      (fun (b : T.guarded_taint) -> b.taint)
+      (fun b taint -> { b with taint })
+      bundles
+  in
+  if phys_equal widened bundles then taints else Taints.of_list widened
+
+(* The taints extended by [offset], bounded in depth and width. *)
 let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
     taints =
   let type_of_offset o =
@@ -213,7 +277,7 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
              * 'o@i', the call `o.getX()` would have taints '{o@i, o@i.x}'
              * when it should only have taints '{o@i.x}'. *)
             Taints.empty
-         | _, Oany ->
+         | _, (Oany | Ocall) ->
             (* Cannot handle this offset. *)
             taints
          | __any__, ((Ofld _ | Ostr _ | Oint _ | Oslice _) as o) ->
@@ -233,6 +297,7 @@ let fix_poly_taint_with_offset ?(max : int option) ~(lang : Lang.t) offset
                     | Control ->
                         taint))
        taints
+  |> bound_poly_width
 
 (* A read of [offset] on a parameter's shape 'Arg (arg, base_offsets)', whose
  * value carries [taints]: the polymorphic taints extended by [offset], under
@@ -822,12 +887,17 @@ and find_in_shape_w_carry ?max ~lang ~taints offset shape =
               m "Could not find offset %s in polymorphic shape %s"
                 (debug_offset offset) (show_shape shape));
           not_found)
-  | Fun _ ->
-      (* This is an error, we just don't want to crash here. *)
-      Log.err (fun m ->
-          m "Could not find offset %s in function shape %s"
-            (debug_offset offset) (show_shape shape));
-      not_found
+  | Fun _ -> (
+      match offset with
+      (* A call of the function: what it returns is not in its shape, see
+         [Sig_inst.close_over]. *)
+      | Ocall :: _ -> not_found
+      | _ ->
+          (* This is an error, we just don't want to crash here. *)
+          Log.err (fun m ->
+              m "Could not find offset %s in function shape %s"
+                (debug_offset offset) (show_shape shape));
+          not_found)
 
 and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
   let not_found = `Not_found (taints, Obj obj, offset) in
@@ -874,7 +944,8 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
                   | Oint _
                   | Ofld _
                   | Ostr _
-                  | Oany ->
+                  | Oany
+                  | Ocall ->
                       None
                 in
                 match recur_offset with
@@ -892,6 +963,8 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
           with
           | None -> not_found
           | Some cell -> `Found cell)
+      (* An object is not called; [Oany] is not consulted for a call. *)
+      | Ocall -> not_found
       | Ofld _
       | Oint _
       | Ostr _ -> (
@@ -1007,9 +1080,11 @@ and update_offset_in_obj ~f offset obj =
                 | Oint _
                 | Ofld _
                 | Ostr _
-                | Oany ->
+                | Oany
+                | Ocall ->
                     Some cell)
               obj
+        | Ocall -> obj
         | Ofld _
         | Oint _
         | Ostr _ ->

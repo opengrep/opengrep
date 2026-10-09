@@ -376,7 +376,12 @@ and expr e =
       G.TypedMetavar (v1, Tok.fake_tok (snd v1) " ", v2)
   | Lambda (v1, t, v2) ->
       let fparams = parameters v1 in
-      let v2 = stmt v2 in
+      let v2 =
+        match v2 with
+        (* An expression body is the value of the lambda, as in JS. *)
+        | Expr (e, sc) -> G.Return (t, Some (expr e), sc) |> G.s
+        | _ -> stmt v2
+      in
       G.Lambda
         {
           G.fparams = fb fparams;

@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-ruby-ivar-block
+    message: A block applied where it is used reads the receiver's fields there, set by the method or memoised by a helper it calls
+    languages: [ruby]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

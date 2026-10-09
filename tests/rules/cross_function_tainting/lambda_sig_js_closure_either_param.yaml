@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-closure-either-param
+    message: A closure's write to a captured variable holding either of two parameters writes both
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: callee-local-write
+    message: A closure's write to a local of its enclosing function is not an effect of that function's signature
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: sourceA()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,15 @@
+rules:
+  - id: lambda-sig-js-param-source
+    message: A lambda's own destructured parameter is a source wherever the lambda is analysed
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function ... (..., $PROP, ...) { ... }
+          - focus-metavariable: $PROP
+    pattern-sinks:
+      - pattern: sink(...)

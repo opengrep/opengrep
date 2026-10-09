@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-captured-param-hof
+    message: A callback a built-in applies reads a captured parameter as the enclosing lambda's, not as its own first argument
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

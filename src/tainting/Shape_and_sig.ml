@@ -39,9 +39,12 @@ module Fields = Map.Make (struct
     | Oint i1, Oint i2 -> Int.compare i1 i2
     | Oslice n1, Oslice n2 -> Int.compare n1 n2
     | Oany, Oany -> 0
-    | (Ofld _ | Ostr _), (Oint _ | Oslice _ | Oany) -> -1
-    | Oint _, (Oslice _ | Oany) -> -1
-    | Oslice _, Oany -> -1
+    | Ocall, Ocall -> 0
+    | (Ofld _ | Ostr _), (Oint _ | Oslice _ | Oany | Ocall) -> -1
+    | Oint _, (Oslice _ | Oany | Ocall) -> -1
+    | Oslice _, (Oany | Ocall) -> -1
+    | Oany, Ocall -> -1
+    | Ocall, (Ofld _ | Ostr _ | Oint _ | Oslice _ | Oany) -> 1
     | Oany, (Ofld _ | Ostr _ | Oint _ | Oslice _) -> 1
     | Oslice _, (Ofld _ | Ostr _ | Oint _) -> 1
     | Oint _, (Ofld _ | Ostr _) -> 1
@@ -220,7 +223,7 @@ end = struct
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
+      | Fun sig1, Fun sig2 -> Signature.equal_with_guards sig1 sig2
       | Bot, _
       | Obj _, _
       | Arg _, _
@@ -234,8 +237,7 @@ end = struct
   let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
 
   (* Guard-aware twin of the chain above; structure identical, but cell
-   * taints compare via [Xtaint.equal_with_guards] and [Fun] shapes via
-   * [Signature.equal_with_guards]. *)
+   * taints compare via [Xtaint.equal_with_guards]. *)
   let rec equal_cell_with_guards_depth depth cell1 cell2 =
     if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
     else
@@ -412,6 +414,17 @@ and Effect : sig
       the function arguments. Thus the results are *
       polymorphic/context-sensitive, as the 'lval' taints can be instantiated *
       accordingly at each call site. *)
+  type callee =
+    | Param of Taint.arg
+        (** A formal parameter of the function whose signature this is,
+            instantiated at a call of it. *)
+    | Captured of IL.name
+        (** A variable a lambda captures, bound where the closure is formed
+            ([Sig_inst.close_over]). *)
+  [@@deriving ord]
+
+  val show_callee : callee -> string
+
   type t =
     | ToSink of taints_to_sink
         (** Taints reach a sink.
@@ -442,9 +455,8 @@ and Effect : sig
         callee : IL.exp;
             (** The function expression being called, it is used for recording a
                 taint trace. *)
-        arg : Taint.arg;
-            (** The formal parameter corresponding to the function shape, this
-                is what we instantiate at a specific call site. *)
+        arg : callee;
+            (** The variable holding the function being called. *)
         arg_offset : Taint.offset list;
             (** When the callback was obtained via indexing/field access into
                 [arg] (e.g. [callback = impl[0]] after destructuring a packed
@@ -533,6 +545,12 @@ end = struct
     guards : Effect_guard.t;
   }
 
+  type callee = Param of Taint.arg | Captured of IL.name [@@deriving ord]
+
+  let show_callee = function
+    | Param arg -> T.show_arg arg
+    | Captured name -> Printf.sprintf "captured(%s)" (fst name.IL.ident)
+
   type args_taints = (Taints.t * Shape.shape) IL.argument list
   [@@deriving ord, eq]
 
@@ -542,7 +560,7 @@ end = struct
     | ToLval of taints_to_lval
     | ToSinkInCall of {
         callee : IL.exp;
-        arg : Taint.arg;
+        arg : callee;
         arg_offset : Taint.offset list;
         args_taints : args_taints;
         guards : Effect_guard.t;
@@ -655,7 +673,7 @@ end = struct
             guards = _;
           } ) -> (
         (* Comparing "fvar"s is cheap so better to do it first. *)
-        match T.compare_arg fvar1 fvar2 with
+        match compare_callee fvar1 fvar2 with
         | 0 -> (
             match List.compare T.compare_offset foff1 foff2 with
             | 0 -> (
@@ -734,7 +752,7 @@ end = struct
         Printf.sprintf "%s%s ----> %s" (T.show_taints ~truncate_guards taints)
           (Effect_guard.show_in_brackets ~truncate_guards guards) (T.show_lval lval)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
-        Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
+        Printf.sprintf "'call<%s>%s%s" (show_callee arg)
           (show_args_taints ~truncate_guards args_taints)
           (Effect_guard.show_in_brackets ~truncate_guards guards)
 
@@ -867,7 +885,8 @@ end = struct
   include Set.Make (struct
     type t = Effect.t
 
-    let compare effect1 effect2 = Effect.compare effect1 effect2
+    let compare effect1 effect2 =
+      if phys_equal effect1 effect2 then 0 else Effect.compare effect1 effect2
   end)
 
   (* [Effect.compare] ignores guards, so the set holds one element per
@@ -1129,6 +1148,12 @@ end
 
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
+  lambda_sigs : Signature.t IL.NameMap.t;
+      (** The signatures of lambdas lifted out of their enclosing function,
+          by the lambda's IL name (a hoisted function's is the same at its
+          uses as at its definition): the variables a lambda captures are
+          [BCaptured] placeholders, bound where the closure is formed (see
+          [Sig_inst.close_over]). *)
 }
 
 (** Separate database for builtin function signatures.
@@ -1207,7 +1232,7 @@ let show_name (name_opt : IL.name option) =
   | None -> ""
 
 let empty_signature_database () : signature_database =
-  { signatures = FunctionMap.empty }
+  { signatures = FunctionMap.empty; lambda_sigs = IL.NameMap.empty }
 
 let lookup_signature (db : signature_database) (name : Function_id.t)
     (arity : int) : Signature.t option =
@@ -1222,17 +1247,20 @@ let lookup_all_signatures (db : signature_database) (name : Function_id.t)
   | Some sigs -> SignatureSet.elements sigs
   | None -> []
 
+(* The latest extraction replaces an equal signature: in a fixpoint, the
+   newest is the one to keep. *)
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =
     FunctionMap.update name
       (fun existing_sigs ->
         match existing_sigs with
-        | Some sigs -> Some (SignatureSet.add signature sigs)
+        | Some sigs ->
+            Some (SignatureSet.add signature (SignatureSet.remove signature sigs))
         | None -> Some (SignatureSet.singleton signature))
       db.signatures
   in
-  { signatures }
+  { db with signatures }
 
 (* Unlike add_signature, discards any prior entries for [name]. *)
 let replace_signature (db : signature_database) (name : Function_id.t)
@@ -1240,7 +1268,15 @@ let replace_signature (db : signature_database) (name : Function_id.t)
   let signatures =
     FunctionMap.add name (SignatureSet.singleton signature) db.signatures
   in
-  { signatures }
+  { db with signatures }
+
+let add_lambda_sig (db : signature_database) (name : IL.name)
+    (lambda_sig : Signature.t) : signature_database =
+  { db with lambda_sigs = IL.NameMap.add name lambda_sig db.lambda_sigs }
+
+let find_lambda_sig (db : signature_database) (name : IL.name) :
+    Signature.t option =
+  IL.NameMap.find_opt name db.lambda_sigs
 
 let show_func_key (key : func_key) : string =
   Function_id.show_debug key

@@ -2344,7 +2344,10 @@ and method_definition (env : env)
   let _tparams, (v8, tret) = call_signature env v8 in
   let v9 = statement_block env v9 in
   let attrs = v1 @ v2 @ v2bis @ v3 @ v4 @ v5 @ v7 |> List_.map attr in
-  let f_kind = (G.Method, fake) in
+  (* The method's token is its parameters' opening paren: a real token
+     whatever the property name, a computed one included. *)
+  let lp, _, _ = v8 in
+  let f_kind = (G.Method, lp) in
   let f =
     { f_attrs = []; f_params = v8; f_body = v9; f_rettype = tret; f_kind }
   in

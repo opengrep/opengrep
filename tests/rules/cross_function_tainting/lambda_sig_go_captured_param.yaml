@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-go-captured-param
+    message: A closure reads a captured parameter of a method at the parameter's index, which the receiver does not take
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

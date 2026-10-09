@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-captured-lambda-call
+    message: A callback's call of a function held by a captured variable returns what that function returns and passes its arguments to it
+    languages: [typescript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-object-methods
+    message: Each method of an object literal inside a function has a signature of its own and reads the function's variables it captures
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-captured-param-call
+    message: A lambda's direct call of a captured parameter carries the parameter's taints
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

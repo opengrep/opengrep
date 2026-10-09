@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-captured-write-hof
+    message: A callback a built-in calls writes a captured local, read after the call
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
