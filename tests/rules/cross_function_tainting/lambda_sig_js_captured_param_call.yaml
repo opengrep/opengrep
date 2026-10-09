@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-captured-param-call
-    message: A source reaches a sink
+    message: A lambda's direct call of a captured parameter carries the parameter's taints
     languages: [javascript]
     severity: WARNING
     mode: taint

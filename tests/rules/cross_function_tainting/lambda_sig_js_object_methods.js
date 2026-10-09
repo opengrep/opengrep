@@ -1,39 +1,34 @@
-// Methods of an object literal inside a function are closures of that
-// function: each has a signature of its own (two methods of one literal are
-// told apart) and reads the variables it captures. The same inside a class
-// method.
+// Methods of an object literal, in a function or in a class method, are its
+// closures: each has a signature of its own and reads the variables it captures.
 function setup(options) {
-  const settings = options.datasources || [];
+  const items = options.items;
+  const names = ["a"];
   install({
-    getList() {
-      return settings.map((s) => s.name);
+    first() {
+      // ok: lambda-sig-js-object-methods
+      sink(names);
     },
-    getInstanceSettings(ref) {
-      const all = settings.map((s) => s.name);
+    at() {
       // ruleid: lambda-sig-js-object-methods
-      return all.find((x) => x === ref) || all[0];
+      sink(items);
     },
   });
 }
 
-class Svc {
+class Box {
   setup(options) {
-    const settings = options.datasources || [];
+    const items = options.items;
     install({
-      getList() {
-        return settings.map((s) => s.name);
-      },
-      getInstanceSettings(ref) {
-        const all = settings.map((s) => s.name);
+      at() {
         // ruleid: lambda-sig-js-object-methods
-        return all.find((x) => x === ref) || all[0];
+        sink(items);
       },
     });
   }
 }
 
 function test() {
-  const data = JSON.parse(JSON.stringify(fixture));
-  setup({ datasources: data });
-  new Svc().setup({ datasources: data });
+  const data = source();
+  setup({ items: data });
+  new Box().setup({ items: data });
 }

@@ -1,40 +1,33 @@
 // A callback inside a method calls another method on the receiver: that
 // method's reads of a field the constructor set are reads of the receiver's
 // field here, where the constructor's argument reaches it.
-const fs = require('fs');
-const path = require('path');
-
-class Compiler {
-  constructor(historyFilePath) {
-    this.history = {};
-    this.historyFilePath = historyFilePath;
-    this._load();
+class Store {
+  constructor(file) {
+    this.file = file;
+    this.other = 'b';
+    this.load();
   }
 
-  setup(app) {
-    app.use((req, res, next) => {
-      const chunk = path.basename(req.url);
-      this._record(chunk);
-      next();
+  watch(emitter) {
+    emitter.on(() => {
+      this.save();
     });
   }
 
-  _record(chunk) {
-    try {
-      // ruleid: lambda_this_method_call
-      fs.writeFileSync(this.historyFilePath, JSON.stringify(this.history), 'utf8');
-    } catch (e) {}
+  save() {
+    // ruleid: lambda_this_method_call
+    sink(this.file);
+    // ok: lambda_this_method_call
+    sink(this.other);
   }
 
-  _load() {
-    try {
-      // ruleid: lambda_this_method_call
-      this.history = JSON.parse(fs.readFileSync(this.historyFilePath, 'utf8'));
-    } catch (e) {}
+  load() {
+    // ruleid: lambda_this_method_call
+    sink(this.file);
   }
 }
 
-function start(historyFilePath, app) {
-  const compiler = new Compiler(historyFilePath);
-  compiler.setup(app);
+function start(emitter) {
+  const store = new Store(source());
+  store.watch(emitter);
 }

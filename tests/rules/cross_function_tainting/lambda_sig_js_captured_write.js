@@ -1,22 +1,22 @@
 // A callback that writes a captured variable, and one that reads it through a
 // callback a built-in calls.
-describe('x', () => {
-  let prepared;
+group(() => {
+  let data;
   let plain;
-  beforeEach(() => {
-    prepared = JSON.parse(JSON.stringify(mock));
+  before(() => {
+    data = source();
     plain = { a: 1 };
   });
-  it('y', () => {
+  check(() => {
     // ruleid: lambda-sig-js-captured-write
-    const lines = [...prepared.diff_files].flatMap((file) => [...file[KEY]]);
+    data.items.map((item) => sink(item));
   });
-  it('z', () => {
+  check(() => {
     // ruleid: lambda-sig-js-captured-write
-    expect(prepared[0].renderIt).toBeTruthy();
+    sink(data);
   });
-  it('w', () => {
+  check(() => {
     // ok: lambda-sig-js-captured-write
-    expect(plain[0]).toBeTruthy();
+    sink(plain);
   });
 });

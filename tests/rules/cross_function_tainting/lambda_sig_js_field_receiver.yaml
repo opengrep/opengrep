@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-field-receiver
-    message: A source reaches a sink
+    message: A method called on a field of the receiver reads that field's object, not the receiver
     languages: [javascript]
     severity: WARNING
     mode: taint

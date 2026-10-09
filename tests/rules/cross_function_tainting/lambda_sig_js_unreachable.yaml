@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-unreachable
-    message: A source reaches a sink
+    message: A lambda at an unreachable point reports nothing, as the code around it
     languages: [javascript]
     severity: WARNING
     mode: taint

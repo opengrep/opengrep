@@ -1,6 +1,6 @@
 rules:
   - id: precondition-fixpoint
-    message: A and B reach the sink
+    message: A sink's labelled precondition stays the same formula over the rounds of a fixpoint
     languages: [javascript]
     severity: WARNING
     mode: taint

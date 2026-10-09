@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-java-expr-body
-    message: A source reaches a sink through a lambda
+    message: An expression-bodied lambda returns its expression
     languages: [java]
     severity: WARNING
     mode: taint

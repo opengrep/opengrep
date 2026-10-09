@@ -2,14 +2,14 @@
 // gets its own signature.
 class C {
   void M() {
-    var cmd = Request.Query["c"];
+    var cmd = source();
     // ruleid: lambda-sig-cs-query-lambdas
-    var r = from u in users where Exec(cmd) select u.Name;
+    var r = from u in users where sink(cmd) select u.Name;
   }
 
   void N() {
     var name = "fixed";
     // ok: lambda-sig-cs-query-lambdas
-    var r = from u in users where Exec(name) select u.Name;
+    var r = from u in users where sink(name) select u.Name;
   }
 }

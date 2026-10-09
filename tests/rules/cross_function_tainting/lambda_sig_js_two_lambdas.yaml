@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-two-lambdas
-    message: A source reaches a sink
+    message: Two anonymous lambdas in one function each keep their own signature
     languages: [javascript]
     severity: WARNING
     mode: taint

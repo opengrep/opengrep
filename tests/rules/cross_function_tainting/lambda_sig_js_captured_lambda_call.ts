@@ -1,26 +1,25 @@
 // A callback calls a function it reaches through a captured variable: a
 // variable holding a lambda, whose result it reads, or an object holding a
 // function, whose sink its arguments reach.
-describe('exporter', () => {
-  const setup = async () => {
-    const copy = JSON.parse(JSON.stringify(schema));
-    return { dashboard: copy };
-  };
-  it('reads what setup returns', async () => {
-    const { dashboard } = await setup();
+function viaVariable() {
+  const make = () => source();
+  const fixed = () => "x";
+  run(() => {
     // ruleid: lambda-sig-js-captured-lambda-call
-    const variable = dashboard.variables[0];
+    sink(make());
+    // ok: lambda-sig-js-captured-lambda-call
+    sink(fixed());
   });
-});
+}
 
 (function () {
-  function readKey(obj, key) {
+  function get(o, k) {
     // ruleid: lambda-sig-js-captured-lambda-call
-    return obj[key];
+    sink(k);
   }
-  var Utils = { readKey: readKey };
-  var run = function (obj) {
-    return Utils.readKey(obj, JSON.stringify(obj));
+  var helpers = { get: get };
+  var read = function (o) {
+    return helpers.get(o, source());
   };
-  run({});
+  read({});
 })();

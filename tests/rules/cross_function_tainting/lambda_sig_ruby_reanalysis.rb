@@ -1,30 +1,21 @@
-# A block in a method whose signature is extracted more than once, in a
-# fixpoint over the methods calling each other, finds the flow through
-# [project_id] once that method's signature is known.
-class IssuableFinder
-  class Params < SimpleDelegator
-    def project?
-      project_id.present?
+# A block in a method calling itself, whose signature is extracted more than
+# once in a fixpoint, finds the flow through [key] once its signature is known.
+class Finder
+  def item
+    memo do
+      next nil unless item
+      # ruleid: lambda-sig-ruby-reanalysis
+      sink(key)
+      # ok: lambda-sig-ruby-reanalysis
+      sink(label)
     end
+  end
 
-    def related_groups
-      project.group.self_and_ancestors if project?
-    end
+  def key
+    source()
+  end
 
-    def project
-      strong_memoize(:project) do
-        next nil unless project?
-
-        # ruleid: lambda-sig-ruby-reanalysis
-        project = project_id.is_a?(Project) ? project_id : Project.find(project_id)
-        project = nil unless Ability.allowed?(current_user, :"read_#{klass.to_ability_name}", project)
-
-        project
-      end
-    end
-
-    def project_id
-      params[:project_id]
-    end
+  def label
+    "x"
   end
 end

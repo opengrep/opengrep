@@ -8,6 +8,8 @@ func (s *Store) Get(ctx int, query string) {
 	s.withSession(func(sess int) {
 		// ruleid: lambda-sig-go-captured-param
 		sink(query)
+		// ok: lambda-sig-go-captured-param
+		sink(ctx)
 	})
 }
 
