@@ -1021,7 +1021,7 @@ let arg_bound (sig_ : Signature.t) (arg : T.arg) : bool =
  * [partial] makes this a partial substitution, as when a closure is formed
  * ([close_over]): a taint or a written lval that [inst_var] does not resolve
  * stays as it is, for a later binder, instead of being dropped. *)
-let rec substitute_in_sig ?(partial = false) ~lang
+let rec substitute_in_sig ~(partial : bool) ~lang
     (inst_var : inst_var) (inst_trace : inst_trace) (sig_ : Signature.t) :
     Signature.t =
   let bound_in_sig = arg_bound sig_ in
@@ -1289,7 +1289,9 @@ let instantiate_shape ~lang inst_var inst_trace shape =
          * actuals via [substitute_in_sig]; bound references to the
          * inner sig's own parameters stay intact for resolution when
          * the inner sig is itself applied later. *)
-        Fun (substitute_in_sig ~lang inst_var inst_trace inner_sig)
+        Fun
+          (substitute_in_sig ~partial:false ~lang inst_var inst_trace
+             inner_sig)
   and inst_xtaint xtaint shape =
     (* This may break INVARIANT(cell) but 'update_offset_in_cell' will restore it. *)
     let xtaint =
