@@ -1,0 +1,13 @@
+rules:
+  - id: go_tuple_binding_captured
+    message: taint of a tuple-bound variable captured by a closure
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
