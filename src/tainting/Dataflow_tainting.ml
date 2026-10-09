@@ -3456,21 +3456,20 @@ let captured_var_assumptions lang ~(outer_vars : IL.name -> bool)
      it memoises: the name is read as the receiver's field of that name, as
      in the environment [this.x] is [x] ([Taint_lval_env.normalize_lval]). *)
   let bare_calls_env =
-    match lang with
-    | Lang.Ruby ->
-        LV.reachable_nodes lambda_cfg
-        |> Seq.fold_left
-             (fun env (node : IL.node) ->
-               match node.n with
-               | NInstr
-                   { i = Call (_, { e = Fetch { base = Var m; rev_offset = [] }; _ }, _); _ }
-                 when Option.is_none !(m.id_info.id_resolved) ->
-                   placeholder_on (LV.lval_of_var m)
-                     { base = BThis; offset = [ Ofld m ] }
-                     env
-               | _ -> env)
-             control_env
-    | _ -> control_env
+    if (Lang_config.get lang).bare_calls_are_receiver_methods then
+      LV.reachable_nodes lambda_cfg
+      |> Seq.fold_left
+           (fun env (node : IL.node) ->
+             match node.n with
+             | NInstr
+                 { i = Call (_, { e = Fetch { base = Var m; rev_offset = [] }; _ }, _); _ }
+               when Option.is_none !(m.id_info.id_resolved) ->
+                 placeholder_on (LV.lval_of_var m)
+                   { base = BThis; offset = [ Ofld m ] }
+                   env
+             | _ -> env)
+           control_env
+    else control_env
   in
   lvals_of_cfg ~nested:true lambda_cfg
   |> Seq.fold_left
