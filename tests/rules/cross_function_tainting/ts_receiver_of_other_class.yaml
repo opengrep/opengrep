@@ -1,0 +1,13 @@
+rules:
+  - id: ts_receiver_of_other_class
+    message: taint from a method resolved through its receiver
+    languages:
+      - typescript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
