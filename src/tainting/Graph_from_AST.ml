@@ -499,7 +499,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 
   let funcs =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun funcs opt_ent parent_path fdef ->
+      (fun funcs ~object_literal_method:_ opt_ent parent_path fdef ->
         match fn_id_of_entity ~lang opt_ent parent_path fdef with
         | Some fn_id ->
             let func = { fn_id; entity = opt_ent; fdef } in
@@ -525,7 +525,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
   in
   (* Visit all calls in the AST, tracking the current function context *)
   Visit_function_defs.visit_with_parent_path ~lang
-    (fun opt_ent parent_path fdef ->
+    (fun ~object_literal_method:_ opt_ent parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
           let is_toplevel_lambda = match (opt_ent, parent_path) with

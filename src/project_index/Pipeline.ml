@@ -641,7 +641,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let per_fdef_edges =
       staged "extract calls" @@ fun () ->
       Visit_function_defs.fold_with_parent_path ~lang
-        (fun edges opt_ent parent_path fdef ->
+        (fun edges ~object_literal_method:_ opt_ent parent_path fdef ->
         (* A skipped anon attributes calls to its enclosing named ancestor, else the file's [<top_level>] node. *)
         let caller_kind =
           if skip_anon opt_ent then begin
