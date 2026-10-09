@@ -9,9 +9,12 @@ function outer(a, b, c) {
 function main() {
   const p = {};
   const q = {};
-  outer(p, q, 1)();
+  const r = {};
+  outer(p, q, r)();
   // ruleid: lambda-sig-js-closure-either-param
   sink(p.x);
   // ruleid: lambda-sig-js-closure-either-param
   sink(q.x);
+  // ok: lambda-sig-js-closure-either-param
+  sink(r.x);
 }

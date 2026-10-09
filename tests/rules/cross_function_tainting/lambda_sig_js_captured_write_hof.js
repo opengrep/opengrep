@@ -11,4 +11,6 @@ function go() {
   const res = collect([source()]);
   // ruleid: lambda-sig-js-captured-write-hof
   sink(res);
+  // ok: lambda-sig-js-captured-write-hof
+  sink(collect(["a"]));
 }

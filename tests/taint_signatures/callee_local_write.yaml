@@ -1,6 +1,6 @@
 rules:
   - id: callee-local-write
-    message: x
+    message: A closure's write to a local of its enclosing function is not an effect of that function's signature
     languages: [javascript]
     severity: WARNING
     mode: taint

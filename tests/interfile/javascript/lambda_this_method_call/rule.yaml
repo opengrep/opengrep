@@ -2,20 +2,11 @@ rules:
   - id: lambda_this_method_call
     languages: [js]
     severity: ERROR
-    message: A function argument reaches the fs module
+    message: A method called on the receiver from a callback reads the field the constructor set from its argument
     mode: taint
     options:
       taint_interfile: true
     pattern-sources:
-      - patterns:
-          - pattern-inside: function ... (..., $ARG,...) {...}
-          - focus-metavariable: $ARG
+      - pattern: source(...)
     pattern-sinks:
-      - patterns:
-          - pattern-inside: |
-              $FS = require('fs')
-              ...
-          - pattern-not: $FS. ... .$METHOD("...", ...)
-          - pattern-either:
-              - pattern: $FS. ... .readFileSync($FILE, ...)
-              - pattern: $FS. ... .writeFileSync($FILE, ...)
+      - pattern: sink(...)

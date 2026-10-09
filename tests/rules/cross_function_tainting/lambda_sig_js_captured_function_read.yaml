@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-captured-function-read
-    message: A source reaches a sink
+    message: A lambda's read of a captured variable holding a function reads the function; calling it, or a function a field of it holds, is a call
     languages: [javascript]
     severity: WARNING
     mode: taint

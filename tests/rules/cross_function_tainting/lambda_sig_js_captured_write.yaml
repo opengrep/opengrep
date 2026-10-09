@@ -1,12 +1,12 @@
 rules:
   - id: lambda-sig-js-captured-write
-    message: Stringified data used as an object key
+    message: A callback's write of a captured variable is read by later callbacks, directly or through a callback a built-in calls
     languages: [javascript]
     severity: WARNING
     mode: taint
     options:
       taint_intrafile: true
     pattern-sources:
-      - pattern: JSON.stringify(...)
+      - pattern: source(...)
     pattern-sinks:
-      - pattern: $OBJECT[...]
+      - pattern: sink(...)

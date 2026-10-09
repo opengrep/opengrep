@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-captured-write-hof
-    message: Tainted data reaches a sink
+    message: A callback a built-in calls writes a captured local, read after the call
     languages: [javascript]
     severity: WARNING
     mode: taint

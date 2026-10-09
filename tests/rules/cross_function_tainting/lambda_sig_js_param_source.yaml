@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-param-source
-    message: Redirect to a URL taken from a function parameter
+    message: A lambda's own destructured parameter is a source wherever the lambda is analysed
     languages: [javascript]
     severity: WARNING
     mode: taint
@@ -12,6 +12,4 @@ rules:
               function ... (..., $PROP, ...) { ... }
           - focus-metavariable: $PROP
     pattern-sinks:
-      - patterns:
-          - pattern: window.location.href = $SINK
-          - focus-metavariable: $SINK
+      - pattern: sink(...)

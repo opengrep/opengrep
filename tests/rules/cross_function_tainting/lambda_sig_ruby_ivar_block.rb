@@ -1,38 +1,35 @@
 # A block applied where it is used reads the receiver's fields there: one the
 # method set itself, and one a helper method it calls memoises.
-class RunnersController
+class Handler
   def update
-    @runner = Ci::Runner.find(params[:id])
-    if Ci::UpdateRunnerService.new(@runner).update(runner_params)
-      respond_to do |format|
-        # ruleid: lambda-sig-ruby-ivar-block
-        format.html { redirect_to admin_runner_path(@runner) }
-      end
+    @item = source()
+    respond do |r|
+      # ruleid: lambda-sig-ruby-ivar-block
+      r.go { sink(@item) }
     end
   end
-end
 
-class KeysController
   def destroy
-    key = user.keys.find(params[:id])
-    respond_to do |format|
+    owner
+    respond do |r|
       # ruleid: lambda-sig-ruby-ivar-block
-      format.html { redirect_to keys_path(user) }
+      r.go { sink(owner) }
     end
   end
 
   def show
-    respond_to do |format|
+    label
+    respond do |r|
       # ok: lambda-sig-ruby-ivar-block
-      format.html { redirect_to keys_path(label) }
+      r.go { sink(label) }
     end
   end
 
-  def user
-    @user ||= User.find_by!(username: params[:user_id])
+  def owner
+    @owner ||= source()
   end
 
   def label
-    @label ||= "keys"
+    @label ||= "x"
   end
 end

@@ -1,6 +1,6 @@
 rules:
   - id: closure-param-write
-    message: x
+    message: A closure's write to a field of the enclosing function's parameter is an effect of that function
     languages: [javascript]
     severity: WARNING
     mode: taint

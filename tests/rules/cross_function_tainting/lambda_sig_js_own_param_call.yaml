@@ -1,6 +1,6 @@
 rules:
   - id: lambda-sig-js-own-param-call
-    message: A source reaches a sink
+    message: A call on a lambda's own parameter, where the lambda is used without arguments, is not a call on a parameter of the enclosing function
     languages: [javascript]
     severity: WARNING
     mode: taint

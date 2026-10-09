@@ -1,18 +1,14 @@
 rules:
   - id: lambda-sig-js-spanning-sink
-    message: Remote property injection
+    message: A sink match spanning a lambda's definition is reported at the expression inside the lambda
     languages: [javascript]
     severity: WARNING
     mode: taint
     options:
       taint_intrafile: true
     pattern-sources:
-      - patterns:
-          - pattern-inside: function ... ($REQ, $RES) {...}
-          - pattern: $REQ.body
+      - pattern: source(...)
     pattern-sinks:
       - patterns:
-          - pattern-inside: $OBJ[...] = ...
-          - pattern: $INDEX
-          - pattern-not: |
-              "..." + $INDEX
+          - pattern-inside: $X[...] = ...
+          - pattern: $I
