@@ -280,6 +280,8 @@ type state_mode =
   | ST_START_HEREDOC of string
   (* started with <<<'XXX', finished by XXX; *)
   | ST_START_NOWDOC of string
+  (* after '__halt_compiler();', up to the end of the file *)
+  | ST_HALTED
 
 
 let default_state = INITIAL
@@ -401,6 +403,9 @@ let PUBLIC = ['P''p']['U''u']['B''b']['L''l']['I''i']['C''c']
 let PROTECTED = ['P''p']['R''r']['O''o']['T''t']['E''e']['C''c']['T''t']['E''e']['D''d']
 let PRIVATE = ['P''p']['R''r']['I''i']['V''v']['A''a']['T''t']['E''e']
 let SET = ['S''s']['E''e']['T''t']
+let HALT_COMPILER =
+  "__" ['H''h']['A''a']['L''l']['T''t'] '_'
+  ['C''c']['O''o']['M''m']['P''p']['I''i']['L''l']['E''e']['R''r']
 (* the '_' of a numeric literal separator only ever sits between two digits,
  * as in '1_000' or '0x1_C'; leading, trailing and doubled ones are not
  * numbers. coupling: LNUM..ONUM in Zend's zend_language_scanner.l
@@ -744,6 +749,41 @@ rule st_in_scripting state = parse
         | "public" -> T_PUBLIC_SET info
         | "protected" -> T_PROTECTED_SET info
         | _ -> T_PRIVATE_SET info
+      }
+
+    (* What follows '__halt_compiler();' is data, not PHP, so lexing stops
+     * there, which is why the call is read in a single match. The call
+     * itself gives the usual tokens. Lexing stops only at the top level, the
+     * one place PHP allows it; elsewhere PHP rejects it, and the rest of the
+     * file is still lexed so that the braces around it stay balanced, with a
+     * '?>' leaving PHP code as it does anywhere else.
+     *)
+    | (HALT_COMPILER as kwd) (WHITESPACEOPT as w1) "(" (WHITESPACEOPT as w2)
+      ")" (WHITESPACEOPT as w3) ((";" | "?>") as semi) {
+        let info = tokinfo lexbuf in
+        let file = Tok.file_of_tok info in
+        let start = (Tok.unsafe_loc_of_tok info).Tok.pos.bytepos in
+        let rev_rest, _ =
+          [ (w1, fun ii -> TSpaces ii);
+            ("(", fun ii -> TOPAR ii);
+            (w2, fun ii -> TSpaces ii);
+            (")", fun ii -> TCPAR ii);
+            (w3, fun ii -> TSpaces ii);
+            (semi, fun ii -> TSEMICOLON ii) ]
+          |> List.fold_left
+               (fun (acc, pos) (s, mk) ->
+                 if String.equal s "" then (acc, pos)
+                 else
+                   (mk (tokinfo_file_str_pos file s pos) :: acc,
+                    pos + String.length s))
+               ([], start + String.length kwd)
+        in
+        state.pending_tokens := List.rev rev_rest @ !(state.pending_tokens);
+        (match !(state.mode), semi with
+         | [ _ ], _ -> set_mode state ST_HALTED
+         | _, "?>" -> set_mode state INITIAL
+         | _ -> ());
+        T_IDENT (case_str kwd, Tok.rewrap_str kwd info)
       }
 
     | LABEL
@@ -1273,6 +1313,15 @@ and st_start_nowdoc state stopdoc = parse
        error ("unrecognised symbol, in st_start_nowdoc rule:"^tok lexbuf);
        TUnknown (tokinfo lexbuf)
     }
+
+(*****************************************************************************)
+(* Rule halted *)
+(*****************************************************************************)
+(* the data after '__halt_compiler();', as a comment so that the parser skips
+ * it, rather than as T_INLINE_HTML, which would be echoed *)
+and st_halted = parse
+  | ANY_CHAR+ { T_COMMENT (tokinfo lexbuf) }
+  | eof { EOF (tokinfo lexbuf |> Tok.rewrap_str "") }
 
 (*****************************************************************************)
 (* Rule comment *)
