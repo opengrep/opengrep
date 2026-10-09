@@ -169,11 +169,6 @@ let normalize_lval lang lval =
   let offset = T.offset_of_rev_IL_offset lang ~rev_offset in
   Some (base, offset)
 
-(* TODO: This is an experiment, try to raise taint_MAX_TAINTED_LVALS and run
- * some benchmarks, if we can e.g. double the limit without affecting perf then
- * just remove this. We could try something clever based e.g. on live-variable
- * analysis, but there is a high risk that the "solution" may introduce perf
- * problems of its own... *)
 (* A variable tracked for its taint: one holding only a function's shape is
    not one, and does not count against the limit. A function holding a
    thousand functions holds a shape for each, and still tracks the taint of
@@ -183,6 +178,11 @@ let tracked_for_taint (Cell (xtaint, shape)) =
   | (`None | `Clean), Fun _ -> false
   | _ -> true
 
+(* TODO: This is an experiment, try to raise taint_MAX_TAINTED_LVALS and run
+ * some benchmarks, if we can e.g. double the limit without affecting perf then
+ * just remove this. We could try something clever based e.g. on live-variable
+ * analysis, but there is a high risk that the "solution" may introduce perf
+ * problems of its own... *)
 let remove_some_lval_from_tainted_set tainted =
   (* Try to make space for a new l-value by removing an auxiliary _tmp one
    * first, the one with the lowest sid, which hopefully isn't needed anymore...

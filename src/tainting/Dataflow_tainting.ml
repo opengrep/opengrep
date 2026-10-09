@@ -1298,7 +1298,7 @@ let close_named_lambda env (name : IL.name) : Signature.t option =
    field ([cb()], [this.cb()]), or by the variable an invoke method is
    called on ([callback.run(x)]); else the signature of the function a
    variable is bound to by name ([cb = handler]); else, with [closing], the
-   lifted signature of the lambda the variable names, closed here. *)
+   lifted signature of the lambda the variable refers to, closed here. *)
 let callee_signature ~closing env fun_exp arity =
   let fun_shape_of (lval : IL.lval) =
     match Lval_env.find_lval env.taint_inst.lang env.lval_env lval with
@@ -2222,23 +2222,11 @@ let apply_call_effects env ~rebound_guards ~deferred
     (taints_acc, shape_acc, lval_env)
     call_effects
 
-(* A [Sig_inst.call_effect.ToSinkInCall] bubbling out of instantiation means
- * the callback's signature could not be resolved inside [Sig_inst]. This
- * helper gives it one more chance at the use site by name-looking-up the
- * saved [callee] expression, and — on success — consumes the callback's
- * resolved effects (recording sinks, propagating return taints/shapes, and
- * applying lval updates) against the fold's running accumulator. On any
- * failure it re-records the preserved effect so a caller one level up can
- * try again.
- *
- * Nested [ToSinkInCall] effects returned by the resolver are re-recorded
- * with their own [callee/arg/arg_offset/args_taints]; the outer preserved
- * effect is only re-recorded when resolution fails outright. *)
 (* A deferred call left unresolved, recorded for a caller to resolve: one
-   on a parameter, at every caller; one on a captured variable only in a
-   lifted frame holding the variable's placeholder, where closing the lambda
-   binds it. Elsewhere the variable is a local of a function that has
-   returned. *)
+   on a parameter, at every caller; one on a captured variable only while a
+   lifted signature is extracted, whose environment holds the variable's
+   placeholder: closing the lambda binds it. Elsewhere the variable is a
+   local of a function that has returned. *)
 let record_deferred_call env ~callee ~arg ~arg_offset ~args_taints ~guards =
   let keep =
     match arg with
@@ -2257,6 +2245,19 @@ let record_deferred_call env ~callee ~arg ~arg_offset ~args_taints ~guards =
     record_effects env
       [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ]
 
+(* A [Sig_inst.call_effect.ToSinkInCall] bubbling out of instantiation means
+ * the callback's signature could not be resolved inside [Sig_inst]. This
+ * helper gives it one more chance at the use site by name-looking-up the
+ * saved [callee] expression, and, on success, consumes the callback's
+ * resolved effects (recording sinks, propagating return taints/shapes, and
+ * applying lval updates) against the fold's running accumulator. On any
+ * failure it records the preserved effect again ([record_deferred_call]) so
+ * a caller one level up can try again.
+ *
+ * Nested [ToSinkInCall] effects returned by the resolver are recorded again
+ * ([record_deferred_call]) with their own [callee/arg/arg_offset/args_taints];
+ * the outer preserved effect is only recorded again when resolution fails
+ * outright. *)
 let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
     ~args_taints ~rebound_guards (taints_acc, shape_acc, lval_env) =
   let resolved_call_effects =
@@ -2348,7 +2349,6 @@ let apply_effects env (call_effects : Sig_inst.call_effects) =
     (Taints.empty, Bot, env.lval_env)
     call_effects
 
-(* Apply [fun_sig] at a use of [fun_exp] with these [args]. *)
 let apply_signature env fun_exp (fun_sig : Signature.t)
     ~(args : IL.exp argument list option)
     (args_taints : (Taints.t * S.shape) argument list) :
@@ -3346,7 +3346,6 @@ let is_local_variable (var : IL.name) =
       false
   | Some _ -> true
 
-(* The variables among these lvals. *)
 let vars_of_lvals ~(init : IL.NameSet.t) (lvals : IL.lval Seq.t) : IL.NameSet.t =
   Seq.fold_left
     (fun vars (lval : IL.lval) ->
@@ -3377,7 +3376,6 @@ let vars_of_cfg ~(lang : Lang.t) (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
   in
   vars_of_lvals ~init:params (lvals_of_cfg ~nested:false fun_cfg)
 
-(* The variables a lambda and the lambdas nested in it mention. *)
 let vars_of_subtree (lambda_cfg : IL.fun_cfg) : IL.NameSet.t =
   vars_of_lvals ~init:IL.NameSet.empty (lvals_of_cfg ~nested:true lambda_cfg)
 
@@ -3395,9 +3393,10 @@ let rec collect_all_lambdas_innermost_first ~(lang : Lang.t)
   let own_vars = vars_of_cfg ~lang fun_cfg in
   let own var = outer_vars var || IL.NameSet.mem var own_vars in
   let subtrees = IL.NameMap.map vars_of_subtree fun_cfg.lambdas in
-  (* The number of lambdas mentioning each variable: one mentioned by any
-     lambda other than [name] is mentioned by two, or by one that is not
-     [name]. *)
+  (* For each variable, the number of sibling lambdas whose subtree
+     mentions it. A sibling other than [name] mentions a variable exactly
+     when that number is two or more, or when it is one and [name]'s
+     subtree ([mine]) does not mention it. *)
   let mentions =
     IL.NameMap.fold
       (fun _ vars mentions ->
@@ -3900,7 +3899,8 @@ and apply_lambda_signature env lambda_name (lambda_cfg : IL.fun_cfg)
     }
   in
   (* The lambda's own parameters are clean here: a deferred call on one of
-     them can bind nothing, and names no parameter of this frame. *)
+     them can bind nothing, and is not a call of a parameter of the
+     enclosing function. *)
   match instantiate_signature env lambda_exp lambda_sig ~args:None args_taints with
   | Some call_effects ->
       let _, _, lval_env =

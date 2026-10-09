@@ -80,13 +80,14 @@ val close_over :
     [BCaptured] variable takes its value in the given environment, the
     environment of the enclosing function at the definition. A read becomes
     the variable's taints; a call becomes a call of what it holds (a deferred
-    call on the enclosing parameter it is, or the effects of the function it
-    holds); a write stays a write to the variable, and is also a write to the
-    parameter of the enclosing function the variable holds, for a closure that
-    leaves the function. A variable the environment does not know stays a
-    [BCaptured] placeholder, bound where the closure is called if that is in
-    the function owning the variable. The lambda's own parameters, the receiver
-    and the control taint are bound where the closure is called. *)
+    call on the parameter of the enclosing function it holds, or the effects
+    of the function it holds); a write stays a write to the variable, and is
+    also a write to the parameter of the enclosing function the variable
+    holds, for a closure that leaves the function. A variable with no binding
+    in the environment stays a [BCaptured] placeholder, bound where the
+    closure is called if that is in the function owning the variable. The
+    lambda's own parameters, the receiver and the control taint are bound
+    where the closure is called. *)
 
 val instantiate_function_signature :
   lang:Lang.t ->
