@@ -2769,7 +2769,7 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
     match eff with
     (* A write into the result of a call is a write to nothing tracked. *)
     | ToLval { lval = { base = BCaptured _; offset }; _ }
-      when List.mem T.Ocall offset ->
+      when List.exists (T.equal_offset T.Ocall) offset ->
         []
     | ToLval ({ lval = { base = BCaptured var; offset }; _ } as tolval) ->
         eff
