@@ -103,6 +103,7 @@ module G_ordered = struct
   let iter_succ f g v = fold_succ List.cons g v [] |> sorted |> List.iter f
 end
 
+(* OCamlgraph: Use built-in algorithms *)
 module Topo = Graph.Topological.Make_stable (G)
 module SCC = Graph.Components.Make (G_ordered)
 

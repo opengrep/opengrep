@@ -86,6 +86,7 @@ class ['self] visitor =
       | None -> super#visit_expr f e
   end
 
+(* NOTE: Removed [lazy] because it can crash when using domains. *)
 let visitor_instance = new visitor
 
 (* Visit all function definitions in an AST. *)

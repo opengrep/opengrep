@@ -2156,6 +2156,7 @@ let apply_call_effects env ~rebound_guards ~deferred
           { taints_with_precondition = incoming_taints, requires; sink; guards; _ }
         ->
           let guards = conj guards in
+          (* Call effects_of_tainted_sink to get proper taint traces, then fix the requires condition *)
           effects_of_tainted_sink env incoming_taints sink
           |> List.map (function
                | Effect.ToSink eff ->
@@ -2172,6 +2173,16 @@ let apply_call_effects env ~rebound_guards ~deferred
       | ToReturn
           { data_taints = taints; data_shape = shape; control_taints; guards; _ }
         ->
+          (* Conjoin the callee's rebound guard onto each per-taint
+           * bundle. The bundles travel with the value through the
+           * outer's storage; at outer's later emission sites
+           * ([effects_of_tainted_return], [record_effects],
+           * [effects_from_arg_updates_at_exit]) one effect emerges
+           * per bundle, each carrying its own guard. Fan-in of
+           * disjoint inner branches is preserved as separate
+           * bundles in [Taint_set] and fused via [compose_or] at
+           * joins; the smart-constructor complement rule then
+           * folds [G or not G] to [top]. *)
           let taints = Taints.conjoin_guard (conj guards) taints in
           let (S.Cell (xtaint, shape)) =
             Shape.unify_cell ~lang
@@ -2202,6 +2213,7 @@ let apply_call_effects env ~rebound_guards ~deferred
       | ToLvalThis { taints; offset; guards } ->
           let guards = conj guards in
           record_this_field_write env taints offset guards;
+          (* Mirror the sibling [ToLval] arm's local write. *)
           let taints = Taints.conjoin_guard guards taints in
           (taints_acc, shape_acc, add_this_field_to_lval_env env lval_env offset taints)
       | ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ->
@@ -2311,6 +2323,7 @@ let instantiate_signature env fun_exp (fun_sig : Signature.t)
       m "SIG_FOUND: %s -> %s"
         (Display_IL.string_of_exp fun_exp)
         (Signature.show fun_sig));
+  (* Callback lookup in both modes; effects-explosion hazard contained by [Sig_inst.preserve_effect]. *)
   Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
     ~max_offset:(poly_offset_bound env fun_exp)
     ~outer_params:env.func.il_params env.lval_env fun_sig ~callee:fun_exp
@@ -2343,6 +2356,13 @@ let apply_signature env fun_exp (fun_sig : Signature.t)
   instantiate_signature env fun_exp fun_sig ~args args_taints
   |> Option.map (apply_effects env)
 
+(* This function is consuming the taint signature of a function to determine
+   a few things:
+   1) What is the status of taint in the current environment, after the function
+      call occurs?
+   2) Are there any effects that occur within the function due to taints being
+      input into the function body, from the calling context?
+*)
 let check_function_call env fun_exp args
     (args_taints : (Taints.t * S.shape) argument list) () :
     (Taints.t * S.shape * Lval_env.t) option =
@@ -2472,6 +2492,7 @@ let call_with_intrafile lval_opt e env args instr =
           | _ -> None)
       | _ -> None
     in
+    (* Handle implicit lambda pattern FIRST, before trying constructor *)
     match implicit_lambda_call with
     | Some (var_taints, fun_sig, lambda_exp, lambda_shape) ->
         apply_signature { env with lval_env } e fun_sig
@@ -2583,7 +2604,8 @@ let call_with_intrafile lval_opt e env args instr =
                    * In this case we return empty taints - the callback's return will be handled
                    * when the ToSinkInCall effect is instantiated. *)
                   let is_method_callback_invoke =
-                    (* An invoke method on a callback parameter. *)
+                    (* Check if this is a method call on a callback parameter
+                     * via a configured invoke method (e.g. .apply, .call, .run). *)
                     match e_obj with
                     | `Obj (_, S.Arg _) -> is_invoke_method env e
                     | _ -> false
@@ -2833,6 +2855,8 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                       (* Check if this is a call to a function parameter (either direct or via method) *)
                       (match e_obj with
                       | `Obj (obj_taints, (S.Arg _ as shape)) ->
+                          (* This is a method call on a function parameter (e.g., callback.apply in Java,
+                           * callback.call in Ruby). Treat it as invoking the callback. *)
                           effects_of_call_func_arg e shape obj_taints ~call_offset:[] args_taints
                           |> record_effects { env with lval_env }
                       | _ ->
@@ -3249,6 +3273,8 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
        (fun (i, env) (param : IL.param) ->
          match param with
          | Param { pname; _ }
+         (* NOTE: from the perspective of the function definition, a "rest" param is just *)
+         (* a param. The difference is only at the call site when instantiating the args. *)
          | ParamRest { pname; _ }
          | ParamKwd { pname; _ }
          | ParamPattern ({ pname; _ }, _) ->
@@ -3257,6 +3283,24 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
              let env =
                match param with
                | ParamPattern (_, pat) ->
+                   (* Seed each leaf with:
+                    * - the [Arg (arg, offset)] shape so the
+                    *   shape system can project the caller's
+                    *   actual argument down to the leaf at HOF
+                    *   call-site instantiation;
+                    * - a [Var (BArg arg, offset)] taint
+                    *   so body references pick up the caller's
+                    *   taint conservatively even when the
+                    *   caller's argument has no structural
+                    *   shape for the projection to walk;
+                    * - any [Src] taints produced by source
+                    *   patterns that match the leaf's own token
+                    *   (e.g. [focus-metavariable: $REQ] with an
+                    *   inner [pattern: body]). There is no IL
+                    *   instruction for a destructured binding,
+                    *   so the only way a source match at the
+                    *   declaration can taint the leaf is by
+                    *   consulting the rule predicate here. *)
                    pattern_leaves_with_offsets ~lang pat
                    |> List.fold_left
                         (fun env (leaf, offset) -> add leaf arg offset env)
@@ -3265,6 +3309,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
              in
              (i + 1, env)
          | ParamReceiver { pname; _ } ->
+             (* Map receiver to BThis so receiver.field yields BThis.field effects. *)
              (* The receiver is not a call-site argument. *)
              ( i,
                Lval_env.add_lval lang (LV.lval_of_var pname)
