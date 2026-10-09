@@ -2659,16 +2659,14 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
                 (taints, shape))
           (Taints.empty, Bot) call_effects
   in
-  (* The value at an offset into a captured variable's, through the calls
-     ([Ocall]) in the offset. A call of a function the variable holds is
-     what it returns, with the function's own taints. A call of a value not
-     known to be a function is, as any call of an unknown function: a method
-     call carries its receiver's taints, a direct call its callee's, and a
-     direct call of a parameter of the enclosing function nothing (its
-     result is the deferred call's, as a parameter callback's). [None] when
-     the environment does not know the variable, which leaves the
-     placeholder for the owner of the variable. A variable the environment
-     knows but holds nothing at the offset is clean. *)
+  (* The value of captured [var] at [offset], from [value], the variable's
+     value where the closure is formed; [path] is the part of the offset
+     already walked. Each [Ocall] in [offset] is a call the lambda makes, and
+     the rest of the offset applies to its result. A call of a function the
+     variable holds gives what the function returns, plus the taints of the
+     function value. A call of any other value gives, as a call of an
+     unknown function does, the receiver's taints for a method call and the
+     callee's for a direct call. An offset holding nothing is clean. *)
   let rec at_offset (var : IL.name) ~(path : T.offset list) value
       (offset : T.offset list) =
     let rec split acc = function
@@ -2696,9 +2694,10 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
         | (Bot | Obj _ | Arg _), _method :: rev_receiver ->
             let taints, _ = find (List.rev rev_receiver) in
             (taints, Bot)
-        | Arg _, [] -> (Taints.empty, Bot)
-        | (Bot | Obj _), [] -> (taints, Bot))
+        | (Bot | Obj _ | Arg _), [] -> (taints, Bot))
   in
+  (* [None] when [lval_env] has no binding for [var]: the placeholder stays
+     for the function owning the variable. *)
   let value_at (var : IL.name) (offset : T.offset list) =
     let* value = value_of var in
     Some (at_offset var ~path:[] value offset)
