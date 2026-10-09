@@ -3343,10 +3343,13 @@ let lvals_of_cfg ~nested (fun_cfg : IL.fun_cfg) : IL.lval Seq.t =
    variable (in Ruby it is a method call). *)
 let is_local_variable (var : IL.name) =
   match !(var.id_info.id_resolved) with
-  | Some ((G.ImportedEntity _ | G.ImportedModule _), _)
+  | Some ((G.Global | G.LocalVar | G.Parameter | G.EnclosedVar), _) -> true
+  | Some
+      ( ( G.ImportedEntity _ | G.ImportedModule _ | G.GlobalName _
+        | G.TypeName | G.Macro | G.EnumConstant ),
+        _ )
   | None ->
       false
-  | Some _ -> true
 
 let vars_of_lvals ~(init : IL.NameSet.t) (lvals : IL.lval Seq.t) : IL.NameSet.t =
   Seq.fold_left
