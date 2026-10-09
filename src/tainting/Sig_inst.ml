@@ -2620,7 +2620,7 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
      index) of one of the lambda's own ([def f(x): y = x; lambda x: y])
      cannot be told from that parameter once in the signature: the variable
      stays a placeholder, bound where the closure is called. *)
-  let names_own_param (taints : Taints.t) =
+  let refers_to_own_param (taints : Taints.t) =
     Taints.to_taint_list taints
     |> List.exists (fun (taint : T.taint) ->
            match taint.orig with
@@ -2631,7 +2631,7 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
   let value_of (var : IL.name) =
     let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
     let taints = Xtaint.to_taints xtaints in
-    if names_own_param taints then None else Some (taints, shape)
+    if refers_to_own_param taints then None else Some (taints, shape)
   in
   (* What the function at an offset into a captured variable returns,
      called without arguments (what the lambda calls it with is in the
