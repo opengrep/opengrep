@@ -35,6 +35,35 @@ let rec qualified_class_name_of_ty (ty : G.type_) : G.name option =
     qualified_class_name_of_ty inner
   | _ -> None
 
+(* A member that is not a class, such as Python [None], contributes no
+   class. *)
+let rec class_names_of_ty (ty : G.type_) : G.name list =
+  match qualified_class_name_of_ty ty with
+  | Some (name : G.name) -> [ name ]
+  | None -> (
+      match ty.G.t with
+      | G.TyOr (left, _, right) -> class_names_of_ty left @ class_names_of_ty right
+      | G.TyExpr (e : G.expr) -> class_names_of_type_expr e
+      | _ -> [])
+
+(* Python writes [X | Y], [Optional[X]] and [Union[X, Y]] as expressions. *)
+and class_names_of_type_expr (e : G.expr) : G.name list =
+  match e.G.e with
+  | G.Call ({ G.e = G.IdSpecial (G.Op G.BitOr, _); _ }, (_, args, _)) ->
+    List.concat_map
+      (fun (arg : G.argument) ->
+        match arg with
+        | G.Arg (member : G.expr) -> class_names_of_type_expr member
+        | _ -> [])
+      args
+  | G.ArrayAccess ({ G.e = G.N (G.Id (("Optional", _), _)); _ }, (_, member, _)) ->
+    class_names_of_type_expr member
+  | G.ArrayAccess
+      ( { G.e = G.N (G.Id (("Union", _), _)); _ },
+        (_, { G.e = G.Container (G.Tuple, (_, members, _)); _ }, _) ) ->
+    List.concat_map class_names_of_type_expr members
+  | _ -> Option.to_list (qualified_class_name_of_ty (G.t (G.TyExpr e)))
+
 let rec dotted_idents_of_expr (e : G.expr) : G.ident list option =
   match e.G.e with
   | G.N (G.Id ((id : G.ident), _)) -> Some [ id ]
