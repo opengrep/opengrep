@@ -39,6 +39,14 @@ let test_sarif_nosemgrep (caps : Scan_subcommand.caps) () =
     ~targets:[ "targets/basic/regex-nosemgrep.txt" ]
     ()
 
+(* The text after "--" in a nosemgrep annotation is the suppression's
+ * justification. *)
+let test_sarif_nosemgrep_justification (caps : Scan_subcommand.caps) () =
+  run_scan caps
+    ~rule:"rules/regex/regex-nosemgrep.yaml"
+    ~targets:[ "targets/nosemgrep/regex-nosemgrep-justification.txt" ]
+    ()
+
 (* Port of: test_sarif_output_rule_board.
  * Verifies rule-board metadata (metadata.semgrep.policy) reaches SARIF. *)
 let test_sarif_rule_board (caps : Scan_subcommand.caps) () =
@@ -150,6 +158,9 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: nosemgrep suppressions"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_nosemgrep caps);
+         t "SARIF: nosemgrep justification"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_nosemgrep_justification caps);
          t "SARIF: rule-board metadata"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_rule_board caps);

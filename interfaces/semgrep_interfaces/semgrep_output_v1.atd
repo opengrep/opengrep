@@ -303,6 +303,9 @@ type cli_match_extra = {
 
   (* for nosemgrep *)
   ?is_ignored: bool option;
+  (* the text after "--" in the nosemgrep annotation, as in
+   * "nosemgrep: rule-id -- the input is validated upstream" *)
+  ?justification: string option;
 
   (* EXPERIMENTAL: added by dependency_aware code *)
   ?sca_info: sca_match option;
@@ -1841,6 +1844,7 @@ type core_match_extra <python decorator="dataclass(frozen=True)"> = {
   metavars: metavars;
   engine_kind: engine_of_finding;
   is_ignored: bool;
+  ?justification: string option;
   (* These fields generally come from the rule, but may be set here if they're
    * being overriden for that particular finding. This would currently occur
    * for rule with a validator for secrets, depending on what the validator

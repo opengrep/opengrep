@@ -46,6 +46,8 @@
 
 - Support for **custom ignore annotations** (instead of default `nosem` / `nosemgrep`). Use the option: `--opengrep-ignore-pattern=<VAL>.`
 
+- **Justifications** for ignore annotations: the text after `--` is reported as the suppression's `justification` in the SARIF output, e.g. `# nosemgrep: rule-id -- the input is validated upstream`.
+
 - Added a CLI option for specifying a custom **ignore file name**: `--semgrepignore-filename=<VAL>.`
 
 - Improved control over **file inclusion/exclusion**. Use `--force-exclude` to apply `--include` / `--exclude` rules even on explicitly passed file targets instead of just on directories.
