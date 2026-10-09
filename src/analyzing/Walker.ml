@@ -138,7 +138,7 @@ let fold_exprs_in_fdef ?(skip_nested_fdefs = false) ?skip_nested_fdef
 let walk_file ~(lang : Lang.t) (ast : G.program) : Observation.t list =
   let func_defs =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun acc opt_ent parent_path fdef ->
+      (fun acc ~object_literal_method:_ opt_ent parent_path fdef ->
         Observation.Func_def { opt_ent; parent_path; fdef } :: acc)
       [] ast
     |> List.rev

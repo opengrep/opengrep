@@ -357,13 +357,13 @@ let build_info_map
   in
   let info_map =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun info_map opt_ent parent_path fdef ->
+      (fun info_map ~object_literal_method opt_ent parent_path fdef ->
         (* A method of an object literal inside a function is visited as a
            closure of that function, without an entity: a lambda. *)
         let as_lambda =
           match fst fdef.fkind with
           | LambdaKind | Arrow -> true
-          | Method -> Option.is_none opt_ent
+          | Method -> object_literal_method
           | Function | BlockCases -> false
         in
         if as_lambda then
