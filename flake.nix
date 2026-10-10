@@ -89,7 +89,7 @@
 #
 # Our OCaml code is (mostly) correct because that's a focus of the language
 # itself. But it relies on a lot of C code and external dependencies, like
-# `libev`, `libcurl`, `tree-sitter` etc. This means that if someone wants to
+# `libev`, `tree-sitter` etc. This means that if someone wants to
 # build and contribute to Opengrep, they must install these dependencies, and
 # hope that their versions is compatible. For example if you install the OCaml
 # packages needed for opengrep, and then install libev, things won't work, since
@@ -165,8 +165,8 @@
 #
 # The maintenance for nix is super low. It automatically pulls in any dependency
 # declared in our semgrep.opam file, which then pulls in any non ocaml
-# dependencies those dependencies rely on. If someone adds a new build tool or
-# python package, they will have to add the dependency to `flake.nix`. This
+# dependencies those dependencies rely on. If someone adds a new build tool,
+# they will have to add the dependency to `flake.nix`. This
 # means you have to read some comments then add the name of the package to an
 # array somewhere, super easy. If you're interested in doing anything more
 # complex, see the future reading section.
@@ -196,8 +196,8 @@
 #
 # Where nix would smooth things over for us even more is simplifying our CI.
 # Right now we have to guess and hope that our CI has the same dependencies as
-# what's on our system, and it can be a fight to add any new dependencies, like
-# libcurl. Not to mention our workflows differ by system, and it's a pain to
+# what's on our system, and it can be a fight to add any new dependencies. Not
+# to mention our workflows differ by system, and it's a pain to
 # make sure they all have the right package names. If we use nix in CI, all we
 # need is to install nix on the target OS/architecture, then run nix build and
 # it can run all build processes, and all e2e tests. Super simple workflow. It
