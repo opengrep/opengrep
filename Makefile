@@ -268,19 +268,13 @@ install-deps: install-deps-for-semgrep-core
 # - pcre2: regex engine used in the opengrep engine (libpcre2 >= 10.43)
 # - gmp: for opengrep and its use of cohttp (LGPL since gmp 6)
 # - libev: ?? for Austin
-# - curl: for opentelemetry, which we use for tracing for Emma
-# - openssl: ??
-# - zlib: ??
-# - openssl-libs-static: dependency of curl-static
 ALPINE_APK_DEPS_CORE=\
   pkgconf \
   pcre2-dev \
   pcre2-static \
   gmp-dev \
   gmp-static \
-  libev-dev \
-  openssl-libs-static \
-  zlib-static
+  libev-dev
 
 # Here is why we need those external packages:
 # - pkg-config?

@@ -63,25 +63,18 @@ if [[ -n "${SEMGREP_NIX_BUILD-}" ]]; then
     CCOPT=()
 elif [[ "$(opam switch show)" == *+static* ]]; then
     FLAGS=()
-    CCLIB=("-lssl" "-lcrypto" "-lz")
+    CCLIB=()
     CCOPT=("-static" "-no-pie")
 else
     case "$OS" in
     linux)
         if [[ -e /etc/alpine-release ]]; then
-            # The CCLIB flags statically (since we have CCOPT include -static)
-            # link in libcurl's dependencies.
-            # This can be removed when we transition away from the ocurl otel
-            # collector.
-            # old: was just '--copt -static --copy -no-pie' before we depended
-            # on libcurl
-            #
             # -Wl,-z,stack-size=8388608: Set default pthread stack size to 8MB.
             # musl libc defaults to only 128KB which causes stack overflow in
             # PCRE's recursive pattern matching (used by aliengrep).
             # See: https://wiki.musl-libc.org/functional-differences-from-glibc.html
             FLAGS=()
-            CCLIB=("-lidn2" "-lunistring" "-lpsl" "-lssl" "-lcrypto" "-lz")
+            CCLIB=()
             CCOPT=("-static" "-no-pie" "-Wl,-z,stack-size=8388608")
         else
             # On non-Alpine Linux distros (e.g., Ubuntu), we just dynamically
