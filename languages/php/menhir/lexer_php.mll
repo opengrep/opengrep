@@ -1043,7 +1043,11 @@ and st_looking_for_property state = parse
 
 (*****************************************************************************)
 and st_looking_for_varname state = parse
-  | LABEL {
+  (* a name is the variable's own only when '[' or '}' follows, as in
+   * "${a}" or "${a[0]}"; otherwise it starts an expression, as in
+   * "${f()}" *)
+  | LABEL ['[' '}'] {
+      yyback 1 lexbuf;
       set_mode state ST_IN_SCRIPTING;
       T_STRING_VARNAME(tok lexbuf, tokinfo lexbuf)
     }

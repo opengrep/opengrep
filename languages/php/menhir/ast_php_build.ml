@@ -1083,7 +1083,12 @@ and encaps env = function
   | EncapsVar v -> lvalue env v
   | EncapsCurly (_, lv, _) -> lvalue env lv
   | EncapsDollarCurly (_, lv, _) -> lvalue env lv
-  | EncapsExpr (_, e, _) -> expr env e
+  (* "${e}" reads the variable whose name e evaluates to, as ${e} does
+   * outside a string, see Deref *)
+  | EncapsExpr (tok, e, _) ->
+      A.Call
+        ( A.expr_id [ (A.builtin "eval_var", wrap tok) ],
+          fb tok [ A.Arg (expr env e) ] )
 
 and array_pair env = function
   | ArrayEmpty -> A.PatternHole
