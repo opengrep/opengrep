@@ -139,8 +139,8 @@ type base =
   | BArg of arg
   | BCaptured of IL.name
       (** A variable of an enclosing function that a lambda uses: a
-          placeholder in the lambda's signature until the closure is formed,
-          see [Sig_inst.close_over]. *)
+          placeholder in the lambda's signature until the closure is created,
+          see [Sig_inst.instantiate_captured]. *)
 [@@deriving ord]
 
 (* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple

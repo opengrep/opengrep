@@ -890,7 +890,7 @@ and find_in_shape_w_carry ?max ~lang ~taints offset shape =
   | Fun _ -> (
       match offset with
       (* A call of the function: what it returns is not in its shape, see
-         [Sig_inst.close_over]. *)
+         [Sig_inst.instantiate_captured]. *)
       | Ocall :: _ -> not_found
       | _ ->
           (* This is an error, we just don't want to crash here. *)

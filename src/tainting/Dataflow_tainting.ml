@@ -900,8 +900,8 @@ let effects_of_call_func_arg fun_exp fun_shape fun_taints ~call_offset args_tain
             (S.show_shape fun_shape));
       (* A call of a variable captured by the lambda being lifted, or of a
          function it holds at [call_offset] ([utils.read()] with [utils]
-         captured): bound where the closure is formed
-         ([Sig_inst.close_over]). *)
+         captured): bound where the closure is created
+         ([Sig_inst.instantiate_captured]). *)
       Taints.to_taint_list fun_taints
       |> List_.filter_map (fun (taint : T.taint) ->
              match taint.orig with
@@ -1269,8 +1269,8 @@ let is_concrete_sink (eff : Effect.t) =
   | ToSinkInCall _ ->
       false
 
-(* A closed lambda signature without its findings, and its findings: they are
-   reported once, where the closure is formed or used, rather than carried by
+(* A closure's signature without its findings, and its findings: they are
+   reported once, where the closure is created or used, rather than carried by
    its [Fun] shape into every use and every enclosing signature. *)
 let split_findings (sig_ : Signature.t) : Signature.t * Effect.t list =
   let findings, effects =
@@ -1278,30 +1278,32 @@ let split_findings (sig_ : Signature.t) : Signature.t * Effect.t list =
   in
   ({ sig_ with effects = Effects.of_list effects }, findings)
 
-(* A lambda's signature closed where the closure is formed, and its
+(* The signature of a closure, its lambda's lifted signature with its
+   captured variables instantiated where the closure is created, and its
    findings. *)
-let close_lambda ~lang lval_env (lambda_sig : Signature.t) =
-  Sig_inst.close_over ~lang lval_env lambda_sig |> split_findings
+let closure_signature ~lang lval_env (lambda_sig : Signature.t) =
+  Sig_inst.instantiate_captured ~lang lval_env lambda_sig |> split_findings
 
-(* The lifted signature of the lambda [name] binds, if any, closed here and
-   its findings reported here. *)
-let close_named_lambda env (name : IL.name) : Signature.t option =
+(* The signature of the closure of the lambda [name] binds, if it has a
+   lifted signature, created here and its findings reported here. *)
+let closure_signature_of_lambda env (name : IL.name) : Signature.t option =
   let* db = env.signature_db in
   Shape_and_sig.find_lambda_sig db name
   |> Option.map (fun lambda_sig ->
-         let closed, findings =
-           close_lambda ~lang:env.taint_inst.lang env.lval_env lambda_sig
+         let closure_sig, findings =
+           closure_signature ~lang:env.taint_inst.lang env.lval_env lambda_sig
          in
          record_effects env findings;
-         closed)
+         closure_sig)
 
 (* The signature of a callee: from the database; else the [Fun] shape the
-   callee holds, e.g. a closure formed earlier, held by a variable or a
+   callee holds, e.g. a closure created earlier, held by a variable or a
    field ([cb()], [this.cb()]), or by the variable an invoke method is
    called on ([callback.run(x)]); else the signature of the function a
-   variable is bound to by name ([cb = handler]); else, with [closing], the
-   lifted signature of the lambda the variable refers to, closed here. *)
-let callee_signature ~closing env fun_exp arity =
+   variable is bound to by name ([cb = handler]); else, with
+   [instantiate_lifted], the lifted signature of the lambda the variable
+   refers to, with its captured variables instantiated here. *)
+let callee_signature ~instantiate_lifted env fun_exp arity =
   let fun_shape_of (lval : IL.lval) =
     match Lval_env.find_lval env.taint_inst.lang env.lval_env lval with
     | Some (S.Cell (_, S.Fun fun_sig)) -> Some fun_sig
@@ -1341,7 +1343,8 @@ let callee_signature ~closing env fun_exp arity =
                         }
                       in
                       lookup_signature env bound arity
-                  | _ when closing -> close_named_lambda env name
+                  | _ when instantiate_lifted ->
+                      closure_signature_of_lambda env name
                   | _ -> None))))
   | None, _ -> None
 
@@ -2227,8 +2230,8 @@ let apply_call_effects env ~rebound_guards ~deferred
 (* A deferred call left unresolved, recorded for a caller to resolve: one
    on a parameter, at every caller; one on a captured variable only while a
    lifted signature is extracted, whose environment holds the variable's
-   placeholder: closing the lambda binds it. Elsewhere the variable is a
-   local of a function that has returned. *)
+   placeholder: instantiating its captured variables binds it. Elsewhere the
+   variable is a local of a function that has returned. *)
 let record_deferred_call env ~callee ~arg ~arg_offset ~args_taints ~guards =
   let keep =
     match arg with
@@ -2274,7 +2277,9 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
       match callee_name_opt with
       | Some callee_name ->
           let arity = List.length args_taints in
-          (match callee_signature ~closing:false env callee arity with
+          (match
+             callee_signature ~instantiate_lifted:false env callee arity
+           with
           | Some callee_sig ->
               Log.debug (fun m ->
                   m "Resolving ToSinkInCall for '%s' at use site"
@@ -2284,7 +2289,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 ~max_offset:(poly_offset_bound env callee)
                 ~outer_params:env.func.il_params
                 env.lval_env callee_sig ~callee ~args:None args_taints
-                ~lookup_sig:(callee_signature ~closing:true env)
+                ~lookup_sig:(callee_signature ~instantiate_lifted:true env)
                 ()
           | None ->
               Log.debug (fun m ->
@@ -2331,7 +2336,7 @@ let instantiate_signature env fun_exp (fun_sig : Signature.t)
     ~max_offset:(poly_offset_bound env fun_exp)
     ~outer_params:env.func.il_params env.lval_env fun_sig ~callee:fun_exp
     ~args args_taints
-    ~lookup_sig:(callee_signature ~closing:true env) ()
+    ~lookup_sig:(callee_signature ~instantiate_lifted:true env) ()
   |> Option.map (fun call_effects ->
          Log.debug (fun m ->
              m "INSTANTIATE_SIG: %s returned %d call_effects: %s"
@@ -2375,7 +2380,7 @@ let check_function_call env fun_exp args
         env.taint_inst.options.taint_intrafile);
   let sig_result =
     if env.taint_inst.options.taint_intrafile then
-      callee_signature ~closing:true env fun_exp arity
+      callee_signature ~instantiate_lifted:true env fun_exp arity
     else None
   in
   match sig_result with
@@ -2412,7 +2417,8 @@ let check_function_call_callee ~(arity : int) env e =
 
 (* The taints a call's result carries from its callee. A variable the lambda
    captures, called at [call_offset] into it, carries the value the closure
-   binds to the variable, called ([T.Ocall], see [Sig_inst.close_over]). *)
+   binds to the variable, called ([T.Ocall], see
+   [Sig_inst.instantiate_captured]). *)
 let called ~call_offset =
   Taints.map_taint (fun (taint : T.taint) ->
       match taint.orig with
@@ -2764,14 +2770,14 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
     | AssignAnon (lval, anon_entity) -> (
         match anon_entity with
         | Lambda _ -> (
-            (* The closure is formed here: the lambda's signature, closed over
-               the variables it captures as they are now. *)
+            (* The closure is created here: the lambda's signature, with its
+               captured variables instantiated as they are now. *)
             match (lval.base, env.signature_db, anon_entity) with
             | Var lambda_name, Some db, Lambda fdef ->
                 let arity = List.length fdef.fparams in
                 (match
-                   match close_named_lambda env lambda_name with
-                   | Some _ as closed -> closed
+                   match closure_signature_of_lambda env lambda_name with
+                   | Some _ as closure_sig -> closure_sig
                    | None ->
                        Shape_and_sig.lookup_signature db
                          (Function_id.of_il_name lambda_name) arity
@@ -3430,8 +3436,8 @@ let rec collect_all_lambdas_innermost_first ~(lang : Lang.t)
 (* The environment a lambda's signature is extracted in, lifting the lambda
    out of the functions enclosing it: every variable of those functions
    ([outer_vars]) that the lambda, or a lambda nested in it, reads or writes
-   holds a [BCaptured] placeholder, bound where the closure is formed
-   ([Sig_inst.close_over]). A field of the receiver, e.g. a Ruby
+   holds a [BCaptured] placeholder, bound where the closure is created
+   ([Sig_inst.instantiate_captured]). A field of the receiver, e.g. a Ruby
    [@x], is read where the lambda is used, see [apply_lambda_signature], as
    is the control taint, e.g. the condition of the [if] it is applied
    under. *)
@@ -3853,15 +3859,15 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   in
   (effects, out_env)
 
-(* The signature extracted for [lambda_name] in this file, if any, closed
-   over the variables it captures: where the closure was formed, from its
+(* The signature extracted for [lambda_name] in this file, if any, with its
+   captured variables instantiated: where the closure was created, from its
    [Fun] shape, or else as they are here. *)
 and lambda_signature env lambda_name : Signature.t option =
   if not env.taint_inst.options.taint_intrafile then None
   else
     match Lval_env.find_var env.lval_env lambda_name with
-    | Some (S.Cell (_, S.Fun closed)) -> Some closed
-    | _ -> close_named_lambda env lambda_name
+    | Some (S.Cell (_, S.Fun closure_sig)) -> Some closure_sig
+    | _ -> closure_signature_of_lambda env lambda_name
 
 (* What analysing the lambda at this use gives, from its signature: each
    parameter is tainted only if it is itself a source, as in
@@ -4214,7 +4220,7 @@ and (fixpoint :
               fun_cfg
           in
           (* A lifted signature keeps its concrete sinks: they are reported
-             where the lambda is closed ([close_lambda]), through
+             where the closure is created ([closure_signature]), through
              [record_effects], so not at an unreachable point. *)
           all_lambdas_list
           |> List.fold_left

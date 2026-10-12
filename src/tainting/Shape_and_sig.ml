@@ -419,8 +419,8 @@ and Effect : sig
         (** A formal parameter of the function whose signature this is,
             instantiated at a call of it. *)
     | Captured of IL.name
-        (** A variable a lambda captures, bound where the closure is formed
-            ([Sig_inst.close_over]). *)
+        (** A variable a lambda captures, bound where the closure is created
+            ([Sig_inst.instantiate_captured]). *)
   [@@deriving ord]
 
   val show_callee : callee -> string
@@ -1152,8 +1152,8 @@ type signature_database = {
       (** The signatures of lambdas lifted out of their enclosing function,
           by the lambda's IL name (a hoisted function's is the same at its
           uses as at its definition): the variables a lambda captures are
-          [BCaptured] placeholders, bound where the closure is formed (see
-          [Sig_inst.close_over]). *)
+          [BCaptured] placeholders, bound where the closure is created (see
+          [Sig_inst.instantiate_captured]). *)
 }
 
 (** Separate database for builtin function signatures.
