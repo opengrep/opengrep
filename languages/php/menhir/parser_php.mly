@@ -645,7 +645,7 @@ function_declaration: ioption(attributes) unticked_function_declaration
    { { $2 with f_attrs = $1 } }
 
 unticked_function_declaration:
- async_opt T_FUNCTION is_reference ident type_params_opt
+ async_opt T_FUNCTION is_reference ident_function_name type_params_opt
    "(" parameter_list ")"
    return_type? function_body
    {  validate_parameter_list $7;
@@ -1336,6 +1336,8 @@ new_expr:
 
 call_expr:
  | member_expr arguments { Call ($1, $2) }
+ | T_READONLY arguments
+     { Call (Id (XName [ QI (Name (str_of_info $1, $1)) ]), $2) }
  (* PHP 8.4: 'new Foo()' is dereferencable, so it lives here rather than in
   * new_expr; the postfix rules below then give '->', '::', '[' and '(' for
   * free, as in 'new Foo()->bar()' or 'new Foo()::CONST'.
@@ -1840,6 +1842,11 @@ ident_in_name:
  | ident { $1 }
  (* can't use keyword_as_ident here, too many conflicts *)
  | T_INSTANCEOF { str_of_info $1, $1 }
+
+(* used in function definitions *)
+ident_function_name:
+ | ident { $1 }
+ | T_READONLY { str_of_info $1, $1 }
 
 (* used in class definitions *)
 ident_class_name:
