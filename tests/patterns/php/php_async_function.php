@@ -17,4 +17,7 @@ function run(array $jobs): void
 
     //OK: a method of that name
     $loop->async(fn () => 2);
+
+    //OK: a first-class callable, which does not call it
+    $run = async(...);
 }

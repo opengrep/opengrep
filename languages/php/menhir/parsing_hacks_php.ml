@@ -395,7 +395,7 @@ let fix_tokens xs =
      * ambiguous with the operand of a prefix 'clone'. In a pattern the
      * '(...)' means any arguments, so the keyword stays.
      *)
-    | T_CLONE ii :: xs
+    | (T_CLONE ii | T_ASYNC ii | T_READONLY ii) :: xs
       when (not (Domain.DLS.get Flag_parsing.sgrep_mode))
            && is_dots_in_parens xs ->
         aux env

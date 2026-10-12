@@ -17,6 +17,9 @@ echo READONLY($a);
 //OK: a method of that name
 $form->readonly($disabled);
 
+//OK: a first-class callable, which does not call it
+$f = readonly(...);
+
 class A
 {
     //OK: the modifier
