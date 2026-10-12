@@ -119,7 +119,7 @@ let name_of_ids ?name_top ?(case_insensitive = false) ?(hidden = false) xs =
           name_last = (x, None);
           name_middle = qualif;
           name_top;
-          name_info = empty_id_info ~hidden ();
+          name_info = empty_id_info ~case_insensitive ~hidden ();
         }
 
 let add_suffix_to_name suffix name =

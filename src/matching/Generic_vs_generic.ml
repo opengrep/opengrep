@@ -542,6 +542,17 @@ let rec m_name_inner a b =
           (* retry with qualified target *)
           (* m_name a n *)
           return ())
+  (* a pattern without a root qualifier matches a name with one, as 'exec'
+   * matches '\exec', but not the converse *)
+  | ( G.Id _,
+      B.IdQualified
+        {
+          name_last = idb, None;
+          name_middle = None;
+          name_top = Some _;
+          name_info = infob;
+        } ) ->
+      m_name a (B.Id (idb, infob))
   (* boilerplate *)
   | ( _a1,
       G.IdQualified
@@ -650,7 +661,7 @@ and m_name_info a b =
       { B.name_last = b0; name_middle = b1; name_top = b2; name_info = b3 } ) ->
       let* () = m_ident_and_type_arguments a0 b0 in
       let* () = (m_option m_qualifier) a1 b1 in
-      let* () = (m_option m_tok) a2 b2 in
+      let* () = (m_option_none_can_match_some m_tok) a2 b2 in
       let* () = m_id_info a3 b3 in
       return ()
 
