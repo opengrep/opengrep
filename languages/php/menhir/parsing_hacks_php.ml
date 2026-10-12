@@ -47,7 +47,6 @@ and ctx =
   | ClassBody
   | FunctionHeader
   | TypeHeader
-  | UserAttribute
   | Block
 
 (*****************************************************************************)
@@ -389,8 +388,6 @@ let fix_tokens xs =
               { env with angles = env.angles - 2 }
               (TGREATER rhs :: TGREATER lhs :: acc)
               xs
-        | UserAttribute :: rest ->
-            aux { env with stack = rest } (T_SR ii :: acc) xs
         | _ -> aux env (T_SR ii :: acc) xs)
     (* PHP 8.5: 'clone(...)' is the first-class callable of the clone
      * function. Read as an identifier it is the same as 'strlen(...)' to the
@@ -466,9 +463,6 @@ let fix_tokens xs =
           | T_FUNCTION _, (Toplevel | ClassHeader) :: _rest ->
               FunctionHeader :: env.stack
           | T_FUNCTION _, Block :: _rest -> FunctionHeader :: env.stack
-          (* also FunctionHeader because we can have attributes on parameters *)
-          | T_SL _, (Toplevel | ClassBody | FunctionHeader) :: _rest ->
-              UserAttribute :: env.stack
           | TOBRACE _ii, ClassHeader :: rest -> ClassBody :: rest
           (* subtle: do not do Block::env.stack here otherwise we will
            * not pop up enough to get back to a Toplevel context
