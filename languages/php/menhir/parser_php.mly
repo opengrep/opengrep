@@ -1351,6 +1351,10 @@ call_expr:
  | T_CLONE "(" ")" { CloneCall ($1, ($2, [], $3)) }
  | T_CLONE "(" expr "," function_call_argument_list ")"
      { CloneCall ($1, ($2, Left (Arg $3) :: Right $4 :: $5, $6)) }
+ (* in a pattern, '...' may come first, as in 'clone(..., $props)' *)
+ | T_CLONE "(" "..." "," function_call_argument_list ")"
+     { CloneCall ($1, ($2, Left (Arg (Flag_parsing.sgrep_guard (Ellipsis $3)))
+                           :: Right $4 :: $5, $6)) }
  | T_CLONE "(" clone_argument_no_expr ")"
      { CloneCall ($1, ($2, [ Left $3 ], $4)) }
  | T_CLONE "(" clone_argument_no_expr "," function_call_argument_list ")"
