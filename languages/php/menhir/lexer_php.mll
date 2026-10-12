@@ -897,41 +897,24 @@ rule st_in_scripting state = parse
      * tokens, but PHP allows to have functions or methods called e.g.
      * string(). So what they have done if this ugly lexing hack.
      *)
-    | "(" TABS_AND_SPACES ("int"|"integer") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_INT_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES ("real"|"double"|"float") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_DOUBLE_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "string" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_STRING_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "binary" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_STRING_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "array" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_ARRAY_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "object" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_OBJECT_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES ("bool"|"boolean") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_BOOL_CAST(tokinfo lexbuf)) lexbuf }
-
-    (* PHP is case insensitive for many things *)
-    | "(" TABS_AND_SPACES "Array" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_ARRAY_CAST(tokinfo lexbuf)) lexbuf }
-    | "(" TABS_AND_SPACES "Object" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_OBJECT_CAST(tokinfo lexbuf)) lexbuf }
-    | "(" TABS_AND_SPACES ("Bool"|"Boolean") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_BOOL_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES ("unset") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_UNSET_CAST(tokinfo lexbuf)) lexbuf }
-
-    (* PHP 8.5 *)
-    | "(" TABS_AND_SPACES "void" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_VOID_CAST(tokinfo lexbuf)) lexbuf }
+    (* the cast names are case-insensitive, as in '(String)'; any other name
+     * in parentheses, as in '(FOO)', gives back all but the '(' *)
+    | "(" TABS_AND_SPACES (LABEL as name) TABS_AND_SPACES ")"
+        { let cast t = lang_ext_or_cast state (t (tokinfo lexbuf)) lexbuf in
+          match String.lowercase_ascii name with
+          | "int" | "integer" -> cast (fun ii -> T_INT_CAST ii)
+          | "real" | "double" | "float" -> cast (fun ii -> T_DOUBLE_CAST ii)
+          | "string" | "binary" -> cast (fun ii -> T_STRING_CAST ii)
+          | "array" -> cast (fun ii -> T_ARRAY_CAST ii)
+          | "object" -> cast (fun ii -> T_OBJECT_CAST ii)
+          | "bool" | "boolean" -> cast (fun ii -> T_BOOL_CAST ii)
+          | "unset" -> cast (fun ii -> T_UNSET_CAST ii)
+          (* PHP 8.5 *)
+          | "void" -> cast (fun ii -> T_VOID_CAST ii)
+          | _ ->
+              yyback (String.length (tok lexbuf) - 1) lexbuf;
+              TOPAR (tokinfo lexbuf)
+        }
     | "?>"
         {
           (* because of XHP and my token merger:
