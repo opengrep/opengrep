@@ -1056,7 +1056,7 @@ and st_looking_for_varname state = parse
 (*****************************************************************************)
 and st_var_offset state = parse
 
-  | LNUM | HEXNUM | BINNUM | OCTNUM { (* /* Offset must be treated as a string */ *)
+  | "-"? (LNUM | HEXNUM | BINNUM | OCTNUM) { (* /* Offset must be treated as a string */ *)
     T_NUM_STRING (tok lexbuf, tokinfo lexbuf)
   }
 
