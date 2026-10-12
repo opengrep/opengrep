@@ -649,6 +649,12 @@ rule st_in_scripting state = parse
      *)
     | "$" { TDOLLAR(tokinfo lexbuf) }
     | "$$" { TDOLLARDOLLAR(tokinfo lexbuf) }
+    (* before another '$' or a '{', the first '$' of '$$' dereferences what
+     * follows, as in '$$$a' or '$${"a"}' *)
+    | "$$" ['$' '{'] {
+        yyback 2 lexbuf;
+        TDOLLAR(tokinfo lexbuf)
+      }
 
   (* ----------------------------------------------------------------------- *)
   (* Constant *)
