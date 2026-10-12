@@ -1,0 +1,11 @@
+rules:
+  - id: test-async-closure
+    languages:
+      - php
+    message: Match Found!
+    mode: taint
+    pattern-sinks:
+      - pattern: exec(...)
+    pattern-sources:
+      - pattern: $_GET
+    severity: WARNING
