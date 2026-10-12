@@ -71,14 +71,15 @@ val merge_dispatch_signatures :
 val arg_bound : Shape_and_sig.Signature.t -> Taint.arg -> bool
 (** Whether the argument is one of the signature's own parameters. *)
 
-val close_over :
+val instantiate_captured :
   lang:Lang.t ->
   Taint_lval_env.t ->
   Shape_and_sig.Signature.t ->
   Shape_and_sig.Signature.t
-(** Closes a lifted lambda signature where the closure is formed: each
-    [BCaptured] variable takes its value in the given environment, the
-    environment of the enclosing function at the definition. A read becomes
+(** Instantiates the captured variables of a lifted lambda signature where
+    the closure is created: each [BCaptured] variable takes its value in
+    the given environment, the environment of the enclosing function at the
+    definition. A read becomes
     the variable's taints; a call becomes a call of what it holds (a deferred
     call on the parameter of the enclosing function it holds, or the effects
     of the function it holds); a write stays a write to the variable, and is

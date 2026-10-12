@@ -43,8 +43,8 @@ type base =
   | BArg of arg  (** A formal parameter in a function/method definition. *)
   | BCaptured of IL.name
       (** A variable of an enclosing function that a lambda uses: a
-          placeholder in the lambda's signature until the closure is formed,
-          see [Sig_inst.close_over]. *)
+          placeholder in the lambda's signature until the closure is created,
+          see [Sig_inst.instantiate_captured]. *)
 
 val compare_base : base -> base -> int
 val show_base : base -> string
@@ -65,7 +65,7 @@ type offset =
       (** The result of calling the value at the preceding offset, `()`.
           Only on a [BCaptured] placeholder: a lambda's call of a variable it
           captures, bound to what the function the variable holds returns
-          where the closure is formed, see [Sig_inst.close_over]. *)
+          where the closure is created, see [Sig_inst.instantiate_captured]. *)
 
 val compare_offset : offset -> offset -> int
 val equal_offset : offset -> offset -> bool

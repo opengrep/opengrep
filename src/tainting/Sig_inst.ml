@@ -1017,9 +1017,9 @@ let arg_bound (sig_ : Signature.t) (arg : T.arg) : bool =
  * itself applied later. Free [BArg]s that match the outer function's
  * parameters are substituted; free [BArg]s that match neither are kept
  * verbatim (they name a yet-deeper enclosing scope).
- * [partial] makes this a partial substitution, as when a closure is formed
- * ([close_over]): a taint or a written lval that [inst_var] does not resolve
- * stays as it is, for a later binder, instead of being dropped. *)
+ * [partial] makes this a partial substitution, as when a closure is created
+ * ([instantiate_captured]): a taint or a written lval that [inst_var] does
+ * not resolve stays as it is, for a later binder, instead of being dropped. *)
 let rec substitute_in_sig ~(partial : bool) ~lang
     (inst_var : inst_var) (inst_trace : inst_trace) (sig_ : Signature.t) :
     Signature.t =
@@ -1660,8 +1660,8 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
   Shape.find_in_shape_poly ~max:max_offset ~lang ~taints:base_taints offset
     base_shape
 
-(* What is the taint denoted by 'sig_lval'? A closed lambda's signature,
-   applied in the function that formed it ([outer_params]), may refer to that
+(* What is the taint denoted by 'sig_lval'? A closure's signature,
+   applied in the function that created it ([outer_params]), may refer to that
    function's parameters and receiver: those stay as they are. *)
 let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
     ~(outer_params : IL.param list) lval_env (taint_sig : Signature.t) fun_exp
@@ -2111,7 +2111,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           guards = _;
         } ->
         (* A call of a captured variable not bound where the closure was
-           formed: it stays, for the function owning the variable. *)
+           created: it stays, for the function owning the variable. *)
         [ ToSinkInCall
             { callee = fun_exp;
               arg = held;
@@ -2605,16 +2605,16 @@ let effect_has_bglob_dependency (eff : Effect.t) : bool =
           (match lval.T.base with T.BGlob _ -> true | _ -> false)
       | _ -> false)
 
-(* Close a lifted lambda signature where the closure is formed: its
- * captured variables take their values in [lval_env]; its own parameters,
+(* Instantiate the captured variables of a lifted lambda signature where the
+ * closure is created: they take their values in [lval_env]; its own parameters,
  * the receiver and the control taint stay to be bound where the closure is
  * called. A captured variable not in [lval_env] stays a [BCaptured]
  * placeholder, bound where the closure is called if that is in the function
  * owning the variable. A call of a captured variable becomes a call of what
  * it holds: a parameter of the enclosing function, or the effects of the
  * function it holds. *)
-let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
-    : Signature.t =
+let instantiate_captured ~(lang : Lang.t) (lval_env : Lval_env.t)
+    (lifted : Signature.t) : Signature.t =
   let max = Shape.max_poly_offset lang in
   (* A value referring to a parameter of the enclosing function with the (name,
      index) of one of the lambda's own ([def f(x): y = x; lambda x: y])
@@ -2635,7 +2635,7 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
   in
   (* What the function at an offset into a captured variable returns,
      called without arguments (what the lambda calls it with is in the
-     deferred call, see [close_effect]). *)
+     deferred call, see [instantiate_captured_effect]). *)
   let return_of (var : IL.name) (offset : T.offset list)
       (fun_sig : Signature.t) =
     let callee : IL.exp =
@@ -2662,7 +2662,7 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
           (Taints.empty, Bot) call_effects
   in
   (* The value of captured [var] at [offset], from [value], the variable's
-     value where the closure is formed; [path] is the part of the offset
+     value where the closure is created; [path] is the part of the offset
      already walked. Each [Ocall] in [offset] is a call the lambda makes, and
      the rest of the offset applies to its result. A call of a function the
      variable holds gives what the function returns, plus the taints of the
@@ -2765,7 +2765,7 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
                  true)
         |> List_.map (fun ce -> effect_of_call_effect (conjoin_call_effect guards ce))
   in
-  let close_effect (eff : Effect.t) : Effect.t list =
+  let instantiate_captured_effect (eff : Effect.t) : Effect.t list =
     match eff with
     (* A write into the result of a call is a write to nothing tracked. *)
     | ToLval { lval = { base = BCaptured _; offset }; _ }
@@ -2806,11 +2806,14 @@ let close_over ~(lang : Lang.t) (lval_env : Lval_env.t) (lifted : Signature.t)
     | ToSinkInCall _ ->
         [ eff ]
   in
-  let closed = substitute_in_sig ~partial:true ~lang inst_var inst_trace lifted in
+  let instantiated =
+    substitute_in_sig ~partial:true ~lang inst_var inst_trace lifted
+  in
   {
-    closed with
+    instantiated with
     effects =
-      Effects.elements closed.effects |> List.concat_map close_effect
+      Effects.elements instantiated.effects
+      |> List.concat_map instantiate_captured_effect
       |> Effects.of_list;
   }
 
