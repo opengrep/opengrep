@@ -55,7 +55,6 @@ let tokens ?(init_state = Lexer_php.INITIAL) input_source =
           match Lexer_php.current_mode state with
           | Lexer_php.INITIAL -> Lexer_php.initial state lexbuf
           | Lexer_php.ST_IN_SCRIPTING -> Lexer_php.st_in_scripting state lexbuf
-          | Lexer_php.ST_IN_SCRIPTING2 -> Lexer_php.st_in_scripting state lexbuf
           | Lexer_php.ST_DOUBLE_QUOTES -> Lexer_php.st_double_quotes state lexbuf
           | Lexer_php.ST_BACKQUOTE -> Lexer_php.st_backquote state lexbuf
           | Lexer_php.ST_LOOKING_FOR_PROPERTY ->

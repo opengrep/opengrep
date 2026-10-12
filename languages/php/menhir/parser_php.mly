@@ -188,7 +188,7 @@ let str_of_info x = Tok.content_of_tok x
 
 %token <Tok.t>
  T_OBJECT_OPERATOR "->" T_ARROW "=>" T_DOUBLE_ARROW "==>"
- T_OPEN_TAG  T_CLOSE_TAG T_OPEN_TAG_WITH_ECHO T_CLOSE_TAG_OF_ECHO
+ T_OPEN_TAG  T_CLOSE_TAG T_OPEN_TAG_WITH_ECHO
  T_START_HEREDOC    T_END_HEREDOC
  T_DOLLAR_OPEN_CURLY_BRACES T_CURLY_OPEN
  TCOLCOL "::" TANTISLASH
@@ -446,14 +446,10 @@ statement:
  | T_ECHO listc(expr_or_dots) ";" { Echo($1,$2,$3) }
  | T_INLINE_HTML                  { InlineHtml($1) }
 
- | T_OPEN_TAG_WITH_ECHO expr T_CLOSE_TAG_OF_ECHO {
-     (* ugly: the 2 tokens will have a wrong string *)
-     Echo ($1, [Left $2], $3)
-   }
- (* ugly: php allows that too  *)
- | T_OPEN_TAG_WITH_ECHO expr ";" T_CLOSE_TAG_OF_ECHO {
-     Echo ($1, [Left $2], $4)
-   }
+ (* '<?=' is 'echo', so it takes a list and ends with ';' or with the '?>'
+  * that closes the tag, which reads as ';' as after any other tag. More
+  * statements may follow before that '?>'. *)
+ | T_OPEN_TAG_WITH_ECHO listc(expr_or_dots) ";" { Echo($1,$2,$3) }
 
  | T_GLOBAL listc(global_var) ";" { Globals($1,$2,$3) }
  | T_STATIC listc(static_var) ";" { StaticVars($1,$2,$3) }

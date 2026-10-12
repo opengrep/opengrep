@@ -254,10 +254,8 @@ let _ = assert ((Common2.hkeys keyword_table) |>
 type state_mode =
   (* aka HTML mode *)
   | INITIAL
-  (* started with <?php or <?, finished by ?> *)
+  (* started with <?php, <? or <?=, finished by ?> *)
   | ST_IN_SCRIPTING
-  (* started with <?=, finished by ?> *)
-  | ST_IN_SCRIPTING2
   (* handled by using ocamllex ability to define multiple lexers
    * | ST_COMMENT
    * | ST_DOC_COMMENT
@@ -954,9 +952,6 @@ rule st_in_scripting state = parse
                *)
               TSEMICOLON(tokinfo lexbuf)
 
-          | ST_IN_SCRIPTING2 ->
-              set_mode state INITIAL;
-              T_CLOSE_TAG_OF_ECHO(tokinfo lexbuf)
           | _ ->
               raise Impossible
         }
@@ -1000,10 +995,7 @@ and initial state = parse
 
   | "<?=" {
       (* less: if short_tags normally, otherwise T_INLINE_HTML *)
-      set_mode state ST_IN_SCRIPTING2;
-      (* todo? ugly, may be better ot generate a real T_ECHO token
-       * with maybe a FakeTok or ExpandeTok.
-       *)
+      set_mode state ST_IN_SCRIPTING;
       T_OPEN_TAG_WITH_ECHO(tokinfo lexbuf);
     }
 
