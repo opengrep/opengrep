@@ -1457,6 +1457,11 @@ primary_expr:
 
 constant:
  | T_BOOL               { Bool($1) }
+ (* '\true' can only be the literal, since PHP forbids defining a constant
+  * of that name, whereas 'namespace\true' is a namespaced constant that may
+  * be defined, so qualified_name reads that one as a name *)
+ | TANTISLASH T_BOOL
+     { let (b, tok) = $2 in Bool (b, Tok.combine_toks $1 [ tok ]) }
  | T_LNUMBER            { Int($1) }
  | T_DNUMBER            { Double($1) }
  | T_CONSTANT_ENCAPSED_STRING   { String($1) }
@@ -2001,6 +2006,10 @@ qualified_name:
  | TANTISLASH namespace_name             { XName (QITok $1::$2) }
  | T_NAMESPACE TANTISLASH namespace_name
      { XName (QI (Name ("namespace", $1))::QITok $2::$3) }
+ | T_NAMESPACE TANTISLASH T_BOOL
+     { let (_, tok) = $3 in
+       XName [ QI (Name ("namespace", $1)); QITok $2;
+               QI (Name (str_of_info tok, tok)) ] }
 
 (* Should we have 'ident type_arguments' below? No because
    * we allow type arguments only at a few places, for instance
