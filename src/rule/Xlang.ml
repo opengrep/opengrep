@@ -79,6 +79,9 @@ let is_caseless (x : t) : bool =
   | Ok lang -> Lang.is_caseless lang
   | _ -> false
 
+let has_caseless_identifiers (x : t) : bool =
+  List.exists Lang.has_caseless_identifiers (to_langs x)
+
 let is_compatible ~require ~provide =
   match (require, provide) with
   | LRegex, LRegex

@@ -624,13 +624,14 @@ let regexp_prefilter_of_formula ~xlang f : prefilter option =
         fun mvar -> MvarSet.mem mvar id_mvars
   in
   let caseless = Xlang.is_caseless xlang in
+  let caseless_idents = Xlang.has_caseless_identifiers xlang in
   try
     let* final = compute_final_cnf ~caseless ~is_id_mvar f in
     Some
       ( prefilter_formula_of_cnf_step2 final,
         fun big_str ->
           try
-            run_cnf_step2 ~caseless:caseless final big_str
+            run_cnf_step2 ~caseless:caseless_idents final big_str
             (* run_cnf_step2 (And [Or [Idents ["jsonwebtoken"]]]) big_str *)
           with
           (* can happen in spacegrep rules as we don't extract anything from t *)

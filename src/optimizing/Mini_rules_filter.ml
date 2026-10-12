@@ -52,7 +52,11 @@ let filter_mini_rules_relevant_to_file_using_regexp rules lang file =
             *)
            xs
            |> List.for_all (fun x ->
-                  let re = Pcre2_.matching_exact_string x in
+                  let re =
+                    if Lang.has_caseless_identifiers lang then
+                      Pcre2_.matching_caseless_string x
+                    else Pcre2_.matching_exact_string x
+                  in
                   Pcre2_.unanchored_match re str)
          in
 

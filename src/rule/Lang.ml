@@ -104,6 +104,15 @@ let is_caseless lang =
   | Vb -> true
   | _ -> false
 
+(* coupling: the case_insensitive id_flags set by php_to_generic.ml and
+ * Vbnet_parser.ml *)
+let has_caseless_identifiers (lang : t) : bool =
+  match lang with
+  | Vb
+  | Php ->
+      true
+  | _ -> false
+
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)

@@ -1,0 +1,26 @@
+# Targets filter_irrelevant_rules.
+#
+# coupling: Lang.has_caseless_identifiers
+rules:
+  - id: php-caseless-call
+    pattern: system($X)
+    message: system
+    languages: [php]
+    severity: WARNING
+
+  # PHP is not the first language, so its caseless names must not be missed
+  - id: php-caseless-call-multilang
+    pattern: system($X)
+    message: system
+    languages: [javascript, php]
+    severity: WARNING
+
+  - id: php-caseless-taint
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: exec(...)
+    message: taint into exec
+    languages: [php]
+    severity: WARNING
