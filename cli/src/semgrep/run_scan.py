@@ -526,6 +526,7 @@ def run_scan(
     trace: bool = False,
     trace_endpoint: Optional[str] = None,
     max_target_bytes: int = 0,
+    exclude_minified_files: bool = False,
     timeout_threshold: int = 0,
     skip_unknown_extensions: bool = False,
     severity: Optional[Sequence[str]] = None,
@@ -689,6 +690,7 @@ def run_scan(
             includes=include,
             excludes=exclude,
             max_target_bytes=max_target_bytes,
+            exclude_minified_files=exclude_minified_files,
             target_strings=target_strings,
             respect_git_ignore=respect_git_ignore,
             respect_rule_paths=respect_rule_paths,
@@ -826,6 +828,7 @@ def run_scan(
                         includes=include,
                         excludes=exclude,
                         max_target_bytes=max_target_bytes,
+                        exclude_minified_files=exclude_minified_files,
                         # only target the paths that had a match, ignoring symlinks and non-existent files
                         target_strings=baseline_target_strings,
                         respect_git_ignore=respect_git_ignore,

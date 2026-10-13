@@ -168,6 +168,7 @@ def ci(
     enable_nosem: bool,
     enable_version_check: bool,
     exclude: Optional[Tuple[str, ...]],
+    exclude_minified_files: bool,
     exclude_rule: Optional[Tuple[str, ...]],
     suppress_errors: bool,
     force_color: bool,
@@ -391,6 +392,7 @@ def ci(
         "exclude": per_product_excludes,
         "exclude_rule": exclude_rule,
         "max_target_bytes": max_target_bytes,
+        "exclude_minified_files": exclude_minified_files,
         "autofix": False,
         "dryrun": True,
         # Always true, as we want to always report all findings, even

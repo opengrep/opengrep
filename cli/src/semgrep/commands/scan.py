@@ -104,6 +104,12 @@ _scan_options: List[Callable] = [
         default=DEFAULT_MAX_TARGET_SIZE,
     ),
     optgroup.option(
+        "--exclude-minified-files/--no-exclude-minified-files",
+        is_flag=True,
+        default=False,
+        help="Skip minified files: files over 1000 bytes whose first 4096 bytes are less than 7% whitespace or average more than 1000 bytes per line. By default minified files are scanned.",
+    ),
+    optgroup.option(
         "--use-git-ignore/--no-git-ignore",
         is_flag=True,
         default=True,
@@ -486,6 +492,7 @@ def scan(
     enable_version_check: bool,
     error_on_findings: bool,
     exclude: Optional[Tuple[str, ...]],
+    exclude_minified_files: bool,
     exclude_rule: Optional[Tuple[str, ...]],
     force_color: bool,
     include: Optional[Tuple[str, ...]],
@@ -778,6 +785,7 @@ def scan(
                     exclude={product: (exclude or ()) for product in ALL_PRODUCTS},
                     exclude_rule=exclude_rule,
                     max_target_bytes=max_target_bytes,
+                    exclude_minified_files=exclude_minified_files,
                     replacement=replacement,
                     strict=strict,
                     autofix=autofix,
