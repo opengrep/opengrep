@@ -71,8 +71,8 @@ let is_special_identifier ?lang str =
   || (is_js lang && str = Ast_js.default_entity)
   (* parser_java.mly inserts some implicit this *)
   || (lang =*= Some Lang.Java && str = "this")
-  || (* TODO: PHP converts some Eval in __builtin *)
-  (lang =*= Some Lang.Php && str =~ "__builtin__*")
+  || (* TODO: PHP converts some Eval in !builtin! *)
+  (lang =*= Some Lang.Php && Ast_php.is_builtin str)
   (* ast_php_build.ml encodes the leading '\' of a root-qualified name, the
    * 'static' of late static binding, 'C::class', 'namespace\' and lambdas
    * as synthetic '__special__xxx' identifiers. None of them occur literally

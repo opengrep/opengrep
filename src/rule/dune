@@ -29,6 +29,8 @@
    ; in languages/
    ; TODO ugly dependency to Ast_js.default_entity in Pattern.ml
    parser_javascript.ast
+   ; Ast_php.is_builtin in Pattern.ml
+   parser_php.ast
 
    ; in src/
    ; We should also not depend on any other semgrep libs (except the one below
