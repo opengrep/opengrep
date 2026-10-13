@@ -655,9 +655,7 @@ and m_name_info a b =
   match (a, b) with
   | ( { G.name_last = a0; name_middle = a1; name_top = a2; name_info = a3 },
       { B.name_last = b0; name_middle = b1; name_top = b2; name_info = b3 } ) ->
-      let case_insensitive =
-        G.is_case_insensitive a3 && B.is_case_insensitive b3
-      in
+      let case_insensitive = B.is_case_insensitive b3 in
       let* () = m_ident_and_type_arguments ~case_insensitive a0 b0 in
       let* () = (m_option (m_qualifier ~case_insensitive)) a1 b1 in
       let* () = (m_option_none_can_match_some m_tok) a2 b2 in
@@ -726,16 +724,12 @@ and m_ident_and_id_info (a1, a2) (b1, b2) =
       match match_prefix_metavar stra b1 with
       | Some tin -> tin
       | None ->
-          let case_insensitive =
-            G.is_case_insensitive a2 && B.is_case_insensitive b2
-          in
+          let case_insensitive = B.is_case_insensitive b2 in
           let* () = m_wrap (m_id_string case_insensitive) a1 b1 in
           m_id_info a2 b2)
   (* general case *)
   | _, _ ->
-      let case_insensitive =
-        G.is_case_insensitive a2 && B.is_case_insensitive b2
-      in
+      let case_insensitive = B.is_case_insensitive b2 in
       let* () = m_wrap (m_id_string case_insensitive) a1 b1 in
       m_id_info a2 b2
 

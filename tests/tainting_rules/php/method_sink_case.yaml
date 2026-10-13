@@ -1,0 +1,11 @@
+rules:
+  - id: test-method-sink-case
+    languages:
+      - php
+    message: Match Found!
+    mode: taint
+    pattern-sinks:
+      - pattern: $DB->query(...)
+    pattern-sources:
+      - pattern: $_GET
+    severity: WARNING

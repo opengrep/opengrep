@@ -72,6 +72,13 @@ let name_of_qualified_ident ~case_insensitive (n : name) =
   | Some (root : tok) ->
       H.name_of_ids ~case_insensitive ~name_top:(info root) xs
 
+(* Constants are case sensitive, except 'null', but the namespace part of a
+ * qualified one is not; a single flag cannot say both, so a qualified
+ * constant is case insensitive as a whole. *)
+let constant_is_case_insensitive (n : name) =
+  match n.n_parts with
+  | [ (s, _) ] -> String.equal (String.lowercase_ascii s) "null"
+  | _ -> true
 
 let fixOp x = x
 
@@ -286,7 +293,11 @@ and expr e : G.expr =
       let v1 = wrap string v1 in
       G.L (G.String (fb v1)) |> G.e
   | Id v1 ->
-      let v1 = name_of_qualified_ident ~case_insensitive:true v1 in
+      let v1 =
+        name_of_qualified_ident
+          ~case_insensitive:(constant_is_case_insensitive v1)
+          v1
+      in
       G.N v1 |> G.e
   | IdSpecial v1 -> special v1
   (* unify Id and Var, finally *)
@@ -313,13 +324,13 @@ and expr e : G.expr =
       let v1 = expr v1 and v2 = expr v2 in
       G.DotAccess (v1, t, G.FDynamic v2) |> G.e
   | Class_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
-      let v1 = expr v1 and v2 = ident v2 in
+      let v1 = function_or_class_name v1 and v2 = ident v2 in
       G.DotAccess (v1, t, G.FN (G.Id (v2, G.empty_id_info ()))) |> G.e
   | Class_get (v1, t, v2) ->
-      let v1 = expr v1 and v2 = expr v2 in
+      let v1 = function_or_class_name v1 and v2 = expr v2 in
       G.DotAccess (v1, t, G.FDynamic v2) |> G.e
   | New (v0, v1, v2) ->
-      let v1 = expr v1 and v2 = list argument v2 in
+      let v1 = function_or_class_name v1 and v2 = list argument v2 in
       let t = H.expr_to_type v1 in
       G.New (v0, t, G.empty_id_info (), fb v2) |> G.e
   | NewAnonClass (_tTODO, args, cdef) ->
@@ -328,7 +339,7 @@ and expr e : G.expr =
       let anon_class = G.AnonClass cdef |> G.e in
       G.Call (anon_class, fb args) |> G.e
   | InstanceOf (t, v1, v2) ->
-      let v1 = expr v1 and v2 = expr v2 in
+      let v1 = expr v1 and v2 = function_or_class_name v2 in
       G.Call
         ( G.IdSpecial (G.Instanceof, t) |> G.e,
           fb ([ v1; v2 ] |> List_.map G.arg) )
@@ -380,7 +391,7 @@ and expr e : G.expr =
           Tok.unsafe_fake_bracket [ G.Arg v1 ] )
       |> G.e
   | Call (v1, v2) ->
-      let v1 = expr v1 and v2 = bracket (list argument) v2 in
+      let v1 = function_or_method v1 and v2 = bracket (list argument) v2 in
       G.Call (v1, v2) |> G.e
   (* PHP 8.1: first-class callable - desugar to Closure::fromCallable(...) *)
   | FirstClassCallable (callable_expr, tok) ->
@@ -401,13 +412,13 @@ and expr e : G.expr =
         (* Foo::bar(...) → Closure::fromCallable([Foo::class, 'bar']) *)
         | Class_get (class_ref, _colons,
                      Id { n_root = None; n_parts = [ method_name ] }) ->
-            let class_expr = expr class_ref in
+            let class_expr = function_or_class_name class_ref in
             let method_str =
               G.L (G.String (fb  method_name)) |> G.e
             in
             G.Arg (G.Container (G.Array, fb [ class_expr; method_str ]) |> G.e)
         (* For other forms, pass as-is *)
-        | _ -> G.Arg (expr callable_expr)
+        | _ -> G.Arg (function_or_class_name callable_expr)
       in
       let closure_class =
         G.N
@@ -454,14 +465,15 @@ and expr e : G.expr =
         (* the right-hand side is normally first-class callable syntax; pipe
          * to the callable itself rather than to its Closure::fromCallable
          * desugaring *)
-        | FirstClassCallable (callable_expr, _) -> expr callable_expr
+        | FirstClassCallable (callable_expr, _) ->
+            function_or_method callable_expr
         (* In a pattern, 'f(...)' parses as a call whose only argument is an
          * ellipsis rather than as FirstClassCallable (see parser_php.mly), so
          * '$X |> f(...)' would otherwise desugar to a call of f(...)'s result
          * and never match piped code. Real code cannot produce this shape,
          * since an ellipsis argument only exists in patterns. *)
         | Call (callable_expr, (_, [ Arg (Ellipsis _) ], _)) ->
-            expr callable_expr
+            function_or_method callable_expr
         | _ -> expr v2
       in
       let desugared = G.Call (callee, fb [ G.Arg arg ]) |> G.e in
@@ -544,6 +556,27 @@ and expr e : G.expr =
       let e = expr e in
       let matches = List_.map match_ matches in
       G.StmtExpr (G.Switch (tok, Some (G.Cond e), matches) |> G.s) |> G.e
+
+(* the function of a call or the class of 'new', '::' or 'instanceof', whose
+ * name, unlike a constant's, is case insensitive *)
+and function_or_class_name (e : expr) : G.expr =
+  match e with
+  | Id v1 -> G.N (name_of_qualified_ident ~case_insensitive:true v1) |> G.e
+  | _ -> expr e
+
+(* the function or method of a call, whose name is case insensitive, unlike
+ * that of a property *)
+and function_or_method (e : expr) : G.expr =
+  match e with
+  | Obj_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
+      method_access (expr v1) t v2
+  | Class_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
+      method_access (function_or_class_name v1) t v2
+  | _ -> function_or_class_name e
+
+and method_access (obj : G.expr) (t : tok) (name : ident) : G.expr =
+  let name = G.Id (ident name, G.empty_id_info ~case_insensitive:true ()) in
+  G.DotAccess (obj, t, G.FN name) |> G.e
 
 and match_ = function
   | MCase (cases, e) ->
