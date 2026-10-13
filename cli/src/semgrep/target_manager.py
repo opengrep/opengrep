@@ -74,6 +74,35 @@ ALL_EXTENSIONS: Collection[FileExtension] = {
     if ext != FileExtension("")
 }
 
+# coupling: src/targeting/Skip_target.ml is_minified
+MINIFIED_SAMPLE_BYTES = 4096
+MINIFIED_MIN_SAMPLE_BYTES = 1000
+MIN_WHITESPACE_FREQUENCY = 0.07
+MIN_LINE_FREQUENCY = 0.001
+
+
+def is_minified(path: Path) -> bool:
+    """
+    Whether the first block of the file, when larger than
+    MINIFIED_MIN_SAMPLE_BYTES, has a whitespace or line frequency below
+    the minimum.
+    """
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        length = os.lseek(fd, 0, os.SEEK_END)
+        os.lseek(fd, 0, os.SEEK_SET)
+        sample = os.read(fd, min(MINIFIED_SAMPLE_BYTES, length))
+    finally:
+        os.close(fd)
+    if len(sample) <= MINIFIED_MIN_SAMPLE_BYTES:
+        return False
+    whitespace = sum(sample.count(c) for c in (b" ", b"\t", b"\r", b"\n"))
+    lines = sample.count(b"\n") + 1
+    return (
+        whitespace / len(sample) < MIN_WHITESPACE_FREQUENCY
+        or lines / len(sample) < MIN_LINE_FREQUENCY
+    )
+
 
 def write_pipes_to_disk(targets: Sequence[str], temp_dir: Path) -> Sequence[str]:
     """
@@ -121,6 +150,7 @@ class FileTargetingLog:
     cli_excludes: Set[Path] = Factory(set)
     insufficient_permissions: Set[Path] = Factory(set)
     size_limit: Set[Path] = Factory(set)
+    minified: Set[Path] = Factory(set)
 
     # "None" indicates that all lines were skipped
     core_failure_lines_by_file: Mapping[
@@ -171,6 +201,8 @@ class FileTargetingLog:
             res.append((x, "insufficient_permissions"))
         for x in self.size_limit:
             res.append((x, "exceeded_size_limit"))
+        for x in self.minified:
+            res.append((x, "minified"))
         return sorted(res)
 
     def __str__(self) -> str:
@@ -215,6 +247,8 @@ class FileTargetingLog:
             skip_fragments.append(
                 f"{len(self.size_limit)} files larger than {self.target_manager.max_target_bytes / 1000 / 1000} MB"
             )
+        if self.minified:
+            skip_fragments.append(f"{len(self.minified)} minified files")
 
         if self.semgrepignored or self.semgrepignored_dirs:
             counts = []
@@ -324,6 +358,15 @@ class FileTargetingLog:
         else:
             yield 2, "<none>"
 
+        if self.target_manager.exclude_minified_files:
+            yield 1, "Skipped as minified files:"
+            yield 1, "(Disable by passing --no-exclude-minified-files)"
+            if self.minified:
+                for path in sorted(self.minified):
+                    yield 2, with_color(Colors.cyan, str(path))
+            else:
+                yield 2, "<none>"
+
         yield 1, "Partially analyzed due to parsing or internal Opengrep errors"
         if self.core_failure_lines_by_file:
             for path, (lines, rule_ids) in sorted(
@@ -398,6 +441,8 @@ class FileTargetingLog:
                 "reason": "exceeded_size_limit",
                 "size_limit_bytes": self.target_manager.max_target_bytes,
             }
+        for path in self.minified:
+            yield {"path": str(path), "reason": "minified"}
         for path in self.core_failure_lines_by_file:
             yield {
                 "path": str(path),
@@ -630,6 +675,7 @@ class TargetManager:
     includes: Sequence[str] = Factory(list)
     excludes: Mapping[out.Product, Sequence[str]] = Factory(dict)
     max_target_bytes: int = -1
+    exclude_minified_files: bool = False
     respect_git_ignore: bool = False
     respect_rule_paths: bool = True
     baseline_handler: Optional[BaselineHandler] = None
@@ -808,6 +854,18 @@ class TargetManager:
 
         return FilteredFiles(frozenset(kept), frozenset(removed))
 
+    @staticmethod
+    def filter_minified(candidates: FrozenSet[Path]) -> FilteredFiles:
+        """
+        Exclude minified files
+        """
+        kept, removed = partition(
+            candidates,
+            lambda path: not is_minified(path),
+        )
+
+        return FilteredFiles(frozenset(kept), frozenset(removed))
+
     @lru_cache(maxsize=None)
     def get_all_files(self, ignore_baseline_handler: bool = False) -> FrozenSet[Path]:
         return frozenset(
@@ -971,6 +1029,10 @@ class TargetManager:
             files = file_ignore.filter_paths(candidates=files.kept)
             # TODO: Fix ignore_log to log which profile filtered which files.
             self.ignore_log.semgrepignored.update(files.removed)
+
+        if self.exclude_minified_files:
+            files = self.filter_minified(files.kept)
+            self.ignore_log.minified.update(files.removed)
 
         kept_files = files.kept
 
