@@ -104,16 +104,22 @@ let modifierbis = function
   | PrivateSet -> G.Private (* fallback, actual handling in modifier function *)
   | ProtectedSet -> G.Protected
 
+(* A cast has many written forms ((float), (Real), (binary), ...), all
+ * represented by one canonical type, which the source need not contain.
+ * Hidden keeps the prefilter from requiring it. *)
 let ptype (x, t) =
+  let builtin (s : string) : G.type_ =
+    G.TyN (G.Id ((s, t), G.empty_id_info ~hidden:true ())) |> G.t
+  in
   match x with
-  | BoolTy -> G.ty_builtin ("bool", t)
-  | IntTy -> G.ty_builtin ("int", t)
-  | DoubleTy -> G.ty_builtin ("double", t)
-  | StringTy -> G.ty_builtin ("string", t)
+  | BoolTy -> builtin "bool"
+  | IntTy -> builtin "int"
+  | DoubleTy -> builtin "double"
+  | StringTy -> builtin "string"
   (* TODO: TyArray of gen? *)
-  | ArrayTy -> G.ty_builtin ("array", t)
-  | ObjectTy -> G.ty_builtin ("object", t)
-  | VoidTy -> G.ty_builtin ("void", t)
+  | ArrayTy -> builtin "array"
+  | ObjectTy -> builtin "object"
+  | VoidTy -> builtin "void"
 
 let list_expr_to_opt xs =
   match xs with
