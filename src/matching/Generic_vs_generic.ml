@@ -192,7 +192,7 @@ let match_prefix_metavar stra (strb, tokb) =
 
 (* coupling: modify also m_ident_and_id_info *)
 (* You should prefer to use m_ident_and_id_info if you can *)
-let m_ident a b =
+let m_ident ?(case_insensitive = false) a b =
   match (a, b) with
   (* metavar: *)
   | (str, tok), b when Mvar.is_metavar_name str ->
@@ -205,12 +205,8 @@ let m_ident a b =
   | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
-  (* Note: We should try to avoid allowing case insensitive
-   *  identifiers to get here because we have no way of
-   *  distinguishing them from case sensitive identifiers
-   *)
   (* general case *)
-  | a, b -> m_wrap m_string a b
+  | a, b -> m_wrap (m_id_string case_insensitive) a b
 
 (* see also m_dotted_name_prefix_ok *)
 let m_dotted_name a b =
@@ -659,23 +655,27 @@ and m_name_info a b =
   match (a, b) with
   | ( { G.name_last = a0; name_middle = a1; name_top = a2; name_info = a3 },
       { B.name_last = b0; name_middle = b1; name_top = b2; name_info = b3 } ) ->
-      let* () = m_ident_and_type_arguments a0 b0 in
-      let* () = (m_option m_qualifier) a1 b1 in
+      let case_insensitive =
+        G.is_case_insensitive a3 && B.is_case_insensitive b3
+      in
+      let* () = m_ident_and_type_arguments ~case_insensitive a0 b0 in
+      let* () = (m_option (m_qualifier ~case_insensitive)) a1 b1 in
       let* () = (m_option_none_can_match_some m_tok) a2 b2 in
       let* () = m_id_info a3 b3 in
       return ()
 
-and m_ident_and_type_arguments (a1, a2) (b1, b2) =
-  let* () = m_ident a1 b1 in
+and m_ident_and_type_arguments ?(case_insensitive = false) (a1, a2) (b1, b2) =
+  let* () = m_ident ~case_insensitive a1 b1 in
   let* () = m_option m_type_arguments a2 b2 in
   return ()
 
-and m_qualifier a b =
+and m_qualifier ?(case_insensitive = false) a b =
   match (a, b) with
   (* Like for m_dotted_name, [$X] should match anything *)
   | G.QDots [ ((str, t), _) ], B.QDots b when Mvar.is_metavar_name str ->
       envf (str, t) (MV.E (make_dotted (List_.map fst b)))
-  | G.QDots a, B.QDots b -> m_list m_ident_and_type_arguments a b
+  | G.QDots a, B.QDots b ->
+      m_list (m_ident_and_type_arguments ~case_insensitive) a b
   | G.QExpr (a1, a2), B.QExpr (b1, b2) -> m_expr a1 b1 >>= fun () -> m_tok a2 b2
   | G.QDots _, _
   | G.QExpr _, _ ->
