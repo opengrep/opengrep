@@ -208,6 +208,12 @@ let m_ident ?(case_insensitive = false) a b =
   (* general case *)
   | a, b -> m_wrap (m_id_string case_insensitive) a b
 
+(* The parts of a dotted name, as in an import, carry no id_info, so the
+ * language decides whether their case matters. *)
+let m_dotted_ident (a : G.ident) (b : G.ident) : tin -> tout =
+  with_lang (fun lang ->
+      m_ident ~case_insensitive:(Lang.has_caseless_identifiers lang) a b)
+
 (* see also m_dotted_name_prefix_ok *)
 let m_dotted_name a b =
   match (a, b) with
@@ -215,7 +221,7 @@ let m_dotted_name a b =
   | [ (s, t) ], b when Mvar.is_metavar_name s ->
       envf (s, t) (MV.N (H.name_of_ids b))
   (* TODO? we could allow a.b.$X to match a.b.c.d *)
-  | a, b -> (m_list m_ident) a b
+  | a, b -> (m_list m_dotted_ident) a b
 
 (* OPT: As an optimization, all locations that require empty_id_infos reuse this
  * reference to cut down on allocations.
@@ -267,7 +273,7 @@ let rec m_dotted_name_prefix_ok a b =
        *)
       envf (s, t) (MV.E (make_dotted b))
   | xa :: aas, xb :: bbs ->
-      let* () = m_ident xa xb in
+      let* () = m_dotted_ident xa xb in
       m_dotted_name_prefix_ok aas bbs
   (* prefix is ok *)
   | [], _ -> return ()
@@ -734,8 +740,11 @@ and m_ident_and_id_info (a1, a2) (b1, b2) =
       m_id_info a2 b2
 
 and m_ident_and_empty_id_info a1 b1 =
-  let empty = G.empty_id_info () in
-  m_ident_and_id_info (a1, empty) (b1, empty)
+  with_lang (fun lang ->
+      let empty =
+        G.empty_id_info ~case_insensitive:(Lang.has_caseless_identifiers lang) ()
+      in
+      m_ident_and_id_info (a1, empty) (b1, empty))
 
 (* Currently m_id_info is a Nop because the Semgrep pattern
  * does not have correct name resolution (see the comment below).
