@@ -7,6 +7,13 @@
  (url "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0-opengrep")
  (package (name memprof-limits)))
 
+;; visitors generates a method as one function of full arity; the
+;; released 20260520 nests one function per parameter under ppxlib 0.36
+;; and later.
+(pin
+ (url "git+https://github.com/opengrep/visitors.git#full-arity")
+ (package (name visitors)))
+
 ;; classic dune-project settings
 (name semgrep)
 (using menhir 2.1)
@@ -500,7 +507,7 @@ For more information see https://opengrep.dev.
     ppx_inline_test
     (ppx_sexp_conv (>= v0.16.0))
     ppx_expect
-    (visitors (= 20260520))
+    (visitors (= "dev"))
     ; regexps
     re
     ; we're currently "vendoring" pcre2 in libs/pcre2
