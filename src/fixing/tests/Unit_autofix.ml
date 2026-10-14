@@ -99,7 +99,44 @@ let create_make_fixed_lines_test { test_name; contents; fixes; expected } =
       Alcotest.(check (string |> list |> option |> list))
         "fixed_lines" expected all_fixed_lines)
 
+(* The edits of a symbolic link and of a file with another hard link are not
+ * written. *)
+let test_apply_edits_skips_links () =
+  Testutil_files.with_tempfiles ~chdir:true
+    [
+      Testutil_files.File ("plain.txt", "foo\n");
+      Testutil_files.File ("linked.txt", "foo\n");
+      Testutil_files.Hardlink ("other.txt", "linked.txt");
+      Testutil_files.File ("pointed_at.txt", "foo\n");
+      Testutil_files.Symlink ("sym.txt", "pointed_at.txt");
+    ]
+    (fun _cwd ->
+      let edit (path : string) : Textedit.t =
+        { start = 0; end_ = 3; replacement_text = "bar"; path = Fpath.v path }
+      in
+      let { Textedit.modified_files; skipped_files; conflicting_edits } =
+        Textedit.apply_edits ~dryrun:false
+          [ edit "plain.txt"; edit "linked.txt"; edit "sym.txt" ]
+      in
+      Alcotest.(check (list string))
+        "modified files" [ "plain.txt" ]
+        (List_.map Fpath.to_string modified_files);
+      Alcotest.(check (list string))
+        "skipped files" [ "linked.txt"; "sym.txt" ]
+        (List.sort String.compare (List_.map Fpath.to_string skipped_files));
+      Alcotest.(check int) "conflicting edits" 0 (List.length conflicting_edits);
+      Alcotest.(check string)
+        "plain file" "bar\n"
+        (UFile.read_file (Fpath.v "plain.txt"));
+      Alcotest.(check string)
+        "linked file" "foo\n"
+        (UFile.read_file (Fpath.v "linked.txt"));
+      Alcotest.(check string)
+        "pointed at file" "foo\n"
+        (UFile.read_file (Fpath.v "pointed_at.txt")))
+
 let tests =
   Testo.categorize "autofix"
     (Testo.categorize "make_fixed_lines"
-       (List_.map create_make_fixed_lines_test make_fixed_lines_cases))
+       (List_.map create_make_fixed_lines_test make_fixed_lines_cases)
+    @ [ Testo.create "apply_edits, aliased files" test_apply_edits_skips_links ])

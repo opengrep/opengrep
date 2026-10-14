@@ -35,11 +35,13 @@ type t =
   | Unreadable of string * string
   | Unreadable_dir of string * t list
   | Symlink of string * string
+  | Hardlink of string * string
 
 (* if you prefer a curried syntax *)
 let file name : t = File (name, "")
 let dir name entries : t = Dir (name, entries)
 let symlink name dest : t = Symlink (name, dest)
+let hardlink name target : t = Hardlink (name, target)
 
 (*****************************************************************************)
 (* Helpers *)
@@ -51,7 +53,8 @@ let get_name = function
   | Executable (name, _)
   | Unreadable (name, _)
   | Unreadable_dir (name, _)
-  | Symlink (name, _) ->
+  | Symlink (name, _)
+  | Hardlink (name, _) ->
       name
 
 let rec sort xs =
@@ -65,7 +68,8 @@ and sort_one x =
   | File _
   | Executable _
   | Unreadable _
-  | Symlink _ ->
+  | Symlink _
+  | Hardlink _ ->
       x
 
 (*****************************************************************************)
@@ -196,7 +200,8 @@ let flatten ?(root = Fpath.v ".") ?(include_dirs = false) files =
     | Unreadable (name, _contents) ->
         let file = dir / name in
         (file :: acc, dir)
-    | Symlink (name, _dest) ->
+    | Symlink (name, _dest)
+    | Hardlink (name, _dest) ->
         let file = dir / name in
         (file :: acc, dir)
   in
@@ -208,7 +213,18 @@ let flatten ?(root = Fpath.v ".") ?(include_dirs = false) files =
 let print_files files =
   flatten files |> List.iter (fun path -> UPrintf.printf "%s\n" !!path)
 
-let rec write root files = List.iter (write_one root) files
+(* A hard link needs its target on disk, so the hard links of a directory
+   are written after its other entries. *)
+let rec write root files =
+  let links, others =
+    List.partition
+      (function
+        | Hardlink _ -> true
+        | _ -> false)
+      files
+  in
+  List.iter (write_one root) others;
+  List.iter (write_one root) links
 
 and write_one root file =
   match file with
@@ -236,6 +252,7 @@ and write_one root file =
   | Symlink (name, dest) ->
       let path = !!(root / name) in
       UUnix.symlink dest path
+  | Hardlink (name, target) -> UUnix.link !!(root / target) !!(root / name)
 
 let read root =
   let rec read path =
