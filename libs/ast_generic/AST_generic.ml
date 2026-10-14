@@ -942,7 +942,7 @@ and expr_kind =
    * handled as an AssignOp with special Append).
    * Define/Arguments/NewTarget/YieldStar/Exports/Module/UseStrict JS,
    * Require JS and Lua,
-   * UnitLiteral/HexString/UnicodeString/TupleHole/StructExpr in Solidity,
+   * UnitLiteral/HexString/UnicodeString/PatternHole/StructExpr in Solidity,
    * AtomExpr/AnonDotField/ContainerBits/When/Join/OpSlashInt/Sigil/Shortcut
    * AttrExpr in Elixir, Error/ImportStr/ObjComprehension in Jsonnet
    * TODO? lift up to program attribute/directive UseStrict, Require in Import?

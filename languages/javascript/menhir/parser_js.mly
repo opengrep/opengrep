@@ -150,6 +150,15 @@ let special spec tok xs =
   Apply (IdSpecial (spec, tok), fb tok xs)
 
 let bop op a b c = special (ArithOp op) b [a;c]
+
+(* one hole per comma of an elision; after the last element, the first comma
+ * is a trailing comma *)
+let holes (commas : tok list) : expr list =
+  List.map (fun (_ : tok) -> PatternHole) commas
+let trailing_holes (commas : tok list) : expr list =
+  match commas with
+  | [] -> []
+  | _ :: commas -> holes commas
 let uop op tok x = special op tok [x]
 
 let seq (e1, t, e2) = special Seq t [e1; e2]
@@ -688,16 +697,12 @@ binding_element:
 
 (* array destructuring *)
 
-(* TODO use elision below.
- * invent a new Hole category or maybe an array_argument special
- * type like for the (call)argument type.
- *)
 array_binding_pattern:
  | "[" "]"                      { Arr ($1, [], $2) }
  | "[" binding_element_list "]" { Arr ($1, $2, $3) }
 
 binding_start_element:
- | ","                  { [] (* TODO elision *) }
+ | ","                  { [PatternHole] }
  | binding_element ","  { [$1] }
 
 binding_start_list:
@@ -1505,16 +1510,16 @@ assignment_operator:
 (* array *)
 (*----------------------------*)
 
-(* TODO: use elision below *)
 array_literal:
- | "[" optl(elision) "]"                   { Arr($1, [], $3) }
- | "[" element_list_rev optl(elision) "]"  { Arr($1, List.rev $2, $4) }
+ | "[" optl(elision) "]"                   { Arr($1, holes $2, $3) }
+ | "[" element_list_rev optl(elision) "]"
+     { Arr($1, List.rev $2 @ trailing_holes $3, $4) }
 
 (* TODO: conflict on ",", *)
 element_list_rev:
- | optl(elision)   element               { [$2] }
+ | optl(elision)   element               { $2 :: holes $1 }
  | element_list_rev "," element          { $3::$1 }
- | element_list_rev "," elision element  { $4::$1 }
+ | element_list_rev "," elision element  { $4 :: holes $3 @ $1 }
 
 element:
  | assignment_expr       { $1 }

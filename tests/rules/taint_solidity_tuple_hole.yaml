@@ -1,0 +1,10 @@
+rules:
+- id: taint-solidity-tuple-hole
+  mode: taint
+  pattern-sources:
+    - pattern: taint_source()
+  pattern-sinks:
+    - pattern: sink(...)
+  message: Tainted value reaches sink through a tuple with a skipped component
+  severity: WARNING
+  languages: [solidity]

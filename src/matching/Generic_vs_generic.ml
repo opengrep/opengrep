@@ -1010,6 +1010,10 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
             when String.equal str atom_str ->
               return ()
           | _ -> fail ())
+  (* PatternHole consists of fake tokens only, and should match $_ but not $A *)
+  | G.N (G.Id ((str, _), _)), B.OtherExpr (("PatternHole", _), [])
+    when Mvar.is_metavar_name str && not (Mvar.is_anonymous_metavar str) ->
+      fail ()
   | G.N (G.Id ((str, tok), _id_info)), _b when Mvar.is_metavar_name str ->
       envf (str, tok) (MV.E b)
   (* Atom literal whose inner string is a metavariable name. Comes from
@@ -3079,6 +3083,10 @@ and m_pattern a b =
   | G.DisjPat (a1, a2), b -> m_pattern a1 b >||> m_pattern a2 b
   (* metavar: *)
   (* less: G.PatId vs B.PatId? Use MV.Id then ? *)
+  (* PatternHole consists of fake tokens only, and should match $_ but not $A *)
+  | G.PatId ((str, _), _), B.OtherPat (("PatternHole", _), [])
+    when Mvar.is_metavar_name str && not (Mvar.is_anonymous_metavar str) ->
+      fail ()
   | G.PatId ((str, tok), _id_info), b2 when Mvar.is_metavar_name str -> (
       try
         let e2 = H.pattern_to_expr b2 in

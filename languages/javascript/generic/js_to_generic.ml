@@ -342,6 +342,8 @@ and expr (x : expr) =
   | Arr v1 ->
       let v1 = bracket (list expr) v1 in
       G.Container (G.Array, v1) |> G.e
+  | PatternHole ->
+      G.OtherExpr (("PatternHole", Tok.unsafe_fake_tok ""), []) |> G.e
   | Conditional (v1, v2, v3) ->
       let v1 = expr v1 and v2 = expr v2 and v3 = expr v3 in
       G.Conditional (v1, v2, v3) |> G.e

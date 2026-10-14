@@ -1,0 +1,11 @@
+rules:
+  - id: test-sparse-array-literal
+    languages:
+      - js
+    message: Match Found!
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: WARNING
