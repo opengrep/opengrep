@@ -24,10 +24,12 @@ let with_test_files f =
     [
       dir "dir" [];
       file "reg";
+      file "reg-alone";
       symlink "broken-symlink" "missing";
       symlink "reg-link" "reg";
       symlink "reg-link2" "reg-link";
       symlink "dir-link" "dir";
+      hardlink "reg-hardlink" "reg";
     ]
     f
 
@@ -202,6 +204,69 @@ let test_is_dir_or_lnk_or_reg () =
         "" false
         (UFile.is_dir_or_lnk_or_reg (Fpath.v "missing")))
 
+let test_entry () =
+  with_test_files (fun _cwd ->
+      let links (path : string) : int option =
+        match UFile.entry (Fpath.v path) with
+        | UFile.Reg { links; _ } -> Some links
+        | UFile.Absent
+        | UFile.Unreadable
+        | UFile.Link
+        | UFile.Dir
+        | UFile.Special ->
+            None
+      in
+      let is (name : string) (expected : UFile.entry -> bool) (path : string)
+          : unit =
+        Alcotest.(check bool) name true (expected (UFile.entry (Fpath.v path)))
+      in
+      Alcotest.(check (option int)) "regular file with two entries" (Some 2)
+        (links "reg");
+      Alcotest.(check (option int)) "the second entry" (Some 2)
+        (links "reg-hardlink");
+      Alcotest.(check (option int)) "regular file with one entry" (Some 1)
+        (links "reg-alone");
+      Alcotest.(check bool) "the two entries are one file" true
+        (match (UFile.entry (Fpath.v "reg"), UFile.entry (Fpath.v "reg-hardlink")) with
+        | UFile.Reg a, UFile.Reg b -> Int.equal a.dev b.dev && Int.equal a.ino b.ino
+        | _ -> false);
+      is "directory" (function UFile.Dir -> true | _ -> false) "dir";
+      is "link to a regular file" (function UFile.Link -> true | _ -> false) "reg-link";
+      is "link to nothing" (function UFile.Link -> true | _ -> false) "broken-symlink";
+      is "absent" (function UFile.Absent -> true | _ -> false) "missing";
+      is "below a regular file" (function UFile.Absent -> true | _ -> false)
+        "reg-alone/missing")
+
+let test_write_single_entry () =
+  with_test_files (fun _cwd ->
+      let write (path : string) : bool =
+        let file = Fpath.v path in
+        UFile.write_single_entry ~file ~expected:(UFile.entry file) "new\n"
+      in
+      Alcotest.(check bool) "one entry" true (write "reg-alone");
+      Alcotest.(check string)
+        "written" "new\n"
+        (UFile.read_file (Fpath.v "reg-alone"));
+      Alcotest.(check bool) "two entries" false (write "reg-hardlink");
+      Alcotest.(check bool) "absent" true (write "created");
+      Alcotest.(check string)
+        "created" "new\n"
+        (UFile.read_file (Fpath.v "created"));
+      Alcotest.(check bool) "link" false (write "reg-link");
+      Alcotest.(check bool) "directory" false (write "dir");
+      Alcotest.(check bool) "link to nothing" false (write "broken-symlink");
+      (* the entry examined earlier is another file now *)
+      let stale : UFile.entry = UFile.entry (Fpath.v "created") in
+      Sys.remove "created";
+      Sys.rename "reg-alone" "created";
+      Alcotest.(check bool)
+        "replaced file" false
+        (UFile.write_single_entry ~file:(Fpath.v "created") ~expected:stale
+           "again\n");
+      Alcotest.(check string)
+        "left alone" "new\n"
+        (UFile.read_file (Fpath.v "created")))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -247,4 +312,6 @@ let tests =
       t "is_dir_or_lnk" test_is_dir_or_lnk;
       t "is_lnk_or_reg" test_is_lnk_or_reg;
       t "is_dir_or_lnk_or_reg" test_is_dir_or_lnk_or_reg;
+      t "entry" test_entry;
+      t "write_single_entry" test_write_single_entry;
     ]

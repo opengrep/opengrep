@@ -34,9 +34,10 @@ let autofix (dryrun : bool) (edits : Out.edit list) :
     in
     (0, fixed_lines)
   else
-    let modified_files, _failed_edit =
+    let { Textedit.modified_files; skipped_files; _ } =
       Textedit.apply_edits ~dryrun:false edits
     in
+    Autofix.warn_unwritten_fixes skipped_files;
     (List.length modified_files, [])
 
 let format (kind : Out.output_format)

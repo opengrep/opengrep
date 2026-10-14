@@ -286,9 +286,19 @@ let check_destination (dest : string) : unit =
     Error.abort
       (spf "Sending output to a URL (%s) is not supported yet by opengrep" dest);
   (* the scanned repository can ship a symlink here, and writing through it
-   * would truncate whatever it resolves to *)
-  if UFile.is_lnk (Fpath.v dest) then
-    Error.abort (spf "Output is symlink: %s" dest)
+   * would truncate whatever it resolves to; a hard link is the same file as
+   * its other entries *)
+  match UFile.entry (Fpath.v dest) with
+  | UFile.Link -> Error.abort (spf "Output is symlink: %s" dest)
+  | UFile.Reg { links; _ } when links > 1 ->
+      Error.abort
+        (spf "Cannot write output to %s: it has other hard links" dest)
+  | UFile.Absent
+  | UFile.Unreadable
+  | UFile.Dir
+  | UFile.Reg _
+  | UFile.Special ->
+      ()
 
 (* Called before the scan, so that a destination we will not write to costs
  * nothing. Also aborts on the conflicts reported by effective_outputs. *)
@@ -338,7 +348,23 @@ let dispatch_output_format
          * so report it without the backtrace of an unexpected exception *)
         (try
            UFile.make_directories (Fpath.parent file);
-           UFile.write_file ~file str
+           (* the entry is examined again here, after the scan *)
+           match UFile.entry file with
+           (* a device or a named pipe, such as /dev/null, is written by a
+              plain open: it is neither truncated nor created. A directory
+              or an entry that cannot be examined fails in that open, with
+              the system's message. *)
+           | UFile.Special
+           | UFile.Dir
+           | UFile.Unreadable ->
+               UFile.write_file ~file str
+           | expected when UFile.write_single_entry ~file ~expected str -> ()
+           | _ ->
+               Error.abort
+                 (spf
+                    "Cannot write output to %s: it is a symbolic link or has \
+                     other hard links"
+                    dest)
          with
         | Unix.Unix_error (err, _, _) ->
             Error.abort

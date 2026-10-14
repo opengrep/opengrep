@@ -1,3 +1,7 @@
+import os
+import stat
+from pathlib import Path
+from typing import Dict
 from typing import List
 from typing import Tuple
 
@@ -9,6 +13,16 @@ from semgrep.util import unit_str
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
+
+
+def _single_entry(path: Path) -> bool:
+    # a regular file with one directory entry, examined without following a
+    # symbolic link
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_nlink == 1
 
 
 def _match_to_edit(match: RuleMatch, fix: str) -> out.Edit:
@@ -44,17 +58,31 @@ def apply_fixes(rule_matches_by_rule: RuleMatchMap, dryrun: bool = False) -> Non
     #    do that, we make a list of (rulematch, edit) pairs. We pass the edits
     #    to OCaml. Then we get a list of fixed_lines along with an index for the
     #    associated match. We use that index to mutate the appropriate fix.
+    #
+    # A file that is a symbolic link or has other directory entries is left
+    # out here, once per file. A dry run writes nothing, so it is not checked.
+    writable: Dict[Path, bool] = {}
     matches: List[Tuple[RuleMatch, out.Edit]] = []
     for _, rule_matches in rule_matches_by_rule.items():
         for match in rule_matches:
             fix = match.fix
-            if fix is not None:
+            if fix is None:
+                continue
+            if match.path not in writable:
+                writable[match.path] = dryrun or _single_entry(match.path)
+            if writable[match.path]:
                 matches.append(
                     (
                         match,
                         _match_to_edit(match, fix),
                     )
                 )
+    for path, is_writable in writable.items():
+        if not is_writable:
+            logger.warning(
+                f"Fix not written to {path}: it is a symbolic link, has other "
+                "hard links or cannot be examined"
+            )
     edits = [edit for (match, edit) in matches]
     rpc_args = out.ApplyFixesParams(dryrun, edits)
     application_result = semgrep.rpc_call.apply_fixes(rpc_args)
