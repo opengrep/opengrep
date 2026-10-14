@@ -52,7 +52,7 @@ depends: [
   "ppx_inline_test"
   "ppx_sexp_conv" {>= "v0.16.0"}
   "ppx_expect"
-  "visitors" {= "20260520"}
+  "visitors" {= "dev"}
   "re"
   "ocamlgraph"
   "semver"
@@ -97,5 +97,9 @@ pin-depends: [
   [
     "memprof-limits.dev"
     "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0-opengrep"
+  ]
+  [
+    "visitors.dev"
+    "git+https://github.com/opengrep/visitors.git#full-arity"
   ]
 ]
