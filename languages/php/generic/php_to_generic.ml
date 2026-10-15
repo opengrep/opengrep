@@ -399,46 +399,12 @@ and expr e : G.expr =
   | Call (v1, v2) ->
       let v1 = function_or_method v1 and v2 = bracket (list argument) v2 in
       G.Call (v1, v2) |> G.e
-  (* PHP 8.1: first-class callable - desugar to Closure::fromCallable(...) *)
+  (* PHP 8.1: 'f(...)' is the callable f, not a call; AST_to_IL lowers it to
+   * its callee *)
   | FirstClassCallable (callable_expr, tok) ->
-      let callable_arg =
-        match callable_expr with
-        (* strlen(...) → Closure::fromCallable('strlen') *)
-        | Id { n_root = None; n_parts = [ name ] } ->
-            G.Arg (G.L (G.String (fb name)) |> G.e)
-        (* $obj->method(...) → Closure::fromCallable([$obj, 'method']) *)
-        | Obj_get (obj, _arrow,
-                   Id { n_root = None; n_parts = [ method_name ] }) ->
-            let obj_expr = expr obj in
-            let method_str =
-              G.L (G.String (fb method_name)) |> G.e
-            in
-            G.Arg
-              (G.Container (G.Array, fb [ obj_expr; method_str ]) |> G.e)
-        (* Foo::bar(...) → Closure::fromCallable([Foo::class, 'bar']) *)
-        | Class_get (class_ref, _colons,
-                     Id { n_root = None; n_parts = [ method_name ] }) ->
-            let class_expr = function_or_class_name class_ref in
-            let method_str =
-              G.L (G.String (fb  method_name)) |> G.e
-            in
-            G.Arg (G.Container (G.Array, fb [ class_expr; method_str ]) |> G.e)
-        (* For other forms, pass as-is *)
-        | _ -> G.Arg (function_or_class_name callable_expr)
-      in
-      let closure_class =
-        G.N
-          (G.IdQualified
-             {
-               G.name_last = (("fromCallable", tok), None);
-               name_middle =
-                 Some (G.QDots [ (("Closure", tok), None) ]);
-               name_top = None;
-               name_info = G.empty_id_info ();
-             })
-        |> G.e
-      in
-      G.Call (closure_class, fb [ callable_arg ]) |> G.e
+      G.OtherExpr
+        (("FirstClassCallable", tok), [ G.E (function_or_method callable_expr) ])
+      |> G.e
   | Throw (t, v1) ->
       let v1 = expr v1 in
       let st = G.Throw (t, v1, G.sc) |> G.s in
@@ -469,8 +435,7 @@ and expr e : G.expr =
       let callee =
         match v2 with
         (* the right-hand side is normally first-class callable syntax; pipe
-         * to the callable itself rather than to its Closure::fromCallable
-         * desugaring *)
+         * to the callable itself *)
         | FirstClassCallable (callable_expr, _) ->
             function_or_method callable_expr
         (* In a pattern, 'f(...)' parses as a call whose only argument is an

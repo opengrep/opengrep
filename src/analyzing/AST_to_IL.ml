@@ -2653,6 +2653,9 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
     | CLJ_ME1.Macroexpansion_error (_msg, any_expr) ->
       ([], fixme_exp ToDo any_expr (related_tok tok))
     | exn -> raise exn)
+  (* a first-class callable, as PHP's 'f(...)', is the value of its callee
+   * coupling: php_to_generic.ml, Callback_extraction.ml *)
+  | G.OtherExpr (("FirstClassCallable", _), [ G.E callee ]) -> expr env callee
   (* Default. *)
   | G.OtherExpr ((str, tok), xs) ->
       let results =

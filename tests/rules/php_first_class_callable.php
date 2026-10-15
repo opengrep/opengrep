@@ -1,14 +1,14 @@
 <?php
-// Test that Closure::fromCallable pattern matches PHP 8.1 first-class callable syntax
-// strlen(...) is desugared to Closure::fromCallable('strlen')
+// A first-class callable such as strlen(...) is the callable itself, not a call
+// to Closure::fromCallable; only a call written in the source matches.
 
-# ruleid:first-class-callable
+# ok:first-class-callable
 $fn1 = strlen(...);
 
-# ruleid:first-class-callable
+# ok:first-class-callable
 $fn2 = $obj->method(...);
 
-# ruleid:first-class-callable
+# ok:first-class-callable
 $fn3 = Foo::bar(...);
 
 # ruleid:first-class-callable

@@ -1,0 +1,11 @@
+rules:
+  - id: test-fcc-method-callback
+    message: Taint flows into a method passed as a first-class callable
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

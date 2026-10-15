@@ -237,6 +237,9 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       | Some reference ->
           extract_callbacks_from_arg ~lang ~func_lookup reference
       | None -> [])
+  (* a first-class callable, as PHP's 'f(...)', refers to its callee *)
+  | G.OtherExpr (("FirstClassCallable", _), [ G.E callee ]) ->
+      extract_callbacks_from_arg ~lang ~func_lookup callee
   | G.Call (callee, _) when is_closure_from_callable callee -> (
       match reference_of_callable_literal ~lang arg_expr with
       | Some reference ->
