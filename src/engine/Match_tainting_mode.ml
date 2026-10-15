@@ -955,6 +955,7 @@ let check_rules ~match_hook
          | Lang.Julia
          | Lang.Kotlin
          | Lang.Lua
+         | Lang.Php
          | Lang.Python
          | Lang.Ruby
          | Lang.Rust
