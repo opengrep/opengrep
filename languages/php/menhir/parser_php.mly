@@ -2013,7 +2013,13 @@ namespace_aliasing_clause: T_AS ident { $1, Name $2 }
 
 qualified_name:
  | namespace_name                        { XName $1 }
- | TANTISLASH namespace_name             { XName (QITok $1::$2) }
+ | TANTISLASH namespace_name
+     { match $2 with
+       (* '\null' is null, as '\true' is true, see constant *)
+       | [ QI (Name (s, tok)) ]
+         when String.equal (String.lowercase_ascii s) "null" ->
+           XName [ QI (Name (s, Tok.combine_toks $1 [ tok ])) ]
+       | _ -> XName (QITok $1::$2) }
  | T_NAMESPACE TANTISLASH namespace_name
      { XName (QI (Name ("namespace", $1))::QITok $2::$3) }
  | T_NAMESPACE TANTISLASH T_BOOL
