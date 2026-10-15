@@ -119,7 +119,7 @@ let name_of_ids ?name_top ?(case_insensitive = false) ?(hidden = false) xs =
           name_last = (x, None);
           name_middle = qualif;
           name_top;
-          name_info = empty_id_info ~hidden ();
+          name_info = empty_id_info ~case_insensitive ~hidden ();
         }
 
 let add_suffix_to_name suffix name =
@@ -279,6 +279,10 @@ let rec expr_to_pattern e =
   | Constructor (n, (_, args, _)) ->
       PatConstructor (n, args |> List_.map expr_to_pattern)
   | Ellipsis t -> PatEllipsis t
+  (* a skipped element of a destructuring target, as in '[, $b] = $a'
+   * coupling: PatternHole in php_to_generic.ml, js_to_generic.ml,
+   * Parse_hack_tree_sitter.ml, Parse_solidity_tree_sitter.ml *)
+  | OtherExpr (("PatternHole", tok), []) -> OtherPat (("PatternHole", tok), [])
   | OtherExpr (tag, [ E e ]) -> OtherPat (tag, [ P (expr_to_pattern e) ])
   | Cast (ty, _tok, expr) -> PatTyped (expr_to_pattern expr, ty)
   | LetPattern (p, {e = N (Id (i, info)); _} ) -> PatAs (p, (i, info))

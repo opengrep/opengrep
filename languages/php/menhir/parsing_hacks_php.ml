@@ -36,7 +36,10 @@ module TH = Token_helpers_php
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-type env = { stack : ctx list; misc : unit }
+(* angles counts the '<' still open since the last '=', ';', '{' or '}', so
+ * that a '>>' is split only where it can close two type arguments, and not in
+ * an initializer such as 'const X = 4 >> 1;' *)
+type env = { stack : ctx list; angles : int }
 
 and ctx =
   | Toplevel
@@ -44,7 +47,6 @@ and ctx =
   | ClassBody
   | FunctionHeader
   | TypeHeader
-  | UserAttribute
   | Block
 
 (*****************************************************************************)
@@ -113,6 +115,30 @@ let rec is_variable toks =
   | [] -> false
   | T_VARIABLE _ :: _ -> true
   | x :: xs -> if TH.is_comment x then is_variable xs else false
+
+(* Looks to see if the next tokens are '(' '...' ')' (ignoring comments) *)
+let is_dots_in_parens (toks : token list) : bool =
+  let rec skip_comments (toks : token list) : token list =
+    match toks with
+    | x :: xs when TH.is_comment x -> skip_comments xs
+    | xs -> xs
+  in
+  match skip_comments toks with
+  | TOPAR _ :: xs -> (
+      match skip_comments xs with
+      | T_ELLIPSIS _ :: ys -> (
+          match skip_comments ys with
+          | TCPAR _ :: _ -> true
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
+
+(* Looks to see if the previous token is '::' (ignoring comments) *)
+let rec is_after_colcol (acc : token list) : bool =
+  match acc with
+  | [] -> false
+  | TCOLCOL _ :: _ -> true
+  | x :: xs -> if TH.is_comment x then is_after_colcol xs else false
 
 (*
  * Find the next group of parenthesized tokens, being sure to balance parens.
@@ -355,12 +381,26 @@ let fix_tokens xs =
         (* type context, those are the only places where types allowed for
          * now, which makes the job easier than in parsing_hacks_java.ml
          *)
-        | (ClassHeader | ClassBody | TypeHeader | FunctionHeader) :: _ ->
+        | (ClassHeader | ClassBody | TypeHeader | FunctionHeader) :: _
+          when env.angles >= 2 ->
             let lhs, rhs = split_two_char_info ii in
-            aux env (TGREATER rhs :: TGREATER lhs :: acc) xs
-        | UserAttribute :: rest ->
-            aux { env with stack = rest } (T_SR ii :: acc) xs
+            aux
+              { env with angles = env.angles - 2 }
+              (TGREATER rhs :: TGREATER lhs :: acc)
+              xs
         | _ -> aux env (T_SR ii :: acc) xs)
+    (* PHP 8.5: 'clone(...)' is the first-class callable of the clone
+     * function. Read as an identifier it is the same as 'strlen(...)' to the
+     * grammar, whereas after the 'clone' keyword the '(...)' would be
+     * ambiguous with the operand of a prefix 'clone'. In a pattern the
+     * '(...)' means any arguments, so the keyword stays.
+     *)
+    | (T_CLONE ii | T_ASYNC ii | T_READONLY ii) :: xs
+      when (not (Domain.DLS.get Flag_parsing.sgrep_mode))
+           && is_dots_in_parens xs ->
+        aux env
+          (T_IDENT (Lexer_php.case_str (Tok.content_of_tok ii), ii) :: acc)
+          xs
     (* This must be part of a lambda expression.
      * The parameters of a lambda expression are extremely difficult to parse
      * due to their similarity to standard expressions.
@@ -416,15 +456,13 @@ let fix_tokens xs =
            * could be used in a different context as part of an XHP attribute
            * name, see ident_xhp_attr_name_atom rule in parser_php.mly
            *)
-          | (T_CLASS _ | T_TRAIT _ | T_INTERFACE _), Toplevel :: _rest ->
+          | (T_CLASS _ | T_TRAIT _ | T_INTERFACE _), Toplevel :: _rest
+            when not (is_after_colcol acc) ->
               ClassHeader :: env.stack
           | T_TYPE _, Toplevel :: _rest -> TypeHeader :: env.stack
           | T_FUNCTION _, (Toplevel | ClassHeader) :: _rest ->
               FunctionHeader :: env.stack
           | T_FUNCTION _, Block :: _rest -> FunctionHeader :: env.stack
-          (* also FunctionHeader because we can have attributes on parameters *)
-          | T_SL _, (Toplevel | ClassBody | FunctionHeader) :: _rest ->
-              UserAttribute :: env.stack
           | TOBRACE _ii, ClassHeader :: rest -> ClassBody :: rest
           (* subtle: do not do Block::env.stack here otherwise we will
            * not pop up enough to get back to a Toplevel context
@@ -441,7 +479,18 @@ let fix_tokens xs =
           (* default case *)
           | _, st -> st
         in
-        aux { env with stack } (x :: acc) xs
+        let angles =
+          match x with
+          | TSMALLER _ -> env.angles + 1
+          | TGREATER _ -> max 0 (env.angles - 1)
+          | TEQ _
+          | TSEMICOLON _
+          | TOBRACE _
+          | TCBRACE _ ->
+              0
+          | _ -> env.angles
+        in
+        aux { stack; angles } (x :: acc) xs
   in
-  aux { stack = [ Toplevel ]; misc = () } [] (fix_heredocs (split_ampersands xs))
+  aux { stack = [ Toplevel ]; angles = 0 } [] (fix_heredocs (split_ampersands xs))
 [@@profiling]

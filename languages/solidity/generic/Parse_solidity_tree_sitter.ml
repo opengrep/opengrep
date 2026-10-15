@@ -47,8 +47,11 @@ let map_trailing_comma env v =
   | Some tok -> (* "," *) token env tok |> ignore
   | None -> ()
 
-let tuple_hole_expr _env tok = OtherExpr (("TupleHole", tok), []) |> G.e
-let tuple_hole_pat _env tok = PatWildcard tok |> G.p
+let pattern_hole_expr () =
+  OtherExpr (("PatternHole", Tok.unsafe_fake_tok ""), []) |> G.e
+
+let pattern_hole_pat () =
+  OtherPat (("PatternHole", Tok.unsafe_fake_tok ""), []) |> G.p
 
 let stmt_of_def_or_dir = function
   | Either_.Left3 def -> DefStmt def |> G.s
@@ -1462,18 +1465,15 @@ and map_tuple_expression (env : env) ((v1, v2, v3, v4) : CST.tuple_expression) :
   let v2 =
     match v2 with
     | Some x -> map_expression env x
-    | None -> tuple_hole_expr env lp
+    | None -> pattern_hole_expr ()
   in
   let v3 =
     List_.map
       (fun (v1, v2) ->
-        let tcomma = (* "," *) token env v1 in
-        let e =
-          match v2 with
-          | Some x -> map_expression env x
-          | None -> tuple_hole_expr env tcomma
-        in
-        e)
+        let _tcomma = (* "," *) token env v1 in
+        match v2 with
+        | Some x -> map_expression env x
+        | None -> pattern_hole_expr ())
       v3
   in
   let rp = (* ")" *) token env v4 in
@@ -1891,25 +1891,26 @@ let map_variable_declaration_tuple (env : env)
              * occupies its slot of the RHS tuple but binds nothing, like
              * the `var (x,,y)` form below. Dropping holes would shift
              * every later variable onto the wrong slot. *)
-            let hole_or_pat tok = function
+            let hole_or_pat = function
               | Some decl -> pat_of_decl decl
-              | None -> tuple_hole_pat env tok
+              | None -> pattern_hole_pat ()
             in
             let first =
-              hole_or_pat lp (Option.map (map_variable_declaration env) v1)
+              hole_or_pat (Option.map (map_variable_declaration env) v1)
             in
             let rest =
               List_.map
                 (fun (v1, v2) ->
-                  let tcomma = (* "," *) token env v1 in
-                  hole_or_pat tcomma
-                    (Option.map (map_variable_declaration env) v2))
+                  let _tcomma = (* "," *) token env v1 in
+                  hole_or_pat (Option.map (map_variable_declaration env) v2))
                 v2
             in
             (* A trailing comma is one more empty component. *)
             let trailing =
               match v3 with
-              | Some tok -> [ tuple_hole_pat env ((* "," *) token env tok) ]
+              | Some tok ->
+                  let _tcomma = (* "," *) token env tok in
+                  [ pattern_hole_pat () ]
               | None -> []
             in
             (first :: rest) @ trailing
@@ -1925,20 +1926,17 @@ let map_variable_declaration_tuple (env : env)
         | Some tok ->
             let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
             PatId (id, G.empty_id_info ()) |> G.p
-        | None -> tuple_hole_pat env lp
+        | None -> pattern_hole_pat ()
       in
       let ps =
         List_.map
           (fun (v1, v2) ->
-            let tcomma = (* "," *) token env v1 in
-            let pat =
-              match v2 with
-              | Some tok ->
-                  let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-                  PatId (id, G.empty_id_info ()) |> G.p
-              | None -> tuple_hole_pat env tcomma
-            in
-            pat)
+            let _tcomma = (* "," *) token env v1 in
+            match v2 with
+            | Some tok ->
+                let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
+                PatId (id, G.empty_id_info ()) |> G.p
+            | None -> pattern_hole_pat ())
           v4
       in
       let rp = (* ")" *) token env v5 in

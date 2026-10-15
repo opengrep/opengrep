@@ -534,7 +534,8 @@ and name env : G.name -> lval = function
  * could just recurse on one of them and ignore the other. *)
 and pattern env pat : stmts * lval * stmts =
   match pat with
-  | G.PatWildcard tok ->
+  | G.PatWildcard tok
+  | G.OtherPat (("PatternHole", tok), []) ->
       let lval = fresh_lval env tok in
       ([], lval, [])
   | G.PatLiteral _ ->
@@ -996,7 +997,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
     mk_e (Literal (G.Bool (true, tok))) (related_tok tok)
   in
   match pat with
-  | G.PatWildcard tok | G.PatEllipsis tok -> ([], true_at tok)
+  | G.PatWildcard tok
+  | G.PatEllipsis tok
+  | G.OtherPat (("PatternHole", tok), []) ->
+      ([], true_at tok)
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) | G.PatTyped (inner, _) ->
       pattern_match_cond env scrutinee inner
@@ -2649,6 +2653,9 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
     | CLJ_ME1.Macroexpansion_error (_msg, any_expr) ->
       ([], fixme_exp ToDo any_expr (related_tok tok))
     | exn -> raise exn)
+  (* a first-class callable, as PHP's 'f(...)', is the value of its callee
+   * coupling: php_to_generic.ml, Callback_extraction.ml *)
+  | G.OtherExpr (("FirstClassCallable", _), [ G.E callee ]) -> expr env callee
   (* Default. *)
   | G.OtherExpr ((str, tok), xs) ->
       let results =

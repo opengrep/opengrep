@@ -254,10 +254,8 @@ let _ = assert ((Common2.hkeys keyword_table) |>
 type state_mode =
   (* aka HTML mode *)
   | INITIAL
-  (* started with <?php or <?, finished by ?> *)
+  (* started with <?php, <? or <?=, finished by ?> *)
   | ST_IN_SCRIPTING
-  (* started with <?=, finished by ?> *)
-  | ST_IN_SCRIPTING2
   (* handled by using ocamllex ability to define multiple lexers
    * | ST_COMMENT
    * | ST_DOC_COMMENT
@@ -280,6 +278,8 @@ type state_mode =
   | ST_START_HEREDOC of string
   (* started with <<<'XXX', finished by XXX; *)
   | ST_START_NOWDOC of string
+  (* after '__halt_compiler();', up to the end of the file *)
+  | ST_HALTED
 
 
 let default_state = INITIAL
@@ -396,6 +396,14 @@ let BOOL = (['T''t']['R''r']['U''u']['E''e']) | (['F''f']['A''a']['L''l']['S''s'
  * 'yield from' is recognised in a single match *)
 let YIELD = ['Y''y']['I''i']['E''e']['L''l']['D''d']
 let FROM = ['F''f']['R''r']['O''o']['M''m']
+(* likewise for the asymmetric visibility modifiers, as in 'private(set)' *)
+let PUBLIC = ['P''p']['U''u']['B''b']['L''l']['I''i']['C''c']
+let PROTECTED = ['P''p']['R''r']['O''o']['T''t']['E''e']['C''c']['T''t']['E''e']['D''d']
+let PRIVATE = ['P''p']['R''r']['I''i']['V''v']['A''a']['T''t']['E''e']
+let SET = ['S''s']['E''e']['T''t']
+let HALT_COMPILER =
+  "__" ['H''h']['A''a']['L''l']['T''t'] '_'
+  ['C''c']['O''o']['M''m']['P''p']['I''i']['L''l']['E''e']['R''r']
 (* the '_' of a numeric literal separator only ever sits between two digits,
  * as in '1_000' or '0x1_C'; leading, trailing and doubled ones are not
  * numbers. coupling: LNUM..ONUM in Zend's zend_language_scanner.l
@@ -639,6 +647,12 @@ rule st_in_scripting state = parse
      *)
     | "$" { TDOLLAR(tokinfo lexbuf) }
     | "$$" { TDOLLARDOLLAR(tokinfo lexbuf) }
+    (* before another '$' or a '{', the first '$' of '$$' dereferences what
+     * follows, as in '$$$a' or '$${"a"}' *)
+    | "$$" ['$' '{'] {
+        yyback 2 lexbuf;
+        TDOLLAR(tokinfo lexbuf)
+      }
 
   (* ----------------------------------------------------------------------- *)
   (* Constant *)
@@ -728,6 +742,54 @@ rule st_in_scripting state = parse
         T_YIELD kwdinfo
       }
 
+    (* PHP 8.4 asymmetric visibility, read as one token so that the grammar
+     * does not have to tell 'private(set)' apart from a plain 'private'
+     * followed by a DNF type, as in 'private (A&B)|C $p'
+     *)
+    | ((PUBLIC | PROTECTED | PRIVATE) as kwd)
+      WHITESPACEOPT "(" WHITESPACEOPT SET WHITESPACEOPT ")" {
+        let info = tokinfo lexbuf in
+        match String.lowercase_ascii kwd with
+        | "public" -> T_PUBLIC_SET info
+        | "protected" -> T_PROTECTED_SET info
+        | _ -> T_PRIVATE_SET info
+      }
+
+    (* What follows '__halt_compiler();' is data, not PHP, so lexing stops
+     * there, which is why the call is read in a single match. The call
+     * itself gives the usual tokens. Lexing stops only at the top level, the
+     * one place PHP allows it; elsewhere PHP rejects it, and the rest of the
+     * file is still lexed so that the braces around it stay balanced, with a
+     * '?>' leaving PHP code as it does anywhere else.
+     *)
+    | (HALT_COMPILER as kwd) (WHITESPACEOPT as w1) "(" (WHITESPACEOPT as w2)
+      ")" (WHITESPACEOPT as w3) ((";" | "?>") as semi) {
+        let info = tokinfo lexbuf in
+        let file = Tok.file_of_tok info in
+        let start = (Tok.unsafe_loc_of_tok info).Tok.pos.bytepos in
+        let rev_rest, _ =
+          [ (w1, fun ii -> TSpaces ii);
+            ("(", fun ii -> TOPAR ii);
+            (w2, fun ii -> TSpaces ii);
+            (")", fun ii -> TCPAR ii);
+            (w3, fun ii -> TSpaces ii);
+            (semi, fun ii -> TSEMICOLON ii) ]
+          |> List.fold_left
+               (fun (acc, pos) (s, mk) ->
+                 if String.equal s "" then (acc, pos)
+                 else
+                   (mk (tokinfo_file_str_pos file s pos) :: acc,
+                    pos + String.length s))
+               ([], start + String.length kwd)
+        in
+        state.pending_tokens := List.rev rev_rest @ !(state.pending_tokens);
+        (match !(state.mode), semi with
+         | [ _ ], _ -> set_mode state ST_HALTED
+         | _, "?>" -> set_mode state INITIAL
+         | _ -> ());
+        T_IDENT (case_str kwd, Tok.rewrap_str kwd info)
+      }
+
     | LABEL
         { let info = tokinfo lexbuf in
           let s = tok lexbuf in
@@ -807,7 +869,7 @@ rule st_in_scripting state = parse
         push_mode state ST_BACKQUOTE;
         TBACKQUOTE(tokinfo lexbuf)
       }
-    | 'b'? "<<<" TABS_AND_SPACES (LABEL as s) NEWLINE {
+    | 'b'? "<<<" TABS_AND_SPACES ((LABEL as s) | '"' (LABEL as s) '"') NEWLINE {
         set_mode state (ST_START_HEREDOC s);
         set_bol state (tok lexbuf);
         T_START_HEREDOC (tokinfo lexbuf)
@@ -835,41 +897,24 @@ rule st_in_scripting state = parse
      * tokens, but PHP allows to have functions or methods called e.g.
      * string(). So what they have done if this ugly lexing hack.
      *)
-    | "(" TABS_AND_SPACES ("int"|"integer") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_INT_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES ("real"|"double"|"float") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_DOUBLE_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "string" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_STRING_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "binary" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_STRING_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "array" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_ARRAY_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES "object" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_OBJECT_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES ("bool"|"boolean") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_BOOL_CAST(tokinfo lexbuf)) lexbuf }
-
-    (* PHP is case insensitive for many things *)
-    | "(" TABS_AND_SPACES "Array" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_ARRAY_CAST(tokinfo lexbuf)) lexbuf }
-    | "(" TABS_AND_SPACES "Object" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_OBJECT_CAST(tokinfo lexbuf)) lexbuf }
-    | "(" TABS_AND_SPACES ("Bool"|"Boolean") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_BOOL_CAST(tokinfo lexbuf)) lexbuf }
-
-    | "(" TABS_AND_SPACES ("unset") TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_UNSET_CAST(tokinfo lexbuf)) lexbuf }
-
-    (* PHP 8.5 *)
-    | "(" TABS_AND_SPACES "void" TABS_AND_SPACES ")"
-        { lang_ext_or_cast state (T_VOID_CAST(tokinfo lexbuf)) lexbuf }
+    (* the cast names are case-insensitive, as in '(String)'; any other name
+     * in parentheses, as in '(FOO)', gives back all but the '(' *)
+    | "(" TABS_AND_SPACES (LABEL as name) TABS_AND_SPACES ")"
+        { let cast t = lang_ext_or_cast state (t (tokinfo lexbuf)) lexbuf in
+          match String.lowercase_ascii name with
+          | "int" | "integer" -> cast (fun ii -> T_INT_CAST ii)
+          | "real" | "double" | "float" -> cast (fun ii -> T_DOUBLE_CAST ii)
+          | "string" | "binary" -> cast (fun ii -> T_STRING_CAST ii)
+          | "array" -> cast (fun ii -> T_ARRAY_CAST ii)
+          | "object" -> cast (fun ii -> T_OBJECT_CAST ii)
+          | "bool" | "boolean" -> cast (fun ii -> T_BOOL_CAST ii)
+          | "unset" -> cast (fun ii -> T_UNSET_CAST ii)
+          (* PHP 8.5 *)
+          | "void" -> cast (fun ii -> T_VOID_CAST ii)
+          | _ ->
+              yyback (String.length (tok lexbuf) - 1) lexbuf;
+              TOPAR (tokinfo lexbuf)
+        }
     | "?>"
         {
           (* because of XHP and my token merger:
@@ -890,9 +935,6 @@ rule st_in_scripting state = parse
                *)
               TSEMICOLON(tokinfo lexbuf)
 
-          | ST_IN_SCRIPTING2 ->
-              set_mode state INITIAL;
-              T_CLOSE_TAG_OF_ECHO(tokinfo lexbuf)
           | _ ->
               raise Impossible
         }
@@ -936,10 +978,7 @@ and initial state = parse
 
   | "<?=" {
       (* less: if short_tags normally, otherwise T_INLINE_HTML *)
-      set_mode state ST_IN_SCRIPTING2;
-      (* todo? ugly, may be better ot generate a real T_ECHO token
-       * with maybe a FakeTok or ExpandeTok.
-       *)
+      set_mode state ST_IN_SCRIPTING;
       T_OPEN_TAG_WITH_ECHO(tokinfo lexbuf);
     }
 
@@ -985,7 +1024,11 @@ and st_looking_for_property state = parse
 
 (*****************************************************************************)
 and st_looking_for_varname state = parse
-  | LABEL {
+  (* a name is the variable's own only when '[' or '}' follows, as in
+   * "${a}" or "${a[0]}"; otherwise it starts an expression, as in
+   * "${f()}" *)
+  | LABEL ['[' '}'] {
+      yyback 1 lexbuf;
       set_mode state ST_IN_SCRIPTING;
       T_STRING_VARNAME(tok lexbuf, tokinfo lexbuf)
     }
@@ -998,7 +1041,7 @@ and st_looking_for_varname state = parse
 (*****************************************************************************)
 and st_var_offset state = parse
 
-  | LNUM | HEXNUM | BINNUM | OCTNUM { (* /* Offset must be treated as a string */ *)
+  | "-"? (LNUM | HEXNUM | BINNUM | OCTNUM) { (* /* Offset must be treated as a string */ *)
     T_NUM_STRING (tok lexbuf, tokinfo lexbuf)
   }
 
@@ -1255,6 +1298,15 @@ and st_start_nowdoc state stopdoc = parse
        error ("unrecognised symbol, in st_start_nowdoc rule:"^tok lexbuf);
        TUnknown (tokinfo lexbuf)
     }
+
+(*****************************************************************************)
+(* Rule halted *)
+(*****************************************************************************)
+(* the data after '__halt_compiler();', as a comment so that the parser skips
+ * it, rather than as T_INLINE_HTML, which would be echoed *)
+and st_halted = parse
+  | ANY_CHAR+ { T_COMMENT (tokinfo lexbuf) }
+  | eof { EOF (tokinfo lexbuf |> Tok.rewrap_str "") }
 
 (*****************************************************************************)
 (* Rule comment *)

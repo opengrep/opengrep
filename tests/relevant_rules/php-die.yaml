@@ -1,0 +1,23 @@
+# Targets filter_irrelevant_rules.
+#
+# php_to_generic gives 'die' the name of 'exit', which it is an alias of, so
+# the target below never contains the word the generic AST uses, whichever of
+# the two the pattern is written with.
+rules:
+  - id: php-die
+    pattern: die(...)
+    message: die
+    languages: [php]
+    severity: WARNING
+
+  - id: php-exit-matches-die
+    pattern: exit(...)
+    message: exit, which also matches die
+    languages: [php]
+    severity: WARNING
+
+  - id: php-die-with-message
+    pattern: die("bye")
+    message: die with a message
+    languages: [php]
+    severity: WARNING

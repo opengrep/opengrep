@@ -202,10 +202,10 @@ and expr =
   | New of tok * class_name_reference * arguments option
   | NewAnonClass of tok * arguments option * class_def (* c_name = "!ANON!" *)
   | Clone of tok * expr
-  (* PHP 8.5 clone-with: 'clone($obj, ['p' => $v])' returns a copy of $obj
-   * with those properties replaced. The one-argument 'clone($obj)' is still
-   * a Clone applied to a ParenExpr. *)
-  | CloneWith of tok (* clone *) * (expr * tok (* , *) * expr) paren
+  (* PHP 8.5 clone as a function, as in 'clone($obj, ['p' => $v])', which
+   * returns a copy of $obj with those properties replaced. The one-argument
+   * 'clone($obj)' is still a Clone applied to a ParenExpr. *)
+  | CloneCall of tok (* clone *) * argument comma_list paren
   | AssignRef of lvalue * tok (* = *) * tok (* & *) * lvalue
   | AssignNew of
       lvalue
@@ -358,6 +358,8 @@ and array_pair =
   | ArrayRef of tok (* & *) * lvalue
   | ArrayArrowExpr of expr * tok (* => *) * expr
   | ArrayArrowRef of expr * tok (* => *) * tok (* & *) * lvalue
+  (* a skipped element in destructuring, as in '[, $b] = $arr' *)
+  | ArrayEmpty
 
 and argument =
   | Arg of expr
@@ -452,7 +454,7 @@ and stmt =
    *)
   | Break of tok * expr option * tok
   | Continue of tok * expr option * tok
-  | Label of ident * tok (* : *) * stmt
+  | Label of ident * tok (* : *)
   | Goto of tok * ident * tok (* ; *)
   | Return of tok * expr option * tok
   | Try of tok * stmt_and_def list brace * catch list * finally list
@@ -645,9 +647,9 @@ and class_def = {
 
 and class_type =
   | ClassRegular of tok (* class *)
-  | ClassFinal of tok * tok (* final class *)
-  | ClassAbstract of tok * tok (* abstract class *)
-  | ClassReadonly of tok * tok (* readonly class, PHP 8.2 *)
+  (* abstract, final and readonly (PHP 8.2) in any order, e.g.
+   * 'final readonly class' *)
+  | ClassModified of modifier wrap list * tok
   | Interface of tok (* interface *)
   (* PHP 5.4 traits: http://php.net/manual/en/language.oop5.traits.php
    * Allow to mixin behaviors and data so it's really just
@@ -736,7 +738,8 @@ and modifier =
   | Async
   (* PHP 8.1 readonly properties, PHP 8.2 readonly classes *)
   | Readonly
-  (* PHP 8.4 asymmetric visibility: private(set), protected(set) *)
+  (* PHP 8.4 asymmetric visibility: public(set), protected(set), private(set) *)
+  | PublicSet
   | PrivateSet
   | ProtectedSet
 

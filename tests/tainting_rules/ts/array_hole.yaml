@@ -1,0 +1,11 @@
+rules:
+  - id: test-array-hole
+    languages:
+      - ts
+    message: Match Found!
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: WARNING

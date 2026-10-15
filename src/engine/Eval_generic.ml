@@ -486,18 +486,18 @@ let text_of_binding mvar mval =
    * Visitor_AST.range_of_any_opt and Range.contents_at_range below.
    *
    * The 'not is_hidden' guard is to avoid to pretty print
-   * artificial identifiers such as "builtin__include" in PHP that
+   * artificial identifiers such as "!builtin!include" in PHP that
    * we generate during parsing.
-   * TODO: get rid of the ugly __builtin__ once we've fixed
+   * TODO: get rid of the ugly !builtin! once we've fixed
    * ast_php.ml and removed the builtin() function.
    *
    * TODO: handle also MV.Name, MV.E of DotAccess; maybe use
    * Pretty_print/Ugly_print to factorize work.
    *)
   | MV.Id ((s, _tok), Some { id_flags; _ })
-    when (not (s =~ "^__builtin.*")) && not (IdFlags.is_hidden !id_flags) ->
+    when (not (Ast_php.is_builtin s)) && not (IdFlags.is_hidden !id_flags) ->
       Some s
-  | MV.Id ((s, _tok), None) when not (s =~ "^__builtin.*") -> Some s
+  | MV.Id ((s, _tok), None) when not (Ast_php.is_builtin s) -> Some s
   | _ -> (
       let any = MV.mvalue_to_any mval in
       match AST_generic_helpers.range_of_any_opt any with

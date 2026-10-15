@@ -1,0 +1,27 @@
+# Targets filter_irrelevant_rules.
+#
+# coupling: Pattern.is_special_identifier
+rules:
+  - id: php-clone-prefix
+    pattern: 'clone $X'
+    message: clone
+    languages: [php]
+    severity: WARNING
+
+  - id: php-clone-any-arguments
+    pattern: 'clone(...)'
+    message: clone with any arguments
+    languages: [php]
+    severity: WARNING
+
+  - id: php-clone-root-qualified
+    pattern: '\clone($X)'
+    message: root-qualified clone
+    languages: [php]
+    severity: WARNING
+
+  - id: php-clone-named-arguments
+    pattern: 'clone(object: $X, withProperties: $P)'
+    message: clone with named arguments
+    languages: [php]
+    severity: WARNING

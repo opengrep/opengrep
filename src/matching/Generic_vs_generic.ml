@@ -192,7 +192,7 @@ let match_prefix_metavar stra (strb, tokb) =
 
 (* coupling: modify also m_ident_and_id_info *)
 (* You should prefer to use m_ident_and_id_info if you can *)
-let m_ident a b =
+let m_ident ?(case_insensitive = false) a b =
   match (a, b) with
   (* metavar: *)
   | (str, tok), b when Mvar.is_metavar_name str ->
@@ -205,12 +205,14 @@ let m_ident a b =
   | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
-  (* Note: We should try to avoid allowing case insensitive
-   *  identifiers to get here because we have no way of
-   *  distinguishing them from case sensitive identifiers
-   *)
   (* general case *)
-  | a, b -> m_wrap m_string a b
+  | a, b -> m_wrap (m_id_string case_insensitive) a b
+
+(* The parts of a dotted name, as in an import, carry no id_info, so the
+ * language decides whether their case matters. *)
+let m_dotted_ident (a : G.ident) (b : G.ident) : tin -> tout =
+  with_lang (fun lang ->
+      m_ident ~case_insensitive:(Lang.has_caseless_identifiers lang) a b)
 
 (* see also m_dotted_name_prefix_ok *)
 let m_dotted_name a b =
@@ -219,7 +221,7 @@ let m_dotted_name a b =
   | [ (s, t) ], b when Mvar.is_metavar_name s ->
       envf (s, t) (MV.N (H.name_of_ids b))
   (* TODO? we could allow a.b.$X to match a.b.c.d *)
-  | a, b -> (m_list m_ident) a b
+  | a, b -> (m_list m_dotted_ident) a b
 
 (* OPT: As an optimization, all locations that require empty_id_infos reuse this
  * reference to cut down on allocations.
@@ -271,7 +273,7 @@ let rec m_dotted_name_prefix_ok a b =
        *)
       envf (s, t) (MV.E (make_dotted b))
   | xa :: aas, xb :: bbs ->
-      let* () = m_ident xa xb in
+      let* () = m_dotted_ident xa xb in
       m_dotted_name_prefix_ok aas bbs
   (* prefix is ok *)
   | [], _ -> return ()
@@ -542,6 +544,17 @@ let rec m_name_inner a b =
           (* retry with qualified target *)
           (* m_name a n *)
           return ())
+  (* a pattern without a root qualifier matches a name with one, as 'exec'
+   * matches '\exec', but not the converse *)
+  | ( G.Id _,
+      B.IdQualified
+        {
+          name_last = idb, None;
+          name_middle = None;
+          name_top = Some _;
+          name_info = infob;
+        } ) ->
+      m_name a (B.Id (idb, infob))
   (* boilerplate *)
   | ( _a1,
       G.IdQualified
@@ -648,23 +661,25 @@ and m_name_info a b =
   match (a, b) with
   | ( { G.name_last = a0; name_middle = a1; name_top = a2; name_info = a3 },
       { B.name_last = b0; name_middle = b1; name_top = b2; name_info = b3 } ) ->
-      let* () = m_ident_and_type_arguments a0 b0 in
-      let* () = (m_option m_qualifier) a1 b1 in
-      let* () = (m_option m_tok) a2 b2 in
+      let case_insensitive = B.is_case_insensitive b3 in
+      let* () = m_ident_and_type_arguments ~case_insensitive a0 b0 in
+      let* () = (m_option (m_qualifier ~case_insensitive)) a1 b1 in
+      let* () = (m_option_none_can_match_some m_tok) a2 b2 in
       let* () = m_id_info a3 b3 in
       return ()
 
-and m_ident_and_type_arguments (a1, a2) (b1, b2) =
-  let* () = m_ident a1 b1 in
+and m_ident_and_type_arguments ?(case_insensitive = false) (a1, a2) (b1, b2) =
+  let* () = m_ident ~case_insensitive a1 b1 in
   let* () = m_option m_type_arguments a2 b2 in
   return ()
 
-and m_qualifier a b =
+and m_qualifier ?(case_insensitive = false) a b =
   match (a, b) with
   (* Like for m_dotted_name, [$X] should match anything *)
   | G.QDots [ ((str, t), _) ], B.QDots b when Mvar.is_metavar_name str ->
       envf (str, t) (MV.E (make_dotted (List_.map fst b)))
-  | G.QDots a, B.QDots b -> m_list m_ident_and_type_arguments a b
+  | G.QDots a, B.QDots b ->
+      m_list (m_ident_and_type_arguments ~case_insensitive) a b
   | G.QExpr (a1, a2), B.QExpr (b1, b2) -> m_expr a1 b1 >>= fun () -> m_tok a2 b2
   | G.QDots _, _
   | G.QExpr _, _ ->
@@ -715,22 +730,21 @@ and m_ident_and_id_info (a1, a2) (b1, b2) =
       match match_prefix_metavar stra b1 with
       | Some tin -> tin
       | None ->
-          let case_insensitive =
-            G.is_case_insensitive a2 && B.is_case_insensitive b2
-          in
+          let case_insensitive = B.is_case_insensitive b2 in
           let* () = m_wrap (m_id_string case_insensitive) a1 b1 in
           m_id_info a2 b2)
   (* general case *)
   | _, _ ->
-      let case_insensitive =
-        G.is_case_insensitive a2 && B.is_case_insensitive b2
-      in
+      let case_insensitive = B.is_case_insensitive b2 in
       let* () = m_wrap (m_id_string case_insensitive) a1 b1 in
       m_id_info a2 b2
 
 and m_ident_and_empty_id_info a1 b1 =
-  let empty = G.empty_id_info () in
-  m_ident_and_id_info (a1, empty) (b1, empty)
+  with_lang (fun lang ->
+      let empty =
+        G.empty_id_info ~case_insensitive:(Lang.has_caseless_identifiers lang) ()
+      in
+      m_ident_and_id_info (a1, empty) (b1, empty))
 
 (* Currently m_id_info is a Nop because the Semgrep pattern
  * does not have correct name resolution (see the comment below).
@@ -1005,6 +1019,10 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
             when String.equal str atom_str ->
               return ()
           | _ -> fail ())
+  (* PatternHole consists of fake tokens only, and should match $_ but not $A *)
+  | G.N (G.Id ((str, _), _)), B.OtherExpr (("PatternHole", _), [])
+    when Mvar.is_metavar_name str && not (Mvar.is_anonymous_metavar str) ->
+      fail ()
   | G.N (G.Id ((str, tok), _id_info)), _b when Mvar.is_metavar_name str ->
       envf (str, tok) (MV.E b)
   (* Atom literal whose inner string is a metavariable name. Comes from
@@ -3074,6 +3092,10 @@ and m_pattern a b =
   | G.DisjPat (a1, a2), b -> m_pattern a1 b >||> m_pattern a2 b
   (* metavar: *)
   (* less: G.PatId vs B.PatId? Use MV.Id then ? *)
+  (* PatternHole consists of fake tokens only, and should match $_ but not $A *)
+  | G.PatId ((str, _), _), B.OtherPat (("PatternHole", _), [])
+    when Mvar.is_metavar_name str && not (Mvar.is_anonymous_metavar str) ->
+      fail ()
   | G.PatId ((str, tok), _id_info), b2 when Mvar.is_metavar_name str -> (
       try
         let e2 = H.pattern_to_expr b2 in

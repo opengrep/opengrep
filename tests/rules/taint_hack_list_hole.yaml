@@ -1,0 +1,10 @@
+rules:
+- id: taint-hack-list-hole
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)
+  message: Tainted value reaches sink through a list() with a skipped element
+  severity: WARNING
+  languages: [hack]

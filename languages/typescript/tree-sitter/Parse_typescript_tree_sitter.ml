@@ -98,6 +98,22 @@ let map_sep_list (env : env) (head : 'a) (tail : (_ * 'a) list)
   in
   head :: tail
 
+(* The slots of an array or array pattern: an empty one is a hole, except the
+ * last, which is a trailing comma. *)
+let array_slots (f : 'a -> expr) (head : 'a option) (tail : (_ * 'a option) list)
+    : expr list =
+  let slots = head :: List_.map snd tail in
+  let slots =
+    match List.rev slots with
+    | None :: rest -> List.rev rest
+    | _ -> slots
+  in
+  List_.map
+    (function
+      | Some x -> f x
+      | None -> PatternHole)
+    slots
+
 (*****************************************************************************)
 (* Boilerplate converter *)
 (*****************************************************************************)
@@ -799,11 +815,7 @@ and destructuring_pattern (env : env) (x : CST.destructuring_pattern) :
       let elements =
         match v2 with
         | Some (v1, v2) ->
-            map_sep_list env v1 v2 (fun env x ->
-                match x with
-                | Some x -> [ pat_or_assign_pat env x |> sub_pattern ]
-                | None -> [])
-            |> List_.flatten
+            array_slots (fun x -> pat_or_assign_pat env x |> sub_pattern) v1 v2
         | None -> []
       in
       let close = token env v3 (* "]" *) in
@@ -2383,7 +2395,11 @@ and class_declaration (env : env)
 
 and array_ (env : env) ((v1, v2, v3) : CST.array_) =
   let v1 = token env v1 (* "[" *) in
-  let v2 = anon_opt_opt_choice_exp_rep_COMMA_opt_choice_exp_208ebb4 env v2 in
+  let v2 =
+    match v2 with
+    | Some (v1, v2) -> array_slots (anon_choice_exp_9818c1b env) v1 v2
+    | None -> []
+  in
   let v3 = token env v3 (* "]" *) in
   Arr (v1, v2, v3)
 

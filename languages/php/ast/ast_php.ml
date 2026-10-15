@@ -47,10 +47,10 @@
  *  - sugar is removed, no ArrayLong vs ArrayShort, no InlineHtml,
  *    no HereDoc, no EncapsXxx, no XhpSingleton (but kept Xhp), no
  *    implicit fields via constructor parameters.
- *  - some builtins, for instance 'echo', are transformed in "__builtin__echo".
+ *  - some builtins, for instance 'echo', are transformed in "!builtin!echo".
  *    See builtin() below.
  *  - no include/require, they are transformed in call
- *    to __builtin__require (maybe not a good idea)
+ *    to !builtin!require (maybe not a good idea)
  *  - some special keywords, for instance 'self', are transformed in
  *    "__special__self". See special() below.
  *    The comment is still relevant but we should use a different example than self.
@@ -75,7 +75,7 @@
  *    composite calls to Assign and Ref. Same for AssignList, AssignNew.
  *    Same for arguments passed by reference, no Arg, ArgRef, ArgUnpack.
  *    Same for refs in arrays, no ArrayRef, ArrayArrowRef. Also no ListVar,
- *    ListList, ListEmpty. No ForeachVar, ForeachList.
+ *    ListList. No ForeachVar, ForeachList.
  *    Array value are also decomposed in regular expr or Arrow, no
  *    ArrayArrowExpr, no ForeachArrow. More orthogonal.
 
@@ -188,6 +188,10 @@ type expr =
    * in foreach_pattern.
    *)
   | List of expr list bracket
+  (* A skipped element of a List or of a destructuring ConsArray, as in
+   * '[, $b] = $arr'. It keeps the later elements at their index.
+   *)
+  | PatternHole
   (* used only inside array_value or foreach_pattern, or for yield
    * (which is translated as a builtin and so a Call)
    *)
@@ -199,9 +203,8 @@ type expr =
   (* e.g. f(...$x) *)
   | Unpack of expr
   | Call of expr * argument list bracket
-  (* PHP 8.1: first-class callable syntax - strlen(...), $obj->method(...), etc.
-   * Will be desugared to Closure::fromCallable(...) *)
-  | FirstClassCallable of expr * tok (* ... *)
+  (* PHP 8.1: first-class callable syntax - strlen(...), $obj->method(...), etc. *)
+  | FirstClassCallable of expr * tok (* ) *)
   | Throw of tok * expr
   (* todo? transform into Call (builtin ...) ? *)
   | Infix of AST_generic.incr_decr wrap * expr
@@ -404,6 +407,7 @@ and keyword_modifier =
   | Async
   | Readonly
   (* PHP 8.4 asymmetric visibility *)
+  | PublicSet
   | PrivateSet
   | ProtectedSet
 
@@ -413,6 +417,8 @@ and attribute = expr
 and constant_def = {
   cst_tok : tok;
   cst_name : ident;
+  (* PHP 8.3: class constant type *)
+  cst_type : hint_type option;
   (* normally a static scalar *)
   cst_body : expr;
   (* PHP 7.1: class constant visibility *)
@@ -517,7 +523,9 @@ let wrap_fake s = (s, Tok.fake_tok s)
  * coupling: if modify the string, git grep it because it's probably
  *  used in patterns too.
  *)
-let builtin x = "__builtin__" ^ x
+let builtin_prefix = "!builtin!"
+let builtin (x : string) : string = builtin_prefix ^ x
+let is_builtin (s : string) : bool = String.starts_with ~prefix:builtin_prefix s
 
 (* for 'self'/'parent', 'static', 'lambda', 'namespace', root namespace '\',
  * 'class' as in C::class

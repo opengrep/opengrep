@@ -55,7 +55,6 @@ let tokens ?(init_state = Lexer_php.INITIAL) input_source =
           match Lexer_php.current_mode state with
           | Lexer_php.INITIAL -> Lexer_php.initial state lexbuf
           | Lexer_php.ST_IN_SCRIPTING -> Lexer_php.st_in_scripting state lexbuf
-          | Lexer_php.ST_IN_SCRIPTING2 -> Lexer_php.st_in_scripting state lexbuf
           | Lexer_php.ST_DOUBLE_QUOTES -> Lexer_php.st_double_quotes state lexbuf
           | Lexer_php.ST_BACKQUOTE -> Lexer_php.st_backquote state lexbuf
           | Lexer_php.ST_LOOKING_FOR_PROPERTY ->
@@ -64,7 +63,8 @@ let tokens ?(init_state = Lexer_php.INITIAL) input_source =
               Lexer_php.st_looking_for_varname state lexbuf
           | Lexer_php.ST_VAR_OFFSET -> Lexer_php.st_var_offset state lexbuf
           | Lexer_php.ST_START_HEREDOC s -> Lexer_php.st_start_heredoc state s lexbuf
-          | Lexer_php.ST_START_NOWDOC s -> Lexer_php.st_start_nowdoc state s lexbuf)
+          | Lexer_php.ST_START_NOWDOC s -> Lexer_php.st_start_nowdoc state s lexbuf
+          | Lexer_php.ST_HALTED -> Lexer_php.st_halted lexbuf)
     in
     if not (TH.is_comment tok) then
       state.last_non_whitespace_like_token := Some tok;

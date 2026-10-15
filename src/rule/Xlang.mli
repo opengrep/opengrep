@@ -47,6 +47,8 @@ val lang_of_opt_xlang_exn : t option -> Lang.t
 (* to inform the compilation of regexps *)
 val is_caseless : t -> bool
 
+val has_caseless_identifiers : t -> bool
+
 (*
    Determine whether a single analyzer exist in an set of
    analyzers. If the first analyzer is more than one language, it's

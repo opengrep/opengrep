@@ -33,10 +33,10 @@ val set_hidden : t -> t
 
 val is_case_insensitive : t -> bool
 (**
-   The case_insensitive flag is indicates that equality of ASTs
+   The case_insensitive flag indicates that equality of ASTs
    should not care about the case of the characters being used to
-   determine if two idents are equal.  This is useful for languages
-   like php and apex.
+   determine if two idents are equal. PHP and VB.NET set it. The
+   pattern matcher reads the flag of the target identifier.
 *)
 
 val set_case_insensitive : t -> t

@@ -1,0 +1,11 @@
+rules:
+  - id: test-fcc-variable-callback
+    message: Taint flows into a function held in a variable as a first-class callable
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

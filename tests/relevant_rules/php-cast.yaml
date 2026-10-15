@@ -1,0 +1,22 @@
+# Targets filter_irrelevant_rules.
+#
+# php_to_generic represents every written form of a cast by one canonical type, so the
+# target below never contains the word the generic AST uses.
+rules:
+  - id: php-float-cast
+    pattern: (float) $X
+    message: float cast
+    languages: [php]
+    severity: WARNING
+
+  - id: php-double-cast-matches-real
+    pattern: (double) $X
+    message: double cast, which also matches real
+    languages: [php]
+    severity: WARNING
+
+  - id: php-string-cast-matches-binary
+    pattern: (string) $X
+    message: string cast, which also matches binary
+    languages: [php]
+    severity: WARNING

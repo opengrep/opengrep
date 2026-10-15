@@ -2698,24 +2698,27 @@ and variablish (env : env) (x : CST.variablish) : G.expr =
   | `List_exp (v1, v2, v3, v4, v5, v6) ->
       let _v1TODO = (* "list" *) token env v1 in
       let v2 = (* "(" *) token env v2 in
-      let v3 =
-        match v3 with
-        | Some x -> [ expression env x ]
-        | None -> []
+      let slots =
+        v3
+        :: List_.map
+             (fun (v1, v2) ->
+               let _v1 = (* "," *) token env v1 in
+               v2)
+             v4
       in
-      let v4 =
-        List_.map
-          (fun (v1, v2) ->
-            let _v1 = (* "," *) token env v1 in
-            let v2 =
-              match v2 with
-              | Some x -> [ expression env x ]
-              | None -> []
-            in
-            v2)
-          v4
+      (* an empty slot is a hole, except at the end, where PHP drops it *)
+      let exprs =
+        List.fold_right
+          (fun slot acc ->
+            match (slot, acc) with
+            | None, [] -> []
+            | None, _ ->
+                (G.OtherExpr (("PatternHole", Tok.unsafe_fake_tok ""), [])
+                |> G.e)
+                :: acc
+            | Some x, _ -> expression env x :: acc)
+          slots []
       in
-      let exprs = v3 @ List_.flatten v4 in
       let _v5 =
         match v5 with
         | Some tok -> (* "," *) Some (token env tok)

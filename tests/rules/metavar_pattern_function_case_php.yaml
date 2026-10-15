@@ -1,0 +1,13 @@
+rules:
+  - id: test
+    message: A function name in a metavariable-pattern matches case-insensitively.
+    languages: [php]
+    severity: WARNING
+    patterns:
+      - pattern: $FUNC($_GET[...])
+      - metavariable-pattern:
+          metavariable: $FUNC
+          patterns:
+            - pattern-either:
+                - pattern: fopen
+                - pattern: readfile

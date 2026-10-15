@@ -1,0 +1,13 @@
+rules:
+  - id: test-short-echo-tag
+    languages:
+      - php
+    message: Match Found!
+    mode: taint
+    pattern-sinks:
+      - pattern: echo ...;
+    pattern-sources:
+      - pattern: $_GET
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+    severity: WARNING

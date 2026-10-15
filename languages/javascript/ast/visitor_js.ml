@@ -240,6 +240,7 @@ let (mk_visitor : visitor_in -> visitor_out) =
       | Arr v1 ->
           let v1 = v_bracket (v_list v_expr) v1 in
           ()
+      | PatternHole -> ()
       | Conditional (v1, v2, v3) ->
           let v1 = v_expr v1 and v2 = v_expr v2 and v3 = v_expr v3 in
           ()

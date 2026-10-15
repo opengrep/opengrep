@@ -1,0 +1,13 @@
+rules:
+  - id: test-cast-case-insensitive
+    languages:
+      - php
+    message: Match Found!
+    mode: taint
+    pattern-sinks:
+      - pattern: $DB->query(...)
+    pattern-sources:
+      - pattern: $_GET
+    pattern-sanitizers:
+      - pattern: (int) $X
+    severity: WARNING

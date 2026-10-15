@@ -1,0 +1,10 @@
+# Targets filter_irrelevant_rules.
+#
+# Looking for PHP function names regardless of case must still skip a file
+# that does not contain the name at all.
+rules:
+  - id: php-caseless-call
+    pattern: system($X)
+    message: system
+    languages: [php]
+    severity: WARNING

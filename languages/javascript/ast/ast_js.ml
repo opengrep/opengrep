@@ -197,11 +197,12 @@ and expr =
   | Obj of a_obj
   (* we could transform it in an Obj but it can be useful to remember
    * the difference in further analysis (e.g., in the abstract interpreter).
-   * This can also contain "holes" when the array is used in lhs of an assign
-   * called "elision" which currently are skipped
-   * TODO: have an (expr, elision) Common.either list bracket here.
    *)
   | Arr of expr list bracket
+  (* A skipped element of an array, as in '[, b] = arr' or '[1, , 3]'. It
+   * keeps the later elements at their index.
+   *)
+  | PatternHole
   (* ident is None when assigned in module.exports  *)
   | Class of class_definition * a_ident option
   | ObjAccess of expr * dot_operator wrap * property_name

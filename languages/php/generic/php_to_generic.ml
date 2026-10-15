@@ -72,6 +72,13 @@ let name_of_qualified_ident ~case_insensitive (n : name) =
   | Some (root : tok) ->
       H.name_of_ids ~case_insensitive ~name_top:(info root) xs
 
+(* Constants are case sensitive, except 'null', but the namespace part of a
+ * qualified one is not; a single flag cannot say both, so a qualified
+ * constant is case insensitive as a whole. *)
+let constant_is_case_insensitive (n : name) =
+  match n.n_parts with
+  | [ (s, _) ] -> String.equal (String.lowercase_ascii s) "null"
+  | _ -> true
 
 let fixOp x = x
 
@@ -93,19 +100,26 @@ let modifierbis = function
   | Async -> G.Async
   | Readonly -> G.Const
   (* PHP 8.4 asymmetric visibility - handled separately *)
+  | PublicSet -> G.Public (* fallback, actual handling in modifier function *)
   | PrivateSet -> G.Private (* fallback, actual handling in modifier function *)
   | ProtectedSet -> G.Protected
 
+(* A cast has many written forms ((float), (Real), (binary), ...), all
+ * represented by one canonical type, which the source need not contain.
+ * Hidden keeps the prefilter from requiring it. *)
 let ptype (x, t) =
+  let builtin (s : string) : G.type_ =
+    G.TyN (G.Id ((s, t), G.empty_id_info ~hidden:true ())) |> G.t
+  in
   match x with
-  | BoolTy -> G.ty_builtin ("bool", t)
-  | IntTy -> G.ty_builtin ("int", t)
-  | DoubleTy -> G.ty_builtin ("double", t)
-  | StringTy -> G.ty_builtin ("string", t)
+  | BoolTy -> builtin "bool"
+  | IntTy -> builtin "int"
+  | DoubleTy -> builtin "double"
+  | StringTy -> builtin "string"
   (* TODO: TyArray of gen? *)
-  | ArrayTy -> G.ty_builtin ("array", t)
-  | ObjectTy -> G.ty_builtin ("object", t)
-  | VoidTy -> G.ty_builtin ("void", t)
+  | ArrayTy -> builtin "array"
+  | ObjectTy -> builtin "object"
+  | VoidTy -> builtin "void"
 
 let list_expr_to_opt xs =
   match xs with
@@ -285,7 +299,11 @@ and expr e : G.expr =
       let v1 = wrap string v1 in
       G.L (G.String (fb v1)) |> G.e
   | Id v1 ->
-      let v1 = name_of_qualified_ident ~case_insensitive:true v1 in
+      let v1 =
+        name_of_qualified_ident
+          ~case_insensitive:(constant_is_case_insensitive v1)
+          v1
+      in
       G.N v1 |> G.e
   | IdSpecial v1 -> special v1
   (* unify Id and Var, finally *)
@@ -312,13 +330,13 @@ and expr e : G.expr =
       let v1 = expr v1 and v2 = expr v2 in
       G.DotAccess (v1, t, G.FDynamic v2) |> G.e
   | Class_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
-      let v1 = expr v1 and v2 = ident v2 in
+      let v1 = function_or_class_name v1 and v2 = ident v2 in
       G.DotAccess (v1, t, G.FN (G.Id (v2, G.empty_id_info ()))) |> G.e
   | Class_get (v1, t, v2) ->
-      let v1 = expr v1 and v2 = expr v2 in
+      let v1 = function_or_class_name v1 and v2 = expr v2 in
       G.DotAccess (v1, t, G.FDynamic v2) |> G.e
   | New (v0, v1, v2) ->
-      let v1 = expr v1 and v2 = list argument v2 in
+      let v1 = function_or_class_name v1 and v2 = list argument v2 in
       let t = H.expr_to_type v1 in
       G.New (v0, t, G.empty_id_info (), fb v2) |> G.e
   | NewAnonClass (_tTODO, args, cdef) ->
@@ -327,7 +345,7 @@ and expr e : G.expr =
       let anon_class = G.AnonClass cdef |> G.e in
       G.Call (anon_class, fb args) |> G.e
   | InstanceOf (t, v1, v2) ->
-      let v1 = expr v1 and v2 = expr v2 in
+      let v1 = expr v1 and v2 = function_or_class_name v2 in
       G.Call
         ( G.IdSpecial (G.Instanceof, t) |> G.e,
           fb ([ v1; v2 ] |> List_.map G.arg) )
@@ -364,6 +382,8 @@ and expr e : G.expr =
   | List v1 ->
       let v1 = bracket (list expr) v1 in
       G.Container (G.List, v1) |> G.e
+  | PatternHole ->
+      G.OtherExpr (("PatternHole", Tok.unsafe_fake_tok ""), []) |> G.e
   | Arrow (v1, t, v2) ->
       let v1 = expr v1 and v2 = expr v2 in
       G.keyval v1 t v2
@@ -377,48 +397,14 @@ and expr e : G.expr =
           Tok.unsafe_fake_bracket [ G.Arg v1 ] )
       |> G.e
   | Call (v1, v2) ->
-      let v1 = expr v1 and v2 = bracket (list argument) v2 in
+      let v1 = function_or_method v1 and v2 = bracket (list argument) v2 in
       G.Call (v1, v2) |> G.e
-  (* PHP 8.1: first-class callable - desugar to Closure::fromCallable(...) *)
+  (* PHP 8.1: 'f(...)' is the callable f, not a call; AST_to_IL lowers it to
+   * its callee *)
   | FirstClassCallable (callable_expr, tok) ->
-      let callable_arg =
-        match callable_expr with
-        (* strlen(...) → Closure::fromCallable('strlen') *)
-        | Id { n_root = None; n_parts = [ name ] } ->
-            G.Arg (G.L (G.String (fb name)) |> G.e)
-        (* $obj->method(...) → Closure::fromCallable([$obj, 'method']) *)
-        | Obj_get (obj, _arrow,
-                   Id { n_root = None; n_parts = [ method_name ] }) ->
-            let obj_expr = expr obj in
-            let method_str =
-              G.L (G.String (fb method_name)) |> G.e
-            in
-            G.Arg
-              (G.Container (G.Array, fb [ obj_expr; method_str ]) |> G.e)
-        (* Foo::bar(...) → Closure::fromCallable([Foo::class, 'bar']) *)
-        | Class_get (class_ref, _colons,
-                     Id { n_root = None; n_parts = [ method_name ] }) ->
-            let class_expr = expr class_ref in
-            let method_str =
-              G.L (G.String (fb  method_name)) |> G.e
-            in
-            G.Arg (G.Container (G.Array, fb [ class_expr; method_str ]) |> G.e)
-        (* For other forms, pass as-is *)
-        | _ -> G.Arg (expr callable_expr)
-      in
-      let closure_class =
-        G.N
-          (G.IdQualified
-             {
-               G.name_last = (("fromCallable", tok), None);
-               name_middle =
-                 Some (G.QDots [ (("Closure", tok), None) ]);
-               name_top = None;
-               name_info = G.empty_id_info ();
-             })
-        |> G.e
-      in
-      G.Call (closure_class, fb [ callable_arg ]) |> G.e
+      G.OtherExpr
+        (("FirstClassCallable", tok), [ G.E (function_or_method callable_expr) ])
+      |> G.e
   | Throw (t, v1) ->
       let v1 = expr v1 in
       let st = G.Throw (t, v1, G.sc) |> G.s in
@@ -449,16 +435,16 @@ and expr e : G.expr =
       let callee =
         match v2 with
         (* the right-hand side is normally first-class callable syntax; pipe
-         * to the callable itself rather than to its Closure::fromCallable
-         * desugaring *)
-        | FirstClassCallable (callable_expr, _) -> expr callable_expr
+         * to the callable itself *)
+        | FirstClassCallable (callable_expr, _) ->
+            function_or_method callable_expr
         (* In a pattern, 'f(...)' parses as a call whose only argument is an
          * ellipsis rather than as FirstClassCallable (see parser_php.mly), so
          * '$X |> f(...)' would otherwise desugar to a call of f(...)'s result
          * and never match piped code. Real code cannot produce this shape,
          * since an ellipsis argument only exists in patterns. *)
         | Call (callable_expr, (_, [ Arg (Ellipsis _) ], _)) ->
-            expr callable_expr
+            function_or_method callable_expr
         | _ -> expr v2
       in
       let desugared = G.Call (callee, fb [ G.Arg arg ]) |> G.e in
@@ -542,6 +528,27 @@ and expr e : G.expr =
       let matches = List_.map match_ matches in
       G.StmtExpr (G.Switch (tok, Some (G.Cond e), matches) |> G.s) |> G.e
 
+(* the function of a call or the class of 'new', '::' or 'instanceof', whose
+ * name, unlike a constant's, is case insensitive *)
+and function_or_class_name (e : expr) : G.expr =
+  match e with
+  | Id v1 -> G.N (name_of_qualified_ident ~case_insensitive:true v1) |> G.e
+  | _ -> expr e
+
+(* the function or method of a call, whose name is case insensitive, unlike
+ * that of a property *)
+and function_or_method (e : expr) : G.expr =
+  match e with
+  | Obj_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
+      method_access (expr v1) t v2
+  | Class_get (v1, t, Id { n_root = None; n_parts = [ v2 ] }) ->
+      method_access (function_or_class_name v1) t v2
+  | _ -> function_or_class_name e
+
+and method_access (obj : G.expr) (t : tok) (name : ident) : G.expr =
+  let name = G.Id (ident name, G.empty_id_info ~case_insensitive:true ()) in
+  G.DotAccess (obj, t, G.FN name) |> G.e
+
 and match_ = function
   | MCase (cases, e) ->
       let cases =
@@ -573,7 +580,10 @@ and special (spec, tok) =
   | LateStatic -> G.IdSpecial (G.LateStatic, tok) |> G.e
   | FuncLike Empty -> G.N (G.Id (("empty", tok), G.empty_id_info ())) |> G.e
   | FuncLike Eval -> G.IdSpecial (G.Eval, tok) |> G.e
-  | FuncLike Exit -> G.N (G.Id (("exit", tok), G.empty_id_info ())) |> G.e
+  (* die converts to exit, so a pattern with either matches both; hidden keeps
+   * the prefilter from requiring 'exit' *)
+  | FuncLike Exit ->
+      G.N (G.Id (("exit", tok), G.empty_id_info ~hidden:true ())) |> G.e
   | FuncLike Isset -> G.IdSpecial (G.Defined, tok) |> G.e
   | FuncLike Unset -> G.N (G.Id (("unset", tok), G.empty_id_info ())) |> G.e
 
@@ -708,10 +718,12 @@ and parameter_classic
   | _, Some tok -> G.OtherParam (("Ref", tok), [ G.Pa (G.Param pclassic) ])
   | Some tok, None -> G.ParamRest (tok, pclassic)
 
-(* PHP 8.4 asymmetric visibility: private(set) and protected(set)
-   are converted to OtherAttribute like Swift does *)
+(* PHP 8.4 asymmetric visibility: public(set), protected(set) and
+   private(set) are converted to OtherAttribute like Swift does *)
 and modifier_to_attr (m, tok) =
   match m with
+  | PublicSet ->
+      G.OtherAttribute (("public(set)", tok), [])
   | PrivateSet ->
       G.OtherAttribute (("private(set)", tok), [])
   | ProtectedSet ->
@@ -732,14 +744,16 @@ and attribute v =
   | _ -> raise Impossible
 
 (* see ast_php_build.ml *)
-and constant_def { cst_name; cst_body; cst_tok = tok; cst_modifiers; cst_attrs } =
+and constant_def
+    { cst_name; cst_type; cst_body; cst_tok = tok; cst_modifiers; cst_attrs } =
   let id = ident cst_name in
+  let typ = option hint_type cst_type in
   let body = expr cst_body in
   let modifiers = list modifier_to_attr cst_modifiers in
   let attrs = list attribute cst_attrs in
   let attr = (G.KeywordAttr (G.Const, tok) :: modifiers) @ attrs in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:attr in
-  (ent, { G.vinit = Some body; vtype = None; vtok = G.no_sc })
+  (ent, { G.vinit = Some body; vtype = typ; vtok = G.no_sc })
 
 and enum_type _tok { e_base; e_constraint } =
   let t = hint_type e_base in

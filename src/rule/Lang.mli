@@ -133,6 +133,7 @@ val is_js : t -> bool
 val is_c_cpp : t -> bool
 
 val is_caseless : t -> bool
+val has_caseless_identifiers : t -> bool
 val lang_map : (string, t) Hashtbl.t
 
 (* Association from a valid name for a language to its unique internal ID. *)

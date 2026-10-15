@@ -165,6 +165,7 @@ let str_of_info x = Tok.content_of_tok x
  T_ECHO  T_PRINT
  (* pad: was declared via right ... ??? mean token ? *)
  T_ASYNC T_STATIC  T_ABSTRACT  T_FINAL  T_PRIVATE T_PROTECTED T_PUBLIC T_READONLY
+ T_PUBLIC_SET T_PROTECTED_SET T_PRIVATE_SET
  T_UNSET T_ISSET T_EMPTY
  T_CLASS   T_INTERFACE  T_EXTENDS T_IMPLEMENTS
  T_TRAIT T_INSTEADOF
@@ -187,7 +188,7 @@ let str_of_info x = Tok.content_of_tok x
 
 %token <Tok.t>
  T_OBJECT_OPERATOR "->" T_ARROW "=>" T_DOUBLE_ARROW "==>"
- T_OPEN_TAG  T_CLOSE_TAG T_OPEN_TAG_WITH_ECHO T_CLOSE_TAG_OF_ECHO
+ T_OPEN_TAG  T_CLOSE_TAG T_OPEN_TAG_WITH_ECHO
  T_START_HEREDOC    T_END_HEREDOC
  T_DOLLAR_OPEN_CURLY_BRACES T_CURLY_OPEN
  TCOLCOL "::" TANTISLASH
@@ -334,6 +335,10 @@ list_sep(X,Sep):
 %inline
 listc(X): list_sep(X, ",") { $1 }
 
+listc_trailing(X):
+ | listc(X)     { $1 }
+ | listc(X) "," { $1 @ [Right $2] }
+
 (* Like above, but skipping the separate tokens.
  * We deviate from pure CST towards an AST for a few constructs
  *)
@@ -418,7 +423,7 @@ statement:
  | T_BREAK    expr? ";" { Break($1,$2, $3) }
  | T_CONTINUE expr? ";" { Continue($1, $2, $3) }
 
- | ident ":" statement { Label (Name $1,$2,$3) }
+ | ident ":" { Label (Name $1, $2) }
  | T_GOTO ident ";" { Goto ($1,Name $2,$3) }
 
  | T_RETURN expr_or_dots? ";"  { Return ($1, $2, $3)}
@@ -441,19 +446,15 @@ statement:
  | T_ECHO listc(expr_or_dots) ";" { Echo($1,$2,$3) }
  | T_INLINE_HTML                  { InlineHtml($1) }
 
- | T_OPEN_TAG_WITH_ECHO expr T_CLOSE_TAG_OF_ECHO {
-     (* ugly: the 2 tokens will have a wrong string *)
-     Echo ($1, [Left $2], $3)
-   }
- (* ugly: php allows that too  *)
- | T_OPEN_TAG_WITH_ECHO expr ";" T_CLOSE_TAG_OF_ECHO {
-     Echo ($1, [Left $2], $4)
-   }
+ (* '<?=' is 'echo', so it takes a list and ends with ';' or with the '?>'
+  * that closes the tag, which reads as ';' as after any other tag. More
+  * statements may follow before that '?>'. *)
+ | T_OPEN_TAG_WITH_ECHO listc(expr_or_dots) ";" { Echo($1,$2,$3) }
 
  | T_GLOBAL listc(global_var) ";" { Globals($1,$2,$3) }
  | T_STATIC listc(static_var) ";" { StaticVars($1,$2,$3) }
 
- | T_UNSET "(" listc(unset_variable) ")" ";" { Unset($1,($2,$3,$4),$5) }
+ | T_UNSET "(" listc_trailing(unset_variable) ")" ";" { Unset($1,($2,$3,$4),$5) }
 
  | T_USE use_filename ";"         { Use($1,$2,$3) }
  | T_DECLARE  "(" listc(declare) ")" declare_statement
@@ -495,11 +496,12 @@ match_case_list:
 match_case:
     | match_conds T_ARROW expr {MCase($1, $3)}
 
-    | T_DEFAULT T_ARROW expr { MDefault($1, $3)}
+    | T_DEFAULT ioption(",") T_ARROW expr { MDefault($1, $4)}
 
 (* an arm may list several conditions, as in '1, 2 => "a"' *)
 match_conds:
     | expr { [$1] }
+    | expr "," { [$1] }
     | expr "," match_conds { $1 :: $3 }
 
 mellipse: "..." {MEllipsis $1} 
@@ -598,7 +600,7 @@ global_var:
 
 static_var:
  | variable                   { (DName $1, None) }
- | variable TEQ static_scalar { (DName $1, Some ($2, $3)) }
+ | variable TEQ expr { (DName $1, Some ($2, $3)) }
 
 unset_variable: expr_or_dots    { $1 }
 
@@ -620,7 +622,7 @@ constant_declaration: ioption(attributes) unticked_constant_declaration
  * carries its own '='.
  *)
 unticked_constant_declaration:
-  T_CONST ioption(type_php) constant_declaration_elems ";"
+  T_CONST ioption(type_php_static) constant_declaration_elems ";"
    { $3 |> List.map (fun (name, eqtok, v) ->
        { cst_toks = ($1, eqtok, $4); cst_name = name; cst_val = v;
          cst_type = $2; cst_attrs = None }) }
@@ -639,7 +641,7 @@ function_declaration: ioption(attributes) unticked_function_declaration
    { { $2 with f_attrs = $1 } }
 
 unticked_function_declaration:
- async_opt T_FUNCTION is_reference ident type_params_opt
+ async_opt T_FUNCTION is_reference ident_function_name type_params_opt
    "(" parameter_list ")"
    return_type? function_body
    {  validate_parameter_list $7;
@@ -816,10 +818,21 @@ unticked_class_declaration:
 
 
 class_entry_type:
- | T_CLASS                    { ClassRegular $1 }
- | T_ABSTRACT T_CLASS         { ClassAbstract ($1, $2) }
- | T_FINAL    T_CLASS         { ClassFinal ($1, $2) }
- | T_READONLY T_CLASS         { ClassReadonly ($1, $2) }
+ | T_CLASS                         { ClassRegular $1 }
+ | class_entry_modifier+ T_CLASS   { ClassModified ($1, $2) }
+
+(* Inlined, so that 'final readonly class' and a method pattern such as
+ * 'final public function' share their states up to 'class' or 'function'.
+ *)
+%inline class_entry_modifier:
+ | class_modifier { $1 }
+ | T_READONLY     { Readonly, $1 }
+
+(* PHP 8.3: an anonymous class can be readonly, and no other modifier is
+ * allowed on it *)
+%inline anon_class_entry_type:
+ | T_CLASS            { ClassRegular $1, $1 }
+ | T_READONLY T_CLASS { ClassModified ([ (Readonly, $1) ], $2), $2 }
 
 
 visibility_modifier:
@@ -841,14 +854,9 @@ class_modifier:
 
 (* PHP 8.4 asymmetric visibility *)
 %inline set_visibility_modifier:
- | T_PRIVATE "(" T_IDENT ")"
-     { let (s, _) = $3 in
-       if s = "set" then PrivateSet, $1
-       else raise Parsing.Parse_error }
- | T_PROTECTED "(" T_IDENT ")"
-     { let (s, _) = $3 in
-       if s = "set" then ProtectedSet, $1
-       else raise Parsing.Parse_error }
+ | T_PUBLIC_SET    { PublicSet, $1 }
+ | T_PROTECTED_SET { ProtectedSet, $1 }
+ | T_PRIVATE_SET   { PrivateSet, $1 }
 
 
 extends_from:
@@ -878,7 +886,7 @@ implements_list:
  *)
 member_declaration:
  | ioption(attributes) member_modifier*
-   T_CONST ioption(type_php) listc(class_constant_declaration)  ";"
+   T_CONST ioption(type_php_static) listc(class_constant_declaration)  ";"
      { ClassConstants($1, $2, $3, $4, $5, $6) }
 
 (* class variables (aka properties) *)
@@ -993,16 +1001,23 @@ trait_precedence_rule:
  | qualified_name_for_traits "::" T_IDENT T_INSTEADOF class_name_list ";"
    { InsteadOf ($1, $2, Name $3, $4, $5, $6) }
 
+(* After a modifier the new name may be any keyword, as in
+ * 'as public foreach'. Without a modifier no keyword is accepted, since a
+ * modifier keyword there would read as the modifier.
+ *)
 trait_alias_rule:
- | trait_alias_rule_method T_AS member_modifier* T_IDENT ";"
-   { As ($1, $2, $3, Some (Name $4), $5) }
+ | trait_alias_rule_method T_AS T_IDENT ";"
+   { As ($1, $2, [], Some (Name $3), $4) }
 
- | trait_alias_rule_method T_AS member_modifier+ ";"
-   { As ($1, $2, $3, None, $4) }
+ | trait_alias_rule_method T_AS member_modifier ident_semi_reserved ";"
+   { As ($1, $2, [$3], Some (Name $4), $5) }
+
+ | trait_alias_rule_method T_AS member_modifier ";"
+   { As ($1, $2, [$3], None, $4) }
 
 trait_alias_rule_method:
  | qualified_name_for_traits "::" T_IDENT { Right ($1, $2, Name $3) }
- | T_IDENT { Left (Name $1) }
+ | ident_semi_reserved { Left (Name $1) }
 
 (*************************************************************************)
 (* Type definitions *)
@@ -1066,8 +1081,8 @@ primary_type_php:
  | "?" type_php
      { HintQuestion ($1, $2)  }
  (* PHP 8.1/8.2: intersection types (A&B) for DNF types *)
- | "(" intersection_type_php_list ")"
-     { HintIntersection ($1, $2, $3) }
+ | "(" intersection_elem_php tand_any intersection_type_php_list ")"
+     { HintIntersection ($1, Left $2 :: Right $3 :: $4, $5) }
  | "(" non_empty_type_php_list ")"
      { HintTuple ($1, $2, $3) }
  | "(" T_FUNCTION "(" type_php_or_dots_list ")" return_type ")"
@@ -1098,15 +1113,23 @@ type_arg_list:
   | type_php                       { [Left $1]}
   | type_php "," type_arg_list     { (Left $1)::(Right $2):: $3 }
 
-(* 'static' is a type only in return position, so it is spelled out here
- * rather than in primary_type_php, where it would be ambiguous with the
- * 'static' modifier of a property or method.
+return_type: ":" type_php_static { $1, $2 }
+
+(* 'static' is a type only in return and class constant position, so these
+ * get a type_php of their own rather than 'static' joining primary_type_php,
+ * where it would be ambiguous with the 'static' modifier of a property or
+ * method.
  *)
-return_type:
- | ":" type_php     { $1, $2 }
- | ":" bare_intersection_php { $1, $2 }
- | ":" T_STATIC     { $1, Hint (LateStatic $2, None) }
- | ":" "?" T_STATIC { $1, HintQuestion ($2, Hint (LateStatic $3, None)) }
+type_php_static:
+ | type_php_static "::" primary_type_php { HintTypeConst ($1, $2, $3) }
+ | list_sep(primary_type_php_static, "|")
+    { match $1 with | [Left v] -> v | xs -> HintUnion xs }
+ | bare_intersection_php { $1 }
+
+primary_type_php_static:
+ | primary_type_php { $1 }
+ | T_STATIC         { Hint (LateStatic $1, None) }
+ | "?" T_STATIC     { HintQuestion ($1, Hint (LateStatic $2, None)) }
 
 (*************************************************************************)
 (* Attributes *)
@@ -1230,6 +1253,17 @@ expr:
  | T_UNSET_CAST  expr   { CastUnset($1,$2) }
 
  | T_EXIT exit_expr { Exit($1,$2) }
+ | T_EXIT "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Exit ($1, Some ($2, Some (Ellipsis $3), $4))
+       else FirstClassCallable (Id (XName [QI (Name (str_of_info $1, $1))]),
+                                $2, $3, $4) }
+ (* PHP 8.4: exit and die are functions, which no namespace can shadow, so
+  * '\exit(...)' is exit *)
+ | TANTISLASH T_EXIT "(" ")"
+     { Exit (Tok.combine_toks $1 [ $2 ], Some ($3, None, $4)) }
+ | TANTISLASH T_EXIT "(" expr ")"
+     { Exit (Tok.combine_toks $1 [ $2 ], Some ($3, Some $4, $5)) }
  | "@" expr           { At($1,$2) }
  | T_PRINT expr  { Print($1,$2) }
 
@@ -1264,7 +1298,7 @@ expr:
 
  | T_EVAL "(" expr_or_dots ")"         { Eval($1,($2,$3,$4)) }
 
- | T_ISSET "(" listc(expr_or_dots) ")" { Isset($1, ($2, $3, $4)) }
+ | T_ISSET "(" listc_trailing(expr_or_dots) ")" { Isset($1, ($2, $3, $4)) }
 
  | T_LIST "(" assignment_list ")" TEQ expr
      { AssignList($1,($2,$3,$4),$5,$6) }
@@ -1304,24 +1338,44 @@ new_expr:
 
 call_expr:
  | member_expr arguments { Call ($1, $2) }
+ | T_READONLY arguments
+     { Call (Id (XName [ QI (Name (str_of_info $1, $1)) ]), $2) }
+ | T_ASYNC arguments
+     { Call (Id (XName [ QI (Name (str_of_info $1, $1)) ]), $2) }
  (* PHP 8.4: 'new Foo()' is dereferencable, so it lives here rather than in
   * new_expr; the postfix rules below then give '->', '::', '[' and '(' for
   * free, as in 'new Foo()->bar()' or 'new Foo()::CONST'.
   *)
  | T_NEW member_expr arguments { New ($1, $2, Some $3) }
- (* PHP 8.5 clone-with. It lives here rather than next to the prefix 'clone'
-  * so that the postfix rules apply to its result, as in
-  * 'clone($obj, ['p' => 1])->m()'.
+ (* PHP 8.5: clone is also a function, as in 'clone($obj, ['p' => 1])' or
+  * 'clone(object: $obj)'. It lives here rather than next to the prefix
+  * 'clone' so that the postfix rules apply to its result, as in
+  * 'clone($obj, ['p' => 1])->m()'. A single positional argument is left to
+  * the prefix 'clone', which reads the parentheses as part of the operand to
+  * the same effect.
   *)
- | T_CLONE "(" expr "," expr ")" { CloneWith($1, ($2, ($3, $4, $5), $6)) }
+ | T_CLONE "(" ")" { CloneCall ($1, ($2, [], $3)) }
+ | T_CLONE "(" expr "," function_call_argument_list ")"
+     { CloneCall ($1, ($2, Left (Arg $3) :: Right $4 :: $5, $6)) }
+ (* in a pattern, '...' may come first, as in 'clone(..., $props)' *)
+ | T_CLONE "(" "..." "," function_call_argument_list ")"
+     { CloneCall ($1, ($2, Left (Arg (Flag_parsing.sgrep_guard (Ellipsis $3)))
+                           :: Right $4 :: $5, $6)) }
+ | T_CLONE "(" clone_argument_no_expr ")"
+     { CloneCall ($1, ($2, [ Left $3 ], $4)) }
+ | T_CLONE "(" clone_argument_no_expr "," function_call_argument_list ")"
+     { CloneCall ($1, ($2, Left $3 :: Right $4 :: $5, $6)) }
+ | TANTISLASH T_CLONE arguments
+     { CloneCall (Tok.combine_toks $1 [ $2 ], $3) }
  (* An anonymous class is dereferencable too, and unlike a named class it does
   * not need the parentheses, since its own brackets come before the body:
   * both 'new class {}->m()' and 'new class () {}->m()' are valid.
   *)
- | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
+ | T_NEW ioption(attributes) anon_class_entry_type arguments? extends_from implements_list
    "{" member_declaration* "}"
-     { let class_ =
-         { c_type = ClassRegular $3; c_name = Name ("!ANON!", $3);
+     { let c_type, tok = $3 in
+       let class_ =
+         { c_type; c_name = Name ("!ANON!", tok);
            c_extends = $5; c_tparams = None;
            c_implements = $6; c_body = $7, $8, $9;
            c_attrs = $2; c_enum_type = None; }
@@ -1413,6 +1467,11 @@ primary_expr:
 
 constant:
  | T_BOOL               { Bool($1) }
+ (* '\true' can only be the literal, since PHP forbids defining a constant
+  * of that name, whereas 'namespace\true' is a namespaced constant that may
+  * be defined, so qualified_name reads that one as a name *)
+ | TANTISLASH T_BOOL
+     { let (b, tok) = $2 in Bool (b, Tok.combine_toks $1 [ tok ]) }
  | T_LNUMBER            { Int($1) }
  | T_DNUMBER            { Double($1) }
  | T_CONSTANT_ENCAPSED_STRING   { String($1) }
@@ -1466,6 +1525,13 @@ static_scalar:
  | TMINUS static_scalar %prec T_INC { Unary((UnMinus,$1),$2) }
  | TBANG  static_scalar             { Unary((UnBang,$1),$2) }
  | TTILDE static_scalar             { Unary((UnTilde,$1),$2) }
+ (* Casts *)
+ | T_BOOL_CAST   static_scalar { Cast((BoolTy,$1),$2) }
+ | T_INT_CAST    static_scalar { Cast((IntTy,$1),$2) }
+ | T_DOUBLE_CAST static_scalar { Cast((DoubleTy,$1),$2) }
+ | T_STRING_CAST static_scalar { Cast((StringTy,$1),$2) }
+ | T_ARRAY_CAST  static_scalar { Cast((ArrayTy,$1),$2) }
+ | T_OBJECT_CAST static_scalar { Cast((ObjectTy,$1),$2) }
 
 static_scalar_primary:
  | constant { Sc (C $1) }
@@ -1496,10 +1562,11 @@ static_scalar_primary:
  | T_NEW T_SELF arguments?   { New ($1, Id (Self $2), $3) }
  | T_NEW T_PARENT arguments? { New ($1, Id (Parent $2), $3) }
  | T_NEW T_STATIC arguments? { New ($1, Id (LateStatic $2), $3) }
- | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
+ | T_NEW ioption(attributes) anon_class_entry_type arguments? extends_from implements_list
    "{" member_declaration* "}"
-     { let class_ =
-         { c_type = ClassRegular $3; c_name = Name ("!ANON!", $3);
+     { let c_type, tok = $3 in
+       let class_ =
+         { c_type; c_name = Name ("!ANON!", tok);
            c_extends = $5; c_tparams = None;
            c_implements = $6; c_body = $7, $8, $9;
            c_attrs = $2; c_enum_type = None; }
@@ -1529,6 +1596,12 @@ static_scalar_primary:
  | T_PARENT "::" T_CLASS             { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name ("class",$3))])) }
  | qualified_class_name "::" ident   { ClassGet(Id $1,$2,Id (XName [QI (Name $3)])) }
  | qualified_class_name "::" T_CLASS { ClassGet(Id $1,$2,Id (XName [QI (Name ("class",$3))])) }
+ | T_SELF "::" "{" static_scalar "}"
+     { ClassGet(Id (Self $1), $2, BraceIdent ($3, $4, $5)) }
+ | T_PARENT "::" "{" static_scalar "}"
+     { ClassGet(Id (Parent $1), $2, BraceIdent ($3, $4, $5)) }
+ | qualified_class_name "::" "{" static_scalar "}"
+     { ClassGet(Id $1, $2, BraceIdent ($3, $4, $5)) }
  (* PHP 8.3: a property may be read in a constant expression, which is how an
   * enum case's name or value is used there: 'Suit::Hearts->value'. The
   * operand is any constant expression, as in '(new A)->prop'; PHP rejects
@@ -1555,7 +1628,11 @@ assignment_list_element:
      { ListArrow ($1, $2, ListList ($3, ($4, $5, $6))) }
  | (*empty*)            { ListEmpty }
 
-array_pair_list: array_pair_list_rev { List.rev $1 }
+(* As in PHP, a trailing comma leaves no empty element behind. *)
+array_pair_list: array_pair_list_rev
+  { match $1 with
+    | Left ArrayEmpty :: xs -> List.rev xs
+    | xs -> List.rev xs }
 array_pair:
  | expr_or_dots                    { (ArrayExpr $1) }
  | tand_any expr               { (ArrayRef ($1,$2)) }
@@ -1569,6 +1646,10 @@ array_pair:
 (*----------------------------*)
 
 arguments: "(" function_call_argument_list ")" { ($1, $2, $3) }
+
+%inline clone_argument_no_expr:
+ | "..." expr { ArgUnpack ($1, $2) }
+ | ident_semi_reserved ":" expr_or_dots { ArgLabel (Name $1, $2, $3) }
 
 (* TODO: we want ... in primary_expr, but it leads to many conflicts. *)
 (* semgrep-ext: *)
@@ -1732,7 +1813,7 @@ dim_offset:
 exit_expr:
  | (*empty*)    { None }
  | "(" ")"      { Some($1, None, $2) }
- | "(" expr_or_dots ")" { Some($1, Some $2, $3) }
+ | "(" expr ")" { Some($1, Some $2, $3) }
 
 
 (*************************************************************************)
@@ -1769,6 +1850,12 @@ ident_in_name:
  | ident { $1 }
  (* can't use keyword_as_ident here, too many conflicts *)
  | T_INSTANCEOF { str_of_info $1, $1 }
+
+(* used in function definitions *)
+ident_function_name:
+ | ident { $1 }
+ | T_READONLY { str_of_info $1, $1 }
+ | T_ASYNC { str_of_info $1, $1 }
 
 (* used in class definitions *)
 ident_class_name:
@@ -1899,7 +1986,7 @@ namespace_use_declaration:
    { [NamespaceUse ($1, $2, $3, $4)] }
  | T_USE use_keyword?
    TANTISLASH? namespace_name TANTISLASH
-   "{" listc2(namespace_use_group_clause) "}"
+   "{" listc2(namespace_use_group_clause) ioption(",") "}"
   ";"
    { $7 |> List.map (fun (clause_kwd_opt, name, alias_opt) ->
        let full_name = (qiopt $3 $4) @ name in
@@ -1907,7 +1994,7 @@ namespace_use_declaration:
          | Some _ -> clause_kwd_opt
          | None -> $2
        in
-       NamespaceUse ($1, kwd_opt, [Left (full_name, alias_opt)], $9)
+       NamespaceUse ($1, kwd_opt, [Left (full_name, alias_opt)], $10)
       )
    }
 
@@ -1918,7 +2005,7 @@ use_keyword:
 
 namespace_name:
  | ident_in_name                           { [QI (Name $1)] }
- | namespace_name TANTISLASH ident_in_name { $1 @ [QITok $2; QI (Name $3)] }
+ | namespace_name TANTISLASH ident_semi_reserved { $1 @ [QITok $2; QI (Name $3)] }
 
 namespace_use_clause:
   TANTISLASH? namespace_name namespace_aliasing_clause?
@@ -1932,9 +2019,19 @@ namespace_aliasing_clause: T_AS ident { $1, Name $2 }
 
 qualified_name:
  | namespace_name                        { XName $1 }
- | TANTISLASH namespace_name             { XName (QITok $1::$2) }
+ | TANTISLASH namespace_name
+     { match $2 with
+       (* '\null' is null, as '\true' is true, see constant *)
+       | [ QI (Name (s, tok)) ]
+         when String.equal (String.lowercase_ascii s) "null" ->
+           XName [ QI (Name (s, Tok.combine_toks $1 [ tok ])) ]
+       | _ -> XName (QITok $1::$2) }
  | T_NAMESPACE TANTISLASH namespace_name
      { XName (QI (Name ("namespace", $1))::QITok $2::$3) }
+ | T_NAMESPACE TANTISLASH T_BOOL
+     { let (_, tok) = $3 in
+       XName [ QI (Name ("namespace", $1)); QITok $2;
+               QI (Name (str_of_info tok, tok)) ] }
 
 (* Should we have 'ident type_arguments' below? No because
    * we allow type arguments only at a few places, for instance
@@ -2005,7 +2102,7 @@ param_type_php:
 (* no parentheses to record here, so the '&' stands in for them;
  * php_to_generic ignores those and folds on the real '&' tokens *)
 bare_intersection_php:
- | class_name tand_any intersection_type_php_list
+ | intersection_elem_php tand_any intersection_type_php_list
      { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
 
 (* the same, in the one position where a '&' could instead introduce a
@@ -2014,22 +2111,22 @@ bare_intersection_php:
  * in a pattern: '&$T' reads as the by-reference parameter it looks like.
  *)
 bare_intersection_param_php:
- | class_name TAND_NOT_VAR intersection_type_php_list_param
+ | intersection_elem_php TAND_NOT_VAR intersection_type_php_list_param
      { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
 
 intersection_type_php_list_param:
- | list_sep(class_name, TAND_NOT_VAR) { $1 }
+ | list_sep(intersection_elem_php, TAND_NOT_VAR) { $1 }
 
 (* PHP 8.1/8.2: intersection types use & separator, must have 2+ types *)
 intersection_type_php_list:
- | list_sep(class_name, tand_any) { $1 }
+ | list_sep(intersection_elem_php, tand_any) { $1 }
+
+intersection_elem_php:
+ | class_name { $1 }
+ | T_SELF     { Hint (Self $1, None) }
+ | T_PARENT   { Hint (Parent $1, None) }
 
 class_name_list: listc(class_name_no_array) { $1 }
-
-possible_comma:
- | (*empty*) { [] }
- | ","        { [Right $1] }
-
 
 function_call_argument_list:
  | (*empty*)                              { [] }
@@ -2040,14 +2137,13 @@ function_call_argument_list:
 %inline
 non_empty_function_call_argument_list: listc(function_call_argument) { $1 }
 
-assignment_list: listc(assignment_list_element) { $1 }
-
-non_empty_array_pair_list_rev:
- | array_pair { [Left $1] }
- (*s: repetitive non_empty_array_pair_list *)
- | non_empty_array_pair_list_rev "," array_pair  { Left $3::Right $2::$1 }
- (*e: repetitive non_empty_array_pair_list *)
+(* As in PHP, a trailing comma leaves no empty element behind. *)
+assignment_list: listc(assignment_list_element)
+  { match List.rev $1 with
+    | Left ListEmpty :: xs -> List.rev xs
+    | _ -> $1 }
 
 array_pair_list_rev:
- | (*empty*) { [] }
- | non_empty_array_pair_list_rev possible_comma { $2@$1 }
+ | ioption(array_pair) { [Left (Option.value ~default:ArrayEmpty $1)] }
+ | array_pair_list_rev "," ioption(array_pair)
+     { Left (Option.value ~default:ArrayEmpty $3) :: Right $2 :: $1 }
