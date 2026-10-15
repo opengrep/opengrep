@@ -216,6 +216,23 @@ let tests parse_program =
               Alcotest.failf
                 "expected two definitions and one use of Foo, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "kotlin call refers to the class, not the parameter of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/kotlin/class_and_parameter.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_ ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the class" true
+                (AST_generic.SId.equal class_ call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one definition and one resolved use of Foo, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
       t "python redefinition rebinds the same name" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/redefined_def.py")
@@ -375,7 +392,10 @@ let tests parse_program =
           check_resolutions ast "state" [ "Global"; "Global" ]);
       t "an annotation refers to the imported type, not the variable of the same name"
         (fun () ->
-          [ ("naming/java/annotation_and_field.java", "Inject") ]
+          [
+            ("naming/java/annotation_and_field.java", "Inject");
+            ("naming/kotlin/annotation_and_property.kt", "Inject");
+          ]
           |> List.iter (fun ((path, name) : string * string) ->
                  let file = Fpath.v (Filename.concat tests_path path) in
                  let ast = parse_program file in
@@ -393,6 +413,7 @@ let tests parse_program =
           [
             ("naming/rust/type_alias_and_constant.rs", "T");
             ("naming/java/nested_class_and_field.java", "Inner");
+            ("naming/kotlin/type_alias_and_variable.kt", "Foo");
           ]
           |> List.iter (fun ((path, name) : string * string) ->
                  let file = Fpath.v (Filename.concat tests_path path) in
@@ -418,29 +439,44 @@ let tests parse_program =
                         use of %s, found %d and %d"
                        path name (List.length definitions)
                        (List.length (List.filter Option.is_some uses))));
-      t "java uses of a type refer to the nested class" (fun () ->
-          let file =
-            Fpath.v
-              (Filename.concat tests_path
-                 "naming/java/nested_class_and_field.java")
-          in
-          let ast = parse_program file in
-          Naming_AST.resolve Lang.Java ast;
-          (* the definitions are the field, then the class; the uses in a
-             type are the return type and the type of [new Inner()] *)
-          match (def_sids_of_name ast "Inner", type_resolutions_of_name ast "Inner")
-          with
-          | [ _field; class_ ], [ Some (_, return_type); Some (_, instance) ] ->
-              Alcotest.(check bool) "the return type refers to the class" true
-                (AST_generic.SId.equal class_ return_type);
-              Alcotest.(check bool) "the type of the instance refers to the class"
-                true
-                (AST_generic.SId.equal class_ instance)
-          | definitions, uses ->
-              Alcotest.failf
-                "expected two definitions and two type uses of Inner, found %d \
-                 and %d"
-                (List.length definitions) (List.length uses));
+      t "a use in a type refers to the type, not the variable of the same name"
+        (fun () ->
+          (* the definitions are the variable, then the type; in Java the
+             uses in a type are a return type and the type of [new Inner()],
+             in Kotlin the type of [copy] *)
+          [
+            ("naming/java/nested_class_and_field.java", "Inner", 2);
+            ("naming/kotlin/type_alias_and_variable.kt", "Foo", 1);
+          ]
+          |> List.iter (fun ((path, name, count) : string * string * int) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 let uses = type_resolutions_of_name ast name in
+                 match def_sids_of_name ast name with
+                 | [ _variable; type_ ] when Int.equal (List.length uses) count
+                   ->
+                     uses
+                     |> List.iteri
+                          (fun (i : int) (use : AST_generic.resolved_name option)
+                          ->
+                            match use with
+                            | Some (_kind, sid) ->
+                                Alcotest.(check bool)
+                                  (spf "type use #%d of %s refers to the type" i
+                                     name)
+                                  true
+                                  (AST_generic.SId.equal type_ sid)
+                            | None ->
+                                Alcotest.failf
+                                  "%s: type use #%d of %s is unresolved" path i
+                                  name)
+                 | definitions ->
+                     Alcotest.failf
+                       "%s: expected two definitions and %d type uses of %s, \
+                        found %d and %d"
+                       path count name (List.length definitions)
+                       (List.length uses)));
       t "python class binds its name in its scope" (fun () ->
           let file =
             Fpath.v
