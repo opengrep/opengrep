@@ -15,10 +15,12 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Method ->
       [ Function ]
   | Module
-  | Import ->
+  | Import
+  | Static_import ->
       [ Variable ]
   | Class
-  | Type_alias ->
+  | Type_alias
+  | Type_parameter ->
       []
 
 let searched_by : Lang_namespaces.use_position -> t list list = function

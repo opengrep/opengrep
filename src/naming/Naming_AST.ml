@@ -971,6 +971,74 @@ let with_class_or_type_binding (env : env) (lang : Lang.t) (entity : entity)
   visit ();
   if not before then declare_class_or_type env lang entity kind
 
+(* A constructor is not a member of its class: its name refers to the class
+   (JLS 8.8). It takes the class's binding at its own site, which is what
+   identifies the constructor as a function. *)
+let resolve_constructors (env : env) (entity : entity)
+    (c : class_definition) : unit =
+  match entity.name with
+  | EN (Id (_, class_info)) -> (
+      match !(class_info.id_resolved) with
+      | None -> ()
+      | Some (class_kind, class_sid) ->
+          let binding = SId.to_int class_sid in
+          let _, fields, _ = c.cbody in
+          fields
+          |> List.iter (fun (F stmt : field) ->
+                 match stmt.s with
+                 | DefStmt
+                     ({ name = EN (Id (ctor_id, ctor_info)); attrs; _ }, FuncDef _)
+                   when List.exists
+                          (function
+                            | KeywordAttr (Ctor, _) -> true
+                            | _ -> false)
+                          attrs -> (
+                     match !(ctor_info.id_resolved) with
+                     | Some _ ->
+                         ctor_info.id_resolved :=
+                           Some
+                             ( class_kind,
+                               SId.of_tok ~binding ~file:env.file (snd ctor_id)
+                             )
+                     | None -> ())
+                 | _ -> ()))
+  | _ -> ()
+
+(* Type parameters bind in the current scope, which the caller opens: a use
+   in their scope refers to them, not to a type of the same name outside. *)
+let declare_type_parameters (env : env) (tparams : type_parameters option) :
+    unit =
+  match (tparams, namespace_of env Type_parameter) with
+  | Some (_, tparams, _), (_ :: _ as namespaces) ->
+      tparams
+      |> List.iter (fun (tparam : type_parameter) ->
+             match tparam with
+             | TP { tp_id; _ } ->
+                 let sid =
+                   SId.of_tok ~binding:(fresh_binding env) ~file:env.file
+                     (snd tp_id)
+                 in
+                 namespaces
+                 |> List.iter (fun (ns : namespace_hash) ->
+                        add_current_scope ns tp_id
+                          { entname = (Parameter, sid); enttype = None }
+                          env.names)
+             | TParamEllipsis _
+             | OtherTypeParam _ ->
+                 ())
+  | _ -> ()
+
+(* Runs [f] in a block scope that holds the type parameters of a function,
+   when it has some that bind. *)
+let with_type_parameters (env : env) (tparams : type_parameters option)
+    (f : unit -> unit) : unit =
+  match (tparams, namespace_of env Type_parameter) with
+  | Some _, _ :: _ ->
+      with_new_block_scope env.names (fun () ->
+          declare_type_parameters env tparams;
+          f ())
+  | _ -> f ()
+
 let function_definition_kind (env : env) : Lang_namespaces.definition_kind =
   match top_context env with
   | InClass -> Method
@@ -993,6 +1061,10 @@ let declare_class_members env lang (c : class_definition) : unit =
              when env.function_namespace ->
                declare_func env lang (function_definition_kind env) id id_info
                  frettype
+           | DefStmt (entity, ClassDef _) ->
+               declare_class_or_type env lang entity Class
+           | DefStmt (entity, TypeDef _) ->
+               declare_class_or_type env lang entity Type_alias
            | _ -> ())
 
 let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
@@ -1107,9 +1179,11 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                   with_new_function_scope
                     (parameter_scope env (special_class_params @ class_params))
                     env.names (fun () ->
+                      declare_type_parameters env entity.tparams;
                       declare_class_members env lang c;
                       self#visit_class_or_type_entity venv entity;
-                      self#visit_class_definition venv c)))
+                      self#visit_class_definition venv c)));
+          resolve_constructors env entity c
       (* `const x = require('y');` (or var, or let)
        *
        * JS: This is a CommonJS import, popularized before ES6 standardized
@@ -1288,7 +1362,8 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                     and the field's type is what a use of the name carries. *)
                  declare_in_scope env lang namespaces scope add
                    ~keep_type:true id id_info);
-          super#visit_definition venv x
+          with_type_parameters env (fst x).tparams (fun () ->
+              super#visit_definition venv x)
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
           let s = String.lowercase_ascii (Tok.content_of_tok tok) in
@@ -1345,6 +1420,16 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
 
     (* sgrep: the import aliases *)
     method! visit_directive venv x =
+      let import : Lang_namespaces.definition_kind =
+        if
+          List.exists
+            (function
+              | KeywordAttr (Static, _) -> true
+              | _ -> false)
+            x.d_attrs
+        then Static_import
+        else Import
+      in
       (match x.d with
       | ImportFrom (_, DottedName xs, imported_names) ->
           List.iter
@@ -1357,7 +1442,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
                   set_resolved env id_info resolved;
-                  bind env Import add_imported_scope alias resolved
+                  bind env import add_imported_scope alias resolved
               | id, None ->
                   (* for python *)
                   let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
@@ -1365,7 +1450,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
-                  bind env Import add_imported_scope id resolved)
+                  bind env import add_imported_scope id resolved)
             imported_names
       | ImportFrom (_, FileName (s, tok), imported_names) ->
           List.iter
@@ -1383,7 +1468,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
-                  bind env Import add_imported_scope id resolved
+                  bind env import add_imported_scope id resolved
               | id, Some (alias, id_info)
                 when Lang.is_js lang && fst id <> Ast_js.default_entity ->
                   (* for JS *)
@@ -1395,7 +1480,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
                   set_resolved env id_info resolved;
-                  bind env Import add_imported_scope alias resolved
+                  bind env import add_imported_scope alias resolved
               | _ -> ())
             imported_names
       | ImportAs (_, DottedName xs, Some (alias, id_info)) ->
@@ -1404,7 +1489,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
-          bind env Import add_imported_scope alias resolved
+          bind env import add_imported_scope alias resolved
       | ImportAs (_, FileName (s, tok), Some (alias, id_info)) ->
           (* for Go *)
           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
@@ -1413,7 +1498,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
           let canonical = dotted_to_canonical [ base ] in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
-          bind env Import add_imported_scope alias resolved
+          bind env import add_imported_scope alias resolved
       | _ -> ());
       super#visit_directive venv x
 

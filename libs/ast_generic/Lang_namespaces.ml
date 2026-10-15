@@ -12,8 +12,10 @@ type definition_kind =
   | Method (* in a class body *)
   | Class
   | Type_alias
+  | Type_parameter
   | Module (* a module alias *)
   | Import
+  | Static_import (* of static members, as Java's [import static] *)
 
 type use_position =
   | Expression
@@ -67,9 +69,11 @@ module Single_without_type_bindings : NAMESPACES = struct
     | Function
     | Method
     | Module
-    | Import ->
+    | Import
+    | Static_import ->
         Single.of_definition kind
     | Class
-    | Type_alias ->
+    | Type_alias
+    | Type_parameter ->
         []
 end

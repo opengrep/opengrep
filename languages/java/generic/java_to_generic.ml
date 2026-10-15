@@ -655,7 +655,13 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
     | _, { s = G.Block (_, [], _); _ } when is_abstract -> G.FBNothing
     | _ -> FBStmt v4
   in
-  ( { ent with G.attrs = ent.G.attrs @ throws },
+  (* a constructor is the method declaration without a result type *)
+  let ctor =
+    match m_var.type_ with
+    | None -> [ G.KeywordAttr (G.Ctor, snd m_var.name) ]
+    | Some _ -> []
+  in
+  ( { ent with G.attrs = ent.G.attrs @ ctor @ throws },
     {
       G.fparams = fb fparams;
       frettype = rett;
@@ -856,7 +862,7 @@ let partial = function
       let v1 = catch v1 in
       G.PartialCatch v1
 
-let any = function
+let any_with_constructor_attributes = function
   | AMod v1 ->
       let v1 = modifier v1 in
       G.At v1
@@ -896,3 +902,28 @@ let any = function
   | AProgram v1 ->
       let v1 = program v1 in
       G.Pr v1
+
+(* In a pattern a method declaration without a result type is any method, as
+   rules use it, so the constructor attribute of targets stays out. *)
+let without_constructor_attributes : G.any -> G.any =
+  let mapper =
+    object
+      inherit [_] AST_generic.map as super
+
+      method! visit_entity (env : unit) (ent : G.entity) =
+        super#visit_entity env
+          {
+            ent with
+            G.attrs =
+              List.filter
+                (function
+                  | G.KeywordAttr (G.Ctor, _) -> false
+                  | _ -> true)
+                ent.G.attrs;
+          }
+    end
+  in
+  mapper#visit_any ()
+
+let any (x : any) : G.any =
+  without_constructor_attributes (any_with_constructor_attributes x)
