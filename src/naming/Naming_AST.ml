@@ -326,6 +326,8 @@ type namespaces = {
   variables : namespace_hash;
   of_definition : Lang_namespaces.definition_kind -> namespace_hash list;
   searched_by : Lang_namespaces.use_position -> namespace_hash list list;
+  class_rebinds_import : bool;
+  class_in_scope_in_its_definition : bool;
 }
 
 type env = {
@@ -388,6 +390,8 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
       | Type_position -> type_position
       | Qualifier -> qualifier
       | Name -> name);
+    class_rebinds_import = N.class_rebinds_import;
+    class_in_scope_in_its_definition = N.class_in_scope_in_its_definition;
   }
 
 let default_env (namespaces : namespaces) (lang : Lang.t) (file : string) : env
@@ -903,6 +907,70 @@ let declare_func (env : env) (lang : Lang.t)
                add_current_scope ns id resolved env.names);
       set_resolved env id_info resolved
 
+(* Binds [id] in [namespaces] of [scope], with [add], with one identity. A
+   definition of a name that the scope already binds rebinds it: the same
+   identity, the one of the first of [namespaces] that binds the name, at its
+   own site. [keep_type] keeps the type the scope had for the name. *)
+let declare_in_scope (env : env) (lang : Lang.t)
+    (namespaces : namespace_hash list) (scope : scope)
+    (add : namespace_hash -> ident -> scope_info -> scopes -> unit)
+    ~(keep_type : bool) (id : ident) (id_info : id_info) : unit =
+  let binding, enttype =
+    match
+      List.find_map
+        (fun (ns : namespace_hash) -> lookup ns (fst id) [ scope ])
+        namespaces
+    with
+    | Some { entname = _, bound; enttype } ->
+        (SId.to_int bound, if keep_type then enttype else None)
+    | None -> (fresh_binding env, None)
+  in
+  let sid = SId.of_tok ~binding ~file:env.file (snd id) in
+  let resolved = { entname = (resolved_name_kind env lang, sid); enttype } in
+  List.iter (fun (ns : namespace_hash) -> add ns id resolved env.names) namespaces;
+  set_resolved env id_info resolved
+
+(* A class or a type alias binds its name in the scope enclosing its
+   definition, with no type. At the top level it binds in the imported scope,
+   as a function does. Where it does not rebind an import, its name takes the
+   import's resolution. *)
+let declare_class_or_type (env : env) (lang : Lang.t) (entity : entity)
+    (kind : Lang_namespaces.definition_kind) : unit =
+  match (entity.name, namespace_of env kind) with
+  | EN (Id (id, id_info)), (_ :: _ as namespaces)
+    when is_resolvable_name_ctx env lang -> (
+      let import =
+        if not env.namespaces.class_rebinds_import then
+          match lookup_scope_opt id env with
+          | Some { entname = (ImportedEntity _ | ImportedModule _), _; _ } as
+            import ->
+              import
+          | Some _
+          | None ->
+              None
+        else None
+      in
+      match import with
+      | Some import -> set_resolved env id_info import
+      | None ->
+          let scope, add =
+            match !(env.names.blocks) with
+            | [] -> (!(env.names.imported), add_imported_scope)
+            | current :: _ -> (current, add_current_scope)
+          in
+          declare_in_scope env lang namespaces scope add ~keep_type:false id
+            id_info)
+  | _ -> ()
+
+(* Visits a class or type definition with [visit], binding its name before
+   the visit where it is in scope in its own definition, after it otherwise. *)
+let with_class_or_type_binding (env : env) (lang : Lang.t) (entity : entity)
+    (kind : Lang_namespaces.definition_kind) (visit : unit -> unit) : unit =
+  let before = env.namespaces.class_in_scope_in_its_definition in
+  if before then declare_class_or_type env lang entity kind;
+  visit ();
+  if not before then declare_class_or_type env lang entity kind
+
 let function_definition_kind (env : env) : Lang_namespaces.definition_kind =
   match top_context env with
   | InClass -> Method
@@ -970,8 +1038,8 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       List.iter (self#visit_attribute venv) attrs;
       Option.iter (self#visit_type_parameters venv) tparams
 
-    (* Name resolution binds no class or type, and a plain name in their
-       definition is a defining occurrence: a lookup would find whatever
+    (* A plain name in a class or type definition is a defining occurrence,
+       which [declare_class_or_type] binds: a lookup would find whatever
        variable or field of that name is in scope. *)
     method private visit_class_or_type_entity (venv : unit) (entity : entity) =
       match entity with
@@ -1025,22 +1093,23 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       match x with
      | { attrs; _ } as entity, ClassDef c ->
           declare_unit_struct env lang entity;
-          let class_params = params_of_parameters env c.cparams in
-          with_new_context InClass env (fun () ->
-              let special_class_params =
-                if Lang.is_js lang then
-                  let _, fields, _ = c.cbody in
-                  js_get_angular_constructor_args env attrs
-                    (List_.map (fun (F x) -> x) fields)
-                else []
-              in
-              (* TODO? Maybe we need a `with_new_class_scope`. For now, abusing `with_new_function_scope`. *)
-              with_new_function_scope
-                (parameter_scope env (special_class_params @ class_params))
-                env.names (fun () ->
-                  declare_class_members env lang c;
-                  self#visit_class_or_type_entity venv entity;
-                  self#visit_class_definition venv c))
+          with_class_or_type_binding env lang entity Class (fun () ->
+              let class_params = params_of_parameters env c.cparams in
+              with_new_context InClass env (fun () ->
+                  let special_class_params =
+                    if Lang.is_js lang then
+                      let _, fields, _ = c.cbody in
+                      js_get_angular_constructor_args env attrs
+                        (List_.map (fun (F x) -> x) fields)
+                    else []
+                  in
+                  (* TODO? Maybe we need a `with_new_class_scope`. For now, abusing `with_new_function_scope`. *)
+                  with_new_function_scope
+                    (parameter_scope env (special_class_params @ class_params))
+                    env.names (fun () ->
+                      declare_class_members env lang c;
+                      self#visit_class_or_type_entity venv entity;
+                      self#visit_class_definition venv c)))
       (* `const x = require('y');` (or var, or let)
        *
        * JS: This is a CommonJS import, popularized before ES6 standardized
@@ -1208,10 +1277,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                  (* The scope a definition binds its name in: the file's
                     imported scope at the top level (see above), else the
                     enclosing block, a function's for a nested function, a
-                    class's for a method. A definition of a name that scope
-                    already binds rebinds it: the same identity, the one of
-                    the first of its namespaces that binds the name, at its
-                    own site. *)
+                    class's for a method. *)
                  let scope, add =
                    match !(env.names.blocks) with
                    | [] -> (!(env.names.imported), add_imported_scope)
@@ -1220,24 +1286,8 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                  (* A rebinding keeps the type the scope had for the name: a
                     Java field and its same-named accessor are one entry here,
                     and the field's type is what a use of the name carries. *)
-                 let binding, enttype =
-                   match
-                     List.find_map
-                       (fun (ns : namespace_hash) -> lookup ns (fst id) [ scope ])
-                       namespaces
-                   with
-                   | Some { entname = _, bound; enttype } ->
-                       (SId.to_int bound, enttype)
-                   | None -> (fresh_binding env, None)
-                 in
-                 let sid = SId.of_tok ~binding ~file:env.file (snd id) in
-                 let resolved =
-                   { entname = (resolved_name_kind env lang, sid); enttype }
-                 in
-                 List.iter
-                   (fun (ns : namespace_hash) -> add ns id resolved env.names)
-                   namespaces;
-                 set_resolved env id_info resolved);
+                 declare_in_scope env lang namespaces scope add
+                   ~keep_type:true id id_info);
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
@@ -1287,8 +1337,9 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
           declare_var env lang id id_info ~is_macro:true ~explicit:true (Some e) None;
           super#visit_definition venv x
       | entity, (TypeDef _ as kind) ->
-          self#visit_class_or_type_entity venv entity;
-          self#visit_definition_kind venv kind
+          with_class_or_type_binding env lang entity Type_alias (fun () ->
+              self#visit_class_or_type_entity venv entity;
+              self#visit_definition_kind venv kind)
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
 
@@ -1751,6 +1802,10 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   match lang with
   | Lang.Java -> (module Namespaces_java)
   | Lang.Kotlin -> (module Namespaces_kotlin)
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3 ->
+      (module Namespaces_python)
   | _ -> (module Lang_namespaces.Single_without_type_bindings)
 
 let resolve (lang : Lang.t) (prog : program) : unit =

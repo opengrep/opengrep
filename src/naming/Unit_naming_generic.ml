@@ -195,6 +195,48 @@ let tests parse_program =
                  with
                  | Parsing_error.Syntax_error _ ->
                      Alcotest.failf "it should correctly parse %s" !!file));
+      t "python class and function of one name follow source order" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/python/class_then_def.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* the function rebinds the class's name, and the call refers to it *)
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_; function_ ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the function" true
+                (AST_generic.SId.equal function_ call);
+              Alcotest.(check bool) "the function rebinds the class's binding"
+                true
+                (Int.equal
+                   (AST_generic.SId.to_int class_)
+                   (AST_generic.SId.to_int function_))
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and one use of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "python base class of the same name refers to the earlier binding"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/python/class_extends_variable.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          let line (sid : AST_generic.SId.t) : int =
+            let _, _, line, _ = AST_generic.SId.to_loc sid in
+            line
+          in
+          (* Occurrences: the assignment, the base class, the call. *)
+          match resolutions_of_name ast "Foo" with
+          | [ Some (_, assigned); Some (_, base); Some (_, call) ] ->
+              Alcotest.(check int) "the base refers to the assignment"
+                (line assigned) (line base);
+              Alcotest.(check int) "the call refers to the class" 4 (line call)
+          | uses ->
+              Alcotest.failf "expected three resolved uses of Foo, found %d"
+                (List.length (List.filter Option.is_some uses)));
       t "python redefinition rebinds the same name" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/redefined_def.py")
@@ -377,4 +419,24 @@ let tests parse_program =
                         use of %s, found %d and %d"
                        path name (List.length definitions)
                        (List.length (List.filter Option.is_some uses))));
+      t "python class binds its name in its scope" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/python/class_in_function.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment, the call of the class in
+             f, the read of the global in g. *)
+          check_resolutions ast "Foo" [ "Global"; "LocalVar"; "Global" ];
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_ ], [ Some (_, global); Some (_, call); Some (_, read) ] ->
+              Alcotest.(check bool) "the call refers to the class" true
+                (AST_generic.SId.equal class_ call);
+              Alcotest.(check bool) "the read refers to the global" true
+                (AST_generic.SId.equal global read)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one class and three uses of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
     ]
