@@ -1258,6 +1258,12 @@ expr:
        then Exit ($1, Some ($2, Some (Ellipsis $3), $4))
        else FirstClassCallable (Id (XName [QI (Name (str_of_info $1, $1))]),
                                 $2, $3, $4) }
+ (* PHP 8.4: exit and die are functions, which no namespace can shadow, so
+  * '\exit(...)' is exit *)
+ | TANTISLASH T_EXIT "(" ")"
+     { Exit (Tok.combine_toks $1 [ $2 ], Some ($3, None, $4)) }
+ | TANTISLASH T_EXIT "(" expr ")"
+     { Exit (Tok.combine_toks $1 [ $2 ], Some ($3, Some $4, $5)) }
  | "@" expr           { At($1,$2) }
  | T_PRINT expr  { Print($1,$2) }
 
