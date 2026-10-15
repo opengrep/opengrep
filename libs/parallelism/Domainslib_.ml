@@ -2,6 +2,19 @@
 
 module T = Domainslib.Task
 
+(* A minor collection stops every domain, so with many domains allocating
+   the default minor heap (256k words) keeps them in that barrier most of
+   the time. Each domain sets its own: the runtime gives a spawned domain
+   the startup default, never the parent's setting. 4M words removes most
+   of the barrier; larger buys nothing. *)
+let minor_heap_words = 4_000_000
+
+(* Once per domain: the key's initialiser runs on the first [get] in each
+   domain. *)
+let minor_heap_set : unit Domain.DLS.key =
+  Domain.DLS.new_key (fun () ->
+      Gc.set { (Gc.get ()) with Gc.minor_heap_size = minor_heap_words })
+
 (* From the [Parmap_] module. *)
 let wrap_result f ~exception_handler x =
   try Ok (f x) with
@@ -45,10 +58,16 @@ let parmap _caps ?(chunksize=1) ~num_domains ~exception_handler f xs =
   (* It can be detrimental to performance if we go above the CPU count, so we
    * place an upper bound. TODO: Add a log when this happens? *)
   let num_domains = min num_domains (get_cpu_count ()) in
+  (* On this domain first: it raises the reservation while it is the only
+     domain, and it takes tasks too. *)
+  Domain.DLS.get minor_heap_set;
   let pool = T.setup_pool ~num_domains:(num_domains - 1) () in
   let xs_array = Array.of_list xs in
   let res_array = Array.make (Array.length xs_array) None in
-  let f' x = wrap_result f ~exception_handler x in
+  let f' x =
+    Domain.DLS.get minor_heap_set;
+    wrap_result f ~exception_handler x
+  in
   Common.protect ~finally:(fun () -> T.teardown_pool pool) (fun () ->
       T.run pool (fun () ->
           T.parallel_for pool ~start:0 ~finish:(Array.length xs_array - 1)

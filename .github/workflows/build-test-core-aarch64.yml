@@ -14,7 +14,7 @@ jobs:
   build-core:
     strategy:
       matrix:
-        ocaml_version: ["5.5.0"]
+        ocaml_version: ["5.5.1"]
     runs-on: ubuntu-24.04-arm
 
     steps:

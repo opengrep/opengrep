@@ -400,9 +400,22 @@ let apply_fixes_to_file_exn path edits =
            (List_.hd_exn "unexpected empty list" conflicting_edits)
              .replacement_text)
 
-let apply_fixes ?(dryrun = false) (edits : Textedit.t list) : unit =
-  let modified_files, failed_fixes = Textedit.apply_edits ~dryrun edits in
+let warn_unwritten_fixes (paths : Fpath.t list) : unit =
+  paths
+  |> List.iter (fun (path : Fpath.t) ->
+         (* nosemgrep: no-logs-in-library *)
+         Logs.warn (fun m ->
+             m
+               "Fix not written to %s: it is a symbolic link, has other hard \
+                links or cannot be examined"
+               (Fpath.to_string path)))
 
+let apply_fixes ?(dryrun = false) (edits : Textedit.t list) : unit =
+  let { Textedit.modified_files; skipped_files; conflicting_edits = failed_fixes }
+      =
+    Textedit.apply_edits ~dryrun edits
+  in
+  warn_unwritten_fixes skipped_files;
   (match modified_files with
   | _ :: _ ->
       Log.info (fun m ->

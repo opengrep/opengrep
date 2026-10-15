@@ -119,6 +119,18 @@ let test_output_destination_is_symlink (caps : Scan_subcommand.caps) () =
     ~extra_args:[ "--sarif-output"; "findings.sarif" ]
     ~output_files:[ "pointed_at.txt" ] ~expect_abort:true ()
 
+(* A destination with a second directory entry. *)
+let test_output_destination_with_two_entries (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_files:
+      [
+        F.File ("shared.txt", "left alone\n");
+        F.Hardlink ("findings.sarif", "shared.txt");
+      ]
+    ~extra_args:[ "--sarif-output"; "findings.sarif" ]
+    ~output_files:[ "shared.txt" ] ~expect_abort:true ()
+
 (*****************************************************************************)
 (* Entry point                                                                *)
 (*****************************************************************************)
@@ -162,4 +174,7 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "output destination is a symlink" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (test_output_destination_is_symlink caps);
+      t "output destination, aliased file" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (test_output_destination_with_two_entries caps);
     ]

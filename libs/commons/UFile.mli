@@ -130,6 +130,20 @@ val is_dir_or_lnk : Fpath.t -> bool
 val is_lnk_or_reg : Fpath.t -> bool
 val is_dir_or_lnk_or_reg : Fpath.t -> bool
 
+(* A directory entry by one lstat, never followed. [Reg] carries the link
+   count, the device and the inode of a regular file. [Absent] is an entry
+   that is not there; [Unreadable] one that cannot be examined. *)
+type reg = { links : int; dev : int; ino : int }
+type entry = Absent | Unreadable | Link | Dir | Reg of reg | Special
+
+val entry : Fpath.t -> entry
+
+(* Writes the data to [file] when [expected], the entry examined earlier, is
+   a regular file with one directory entry and the open file is that same
+   file, or creates the file when [expected] is [Absent]. Returns whether
+   the file was written. Raises Unix.Unix_error as the system calls do. *)
+val write_single_entry : file:Fpath.t -> expected:entry -> string -> bool
+
 (* Turn a file kind into a JSON string node and vice-versa *)
 val file_kind_to_yojson : Unix.file_kind -> Yojson.Safe.t
 val file_kind_of_yojson : Yojson.Safe.t -> (Unix.file_kind, string) result

@@ -45,12 +45,16 @@ type t =
   | Dir of string (* name *) * t list
   | File of string (* name *) * string (* contents *)
   | Symlink of string (* name *) * string (* destination path *)
+  | Hardlink of
+      string (* name *)
+      * string (* file it links to, relative to the link's own directory *)
 
 (* if you prefer a curried syntax to build the tree *)
 
 val file : string (* filename *) -> t
 val dir : string (* name *) -> t list -> t
 val symlink : string (* name *) -> string (* dest *) -> t
+val hardlink : string (* name *) -> string (* target *) -> t
 
 (*
    Sort the files in a reasonable order. Useful for comparison purposes.

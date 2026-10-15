@@ -16,12 +16,19 @@ type edit_application_result =
       conflicting_edits : t list;
     }
 
+type application = {
+  modified_files : Fpath.t list;
+  (* files that are not regular files with one directory entry, or that
+     cannot be examined; their edits are not applied *)
+  skipped_files : Fpath.t list;
+  (* edits that were not applied because they overlapped with others *)
+  conflicting_edits : t list;
+}
+
 (* Apply a list of edits, modifying the files in place. If dryrun, do everything
- * but write to the files. A file that is itself a symbolic link is skipped.
- *
- * Returns the list of modified files and the list of edits that were not
- * applied because they overlapped with others. *)
-val apply_edits : dryrun:bool -> t list -> Fpath.t list * t list
+ * but write to the files. A file is examined by one lstat, without following
+ * a symbolic link, and is written only as the entry examined. *)
+val apply_edits : dryrun:bool -> t list -> application
 
 (* Applies the edits to the given text and returns the result. Pure function. *)
 val apply_edits_to_text : Fpath.t -> string -> t list -> edit_application_result

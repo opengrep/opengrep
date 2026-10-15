@@ -93,6 +93,24 @@ def get_path_str(target: Path) -> str:
     return path_str
 
 
+def destination_not_written(destination: str) -> Optional[str]:
+    # the message for a destination that is not written to, or None.
+    # Mirrors the OCaml Output.check_destination: the destination is a
+    # symbolic link or a file with other hard links, examined without
+    # following a symbolic link.
+    try:
+        st = os.lstat(destination)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as e:
+        return f"Cannot write output to {destination}: {e.strerror}"
+    if stat.S_ISLNK(st.st_mode):
+        return f"Output is symlink: {destination}"
+    if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+        return f"Cannot write output to {destination}: it has other hard links"
+    return None
+
+
 def _build_time_json(
     rules: List[Rule],
     targets: Set[Path],
@@ -514,8 +532,9 @@ class OutputHandler:
         # skipped: the wrapper supports posting to them.
         for destination, _format in self.settings.get_outputs():
             if destination is not None and not is_url(destination):
-                if Path(destination).is_symlink():
-                    error = SemgrepError(f"Output is symlink: {destination}")
+                message = destination_not_written(destination)
+                if message is not None:
+                    error = SemgrepError(message)
                     # wrapper.py exits without printing a SemgrepError
                     logger.error(error.format_for_terminal())
                     raise error
@@ -526,19 +545,35 @@ class OutputHandler:
         else:
             save_path = Path(destination)
             # the scanned repository can ship a symlink here, and writing
-            # through it would truncate whatever it resolves to
-            if save_path.is_symlink():
-                raise SemgrepError(f"Output is symlink: {destination}")
+            # through it would truncate whatever it resolves to; the
+            # destination is examined again here, after the scan
+            message = destination_not_written(destination)
+            if message is not None:
+                raise SemgrepError(message)
             # create the folders if not exists
             save_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                st: Optional[os.stat_result] = os.lstat(save_path)
+            except FileNotFoundError:
+                st = None
+            # a device or a named pipe, such as /dev/null, is written by a
+            # plain open: it is neither truncated nor replaced
+            if (
+                st is not None
+                and not stat.S_ISREG(st.st_mode)
+                and not stat.S_ISDIR(st.st_mode)
+            ):
+                with open(save_path, "w", encoding="utf-8") as fout:
+                    fout.write(output)
+                return
             # an existing regular destination keeps its permission bits; a
             # new one gets the kernel-masked mode a plain open would have
             # used
-            try:
-                st = os.lstat(save_path)
-                mode = stat.S_IMODE(st.st_mode) if stat.S_ISREG(st.st_mode) else None
-            except FileNotFoundError:
-                mode = None
+            mode = (
+                stat.S_IMODE(st.st_mode)
+                if st is not None and stat.S_ISREG(st.st_mode)
+                else None
+            )
             # write to a sibling temporary file and rename: os.replace
             # swaps a symlink leaf rather than writing through it, and an
             # interrupted write cannot leave a truncated output file
