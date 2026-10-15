@@ -497,4 +497,23 @@ let tests parse_program =
               Alcotest.failf
                 "expected one class and three uses of Foo, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "go type binds its name in its block" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/go/type_in_function.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* Occurrences: the conversion to the type in f, the read of the
+             package variable in g. *)
+          check_resolutions ast "T" [ "LocalVar"; "Global" ];
+          match (def_sids_of_name ast "T", resolutions_of_name ast "T") with
+          | [ variable; type_ ], [ Some (_, conversion); Some (_, read) ] ->
+              Alcotest.(check bool) "the conversion refers to the type" true
+                (AST_generic.SId.equal type_ conversion);
+              Alcotest.(check bool) "the read refers to the variable" true
+                (AST_generic.SId.equal variable read)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two uses of T, found %d and %d"
+                (List.length definitions) (List.length uses));
     ]

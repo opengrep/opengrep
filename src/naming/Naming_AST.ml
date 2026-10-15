@@ -1698,6 +1698,7 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   match lang with
   | Lang.Java -> (module Namespaces_java)
   | Lang.Kotlin -> (module Namespaces_kotlin)
+  | Lang.Go
   | Lang.Python
   | Lang.Python2
   | Lang.Python3 ->
