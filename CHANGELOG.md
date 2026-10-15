@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.31.0](https://github.com/opengrep/opengrep/releases/tag/v1.31.0) - 15-10-2026
+
+### Improvements
+
+* `--exclude-minified-files` in `scan` and `ci` on the python cli by @dimitris-m in #876
+* Every domain gets a 4M-word minor heap, so scans spend less time in minor collections by @corneliuhoffman in #874
+* Build with OCaml 5.5.1 and `visitors` from the opengrep fork to address performance issues by @corneliuhoffman in #874
+
+### Bug fixes
+
+* `-o /dev/null` and other device or named pipe destinations are written on the python cli path, instead of failing by @corneliuhoffman in #874
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.30.2...v1.31.0
+
+
 ## [1.30.0](https://github.com/opengrep/opengrep/releases/tag/v1.30.0) - 07-09-2026
 
 ### New features
