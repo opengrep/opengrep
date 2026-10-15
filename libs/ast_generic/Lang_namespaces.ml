@@ -35,21 +35,27 @@ module type NAMESPACES = sig
   val searched_by : use_position -> t list list
 end
 
-(* A single namespace, in which classes and type aliases bind nothing. *)
-module Single_without_type_bindings : NAMESPACES = struct
+(* A single namespace for every definition. *)
+module Single : NAMESPACES = struct
   type t = Value [@@deriving eq]
 
   let variables = Value
+  let of_definition (_ : definition_kind) : t option = Some Value
+  let searched_by (_ : use_position) : t list list = [ [ Value ] ]
+end
 
-  let of_definition : definition_kind -> t option = function
+(* A single namespace, in which classes and type aliases bind nothing. *)
+module Single_without_type_bindings : NAMESPACES = struct
+  include Single
+
+  let of_definition (kind : definition_kind) : t option =
+    match kind with
     | Function
     | Method
     | Module
     | Import ->
-        Some Value
+        Single.of_definition kind
     | Class _
     | Type_alias ->
         None
-
-  let searched_by (_ : use_position) : t list list = [ [ Value ] ]
 end
