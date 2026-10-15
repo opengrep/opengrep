@@ -1,0 +1,9 @@
+(library
+ (public_name parser_java.naming)
+ (name parser_java_naming)
+ (wrapped false)
+ (libraries
+   ast_generic
+ )
+ (preprocess (pps ppx_deriving.eq))
+)
