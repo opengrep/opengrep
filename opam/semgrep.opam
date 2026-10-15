@@ -51,7 +51,7 @@ depends: [
   "ppx_inline_test"
   "ppx_sexp_conv" {>= "v0.16.0"}
   "ppx_expect"
-  "visitors" {= "20260520"}
+  "visitors" {= "dev"}
   "re"
   "ocamlgraph"
   "semver"
@@ -100,5 +100,9 @@ pin-depends: [
   [
     "memtrace.dev"
     "git+https://github.com/opengrep/memtrace.git#dm/multicore-memprof-limits-compat"
+  ]
+  [
+    "visitors.dev"
+    "git+https://github.com/opengrep/visitors.git#full-arity"
   ]
 ]

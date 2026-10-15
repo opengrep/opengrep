@@ -318,21 +318,24 @@ let get_arity params info lang =
   Receiver.arity lang ~is_method:(Receiver.is_method info.fdef)
     ~is_static:info.is_static params
 
-(* Drop implicit-receiver IL params; G and IL param lists share length/order. *)
+(* Drop implicit-receiver IL params. The IL params start with one per G param,
+   in the same order; any further ones are synthetic (the block a Ruby or
+   Crystal method yields to without declaring it) and are kept. *)
 let filter_implicit_receiver_params (lang : Lang.t) (info : fun_info)
     (g_params : G.parameter list) (il_params : IL.param list)
     : IL.param list =
   match info.class_name_str with
   | None -> il_params
   | Some _ ->
-    List.combine g_params il_params
-    |> List.filteri
-         (fun i ((gp, ip) : G.parameter * IL.param) ->
-            match ip with
-            (* Keep IL.ParamReceiver — extractor maps it to BThis without consuming an arg index. *)
-            | IL.ParamReceiver _ -> true
-            | _ -> not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
-    |> List.map snd
+    il_params
+    |> List.filteri (fun i (ip : IL.param) ->
+           match (ip, List.nth_opt g_params i) with
+           (* IL.ParamReceiver is kept: the extractor maps it to BThis without
+              consuming an arg index. *)
+           | IL.ParamReceiver _, _
+           | _, None ->
+               true
+           | _, Some gp -> not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
 
 (* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
 let build_info_map
@@ -807,6 +810,16 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               ~sccs ~analyze initial_signature_db
           in
           (* Single match-emission pass over the converged DB. *)
+          let is_constructor_node (node : Function_id.t) : bool =
+            match Shape_and_sig.FunctionMap.find_opt node info_map with
+            | Some info ->
+                Object_initialization.is_constructor lang
+                  (fst info.name.IL.ident) info.class_name_str
+            | None -> false
+          in
+          let constructors, others =
+            List.partition is_constructor_node analysis_order
+          in
           let topo_matches =
             List.fold_left
               (fun (ms : Core_match.t list) (node : Function_id.t) ->
@@ -834,7 +847,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                           (Fpath.to_string file)
                           (IL.show_name info.name));
                   List.rev_append findings ms)
-              [] analysis_order
+              [] (constructors @ others)
           in
           (Some signature_db_after_order, Some relevant_graph, topo_matches))
         else (

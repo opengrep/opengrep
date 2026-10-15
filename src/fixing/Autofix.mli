@@ -15,6 +15,9 @@ val produce_autofixes :
 *)
 val apply_fixes_to_file_exn : Fpath.t -> Textedit.t list -> string
 
+(* Reports the files whose fixes were not written; see Textedit.apply_edits. *)
+val warn_unwritten_fixes : Fpath.t list -> unit
+
 (* for use by osemgrep *)
 val apply_fixes_of_core_matches :
   ?dryrun:bool -> Semgrep_output_v1_t.core_match list -> unit

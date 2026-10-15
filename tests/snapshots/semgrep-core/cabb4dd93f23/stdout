@@ -1,0 +1,17 @@
+--- begin input files ---
+eqeq.yaml
+findings.sarif
+shared.txt
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 61 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 100644 findings.sarif
+ create mode 100644 shared.txt
+ create mode 100644 stupid.py
+aborted: Cannot write output to findings.sarif: it has other hard links
+--- content of shared.txt ---
+left alone
+

@@ -491,6 +491,9 @@ let extract_toplevel_hof_callbacks
 let build_call_graph ~(lang : Lang.t) (ast : G.program)
     : Call_graph.G.t =
   let graph = Call_graph.G.create () in
+  let skip_nested =
+    (Lang_config.get lang).Lang_config.skip_nested_in_extract_calls
+  in
 
   let top_level_node : node =
     Function_id.of_il_name (top_level_name_of_ast ast)
@@ -532,6 +535,27 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
             | (None, [None]) | (None, []) -> true
             | _ -> false
           in
+          let has_lambda_identity =
+            match fst fdef.G.fkind with
+            | G.LambdaKind
+            | G.Arrow ->
+                true
+            | _ -> Option.is_none opt_ent
+          in
+          let enclosing_node =
+            match fn_id_to_node parent_path with
+            | Some (node : node)
+              when skip_nested && has_lambda_identity
+                   && Call_graph.G.mem_vertex graph node ->
+                Some node
+            | Some _
+            | None ->
+                None
+          in
+          let extra_callers =
+            Option.to_list enclosing_node
+            @ if is_toplevel_lambda then [ top_level_node ] else []
+          in
 
           let { calls = callee_calls; callbacks = callback_calls; _ } =
             extract_calls ~lang
@@ -557,8 +581,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
               match fn_id_to_node callee_fn_id, fn_id_to_node fn_id with
               | Some callee_node, Some caller_node ->
                   Call_graph.add_edge graph ~src:callee_node ~dst:caller_node ~call_tok;
-                  if is_toplevel_lambda then
-                    Call_graph.add_edge graph ~src:callee_node ~dst:top_level_node ~call_tok
+                  List.iter
+                    (fun (dst : node) ->
+                      Call_graph.add_edge graph ~src:callee_node ~dst ~call_tok)
+                    extra_callers
               | _ -> ())
             callee_calls;
 
@@ -574,8 +600,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
                     | None -> callback_node
                   in
                   Call_graph.add_edge graph ~src:src_to_caller ~dst:caller_node ~call_tok;
-                  if is_toplevel_lambda then
-                    Call_graph.add_edge graph ~src:src_to_caller ~dst:top_level_node ~call_tok
+                  List.iter
+                    (fun (dst : node) ->
+                      Call_graph.add_edge graph ~src:src_to_caller ~dst ~call_tok)
+                    extra_callers
               | _ -> ())
             callback_calls
       | None -> ())

@@ -1,0 +1,13 @@
+rules:
+  - id: python_receiver_untyped_field
+    message: taint through a method called on a field
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

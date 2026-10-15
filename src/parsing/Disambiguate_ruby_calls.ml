@@ -17,7 +17,27 @@ let is_unresolved_method_call (name : ident) (info : id_info) : bool =
   && not (Char.equal s.[0] '$')
   && not (Char.equal s.[0] '@')
 
-class ['self] visitor =
+module SIdSet = Set.Make (SId)
+
+let method_bindings (lang : Lang.t) (prog : program) : SIdSet.t =
+  Visit_function_defs.fold_with_parent_path ~lang
+    (fun (acc : SIdSet.t) ~object_literal_method:_ (opt_ent : entity option)
+         _parent_path (fdef : function_definition) ->
+      match (fst fdef.fkind, opt_ent) with
+      | ( (Function | Method),
+          Some
+            { name = EN (Id (_, { id_resolved = { contents = Some (_, sid) }; _ }));
+              _ } ) ->
+          SIdSet.add sid acc
+      | _ -> acc)
+    SIdSet.empty prog
+
+let refers_to_method (methods : SIdSet.t) (info : id_info) : bool =
+  match !(info.id_resolved) with
+  | Some (_, sid) -> SIdSet.mem sid methods
+  | None -> false
+
+class ['self] visitor (methods : SIdSet.t) =
   object (self : 'self)
     inherit [_] AST_generic.map as super
 
@@ -36,12 +56,12 @@ class ['self] visitor =
           let args = self#visit_arguments env args in
           Call (callee, args)
       (* Bare unresolved lowercase identifier -- wrap in a zero-arg Call. *)
-      | N (Id (name, info)) when is_unresolved_method_call name info ->
+      | N (Id (name, info))
+        when is_unresolved_method_call name info
+             || refers_to_method methods info ->
           Call (N (Id (name, info)) |> e, Tok.unsafe_fake_bracket [])
       | _ -> super#visit_expr_kind env ek
   end
 
-let visitor_instance = new visitor
-
-let disambiguate (prog : program) : program =
-  visitor_instance#visit_program () prog
+let disambiguate (lang : Lang.t) (prog : program) : program =
+  (new visitor (method_bindings lang prog))#visit_program () prog

@@ -247,8 +247,14 @@
       url = "git+https://gitlab.com/dimitris-m/memprof-limits.git?ref=dm/ocaml-5.3.0-opengrep";
       flake = false;
     };
+    # Fork of visitors where a generated method is one function of full
+    # arity. Referenced as `visitors {= "dev"}` in semgrep.opam.
+    visitors-src = {
+      url = "git+https://github.com/opengrep/visitors.git?ref=full-arity";
+      flake = false;
+    };
   };
-  outputs = { self, nixpkgs, flake-utils, opam-nix, opam-repository, memprof-limits-src }@inputs:
+  outputs = { self, nixpkgs, flake-utils, opam-nix, opam-repository, memprof-limits-src, visitors-src }@inputs:
     let package = "semgrep";
     in flake-utils.lib.eachDefaultSystem (system:
       let
@@ -265,7 +271,14 @@
             sed -i '/^version:/d' $out/memprof-limits.opam
           '';
         memprof-limits-repo = on.makeOpamRepo memprof-limits-pin-src;
-        opamRepos = [ memprof-limits-repo "${opam-repository}" ];
+        visitors-pin-src =
+          pkgs.runCommand "visitors-dev-src" { } ''
+            cp -r ${visitors-src} $out
+            chmod -R u+w $out
+            sed -i '/^version:/d' $out/visitors.opam
+          '';
+        visitors-repo = on.makeOpamRepo visitors-pin-src;
+        opamRepos = [ memprof-limits-repo visitors-repo "${opam-repository}" ];
         lib = pkgs.lib;
         isDarwin = lib.strings.hasSuffix "darwin" system;
         hasSubmodules = !builtins.hasAttr "submodules" self || self.submodules;
@@ -287,7 +300,7 @@
           # Pin the OCaml compiler to the version we build with. Our opam
           # packages only declare floors (process_limits and the memprof-limits
           # fork require >= 5.3.0; opengrep.opam requires >= 5.2.1).
-          ocaml-base-compiler = "5.5.0";
+          ocaml-base-compiler = "5.5.1";
           #TODO: needed for semgrep pro, should be in ../flake.nix instead
           #coupling: if you add one thing here, need to update also the
           # buildInputs overlay below
