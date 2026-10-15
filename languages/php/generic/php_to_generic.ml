@@ -56,8 +56,7 @@ let bracket of_a (t1, x, t2) = (info t1, of_a x, info t2)
 let ident v = wrap string v
 let var v = wrap string v
 
-(* a variable bound to an enclosing scope's by a directive such as
- * [global $x;] or a closure's [use ($x)] *)
+(* a variable bound to the file scope's by a [global $x;] directive *)
 let use_outer_decl (tok : Tok.t) (id : G.ident) : G.stmt =
   let ent = G.basic_entity ~case_insensitive:false id in
   G.DefStmt (ent, G.UseOuterDecl tok) |> G.s
@@ -492,36 +491,41 @@ and expr e : G.expr =
        f_return_type = rett;
        f_body = body;
       } ->
+          (* An anonymous function captures what its [use] clause lists; an
+           * arrow function has no capture list. PHP has no empty [use ()]. *)
           let lambdakind =
             match lambdakind with
             | AnonLambda -> G.LambdaKind
             | ShortLambda -> G.Arrow
             | _ -> error tok "unsupported lambda variant"
           in
-          (* [function () use ($x, &$y) { ... }]: the captured variables
-           * are the enclosing scope's, declared at the head of the body
-           * as a [use] directive for naming to bind them there. *)
-          let uses =
-            l_uses
-            |> List_.map (fun ((_is_ref : bool), (v : var)) ->
-                   use_outer_decl (Tok.fake_tok t "use") (var v))
+          let captures =
+            let capture ((is_ref : bool), (v : var)) =
+              let id = var v in
+              let mode = if is_ref then G.ByReference else G.ByCopy in
+              G.CaptureVar ([], id, G.empty_id_info (), (mode, snd id), None)
+            in
+            match l_uses with
+            | [] -> None
+            | _ :: _ ->
+                Some
+                  {
+                    G.cdefault = None;
+                    cexplicit = List_.map capture l_uses;
+                    clocals = [];
+                  }
           in
-          let body =
-            match (uses, stmt body) with
-            | [], body -> body
-            | _, { G.s = G.Block (l, stmts, r); _ } ->
-                G.Block (l, uses @ stmts, r) |> G.s
-            | _, body -> G.Block (Tok.unsafe_fake_bracket (uses @ [ body ])) |> G.s
-          in
+          let body = stmt body in
           let ps = parameters ps in
           let rett = option hint_type rett in
           G.Lambda
-            {
-              G.fparams = fb ps;
-              frettype = rett;
-              fbody = G.FBStmt body;
-              fkind = (lambdakind, t);
-            }
+            ( {
+                G.fparams = fb ps;
+                frettype = rett;
+                fbody = G.FBStmt body;
+                fkind = (lambdakind, t);
+              },
+              captures )
           |> G.e)
   | Match (tok, e, matches) ->
       let e = expr e in

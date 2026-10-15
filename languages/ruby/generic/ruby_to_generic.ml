@@ -174,7 +174,7 @@ let rec expr e =
       let xs = option expr eopt |> Option.to_list |> List_.map G.arg in
       let special = G.IdSpecial (G.Spread, t) |> G.e in
       G.Call (special, fb xs)
-  | CodeBlock ((t1, _, t2), params_opt, xs) ->
+  | CodeBlock ((t1, _, t2), params_opt, block_locals, xs) ->
       let params =
         match params_opt with
         | None -> []
@@ -190,7 +190,29 @@ let rec expr e =
           fkind = (G.LambdaKind, t1);
         }
       in
-      G.Lambda def
+      (* A pattern's '...' among the block-local variables is the capture
+       * list's [CaptureEllipsis]: a block has no other capture and no
+       * default for it to allow. *)
+      let captures =
+        match block_locals with
+        | [] -> None
+        | _ :: _ ->
+            Some
+              {
+                G.cdefault = None;
+                cexplicit =
+                  block_locals
+                  |> List_.filter_map (function
+                       | BlockLocalEllipsis tok -> Some (G.CaptureEllipsis tok)
+                       | BlockLocal _ -> None);
+                clocals =
+                  block_locals
+                  |> List_.filter_map (function
+                       | BlockLocal id -> Some (id, G.empty_id_info ())
+                       | BlockLocalEllipsis _ -> None);
+              }
+      in
+      G.Lambda (def, captures)
   | Lambda (tok, params_opt, xs) ->
       let params =
         match params_opt with
@@ -207,7 +229,7 @@ let rec expr e =
           fkind = (G.LambdaKind, tok);
         }
       in
-      G.Lambda def
+      G.Lambda (def, None)
   | Rescue (e1, t, e2) ->
       (* We translate `e1 rescue e2` to
 

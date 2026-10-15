@@ -1,0 +1,12 @@
+rules:
+  - id: js_name_bound_to_two_lambdas
+    message: a name bound to two lambdas holds either at the call
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

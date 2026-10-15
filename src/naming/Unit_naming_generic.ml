@@ -306,6 +306,19 @@ let tests parse_program =
             [ "Global"; "Unresolved"; "Global"; "Global"; "Global" ];
           (* the directive creates the global *)
           check_resolutions ast "$created" [ "Global" ]);
+      t "php closure use by reference creates the variable" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/php/closure_use_by_reference.php")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Php ast;
+          (* Occurrences: the write in the closure, the read after the
+             call; both are the variable the [use] creates in the
+             function. *)
+          check_resolutions ast "$u" [ "LocalVar"; "LocalVar" ];
+          check_single_binding ast "$u");
       t "js bare assignment mutates outer binding" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/js/assign_outer.js")

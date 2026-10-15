@@ -1,0 +1,12 @@
+rules:
+  - id: csharp_query_clause_value
+    message: the select expression is the value of the query clause
+    languages: [csharp]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: Source(...)
+    pattern-sinks:
+      - pattern: Sink(...)

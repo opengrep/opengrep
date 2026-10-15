@@ -305,7 +305,7 @@ and expr (x : expr) =
   | Fun (v1, _v2TODO) ->
       let def, more_attrs = fun_ v1 in
       (* TODO: Include attrs in generic AST? Where? *)
-      let e = G.Lambda def |> G.e in
+      let e = G.Lambda (def, None) |> G.e in
       (* Since the attrs aren't included in the AST, at least update the range
        * to include them. See
        * https://github.com/semgrep/semgrep/issues/7353 *)

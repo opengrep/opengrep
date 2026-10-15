@@ -1585,12 +1585,12 @@ and map_closure_expression (env : env)
         G.KeywordAttr (G.Static, tok))
       v1
   in
-  let _is_moveTODO =
+  (* A [move] closure takes what it uses by value where it is created. *)
+  let captures =
     Option.map
       (fun tok ->
-        let tok = token env tok in
-        (* "move" *)
-        G.KeywordAttr (G.Mutable, tok))
+        let tok = token env tok (* "move" *) in
+        { G.cdefault = Some (G.ByCopy, tok); cexplicit = []; clocals = [] })
       v2
   in
   let params = map_closure_parameters env v3 in
@@ -1623,7 +1623,7 @@ and map_closure_expression (env : env)
       G.fbody = body;
     }
   in
-  G.Lambda func_def
+  G.Lambda (func_def, captures)
 
 and map_yield_expression (env : env) (x : CST.yield_expression) =
   match x with

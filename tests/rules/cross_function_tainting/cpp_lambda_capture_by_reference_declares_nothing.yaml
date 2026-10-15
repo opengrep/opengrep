@@ -1,0 +1,13 @@
+rules:
+  - id: cpp_lambda_capture_by_reference_declares_nothing
+    message: a capture by reference refers to the variable of that name where the lambda is written
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

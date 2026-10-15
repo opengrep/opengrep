@@ -1,0 +1,12 @@
+rules:
+  - id: kotlin_reassigned_field_lambda
+    message: a property holds the lambda assigned last
+    languages: [kotlin]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

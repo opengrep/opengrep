@@ -390,7 +390,7 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
   | `Func_defi (v1, v2) ->
       let t = token env v1 (* "function" *) in
       let v2 = map_function_body env v2 v1 in
-      G.Lambda { v2 with G.fkind = (G.LambdaKind, t) }
+      G.Lambda ({ v2 with G.fkind = (G.LambdaKind, t) }, None)
   | `Table x ->
       let x = map_table env x in
       x.G.e

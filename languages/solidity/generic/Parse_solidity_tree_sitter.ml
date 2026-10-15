@@ -2096,7 +2096,7 @@ and map_statement (env : env) (x : CST.statement) : stmt =
           fbody = FBStmt st;
         }
       in
-      let lambda = Lambda fun_ |> G.e in
+      let lambda = Lambda (fun_, None) |> G.e in
       let call = Call (lambda, fb [ Arg e ]) |> G.e in
       let try_stmt = G.exprstmt call in
       let catches = List_.map (map_catch_clause env) v5 in

@@ -1,0 +1,8 @@
+rules:
+- id: capture-metavar-ellipsis-initialiser
+  #ERROR: $...C stands for captures
+  pattern: |
+    [$...C = a](){ ... }
+  message: a capture metavariable ellipsis has no initialiser
+  severity: WARNING
+  languages: [cpp]

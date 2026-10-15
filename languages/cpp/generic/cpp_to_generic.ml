@@ -597,8 +597,8 @@ and map_expr env x : G.expr =
       let st = G.Throw (v1, v2, G.sc) |> G.s in
       G.stmt_to_expr st
   | Lambda v1 ->
-      let v1 = map_lambda_definition env v1 in
-      G.Lambda v1 |> G.e
+      let fdef, captures = map_lambda_definition env v1 in
+      G.Lambda (fdef, Some captures) |> G.e
   | ParamPackExpansion (v1, v2) ->
       let v1 = map_expr env v1 and v2 = map_tok env v2 in
       G.OtherExpr (("Pack", v2), [ G.E v1 ]) |> G.e
@@ -1827,21 +1827,80 @@ and map_function_definition_body env x =
       in
       (l, (G.OtherStmt (OS_Todo, l2) |> G.s) :: body, r)
 
-and map_lambda_definition env (v1, v2) : G.function_definition =
-  let _v1TODO = map_bracket env (map_of_list (map_lambda_capture env)) v1
-  and v2 = map_function_definition env v2 in
-  v2
+and map_lambda_definition env ((_, captures, _), v2) :
+    G.function_definition * G.captures =
+  let cdefault =
+    List.find_map
+      (function
+        | CaptureEq tok -> Some (G.ByCopy, map_tok env tok)
+        | CaptureRef tok -> Some (G.ByReference, map_tok env tok)
+        | CaptureOther _ -> None)
+      captures
+  in
+  let cexplicit =
+    List_.filter_map
+      (function
+        | CaptureOther e -> map_lambda_capture env e
+        | CaptureEq _
+        | CaptureRef _ ->
+            None)
+      captures
+  in
+  (map_function_definition env v2, { G.cdefault; cexplicit; clocals = [] })
 
-and map_lambda_capture env = function
-  | CaptureEq v1 ->
-      let v1 = map_tok env v1 in
-      Left v1
-  | CaptureRef v1 ->
-      let v1 = map_tok env v1 in
-      Left v1
-  | CaptureOther v1 ->
-      let v1 = map_expr env v1 in
-      Right v1
+(* A listed capture: [x], [this], [*this], or an initialised capture, by
+ * copy-initialisation [y = e], direct-initialisation [y(e)] or
+ * direct-list-initialisation [y{e}], each by reference when written after
+ * [&] ([&x], [&r = x], [&r(x)], [&r{x}]); in a pattern, [...]. A pack
+ * expansion [xs...] gives the capture of [xs]: the pack is not represented.
+ * The tree-sitter grammar accepts any expression in a capture list; an
+ * expression of no form above is not a C++ capture and gives none. *)
+and map_lambda_capture env (e : expr) : G.capture option =
+  (* the expressions of a direct-initialisation or a
+   * direct-list-initialisation *)
+  let init_exprs (obj_init : obj_init) : G.expr list G.bracket =
+    let l, args, r = map_obj_init env obj_init in
+    (l, List_.map H.argument_to_expr args, r)
+  in
+  (* [by_reference]: the [&] written before the capture; [init]: its
+   * initialiser, written after [=] *)
+  let rec capture ?(by_reference : tok option)
+      ?(init : G.capture_init option) (e : expr) : G.capture option =
+    let var (id : ident) (init : G.capture_init option) =
+      let mode =
+        match by_reference with
+        | Some tok -> (G.ByReference, map_tok env tok)
+        | None -> (G.ByCopy, map_tok env (snd id))
+      in
+      Some (G.CaptureVar ([], map_ident env id, G.empty_id_info (), mode, init))
+    in
+    match (e, by_reference, init) with
+    | Ellipsis tok, None, None -> Some (G.CaptureEllipsis (map_tok env tok))
+    | ParamPackExpansion (e, _), _, _ -> capture ?by_reference ?init e
+    | Unary ((GetRef, tok), e), None, _ -> capture ~by_reference:tok ?init e
+    | Assign (lhs, SimpleAssign eq, Left e), _, None ->
+        capture ?by_reference
+          ~init:(G.InitAssign (map_tok env eq, map_expr env e))
+          lhs
+    | Assign (lhs, SimpleAssign eq, Right i), _, None ->
+        capture ?by_reference
+          ~init:(G.InitAssign (map_tok env eq, map_initialiser env i))
+          lhs
+    | N (None, [], IdIdent id), _, _ -> var id init
+    | Call (N (None, [], IdIdent id), args), _, None ->
+        var id (Some (G.InitDirect (init_exprs (Args args))))
+    | ( ConstructedObject ((_, TypeName (None, [], IdIdent id)), (Inits _ as i)),
+        _,
+        None ) ->
+        var id (Some (G.InitList (init_exprs i)))
+    | IdSpecial (This, tok), None, None ->
+        let tok = map_tok env tok in
+        Some (G.CaptureThis ([], tok, (G.ByReference, tok)))
+    | Unary ((DeRef, star), IdSpecial (This, tok)), None, None ->
+        Some (G.CaptureThis ([], map_tok env tok, (G.ByCopy, map_tok env star)))
+    | _ -> None
+  in
+  capture e
 
 and map_enum_definition env
     {

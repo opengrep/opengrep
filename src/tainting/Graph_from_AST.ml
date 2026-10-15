@@ -382,7 +382,7 @@ let extract_calls ~(lang : Lang.t)
                               | G.XmlSingleton (_, name, _)); _ } ->
           let synth =
             G.{ e = G.N name; e_id = -1; e_range = None;
-                is_implicit_return = false; facts = [] }
+                implicit_return = Not_returned; facts = [] }
           in
           (match identify_callee ~func_lookup ~caller_parent_path synth with
            | Some fn_id ->
@@ -416,7 +416,7 @@ let extract_decorator_calls
     match attr with
     | G.NamedAttr (_, name, _args) ->
       let synth = G.{ e = G.N name; e_id = -1; e_range = None;
-                       is_implicit_return = false; facts = [] } in
+                       implicit_return = Not_returned; facts = [] } in
       let call_arity = match _args with
         | (_, args, _) -> List.length args
       in
@@ -499,7 +499,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 
   let funcs =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun funcs ~object_literal_method:_ opt_ent parent_path fdef ->
+      (fun funcs ~object_literal_method:_ ~captures:_ ~enclosing_captures:_
+           opt_ent parent_path fdef ->
         match fn_id_of_entity ~lang opt_ent parent_path fdef with
         | Some fn_id ->
             let func = { fn_id; entity = opt_ent; fdef } in
@@ -525,7 +526,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
   in
   (* Visit all calls in the AST, tracking the current function context *)
   Visit_function_defs.visit_with_parent_path ~lang
-    (fun ~object_literal_method:_ opt_ent parent_path fdef ->
+    (fun ~object_literal_method:_ ~captures:_ ~enclosing_captures:_ opt_ent
+         parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
           let is_toplevel_lambda = match (opt_ent, parent_path) with
@@ -755,11 +757,28 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
   let visitor = object (self)
     inherit [_] G.iter_no_id_info as super
 
+    (* [captures]: the captures of [fdef] when it is a lambda. Their
+       initialisers are evaluated where the lambda is created, so a range
+       inside one belongs to the enclosing function. *)
     method private attribute_ranges_to_function (span : G.any) (ent : G.entity)
-        (fdef : G.function_definition)
+        (fdef : G.function_definition) ~(captures : G.captures option)
         (env : G.name option * IL.name option list)
         (visit_nested : G.name option * IL.name option list -> unit) : unit =
       let current_class, parent_path = env in
+      let initialiser_ranges =
+        AST_generic_helpers.capture_initialiser_exprs captures
+        |> List_.filter_map (fun (init : G.expr) ->
+               AST_generic_helpers.range_of_any_opt (G.E init)
+               |> Option.map (fun (loc_start, loc_end) ->
+                      Range.range_of_token_locations loc_start loc_end))
+      in
+      let in_initialiser (range : Range.t) =
+        List.exists
+          (fun (init : Range.t) ->
+            init.Range.start <= range.Range.start
+            && range.Range.end_ <= init.Range.end_)
+          initialiser_ranges
+      in
       match AST_generic_helpers.range_of_any_opt span with
       | Some (loc_start, loc_end) ->
           let range = Range.range_of_token_locations loc_start loc_end in
@@ -769,7 +788,8 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
 
           (* For each range, check if it's inside this function *)
           List.iter (fun (range : Range.t) ->
-            if func_start <= range.Range.start && range.Range.end_ <= func_end then (
+            if func_start <= range.Range.start && range.Range.end_ <= func_end
+               && not (in_initialiser range) then (
               let class_il = Option.bind current_class g_name_to_il_name in
               let visitor_parent_path =
                 match parent_path with
@@ -838,16 +858,19 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
 
               super#visit_definition env' def
           | None -> super#visit_definition env' def)
-      | G.FuncDef fdef | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
+      | G.FuncDef fdef ->
           (* Get the entire function definition range (including parameters) *)
-          self#attribute_ranges_to_function (G.Def def) ent fdef env
+          self#attribute_ranges_to_function (G.Def def) ent fdef ~captures:None
+            env (fun env' -> super#visit_definition env' def)
+      | G.VarDef { vinit = Some { e = G.Lambda (fdef, captures); _ }; _ } ->
+          self#attribute_ranges_to_function (G.Def def) ent fdef ~captures env
             (fun env' -> super#visit_definition env' def)
       | _ -> super#visit_definition env def
 
     method! visit_expr (env : G.name option * IL.name option list) e =
       match Visit_function_defs.extract_lambda_assignment ~lang e with
-      | Some ((ent : G.entity), (fdef : G.function_definition)) ->
-          self#attribute_ranges_to_function (G.E e) ent fdef env
+      | Some ((ent : G.entity), (fdef : G.function_definition), captures) ->
+          self#attribute_ranges_to_function (G.E e) ent fdef ~captures env
             (fun env' -> super#visit_expr env' e)
       | None -> (
           match e.G.e with

@@ -34,6 +34,14 @@ module Log = Log_analyzing.Log
 (* Helpers *)
 (*****************************************************************************)
 
+(* An expression a front end's translation already returns keeps that mark. *)
+let mark_returned (e : expr) : unit =
+  match e.implicit_return with
+  | Not_returned -> e.implicit_return <- Returned
+  | Returned
+  | Returned_by_translation ->
+      ()
+
 let rec mark_first_instr_ancestor (cfg : IL.cfg) i =
   let node = cfg.graph#nodes#find i in
   match node.n with
@@ -64,7 +72,7 @@ let rec mark_first_instr_ancestor (cfg : IL.cfg) i =
                  Printf.sprintf "range=%d-%d"
                    s.Tok.pos.bytepos ee.Tok.pos.bytepos
                | None -> "?"));
-          e.is_implicit_return <- true
+          mark_returned e
       | _else_ ->
           (* Not a mark-eligible instruction (e.g. an aux_var temp-chain
              Assign with [eorig = NoOrig]). Walk past it to reach the
@@ -110,11 +118,21 @@ let mark_implicit_return lang ast =
          match fkind with
          | __any__ when lang_supports_implicit_return lang ->
              mark_implicit_return_fdef lang ~tok fdef
-         | LambdaKind ->
+         | LambdaKind -> mark_implicit_return_fdef lang ~tok fdef
+         | Arrow -> (
              (* Lambdas expressions tend to always support implicit returns,
               * even in languages that require explicit returns like Java.
-              * An [Arrow] is not marked: a block body returns only what it
-              * says, and an expression body comes from the parser as a
-              * [Return] (JS, PHP). *)
-             mark_implicit_return_fdef lang ~tok fdef
+              * The expression body of an arrow, [x -> e] in Java ([FBStmt]
+              * holding one [ExprStmt]) or [x => e] in C# ([FBExpr]), is its
+              * value, whatever the form of [e]; a block body returns a value
+              * only through [return] statements. The JS and PHP parsers
+              * already convert an expression body into a [Return]. *)
+             match fdef.fbody with
+             | FBExpr e
+             | FBStmt { s = ExprStmt (e, _); _ } ->
+                 mark_returned e
+             | FBStmt _
+             | FBDecl _
+             | FBNothing ->
+                 ())
          | __else__ -> ())

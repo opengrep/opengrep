@@ -309,12 +309,12 @@ let rec expr env (x : expr) =
   | Lambda (t0, v1, _t2, v2) ->
       let v1 = parameters env v1 and v2 = expr env v2 in
       G.Lambda
-        {
+        ({
           G.fparams = fb v1;
           fbody = G.FBExpr v2;
           frettype = None;
           fkind = (G.LambdaKind, t0);
-        }
+        }, None)
       |> G.e
   | IfExp (v1, v2, v3) ->
       let v1 = expr env v1 and v2 = expr env v2 and v3 = expr env v3 in

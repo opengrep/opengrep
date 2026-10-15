@@ -15,6 +15,8 @@ type mvalue =
   | Ss of AST_generic.stmt list
   | Args of AST_generic.argument list
   | Params of AST_generic.parameter list
+  | Captures of AST_generic.capture list
+  | BlockLocals of (AST_generic.ident * AST_generic.id_info) list
   | Xmls of AST_generic.xml_body list
   (* Text below is used to match the content of a string or atom, without the
    * enclosing quotes. For a string this can actually be empty. Includes both

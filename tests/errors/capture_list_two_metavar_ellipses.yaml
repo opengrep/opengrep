@@ -1,0 +1,8 @@
+rules:
+- id: capture-list-two-metavar-ellipses
+  #ERROR: a capture list holds at most one $...X
+  pattern: |
+    [$...C, $...D](){ ... }
+  message: a capture list is matched in any order
+  severity: WARNING
+  languages: [cpp]

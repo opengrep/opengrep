@@ -126,18 +126,24 @@ let param_from_lambda_params lambda_params =
       let ids = List_.map (fun id -> PatId (id, empty_id_info ())) ids in
       ParamPattern (PatTuple (fb ids), implicit_param_classic tk)
 
+(* The body of a lambda built for a query clause, by the translation of query
+ * expressions into method calls: the clause expression is the lambda's value,
+ * returned by the translation rather than by the source. *)
+let query_lambda_body (expr : expr) : function_body =
+  FBExpr { expr with implicit_return = Returned_by_translation }
+
 (* create lambda lambda_params -> expr *)
 let create_lambda lambda_params expr =
   let fparams =
     Tok.unsafe_fake_bracket [ param_from_lambda_params lambda_params ]
   in
   Lambda
-    {
+    ({
       fkind = (Arrow, fake "=>");
       fparams;
       frettype = None;
-      fbody = FBExpr expr;
-    }
+      fbody = query_lambda_body expr;
+    }, None)
   |> G.e
 
 (* create lambda (lambda_params, ident) -> (lambda_params..., ident) *)
@@ -151,12 +157,12 @@ let create_join_result_lambda lambda_params ident =
   in
   let expr = G.Container (G.Tuple, fb ids) |> G.e in
   Lambda
-    {
+    ({
       fkind = (Arrow, fake "=>");
       fparams;
       frettype = None;
-      fbody = FBExpr expr;
-    }
+      fbody = query_lambda_body expr;
+    }, None)
   |> G.e
 
 (* create a new lambda in the form
@@ -1398,12 +1404,12 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
       in
       let v4 = block env v4 in
       Lambda
-        {
+        ({
           fkind = (LambdaKind, tdelegate);
           fparams;
           frettype = None;
           fbody = G.FBStmt v4;
-        }
+        }, None)
       |> G.e
   | `Anon_obj_crea_exp (v1, v2, v3, v4, v5) ->
       let v1 = token env v1 (* "new" *) in
@@ -1550,7 +1556,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
         | `Blk x -> G.FBStmt (block env x)
         | `Exp x -> G.FBExpr (expression env x)
       in
-      Lambda { fkind = (Arrow, v5); fparams = v4; frettype = v3; fbody = v6 }
+      Lambda ({ fkind = (Arrow, v5); fparams = v4; frettype = v3; fbody = v6 }, None)
       |> G.e
   | `Make_ref_exp (v1, v2, v3, v4) ->
       let v1 = token env v1 (* "__makeref" *) in

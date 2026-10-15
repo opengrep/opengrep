@@ -324,6 +324,8 @@ let rec equal_ast_bound_code (config : Rule_options.t) (a : MV.mvalue)
     | MV.Raw _, MV.Raw _
     | MV.Text _, MV.Text _
     | MV.Params _, MV.Params _
+    | MV.Captures _, MV.Captures _
+    | MV.BlockLocals _, MV.BlockLocals _
     | MV.Args _, MV.Args _
     | MV.Xmls _, MV.Xmls _ ->
         (* TODO: Case insensitive identifiers can still be embedded in
@@ -706,12 +708,12 @@ let m_list_with_dots_and_metavar_ellipsis ?(can_skip=fun _ -> false) ~less_is_ok
  * need reflect tin so we can call the matcher and query whether there
  * was a match. Maybe a <??> monadic operator?
  *)
-let rec m_list_in_any_order ~less_is_ok f xsa xsb =
-  match (xsa, xsb) with
-  | [], [] -> return ()
-  (* less-is-ok: empty list can sometimes match non-empty list *)
-  | [], _ :: _ -> if less_is_ok then return () else fail ()
-  | a :: xsa, xsb ->
+(* Each element of [xsa] matches a distinct element of [xsb]; the elements
+ * of [xsb] left over, in no particular order, go to [m_rest]. *)
+let rec m_list_in_any_order_with_rest ~m_rest f xsa xsb =
+  match xsa with
+  | [] -> m_rest xsb
+  | a :: xsa ->
       let candidates = all_elem_and_rest_of_list xsb in
       (* less: could use a fold *)
       let rec aux xs =
@@ -720,10 +722,36 @@ let rec m_list_in_any_order ~less_is_ok f xsa xsb =
         | (b, xsb) :: xs ->
             f a b
             >>= (fun () ->
-                  m_list_in_any_order ~less_is_ok f xsa (lazy_rest_of_list xsb))
+                  m_list_in_any_order_with_rest ~m_rest f xsa
+                    (lazy_rest_of_list xsb))
             >||> aux xs
       in
       aux candidates
+
+let m_list_in_any_order ~less_is_ok f xsa xsb =
+  m_list_in_any_order_with_rest
+    ~m_rest:(function
+      | [] -> return ()
+      (* less-is-ok: empty list can sometimes match non-empty list *)
+      | _ :: _ -> if less_is_ok then return () else fail ())
+    f xsa xsb
+
+(* As [m_list_in_any_order], the elements of [xsb] that no element of [xsa]
+ * matches bound to [mvar], by [mvalue_of_rest], in their order in [xsb]:
+ * a [$...X] in a list matched in any order. [rest_ok] constrains them. *)
+let m_list_in_any_order_binding_rest ?(rest_ok = fun _ -> true)
+    ~(mvar : MV.mvar G.wrap) ~mvalue_of_rest f xsa xsb : tin -> tout =
+  m_list_in_any_order_with_rest
+    ~m_rest:(fun rest ->
+      let rest =
+        rest
+        |> List.sort (fun ((i : int), _) ((j : int), _) -> Int.compare i j)
+        |> List_.map snd
+      in
+      if rest_ok rest then envf mvar (mvalue_of_rest rest) else fail ())
+    (fun a (_, b) -> f a b)
+    xsa
+    (List.mapi (fun (i : int) b -> (i, b)) xsb)
 
 (* ---------------------------------------------------------------------- *)
 (* stdlib: combinatorial search *)

@@ -1,0 +1,12 @@
+rules:
+  - id: csharp_lambda_expression_body_value
+    message: the expression body of a lambda is its value
+    languages: [csharp]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: Source(...)
+    pattern-sinks:
+      - pattern: Sink(...)

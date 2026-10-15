@@ -459,26 +459,21 @@ let scoped_identifier (env : env) ((v1, v2, v3) : CST.scoped_identifier) :
   in
   v1 @ [ v3 ]
 
-let _anonymous_function_use_clause (env : env)
-    ((v1, v2, v3, v4, v5, v6) : CST.anonymous_function_use_clause) =
-  let v1 = (* "use" *) token env v1 in
-  let v2 = (* "(" *) token env v2 in
-  let v3 = (* variable *) token env v3 in
-  let v4 =
-    List_.map
-      (fun (v1, v2) ->
-        let v1 = (* "," *) token env v1 in
-        let v2 = (* variable *) token env v2 in
-        todo env (v1, v2))
-      v4
+(* [use ($x, $y)]: an anonymous function captures what it lists, by copy. *)
+let anonymous_function_use_clause (env : env)
+    (( _use (* "use" *),
+       _lp (* "(" *),
+       v3,
+       v4,
+       _comma (* "," *),
+       _rp (* ")" *) ) :
+      CST.anonymous_function_use_clause) : G.captures =
+  let capture (tok : CST.variable) =
+    let id = (* variable *) str env tok in
+    G.CaptureVar ([], id, G.empty_id_info (), (G.ByCopy, snd id), None)
   in
-  let v5 =
-    match v5 with
-    | Some tok -> (* "," *) token env tok
-    | None -> todo env ()
-  in
-  let v6 = (* ")" *) token env v6 in
-  todo env (v1, v2, v3, v4, v5, v6)
+  let vars = v3 :: List_.map (fun (_comma (* "," *), v) -> v) v4 in
+  { G.cdefault = None; cexplicit = List_.map capture vars; clocals = [] }
 
 let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
   (* Q: How to represent `use` type? *)
@@ -1579,7 +1574,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               fbody = v5;
             }
           in
-          G.Lambda def |> G.e
+          G.Lambda (def, None) |> G.e
       | `Call_exp x -> call_expression env x
       | `Sele_exp x -> selection_expression env x
       | `New_exp (v1, v2, v3, v4) ->
@@ -1628,11 +1623,8 @@ and expression (env : env) (x : CST.expression) : G.expr =
                 Some v2
             | None -> None
           in
-          let _v5TODO =
-            match v5 with
-            (* TODO: No way to capture this in generic *)
-            | Some _x -> None (* Some (anonymous_function_use_clause env x) *)
-            | None -> None
+          let captures =
+            Option.map (anonymous_function_use_clause env) v5
           in
           let v6 = compound_statement env v6 in
           let def : G.function_definition =
@@ -1643,7 +1635,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               fbody = G.FBStmt v6;
             }
           in
-          G.Lambda def |> G.e
+          G.Lambda (def, captures) |> G.e
       | `Xhp_exp x -> G.Xml (xhp_expression env x) |> G.e)
   | `Ellips tok -> (* "..." *) G.Ellipsis (token env tok) |> G.e
   | `Deep_ellips (v1, v2, v3) ->

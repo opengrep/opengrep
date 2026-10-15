@@ -1,0 +1,8 @@
+rules:
+- id: block-locals-two-metavar-ellipses
+  #ERROR: a list of block-local variables holds at most one $...X
+  pattern: |
+    foo { |x; $...Y, $...Z| ... }
+  message: block-local variables are matched in any order
+  severity: WARNING
+  languages: [ruby]

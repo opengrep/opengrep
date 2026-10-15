@@ -3345,23 +3345,27 @@ let lvals_of_cfg ~nested (fun_cfg : IL.fun_cfg) : IL.lval Seq.t =
 
 (* A name resolved to a variable of this module: a local, a parameter, or a
    module-level binding (a lambda at the top level captures it like a
-   local). An imported name is another module's; an unresolved one is not a
-   variable (in Ruby it is a method call). *)
-let is_local_variable (var : IL.name) =
+   local). An imported name is another module's. An unresolved name counts
+   as a variable: unresolved names with the same text are the same
+   [IL.name], so a lambda and its enclosing function share it. Where
+   [bare_calls_are_receiver_methods] holds, an unresolved bare name is a
+   call of a method of the receiver and does not count. *)
+let is_local_variable ~(lang : Lang.t) (var : IL.name) =
   match !(var.id_info.id_resolved) with
   | Some ((G.Global | G.LocalVar | G.Parameter | G.EnclosedVar), _) -> true
   | Some
       ( ( G.ImportedEntity _ | G.ImportedModule _ | G.GlobalName _
         | G.TypeName | G.Macro | G.EnumConstant ),
-        _ )
-  | None ->
+        _ ) ->
       false
+  | None -> not (Lang_config.get lang).bare_calls_are_receiver_methods
 
-let vars_of_lvals ~(init : IL.NameSet.t) (lvals : IL.lval Seq.t) : IL.NameSet.t =
+let vars_of_lvals ~(lang : Lang.t) ~(init : IL.NameSet.t)
+    (lvals : IL.lval Seq.t) : IL.NameSet.t =
   Seq.fold_left
     (fun vars (lval : IL.lval) ->
       match lval.base with
-      | Var var when is_local_variable var -> IL.NameSet.add var vars
+      | Var var when is_local_variable ~lang var -> IL.NameSet.add var vars
       | Var _ | VarSpecial _ | Mem _ -> vars)
     init lvals
 
@@ -3385,10 +3389,11 @@ let vars_of_cfg ~(lang : Lang.t) (fun_cfg : IL.fun_cfg) : IL.NameSet.t =
                [])
     |> IL.NameSet.of_list
   in
-  vars_of_lvals ~init:params (lvals_of_cfg ~nested:false fun_cfg)
+  vars_of_lvals ~lang ~init:params (lvals_of_cfg ~nested:false fun_cfg)
 
-let vars_of_subtree (lambda_cfg : IL.fun_cfg) : IL.NameSet.t =
-  vars_of_lvals ~init:IL.NameSet.empty (lvals_of_cfg ~nested:true lambda_cfg)
+let vars_of_subtree ~(lang : Lang.t) (lambda_cfg : IL.fun_cfg) : IL.NameSet.t =
+  vars_of_lvals ~lang ~init:IL.NameSet.empty
+    (lvals_of_cfg ~nested:true lambda_cfg)
 
 (* All lambdas of a function, innermost first, so that a nested lambda's
    signature is extracted before its parent's, each with [outer_vars], the
@@ -3403,7 +3408,7 @@ let rec collect_all_lambdas_innermost_first ~(lang : Lang.t)
     (IL.name * IL.fun_cfg * (IL.name -> bool)) list =
   let own_vars = vars_of_cfg ~lang fun_cfg in
   let own var = outer_vars var || IL.NameSet.mem var own_vars in
-  let subtrees = IL.NameMap.map vars_of_subtree fun_cfg.lambdas in
+  let subtrees = IL.NameMap.map (vars_of_subtree ~lang) fun_cfg.lambdas in
   (* For each variable, the number of sibling lambdas whose subtree
      mentions it. A sibling other than [name] mentions a variable exactly
      when that number is two or more, or when it is one and [name]'s

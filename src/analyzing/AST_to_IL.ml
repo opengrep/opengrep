@@ -96,6 +96,11 @@ type env = {
    * the consumer sends in, which no argument of the method says anything
    * about. *)
   yield_block : name option;
+  (* The captures by reference that alias a fixed object ([&r = x],
+   * [&r = a.b]), of the lambda being lowered and of the lambdas enclosing it,
+   * keyed by the sid [Naming_AST] gives them, each with the lval of that
+   * object where its lambda is created. *)
+  capture_aliases : (G.SId.t * lval) list;
 }
 
 let empty_env (lang : Lang.t) (file : string) : env =
@@ -106,6 +111,7 @@ let empty_env (lang : Lang.t) (file : string) : env =
     inside_function = false;
     pattern_binds_lvals = false;
     yield_block = None;
+    capture_aliases = [];
     file;
     idx_counter = Atomic.make 1;
     lang }
@@ -326,7 +332,7 @@ let is_constructor env ret_ty id_info : bool =
 (* Clojure wraps function bodies and macro-expanded forms such as [->>] in
  * [OtherExpr("ExprBlock", ...)] / [OtherExpr("->>", ...)] wrappers whose last
  * sub-expression carries the value. [mark_first_instr_ancestor] sets
- * [is_implicit_return] on the inner value-producing G.expr (e.g. the Call), but
+ * [implicit_return] on the inner value-producing G.expr (e.g. the Call), but
  * the lowering sites check the flag on the outer ExprStmt's eorig, which is
  * the wrapper, not the inner expression. This helper treats a wrapper as
  * implicitly-returned when its last sub-expression is.
@@ -334,7 +340,7 @@ let is_constructor env ret_ty id_info : bool =
  * Likewise for a conditional expression, 'c ? e1 : e2': the flag is set on
  * the two branches, which are what the last instructions compute. *)
 let rec effective_implicit_return env (eorig : G.expr) : bool =
-  if eorig.is_implicit_return then true
+  if G.is_implicitly_returned eorig then true
   else
     match eorig.e with
     | G.Conditional (_, e1, e2) ->
@@ -343,7 +349,7 @@ let rec effective_implicit_return env (eorig : G.expr) : bool =
       when env.lang =*= Lang.Clojure
            && CLJ_ME1.expands_as_block kind -> (
         match List.rev exprs with
-        | G.E { is_implicit_return = true; _ } :: _ -> true
+        | G.E (last : G.expr) :: _ -> G.is_implicitly_returned last
         | _ -> false)
     | _ -> false
 
@@ -515,9 +521,19 @@ and name env : G.name -> lval = function
   | G.Id (("_", tok), _) ->
       (* wildcard *)
       fresh_lval env tok
-  | G.Id (id, id_info) ->
-      let lval = lval_of_id_info id id_info in
-      lval
+  | G.Id (id, id_info) -> (
+      let alias =
+        match !(id_info.id_resolved) with
+        | Some (_, sid) ->
+            List.find_map
+              (fun (alias_sid, lval) ->
+                if G.SId.equal sid alias_sid then Some lval else None)
+              env.capture_aliases
+        | None -> None
+      in
+      match alias with
+      | Some lval -> lval
+      | None -> lval_of_id_info id id_info)
   | G.IdQualified qualified_info ->
       let lval = lval_of_id_qualified qualified_info in
       lval
@@ -2301,8 +2317,9 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       (ss, mk_e (Composite (kind, (l, xs, r))) eorig)
   | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
       comprehension env er clauses
-  | G.Lambda fdef ->
+  | G.Lambda (fdef, captures) ->
       let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+      let ss_init, aliases = capture_initialisers env captures in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -2310,11 +2327,12 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           { env with cont_label = None;
                      break_labels = [];
                      rec_point_label = None;
-                     rec_point_lvals = None }
+                     rec_point_lvals = None;
+                     capture_aliases = aliases @ env.capture_aliases }
           fdef
       in
       let instr = mk_s (Instr (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig)) in
-      ([instr], mk_e (Fetch lval) eorig)
+      (ss_init @ [ instr ], mk_e (Fetch lval) eorig)
   | G.AnonClass def ->
       (* TODO: should use def.ckind *)
       let tok = Common2.fst3 def.G.cbody in
@@ -2679,6 +2697,93 @@ and expr env ?void e_gen : stmts * exp =
   try expr_aux env ?void e_gen with
   | Fixme (kind, any_generic) ->
       ([], fixme_exp kind any_generic (related_exp e_gen))
+
+(* The initialised captures of a lambda, where it is created. One by copy,
+ * [[y = e]], [[y(e)]] or [[y{e}]], is a new variable of the lambda assigned
+ * there, which the lambda then captures; an initialiser of several
+ * expressions, [[y(a, b)]], assigns their container. One by reference to a
+ * fixed object is an alias of that object inside the lambda (see
+ * [capture_alias]). One by reference to anything else, [[&r = *p]],
+ * [[&r = v[i]]], [[&r = f()]], refers to an object fixed there, which the
+ * expression may later no longer refer to; without alias analysis it is
+ * read with its value there. *)
+and capture_initialisers env (captures : G.captures option) :
+    stmts * (G.SId.t * lval) list =
+  let initialise (capture : G.capture) : (stmts * (G.SId.t * lval) list) option
+      =
+    match capture with
+    | G.CaptureVar (_, id, id_info, _, Some init) -> (
+        match capture_alias env capture with
+        | Some (ss, alias) -> Some (ss, [ alias ])
+        | None ->
+            let init_e = capture_init_value init in
+            let ss, e = expr env init_e in
+            let assign =
+              mk_s
+                (Instr
+                   (mk_i
+                      (Assign (lval_of_id_info id id_info, e))
+                      (related_exp init_e)))
+            in
+            Some (ss @ [ assign ], []))
+    | G.CaptureVar (_, _, _, _, None)
+    | G.CaptureThis _
+    | G.CaptureEllipsis _ ->
+        None
+  in
+  match captures with
+  | None -> ([], [])
+  | Some { cexplicit; _ } ->
+      let ss, aliases = cexplicit |> List_.filter_map initialise |> List.split in
+      (List.concat ss, List.concat aliases)
+
+(* The value a capture's initialiser gives the new variable: its expression,
+ * or the container of its expressions when it has several, or none. *)
+and capture_init_value (init : G.capture_init) : G.expr =
+  match init with
+  | G.InitAssign (_, e)
+  | G.InitDirect (_, [ e ], _)
+  | G.InitList (_, [ e ], _) ->
+      e
+  | G.InitDirect exprs
+  | G.InitList exprs ->
+      G.Container (G.Array, exprs) |> G.e
+
+(* A capture by reference initialised with a fixed object, [[&r = x]],
+ * [[&r(x)]], [[&r{x}]], is an alias of that object: the variable, in every
+ * language; in C and C++, also a field path of a variable or of [this],
+ * [[&r = a.b]], [[&r = this->x]], since a field of a C++ object is part of
+ * the object (value semantics). The statements are those of the lval. *)
+and capture_alias env (capture : G.capture) :
+    (stmts * (G.SId.t * lval)) option =
+  let rec is_field_path (e : G.expr) =
+    match e.G.e with
+    | G.N (G.Id _)
+    | G.DeRef (_, { e = G.IdSpecial (G.This, _); _ }) ->
+        true
+    | G.DotAccess (e, _, G.FN (G.Id _)) -> is_field_path e
+    | _ -> false
+  in
+  let is_fixed_object (e : G.expr) =
+    match (e.G.e, env.lang) with
+    | G.N (G.Id _), _ -> true
+    | _, (Lang.C | Lang.Cpp) -> is_field_path e
+    | _ -> false
+  in
+  match capture with
+  | G.CaptureVar (_, _, id_info, (G.ByReference, _), Some init) -> (
+      let init_e = capture_init_value init in
+      match !(id_info.id_resolved) with
+      | Some (_, sid) when is_fixed_object init_e ->
+          let ss, lv = lval env init_e in
+          Some (ss, (sid, lv))
+      | Some _
+      | None ->
+          None)
+  | G.CaptureVar _
+  | G.CaptureThis _
+  | G.CaptureEllipsis _ ->
+      None
 
 and expr_opt env tok : G.expr option -> stmts * exp = function
   | None ->
@@ -4048,7 +4153,7 @@ and stmt_aux env st : stmts =
       let ss, _ = type_ env ty in
       ss
   | G.DefStmt ({ G.name = G.EDynamic lhs; _ }, G.FuncDef fdef) ->
-      let ss_lambda, rhs = expr env (G.Lambda fdef |> G.e) in
+      let ss_lambda, rhs = expr env (G.Lambda (fdef, None) |> G.e) in
       let ss_assign, _ = assign env ~g_expr:lhs lhs (snd fdef.fkind) rhs in
       ss_lambda @ ss_assign
   | G.DefStmt (ent, G.FuncDef fdef) when env.inside_function ->
@@ -4634,11 +4739,30 @@ let file_of_any (any : G.any) : string =
   | Some (loc, _) -> Fpath.to_string (Fpath.normalize loc.Tok.pos.file)
   | None -> ""
 
-let function_definition lang fdef : function_definition =
+let function_definition_env (lang : Lang.t) (fdef : G.function_definition) :
+    env =
+  empty_env lang (file_of_any (G.Partial (G.PartialLambdaOrFuncDef fdef)))
+
+(* A lambda lowered on its own, away from where it is created: its captures
+ * by reference alias their objects as where it is created; the assignments
+ * of its other initialised captures belong to that place and are left out.
+ * The captures of the lambdas enclosing it, [enclosing_captures], outermost
+ * first, give their aliases as when it is lowered inside them. *)
+let lambda_definition (lang : Lang.t)
+    ~(enclosing_captures : G.captures list) (captures : G.captures option)
+    (fdef : G.function_definition) : function_definition =
   let env =
-    empty_env lang (file_of_any (G.Partial (G.PartialLambdaOrFuncDef fdef)))
+    enclosing_captures @ Option.to_list captures
+    |> List.fold_left
+         (fun env (captures : G.captures) ->
+           let _, aliases = capture_initialisers env (Some captures) in
+           { env with capture_aliases = aliases @ env.capture_aliases })
+         (function_definition_env lang fdef)
   in
   function_definition env fdef
+
+let function_definition lang fdef : function_definition =
+  function_definition (function_definition_env lang fdef) fdef
 
 let stmt lang st : stmts =
   let env = empty_env lang (file_of_any (G.S st)) in

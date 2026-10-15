@@ -345,19 +345,27 @@ let build_info_map
     if Shape_and_sig.FunctionMap.mem fid info_map then info_map
     else Shape_and_sig.FunctionMap.add fid info info_map
   in
+  (* [closure]: [Some] for a function analysed as a closure, with the
+     captures of the lambdas enclosing it. *)
   let build_fun_info (name : IL.name) ~(class_name_str : string option)
       ~(method_properties : G.expr list) ~(is_static : bool)
-      ~(is_closure : bool)
+      ~(closure : (G.captures option * G.captures list) option)
       (fdef : G.function_definition) : fun_info =
-    let fdef_il = AST_to_IL.function_definition lang fdef in
+    let fdef_il =
+      match closure with
+      | Some (captures, enclosing_captures) ->
+          AST_to_IL.lambda_definition lang ~enclosing_captures captures fdef
+      | None -> AST_to_IL.function_definition lang fdef
+    in
     let cfg = CFG_build.cfg_of_fdef fdef_il in
     { name; class_name_str; method_properties; is_static;
-      cfg; fdef; is_closure;
+      cfg; fdef; is_closure = Option.is_some closure;
       file_ast = None; taint_inst = None }
   in
   let info_map =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun info_map ~object_literal_method opt_ent parent_path fdef ->
+      (fun info_map ~object_literal_method ~captures ~enclosing_captures
+           opt_ent parent_path fdef ->
         (* A method of an object literal inside a function is visited as a
            closure of that function, without an entity: a lambda. *)
         let as_lambda =
@@ -381,7 +389,7 @@ let build_info_map
                let info =
                  build_fun_info name ~class_name_str
                    ~method_properties:[] ~is_static:false
-                   ~is_closure:true fdef
+                   ~closure:(Some (captures, enclosing_captures)) fdef
                in
                add_info fid info info_map)
         else (
@@ -433,7 +441,7 @@ let build_info_map
                    in
                    let info =
                      build_fun_info name ~class_name_str ~method_properties
-                       ~is_static ~is_closure:false fdef
+                       ~is_static ~closure:None fdef
                    in
                    add_info fid info info_map)))
       Shape_and_sig.FunctionMap.empty

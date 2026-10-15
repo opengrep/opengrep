@@ -61,6 +61,8 @@ type mvalue =
   | Ss of AST_generic.stmt list
   | Args of AST_generic.argument list
   | Params of AST_generic.parameter list
+  | Captures of AST_generic.capture list
+  | BlockLocals of (AST_generic.ident * AST_generic.id_info) list
   | Xmls of AST_generic.xml_body list
   (* Text below is used to match the content of a string or atom, without the
    * enclosing quotes. For a string this can actually be empty. Includes both
@@ -105,6 +107,8 @@ let mvalue_to_any = function
   | Ss x -> G.Ss x
   | Args x -> G.Args x
   | Params x -> G.Params x
+  | Captures x -> G.Captures x
+  | BlockLocals x -> G.BlockLocals x
   | Xmls x -> G.Xmls x
   | T x -> G.T x
   | P x -> G.P x
@@ -126,6 +130,8 @@ let mvalue_to_expr = function
   | Ss _
   | Args _
   | Params _
+  | Captures _
+  | BlockLocals _
   | Xmls _
   | T _
   | P _
@@ -147,6 +153,8 @@ let mvalue_of_any any =
   | Ss x -> Ss x
   | Args x -> Args x
   | Params x -> Params x
+  | Captures x -> Captures x
+  | BlockLocals x -> BlockLocals x
   | Xmls x -> Xmls x
   | T x -> T x
   | P x -> P x
@@ -205,6 +213,8 @@ let program_of_mvalue : mvalue -> G.program option =
   | Raw x -> Some [ G.exprstmt (G.RawExpr x |> G.e) ]
   | Ss stmts -> Some stmts
   | Params _
+  | Captures _
+  | BlockLocals _
   | Args _
   | Xmls _
   | T _

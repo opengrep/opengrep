@@ -1288,7 +1288,7 @@ and function_literal (env : env) (x : CST.function_literal) =
       let func_def =
         { fkind = kind; fparams = v3; frettype = v4; fbody = v5 }
       in
-      Lambda func_def |> G.e
+      Lambda (func_def, None) |> G.e
 
 and function_type (env : env) ((v1, v2, v3, v4) : CST.function_type) =
   let _v1TODO =
@@ -1522,7 +1522,7 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
   let func_def =
     { fkind = kind; fparams = fb params; frettype = None; fbody }
   in
-  Lambda func_def |> G.e
+  Lambda (func_def, None) |> G.e
 
 and var_or_multivar (env : env) (x : CST.lambda_parameter) =
   match x with
@@ -1844,7 +1844,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
         match g_expr_v1.e, g_args_v2 with
         (* Pattern match for the specific structure of a scope function call *)
         | G.DotAccess (receiver_g_expr, _, G.FN (G.Id ((name, _), _))),
-          (l_paren, [ G.Arg ({ e = G.Lambda fdef; _ } as lambda_g_expr) ], r_paren) ->
+          (l_paren, [ G.Arg ({ e = G.Lambda (fdef, captures); _ } as lambda_g_expr) ], r_paren) ->
             (
               if List.exists (String.equal name) scope_function_names then
                   (match Tok.unbracket fdef.fparams with
@@ -1886,7 +1886,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
                         
                         (* Reconstruct the AST with the modified lambda. *)
                         let new_fdef = { fdef with fbody = new_fbody } in
-                        let new_lambda_g_expr = { lambda_g_expr with e = G.Lambda new_fdef } in
+                        let new_lambda_g_expr = { lambda_g_expr with e = G.Lambda (new_fdef, captures) } in
                         let new_arg = G.Arg new_lambda_g_expr in
 
                         (* Return the original call expression but with the modified arguments tuple. *)

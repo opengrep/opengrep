@@ -172,7 +172,7 @@ class ['self] matching_visitor =
        * equivalence feels more natural here, and it allows us to keep
        * the cases in Generic_vs_generic not too complicated.
        *)
-      if env.implicit_return && e.is_implicit_return then
+      if env.implicit_return && is_implicitly_returned_in_source e then
         let ret = Return (fake "return", Some e, sc) |> s in
         self#visit_stmt env ret
 

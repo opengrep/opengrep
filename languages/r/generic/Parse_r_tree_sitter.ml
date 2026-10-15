@@ -302,10 +302,10 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
       Call (e, (l, xs, r)) |> G.e
   | `Func_defi x ->
       let func = map_function_definition env x in
-      Lambda func |> G.e
+      Lambda (func, None) |> G.e
   | `Lambda_func x ->
       let func = map_lambda_function env x in
-      Lambda func |> G.e
+      Lambda (func, None) |> G.e
   | `Assign x -> map_assignment env x
   | `Paren_list (v1, v2, v3) ->
       let l = (* "(" *) token env v1 in

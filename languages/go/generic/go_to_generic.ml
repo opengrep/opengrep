@@ -351,7 +351,7 @@ let top_func () =
         G.TypedMetavar (v1, v2, v3)
     | FuncLit (v1, v2) ->
         let ftok, params, ret = func_type v1 and v2 = stmt v2 in
-        G.Lambda (mk_func_def (G.LambdaKind, ftok) params ret (G.FBStmt v2))
+        G.Lambda (mk_func_def (G.LambdaKind, ftok) params ret (G.FBStmt v2), None)
     | Receive (v1, v2) ->
         let v1 = tok v1 and v2 = expr v2 in
         G.OtherExpr (("Receive", v1), [ G.E v2 ])

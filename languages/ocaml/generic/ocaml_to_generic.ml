@@ -48,7 +48,7 @@ let add_attrs ent attrs = { ent with G.attrs }
 let mk_var_or_func tlet params tret body =
   (* coupling: with stmt() and what is generated for simple expressions *)
   match (params, body.G.s) with
-  | [], G.OtherStmt (G.OS_ExprStmt2, [ G.E { e = G.Lambda def; _ } ]) ->
+  | [], G.OtherStmt (G.OS_ExprStmt2, [ G.E { e = G.Lambda (def, _); _ } ]) ->
       G.FuncDef def
   | [], G.OtherStmt (G.OS_ExprStmt2, [ G.E e ]) ->
       G.VarDef { G.vinit = Some e; vtype = tret; vtok = G.no_sc }
@@ -382,7 +382,7 @@ and expr e =
           fbody = G.FBExpr v2;
         }
       in
-      G.Lambda def |> G.e
+      G.Lambda (def, None) |> G.e
   | Function (t, xs) ->
       let xs = list (fun a -> a |> match_case |> G.case_of_pat_and_expr) xs in
       let id = G.implicit_param_id t in
@@ -393,12 +393,12 @@ and expr e =
         |> G.s
       in
       G.Lambda
-        {
+        ({
           G.fparams = fb params;
           frettype = None;
           fkind = (G.Function, t);
           fbody = G.FBStmt body_stmt;
-        }
+        }, None)
       |> G.e
   | ExprTodo (t, xs) ->
       let t = todo_category t in

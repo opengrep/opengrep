@@ -53,5 +53,5 @@ let convert_elixir_short_lambda (e : G.expr) : G.expr =
           fbody = G.FBStmt body;
         }
       in
-      G.Lambda fdef |> G.e
+      G.Lambda (fdef, None) |> G.e
   | _ -> e

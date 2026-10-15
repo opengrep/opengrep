@@ -1,0 +1,13 @@
+rules:
+  - id: php_lambda_reads_unresolved_superglobal
+    message: a lambda captures a variable that naming does not resolve
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
