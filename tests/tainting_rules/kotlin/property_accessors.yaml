@@ -1,0 +1,17 @@
+rules:
+- id: taint
+  languages: [kotlin]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+    - patterns:
+        - pattern-inside: |
+            var fromParameter: String = ...
+                set($VALUE: String) {
+                    ...
+                }
+        - focus-metavariable: $VALUE
+  pattern-sinks:
+    - pattern: sink(...)
