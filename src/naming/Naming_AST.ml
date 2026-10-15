@@ -863,6 +863,28 @@ let declare_class_or_type (env : 'ns env) (lang : Lang.t) (entity : entity)
           declare_in_scope env lang ns scope add ~keep_type:false id id_info)
   | _ -> ()
 
+(* A constructor is not a member of its class: its name refers to the class
+   (JLS 8.8). *)
+let resolve_constructors (entity : entity) (c : class_definition) : unit =
+  match entity.name with
+  | EN (Id (_, class_info)) -> (
+      match !(class_info.id_resolved) with
+      | None -> ()
+      | Some _ as resolved ->
+          let _, fields, _ = c.cbody in
+          fields
+          |> List.iter (fun (F stmt : field) ->
+                 match stmt.s with
+                 | DefStmt ({ name = EN (Id (_, ctor_info)); attrs; _ }, FuncDef _)
+                   when List.exists
+                          (function
+                            | KeywordAttr (Ctor, _) -> true
+                            | _ -> false)
+                          attrs ->
+                     ctor_info.id_resolved := resolved
+                 | _ -> ()))
+  | _ -> ()
+
 let function_definition_kind (env : 'ns env) : Lang_namespaces.definition_kind =
   match top_context env with
   | InClass -> Method
@@ -885,6 +907,10 @@ let declare_class_members env lang (c : class_definition) : unit =
              when env.function_namespace ->
                declare_func env lang (function_definition_kind env) id id_info
                  frettype
+           | DefStmt (entity, ClassDef nested) ->
+               declare_class_or_type env lang entity (Class (fst nested.ckind))
+           | DefStmt (entity, TypeDef _) ->
+               declare_class_or_type env lang entity Type_alias
            | _ -> ())
 
 let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
@@ -998,7 +1024,8 @@ class ['self, 'ns] resolve_visitor (env : 'ns env) (lang : Lang.t) =
                   declare_class_members env lang c;
                   self#visit_class_or_type_entity venv entity;
                   self#visit_class_definition venv c));
-          declare_class_or_type env lang entity (Class (fst c.ckind))
+          declare_class_or_type env lang entity (Class (fst c.ckind));
+          resolve_constructors entity c
       (* `const x = require('y');` (or var, or let)
        *
        * JS: This is a CommonJS import, popularized before ES6 standardized

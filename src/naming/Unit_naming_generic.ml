@@ -30,6 +30,44 @@ let resolutions_of_name ast name =
   visitor#visit_program () ast;
   List.rev !acc
 
+(* The resolutions of every use of [name] as a type, in source order. *)
+let type_resolutions_of_name ast name =
+  let acc = ref [] in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_type_ venv ty =
+        (match ty.AST_generic.t with
+        | AST_generic.TyN (AST_generic.Id ((s, _), id_info))
+          when String.equal s name ->
+            acc := !(id_info.AST_generic.id_resolved) :: !acc
+        | _ -> ());
+        super#visit_type_ venv ty
+    end
+  in
+  visitor#visit_program () ast;
+  List.rev !acc
+
+(* The resolutions of every annotation or decorator [name], in source order. *)
+let attribute_resolutions_of_name ast name =
+  let acc = ref [] in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_attribute venv attr =
+        (match attr with
+        | AST_generic.NamedAttr (_, AST_generic.Id ((s, _), id_info), _)
+          when String.equal s name ->
+            acc := !(id_info.AST_generic.id_resolved) :: !acc
+        | _ -> ());
+        super#visit_attribute venv attr
+    end
+  in
+  visitor#visit_program () ast;
+  List.rev !acc
+
 let kind_of_resolution = function
   | None -> "Unresolved"
   | Some ((kind : AST_generic.resolved_name_kind), _sid) -> (
@@ -335,10 +373,23 @@ let tests parse_program =
           (* JS keeps the full-chain lookup: the bare assignment in setup()
              mutates the module-level `state`, it does not declare a local. *)
           check_resolutions ast "state" [ "Global"; "Global" ]);
+      t "an annotation refers to the imported type, not the variable of the same name"
+        (fun () ->
+          [ ("naming/java/annotation_and_field.java", "Inject") ]
+          |> List.iter (fun ((path, name) : string * string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 Alcotest.(check (list string))
+                   (spf "%s: resolutions of the annotation %s" path name)
+                   [ "ImportedEntity" ]
+                   (attribute_resolutions_of_name ast name
+                   |> List.map kind_of_resolution)));
       t "a class or type definition does not resolve to the variable of the same name"
         (fun () ->
           (* a type alias next to a constant, and a nested class next to a
-             field: only the constant and the field are bindings *)
+             field: the use refers to the constant or the field, and the
+             alias or the class does not share its binding *)
           [
             ("naming/rust/type_alias_and_constant.rs", "T");
             ("naming/java/nested_class_and_field.java", "Inner");
@@ -349,17 +400,47 @@ let tests parse_program =
                  Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
                  match (def_sids_of_name ast name, resolutions_of_name ast name)
                  with
-                 | [ variable ], [ Some (_kind, use) ] ->
+                 | variable :: others, [ Some (_kind, use) ] ->
                      Alcotest.(check bool)
                        (spf "the use of %s refers to the variable" name)
                        true
-                       (AST_generic.SId.equal variable use)
+                       (AST_generic.SId.equal variable use);
+                     Alcotest.(check bool)
+                       (spf "no other definition of %s shares its binding" name)
+                       true
+                       (List.for_all
+                          (fun (other : AST_generic.SId.t) ->
+                            not (AST_generic.SId.equal variable other))
+                          others)
                  | definitions, uses ->
                      Alcotest.failf
-                       "%s: expected one resolved definition and one resolved \
+                       "%s: expected a resolved definition and one resolved \
                         use of %s, found %d and %d"
                        path name (List.length definitions)
                        (List.length (List.filter Option.is_some uses))));
+      t "java uses of a type refer to the nested class" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/nested_class_and_field.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the definitions are the field, then the class; the uses in a
+             type are the return type and the type of [new Inner()] *)
+          match (def_sids_of_name ast "Inner", type_resolutions_of_name ast "Inner")
+          with
+          | [ _field; class_ ], [ Some (_, return_type); Some (_, instance) ] ->
+              Alcotest.(check bool) "the return type refers to the class" true
+                (AST_generic.SId.equal class_ return_type);
+              Alcotest.(check bool) "the type of the instance refers to the class"
+                true
+                (AST_generic.SId.equal class_ instance)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two type uses of Inner, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
       t "python class binds its name in its scope" (fun () ->
           let file =
             Fpath.v
