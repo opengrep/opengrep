@@ -862,6 +862,21 @@ class ['self] resolve_visitor env lang =
     (* ---------- *)
     (* !the defs! *)
     (* ---------- *)
+
+    method private visit_attributes_and_type_parameters (venv : unit)
+        (attrs : attribute list) (tparams : type_parameters option) =
+      List.iter (self#visit_attribute venv) attrs;
+      Option.iter (self#visit_type_parameters venv) tparams
+
+    (* Name resolution binds no class or type, and a plain name in their
+       definition is a defining occurrence: a lookup would find whatever
+       variable or field of that name is in scope. *)
+    method private visit_class_or_type_entity (venv : unit) (entity : entity) =
+      match entity with
+      | { name = EN (Id _); attrs; tparams } ->
+          self#visit_attributes_and_type_parameters venv attrs tparams
+      | _ -> self#visit_entity venv entity
+
     method! visit_function_definition venv x =
       (* todo: add the function as a Global. In fact we should do a first
        * pass for some languages to add all of them first, because
@@ -920,7 +935,7 @@ class ['self] resolve_visitor env lang =
               with_new_function_scope (special_class_params @ class_params)
                 env.names (fun () ->
                   declare_class_members env lang c;
-                  self#visit_entity venv entity;
+                  self#visit_class_or_type_entity venv entity;
                   self#visit_class_definition venv c))
       (* `const x = require('y');` (or var, or let)
        *
@@ -1031,8 +1046,7 @@ class ['self] resolve_visitor env lang =
           (* Visit attrs and tparams before vtype, matching the original order
            * in the generic visitor. This matters for C++ template variables
            * where vtype may reference type parameters from tparams. *)
-          List.iter (self#visit_attribute venv) attrs;
-          Option.iter (self#visit_type_parameters venv) tparams;
+          self#visit_attributes_and_type_parameters venv attrs tparams;
           Option.iter (self#visit_type_ venv) vtype;
           declare_var env lang id id_info ~explicit:true vinit vtype;
           if
@@ -1153,6 +1167,9 @@ class ['self] resolve_visitor env lang =
             { macroparams = []; macrobody = [ E ({ e = L _; _ } as e) ] } ) ->
           declare_var env lang id id_info ~is_macro:true ~explicit:true (Some e) None;
           super#visit_definition venv x
+      | entity, (TypeDef _ as kind) ->
+          self#visit_class_or_type_entity venv entity;
+          self#visit_definition_kind venv kind
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
 

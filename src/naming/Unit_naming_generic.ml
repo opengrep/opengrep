@@ -49,7 +49,7 @@ let check_resolutions ast name expected =
     (spf "resolutions of '%s'" name)
     expected actual
 
-(* The sid of the definition (def/class entity) named [name]. *)
+(* The sid of the first definition of [name] that has a binding. *)
 let def_sid_of_name ast name =
   let acc = ref None in
   let visitor =
@@ -70,7 +70,7 @@ let def_sid_of_name ast name =
   visitor#visit_program () ast;
   !acc
 
-(* The sids of every definition (def/class entity) named [name], in order. *)
+(* The sids of every definition of [name] that has a binding, in order. *)
 let def_sids_of_name ast name =
   let acc = ref [] in
   let visitor =
@@ -352,4 +352,29 @@ let tests parse_program =
           (* JS keeps the full-chain lookup: the bare assignment in setup()
              mutates the module-level `state`, it does not declare a local. *)
           check_resolutions ast "state" [ "Global"; "Global" ]);
+      t "a class or type definition does not resolve to the variable of the same name"
+        (fun () ->
+          (* a type alias next to a constant, and a nested class next to a
+             field: only the constant and the field are bindings *)
+          [
+            ("naming/rust/type_alias_and_constant.rs", "T");
+            ("naming/java/nested_class_and_field.java", "Inner");
+          ]
+          |> List.iter (fun ((path, name) : string * string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match (def_sids_of_name ast name, resolutions_of_name ast name)
+                 with
+                 | [ variable ], [ Some (_kind, use) ] ->
+                     Alcotest.(check bool)
+                       (spf "the use of %s refers to the variable" name)
+                       true
+                       (AST_generic.SId.equal variable use)
+                 | definitions, uses ->
+                     Alcotest.failf
+                       "%s: expected one resolved definition and one resolved \
+                        use of %s, found %d and %d"
+                       path name (List.length definitions)
+                       (List.length (List.filter Option.is_some uses))));
     ]
