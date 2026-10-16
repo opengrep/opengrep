@@ -19,4 +19,28 @@ class SwitchCase {
       _ => 0,
     };
   }
+
+  void guardAmongLabelsFails() {
+    var x = taint_source();
+    object k = 3;
+    switch (k) {
+      case 1:
+      case int n when n > 5:
+        // ok: taint-switch-case-csharp
+        sink(x);
+        break;
+    }
+  }
+
+  void guardAmongLabelsHolds() {
+    var x = taint_source();
+    object k = 7;
+    switch (k) {
+      case 1:
+      case int n when n > 5:
+        // ruleid: taint-switch-case-csharp
+        sink(x);
+        break;
+    }
+  }
 }

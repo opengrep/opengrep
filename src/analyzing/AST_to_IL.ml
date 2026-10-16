@@ -774,9 +774,8 @@ and pattern env pat : stmts * lval * stmts =
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
       let guard_stmts, _e_guard = expr env when_expr in
-      (* TODO: Handle fallthrough which is now true by default for
-       * this kind of pattern. But I wonder if it would be pointless
-       * to bother with it. *)
+      (* Here the guard is evaluated but not tested. The guard of a label of
+       * a switch is tested in [guarded_label_tests]. *)
       (pre_ss, lval, pat_stmts @ guard_stmts)
   | G.DisjPat (pat1, _pat2) ->
     (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
@@ -1031,6 +1030,9 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) | G.PatTyped (inner, _) ->
       pattern_match_cond env scrutinee inner
+  (* The guard of a label of a switch is tested in [guarded_label_tests],
+   * after the bindings of the pattern; a guard nested in a pattern is
+   * not. *)
   | G.PatWhen (inner, _guardTODO) ->
       pattern_match_cond env scrutinee inner
   | G.PatLiteral _
@@ -4371,7 +4373,6 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
             (ss @ pm_ss, pm_cond :: es)
         | G.Case (tok, G.OtherPat (_, [ E c ]))
         | G.CaseEqualExpr (tok, c) ->
-            (* TODO: PatWhen should use something along these lines... *)
             let c_ss, c' = expr env c in
             ( ss @ c_ss,
               {
@@ -4388,7 +4389,9 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
             (* Generic structural cond via [pattern_match_cond]: covers
              * [PatLiteral] (when nested), [PatList]/[PatTuple] (length +
              * per-slot recursion), [PatType], and via [pattern_to_expr]
-             * any future patterns the helper grows to support. *)
+             * any future patterns the helper grows to support. A PatWhen
+             * guard is not part of this condition: [guarded_label_tests]
+             * tests it after the bindings of its pattern. *)
             let pm_ss, pm_cond = pattern_match_cond env switch_expr pat in
             (ss @ pm_ss, pm_cond :: es)
         | G.OtherCase ((_todo_categ, tok), _any) ->
@@ -4452,9 +4455,21 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           lower_body xs (* TODO this is not tail recursive *)
       in
       let label = fresh_label env ~label:"__switch_case" tok in
-      let case_ss, case = translate_cases env cases in
-      let jump =
-        mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps))
+      let is_guarded = function
+        | G.Case (_, G.PatWhen _) -> true
+        | _ -> false
+      in
+      let case_ss, jump, guarded =
+        match switch_expr_opt with
+        | Some cond when List.exists is_guarded cases ->
+            ( [],
+              guarded_label_tests env cond tok translate_cases label cases jumps,
+              true )
+        | _ ->
+            let case_ss, case = translate_cases env cases in
+            ( case_ss,
+              [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ],
+              false )
       in
 
       (* Here we add bindings for the switch pattern, for the common case:
@@ -4466,10 +4481,11 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
        * intention if not to create a variable?
        *)
       let pat_stmts =
-        match switch_expr_opt, cases with
+        match (switch_expr_opt, cases) with
+        (* A branch with a guard binds with its tests, see
+         * [guarded_label_tests]. *)
+        | Some _, _ when guarded -> []
         | Some cond, [ G.Case (_tok, pat) ] ->
-            (* TODO: Need break_label here, if we are to handle PatWhen.
-             * See comments below. *)
             pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
         | _ -> []
       in
@@ -4491,21 +4507,53 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
       let new_stmts = lower_body body in
 
       let body = [ mk_s (Label label) ] @ body_pat_stmts @ new_stmts in
-      (* Maybe lang has no_fallthrough in general but here we have PatWhen
-       * with guard. Not sure any of that makes a true difference though! *)
-      let is_guarded_pat =
-        match cases with
-        | [ G.Case (_, G.PatWhen _) ] -> true
-        | _ -> false
-      in
+      (* A branch with a PatWhen guard breaks like any other: its body is
+       * reached only through a label that matched, with its guard if it has
+       * one; a failed label or guard has already gone on to the next label
+       * or branch. *)
       let break_if_no_fallthrough =
-        if no_switch_fallthrough env.lang && not is_guarded_pat then
-          (* TODO: Now, this instruction must be emitted conditionally
-           * in the translation of PatWhen, in the true branch of the If. *)
+        if no_switch_fallthrough env.lang then
+          (* Reached only through a label that matched, with its guard, if
+           * any. *)
           [ mk_s (Goto (tok, break_label)) ]
         else []
       in
-      (pre_jump_ss @ case_ss @ [ jump ], body @ break_if_no_fallthrough @ bodies)
+      (pre_jump_ss @ case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
+
+(* The tests of a branch with a guard ([PatWhen]): its labels in order. A
+ * guard is tested after the bindings of its pattern, which it may read;
+ * when a label or its guard fails, matching goes on with the next label,
+ * then with [jumps], the tests of the next branches. Each test ends in a
+ * jump, to [body_label] or to the next test, and the bindings sit here
+ * rather than before the body, which a previous body may fall into. *)
+and guarded_label_tests env cond tok translate_cases body_label cases jumps :
+    stmts =
+  let goto label = mk_s (Goto (tok, label)) in
+  let rec tests = function
+    | [] -> jumps
+    | case :: rest ->
+        let next_label = fresh_label env ~label:"__switch_next" tok in
+        let case_ss, case_cond = translate_cases env [ case ] in
+        let on_match =
+          match case with
+          | G.Case (_, G.PatWhen (inner, guard)) ->
+              let bind_ss =
+                pattern_assign_statements env ~eorig:(Related (G.P inner)) cond
+                  inner
+              in
+              let guard_ss, guard_e = expr env guard in
+              bind_ss @ guard_ss
+              @ [ mk_s (IL.If (tok, guard_e, [ goto body_label ], [ goto next_label ])) ]
+          | _ -> [ goto body_label ]
+        in
+        let here =
+          case_ss
+          @ [ mk_s (IL.If (tok, case_cond, on_match, [ goto next_label ]));
+              mk_s (Label next_label) ]
+        in
+        here @ tests rest
+  in
+  tests cases
 
 and stmt env st : stmt list =
   (* A destructuring-assignment context never spans a statement boundary;
