@@ -61,4 +61,26 @@ defmodule SwitchCase do
     # ok: taint-switch-case-elixir
     sink(foo)
   end
+
+  def later_map_clause_is_reachable(m) do
+    x = taint_source()
+    case m do
+      %{a: a} ->
+        g(a)
+      %{b: _b} ->
+        # ruleid: taint-switch-case-elixir
+        sink(x)
+    end
+  end
+
+  def map_pattern_matches_a_bigger_map() do
+    x = taint_source()
+    case %{a: 1, b: 2} do
+      %{a: 1} ->
+        # ruleid: taint-switch-case-elixir
+        sink(x)
+      _ ->
+        0
+    end
+  end
 end

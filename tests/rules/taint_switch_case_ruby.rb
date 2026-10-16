@@ -97,3 +97,12 @@ def integer_label_matches_a_float
     sink(x)
   end
 end
+
+def hash_pattern_matches_a_bigger_hash
+  x = taint_source()
+  case {a: 1, b: 2}
+  in {a: 1}
+    # ruleid: taint-switch-case-ruby
+    sink(x)
+  end
+end

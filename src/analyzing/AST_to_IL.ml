@@ -446,6 +446,22 @@ let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
       inner
   | _ -> p
 
+(* A field offset, as an IL name with empty id_info and the default sid:
+ * the shape of a caller-side field access on an unresolved id_info and of a
+ * record-literal field key. *)
+let dot_offset (ident : G.ident) : offset =
+  {
+    o = Dot { ident; sid = G.SId.unsafe_default; id_info = G.empty_id_info () };
+    oorig = NoOrig;
+  }
+
+(* The offset of a record field: its last segment, the qualifier dropped
+ * (e.g. [M.field] in OCaml). *)
+let record_field_offset (tok : Tok.t) (dot_ident : G.dotted_ident) : offset =
+  match List.rev dot_ident with
+  | last :: _ -> dot_offset last
+  | [] -> dot_offset ("", tok)
+
 (* Build a field [Dot] offset from a map-pair key pattern. Returns [None]
  * for opaque keys — callers fall back to binding the value without a key
  * projection, losing field-sensitivity for that leaf.
@@ -461,31 +477,19 @@ let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
  * [PatLiteral (G.Atom …)] branch — option (3) in the design
  * discussion. *)
 let key_offset_of_pattern (key_pat : G.pattern) : offset option =
-  let mk_dot (s, tok) =
-    {
-      o =
-        Dot
-          {
-            ident = (s, tok);
-            sid = G.SId.unsafe_default;
-            id_info = G.empty_id_info ();
-          };
-      oorig = NoOrig;
-    }
-  in
   let stripped (s, tok) = (String_.strip_wrapping_char ':' s, tok) in
   match key_pat with
-  | G.PatId (id, _) -> Some (mk_dot (stripped id))
-  | G.PatLiteral (G.String (_, id, _)) -> Some (mk_dot (stripped id))
-  | G.PatLiteral (G.Atom (_, id)) -> Some (mk_dot (stripped id))
+  | G.PatId (id, _) -> Some (dot_offset (stripped id))
+  | G.PatLiteral (G.String (_, id, _)) -> Some (dot_offset (stripped id))
+  | G.PatLiteral (G.Atom (_, id)) -> Some (dot_offset (stripped id))
   | G.OtherPat ((((":" | "::") as prefix), _), [ G.Name (G.Id (id, _)) ]) ->
       let s, tok = id in
-      Some (mk_dot (prefix ^ String_.strip_wrapping_char ':' s, tok))
+      Some (dot_offset (prefix ^ String_.strip_wrapping_char ':' s, tok))
   | G.OtherPat
       ( (((":" | "::") as prefix), _),
         [ G.Name (G.IdQualified { name_last = (id, _); _ }) ] ) ->
       let s, tok = id in
-      Some (mk_dot (prefix ^ String_.strip_wrapping_char ':' s, tok))
+      Some (dot_offset (prefix ^ String_.strip_wrapping_char ':' s, tok))
   | _ -> None
 
 (*****************************************************************************)
@@ -757,14 +761,6 @@ and pattern env pat : stmts * lval * stmts =
      * segment as the field label; the qualifier is dropped. *)
     let tmp = fresh_var env tok2 in
     let tmp_lval = lval_of_base (Var tmp) in
-    let synth_name ident =
-      { ident; sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
-    in
-    let last_ident_of dot_ident =
-      match List.rev dot_ident with
-      | last :: _ -> last
-      | [] -> ("", tok2)
-    in
     let ss =
       List.concat_map
         (fun (dot_ident, pat_i) ->
@@ -774,8 +770,7 @@ and pattern env pat : stmts * lval * stmts =
           | G.OtherPat (("..", _), []) -> []
           | _ ->
               let eorig = Related (G.P pat_i) in
-              let field_name = synth_name (last_ident_of dot_ident) in
-              let offset_i = { o = Dot field_name; oorig = NoOrig } in
+              let offset_i = record_field_offset tok2 dot_ident in
               let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
               pattern_assign_statements env
                 (mk_e (Fetch lval_i) eorig)
@@ -1017,6 +1012,45 @@ and pm_lower_sequence env scrutinee ~allow_rest pats _tok =
   in
   (List.concat slot_setups, pm_conjoin op_tok (lc :: slot_conds))
 
+(* Cond for entries looked up by key or by field: the key is present
+ * ([key in scrutinee], left undecided), and the pattern matches the entry
+ * at its offset, read on [scrutinee] directly as in [pm_slot_of]. A key
+ * with no expression gives an unsupported condition; an entry whose key
+ * has no offset ([key_offset_of_pattern]), or a scrutinee that is not a
+ * Fetch, leaves the entry's value untested. *)
+and pm_lower_entries env scrutinee
+    (entries : (G.expr option * offset option * G.pattern) list) =
+  let op_tok = Tok.unsafe_fake_tok "patmatch" in
+  let setups, conds =
+    entries
+    |> List.map (fun (key_opt, off_opt, p) ->
+           let key_ss, present =
+             match key_opt with
+             | Some key ->
+                 let ss, key_il = expr env key in
+                 ( ss,
+                   mk_e
+                     (Operator ((G.In, op_tok), mk_unnamed_args [ key_il; scrutinee ]))
+                     NoOrig )
+             | None -> ([], fixme_exp ToDo (G.P p) (related_tok op_tok))
+           in
+           let value_ss, value_cond =
+             match (off_opt, scrutinee.e) with
+             | Some off, Fetch lval ->
+                 let entry =
+                   mk_e
+                     (Fetch { lval with rev_offset = off :: lval.rev_offset })
+                     NoOrig
+                 in
+                 pattern_match_cond env entry p
+             | _ ->
+                 ([], mk_e (Literal (G.Bool (true, op_tok))) (related_tok op_tok))
+           in
+           (key_ss @ value_ss, pm_conjoin op_tok [ present; value_cond ]))
+    |> List.split
+  in
+  (List.concat setups, pm_conjoin op_tok conds)
+
 (* Cond for [PatType] with a named type ([TyN]). *)
 and pm_lower_type scrutinee name =
   let op_tok = Tok.unsafe_fake_tok "patmatch" in
@@ -1046,8 +1080,15 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   | G.OtherPat (("PatternHole", tok), []) ->
       ([], true_at tok)
   | G.PatId ((_, tok), _) -> ([], true_at tok)
-  | G.PatAs (inner, _) | G.PatTyped (inner, _) ->
-      pattern_match_cond env scrutinee inner
+  | G.PatAs (inner, _) -> pattern_match_cond env scrutinee inner
+  (* A typed pattern tests the type of the value when the type is a name
+   * ([pm_lower_type]), then its inner pattern. *)
+  | G.PatTyped (inner, ty) -> (
+      let ss, inner_cond = pattern_match_cond env scrutinee inner in
+      match ty.t with
+      | G.TyN name ->
+          (ss, pm_conjoin op_tok [ pm_lower_type scrutinee name; inner_cond ])
+      | _ -> (ss, inner_cond))
   (* The guard of a label of a switch is tested in [guarded_label_tests],
    * after the bindings of the pattern; a guard nested in a pattern is
    * not. *)
@@ -1076,8 +1117,41 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
+  (* A map pattern (map pairs, see [is_map_pair_pattern]): each value
+   * against the entry of its key. It matches a map with other entries too,
+   * so there is no length test. *)
+  | G.PatList (_, (_ :: _ as pats), _) when List.for_all is_map_pair_pattern pats
+    ->
+      pats
+      |> List_.map (fun p ->
+             match unwrap_map_pair_pattern p with
+             | G.PatKeyVal (key, value) ->
+                 let key_expr =
+                   match key with
+                   | G.PatLiteral lit -> Some (G.L lit |> G.e)
+                   | G.OtherPat (("ExprToPattern", _), [ G.E e ]) -> Some e
+                   | _ -> None
+                 in
+                 (key_expr, key_offset_of_pattern key, value)
+             | other -> (None, None, other))
+      |> pm_lower_entries env scrutinee
   | G.PatList (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:true pats t2
+  (* A record pattern: each field's pattern against that field. *)
+  | G.PatRecord (_, fields, t2) ->
+      fields
+      |> List.filter_map (fun (dot_ident, p) ->
+             match p with
+             (* Rest-field marker, e.g. Rust `Q { f, .. }`. *)
+             | G.OtherPat (("..", _), []) -> None
+             | _ ->
+                 let field =
+                   match List.rev dot_ident with
+                   | (s, tok) :: _ -> Some (G.L (G.String (tok, (s, tok), tok)) |> G.e)
+                   | [] -> None
+                 in
+                 Some (field, Some (record_field_offset t2 dot_ident), p))
+      |> pm_lower_entries env scrutinee
   | G.PatType { t = G.TyN name; _ } ->
       ([], pm_lower_type scrutinee name)
   (* C# relational patterns (`< 5`, `>= 0`, …) and Kotlin `when` range tests
