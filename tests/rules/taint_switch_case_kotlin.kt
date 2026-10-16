@@ -101,3 +101,13 @@ fun whenWithoutSubject(n: Int) {
     }
   }
 }
+
+fun emptyArmKeepsTheWhen(k: Int) {
+  var y = 0
+  when (k) {
+    1 -> { y = taint_source() }
+    else -> {}
+  }
+  // ruleid: taint-switch-case-kotlin
+  sink(y)
+}
