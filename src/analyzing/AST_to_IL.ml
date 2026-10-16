@@ -775,6 +775,9 @@ and pattern env pat : stmts * lval * stmts =
         fields
     in
     ([], tmp_lval, ss)
+  (* An element `a: p` of a C# positional pattern binds what `p` binds; the
+   * identifier binds nothing. *)
+  | G.OtherPat (("NamedElement", _), [ G.I _; G.P inner ]) -> pattern env inner
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
       let guard_stmts, _e_guard = expr env when_expr in
@@ -1084,6 +1087,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       ([], true_at tok)
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) -> pattern_match_cond env scrutinee inner
+  (* An element `a: p` of a C# positional pattern (`(a: FOO, ...)`): `p` is
+   * tested at the element's position. *)
+  | G.OtherPat (("NamedElement", _), [ G.I _; G.P inner ]) ->
+      pattern_match_cond env scrutinee inner
   (* A typed pattern tests the type of the value when the type is a name
    * ([pm_lower_type]), then its inner pattern. *)
   | G.PatTyped (inner, ty) -> (

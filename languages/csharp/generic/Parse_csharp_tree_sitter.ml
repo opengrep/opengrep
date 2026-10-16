@@ -2133,9 +2133,10 @@ and positional_pattern_element (env : env) (x : CST.argument) : G.pattern =
       in
       match v1 with
       | None -> pat
-      | Some id ->
-          G.PatTuple
-            (Tok.unsafe_fake_bracket [ G.PatId (id, G.empty_id_info ()); pat ]))
+      (* An element `a: p`: the identifier refers to the tuple element at
+       * this position, and `p` is tested there; the identifier binds
+       * nothing. *)
+      | Some id -> G.OtherPat (("NamedElement", snd id), [ G.I id; G.P pat ]))
   | `Semg_vari_meta _ -> H2.expr_to_pattern (H2.argument_to_expr (argument env x))
 
 (* TODO: generate directly pattern so no need to use H2.expr_to_pattern *)
