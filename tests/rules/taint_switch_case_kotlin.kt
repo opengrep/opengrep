@@ -102,6 +102,31 @@ fun whenWithoutSubject(n: Int) {
   }
 }
 
+fun breakLeavesTheLoop(ks: List<Int>) {
+  var y = 0
+  for (k in ks) {
+    when (k) {
+      1 -> { y = taint_source(); break }
+      else -> {}
+    }
+    y = 0
+  }
+  // ruleid: taint-switch-case-kotlin
+  sink(y)
+}
+
+fun breakSkipsTheRestOfTheLoop(ks: List<Int>) {
+  for (k in ks) {
+    var y = 0
+    when (k) {
+      1 -> { y = taint_source(); break }
+      else -> {}
+    }
+    // ok: taint-switch-case-kotlin
+    sink(y)
+  }
+}
+
 fun emptyArmKeepsTheWhen(k: Int) {
   var y = 0
   when (k) {

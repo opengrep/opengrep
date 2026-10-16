@@ -107,6 +107,33 @@ def hash_pattern_matches_a_bigger_hash
   end
 end
 
+def break_leaves_the_loop(k)
+  y = 0
+  while more()
+    case k
+    when 1
+      y = taint_source()
+      break
+    end
+    y = 0
+  end
+  # ruleid: taint-switch-case-ruby
+  sink(y)
+end
+
+def break_skips_the_rest_of_the_loop(k)
+  while more()
+    y = 0
+    case k
+    when 1
+      y = taint_source()
+      break
+    end
+    # ok: taint-switch-case-ruby
+    sink(y)
+  end
+end
+
 def empty_else_keeps_the_case(k)
   y = 0
   r = case k

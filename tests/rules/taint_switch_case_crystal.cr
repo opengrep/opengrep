@@ -75,3 +75,30 @@ def integer_label_does_not_match_another_integer
     sink(x)
   end
 end
+
+def break_leaves_the_loop(k)
+  y = 0
+  while more()
+    case k
+    when 1
+      y = taint_source()
+      break
+    end
+    y = 0
+  end
+  # ruleid: taint-switch-case-crystal
+  sink(y)
+end
+
+def break_skips_the_rest_of_the_loop(k)
+  while more()
+    y = 0
+    case k
+    when 1
+      y = taint_source()
+      break
+    end
+    # ok: taint-switch-case-crystal
+    sink(y)
+  end
+end

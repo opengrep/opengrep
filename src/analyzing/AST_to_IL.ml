@@ -3990,6 +3990,22 @@ and no_switch_fallthrough : Lang.t -> bool = function
       true
   | _ -> false
 
+(* Languages in which a bare `break` inside a switch exits the enclosing
+ * loop: the switch (Kotlin `when`; Rust, Move and Python `match`; Ruby and
+ * Crystal `case`) is not a target of `break`. *)
+and break_skips_switch : Lang.t -> bool = function
+  | Kotlin
+  | Rust
+  | Move_on_sui
+  | Move_on_aptos
+  | Ruby
+  | Crystal
+  | Python
+  | Python2
+  | Python3 ->
+      true
+  | _ -> false
+
 and break_continue_labels env tok : stmts * stmts * env =
   let cont_label = fresh_label env ~label:"__loop_continue" tok in
   let break_label = fresh_label env ~label:"__loop_break" tok in
@@ -4006,8 +4022,12 @@ and break_continue_labels env tok : stmts * stmts * env =
 
 and switch_break_label env tok : label * stmts * env =
   let break_label = fresh_label env ~label:"__switch_break" tok in
+  (* Without an enclosing loop (a Ruby block) the switch stays the target,
+   * so that such a `break` does not turn the switch into a fixme. *)
   let switch_env =
-    { env with break_labels = break_label :: env.break_labels }
+    match env.break_labels with
+    | _ :: _ when break_skips_switch env.lang -> env
+    | _ -> { env with break_labels = break_label :: env.break_labels }
   in
   (break_label, [ mk_s (Label break_label) ], switch_env)
 
