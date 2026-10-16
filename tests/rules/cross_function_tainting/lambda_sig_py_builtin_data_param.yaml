@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-py-builtin-data-param
+    message: A built-in's placeholder for the data it maps over is not a parameter of the function calling it
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

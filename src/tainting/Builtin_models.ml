@@ -51,7 +51,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = { Taint.name = "callback"; index = 0 };
+        arg = Shape_and_sig.Effect.Param { Taint.name = "callback"; index = 0 };
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -131,7 +131,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = callback_arg;
+        arg = Shape_and_sig.Effect.Param callback_arg;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -204,7 +204,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = callback_arg;
+        arg = Shape_and_sig.Effect.Param callback_arg;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -328,7 +328,7 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = impl_arg;
+        arg = Shape_and_sig.Effect.Param impl_arg;
         arg_offset = [ Oint callback_index ];
         args_taints;
         guards;

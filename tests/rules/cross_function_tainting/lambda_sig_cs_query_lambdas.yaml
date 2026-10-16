@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-cs-query-lambdas
+    message: Each lambda of a query expression has a signature of its own, though it has no token of its own
+    languages: [csharp]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

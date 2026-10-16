@@ -1,0 +1,16 @@
+rules:
+  - id: precondition-fixpoint-closure
+    message: A closure's sink precondition stays the same formula over the rounds of a fixpoint
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - label: A
+        pattern: sourceA()
+      - label: B
+        pattern: sourceB()
+    pattern-sinks:
+      - requires: A and B
+        pattern: sink(...)

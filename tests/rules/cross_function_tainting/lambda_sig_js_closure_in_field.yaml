@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-closure-in-field
+    message: A closure held by a field is called through the field
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

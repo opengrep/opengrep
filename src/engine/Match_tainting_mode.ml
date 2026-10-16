@@ -48,7 +48,7 @@ type fun_info = {
   cfg : IL.fun_cfg;
   fdef : G.function_definition;
   is_static : bool;  (* [@staticmethod] and the like: no implicit receiver *)
-  is_lambda_assignment : bool;
+  is_closure : bool;
   file_ast : G.program option;  (* [Some] cross-file, [None] current file *)
   taint_inst : Taint_rule_inst.t option;  (* [Some] cross-file preds, else current-file *)
 }
@@ -347,20 +347,26 @@ let build_info_map
   in
   let build_fun_info (name : IL.name) ~(class_name_str : string option)
       ~(method_properties : G.expr list) ~(is_static : bool)
-      ~(is_lambda_assignment : bool)
+      ~(is_closure : bool)
       (fdef : G.function_definition) : fun_info =
     let fdef_il = AST_to_IL.function_definition lang fdef in
     let cfg = CFG_build.cfg_of_fdef fdef_il in
     { name; class_name_str; method_properties; is_static;
-      cfg; fdef; is_lambda_assignment;
+      cfg; fdef; is_closure;
       file_ast = None; taint_inst = None }
   in
   let info_map =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun info_map opt_ent parent_path fdef ->
-        match fst fdef.fkind with
-        | LambdaKind
-        | Arrow ->
+      (fun info_map ~object_literal_method opt_ent parent_path fdef ->
+        (* A method of an object literal inside a function is visited as a
+           closure of that function, without an entity: a lambda. *)
+        let as_lambda =
+          match fst fdef.fkind with
+          | LambdaKind | Arrow -> true
+          | Method -> object_literal_method
+          | Function | BlockCases -> false
+        in
+        if as_lambda then
             (* Must match [Graph_from_AST.fn_id_of_entity]'s key, else info_map/topo-fold lookups miss the lambda. *)
             let name = Visit_function_defs.synth_lambda_il_name fdef in
             let fid = Function_id.of_il_name name in
@@ -375,12 +381,10 @@ let build_info_map
                let info =
                  build_fun_info name ~class_name_str
                    ~method_properties:[] ~is_static:false
-                   ~is_lambda_assignment:true fdef
+                   ~is_closure:true fdef
                in
                add_info fid info info_map)
-        | Function
-        | Method
-        | BlockCases -> (
+        else (
             match Option.bind opt_ent AST_to_IL.name_of_entity with
             | None -> info_map
             | Some name ->
@@ -429,7 +433,7 @@ let build_info_map
                    in
                    let info =
                      build_fun_info name ~class_name_str ~method_properties
-                       ~is_static ~is_lambda_assignment:false fdef
+                       ~is_static ~is_closure:false fdef
                    in
                    add_info fid info info_map)))
       Shape_and_sig.FunctionMap.empty
@@ -502,7 +506,7 @@ let extract_and_check
     extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
       ~taint_inst ~ast info
   in
-  (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
+  (* For closures, keep only ToSink effects with a concrete Src match; parameterised (BArg) taint is carried by the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
     match eff with
     | Effect.ToSink si ->
@@ -541,10 +545,10 @@ let extract_and_check
         info.cfg
     in
     let effects_to_record =
-    if info.is_lambda_assignment then
-      Effects.filter_map keep_src_toSink_only fdef_effects
-    else fdef_effects
-  in
+      if info.is_closure then
+        Effects.filter_map keep_src_toSink_only fdef_effects
+      else fdef_effects
+    in
     let findings = pms_of_effects ~lang ~match_on effects_to_record in
     (updated_db, findings)
 

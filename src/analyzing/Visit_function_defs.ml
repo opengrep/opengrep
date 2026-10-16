@@ -86,66 +86,6 @@ class ['self] visitor =
       | None -> super#visit_expr f e
   end
 
-class ['self] visitor_with_class_context =
-  object (self : 'self)
-    inherit [_] G.iter_no_id_info as super
-    val current_class : G.name option ref = ref None
-
-    method! visit_definition f ((ent, def_kind) as def) =
-      match def_kind with
-      | G.ClassDef _cdef ->
-          let old_class = !current_class in
-          (current_class :=
-             match ent.name with
-             | EN name -> Some name
-             | _ -> None);
-          super#visit_definition f def;
-          current_class := old_class
-      | G.FuncDef fdef ->
-          f (Some ent) !current_class fdef;
-          (* Go into nested functions
-             but do NOT revisit the function definition again! *)
-          let body = H.funcbody_to_stmt fdef.G.fbody in
-          self#visit_stmt f body
-      | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
-          (* Handle lambda assignments like: const f = () => {...} *)
-          f (Some ent) !current_class fdef;
-          (* Go into nested functions but do NOT revisit the function definition again! *)
-          let body = H.funcbody_to_stmt fdef.G.fbody in
-          self#visit_stmt f body
-      | __else__ -> super#visit_definition f def
-
-    method! visit_field f field =
-      match field with
-      | G.F stmt -> (
-          match stmt.G.s with
-          | G.DefStmt (ent, G.FuncDef fdef) ->
-              f (Some ent) !current_class fdef;
-              (* Go into nested functions but do NOT revisit the function definition again! *)
-              let body = H.funcbody_to_stmt fdef.G.fbody in
-              self#visit_stmt f body
-          | G.DefStmt
-              (ent, G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ }) ->
-              (* Handle lambda assignments in class fields *)
-              f (Some ent) !current_class fdef;
-              let body = H.funcbody_to_stmt fdef.G.fbody in
-              self#visit_stmt f body
-          | _ -> super#visit_field f field)
-
-    method! visit_function_definition f fdef =
-      f None !current_class fdef;
-      (* go into nested functions *)
-      super#visit_function_definition f fdef
-
-    method! visit_expr f e =
-      match extract_lambda_assignment e with
-      | Some (ent, fdef) ->
-          f (Some ent) !current_class fdef;
-          let body = H.funcbody_to_stmt fdef.G.fbody in
-          self#visit_stmt f body
-      | None -> super#visit_expr f e
-  end
-
 (* NOTE: Removed [lazy] because it can crash when using domains. *)
 let visitor_instance = new visitor
 
@@ -155,34 +95,6 @@ let visit (f : G.entity option -> G.function_definition -> unit)
   let v = visitor_instance in
   (* Check each function definition. *)
   v#visit_program f ast
-
-(* Fold over all function definitions in an AST with an accumulator. *)
-let fold (f : 'acc -> G.entity option -> G.function_definition -> 'acc)
-    (init_acc : 'acc) (ast : G.program) : 'acc =
-  let acc_ref = ref init_acc in
-  let v = visitor_instance in
-  v#visit_program (fun opt_ent fdef -> acc_ref := f !acc_ref opt_ent fdef) ast;
-  !acc_ref
-
-(* Visit all function definitions with class context. *)
-let visit_with_class_context
-    (f : G.entity option -> G.name option -> G.function_definition -> unit)
-    (ast : G.program) : unit =
-  let v = new visitor_with_class_context in
-  v#visit_program f ast
-
-(* Fold over all function definitions with class context. *)
-let fold_with_class_context
-    (f :
-      'acc -> G.entity option -> G.name option -> G.function_definition -> 'acc)
-    (init_acc : 'acc) (ast : G.program) : 'acc =
-  let acc_ref = ref init_acc in
-  let v = new visitor_with_class_context in
-  v#visit_program
-    (fun opt_ent class_name fdef ->
-      acc_ref := f !acc_ref opt_ent class_name fdef)
-    ast;
-  !acc_ref
 
 (* Visitor that tracks both class context and parent function path.
    The parent_path is a list representing the full path from outermost to innermost:
@@ -321,7 +233,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
           let visitor_parent_path, current_fn_id =
             append_to_parrent_path !parent_path class_il func_il
           in
-          f (Some ent) visitor_parent_path fdef;
+          f ~object_literal_method:false (Some ent) visitor_parent_path fdef;
 
           (* Push current function onto path stack for nested functions *)
           Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
@@ -334,7 +246,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
           let visitor_parent_path, current_fn_id =
             append_to_parrent_path !parent_path class_il func_il
           in
-          f (Some ent) visitor_parent_path fdef;
+          f ~object_literal_method:false (Some ent) visitor_parent_path fdef;
           Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
               let body = H.funcbody_to_stmt fdef.G.fbody in
               self#visit_stmt f body)
@@ -350,7 +262,8 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
               let visitor_parent_path, current_fn_id =
                 append_to_parrent_path !parent_path class_il func_il
               in
-              f (Some ent) visitor_parent_path fdef;
+              f ~object_literal_method:false (Some ent) visitor_parent_path
+                fdef;
               Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
                   let body = H.funcbody_to_stmt fdef.G.fbody in
                   self#visit_stmt f body)
@@ -362,20 +275,24 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
               let visitor_parent_path, current_fn_id =
                 append_to_parrent_path !parent_path class_il func_il
               in
-              f (Some ent) visitor_parent_path fdef;
+              f ~object_literal_method:false (Some ent) visitor_parent_path
+                fdef;
               Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
                   let body = H.funcbody_to_stmt fdef.G.fbody in
                   self#visit_stmt f body)
           | _ -> super#visit_field f field)
 
     method! visit_function_definition f fdef =
+      self#visit_anonymous ~object_literal_method:false f fdef
+
+    method private visit_anonymous ~(object_literal_method : bool) f fdef =
       (* Anonymous nested functions *)
       let visitor_parent_path =
         if !parent_path = [] then
           [ Option.bind !current_class g_name_to_il_name ]
         else !parent_path
       in
-      f None visitor_parent_path fdef;
+      f ~object_literal_method None visitor_parent_path fdef;
       (* No path change for anonymous functions - they don't add to the path *)
       super#visit_function_definition f fdef
 
@@ -387,25 +304,43 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
           let visitor_parent_path, current_fn_id =
             append_to_parrent_path !parent_path class_il func_il
           in
-          f (Some ent) visitor_parent_path fdef;
+          f ~object_literal_method:false (Some ent) visitor_parent_path fdef;
           Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
               let body = H.funcbody_to_stmt fdef.G.fbody in
               self#visit_stmt f body)
-      | None -> super#visit_expr f e
+      | None -> (
+          match e.G.e with
+          | G.Record (_, fields, _) when not (List.is_empty !parent_path) ->
+              (* The methods of an object literal inside a function are
+                 closures of that function, as lambdas are, not functions of
+                 their own. *)
+              fields
+              |> List.iter (function
+                   | G.F { s = G.DefStmt (_, G.FuncDef fdef); _ } ->
+                       self#visit_anonymous ~object_literal_method:true f fdef
+                   | field -> self#visit_field f field)
+          | _ -> super#visit_expr f e)
   end
 
-(* Visit all function definitions with parent path context. *)
+(* Visit all function definitions with parent path context.
+   [object_literal_method] is set for a method of an object literal inside a
+   function, visited without its entity as a closure of that function. *)
 let visit_with_parent_path ~(lang : Lang.t)
     (f :
-      G.entity option -> IL.name option list -> G.function_definition -> unit)
-    (ast : G.program) : unit =
+      object_literal_method:bool ->
+      G.entity option ->
+      IL.name option list ->
+      G.function_definition ->
+      unit) (ast : G.program) : unit =
   let v = new visitor_with_parent_path ~lang in
   v#visit_program f ast
 
-(* Fold over all function definitions with parent path context. *)
+(* Fold over all function definitions with parent path context; see
+   [visit_with_parent_path]. *)
 let fold_with_parent_path ~(lang : Lang.t)
     (f :
       'acc ->
+      object_literal_method:bool ->
       G.entity option ->
       IL.name option list ->
       G.function_definition ->
@@ -413,8 +348,8 @@ let fold_with_parent_path ~(lang : Lang.t)
   let acc_ref = ref init_acc in
   let v = new visitor_with_parent_path ~lang in
   v#visit_program
-    (fun opt_ent parent_path fdef ->
-      acc_ref := f !acc_ref opt_ent parent_path fdef)
+    (fun ~object_literal_method opt_ent parent_path fdef ->
+      acc_ref := f !acc_ref ~object_literal_method opt_ent parent_path fdef)
     ast;
   !acc_ref
 

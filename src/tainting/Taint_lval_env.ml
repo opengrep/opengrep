@@ -169,28 +169,43 @@ let normalize_lval lang lval =
   let offset = T.offset_of_rev_IL_offset lang ~rev_offset in
   Some (base, offset)
 
+(* A variable tracked for its taint: one holding only a function's shape is
+   not one, and does not count against the limit. A function holding a
+   thousand functions holds a shape for each, and still tracks the taint of
+   its own temporaries. *)
+let tracked_for_taint (Cell (xtaint, shape)) =
+  match (xtaint, shape) with
+  | (`None | `Clean), Fun _ -> false
+  | _ -> true
+
 (* TODO: This is an experiment, try to raise taint_MAX_TAINTED_LVALS and run
  * some benchmarks, if we can e.g. double the limit without affecting perf then
  * just remove this. We could try something clever based e.g. on live-variable
  * analysis, but there is a high risk that the "solution" may introduce perf
  * problems of its own... *)
 let remove_some_lval_from_tainted_set tainted =
-  (* Try to make space for a new l-value by removing an auxiliary _tmp one first.
-   * By using using `find_first_opt` we try to find the one with the lowest sid,
-   * which hopefully isn't needed anymore... (unless it's inside a loop...).
-   * This could perhaps (?) break monotonicity and cause divergence of the fixpoint,
-   * but the Limits_semgrep.taint_FIXPOINT_TIMEOUT seconds timeout would take care
-   * of that. *)
-  tainted
+  (* Try to make space for a new l-value by removing an auxiliary _tmp one
+   * first, the one with the lowest sid, which hopefully isn't needed anymore...
+   * (unless it's inside a loop...). This could perhaps (?) break monotonicity
+   * and cause divergence of the fixpoint, but the
+   * Limits_semgrep.taint_FIXPOINT_TIMEOUT seconds timeout would take care of
+   * that. *)
+  NameMap.to_seq tainted
   (* auxiliary _tmp variables get fake tokens *)
-  |> NameMap.find_first_opt (fun var -> Tok.is_fake (snd var.ident))
-  |> Option.map (function var, _ -> var, NameMap.remove var tainted)
+  |> Seq.find (fun (var, cell) ->
+         Tok.is_fake (snd var.IL.ident) && tracked_for_taint cell)
+  |> Option.map (function var, _ -> (var, NameMap.remove var tainted))
+
+let tainted_cardinal tainted =
+  NameMap.fold
+    (fun _ cell n -> if tracked_for_taint cell then n + 1 else n)
+    tainted 0
 
 let check_tainted_lvals_limit tainted new_var =
   if
     (not (NameMap.mem new_var tainted))
     && !Flag_semgrep.max_tainted_vars > 0
-    && NameMap.cardinal tainted > !Flag_semgrep.max_tainted_vars
+    && tainted_cardinal tainted > !Flag_semgrep.max_tainted_vars
   then (
     match remove_some_lval_from_tainted_set tainted with
     | Some (dropped_var, tainted) ->

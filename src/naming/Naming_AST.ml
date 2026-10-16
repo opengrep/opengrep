@@ -1334,6 +1334,22 @@ class ['self] resolve_visitor env lang =
           super#visit_expr venv x;
           declare_var env lang id id_info ~explicit:true (Some e2) None;
           recurse := false
+      | AssignOp ({ e = Container (Tuple, (_, elems, _)); _ }, (Eq, tok), e2)
+        when lang =*= Lang.Go
+             && String.equal (Tok.content_of_tok tok) ":="
+             && is_resolvable_name_ctx env lang ->
+          self#visit_expr venv e2;
+          elems
+          |> List.iter (fun (elem : expr) ->
+                 match (elem.e, !(env.names.blocks)) with
+                 | N (Id (((s, _) as id), id_info)), current :: _
+                   when (not (String.equal s "_"))
+                        && Option.is_none (lookup s [ current ]) ->
+                     declare_var env lang id id_info ~explicit:true None None
+                 | _ ->
+                     Common.save_excursion_unsafe env.in_lvalue true (fun () ->
+                         self#visit_expr venv elem));
+          recurse := false
       | Assign ({ e = N (Id (id, id_info)); _ }, _, e2)
         when Option.is_none (lookup_for_implicit_assign_opt id env)
              && assign_implicitly_declares lang
