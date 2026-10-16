@@ -200,6 +200,21 @@ let expr_to_stmt e =
   | StmtExpr stmt -> stmt
   | _ -> ExprStmt (e, sc) |> G.s
 
+(* A [PatList] / [PatConstructor] holds "map pairs" when every element is a
+ * [PatKeyVal] in the canonical [(lookup_key, binding_pattern)] order,
+ * possibly wrapped by exactly one [OtherPat("MapPairKeyword" |
+ * "MapPairArrow", …)]. That tag is emitted by the Elixir parser to
+ * preserve the source-level [:] vs [=>] distinction for rule matching;
+ * no other parser uses it, and no parser nests it. *)
+let is_map_pair_pattern (p : pattern) : bool =
+  match p with
+  | PatKeyVal (_, _) -> true
+  | OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ P (PatKeyVal (_, _)) ] ) ->
+      true
+  | _ -> false
+
 (* In Go/Swift a pattern can be a complex expressions. It is just
  * matched for equality with the thing it's matched against, so in that
  * case it should be a pattern like | _ when expr = x.

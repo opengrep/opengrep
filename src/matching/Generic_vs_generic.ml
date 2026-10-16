@@ -3154,7 +3154,14 @@ and m_pattern a b =
   | G.PatConstructor (a1, a2), B.PatConstructor (b1, b2) ->
       m_name a1 b1 >>= fun () -> (m_list_with_ellipsis m_pattern) a2 b2
   | G.PatTuple a1, B.PatTuple b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
-  | G.PatList a1, B.PatList b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
+  (* Two map patterns (lists of map pairs): each pair of the rule matches a
+   * pair of the target, in any order, and the target may have more pairs,
+   * as a map pattern matches a map with more entries. *)
+  | G.PatList ((_, a2, _) as a1), B.PatList ((_, b2, _) as b1) -> (
+      match (map_pattern_pairs a2, map_pattern_pairs b2) with
+      | Some pairs, Some target_pairs ->
+          m_list_in_any_order ~less_is_ok:true m_pattern pairs target_pairs
+      | _ -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1)
   | G.PatRecord a1, B.PatRecord b1 ->
       m_bracket m_list__m_field_pattern a1 b1
   | G.PatKeyVal (a1, a2), B.PatKeyVal (b1, b2) ->
@@ -3199,6 +3206,20 @@ and m_field_pattern a b =
        * id_info) instead of binding twice in conflicting forms. *)
       m_pattern a2 b2
   | (a1, a2), (b1, b2) -> m_dotted_name a1 b1 >>= fun () -> m_pattern a2 b2
+
+(* The pairs of a map pattern, a non-empty list of map pairs
+ * ([H.is_map_pair_pattern]) with any `...` left out, or [None] for another
+ * list pattern. *)
+and map_pattern_pairs (pats : G.pattern list) : G.pattern list option =
+  match
+    List.filter
+      (function
+        | G.PatEllipsis _ -> false
+        | _ -> true)
+      pats
+  with
+  | _ :: _ as pairs when List.for_all H.is_map_pair_pattern pairs -> Some pairs
+  | _ -> None
 
 (* Subset-semantic, order-independent matching of [PatRecord] field lists.
  * Every pattern field must match some target field (by [m_field_pattern]),

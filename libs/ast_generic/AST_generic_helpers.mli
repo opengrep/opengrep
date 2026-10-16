@@ -4,6 +4,10 @@ val str_of_ident : AST_generic.ident -> string
 
 exception NotAnExpr
 
+(* A [PatList] / [PatConstructor] holds "map pairs" when every element is
+ * one of these: a [PatKeyVal], possibly wrapped by Elixir's map-pair tag. *)
+val is_map_pair_pattern : AST_generic.pattern -> bool
+
 val expr_to_pattern : AST_generic.expr -> AST_generic.pattern
 
 (* This executes some simplifications, such as not producing

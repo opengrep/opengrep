@@ -351,21 +351,6 @@ let rec effective_implicit_return env (eorig : G.expr) : bool =
 (* Map-pair pattern helpers *)
 (*****************************************************************************)
 
-(* A [PatList] / [PatConstructor] holds "map pairs" when every element is a
- * [PatKeyVal] in the canonical [(lookup_key, binding_pattern)] order,
- * possibly wrapped by exactly one [OtherPat("MapPairKeyword" |
- * "MapPairArrow", …)]. That tag is emitted by the Elixir parser to
- * preserve the source-level [:] vs [=>] distinction for rule matching;
- * no other parser uses it, and no parser nests it. *)
-let is_map_pair_pattern (p : G.pattern) : bool =
-  match p with
-  | G.PatKeyVal (_, _) -> true
-  | G.OtherPat
-      ( (("MapPairKeyword" | "MapPairArrow"), _),
-        [ G.P (G.PatKeyVal (_, _)) ] ) ->
-      true
-  | _ -> false
-
 (* A compound pattern binding one or more variables out of a value, as in a
  * destructuring declaration: Solidity's `(uint256 a, uint256 b) = f()`,
  * Rust's `let (a, b) = f()` / `let P { x, y } = f()` / `let Some(x) = f()`,
@@ -610,7 +595,7 @@ and pattern env pat : stmts * lval * stmts =
       let tmp = fresh_var env tok2 in
       let tmp_lval = lval_of_base (Var tmp) in
       let ss =
-        if pats <> [] && List.for_all is_map_pair_pattern pats then
+        if pats <> [] && List.for_all H.is_map_pair_pattern pats then
           (* Map/dict destructure: every element is a [PatKeyVal] (possibly
            * tagged). Each binding fetches [tmp.key], not [tmp[i]]. *)
           List.concat_map (map_pair_assign_stmts env tmp) pats
@@ -682,6 +667,18 @@ and pattern env pat : stmts * lval * stmts =
             | G.OtherPat (("..", _), []) :: tail_pats
               when env.lang =*= Lang.Rust ->
                 (List.rev acc, None, List_.map (fun p -> (p, i)) tail_pats)
+            (* Dart rest element, anywhere in the list: [a, ...r, z] →
+             * PatConstructor("...", [r]), [a, ..., z] → PatConstructor
+             * ("...", []). [r] covers [i..]; elements after the rest are
+             * end-relative and, as for Rust above, bound to that view. *)
+            | G.PatConstructor (G.Id (("...", _), _), rest) :: tail_pats
+              when env.lang =*= Lang.Dart ->
+                let opt_rest =
+                  match rest with
+                  | [ rest_pat ] -> Some (rest_pat, i)
+                  | _ -> None
+                in
+                (List.rev acc, opt_rest, List_.map (fun p -> (p, i)) tail_pats)
             | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
           in
           let fixed, opt_rest, unbindable = split_trailing_rest [] 0 pats in
@@ -701,9 +698,9 @@ and pattern env pat : stmts * lval * stmts =
              * end-relative offset kind in [IL.offset]/[Taint.offset],
              * plus arity tracking in [Obj] shapes to resolve it soundly
              * — sparse shapes built by writes do not know their length.
-             * When the scrutinee is a syntactic literal the marker never
-             * reaches here: [expand_rest_marker_by_arity] has already
-             * rewritten it into exact wildcard slots. *)
+             * For Rust, when the scrutinee is a syntactic literal the
+             * marker never reaches here: [expand_rest_marker_by_arity] has
+             * already rewritten it into exact wildcard slots. *)
             List.concat_map (fun (p, lo) -> lower_rest p lo) unbindable
           in
           fixed_ss @ rest_ss @ unbindable_ss
@@ -714,7 +711,7 @@ and pattern env pat : stmts * lval * stmts =
       let inner_pre_ss, lval, post_ss = pattern env pat1 in
       (pre_ss @ inner_pre_ss, lval, post_ss)
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
-    when pats <> [] && List.for_all is_map_pair_pattern pats ->
+    when pats <> [] && List.for_all H.is_map_pair_pattern pats ->
       (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
        * a flat list of [PatKeyVal]s over the incoming map. Lower as a
        * map destructure rather than a positional tuple. *)
@@ -947,7 +944,7 @@ and pm_len_cond tok e op n =
 
 (* Split a [PatList] body into [(fixed_pat, slot_index)] prefix and an
  * optional rest-position. Mirrors the lang-specific split in [pattern]:
- * Clojure [&], Elixir [|], JS [...]. *)
+ * Clojure [&], Elixir [|], JS [...], Dart [...] (anywhere in the list). *)
 and pm_split_rest env pats =
   let rec go acc i = function
     | [] -> (List.rev acc, None)
@@ -959,6 +956,12 @@ and pm_split_rest env pats =
         (List.rev ((last_fixed, i) :: acc), Some (i + 1))
     | [ G.PatConstructor (G.Id (("...", _), _), [ _rest ]) ]
       when Lang.is_js env.lang ->
+        (List.rev acc, Some i)
+    (* Dart rest element, with or without a pattern, anywhere in the list:
+     * the slots before it are exact; those after it are end-relative and
+     * stay untested. *)
+    | G.PatConstructor (G.Id (("...", _), _), ([] | [ _ ])) :: _
+      when env.lang =*= Lang.Dart ->
         (List.rev acc, Some i)
     | p :: rest -> go ((p, i) :: acc) (i + 1) rest
   in
@@ -1117,10 +1120,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
-  (* A map pattern (map pairs, see [is_map_pair_pattern]): each value
+  (* A map pattern (map pairs, see [H.is_map_pair_pattern]): each value
    * against the entry of its key. It matches a map with other entries too,
    * so there is no length test. *)
-  | G.PatList (_, (_ :: _ as pats), _) when List.for_all is_map_pair_pattern pats
+  | G.PatList (_, (_ :: _ as pats), _) when List.for_all H.is_map_pair_pattern pats
     ->
       pats
       |> List_.map (fun p ->
