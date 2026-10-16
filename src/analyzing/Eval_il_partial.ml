@@ -310,14 +310,14 @@ and eval_op memo (env : env) wop args =
   | G.Or, [ G.Lit (G.Bool (false, _)); c ] when Lang.equal env.lang Lang.Python
     ->
       c (* Python: False or 42 -> 42 *)
-  (* Ruby's `===`, which the Ruby front end writes as [PhysEq], is case
-   * equality: its result depends on the class of the receiver (a Regexp
-   * matches, a Range includes, a class tests membership, `1 === 1.0`). It
-   * agrees with `==` only between two literals of the same kind among
-   * integers, floats, strings, symbols, booleans and nil; otherwise it is
-   * not decided on the operands' values. *)
+  (* Ruby's and Crystal's `===`, which their front ends write as [PhysEq],
+   * is case equality: its result depends on the class of the receiver (a
+   * Regexp matches, a Range includes, a class tests membership,
+   * `1 === 1.0`). It agrees with `==` only between two literals of the same
+   * kind among integers, floats, strings, symbols, booleans and nil;
+   * otherwise it is not decided on the operands' values. *)
   | G.PhysEq, _
-    when Lang.equal env.lang Lang.Ruby
+    when (Lang.equal env.lang Lang.Ruby || Lang.equal env.lang Lang.Crystal)
          &&
          match cs with
          | [ G.Lit l1; G.Lit l2 ] -> (

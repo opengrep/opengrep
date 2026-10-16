@@ -402,14 +402,16 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatAs _ -> true
   | _ -> false
 
-(* The operator that tests a case label against the scrutinee. Ruby's `case`
- * tests with case equality, `label === scrutinee`, which the Ruby front end
- * writes as [PhysEq] and whose result depends on the class of the label (a
- * Regexp matches, a Range includes, a class tests membership); other
- * languages test value equality. *)
+(* The operator that tests a case label against the scrutinee. A Ruby or
+ * Crystal `case` tests with case equality, `label === scrutinee`, which
+ * their front ends write as [PhysEq] and whose result depends on the class
+ * of the label (a Regexp matches, a Range includes, a class tests
+ * membership); other languages test value equality. *)
 let label_test_operator (lang : Lang.t) : G.operator =
   match lang with
-  | Lang.Ruby -> G.PhysEq
+  | Lang.Ruby
+  | Lang.Crystal ->
+      G.PhysEq
   | _ -> G.Eq
 
 (* The comparison of a test pattern whose subject is implicit: a C#
