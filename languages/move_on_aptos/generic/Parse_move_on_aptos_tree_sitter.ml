@@ -685,6 +685,12 @@ let rec map_bind (env : env) (x : CST.bind) : G.pattern =
       let name = map_var_name env x in
       match name with
       | "_", tok -> G.PatWildcard tok
+      (* A variable name cannot start with an uppercase letter: such a name
+       * is a constant or an enum variant, matched by value. *)
+      | s, _ when String_.is_capitalized s ->
+          G.OtherPat
+            ( ("ExprToPattern", Tok.unsafe_fake_tok ""),
+              [ G.E (G.N (H2.name_of_id name) |> G.e) ] )
       | _ -> G.PatId (name, G.empty_id_info ()))
   | `Name_access_chain_opt_type_args_opt_choice_bind_fields (v1, v2, v3) -> (
       let struct_name = map_name_access_chain env v1 in
@@ -1427,6 +1433,8 @@ let rec transpile_let_bind (env : env) (left : G.pattern) (right : G.expr) :
         |> G.s |> G.stmt_to_expr
       in
       transpile_let_bind env pat right
+  (* A constant or an enum variant binds nothing. *)
+  | G.OtherPat (("ExprToPattern", _), [ E { e = G.N _; _ } ]) -> []
   | _ -> failwith "Unsupported pattern in let binding"
 
 let map_function_signature (env : env) attrs
@@ -2238,6 +2246,7 @@ and map_match_arm (env : env) (x : CST.match_arm) : G.case_and_body =
       match pat with
       | G.PatType _
       | G.PatId _
+      | G.OtherPat (("ExprToPattern", _), _)
       | G.PatEllipsis _
       | G.PatWildcard _ ->
           G.CasesAndBody ([ G.Case (v3, cond) ], body)
