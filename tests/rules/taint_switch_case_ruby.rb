@@ -17,3 +17,13 @@ def label_is_not_bound
     sink(FOO)
   end
 end
+
+def empty_else_keeps_the_case(k)
+  y = 0
+  r = case k
+      when 1 then y = taint_source()
+      else
+      end
+  # ruleid: taint-switch-case-ruby
+  sink(y)
+end

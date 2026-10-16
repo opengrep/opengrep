@@ -3485,11 +3485,6 @@ and comprehension env (result_expr : G.expr)
   (loop_stmts, mk_e (Fetch tmp) NoOrig)
   
 and stmt_expr env ?g_expr st : stmts * exp =
-  let todo_here () =
-    match g_expr with
-    | None -> todo (G.E (G.e (G.StmtExpr st)))
-    | Some e_gen -> todo (G.E e_gen)
-  in
   match st.G.s with
   | G.ExprStmt (eorig, tok) ->
       let ss, e = expr env eorig in
@@ -3543,7 +3538,7 @@ and stmt_expr env ?g_expr st : stmts * exp =
         | Some e_gen -> SameAs e_gen
       in
       (ss @ [if_stmt], mk_e (Fetch fresh) eorig)
-  | G.Block (_, block, _) -> (
+  | G.Block (l, block, _) -> (
       (* See 'AST_generic.stmt_to_expr' *)
       match List.rev block with
       | st :: rev_sts ->
@@ -3551,7 +3546,9 @@ and stmt_expr env ?g_expr st : stmts * exp =
           let prefix_ss = List_.flatten list_of_lists in
           let last_ss, last_e = stmt_expr env st in
           (prefix_ss @ last_ss, last_e)
-      | __else__ -> todo_here ())
+      (* An empty block evaluates to the unit value (`Unit` in Kotlin, `()`
+       * in Rust and Scala, `nil` in Ruby and Elixir). *)
+      | [] -> ([], mk_unit l (Related (G.S st))))
   | G.Return (t, eorig, _) ->
       let ss_e, expression = expr_opt env t eorig in
       let ret_stmt = mk_s (Return (t, expression)) in
@@ -3607,7 +3604,7 @@ and stmt_expr env ?g_expr st : stmts * exp =
       (* In any case, let's make sure the statement is in the IL translation
        * so that e.g. taint can do its job. *)
       let new_stmts = stmt env st in
-      (* Do not call todo_here() here: it raises and would lose new_stmts.
+      (* Do not raise a [Fixme] here: it would lose new_stmts.
        * Instead, produce the fixme expression directly. *)
       let gany = match g_expr with
         | None -> G.E (G.e (G.StmtExpr st))
