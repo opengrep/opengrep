@@ -590,18 +590,20 @@ let top_func () =
         let v1 = case_kind v1 and v2 = stmt v2 in
         G.CasesAndBody (v1, v2)
     | CaseEllipsis (_v1, v2) -> G.CaseEllipsis v2
-  and expr_or_type_to_pattern = function
+  and expr_or_type_to_case tok = function
     (* can't call expr_or_type because we want to intercept this one *)
     | Left (ParenType t) ->
         let t = type_ t in
-        G.PatType t
+        G.Case (tok, G.PatType t)
     | x -> (
         match expr_or_type x with
-        | Left e -> H.expr_to_pattern e
-        | Right t -> G.PatType t)
+        (* Value labels read existing names; type-switch labels keep their
+         * type patterns. Neither should become a PatId binding. *)
+        | Left e -> G.CaseEqualExpr (tok, e)
+        | Right t -> G.Case (tok, G.PatType t))
   and case_kind = function
     | CaseExprs (tok, v1) ->
-        v1 |> List_.map (fun x -> G.Case (tok, expr_or_type_to_pattern x))
+        v1 |> List_.map (expr_or_type_to_case tok)
     | CaseAssign (tok, v1, v2, v3) ->
         let v1 = list expr_or_type v1 and v3 = expr v3 in
         let v1 =
