@@ -3961,6 +3961,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Ruby
   | Crystal
   | Rust
+  | Move_on_sui
+  | Move_on_aptos
   | Clojure
   | Elixir
   | Kotlin ->
