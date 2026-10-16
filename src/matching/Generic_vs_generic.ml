@@ -3058,6 +3058,12 @@ and m_case a b =
       m_tok a0 b0 >>= fun () -> m_pattern a1 b1
   | G.CaseEqualExpr (a0, a1), B.CaseEqualExpr (b0, b1) ->
       m_tok a0 b0 >>= fun () -> m_expr a1 b1
+  (* A label that is only a metavariable matches every label, whether the
+   * target label is a value or a pattern. *)
+  | ( G.CaseEqualExpr (_, { e = G.N (G.Id ((str, tok), id_info)); _ }),
+      B.Case (_, b1) )
+    when Mvar.is_metavar_name str ->
+      m_pattern (G.PatId ((str, tok), id_info)) b1
   | G.Default a0, B.Default b0 -> m_tok a0 b0
   | G.OtherCase (a0, a1), B.OtherCase (b0, b1) ->
       let* () = m_todo_kind a0 b0 in
@@ -3117,6 +3123,19 @@ and m_pattern a b =
         (* this can happen with PatAs in exception handler in Python *)
       with
       | H.NotAnExpr -> envf (str, tok) (MV.P b2))
+  (* A value pattern that is only a metavariable matches any pattern, as a
+   * PatId metavariable does. A target value pattern with the same tag goes
+   * to the OtherPat arm below. *)
+  | ( G.OtherPat
+        ( ((("ExprToPattern" | "expr") as tag), _),
+          [ G.E { e = G.N (G.Id ((str, tok), id_info)); _ } ] ),
+      b2 )
+    when Mvar.is_metavar_name str
+         &&
+         match b2 with
+         | B.OtherPat ((tag2, _), _) -> not (String.equal tag tag2)
+         | _ -> true ->
+      m_pattern (G.PatId ((str, tok), id_info)) b2
   (* dots: *)
   | G.PatEllipsis _, _ -> return ()
   (* boilerplate *)
