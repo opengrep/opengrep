@@ -2090,9 +2090,53 @@ and tuple_element (env : env) ((v1, v2) : CST.tuple_element) =
   let _v2TODO = Option.map (identifier env) v2 (* identifier *) in
   v1
 
+(* A name in a constant pattern is a value, never a binder: C# binders are
+ * `var x` and `T x`, and a bare name is a constant or a type. *)
 and constant_pattern (env : env) (x : CST.constant_pattern) : G.pattern =
-  let e = constant_pattern_aux env x in
-  H2.expr_to_pattern e
+  match x with
+  | `Tuple_exp x -> positional_pattern env x
+  | _ ->
+      let e = constant_pattern_aux env x in
+      G.OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ])
+
+(* The grammar parses a positional pattern such as `(FOO, var y)` as a
+ * constant pattern holding a tuple expression, and [declaration_expression]
+ * converts `var y` to the same expression as a constant `y`. So the
+ * elements are converted here, from the CST. *)
+and positional_pattern (env : env)
+    ((v1, v2, v3, v4, v5, v6) : CST.tuple_expression) : G.pattern =
+  let v1 = token env v1 (* "(" *) in
+  let v2 = positional_pattern_element env v2 in
+  let _v3 = token env v3 (* "," *) in
+  let v4 = positional_pattern_element env v4 in
+  let v5 =
+    List_.map
+      (fun (v1, v2) ->
+        let _v1 = token env v1 (* "," *) in
+        positional_pattern_element env v2)
+      v5
+  in
+  let v6 = token env v6 (* ")" *) in
+  G.PatTuple (v1, v2 :: v4 :: v5, v6)
+
+and positional_pattern_element (env : env) (x : CST.argument) : G.pattern =
+  match x with
+  | `Opt_name_colon_opt_choice_ref_choice_exp (v1, _v2, v3) -> (
+      let v1 = Option.map (name_colon env) v1 in
+      let pat =
+        match v3 with
+        | `Decl_exp x -> H2.expr_to_pattern (declaration_expression env x)
+        | `Exp (`Lvalue_exp (`Tuple_exp x)) -> positional_pattern env x
+        | `Exp x ->
+            G.OtherPat
+              (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E (expression env x) ])
+      in
+      match v1 with
+      | None -> pat
+      | Some id ->
+          G.PatTuple
+            (Tok.unsafe_fake_bracket [ G.PatId (id, G.empty_id_info ()); pat ]))
+  | `Semg_vari_meta _ -> H2.expr_to_pattern (H2.argument_to_expr (argument env x))
 
 (* TODO: generate directly pattern so no need to use H2.expr_to_pattern *)
 and constant_pattern_aux env (x : CST.constant_pattern) : G.expr =

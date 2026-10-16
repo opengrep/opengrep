@@ -10,3 +10,8 @@ rules:
   message: Tainted value reaches sink
   severity: WARNING
   languages: [php]
+- id: switch-case-constant-propagation-php
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [php]
