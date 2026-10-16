@@ -150,19 +150,16 @@ type scope_info = {
   enttype : type_ option;
 }
 
-type namespace =
-  | VarName
-  | FuncName
+(* A key is a name in one of the namespaces of the language
+   (see [Lang_namespaces]). *)
+type 'ns scope = ('ns * string, scope_info) Assoc.t
 
-type scope_key = namespace * string
-type scope = (scope_key, scope_info) Assoc.t
-
-type scopes = {
-  global : scope ref;
+type 'ns scopes = {
+  global : 'ns scope ref;
   (* function, nested blocks, nested functions (lambdas) *)
-  blocks : scope list ref;
+  blocks : 'ns scope list ref;
   (* useful for python, kind of global scope but for entities *)
-  imported : scope ref;
+  imported : 'ns scope ref;
       (* todo?
        * - class? right now we abuse EnclosedVar in resolved_name_kind.
        * - function? for 'var' in JS
@@ -182,60 +179,48 @@ let with_new_function_scope params scopes f =
 let with_new_block_scope scopes f =
   Common.save_excursion_unsafe scopes.blocks ([] :: !(scopes.blocks)) f
 
-let var_key (id : ident) : scope_key = (VarName, H.str_of_ident id)
-let func_key (id : ident) : scope_key = (FuncName, H.str_of_ident id)
+let key (ns : 'ns) (id : ident) : 'ns * string = (ns, H.str_of_ident id)
 
-let equal_namespace (a : namespace) (b : namespace) : bool =
-  match (a, b) with
-  | VarName, VarName
-  | FuncName, FuncName ->
-      true
-  | VarName, FuncName
-  | FuncName, VarName ->
-      false
-
-let add_key_current_scope (key : scope_key) resolved scopes =
+let add_current_scope (ns : 'ns) (id : ident) (resolved : scope_info)
+    (scopes : 'ns scopes) : unit =
   match !(scopes.blocks) with
-  | [] -> scopes.global := (key, resolved) :: !(scopes.global)
-  | xs :: xxs -> scopes.blocks := ((key, resolved) :: xs) :: xxs
-
-let add_ident_current_scope id resolved scopes =
-  add_key_current_scope (var_key id) resolved scopes
-
-let add_func_ident_current_scope id resolved scopes =
-  add_key_current_scope (func_key id) resolved scopes
+  | [] -> scopes.global := (key ns id, resolved) :: !(scopes.global)
+  | xs :: xxs -> scopes.blocks := ((key ns id, resolved) :: xs) :: xxs
 
 (* for Python *)
-let add_ident_imported_scope id resolved scopes =
-  scopes.imported := (var_key id, resolved) :: !(scopes.imported)
+let add_imported_scope (ns : 'ns) (id : ident) (resolved : scope_info)
+    (scopes : 'ns scopes) : unit =
+  scopes.imported := (key ns id, resolved) :: !(scopes.imported)
 
-let add_ident_global_scope id resolved scopes =
-  scopes.global := (var_key id, resolved) :: !(scopes.global)
+let add_global_scope (ns : 'ns) (id : ident) (resolved : scope_info)
+    (scopes : 'ns scopes) : unit =
+  scopes.global := (key ns id, resolved) :: !(scopes.global)
 
 (* for JS 'var' *)
 let _add_ident_function_scope _id _resolved _scopes = raise Todo
 let untyped_ent name = { entname = name; enttype = None }
 
-let rec find_in_scope_where (ns : namespace) (s : string)
-    (p : scope_info -> bool) (xs : scope) : scope_info option =
+let rec find_in_scope_where (equal : 'ns -> 'ns -> bool) (ns : 'ns)
+    (s : string) (p : scope_info -> bool) (xs : 'ns scope) : scope_info option =
   match xs with
   | [] -> None
   | ((entry_ns, entry_s), res) :: xs ->
-      if equal_namespace ns entry_ns && String.equal s entry_s && p res then
-        Some res
-      else find_in_scope_where ns s p xs
+      if String.equal s entry_s && equal ns entry_ns && p res then Some res
+      else find_in_scope_where equal ns s p xs
 
-let find_in_scope (ns : namespace) (s : string) (xs : scope) :
-    scope_info option =
-  find_in_scope_where ns s (fun _ -> true) xs
+let find_in_scope (equal : 'ns -> 'ns -> bool) (group : 'ns list) (s : string)
+    (xs : 'ns scope) : scope_info option =
+  List.find_map
+    (fun (ns : 'ns) -> find_in_scope_where equal ns s (fun _ -> true) xs)
+    group
 
-let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
-    (xxs : scope list) : scope_info option =
+let rec lookup_group ~(class_attr : bool) (equal : 'ns -> 'ns -> bool)
+    (group : 'ns list) (s : string) (xxs : 'ns scope list) : scope_info option =
   match xxs with
   | [] -> None
   | xs :: xxs -> (
-      match find_in_scope ns s xs with
-      | None -> lookup_namespace ~class_attr ns s xxs
+      match find_in_scope equal group s xs with
+      | None -> lookup_group ~class_attr equal group s xxs
       | Some res when class_attr -> (
           match res.entname with
           | EnclosedVar, _ -> Some res
@@ -251,30 +236,53 @@ let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
            *         }
            *     }
            *)
-          | __else__ -> lookup_namespace ~class_attr ns s xxs)
+          | __else__ -> lookup_group ~class_attr equal group s xxs)
       | Some res -> Some res)
 
+let has_entry (s : string) (xxs : 'ns scope list) : bool =
+  List.exists
+    (List.exists (fun (((_, entry_s), _) : ('ns * string) * scope_info) ->
+         String.equal s entry_s))
+    xxs
+
+let lookup_groups ~(class_attr : bool) (equal : 'ns -> 'ns -> bool)
+    (groups : 'ns list list) (s : string) (xxs : 'ns scope list) :
+    scope_info option =
+  match groups with
+  | [ group ] -> lookup_group ~class_attr equal group s xxs
+  (* a name that no scope binds misses in every group: one scan decides it *)
+  | _ when not (has_entry s xxs) -> None
+  | _ ->
+      List.find_map
+        (fun (group : 'ns list) -> lookup_group ~class_attr equal group s xxs)
+        groups
+
 (* see also lookup_scope_opt below taking as a parameter the environment *)
-let lookup ?(class_attr = false) s xxs =
-  lookup_namespace ~class_attr VarName s xxs
+let lookup (equal : 'ns -> 'ns -> bool) (ns : 'ns) (s : string)
+    (xxs : 'ns scope list) : scope_info option =
+  lookup_group ~class_attr:false equal [ ns ] s xxs
 
 (* for Python, PHP *)
-let lookup_global_scope (s, _) scopes = lookup s [ !(scopes.global) ]
+let lookup_global_scope (equal : 'ns -> 'ns -> bool) (ns : 'ns)
+    ((s, _) : ident) (scopes : 'ns scopes) : scope_info option =
+  lookup equal ns s [ !(scopes.global) ]
 
 (* for Python, PHP *)
-let lookup_nonlocal_scope id scopes =
+let lookup_nonlocal_scope (equal : 'ns -> 'ns -> bool) (ns : 'ns)
+    (id : ident) (scopes : 'ns scopes) : scope_info option =
   let s, tok = id in
   match !(scopes.blocks) with
-  | _ :: xxs -> lookup s xxs
+  | _ :: xxs -> lookup equal ns s xxs
   | [] ->
       let _ = error tok "no outerscope" in
       None
 
 (* for a PHP closure [use]: the variable of the scope enclosing the closure,
  * the file's variables when the closure is at the top level *)
-let lookup_enclosing_scope (s, _) scopes =
+let lookup_enclosing_scope (equal : 'ns -> 'ns -> bool) (ns : 'ns)
+    ((s, _) : ident) (scopes : 'ns scopes) : scope_info option =
   match !(scopes.blocks) with
-  | _ :: xxs -> lookup s (xxs @ [ !(scopes.global) ])
+  | _ :: xxs -> lookup equal ns s (xxs @ [ !(scopes.global) ])
   | [] -> None
 
 let has_block_scope (lang : Lang.t) =
@@ -297,12 +305,15 @@ type context =
   (* separate InMethod? InLambda? just look for InFunction::InClass::_ *)
   | InFunction
 
-type env = {
+type 'ns env = {
   ctx : context list ref;
   (* handle locals/params/globals, block vas, enclosed vars (closures).
    * handle also basic typing information now for Java/Go.
    *)
-  names : scopes;
+  names : 'ns scopes;
+  namespaces : (module Lang_namespaces.NAMESPACES with type t = 'ns);
+  (* functions bind in a namespace apart from variables *)
+  function_namespace : bool;
   (* Inside a PHP function body, the number of enclosing block scopes it
    * hides: it sees no enclosing local and no file variable, only what a
    * [global] directive or a closure [use] plants in it. None outside any
@@ -321,15 +332,23 @@ type env = {
   next_binding : int ref;
 }
 
-let fresh_binding (env : env) : int =
+let fresh_binding (env : 'ns env) : int =
   let binding = !(env.next_binding) in
   env.next_binding := binding + 1;
   binding
 
-let default_env lang file =
+let default_env (type ns)
+    (namespaces : (module Lang_namespaces.NAMESPACES with type t = ns))
+    (lang : Lang.t) (file : string) : ns env =
+  let module N = (val namespaces) in
   {
     ctx = ref [ AtToplevel ];
     names = default_scopes ();
+    namespaces;
+    function_namespace =
+      (match N.of_definition Function with
+      | Some ns -> not (N.equal ns N.variables)
+      | None -> false);
     hidden_blocks = ref None;
     in_lvalue = ref false;
     in_type = ref false;
@@ -374,11 +393,35 @@ let visible_blocks env =
   | None -> blocks
   | Some hidden ->
       let visible = List.length blocks - hidden in
-      List.filteri (fun (i : int) (_ : scope) -> i < visible) blocks
+      List.filteri (fun (i : int) (_ : 'ns scope) -> i < visible) blocks
+
+(* The namespaces of the language, which [env] carries as a first-class
+   module: the type of a language's namespaces is abstract. *)
+let equal_namespaces (type ns) (env : ns env) : ns -> ns -> bool =
+  let module N = (val env.namespaces) in
+  N.equal
+
+let variables (type ns) (env : ns env) : ns =
+  let module N = (val env.namespaces) in
+  N.variables
+
+let namespace_of (type ns) (env : ns env)
+    (kind : Lang_namespaces.definition_kind) : ns option =
+  let module N = (val env.namespaces) in
+  N.of_definition kind
+
+let bind (env : 'ns env) (kind : Lang_namespaces.definition_kind)
+    (add : 'ns -> ident -> scope_info -> 'ns scopes -> unit) (id : ident)
+    (resolved : scope_info) : unit =
+  Option.iter
+    (fun (ns : 'ns) -> add ns id resolved env.names)
+    (namespace_of env kind)
 
 (* accessors *)
-let lookup_namespace_opt ~(class_attr : bool) (ns : namespace) ((s, _) : ident)
-    (env : env) : scope_info option =
+let lookup_position_opt (type ns) ~(class_attr : bool)
+    (position : Lang_namespaces.use_position) ((s, _) : ident) (env : ns env) :
+    scope_info option =
+  let module N = (val env.namespaces) in
   let scopes = env.names in
 
   let actual_scopes =
@@ -409,13 +452,11 @@ let lookup_namespace_opt ~(class_attr : bool) (ns : namespace) ((s, _) : ident)
             visible_blocks env @ file_scope @ [ !(scopes.imported) ]
         | _ -> [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ])
   in
-  lookup_namespace ~class_attr ns s actual_scopes
+  lookup_groups ~class_attr N.equal (N.searched_by position) s actual_scopes
 
-let lookup_scope_opt ?(class_attr = false) id env =
-  lookup_namespace_opt ~class_attr VarName id env
-
-let lookup_func_scope_opt (id : ident) (env : env) : scope_info option =
-  lookup_namespace_opt ~class_attr:false FuncName id env
+let lookup_scope_opt ?(class_attr = false) (id : ident) (env : 'ns env) :
+    scope_info option =
+  lookup_position_opt ~class_attr Expression id env
 
 (* The bare name of a field or method identifies a member of the receiver,
  * never a binding in scope, so it takes no identity from a same-named binding. It
@@ -465,8 +506,10 @@ let type_field_from_scope env id id_info =
  * Other implicit-declaration languages keep the full-chain lookup: a JS
  * bare assignment genuinely mutates the outer binding.
  *)
-let lookup_for_implicit_assign_opt id env =
+let lookup_for_implicit_assign_opt (id : ident) (env : 'ns env) :
+    scope_info option =
   let s, _ = id in
+  let lookup = lookup (equal_namespaces env) (variables env) in
   match (env.lang, !(env.names.blocks)) with
   | Lang.Python, current_block :: _ -> (
       match lookup s [ current_block ] with
@@ -622,13 +665,6 @@ let is_resolvable_name_ctx env lang =
           true
       | _ -> false)
 
-let has_function_namespace (lang : Lang.t) : bool =
-  match lang with
-  | Lang.Java
-  | Lang.Kotlin ->
-      true
-  | _ -> false
-
 let resolved_name_kind env lang =
   match top_context env with
   | AtToplevel -> Global
@@ -654,7 +690,7 @@ let resolved_name_kind env lang =
       | _ -> raise Impossible)
 
 (* !also set the id_info of the parameter as a side effect! *)
-let params_of_parameters env params : scope =
+let params_of_parameters (env : 'ns env) (params : parameters) : 'ns scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
        | Param { pname = Some id; pinfo = id_info; ptype = typ; _ }
@@ -662,7 +698,7 @@ let params_of_parameters env params : scope =
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
-           Some (var_key id, resolved)
+           Some (key (variables env) id, resolved)
        (* Destructuring parameter: the synthetic [parameter_classic]
         * carries a [!!_implicit_param!] binder that needs to be resolved
         * as a regular Parameter, so AST_to_IL can generate a
@@ -674,7 +710,7 @@ let params_of_parameters env params : scope =
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
-           Some (var_key id, resolved)
+           Some (key (variables env) id, resolved)
        (* Ruby [&callback] block parameter and PHP [&$var] by-reference
         * parameter are both produced as
         * [OtherParam("Ref", [Pa(Param(...))])] by their respective AST
@@ -692,7 +728,7 @@ let params_of_parameters env params : scope =
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
-           Some (var_key id, resolved)
+           Some (key (variables env) id, resolved)
        | _ -> None)
 
 let js_get_angular_constructor_args env attrs defs =
@@ -718,20 +754,21 @@ let js_get_angular_constructor_args env attrs defs =
        | _ -> None)
   |> List_.flatten
 
-let current_scope_entry (env : env) (ns : namespace) (id : ident) :
+let current_scope_entry (env : 'ns env) (ns : 'ns) (id : ident) :
     scope_info option =
   match (top_context env, !(env.names.blocks)) with
   | InClass, current :: _ ->
       let site = SId.of_site ~file:env.file (snd id) in
-      find_in_scope_where ns (H.str_of_ident id)
+      find_in_scope_where (equal_namespaces env) ns (H.str_of_ident id)
         (fun ({ entname = _, sid; _ } : scope_info) -> SId.same_site sid site)
         current
   | _ -> None
 
-let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
-    ~explicit vinit vtype =
+let declare_var (env : 'ns env) (lang : Lang.t) (id : ident) (id_info : id_info)
+    ?(force_global : bool = false) ?(is_macro : bool = false)
+    ~(explicit : bool) (vinit : expr option) (vtype : type_ option) : unit =
   let sid =
-    match current_scope_entry env VarName id with
+    match current_scope_entry env (variables env) id with
     | Some { entname = _, sid; _ } -> sid
     | None -> SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id)
   in
@@ -747,28 +784,113 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
        Lang.is_c_cpp lang && is_macro || (* TODO: Clojure macro? *)
        force_global
     then
-      (Global, add_ident_global_scope)
+      (Global, add_global_scope (variables env))
     else
-      (resolved_name_kind env lang, add_ident_current_scope)
+      (resolved_name_kind env lang, add_current_scope (variables env))
   in
   let resolved = { entname = (name_kind, sid); enttype = resolved_type } in
   add_ident_to_its_scope id resolved env.names;
   set_resolved env id_info resolved
 
-let declare_func env lang (id : ident) id_info (frettype : type_ option) =
-  let resolved =
-    match current_scope_entry env FuncName id with
-    | Some resolved -> resolved
-    | None ->
-        let entname =
-          ( resolved_name_kind env lang,
-            SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) )
-        in
-        let resolved = { entname; enttype = frettype } in
-        add_func_ident_current_scope id resolved env.names;
-        resolved
+let declare_func (env : 'ns env) (lang : Lang.t)
+    (kind : Lang_namespaces.definition_kind) (id : ident) (id_info : id_info)
+    (frettype : type_ option) : unit =
+  match namespace_of env kind with
+  | None -> ()
+  | Some ns ->
+      let resolved =
+        match current_scope_entry env ns id with
+        | Some resolved -> resolved
+        | None ->
+            let entname =
+              ( resolved_name_kind env lang,
+                SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id)
+              )
+            in
+            let resolved = { entname; enttype = frettype } in
+            add_current_scope ns id resolved env.names;
+            resolved
+      in
+      set_resolved env id_info resolved
+
+(* Binds [id] in namespace [ns] of [scope], with [add]. A definition of a name
+   that the scope already binds rebinds it: the same identity, at its own
+   site. [keep_type] keeps the type the scope had for the name. *)
+let declare_in_scope (env : 'ns env) (lang : Lang.t) (ns : 'ns)
+    (scope : 'ns scope) (add : 'ns -> ident -> scope_info -> 'ns scopes -> unit)
+    ~(keep_type : bool) (id : ident) (id_info : id_info) : unit =
+  let binding, enttype =
+    match lookup (equal_namespaces env) ns (fst id) [ scope ] with
+    | Some { entname = _, bound; enttype } ->
+        (SId.to_int bound, if keep_type then enttype else None)
+    | None -> (fresh_binding env, None)
   in
+  let sid = SId.of_tok ~binding ~file:env.file (snd id) in
+  let resolved = { entname = (resolved_name_kind env lang, sid); enttype } in
+  add ns id resolved env.names;
   set_resolved env id_info resolved
+
+(* A class or a type alias binds its name in the scope enclosing its
+   definition, once the definition is visited: a base class of the same name
+   refers to the earlier binding, as in Python's [class Foo(Foo):]. The name
+   carries no type. At the top level it binds in the imported scope, as a
+   function does. A Python class does not shadow an import, as an assignment
+   does not (see [lookup_for_implicit_assign_opt]): [class etree] in the
+   [except ImportError] of [from lxml import etree] refers to the import. *)
+let declare_class_or_type (env : 'ns env) (lang : Lang.t) (entity : entity)
+    (kind : Lang_namespaces.definition_kind) : unit =
+  match (entity.name, namespace_of env kind) with
+  | EN (Id (id, id_info)), Some ns when is_resolvable_name_ctx env lang -> (
+      let import =
+        if Lang.equal lang Lang.Python then
+          match lookup_scope_opt id env with
+          | Some { entname = (ImportedEntity _ | ImportedModule _), _; _ } as
+            import ->
+              import
+          | Some _
+          | None ->
+              None
+        else None
+      in
+      match import with
+      | Some import -> set_resolved env id_info import
+      | None ->
+          let scope, add =
+            match !(env.names.blocks) with
+            | [] -> (!(env.names.imported), add_imported_scope)
+            | current :: _ -> (current, add_current_scope)
+          in
+          declare_in_scope env lang ns scope add ~keep_type:false id id_info)
+  | _ -> ()
+
+(* A constructor is not a member of its class: its name refers to the class
+   (JLS 8.8). *)
+let resolve_constructors (entity : entity) (c : class_definition) : unit =
+  match entity.name with
+  | EN (Id (_, class_info)) -> (
+      match !(class_info.id_resolved) with
+      | None -> ()
+      | Some _ as resolved ->
+          let _, fields, _ = c.cbody in
+          fields
+          |> List.iter (fun (F stmt : field) ->
+                 match stmt.s with
+                 | DefStmt ({ name = EN (Id (_, ctor_info)); attrs; _ }, FuncDef _)
+                   when List.exists
+                          (function
+                            | KeywordAttr (Ctor, _) -> true
+                            | _ -> false)
+                          attrs ->
+                     ctor_info.id_resolved := resolved
+                 | _ -> ()))
+  | _ -> ()
+
+let function_definition_kind (env : 'ns env) : Lang_namespaces.definition_kind =
+  match top_context env with
+  | InClass -> Method
+  | AtToplevel
+  | InFunction ->
+      Function
 
 let declare_class_members env lang (c : class_definition) : unit =
   if is_resolvable_name_ctx env lang then
@@ -782,8 +904,13 @@ let declare_class_members env lang (c : class_definition) : unit =
                declare_var env lang id id_info ~explicit:true vinit vtype
            | DefStmt
                ({ name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ })
-             when has_function_namespace lang ->
-               declare_func env lang id id_info frettype
+             when env.function_namespace ->
+               declare_func env lang (function_definition_kind env) id id_info
+                 frettype
+           | DefStmt (entity, ClassDef nested) ->
+               declare_class_or_type env lang entity (Class (fst nested.ckind))
+           | DefStmt (entity, TypeDef _) ->
+               declare_class_or_type env lang entity Type_alias
            | _ -> ())
 
 let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
@@ -813,7 +940,7 @@ let assign_implicitly_declares lang =
 (* Entry point *)
 (*****************************************************************************)
 
-class ['self] resolve_visitor env lang =
+class ['self, 'ns] resolve_visitor (env : 'ns env) (lang : Lang.t) =
   object (self : 'self)
     inherit [_] AST_generic.iter_no_id_info as super
 
@@ -823,6 +950,21 @@ class ['self] resolve_visitor env lang =
     (* ---------- *)
     (* !the defs! *)
     (* ---------- *)
+
+    method private visit_attributes_and_type_parameters (venv : unit)
+        (attrs : attribute list) (tparams : type_parameters option) =
+      List.iter (self#visit_attribute venv) attrs;
+      Option.iter (self#visit_type_parameters venv) tparams
+
+    (* A plain name in a class or type definition is a defining occurrence,
+       which [declare_class_or_type] binds: a lookup would find whatever
+       variable or field of that name is in scope. *)
+    method private visit_class_or_type_entity (venv : unit) (entity : entity) =
+      match entity with
+      | { name = EN (Id _); attrs; tparams } ->
+          self#visit_attributes_and_type_parameters venv attrs tparams
+      | _ -> self#visit_entity venv entity
+
     method! visit_function_definition venv x =
       (* todo: add the function as a Global. In fact we should do a first
        * pass for some languages to add all of them first, because
@@ -880,8 +1022,10 @@ class ['self] resolve_visitor env lang =
               with_new_function_scope (special_class_params @ class_params)
                 env.names (fun () ->
                   declare_class_members env lang c;
-                  self#visit_entity venv entity;
-                  self#visit_class_definition venv c))
+                  self#visit_class_or_type_entity venv entity;
+                  self#visit_class_definition venv c));
+          declare_class_or_type env lang entity (Class (fst c.ckind));
+          resolve_constructors entity c
       (* `const x = require('y');` (or var, or let)
        *
        * JS: This is a CommonJS import, popularized before ES6 standardized
@@ -906,7 +1050,7 @@ class ['self] resolve_visitor env lang =
           let canonical = dotted_to_canonical [ file ] in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
-          add_ident_current_scope id resolved env.names
+          bind env Import add_current_scope id resolved
       (* `const {x, y} = require('z');` (or var, or let)
        *
        * JS: This is a CommonJS import, popularized before ES6 standardized
@@ -962,7 +1106,7 @@ class ['self] resolve_visitor env lang =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
                   set_resolved env local_id_info resolved;
-                  add_ident_current_scope local_id resolved env.names
+                  bind env Import add_current_scope local_id resolved
                   (* TODO handle nested destructuring? *)
                   (* TODO: Use the patterns mechanism to do this proper. *)
               | _ -> ())
@@ -991,8 +1135,7 @@ class ['self] resolve_visitor env lang =
           (* Visit attrs and tparams before vtype, matching the original order
            * in the generic visitor. This matters for C++ template variables
            * where vtype may reference type parameters from tparams. *)
-          List.iter (self#visit_attribute venv) attrs;
-          Option.iter (self#visit_type_parameters venv) tparams;
+          self#visit_attributes_and_type_parameters venv attrs tparams;
           Option.iter (self#visit_type_ venv) vtype;
           declare_var env lang id id_info ~explicit:true vinit vtype
       (* Left the case above because we have the type information `vtype` which
@@ -1032,58 +1175,54 @@ class ['self] resolve_visitor env lang =
            * import came later, breaking
            *   semgrep-rules/python/django/security/audit/raw-query.py.
            * But do we need a special scope for imported functions? *)
-          (if has_function_namespace lang then
-             declare_func env lang id id_info frettype
-           else if is_resolvable_name_ctx env lang then (
-              (* The scope a definition binds its name in: the file's imported
-                 scope at the top level (see above), else the enclosing block,
-                 a function's for a nested function, a class's for a method.
-                 A definition of a name that scope already binds rebinds it:
-                 the same identity, at its own site. *)
-              let scope, add_to_scope =
-                match !(env.names.blocks) with
-                | [] -> (!(env.names.imported), add_ident_imported_scope)
-                | current :: _ -> (current, add_ident_current_scope)
-              in
-              (* A rebinding keeps the type the scope had for the name: a Java
-                 field and its same-named accessor are one entry here, and
-                 the field's type is what a use of the name carries. *)
-              let binding, enttype =
-                match lookup (fst id) [ scope ] with
-                | Some { entname = _, bound; enttype } ->
-                    (SId.to_int bound, enttype)
-                | None -> (fresh_binding env, None)
-              in
-              let sid = SId.of_tok ~binding ~file:env.file (snd id) in
-              let resolved = { entname = (resolved_name_kind env lang, sid); enttype } in
-              add_to_scope id resolved env.names;
-              set_resolved env id_info resolved));
+          (if env.function_namespace then
+             declare_func env lang (function_definition_kind env) id id_info
+               frettype
+           else if is_resolvable_name_ctx env lang then
+             match namespace_of env (function_definition_kind env) with
+             | None -> ()
+             | Some ns ->
+                 (* The scope a definition binds its name in: the file's
+                    imported scope at the top level (see above), else the
+                    enclosing block, a function's for a nested function, a
+                    class's for a method. *)
+                 let scope, add =
+                   match !(env.names.blocks) with
+                   | [] -> (!(env.names.imported), add_imported_scope)
+                   | current :: _ -> (current, add_current_scope)
+                 in
+                 (* A rebinding keeps the type the scope had for the name: a
+                    Java field and its same-named accessor are one entry here,
+                    and the field's type is what a use of the name carries. *)
+                 declare_in_scope env lang ns scope add ~keep_type:true id
+                   id_info);
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
           let s = String.lowercase_ascii (Tok.content_of_tok tok) in
+          let equal = equal_namespaces env and variables = variables env in
           let flookup =
             match s with
-            | "global" -> lookup_global_scope
-            | "nonlocal" -> lookup_nonlocal_scope
+            | "global" -> lookup_global_scope equal variables
+            | "nonlocal" -> lookup_nonlocal_scope equal variables
             (* a PHP closure [use ($x)] *)
-            | "use" -> lookup_enclosing_scope
+            | "use" -> lookup_enclosing_scope equal variables
             | _ ->
                 error tok (spf "unrecognized UseOuterDecl directive: %s" s);
-                lookup_global_scope
+                lookup_global_scope equal variables
           in
           (match flookup id env.names with
           | Some resolved ->
               set_resolved env id_info resolved;
-              add_ident_current_scope id resolved env.names
+              add_current_scope variables id resolved env.names
           | None when String.equal s "global" ->
               (* the directive creates the global when the file has not
                  assigned it yet, as the language does *)
               declare_var env lang id id_info ~force_global:true
                 ~explicit:false None None;
-              lookup_global_scope id env.names
-              |> Option.iter (fun resolved ->
-                     add_ident_current_scope id resolved env.names)
+              lookup_global_scope equal variables id env.names
+              |> Option.iter (fun (resolved : scope_info) ->
+                     add_current_scope variables id resolved env.names)
           | None ->
               error tok
                 (spf "could not find '%s' for directive %s"
@@ -1098,13 +1237,17 @@ class ['self] resolve_visitor env lang =
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
           (* difference with ImportAs, we add in local scope in OCaml *)
-          add_ident_current_scope id resolved env.names;
+          bind env Module add_current_scope id resolved;
           super#visit_definition venv x
       | ( { name = EN (Id (id, id_info)); _ },
           MacroDef
             { macroparams = []; macrobody = [ E ({ e = L _; _ } as e) ] } ) ->
           declare_var env lang id id_info ~is_macro:true ~explicit:true (Some e) None;
           super#visit_definition venv x
+      | entity, (TypeDef _ as kind) ->
+          self#visit_class_or_type_entity venv entity;
+          self#visit_definition_kind venv kind;
+          declare_class_or_type env lang entity Type_alias
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
 
@@ -1122,7 +1265,7 @@ class ['self] resolve_visitor env lang =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
                   set_resolved env id_info resolved;
-                  add_ident_imported_scope alias resolved env.names
+                  bind env Import add_imported_scope alias resolved
               | id, None ->
                   (* for python *)
                   let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
@@ -1130,7 +1273,7 @@ class ['self] resolve_visitor env lang =
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
-                  add_ident_imported_scope id resolved env.names)
+                  bind env Import add_imported_scope id resolved)
             imported_names
       | ImportFrom (_, FileName (s, tok), imported_names) ->
           List.iter
@@ -1148,7 +1291,7 @@ class ['self] resolve_visitor env lang =
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
-                  add_ident_imported_scope id resolved env.names
+                  bind env Import add_imported_scope id resolved
               | id, Some (alias, id_info)
                 when Lang.is_js lang && fst id <> Ast_js.default_entity ->
                   (* for JS *)
@@ -1160,7 +1303,7 @@ class ['self] resolve_visitor env lang =
                     untyped_ent (ImportedEntity canonical, sid)
                   in
                   set_resolved env id_info resolved;
-                  add_ident_imported_scope alias resolved env.names
+                  bind env Import add_imported_scope alias resolved
               | _ -> ())
             imported_names
       | ImportAs (_, DottedName xs, Some (alias, id_info)) ->
@@ -1169,7 +1312,7 @@ class ['self] resolve_visitor env lang =
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
-          add_ident_imported_scope alias resolved env.names
+          bind env Import add_imported_scope alias resolved
       | ImportAs (_, FileName (s, tok), Some (alias, id_info)) ->
           (* for Go *)
           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
@@ -1178,7 +1321,7 @@ class ['self] resolve_visitor env lang =
           let canonical = dotted_to_canonical [ base ] in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
-          add_ident_imported_scope alias resolved env.names
+          bind env Import add_imported_scope alias resolved
       | _ -> ());
       super#visit_directive venv x
 
@@ -1272,7 +1415,10 @@ class ['self] resolve_visitor env lang =
              * THINK: Maybe log something if we were going to overwrite ? *)
             Option.is_none !(id_info.id_resolved)
           then
-            match lookup_scope_opt id env with
+            let position : Lang_namespaces.use_position =
+              if !(env.in_type) then Type_position else Name
+            in
+            match lookup_position_opt ~class_attr:false position id env with
             | Some resolved ->
                 (* name resolution *)
                 set_resolved env id_info resolved
@@ -1286,7 +1432,7 @@ class ['self] resolve_visitor env lang =
           } ->
           (match name_middle with
           | Some (QDots ((m, None) :: rest_of_middle)) -> (
-              match lookup_scope_opt m env with
+              match lookup_position_opt ~class_attr:false Qualifier m env with
               (* Resolve modules for OCaml *)
               | Some { entname = ImportedModule xs, _sidm; _ }
               (* Resolve classes for use in typed metavars (Java) *)
@@ -1364,8 +1510,8 @@ class ['self] resolve_visitor env lang =
               self#visit_expr venv e2);
           recurse := false
       | Call ({ e = N (Id (id, id_info)); _ }, args)
-        when has_function_namespace lang -> (
-          match lookup_func_scope_opt id env with
+        when env.function_namespace -> (
+          match lookup_position_opt ~class_attr:false Callee id env with
           | Some resolved ->
               set_resolved env id_info resolved;
               self#visit_arguments venv args;
@@ -1548,7 +1694,20 @@ class ['self] resolve_visitor env lang =
       | _else_ -> super#visit_stmt venv x
   end
   
-let resolve lang prog =
+let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
+  match lang with
+  | Lang.Java -> (module Namespaces_java)
+  | Lang.Kotlin -> (module Namespaces_kotlin)
+  | Lang.Go
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3 ->
+      (module Lang_namespaces.Single)
+  | _ -> (module Lang_namespaces.Single_without_type_bindings)
+
+let resolve_with (type ns)
+    (namespaces : (module Lang_namespaces.NAMESPACES with type t = ns))
+    (lang : Lang.t) (prog : program) : unit =
   (* The real file of the program, read off its first real token; used to
      stamp every resolved-name sid with its genuine source path. *)
   let file =
@@ -1556,7 +1715,7 @@ let resolve lang prog =
     | Some (loc, _) -> Fpath.to_string (Fpath.normalize loc.Tok.pos.file)
     | None -> ""
   in
-  let env = default_env lang file in
+  let env = default_env namespaces lang file in
 
   (* coupling: we do similar things in Constant_propagation.ml so if you
    * add a feature here, you might want to add a similar thing over there too.
@@ -1565,4 +1724,8 @@ let resolve lang prog =
   in
   visitor#visit_program () prog;
   ()
+
+let resolve (lang : Lang.t) (prog : program) : unit =
+  let (module N) = namespaces_of_lang lang in
+  resolve_with (module N) lang prog
 [@@profiling]

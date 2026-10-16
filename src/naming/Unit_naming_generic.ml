@@ -30,6 +30,44 @@ let resolutions_of_name ast name =
   visitor#visit_program () ast;
   List.rev !acc
 
+(* The resolutions of every use of [name] as a type, in source order. *)
+let type_resolutions_of_name ast name =
+  let acc = ref [] in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_type_ venv ty =
+        (match ty.AST_generic.t with
+        | AST_generic.TyN (AST_generic.Id ((s, _), id_info))
+          when String.equal s name ->
+            acc := !(id_info.AST_generic.id_resolved) :: !acc
+        | _ -> ());
+        super#visit_type_ venv ty
+    end
+  in
+  visitor#visit_program () ast;
+  List.rev !acc
+
+(* The resolutions of every annotation or decorator [name], in source order. *)
+let attribute_resolutions_of_name ast name =
+  let acc = ref [] in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_attribute venv attr =
+        (match attr with
+        | AST_generic.NamedAttr (_, AST_generic.Id ((s, _), id_info), _)
+          when String.equal s name ->
+            acc := !(id_info.AST_generic.id_resolved) :: !acc
+        | _ -> ());
+        super#visit_attribute venv attr
+    end
+  in
+  visitor#visit_program () ast;
+  List.rev !acc
+
 let kind_of_resolution = function
   | None -> "Unresolved"
   | Some ((kind : AST_generic.resolved_name_kind), _sid) -> (
@@ -49,7 +87,7 @@ let check_resolutions ast name expected =
     (spf "resolutions of '%s'" name)
     expected actual
 
-(* The sid of the definition (def/class entity) named [name]. *)
+(* The sid of the first definition of [name] that has a binding. *)
 let def_sid_of_name ast name =
   let acc = ref None in
   let visitor =
@@ -70,7 +108,7 @@ let def_sid_of_name ast name =
   visitor#visit_program () ast;
   !acc
 
-(* The sids of every definition (def/class entity) named [name], in order. *)
+(* The sids of every definition of [name] that has a binding, in order. *)
 let def_sids_of_name ast name =
   let acc = ref [] in
   let visitor =
@@ -158,6 +196,43 @@ let tests parse_program =
                  with
                  | Parsing_error.Syntax_error _ ->
                      Alcotest.failf "it should correctly parse %s" !!file));
+      t "python class and function of one name follow source order" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/python/class_then_def.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* the function rebinds the class's name, and the call refers to it *)
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_; function_ ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the function" true
+                (AST_generic.SId.equal function_ call);
+              Alcotest.(check bool) "the function rebinds the class's binding"
+                true
+                (Int.equal
+                   (AST_generic.SId.to_int class_)
+                   (AST_generic.SId.to_int function_))
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and one use of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "kotlin call refers to the class, not the parameter of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/kotlin/class_and_parameter.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_ ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the class" true
+                (AST_generic.SId.equal class_ call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one definition and one resolved use of Foo, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
       t "python redefinition rebinds the same name" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/redefined_def.py")
@@ -315,4 +390,130 @@ let tests parse_program =
           (* JS keeps the full-chain lookup: the bare assignment in setup()
              mutates the module-level `state`, it does not declare a local. *)
           check_resolutions ast "state" [ "Global"; "Global" ]);
+      t "an annotation refers to the imported type, not the variable of the same name"
+        (fun () ->
+          [
+            ("naming/java/annotation_and_field.java", "Inject");
+            ("naming/kotlin/annotation_and_property.kt", "Inject");
+          ]
+          |> List.iter (fun ((path, name) : string * string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 Alcotest.(check (list string))
+                   (spf "%s: resolutions of the annotation %s" path name)
+                   [ "ImportedEntity" ]
+                   (attribute_resolutions_of_name ast name
+                   |> List.map kind_of_resolution)));
+      t "a class or type definition does not resolve to the variable of the same name"
+        (fun () ->
+          (* a type alias next to a constant, and a nested class next to a
+             field: the use refers to the constant or the field, and the
+             alias or the class does not share its binding *)
+          [
+            ("naming/rust/type_alias_and_constant.rs", "T");
+            ("naming/java/nested_class_and_field.java", "Inner");
+            ("naming/kotlin/type_alias_and_variable.kt", "Foo");
+          ]
+          |> List.iter (fun ((path, name) : string * string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match (def_sids_of_name ast name, resolutions_of_name ast name)
+                 with
+                 | variable :: others, [ Some (_kind, use) ] ->
+                     Alcotest.(check bool)
+                       (spf "the use of %s refers to the variable" name)
+                       true
+                       (AST_generic.SId.equal variable use);
+                     Alcotest.(check bool)
+                       (spf "no other definition of %s shares its binding" name)
+                       true
+                       (List.for_all
+                          (fun (other : AST_generic.SId.t) ->
+                            not (AST_generic.SId.equal variable other))
+                          others)
+                 | definitions, uses ->
+                     Alcotest.failf
+                       "%s: expected a resolved definition and one resolved \
+                        use of %s, found %d and %d"
+                       path name (List.length definitions)
+                       (List.length (List.filter Option.is_some uses))));
+      t "a use in a type refers to the type, not the variable of the same name"
+        (fun () ->
+          (* the definitions are the variable, then the type; in Java the
+             uses in a type are a return type and the type of [new Inner()],
+             in Kotlin the type of [copy] *)
+          [
+            ("naming/java/nested_class_and_field.java", "Inner", 2);
+            ("naming/kotlin/type_alias_and_variable.kt", "Foo", 1);
+          ]
+          |> List.iter (fun ((path, name, count) : string * string * int) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 let uses = type_resolutions_of_name ast name in
+                 match def_sids_of_name ast name with
+                 | [ _variable; type_ ] when Int.equal (List.length uses) count
+                   ->
+                     uses
+                     |> List.iteri
+                          (fun (i : int) (use : AST_generic.resolved_name option)
+                          ->
+                            match use with
+                            | Some (_kind, sid) ->
+                                Alcotest.(check bool)
+                                  (spf "type use #%d of %s refers to the type" i
+                                     name)
+                                  true
+                                  (AST_generic.SId.equal type_ sid)
+                            | None ->
+                                Alcotest.failf
+                                  "%s: type use #%d of %s is unresolved" path i
+                                  name)
+                 | definitions ->
+                     Alcotest.failf
+                       "%s: expected two definitions and %d type uses of %s, \
+                        found %d and %d"
+                       path count name (List.length definitions)
+                       (List.length uses)));
+      t "python class binds its name in its scope" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/python/class_in_function.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment, the call of the class in
+             f, the read of the global in g. *)
+          check_resolutions ast "Foo" [ "Global"; "LocalVar"; "Global" ];
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_ ], [ Some (_, global); Some (_, call); Some (_, read) ] ->
+              Alcotest.(check bool) "the call refers to the class" true
+                (AST_generic.SId.equal class_ call);
+              Alcotest.(check bool) "the read refers to the global" true
+                (AST_generic.SId.equal global read)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one class and three uses of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "go type binds its name in its block" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/go/type_in_function.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* Occurrences: the conversion to the type in f, the read of the
+             package variable in g. *)
+          check_resolutions ast "T" [ "LocalVar"; "Global" ];
+          match (def_sids_of_name ast "T", resolutions_of_name ast "T") with
+          | [ variable; type_ ], [ Some (_, conversion); Some (_, read) ] ->
+              Alcotest.(check bool) "the conversion refers to the type" true
+                (AST_generic.SId.equal type_ conversion);
+              Alcotest.(check bool) "the read refers to the variable" true
+                (AST_generic.SId.equal variable read)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two uses of T, found %d and %d"
+                (List.length definitions) (List.length uses));
     ]

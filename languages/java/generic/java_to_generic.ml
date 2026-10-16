@@ -654,7 +654,13 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
     | _, { s = G.Block (_, [], _); _ } when is_abstract -> G.FBNothing
     | _ -> FBStmt v4
   in
-  ( { ent with G.attrs = ent.G.attrs @ throws },
+  (* a constructor is the method declaration without a result type *)
+  let ctor =
+    match m_var.type_ with
+    | None -> [ G.KeywordAttr (G.Ctor, snd m_var.name) ]
+    | Some _ -> []
+  in
+  ( { ent with G.attrs = ent.G.attrs @ ctor @ throws },
     {
       G.fparams = fb fparams;
       frettype = rett;
