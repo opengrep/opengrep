@@ -3987,6 +3987,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Elixir
   | Kotlin
   | Python
+  | Python2
+  | Python3
   | Scala ->
       true
   | _ -> false
