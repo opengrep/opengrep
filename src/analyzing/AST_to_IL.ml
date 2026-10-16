@@ -3985,7 +3985,9 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Move_on_aptos
   | Clojure
   | Elixir
-  | Kotlin ->
+  | Kotlin
+  | Python
+  | Scala ->
       true
   | _ -> false
 
