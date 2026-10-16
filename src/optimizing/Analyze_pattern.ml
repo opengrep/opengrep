@@ -80,8 +80,9 @@ class ['self] extract_strings_and_mvars_visitor =
         else super#visit_parameter_classic env p
 
       (* Same rationale for pattern identifiers synthesised by a
-       * *_to_generic converter (e.g. Elixir's `__tmp` for the `^` pin
-       * operator): when [id_info] is marked hidden the ident must not
+       * *_to_generic converter (e.g. Dart's `!cascade` receiver binder or
+       * Clojure's threading temporary): when [id_info] is marked hidden the
+       * ident must not
        * leak into the prefilter regex. *)
       method! visit_pattern env x =
         match x with

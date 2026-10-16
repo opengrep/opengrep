@@ -966,6 +966,18 @@ and pattern_constant (env : env) (x : CST.pattern_constant) : qualified =
           x @ [ v3 ]
       | None -> [ v3 ])
 
+(* A constant pattern read as a value: [Foo::BAR] keeps its [::] tokens and
+ * [::BAR] its top scope. *)
+and pattern_constant_expr (env : env) (x : CST.pattern_constant) : expr =
+  match x with
+  | `Cst x -> Id (constant env x)
+  | `Pat_cst_resol (v1, v2, v3) -> (
+      let v2 = (* "::" *) token2 env v2 in
+      let v3 = (* constant *) constant env v3 in
+      match v1 with
+      | Some x -> ScopedId (Scope (pattern_constant_expr env x, v2, SV v3))
+      | None -> ScopedId (TopScope (v2, v3)))
+
 and pattern_value (env : env) (x : CST.pattern_value) =
   match x with
   | `Pat_prim x -> PatExpr (pattern_primitive env x)
@@ -983,12 +995,10 @@ and pattern_value (env : env) (x : CST.pattern_value) =
       let v3 = expression env v3 in
       let _v4 = (* ")" *) token2 env v4 in
       PatPin (v1, v3)
-  | `Pat_cst x -> (
-      match pattern_constant env x with
-      (* A constant is a value pattern, matched with `===`, as the other
-       * value patterns above. Only a lowercase identifier binds. *)
-      | [ x ] -> PatExpr (Id x)
-      | other -> PatConstructor (other, []))
+  (* A constant is a value pattern, matched with `===`, as the other
+   * value patterns above, whether qualified or not. Only a lowercase
+   * identifier binds. *)
+  | `Pat_cst x -> PatExpr (pattern_constant_expr env x)
 
 and pattern_primitive (env : env) (x : CST.pattern_primitive) : expr =
   match x with

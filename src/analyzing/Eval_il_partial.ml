@@ -310,6 +310,28 @@ and eval_op memo (env : env) wop args =
   | G.Or, [ G.Lit (G.Bool (false, _)); c ] when Lang.equal env.lang Lang.Python
     ->
       c (* Python: False or 42 -> 42 *)
+  (* Ruby's `===`, which the Ruby front end writes as [PhysEq], is case
+   * equality: its result depends on the class of the receiver (a Regexp
+   * matches, a Range includes, a class tests membership, `1 === 1.0`). It
+   * agrees with `==` only between two literals of the same kind among
+   * integers, floats, strings, symbols, booleans and nil; otherwise it is
+   * not decided on the operands' values. *)
+  | G.PhysEq, _
+    when Lang.equal env.lang Lang.Ruby
+         &&
+         match cs with
+         | [ G.Lit l1; G.Lit l2 ] -> (
+             match (l1, l2) with
+             | G.Int _, G.Int _
+             | G.Float _, G.Float _
+             | G.String _, G.String _
+             | G.Atom _, G.Atom _
+             | G.Bool _, G.Bool _
+             | G.Null _, G.Null _ ->
+                 false
+             | _ -> true)
+         | _ -> true ->
+      G.Cst G.Cbool
   (* Equality / inequality fold uniformly via [eq] on [G.svalue], so any
    * two [Lit] operands — Bool, Int, String, etc. — produce a [Lit Bool].
    * [PhysEq]/[NotPhysEq] are JS [===]/[!==] and OCaml [==]/[!=]; folding

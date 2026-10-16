@@ -31,4 +31,34 @@ defmodule SwitchCase do
         0
     end
   end
+
+  def pinned_slot_does_not_match() do
+    x = taint_source()
+    y = 1
+    case {2, 0} do
+      {^y, _} ->
+        # ok: taint-switch-case-elixir
+        sink(x)
+      _ ->
+        0
+    end
+  end
+
+  def pinned_slot_matches() do
+    x = taint_source()
+    y = 2
+    case {2, 0} do
+      {^y, _} ->
+        # ruleid: taint-switch-case-elixir
+        sink(x)
+      _ ->
+        0
+    end
+  end
+
+  def pin_in_a_match_binds_nothing(foo) do
+    ^foo = taint_source()
+    # ok: taint-switch-case-elixir
+    sink(foo)
+  end
 end

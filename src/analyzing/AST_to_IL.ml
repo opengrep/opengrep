@@ -402,6 +402,16 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatAs _ -> true
   | _ -> false
 
+(* The operator that tests a case label against the scrutinee. Ruby's `case`
+ * tests with case equality, `label === scrutinee`, which the Ruby front end
+ * writes as [PhysEq] and whose result depends on the class of the label (a
+ * Regexp matches, a Range includes, a class tests membership); other
+ * languages test value equality. *)
+let label_test_operator (lang : Lang.t) : G.operator =
+  match lang with
+  | Lang.Ruby -> G.PhysEq
+  | _ -> G.Eq
+
 (* The comparison of a test pattern whose subject is implicit: a C#
  * relational pattern (`< 5`) or a Kotlin range test (`in r`). The front end
  * records the operator as the tag of an [OtherPat] holding the rhs. *)
@@ -784,6 +794,12 @@ and pattern env pat : stmts * lval * stmts =
   | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
     when env.lang =*= Lang.Elixir ->
     pattern env inner
+  (* Ruby's value pattern (`expr`) and a pinned variable (`^x` in Ruby and
+   * Elixir) match by value and bind nothing, even as an assignment target:
+   * evaluate the expression, as for a value below, and bind a fresh tmp. *)
+  | G.OtherPat ((("expr" | "PatPin"), tok), [ G.E e ]) ->
+      let pre_ss, _e = expr env e in
+      (pre_ss, fresh_lval env tok, [])
   | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) -> (
     (* expr_to_pattern fallback: the expression couldn't be statically
      * converted to a known pattern. This is how an assignment target that
@@ -1036,15 +1052,25 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   | G.PatWhen (inner, _guardTODO) ->
       pattern_match_cond env scrutinee inner
   | G.PatLiteral _
-  | G.OtherPat (("ExprToPattern", _), [ G.E _ ]) ->
+  | G.OtherPat ((("ExprToPattern" | "expr" | "PatPin"), _), [ G.E _ ]) ->
       (* An expression nested in a tuple pattern compares with that slot;
-       * it must not turn into a binding or an unsupported condition. *)
-      let g_exp = AST_generic_helpers.pattern_to_expr pat in
+       * it must not turn into a binding or an unsupported condition. The
+       * same holds for Ruby's value pattern (`expr`) and for a pinned
+       * variable (`^x` in Ruby and Elixir). *)
+      let g_exp =
+        match pat with
+        | G.OtherPat (_, [ G.E e ]) -> e
+        | _ -> AST_generic_helpers.pattern_to_expr pat
+      in
       let ss, value_il = expr env g_exp in
+      let args =
+        match label_test_operator env.lang with
+        | G.PhysEq -> [ value_il; scrutinee ]
+        | _ -> [ scrutinee; value_il ]
+      in
       ( ss,
         mk_e
-          (Operator
-             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed value_il ]))
+          (Operator ((label_test_operator env.lang, op_tok), mk_unnamed_args args))
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
@@ -4353,7 +4379,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
               {
                 e =
                   Operator
-                    ( (G.Eq, tok),
+                    ( (label_test_operator env.lang, tok),
                       [
                         Unnamed { e = Literal l; eorig = related_tok tok };
                         Unnamed switch_expr;
@@ -4376,7 +4402,10 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
             let c_ss, c' = expr env c in
             ( ss @ c_ss,
               {
-                e = Operator ((G.Eq, tok), [ Unnamed c'; Unnamed switch_expr ]);
+                e =
+                  Operator
+                    ( (label_test_operator env.lang, tok),
+                      [ Unnamed c'; Unnamed switch_expr ] );
                 eorig = related_tok tok;
               }
               :: es )
