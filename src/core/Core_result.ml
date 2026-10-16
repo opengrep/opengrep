@@ -91,6 +91,8 @@ type matches_single_file = Core_profiling.partial_profiling match_result
 type processed_match = {
   pm : Core_match.t;
   is_ignored : bool;
+  (* the text after "--" in the nosemgrep annotation, if ignored *)
+  justification : string option;
   autofix_edit : Textedit.t option;
 }
 [@@deriving show]
@@ -124,7 +126,8 @@ type result_or_exn = (t, Exception.t) result
 (* Builders *)
 (*****************************************************************************)
 
-let mk_processed_match pm = { pm; is_ignored = false; autofix_edit = None }
+let mk_processed_match pm =
+  { pm; is_ignored = false; justification = None; autofix_edit = None }
 
 let empty_match_result : Core_profiling.times match_result =
   {
