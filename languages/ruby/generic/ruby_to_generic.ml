@@ -728,6 +728,8 @@ and pattern pat =
   let promote expr =
     match expr with
     | G.L l -> G.PatLiteral l
+    (* A search-pattern `...` label, as [H.expr_to_pattern] gives it. *)
+    | G.Ellipsis t -> G.PatEllipsis t
     | _ -> G.OtherPat (("expr", G.fake "expr"), [ G.E (G.e expr) ])
   in
   match pat with

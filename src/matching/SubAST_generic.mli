@@ -6,5 +6,8 @@ val subexprs_of_expr_implicit :
 
 val subexprs_of_stmt_kind : AST_generic.stmt_kind -> AST_generic.expr list
 
+(* The outermost expressions a pattern holds, a literal included. *)
+val subexprs_of_pattern : AST_generic.pattern -> AST_generic.expr list
+
 val flatten_substmts_of_stmts :
   AST_generic.stmt list -> (AST_generic.stmt list * AST_generic.stmt) option

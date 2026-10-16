@@ -2369,40 +2369,46 @@ and variable_declaration (env : env) ((v1, v2) : CST.variable_declaration) =
   in
   (v1, v2)
 
-and when_condition (env : env) (x : CST.when_condition) : G.expr =
+(* A condition of a [when] with a subject is compared with the subject;
+ * one of a [when] without a subject is a boolean expression. *)
+and when_condition (env : env) (x : CST.when_condition) : G.case =
   match x with
-  | `Exp v1 -> expression env v1
-  (* TODO: there is an implicit first argument that is the thing
-   * we call 'when' on
+  | `Exp v1 -> G.CaseEqualExpr (fake "case", expression env v1)
+  (* The thing we call 'when' on is the implicit first argument of the
+   * tests below: the switch scrutinee.
    *)
   | `Range_test (v1, v2) ->
-      let op, tok = in_operator env v1 in
+      let _op, tok = in_operator env v1 in
+      let tag =
+        match v1 with
+        | `In _ -> "in"
+        | `BANGin _ -> "!in"
+      in
       let v2 = expression env v2 in
-      G.opcall (op, tok) [ v2 ]
-  | `Type_test (v1, v2) ->
-      let op, tok = is_operator env v1 in
-      let t = type_ env v2 in
-      G.Call (G.IdSpecial (G.Op op, tok) |> G.e, fb [ G.ArgType t ]) |> G.e
+      G.Case (tok, G.OtherPat ((tag, tok), [ G.E v2 ]))
+  | `Type_test (v1, v2) -> (
+      let _op, tok = is_operator env v1 in
+      let pat = G.PatType (type_ env v2) in
+      match v1 with
+      | `Is _ -> G.Case (tok, pat)
+      | `BANGis _ -> G.Case (tok, G.OtherPat (("NotPattern", tok), [ G.P pat ])))
 
 and when_entry (env : env) ((v1, v2, v3, v4) : CST.when_entry) =
   let v1 =
     match v1 with
+    (* Conditions separated by commas: the branch is taken when any of
+     * them holds, as for several case labels on one body. *)
     | `When_cond_rep_COMMA_when_cond (v1, v2) ->
         let v1 = when_condition env v1 in
         let v2 =
           List_.map
             (fun (v1, v2) ->
-              let v1 = token env v1 (* "," *) in
-              let v2 = when_condition env v2 in
-              (v1, v2))
+              let _v1 = token env v1 (* "," *) in
+              when_condition env v2)
             v2
         in
-        let cond =
-          v2
-          |> List.fold_left (fun acc (t, e) -> G.opcall (And, t) [ acc; e ]) v1
-        in
-        Case (fake "case", PatWhen (PatWildcard (fake "_"), cond))
-    | `Else tok -> Default (token env tok)
+        v1 :: v2
+    | `Else tok -> [ Default (token env tok) ]
     (* "else" *)
   in
   let _v2 = token env v2 (* "->" *) in
@@ -2414,7 +2420,7 @@ and when_entry (env : env) ((v1, v2, v3, v4) : CST.when_entry) =
         ()
     | None -> ()
   in
-  CasesAndBody ([ v1 ], v3)
+  CasesAndBody (v1, v3)
 
 and when_subject (env : env) ((v1, v2, v3, v4) : CST.when_subject) : condition =
   let _v1 = token env v1 (* "(" *) in

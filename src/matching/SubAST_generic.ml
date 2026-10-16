@@ -380,6 +380,21 @@ let lambdas_in_expr e =
 (* XXX: Shortcut, because we don't use the cache due to performance degradation. *)
 let lambdas_in_expr_memo = lambdas_in_expr
 
+(* The outermost expressions a pattern holds: a literal, the value of a
+ * value pattern, the operand of a relational or range test. Used to match
+ * a deep-ellipsis case label against a pattern label. *)
+class ['self] exprs_of_pattern_visitor =
+  object (_self : 'self)
+    inherit [_] AST_generic.iter_no_id_info
+    method! visit_expr aref e = Stack_.push e aref
+    method! visit_PatLiteral aref lit = Stack_.push (L lit |> AST_generic.e) aref
+  end
+
+let exprs_of_pattern_visitor_instance = new exprs_of_pattern_visitor
+
+let subexprs_of_pattern (pat : pattern) : expr list =
+  do_visit_with_ref exprs_of_pattern_visitor_instance (P pat)
+
 (*****************************************************************************)
 (* Really substmts_of_stmts *)
 (*****************************************************************************)
