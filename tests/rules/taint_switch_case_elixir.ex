@@ -83,4 +83,15 @@ defmodule SwitchCase do
         0
     end
   end
+
+  def empty_map_pattern_matches_any_map() do
+    x = taint_source()
+    case %{a: 1} do
+      %{} ->
+        # ruleid: taint-switch-case-elixir
+        sink(x)
+      _ ->
+        0
+    end
+  end
 end
