@@ -996,7 +996,9 @@ and pattern_value (env : env) (x : CST.pattern_value) =
       PatPin (v1, v3)
   | `Pat_cst x -> (
       match pattern_constant env x with
-      | [ x ] -> PatId x
+      (* A constant is a value pattern, matched with `===`, as the other
+       * value patterns above. Only a lowercase identifier binds. *)
+      | [ x ] -> PatExpr (Id x)
       | other -> PatConstructor (other, []))
 
 and pattern_primitive (env : env) (x : CST.pattern_primitive) : expr =

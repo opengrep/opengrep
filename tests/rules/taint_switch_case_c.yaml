@@ -1,0 +1,15 @@
+rules:
+- id: taint-switch-case-c
+  mode: taint
+  pattern-sources:
+    - pattern: taint_source()
+  pattern-sinks:
+    - pattern: sink(...)
+  message: Tainted value reaches sink
+  severity: WARNING
+  languages: [c]
+- id: switch-case-constant-propagation-c
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [c]

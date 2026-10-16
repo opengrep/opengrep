@@ -47,6 +47,60 @@ let _map_trailing_comma env x =
 let forward_reference_map_template_substitution =
   ref (fun _env _x -> failwith "Foward reference not set.")
 
+(* In Dart 3 a case label is a pattern. Constant patterns compare the
+ * scrutinee with a value; other patterns may bind names, e.g. `[a, b]`
+ * with constants `a` and `b` compares, while `[var a, var b]` binds.
+ * See https://dart.dev/language/pattern-types#constant.
+ * [map_expression] drops `const`, so the decision is made on the CST. *)
+let rec is_constant_pattern (x : CST.argument) : bool =
+  match x with
+  | `Choice_assign_exp
+      (`Real_exp_rep_casc_sect (`Choice_cond_exp (`Un_exp e), [])) -> (
+      match e with
+      | `Post_exp (`Prim_rep_sele (p, sels)) -> is_constant_primary p sels
+      | `Un_exp_
+          (`Prefix_op_un_exp
+             ( `Minus_op _,
+               `Post_exp
+                 (`Prim_rep_sele
+                    ( `Choice_lit
+                        (`Lit
+                           ( `Deci_int_lit _ | `Hex_int_lit _
+                           | `Deci_floa_point_lit _ )),
+                      [] )) )) ->
+          true
+      | _ -> false)
+  | _ -> false
+
+and is_constant_primary (p : CST.primary) (sels : CST.selector list) : bool =
+  match (p, sels) with
+  | `Choice_lit (`Lit lit), [] -> (
+      match lit with
+      | `Deci_int_lit _
+      | `Hex_int_lit _
+      | `Deci_floa_point_lit _
+      | `True _
+      | `False _
+      | `Str_lit _
+      | `Null_lit _
+      | `Symb_lit _ ->
+          true
+      | `List_lit (const, _, _, _, _)
+      | `Set_or_map_lit (const, _, _, _, _) ->
+          Option.is_some const)
+  | `Choice_lit (`Id (_, name)), [] -> not (String.equal name "_")
+  (* A qualified name: `A.b`, `A.B.c`. *)
+  | `Choice_lit (`Id _), sels ->
+      List.for_all
+        (function
+          | `Choice_excl_op (`Assi_sele (`Unco_assi_sele (`DOT_id _))) -> true
+          | _ -> false)
+        sels
+  | `Choice_lit (`Const_obj_exp _), [] -> true
+  (* A parenthesized pattern only groups. *)
+  | `Choice_lit (`LPAR_exp_RPAR (_, arg, _)), [] -> is_constant_pattern arg
+  | _ -> false
+
 (*****************************************************************************)
 (* Boilerplate converter *)
 (*****************************************************************************)
@@ -2378,9 +2432,11 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
     match v2 with
     | `Case_buil_exp_COLON (v1, v2, v3) ->
         let v1 = (* case_builtin *) token env v1 in
+        let is_constant = is_constant_pattern v2 in
         let v2 = map_expression env v2 in
         let _v3 = (* ":" *) token env v3 in
-        Case (v1, H2.expr_to_pattern v2)
+        if is_constant then CaseEqualExpr (v1, v2)
+        else Case (v1, H2.expr_to_pattern v2)
     | `Defa_COLON (v1, v2) ->
         let v1 = (* "default" *) token env v1 in
         let _v2 = (* ":" *) token env v2 in

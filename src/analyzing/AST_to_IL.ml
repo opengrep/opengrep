@@ -406,8 +406,9 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
 
 (* An Elixir `cond` branch condition is an expression, not a pattern:
  * [expr_to_pattern] tags it [OtherPat("ExprToPattern", …)] (possibly wrapped
- * in a singleton [PatTuple] by [pat_of_args_and_when]). Real `case` patterns
- * never take this shape, so it reliably marks a `cond` condition. *)
+ * in a singleton [PatTuple] by [pat_of_args_and_when]). Value labels of other
+ * languages (Swift, C# constant patterns) take the same shape, so this only
+ * marks a `cond` condition in Elixir. *)
 let rec is_expr_to_pattern (p : G.pattern) : bool =
   match p with
   | G.OtherPat (("ExprToPattern", _), _) -> true
@@ -1004,13 +1005,16 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       pattern_match_cond env scrutinee inner
   | G.PatWhen (inner, _guardTODO) ->
       pattern_match_cond env scrutinee inner
-  | G.PatLiteral _ ->
+  | G.PatLiteral _
+  | G.OtherPat (("ExprToPattern", _), [ G.E _ ]) ->
+      (* An expression nested in a tuple pattern compares with that slot;
+       * it must not turn into a binding or an unsupported condition. *)
       let g_exp = AST_generic_helpers.pattern_to_expr pat in
-      let ss, lit_il = expr env g_exp in
+      let ss, value_il = expr env g_exp in
       ( ss,
         mk_e
           (Operator
-             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed lit_il ]))
+             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed value_il ]))
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
