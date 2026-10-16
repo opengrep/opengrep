@@ -423,6 +423,18 @@ let rec is_expr_to_pattern (p : G.pattern) : bool =
   | G.PatTuple (_, [ p ], _) -> is_expr_to_pattern p
   | _ -> false
 
+(* Rust: an identifier pattern that refers to a constant or a unit struct
+ * matches by value and binds nothing (Rust Reference, Identifier patterns).
+ * [Naming_AST] resolves such a pattern to that definition and a binder to
+ * itself, so the definition site tells the two apart. *)
+let is_rust_path_pattern (env : env) ((_, tok) : G.ident) (id_info : G.id_info)
+    : bool =
+  match (env.lang, !(id_info.G.id_resolved), Tok.loc_of_tok tok) with
+  | Lang.Rust, Some (_, sid), Ok loc ->
+      let _, _, line, col = G.SId.to_loc sid in
+      not (Int.equal line loc.Tok.pos.line && Int.equal col loc.Tok.pos.column)
+  | _ -> false
+
 let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
   match p with
   | G.OtherPat
@@ -557,8 +569,9 @@ and pattern env pat : stmts * lval * stmts =
       let lval = fresh_lval env (Tok.unsafe_fake_tok "_patlit") in
       ([], lval, [])
   (* Tests that bind nothing: a type test, a negated pattern, a relational
-   * or range test. Their operands are evaluated by the test itself
-   * ([pattern_match_cond]), not again here. *)
+   * or range test, a Rust constant or unit struct ([is_rust_path_pattern]).
+   * Their operands are evaluated by the test itself ([pattern_match_cond]),
+   * not again here. *)
   | G.PatType _ ->
       let lval = fresh_lval env (Tok.unsafe_fake_tok "_pattype") in
       ([], lval, [])
@@ -567,6 +580,10 @@ and pattern env pat : stmts * lval * stmts =
       ([], lval, [])
   | G.OtherPat ((tag, tok), [ G.E _ ])
     when Option.is_some (relational_pattern_operator tag) ->
+      let lval = fresh_lval env tok in
+      ([], lval, [])
+  | G.PatId (((_, tok) as id), id_info) when is_rust_path_pattern env id id_info
+    ->
       let lval = fresh_lval env tok in
       ([], lval, [])
   | G.PatId (id, id_info) ->
@@ -1080,11 +1097,25 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   let true_at tok =
     mk_e (Literal (G.Bool (true, tok))) (related_tok tok)
   in
+  let value_test (g_exp : G.expr) : stmts * IL.exp =
+    let ss, value_il = expr env g_exp in
+    let args =
+      match label_test_operator env.lang with
+      | G.PhysEq -> [ value_il; scrutinee ]
+      | _ -> [ scrutinee; value_il ]
+    in
+    ( ss,
+      mk_e
+        (Operator ((label_test_operator env.lang, op_tok), mk_unnamed_args args))
+        NoOrig )
+  in
   match pat with
   | G.PatWildcard tok
   | G.PatEllipsis tok
   | G.OtherPat (("PatternHole", tok), []) ->
       ([], true_at tok)
+  | G.PatId (id, id_info) when is_rust_path_pattern env id id_info ->
+      value_test (G.N (G.Id (id, id_info)) |> G.e)
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) -> pattern_match_cond env scrutinee inner
   (* An element `a: p` of a C# positional pattern (`(a: FOO, ...)`): `p` is
@@ -1110,21 +1141,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
        * it must not turn into a binding or an unsupported condition. The
        * same holds for Ruby's value pattern (`expr`) and for a pinned
        * variable (`^x` in Ruby and Elixir). *)
-      let g_exp =
-        match pat with
+      value_test
+        (match pat with
         | G.OtherPat (_, [ G.E e ]) -> e
-        | _ -> AST_generic_helpers.pattern_to_expr pat
-      in
-      let ss, value_il = expr env g_exp in
-      let args =
-        match label_test_operator env.lang with
-        | G.PhysEq -> [ value_il; scrutinee ]
-        | _ -> [ scrutinee; value_il ]
-      in
-      ( ss,
-        mk_e
-          (Operator ((label_test_operator env.lang, op_tok), mk_unnamed_args args))
-          NoOrig )
+        | _ -> AST_generic_helpers.pattern_to_expr pat)
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
   (* A map pattern (map pairs, see [H.is_map_pair_pattern]): each value

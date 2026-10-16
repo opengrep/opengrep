@@ -10,3 +10,8 @@ rules:
   message: Tainted value reaches sink
   severity: WARNING
   languages: [rust]
+- id: switch-case-constant-propagation-rust
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [rust]
