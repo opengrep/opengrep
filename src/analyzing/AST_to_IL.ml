@@ -404,6 +404,19 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatAs _ -> true
   | _ -> false
 
+(* The comparison of a test pattern whose subject is implicit: a C#
+ * relational pattern (`< 5`) or a Kotlin range test (`in r`). The front end
+ * records the operator as the tag of an [OtherPat] holding the rhs. *)
+let relational_pattern_operator (tag : string) : G.operator option =
+  match tag with
+  | "<" -> Some G.Lt
+  | "<=" -> Some G.LtE
+  | ">" -> Some G.Gt
+  | ">=" -> Some G.GtE
+  | "in" -> Some G.In
+  | "!in" -> Some G.NotIn
+  | _ -> None
+
 (* An Elixir `cond` branch condition is an expression, not a pattern:
  * [expr_to_pattern] tags it [OtherPat("ExprToPattern", …)] (possibly wrapped
  * in a singleton [PatTuple] by [pat_of_args_and_when]). Value labels of other
@@ -542,6 +555,19 @@ and pattern env pat : stmts * lval * stmts =
       ([], lval, [])
   | G.PatLiteral _ ->
       let lval = fresh_lval (Tok.unsafe_fake_tok "_patlit") in
+      ([], lval, [])
+  (* Tests that bind nothing: a type test, a negated pattern, a relational
+   * or range test. Their operands are evaluated by the test itself
+   * ([pattern_match_cond]), not again here. *)
+  | G.PatType _ ->
+      let lval = fresh_lval (Tok.unsafe_fake_tok "_pattype") in
+      ([], lval, [])
+  | G.OtherPat (("NotPattern", tok), [ G.P _ ]) ->
+      let lval = fresh_lval tok in
+      ([], lval, [])
+  | G.OtherPat ((tag, tok), [ G.E _ ])
+    when Option.is_some (relational_pattern_operator tag) ->
+      let lval = fresh_lval tok in
       ([], lval, [])
   | G.PatId (id, id_info) ->
       let lval = lval_of_id_info id id_info in
@@ -1022,24 +1048,21 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       pm_lower_sequence env scrutinee ~allow_rest:true pats t2
   | G.PatType { t = G.TyN name; _ } ->
       ([], pm_lower_type scrutinee name)
-  (* C# relational patterns (`< 5`, `>= 0`, …). The frontend records only the
+  (* C# relational patterns (`< 5`, `>= 0`, …) and Kotlin `when` range tests
+   * (`in r`, `!in r`). The frontend records only the
    * operator and the rhs; the subject is implicit. We reconstruct the real
    * comparison [scrutinee <op> rhs] here, against the single (already
    * materialised) scrutinee, so it is evaluated once and stays anchored on
    * the scrutinee for cond evaluation. *)
-  | G.OtherPat ((("<" | "<=" | ">" | ">=") as op_str, tok), [ G.E rhs ]) ->
-      let op =
-        match op_str with
-        | "<" -> G.Lt
-        | "<=" -> G.LtE
-        | ">" -> G.Gt
-        | _ -> G.GtE
-      in
-      let ss, rhs_il = expr env rhs in
-      ( ss,
-        mk_e
-          (Operator ((op, tok), [ Unnamed scrutinee; Unnamed rhs_il ]))
-          NoOrig )
+  | G.OtherPat ((tag, tok), [ G.E rhs ]) -> (
+      match relational_pattern_operator tag with
+      | Some op ->
+          let ss, rhs_il = expr env rhs in
+          ( ss,
+            mk_e
+              (Operator ((op, tok), [ Unnamed scrutinee; Unnamed rhs_il ]))
+              NoOrig )
+      | None -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok)))
   | G.PatDisj (a, b) ->
       let sa, ca = pattern_match_cond env scrutinee a in
       let sb, cb = pattern_match_cond env scrutinee b in
@@ -3766,7 +3789,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Crystal
   | Rust
   | Clojure
-  | Elixir ->
+  | Elixir
+  | Kotlin ->
       true
   | _ -> false
 
@@ -4272,10 +4296,10 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                 eorig = related_tok tok;
               }
               :: es )
-        | G.Case
-            (_tok, (G.OtherPat ((("<" | "<=" | ">" | ">="), _), [ E _ ]) as pat))
-          ->
-            (* Relational pattern (`case < 0:`): a structural cond, not an
+        | G.Case (_tok, (G.OtherPat ((tag, _), [ E _ ]) as pat))
+          when Option.is_some (relational_pattern_operator tag) ->
+            (* Relational pattern (`case < 0:`) or Kotlin range test
+             * (`in 1..5 ->`): a structural cond, not an
              * equality. Route it through [pattern_match_cond], which rebuilds
              * [switch_expr <op> rhs]. Must come before the generic
              * [OtherPat (_, [E c])] equality shortcut below, which would
