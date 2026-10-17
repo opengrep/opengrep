@@ -552,16 +552,8 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
        * [visit_pattern] call. *)
       (try self#visit_expr env (AST_generic_helpers.pattern_to_expr x)
        with AST_generic_helpers.NotAnExpr -> ());
-      (* A map pattern ([AST_generic_helpers.map_pattern]) holds its entries
-       * in a [PatList] that is not a list pattern of the source: recurse
-       * into the entries, not into that [PatList]. *)
-      let recurse =
-        match x with
-        | OtherPat (("MapPattern", _), [ P (PatList (_, entries, _)) ]) ->
-            fun _ -> List.iter (self#visit_pattern env) entries
-        | _ -> super#visit_pattern env
-      in
-      match_rules_and_recurse mp_env pattern_rules match_p_p recurse
+      match_rules_and_recurse mp_env pattern_rules match_p_p
+        (super#visit_pattern env)
         (fun x -> P x)
         enclosure
         x

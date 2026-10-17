@@ -8,10 +8,20 @@ exception NotAnExpr
  * one of these: a [PatKeyVal], possibly wrapped by Elixir's map-pair tag. *)
 val is_map_pair_pattern : AST_generic.pattern -> bool
 
-(* A map pattern: the [PatList] of its entries, tagged "MapPattern", so
- * that an empty map or a map of only `...` is not a list pattern. *)
+(* A non-empty list of map pairs ([is_map_pair_pattern]). *)
+val is_map_pair_list : AST_generic.pattern list -> bool
+
+(* The [PatKeyVal] of a map pair, without Elixir's map-pair tag. *)
+val unwrap_map_pair_pattern : AST_generic.pattern -> AST_generic.pattern
+
+(* A map pattern: its entries and brackets, tagged "MapPattern", so that an
+ * empty map or a map of only `...` is not a list pattern. *)
 val map_pattern :
   AST_generic.pattern list AST_generic.bracket -> AST_generic.pattern
+
+(* The bracketed entries of a map pattern built by [map_pattern]. *)
+val map_pattern_entries :
+  AST_generic.pattern -> AST_generic.pattern list AST_generic.bracket option
 
 val expr_to_pattern : AST_generic.expr -> AST_generic.pattern
 

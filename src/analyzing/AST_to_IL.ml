@@ -348,7 +348,7 @@ let rec effective_implicit_return env (eorig : G.expr) : bool =
     | _ -> false
 
 (*****************************************************************************)
-(* Map-pair pattern helpers *)
+(* Pattern helpers *)
 (*****************************************************************************)
 
 (* A compound pattern binding one or more variables out of a value, as in a
@@ -412,17 +412,6 @@ let relational_pattern_operator (tag : string) : G.operator option =
   | "!in" -> Some G.NotIn
   | _ -> None
 
-(* An Elixir `cond` branch condition is an expression, not a pattern:
- * [expr_to_pattern] tags it [OtherPat("ExprToPattern", …)] (possibly wrapped
- * in a singleton [PatTuple] by [pat_of_args_and_when]). Value labels of other
- * languages (Swift, C# constant patterns) take the same shape, so this only
- * marks a `cond` condition in Elixir. *)
-let rec is_expr_to_pattern (p : G.pattern) : bool =
-  match p with
-  | G.OtherPat (("ExprToPattern", _), _) -> true
-  | G.PatTuple (_, [ p ], _) -> is_expr_to_pattern p
-  | _ -> false
-
 (* Rust: an identifier pattern that refers to a constant or a unit struct
  * matches by value and binds nothing (Rust Reference, Identifier patterns).
  * [Naming_AST] resolves such a pattern to that definition and a binder to
@@ -434,14 +423,6 @@ let is_rust_path_pattern (env : env) ((_, tok) : G.ident) (id_info : G.id_info)
       let _, _, line, col = G.SId.to_loc sid in
       not (Int.equal line loc.Tok.pos.line && Int.equal col loc.Tok.pos.column)
   | _ -> false
-
-let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
-  match p with
-  | G.OtherPat
-      ( (("MapPairKeyword" | "MapPairArrow"), _),
-        [ G.P (G.PatKeyVal (_, _) as inner) ] ) ->
-      inner
-  | _ -> p
 
 (* A field offset, as an IL name with empty id_info and the default sid:
  * the shape of a caller-side field access on an unresolved id_info and of a
@@ -612,7 +593,7 @@ and pattern env pat : stmts * lval * stmts =
       let tmp = fresh_var env tok2 in
       let tmp_lval = lval_of_base (Var tmp) in
       let ss =
-        if pats <> [] && List.for_all H.is_map_pair_pattern pats then
+        if H.is_map_pair_list pats then
           (* Map/dict destructure: every element is a [PatKeyVal] (possibly
            * tagged). Each binding fetches [tmp.key], not [tmp[i]]. *)
           List.concat_map (map_pair_assign_stmts env tmp) pats
@@ -689,7 +670,7 @@ and pattern env pat : stmts * lval * stmts =
              * ("...", []). [r] covers [i..]; elements after the rest are
              * end-relative and, as for Rust above, bound to that view. *)
             | G.PatConstructor (G.Id (("...", _), _), rest) :: tail_pats
-              when env.lang =*= Lang.Dart ->
+              when Lang.equal env.lang Lang.Dart ->
                 let opt_rest =
                   match rest with
                   | [ rest_pat ] -> Some (rest_pat, i)
@@ -728,7 +709,7 @@ and pattern env pat : stmts * lval * stmts =
       let inner_pre_ss, lval, post_ss = pattern env pat1 in
       (pre_ss @ inner_pre_ss, lval, post_ss)
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
-    when pats <> [] && List.for_all H.is_map_pair_pattern pats ->
+    when H.is_map_pair_list pats ->
       (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
        * a flat list of [PatKeyVal]s over the incoming map. Lower as a
        * map destructure rather than a positional tuple. *)
@@ -796,12 +777,15 @@ and pattern env pat : stmts * lval * stmts =
    * identifier binds nothing. *)
   | G.OtherPat (("NamedElement", _), [ G.I _; G.P inner ]) -> pattern env inner
   (* A map pattern ([H.map_pattern]) binds what its entries bind. *)
-  | G.OtherPat (("MapPattern", _), [ G.P inner ]) -> pattern env inner
+  | G.OtherPat (("MapPattern", _), _) -> (
+      match H.map_pattern_entries pat with
+      | Some entries -> pattern env (G.PatList entries)
+      | None -> todo (G.P pat))
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
       let guard_stmts, _e_guard = expr env when_expr in
       (* Here the guard is evaluated but not tested. The guard of a label of
-       * a switch is tested in [guarded_label_tests]. *)
+       * a switch is tested in [label_tests]. *)
       (pre_ss, lval, pat_stmts @ guard_stmts)
   | G.DisjPat (pat1, _pat2) ->
     (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
@@ -868,7 +852,7 @@ and pattern env pat : stmts * lval * stmts =
  * after unwrapping, emit a [fixme_stmt] so the gap is visible in the IL
  * rather than silently dropping the binding. *)
 and map_pair_assign_stmts env tmp (pat : G.pattern) : stmt list =
-  match unwrap_map_pair_pattern pat with
+  match H.unwrap_map_pair_pattern pat with
   | G.PatKeyVal (key_pat, val_pat) -> (
       match key_offset_of_pattern key_pat with
       | Some offset_i ->
@@ -983,7 +967,7 @@ and pm_split_rest env pats =
      * the slots before it are exact; those after it are end-relative and
      * stay untested. *)
     | G.PatConstructor (G.Id (("...", _), _), ([] | [ _ ])) :: _
-      when env.lang =*= Lang.Dart ->
+      when Lang.equal env.lang Lang.Dart ->
         (List.rev acc, Some i)
     | p :: rest -> go ((p, i) :: acc) (i + 1) rest
   in
@@ -1101,15 +1085,13 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   in
   let value_test (g_exp : G.expr) : stmts * IL.exp =
     let ss, value_il = expr env g_exp in
+    let op = label_test_operator env.lang in
     let args =
-      match label_test_operator env.lang with
+      match op with
       | G.PhysEq -> [ value_il; scrutinee ]
       | _ -> [ scrutinee; value_il ]
     in
-    ( ss,
-      mk_e
-        (Operator ((label_test_operator env.lang, op_tok), mk_unnamed_args args))
-        NoOrig )
+    (ss, mk_e (Operator ((op, op_tok), mk_unnamed_args args)) NoOrig)
   in
   match pat with
   | G.PatWildcard tok
@@ -1127,10 +1109,12 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   (* A map pattern ([H.map_pattern]) matches a map with other entries too:
    * an empty one (Dart `{}`, Elixir `%{}`) tests only that the value is a
    * map. *)
-  | G.OtherPat (("MapPattern", tok), [ G.P (G.PatList (_, [], _)) ]) ->
-      ([], pm_lower_type scrutinee (G.Id (("Map", tok), G.empty_id_info ())))
-  | G.OtherPat (("MapPattern", _), [ G.P inner ]) ->
-      pattern_match_cond env scrutinee inner
+  | G.OtherPat (("MapPattern", tok), _) -> (
+      match H.map_pattern_entries pat with
+      | Some (_, [], _) ->
+          ([], pm_lower_type scrutinee (G.Id (("Map", tok), G.empty_id_info ())))
+      | Some entries -> pattern_match_cond env scrutinee (G.PatList entries)
+      | None -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok)))
   (* A typed pattern tests the type of the value when the type is a name
    * ([pm_lower_type]), then its inner pattern. *)
   | G.PatTyped (inner, ty) -> (
@@ -1139,7 +1123,7 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       | G.TyN name ->
           (ss, pm_conjoin op_tok [ pm_lower_type scrutinee name; inner_cond ])
       | _ -> (ss, inner_cond))
-  (* The guard of a label of a switch is tested in [guarded_label_tests],
+  (* The guard of a label of a switch is tested in [label_tests],
    * after the bindings of the pattern; a guard nested in a pattern is
    * not. *)
   | G.PatWhen (inner, _guardTODO) ->
@@ -1159,11 +1143,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   (* A map pattern (map pairs, see [H.is_map_pair_pattern]): each value
    * against the entry of its key. It matches a map with other entries too,
    * so there is no length test. *)
-  | G.PatList (_, (_ :: _ as pats), _) when List.for_all H.is_map_pair_pattern pats
-    ->
+  | G.PatList (_, pats, _) when H.is_map_pair_list pats ->
       pats
       |> List_.map (fun p ->
-             match unwrap_map_pair_pattern p with
+             match H.unwrap_map_pair_pattern p with
              | G.PatKeyVal (key, value) ->
                  let key_expr =
                    match key with
@@ -4015,6 +3998,24 @@ and break_skips_switch : Lang.t -> bool = function
       true
   | _ -> false
 
+(* Languages in which `break` and `next` outside a loop leave the block that
+ * holds them (a lambda in the IL), with the value they give, if any: Ruby
+ * and Crystal. *)
+and jumps_leave_block : Lang.t -> bool = function
+  | Ruby
+  | Crystal ->
+      true
+  | _ -> false
+
+(* `break v` or `next v` leaving a block: the block returns [v]. *)
+and leave_block env tok (lbl_ident : G.label_ident) : stmts =
+  let ss, e =
+    match lbl_ident with
+    | G.LDynamic v -> expr env v
+    | _ -> expr_opt env tok None
+  in
+  ss @ [ mk_s (Return (tok, e)) ]
+
 and break_continue_labels env tok : stmts * stmts * env =
   let cont_label = fresh_label env ~label:"__loop_continue" tok in
   let break_label = fresh_label env ~label:"__loop_break" tok in
@@ -4031,12 +4032,9 @@ and break_continue_labels env tok : stmts * stmts * env =
 
 and switch_break_label env tok : label * stmts * env =
   let break_label = fresh_label env ~label:"__switch_break" tok in
-  (* Without an enclosing loop (a Ruby block) the switch stays the target,
-   * so that such a `break` does not turn the switch into a fixme. *)
   let switch_env =
-    match env.break_labels with
-    | _ :: _ when break_skips_switch env.lang -> env
-    | _ -> { env with break_labels = break_label :: env.break_labels }
+    if break_skips_switch env.lang then env
+    else { env with break_labels = break_label :: env.break_labels }
   in
   (break_label, [ mk_s (Label break_label) ], switch_env)
 
@@ -4369,9 +4367,13 @@ and stmt_aux env st : stmts =
       match lbl_ident with
       | G.LNone -> (
           match env.cont_label with
+          | None when jumps_leave_block env.lang -> leave_block env tok lbl_ident
           | None -> impossible (G.Tk tok)
           | Some lbl -> [ mk_s (Goto (tok, lbl)) ])
       | G.LId lbl -> [ mk_s (Goto (tok, label_of_label lbl)) ]
+      | G.LDynamic _
+        when Option.is_none env.cont_label && jumps_leave_block env.lang ->
+          leave_block env tok lbl_ident
       | G.LInt _
       | G.LDynamic _ ->
           todo (G.S st))
@@ -4379,6 +4381,7 @@ and stmt_aux env st : stmts =
       match lbl_ident with
       | G.LNone -> (
           match env.break_labels with
+          | [] when jumps_leave_block env.lang -> leave_block env tok lbl_ident
           | [] -> impossible (G.Tk tok)
           | lbl :: _ -> [ mk_s (Goto (tok, lbl)) ])
       | G.LId lbl -> [ mk_s (Goto (tok, label_of_label lbl)) ]
@@ -4386,6 +4389,9 @@ and stmt_aux env st : stmts =
           match List.nth_opt env.break_labels i with
           | None -> impossible (G.Tk tok)
           | Some lbl -> [ mk_s (Goto (tok, lbl)) ])
+      | G.LDynamic _
+        when List.is_empty env.break_labels && jumps_leave_block env.lang ->
+          leave_block env tok lbl_ident
       | G.LDynamic _ -> impossible (G.Tk tok))
   | G.Label (lbl, st) ->
       let lbl = label_of_label lbl in
@@ -4557,7 +4563,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
              * [PatLiteral] (when nested), [PatList]/[PatTuple] (length +
              * per-slot recursion), [PatType], and via [pattern_to_expr]
              * any future patterns the helper grows to support. A PatWhen
-             * guard is not part of this condition: [guarded_label_tests]
+             * guard is not part of this condition: [label_tests]
              * tests it after the bindings of its pattern. *)
             let pm_ss, pm_cond = pattern_match_cond env switch_expr pat in
             (ss @ pm_ss, pm_cond :: es)
@@ -4622,95 +4628,57 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           lower_body xs (* TODO this is not tail recursive *)
       in
       let label = fresh_label env ~label:"__switch_case" tok in
-      let is_guarded = function
-        | G.Case (_, G.PatWhen _) -> true
-        | _ -> false
-      in
-      let case_ss, jump, guarded =
+      let case_ss, jump =
         match switch_expr_opt with
-        | Some cond when List.exists is_guarded cases ->
-            ( [],
-              guarded_label_tests env cond tok translate_cases label cases jumps,
-              true )
-        | _ ->
+        | Some cond ->
+            ([], label_tests env cond tok translate_cases label cases jumps)
+        | None ->
             let case_ss, case = translate_cases env cases in
             ( case_ss,
-              [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ],
-              false )
-      in
-
-      (* Here we add bindings for the switch pattern, for the common case:
-       * cases is one case for the branch. This makes Switch branches behave
-       * like LetPattern.
-       * Note that we only bind patterns when the switch condition is not None,
-       * even though it still does not always make sense...
-       * On the other hand, if the pattern has for example PatId, what is the
-       * intention if not to create a variable?
-       *)
-      let pat_stmts =
-        match (switch_expr_opt, cases) with
-        (* A branch with a guard binds with its tests, see
-         * [guarded_label_tests]. *)
-        | Some _, _ when guarded -> []
-        | Some cond, [ G.Case (_tok, pat) ] ->
-            pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
-        | _ -> []
-      in
-
-      (* In Elixir's `cond`, a branch condition is an expression (tagged
-       * [ExprToPattern]), evaluated in sequence — its side effects (e.g.
-       * `y = source()`) precede and are visible to later branches. *)
-      let hoist_cond_side_effects =
-        env.lang =*= Lang.Elixir
-        &&
-        match cases with
-        | [ G.Case (_, pat) ] -> is_expr_to_pattern pat
-        | _ -> false
-      in
-      let pre_jump_ss, body_pat_stmts =
-        if hoist_cond_side_effects then (pat_stmts, []) else ([], pat_stmts)
+              [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ] )
       in
 
       let new_stmts = lower_body body in
 
-      let body = [ mk_s (Label label) ] @ body_pat_stmts @ new_stmts in
+      let body = [ mk_s (Label label) ] @ new_stmts in
       (* A branch with a PatWhen guard breaks like any other: its body is
        * reached only through a label that matched, with its guard if it has
        * one; a failed label or guard has already gone on to the next label
        * or branch. *)
       let break_if_no_fallthrough =
         if no_switch_fallthrough env.lang then
-          (* Reached only through a label that matched, with its guard, if
-           * any. *)
           [ mk_s (Goto (tok, break_label)) ]
         else []
       in
-      (pre_jump_ss @ case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
+      (case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
 
-(* The tests of a branch with a guard ([PatWhen]): its labels in order. A
- * guard is tested after the bindings of its pattern, which it may read;
- * when a label or its guard fails, matching goes on with the next label,
- * then with [jumps], the tests of the next branches. Each test ends in a
- * jump, to [body_label] or to the next test, and the bindings sit here
- * rather than before the body, which a previous body may fall into. *)
-and guarded_label_tests env cond tok translate_cases body_label cases jumps :
-    stmts =
+(* The tests of a branch of a switch with a scrutinee: its labels in order.
+ * A label is tested after the expressions of the earlier labels and
+ * branches have been evaluated, side effects included (Elixir's `cond`
+ * conditions, such as `y = source()`). A label that matches binds its
+ * pattern, as a LetPattern does, then a guard ([PatWhen]) is tested, which
+ * may read the bindings. When a label or its guard fails, matching goes on
+ * with the next label, then with [jumps], the tests of the next branches.
+ * Each test ends in a jump, to [body_label] or to the next test, and the
+ * bindings sit here rather than before the body, which a previous body may
+ * fall into. *)
+and label_tests env cond tok translate_cases body_label cases jumps : stmts =
   let goto label = mk_s (Goto (tok, label)) in
   let rec tests = function
     | [] -> jumps
     | case :: rest ->
         let next_label = fresh_label env ~label:"__switch_next" tok in
         let case_ss, case_cond = translate_cases env [ case ] in
+        let bind pat =
+          pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
+        in
         let on_match =
           match case with
           | G.Case (_, G.PatWhen (inner, guard)) ->
-              let bind_ss =
-                pattern_assign_statements env ~eorig:(Related (G.P inner)) cond
-                  inner
-              in
               let guard_ss, guard_e = expr env guard in
-              bind_ss @ guard_ss
+              bind inner @ guard_ss
               @ [ mk_s (IL.If (tok, guard_e, [ goto body_label ], [ goto next_label ])) ]
+          | G.Case (_, pat) -> bind pat @ [ goto body_label ]
           | _ -> [ goto body_label ]
         in
         let here =

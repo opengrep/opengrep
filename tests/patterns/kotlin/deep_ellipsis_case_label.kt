@@ -15,4 +15,10 @@ fun f(k: Any) {
     in 1..4 -> { a() }
     else -> { b() }
   }
+
+  // ERROR: match
+  when (k) {
+    4, 5 -> { a() }
+    else -> { b() }
+  }
 }

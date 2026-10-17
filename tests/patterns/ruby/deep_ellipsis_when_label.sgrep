@@ -1,0 +1,4 @@
+case $K
+when <... 2 ...>
+  $F()
+end

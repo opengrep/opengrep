@@ -215,11 +215,39 @@ let is_map_pair_pattern (p : pattern) : bool =
       true
   | _ -> false
 
+(* A non-empty list of map pairs ([is_map_pair_pattern]). *)
+let is_map_pair_list (ps : pattern list) : bool =
+  match ps with
+  | [] -> false
+  | _ :: _ -> List.for_all is_map_pair_pattern ps
+
+(* The [PatKeyVal] of a map pair, without Elixir's map-pair tag. *)
+let unwrap_map_pair_pattern (p : pattern) : pattern =
+  match p with
+  | OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ P (PatKeyVal (_, _) as inner) ] ) ->
+      inner
+  | _ -> p
+
 (* A map pattern whose entries (map pairs and, in a rule, `...`) would
  * otherwise read as a list pattern, as an empty map or a map of only `...`
- * does: the [PatList] of the entries, tagged "MapPattern". *)
+ * does: the entries, then the closing bracket, tagged "MapPattern" with the
+ * opening bracket. *)
 let map_pattern ((l, entries, r) : pattern list bracket) : pattern =
-  OtherPat (("MapPattern", l), [ P (PatList (l, entries, r)) ])
+  OtherPat (("MapPattern", l), List_.map (fun p -> P p) entries @ [ Tk r ])
+
+(* The bracketed entries of a map pattern ([map_pattern]). *)
+let map_pattern_entries (p : pattern) : pattern list bracket option =
+  let rec entries acc = function
+    | [ Tk r ] -> Some (List.rev acc, r)
+    | P e :: rest -> entries (e :: acc) rest
+    | _ -> None
+  in
+  match p with
+  | OtherPat (("MapPattern", l), anys) ->
+      Option.map (fun (es, r) -> (l, es, r)) (entries [] anys)
+  | _ -> None
 
 (* In Go/Swift a pattern can be a complex expressions. It is just
  * matched for equality with the thing it's matched against, so in that
@@ -328,9 +356,12 @@ let rec pattern_to_expr p =
   | PatEllipsis t -> Ellipsis t
   | PatTyped (p, ty) -> Cast (ty, fake "", pattern_to_expr p)
   | OtherPat (("ExprToPattern", _), [ E e ]) -> e.e
-  (* A map pattern ([map_pattern]) reads as a map, not as a list. *)
-  | OtherPat (("MapPattern", _), [ P (PatList (t1, xs, t2)) ]) ->
-      Container (Dict, (t1, xs |> List_.map pattern_to_expr, t2))
+  (* A map pattern ([map_pattern]) reads as a map. *)
+  | OtherPat (("MapPattern", _), _) -> (
+      match map_pattern_entries p with
+      | Some (t1, xs, t2) ->
+          Container (Dict, (t1, xs |> List_.map pattern_to_expr, t2))
+      | None -> raise NotAnExpr)
   | OtherPat (tag, [ P p ]) -> OtherExpr (tag, [ E (pattern_to_expr p) ])
   | _ -> raise NotAnExpr)
   |> G.e

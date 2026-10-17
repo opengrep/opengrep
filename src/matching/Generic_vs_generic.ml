@@ -3038,36 +3038,81 @@ and m_case_and_body a b =
       if List.exists is_default b1 && not (List.exists is_default a1) then
         fail ()
       else
-        m_list_with_dots ~less_is_ok:false m_case
-          (function
-            | G.CaseEqualExpr (_, { e = G.Ellipsis _; _ })
-            | G.Case (_, G.PatEllipsis _) ->
-                true
-            | _ -> false)
-          a1 b1
+        let as_list () =
+          m_list_with_dots ~less_is_ok:false m_case
+            (function
+              | G.CaseEqualExpr (_, { e = G.Ellipsis _; _ })
+              | G.Case (_, G.PatEllipsis _) ->
+                  true
+              | _ -> false)
+            a1 b1
+        in
+        (match a1 with
+        | [ c ] -> (
+            match deep_ellipsis_case c with
+            (* A deep ellipsis `<... e ...>` as the whole case list: [e]
+             * matches an expression of any of the cases, at any depth. *)
+            | Some e ->
+                let no_match _ _ = fail () in
+                m_deep m_expr_deep no_match SubAST_generic.subexprs_of_cases e b1
+            | None -> as_list ())
+        | _ -> as_list ())
         >>= fun () -> m_stmt a2 b2
   | CaseEllipsis _, CasesAndBody _ -> return ()
   | CasesAndBody _, _
   | CaseEllipsis _, _ ->
       fail ()
 
+(* The expression of a case written as a value: a [CaseEqualExpr], or a
+ * [Case] whose pattern holds a value (Dart `ExprToPattern`, Ruby `expr`). *)
+and case_value (c : G.case) : G.expr option =
+  match c with
+  | G.CaseEqualExpr (_, e)
+  | G.Case (_, G.OtherPat ((("ExprToPattern" | "expr"), _), [ G.E e ])) ->
+      Some e
+  | _ -> None
+
+(* A case whose expression is only a deep ellipsis `<... e ...>`: [e]. *)
+and deep_ellipsis_case (c : G.case) : G.expr option =
+  match case_value c with
+  | Some { e = G.DeepEllipsis (_, e, _); _ } -> Some e
+  | _ -> None
+
+(* A case whose expression or pattern is only a metavariable. *)
+and metavariable_case (c : G.case) : (G.ident * G.id_info) option =
+  match (c, case_value c) with
+  | _, Some { e = G.N (G.Id (((str, _) as id), id_info)); _ }
+    when Mvar.is_metavar_name str ->
+      Some (id, id_info)
+  | G.Case (_, G.PatId (((str, _) as id), id_info)), _
+    when Mvar.is_metavar_name str ->
+      Some (id, id_info)
+  | _ -> None
+
 and m_case a b =
+  match (deep_ellipsis_case a, metavariable_case a) with
+  (* As for a deep ellipsis as a statement: [e] matches an expression of
+   * the case, at any depth. *)
+  | Some e, _ ->
+      let no_match _ _ = fail () in
+      m_deep m_expr_deep no_match SubAST_generic.subexprs_of_case e b
+  | None, Some (id, id_info) -> m_metavariable_case id id_info b
+  | None, None -> m_case_same_kind a b
+
+(* A metavariable case matches any case: the value of one written as a
+ * value ([case_value]), else its pattern. *)
+and m_metavariable_case (id : G.ident) (id_info : G.id_info) b =
+  match (case_value b, b) with
+  | Some e, _ -> m_expr (G.N (G.Id (id, id_info)) |> G.e) e
+  | None, B.Case (_, b1) -> m_pattern (G.PatId (id, id_info)) b1
+  | None, (B.CaseEqualExpr _ | B.Default _ | B.OtherCase _) -> fail ()
+
+and m_case_same_kind a b =
   match (a, b) with
   | G.Case (a0, a1), B.Case (b0, b1) ->
       m_tok a0 b0 >>= fun () -> m_pattern a1 b1
   | G.CaseEqualExpr (a0, a1), B.CaseEqualExpr (b0, b1) ->
       m_tok a0 b0 >>= fun () -> m_expr a1 b1
-  (* A label that is only a metavariable matches every label, whether the
-   * target label is a value or a pattern. *)
-  | ( G.CaseEqualExpr (_, { e = G.N (G.Id ((str, tok), id_info)); _ }),
-      B.Case (_, b1) )
-    when Mvar.is_metavar_name str ->
-      m_pattern (G.PatId ((str, tok), id_info)) b1
-  (* A label that is only a deep ellipsis matches a pattern label holding
-   * an expression it matches. *)
-  | G.CaseEqualExpr (_, ({ e = G.DeepEllipsis _; _ } as a1)), B.Case (_, b1) ->
-      SubAST_generic.subexprs_of_pattern b1
-      |> List.fold_left (fun acc b -> acc >||> m_expr a1 b) (fail ())
   | G.Default a0, B.Default b0 -> m_tok a0 b0
   | G.OtherCase (a0, a1), B.OtherCase (b0, b1) ->
       let* () = m_todo_kind a0 b0 in
@@ -3158,10 +3203,13 @@ and m_pattern a b =
    * pair of the target, in any order, and the target may have more pairs,
    * as a map pattern matches a map with more entries. *)
   | G.PatList ((_, a2, _) as a1), B.PatList ((_, b2, _) as b1) -> (
-      match (map_pattern_pairs a2, map_pattern_pairs b2) with
-      | Some pairs, Some target_pairs ->
-          m_list_in_any_order ~less_is_ok:true m_pattern pairs target_pairs
-      | _ -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1)
+      let as_lists () = m_bracket (m_list_with_ellipsis m_pattern) a1 b1 in
+      if not (List.exists H.is_map_pair_pattern a2) then as_lists ()
+      else
+        match (map_pattern_pairs a2, map_pattern_pairs b2) with
+        | Some pairs, Some target_pairs ->
+            m_list_in_any_order ~less_is_ok:true m_pattern pairs target_pairs
+        | _ -> as_lists ())
   | G.PatRecord a1, B.PatRecord b1 ->
       m_bracket m_list__m_field_pattern a1 b1
   | G.PatKeyVal (a1, a2), B.PatKeyVal (b1, b2) ->
@@ -3178,6 +3226,10 @@ and m_pattern a b =
       m_pattern a1 b1 >>= fun () -> m_type_ a2 b2
   | G.PatWhen (a1, a2), B.PatWhen (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_expr a2 b2
+  | G.OtherPat (("MapPattern", _), _), B.OtherPat (("MapPattern", _), _) -> (
+      match (H.map_pattern_entries a, H.map_pattern_entries b) with
+      | Some (_, xs, _), Some (_, ys, _) -> m_map_entries xs ys
+      | _ -> fail ())
   | G.OtherPat (a1, a2), B.OtherPat (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list(*_with_ellipsis ?*) m_any) a2 b2
   | G.PatId _, _
@@ -3207,19 +3259,32 @@ and m_field_pattern a b =
       m_pattern a2 b2
   | (a1, a2), (b1, b2) -> m_dotted_name a1 b1 >>= fun () -> m_pattern a2 b2
 
+(* The entries of two map patterns ([H.map_pattern]): each entry of the rule
+ * other than `...` matches an entry of the target, in any order, and the
+ * target may have more, as a map pattern matches a map with more entries;
+ * a rule with no entries and no `...` matches only an empty map. *)
+and m_map_entries (xs : G.pattern list) (ys : G.pattern list) =
+  let is_dots = function
+    | G.PatEllipsis _ -> true
+    | _ -> false
+  in
+  match List.filter (fun x -> not (is_dots x)) xs with
+  | [] when List.exists is_dots xs || List.is_empty ys -> return ()
+  | [] -> fail ()
+  | entries -> m_list_in_any_order ~less_is_ok:true m_pattern entries ys
+
 (* The pairs of a map pattern, a non-empty list of map pairs
  * ([H.is_map_pair_pattern]) with any `...` left out, or [None] for another
  * list pattern. *)
 and map_pattern_pairs (pats : G.pattern list) : G.pattern list option =
-  match
+  let pairs =
     List.filter
       (function
         | G.PatEllipsis _ -> false
         | _ -> true)
       pats
-  with
-  | _ :: _ as pairs when List.for_all H.is_map_pair_pattern pairs -> Some pairs
-  | _ -> None
+  in
+  if H.is_map_pair_list pairs then Some pairs else None
 
 (* Subset-semantic, order-independent matching of [PatRecord] field lists.
  * Every pattern field must match some target field (by [m_field_pattern]),

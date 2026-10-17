@@ -102,3 +102,48 @@ def break_skips_the_rest_of_the_loop(k)
     sink(y)
   end
 end
+
+def break_in_a_block_leaves_the_block(items)
+  y = 0
+  items.each do |i|
+    case i
+    when 1
+      y = taint_source()
+      break
+    end
+    y = 0
+  end
+  # ruleid: taint-switch-case-crystal
+  sink(y)
+end
+
+def next_in_a_block_skips_the_rest_of_it(items)
+  items.each do |i|
+    y = taint_source()
+    next
+    # ok: taint-switch-case-crystal
+    sink(y)
+  end
+end
+
+def break_in_a_block_skips_the_rest_of_it(items)
+  items.each do |i|
+    y = 0
+    case i
+    when 1
+      y = taint_source()
+      break
+    end
+    # ok: taint-switch-case-crystal
+    sink(y)
+  end
+end
+
+def next_in_a_block_keeps_the_other_path(items)
+  items.each do |i|
+    x = taint_source()
+    next if i == 1
+    # ruleid: taint-switch-case-crystal
+    sink(x)
+  end
+end
