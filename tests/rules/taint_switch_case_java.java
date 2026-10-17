@@ -64,4 +64,43 @@ class SwitchCase {
     // ok: taint-switch-case-java
     sink(RED);
   }
+
+  void defaultFirst(int k) {
+    String x = taint_source();
+    switch (k) {
+      default:
+        // ruleid: taint-switch-case-java
+        sink(x);
+        break;
+      case 1:
+        break;
+    }
+  }
+
+  void switchRuleDoesNotFallThrough(int k) {
+    String y = "";
+    switch (k) {
+      default -> y = taint_source();
+      // ok: taint-switch-case-java
+      case 1 -> sink(y);
+    }
+  }
+
+  void lastSwitchRuleIsNotReachedByFallthrough(int k) {
+    String y = "";
+    switch (k) {
+      case 1 -> y = taint_source();
+      // ok: taint-switch-case-java
+      default -> sink(y);
+    }
+  }
+
+  void switchExpressionWithDefaultFirst(int k) {
+    String r = switch (k) {
+      default -> taint_source();
+      case 1 -> "";
+    };
+    // ruleid: taint-switch-case-java
+    sink(r);
+  }
 }

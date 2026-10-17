@@ -3027,10 +3027,22 @@ and m_finally a b =
 
 and m_case_and_body a b =
   match (a, b) with
+  (* The form of a branch, a Java switch rule (`case 1 -> s`) or not, is
+   * the same in the rule and the target; the cases are then matched without
+   * the tag of that form. *)
+  | CasesAndBody (a1, _), CasesAndBody (b1, _)
+    when not
+           (Bool.equal
+              (List.exists H.is_switch_rule_arrow a1)
+              (List.exists H.is_switch_rule_arrow b1)) ->
+      fail ()
   (* A case that is only `...` stands for any number of cases, of any
-   * form, as `...` does in other lists. A `default` (or `else`) branch is
+   * kind, as `...` does in other lists. A `default` (or `else`) branch is
    * not a case: only a pattern branch with a `default` matches it. *)
   | CasesAndBody (a1, a2), CasesAndBody (b1, b2) ->
+      let without_form = List.filter (Fun.negate H.is_switch_rule_arrow) in
+      let a1 = without_form a1 in
+      let b1 = without_form b1 in
       let is_default = function
         | G.Default _ -> true
         | _ -> false

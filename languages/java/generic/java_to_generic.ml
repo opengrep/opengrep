@@ -547,6 +547,7 @@ and case = function
       let v1 = expr v1 in
       G.CaseEqualExpr (t, v1)
   | Default t -> G.Default t
+  | SwitchRuleArrow t -> G.OtherCase (("->", t), [])
 
 and cases v = list case v
 

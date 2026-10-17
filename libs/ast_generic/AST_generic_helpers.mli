@@ -8,6 +8,10 @@ exception NotAnExpr
  * one of these: a [PatKeyVal], possibly wrapped by Elixir's map-pair tag. *)
 val is_map_pair_pattern : AST_generic.pattern -> bool
 
+(* The tag of a Java switch rule (`case 1 -> s`) among the cases of its
+ * branch. *)
+val is_switch_rule_arrow : AST_generic.case -> bool
+
 (* A non-empty list of map pairs ([is_map_pair_pattern]). *)
 val is_map_pair_list : AST_generic.pattern list -> bool
 

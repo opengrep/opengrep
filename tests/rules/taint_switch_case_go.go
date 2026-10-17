@@ -47,3 +47,24 @@ func typeSwitchKeepsLaterCases(mode interface{}) {
 		sink(taint_source())
 	}
 }
+
+func defaultFirst(k int) {
+	x := taint_source()
+	switch k {
+	default:
+		// ruleid: taint-switch-case-go
+		sink(x)
+	case 1:
+	}
+}
+
+func defaultFirstDoesNotFallThrough(k int) {
+	y := 0
+	switch k {
+	default:
+		y = taint_source()
+	case 1:
+		// ok: taint-switch-case-go
+		sink(y)
+	}
+}

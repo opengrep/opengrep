@@ -53,3 +53,50 @@ void castLabelsReadValues() {
   // ok: taint-switch-case-c
   sink(FIRST);
 }
+
+void default_first(int k) {
+  int x = taint_source();
+  switch (k) {
+    default:
+      // ruleid: taint-switch-case-c
+      sink(x);
+      break;
+    case 1:
+      break;
+  }
+}
+
+void default_shares_a_branch(int k) {
+  int x = taint_source();
+  switch (k) {
+    case 1:
+    default:
+      // ruleid: taint-switch-case-c
+      sink(x);
+      break;
+  }
+}
+
+void default_falls_through(int k) {
+  int y = 0;
+  switch (k) {
+    default:
+      y = taint_source();
+    case 1:
+      // ruleid: taint-switch-case-c
+      sink(y);
+      break;
+  }
+}
+
+void case_breaks_before_default(int k) {
+  int y = 0;
+  switch (k) {
+    case 1:
+      y = taint_source();
+      break;
+    default:
+      // ok: taint-switch-case-c
+      sink(y);
+  }
+}

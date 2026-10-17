@@ -78,4 +78,28 @@ class SwitchCase {
       _ => 0,
     };
   }
+
+  void defaultSharesABranch(int k) {
+    var x = taint_source();
+    switch (k) {
+      case 1:
+      default:
+        // ruleid: taint-switch-case-csharp
+        sink(x);
+        break;
+    }
+  }
+
+  void caseBreaksBeforeDefault(int k) {
+    var y = 0;
+    switch (k) {
+      case 1:
+        y = taint_source();
+        break;
+      default:
+        // ok: taint-switch-case-csharp
+        sink(y);
+        break;
+    }
+  }
 }

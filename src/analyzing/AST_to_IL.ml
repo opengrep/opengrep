@@ -4555,8 +4555,8 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
               }
               :: es )
         | G.Default tok ->
-            (* Default should only ever be the final case, and cannot be part of a list of
-               `Or`ed together cases. It's handled specially in cases_and_bodies_to_stmts
+            (* Default is not tested: cases_and_bodies_to_stmts leaves it out
+               of the cases it tests and sends control to it when they all fail.
             *)
             impossible (G.Tk tok)
         | G.Case (_tok, pat) ->
@@ -4596,8 +4596,8 @@ and cases_to_exp tok env cases : stmts * exp =
             let c_ss, c' = expr env c in
             (ss @ c_ss, c' :: es)
         | G.Default tok ->
-            (* Default should only ever be the final case, and cannot be part of a list of
-               `Or`ed together cases. It's handled specially in cases_and_bodies_to_stmts
+            (* Default is not tested: cases_and_bodies_to_stmts leaves it out
+               of the cases it tests and sends control to it when they all fail.
             *)
             impossible (G.Tk tok)
         (* TODO: Other patterns? Maybe not worth it. *)
@@ -4614,44 +4614,70 @@ and cases_to_exp tok env cases : stmts * exp =
         { e = Operator ((Or, tok), mk_unnamed_args es); eorig = related_tok tok }
   )
 
+(* The branches of a switch: their tests, then their bodies, in order. The
+ * cases of every branch are tested in order, `default` excepted; when they
+ * all fail, control goes to the branch with the `default`, wherever it is,
+ * and otherwise to [break_label]. Each body keeps its place: in a language
+ * with fallthrough, a body that does not break falls into the next one,
+ * except the body of a Java switch rule (`case 1 -> s`, tagged "->"). *)
 and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_cases
-    lower_body : G.case_and_body list -> stmts * stmts = function
-  | [] -> ([ mk_s (Goto (tok, break_label)) ], [])
-  | G.CaseEllipsis tok :: _ -> sgrep_construct (G.Tk tok)
-  | [ G.CasesAndBody ([ G.Default dtok ], body) ] ->
-      let label = fresh_label env ~label:"__switch_default" tok in
-
-      let new_stmts = lower_body body in
-      ([ mk_s (Goto (dtok, label)) ], mk_s (Label label) :: new_stmts)
-  | G.CasesAndBody (cases, body) :: xs ->
-      let jumps, bodies =
-        cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_cases
-          lower_body xs (* TODO this is not tail recursive *)
-      in
-      let label = fresh_label env ~label:"__switch_case" tok in
-      let case_ss, jump =
-        match switch_expr_opt with
-        | Some cond ->
-            ([], case_tests env cond tok translate_cases label cases jumps)
-        | None ->
-            let case_ss, case = translate_cases env cases in
-            ( case_ss,
-              [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ] )
-      in
-
-      let new_stmts = lower_body body in
-
-      let body = [ mk_s (Label label) ] @ new_stmts in
-      (* A branch with a PatWhen guard breaks like any other: its body is
-       * reached only through a case that matched, with its guard if it has
-       * one; a failed case or guard has already gone on to the next case
-       * or branch. *)
-      let break_if_no_fallthrough =
-        if no_switch_fallthrough env.lang then
-          [ mk_s (Goto (tok, break_label)) ]
-        else []
-      in
-      (case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
+    lower_body (cases_and_bodies : G.case_and_body list) : stmts * stmts =
+  let is_default = function
+    | G.Default _ -> true
+    | _ -> false
+  in
+  let default_label = fresh_label env ~label:"__switch_default" tok in
+  let default_tok =
+    cases_and_bodies
+    |> List.find_map (function
+         | G.CasesAndBody (cases, _) ->
+             List.find_map
+               (function
+                 | G.Default t -> Some t
+                 | _ -> None)
+               cases
+         | G.CaseEllipsis _ -> None)
+  in
+  let rec branches = function
+    | [] -> (
+        match default_tok with
+        | Some dtok -> ([ mk_s (Goto (dtok, default_label)) ], [])
+        | None -> ([ mk_s (Goto (tok, break_label)) ], []))
+    | G.CaseEllipsis tok :: _ -> sgrep_construct (G.Tk tok)
+    | G.CasesAndBody (cases, body) :: xs ->
+        let jumps, bodies = branches xs (* TODO this is not tail recursive *) in
+        let label = fresh_label env ~label:"__switch_case" tok in
+        let tested =
+          List.filter (fun c -> not (is_default c || H.is_switch_rule_arrow c)) cases
+        in
+        let case_ss, jump =
+          match (tested, switch_expr_opt) with
+          | [], _ -> ([], jumps)
+          | _, Some cond ->
+              ([], case_tests env cond tok translate_cases label tested jumps)
+          | _, None ->
+              let case_ss, case = translate_cases env tested in
+              ( case_ss,
+                [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ] )
+        in
+        let default_s =
+          if List.exists is_default cases then [ mk_s (Label default_label) ]
+          else []
+        in
+        let new_stmts = lower_body body in
+        let body = [ mk_s (Label label) ] @ default_s @ new_stmts in
+        (* A branch with a PatWhen guard breaks like any other: its body is
+         * reached only through a case that matched, with its guard if it has
+         * one; a failed case or guard has already gone on to the next case
+         * or branch. *)
+        let break_if_no_fallthrough =
+          if no_switch_fallthrough env.lang || List.exists H.is_switch_rule_arrow cases
+          then [ mk_s (Goto (tok, break_label)) ]
+          else []
+        in
+        (case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
+  in
+  branches cases_and_bodies
 
 (* The tests of a branch of a switch with a scrutinee: its cases in order.
  * A case is tested after the expressions of the earlier cases and branches

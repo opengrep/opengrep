@@ -215,6 +215,13 @@ let is_map_pair_pattern (p : pattern) : bool =
       true
   | _ -> false
 
+(* The tag of a Java switch rule (`case 1 -> s`) among the cases of its
+ * branch: the branch has the form of a switch rule. *)
+let is_switch_rule_arrow (c : case) : bool =
+  match c with
+  | OtherCase (("->", _), []) -> true
+  | _ -> false
+
 (* A non-empty list of map pairs ([is_map_pair_pattern]). *)
 let is_map_pair_list (ps : pattern list) : bool =
   match ps with
