@@ -772,14 +772,17 @@ let declare_path_pattern_item (env : env) (id_info : id_info) : unit =
       env.path_pattern_items := SIdSet.add sid !(env.path_pattern_items)
   | None -> ()
 
-(* A Rust unit struct (`struct U;`, which the front end gives a body of fake
- * braces) is also a value, written `U`. *)
-let declare_unit_struct (env : env) (lang : Lang.t) (entity : entity)
-    (c : class_definition) : unit =
-  match (entity.name, c) with
-  | EN (Id (id, id_info)), { ckind = Class, _; cbody = l, [], _; _ }
-    when lang =*= Lang.Rust && Tok.is_fake l && is_resolvable_name_ctx env lang
-    ->
+(* A Rust unit struct (`struct U;`, which the front end marks "UnitStruct")
+ * is also a value, written `U`. *)
+let declare_unit_struct (env : env) (lang : Lang.t) (entity : entity) : unit =
+  let is_unit_struct = function
+    | OtherAttribute (("UnitStruct", _), _) -> true
+    | _ -> false
+  in
+  match entity.name with
+  | EN (Id (id, id_info))
+    when List.exists is_unit_struct entity.attrs
+         && is_resolvable_name_ctx env lang ->
       declare_var env lang id id_info ~explicit:true None None;
       declare_path_pattern_item env id_info
   | _ -> ()
@@ -903,7 +906,7 @@ class ['self] resolve_visitor env lang =
     method! visit_definition venv x =
       match x with
      | { attrs; _ } as entity, ClassDef c ->
-          declare_unit_struct env lang entity c;
+          declare_unit_struct env lang entity;
           let class_params = params_of_parameters env c.cparams in
           with_new_context InClass env (fun () ->
               let special_class_params =
@@ -1033,7 +1036,7 @@ class ['self] resolve_visitor env lang =
           Option.iter (self#visit_type_ venv) vtype;
           declare_var env lang id id_info ~explicit:true vinit vtype;
           if
-            lang =*= Lang.Rust
+            Lang.equal lang Lang.Rust
             && List.exists
                  (function
                    | KeywordAttr (Const, _) -> true
@@ -1238,16 +1241,20 @@ class ['self] resolve_visitor env lang =
       super#visit_catch venv x
 
     method! visit_pattern venv x =
+      let declare_and_visit id id_info =
+        declare_var env lang id id_info ~explicit:true None None;
+        (* TODO: Should we visit before declaring? Better, if we
+         * want `[x, y] as x` to have `as x` shadowing the other `x`. *)
+        super#visit_pattern venv x
+      in
       match x with
       (* Rust: an identifier pattern that refers to a constant or a unit
        * struct in scope is a use of it, not a new variable. *)
       | PatId (id, id_info)
-        when lang =*= Lang.Rust && is_resolvable_name_ctx env lang -> (
+        when Lang.equal lang Lang.Rust && is_resolvable_name_ctx env lang -> (
           match path_pattern_item_opt env id with
           | Some resolved -> set_resolved env id_info resolved
-          | None ->
-              declare_var env lang id id_info ~explicit:true None None;
-              super#visit_pattern venv x)
+          | None -> declare_and_visit id id_info)
       | (PatId (id, id_info) | PatAs (_, (id, id_info)))
         when is_resolvable_name_ctx env lang ->
           (* todo: in Python it does not necessarily introduce
@@ -1258,10 +1265,7 @@ class ['self] resolve_visitor env lang =
            * such 'x' is not a new variable... why should it be
            * a class name?
            *)
-          declare_var env lang id id_info ~explicit:true None None;
-          (* TODO: Should we visit before declaring? Better, if we
-           * want `[x, y] as x` to have `as x` shadowing the other `x`. *)
-          super#visit_pattern venv x
+          declare_and_visit id id_info
       | PatTyped (PatId (id, id_info), ty)
         when is_resolvable_name_ctx env lang ->
           declare_var env lang id id_info ~explicit:true None (Some ty)
