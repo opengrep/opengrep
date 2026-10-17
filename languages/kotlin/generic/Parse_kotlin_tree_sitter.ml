@@ -2397,7 +2397,7 @@ and when_entry (env : env) ((v1, v2, v3, v4) : CST.when_entry) =
   let v1 =
     match v1 with
     (* Conditions separated by commas: the branch is taken when any of
-     * them holds, as for several case labels on one body. *)
+     * them holds, as for several cases on one body. *)
     | `When_cond_rep_COMMA_when_cond (v1, v2) ->
         let v1 = when_condition env v1 in
         let v2 =

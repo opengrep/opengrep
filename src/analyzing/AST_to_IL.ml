@@ -387,12 +387,12 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatAs _ -> true
   | _ -> false
 
-(* The operator that tests a case label against the scrutinee. A Ruby or
- * Crystal `case` tests with case equality, `label === scrutinee`, which
+(* The operator that tests a case against the scrutinee. A Ruby or
+ * Crystal `case` tests with case equality, `value === scrutinee`, which
  * their front ends write as [PhysEq] and whose result depends on the class
- * of the label (a Regexp matches, a Range includes, a class tests
+ * of the value (a Regexp matches, a Range includes, a class tests
  * membership); other languages test value equality. *)
-let label_test_operator (lang : Lang.t) : G.operator =
+let case_test_operator (lang : Lang.t) : G.operator =
   match lang with
   | Lang.Ruby
   | Lang.Crystal ->
@@ -773,9 +773,9 @@ and pattern env pat : stmts * lval * stmts =
         fields
     in
     ([], tmp_lval, ss)
-  (* An element `a: p` of a C# positional pattern binds what `p` binds; the
+  (* A subpattern `a: p` of a C# positional pattern binds what `p` binds; the
    * identifier binds nothing. *)
-  | G.OtherPat (("NamedElement", _), [ G.I _; G.P inner ]) -> pattern env inner
+  | G.OtherPat (("Subpattern", _), [ G.I _; G.P inner ]) -> pattern env inner
   (* A map pattern ([H.map_pattern]) binds what its entries bind. *)
   | G.OtherPat (("MapPattern", _), _) -> (
       match H.map_pattern_entries pat with
@@ -784,8 +784,8 @@ and pattern env pat : stmts * lval * stmts =
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
       let guard_stmts, _e_guard = expr env when_expr in
-      (* Here the guard is evaluated but not tested. The guard of a label of
-       * a switch is tested in [label_tests]. *)
+      (* Here the guard is evaluated but not tested. The guard of a case of a
+       * switch is tested in [case_tests]. *)
       (pre_ss, lval, pat_stmts @ guard_stmts)
   | G.DisjPat (pat1, _pat2) ->
     (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
@@ -1085,7 +1085,7 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   in
   let value_test (g_exp : G.expr) : stmts * IL.exp =
     let ss, value_il = expr env g_exp in
-    let op = label_test_operator env.lang in
+    let op = case_test_operator env.lang in
     let args =
       match op with
       | G.PhysEq -> [ value_il; scrutinee ]
@@ -1102,9 +1102,9 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       value_test (G.N (G.Id (id, id_info)) |> G.e)
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) -> pattern_match_cond env scrutinee inner
-  (* An element `a: p` of a C# positional pattern (`(a: FOO, ...)`): `p` is
+  (* A subpattern `a: p` of a C# positional pattern (`(a: FOO, ...)`): `p` is
    * tested at the element's position. *)
-  | G.OtherPat (("NamedElement", _), [ G.I _; G.P inner ]) ->
+  | G.OtherPat (("Subpattern", _), [ G.I _; G.P inner ]) ->
       pattern_match_cond env scrutinee inner
   (* A map pattern ([H.map_pattern]) matches a map with other entries too:
    * an empty one (Dart `{}`, Elixir `%{}`) tests only that the value is a
@@ -1123,7 +1123,7 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       | G.TyN name ->
           (ss, pm_conjoin op_tok [ pm_lower_type scrutinee name; inner_cond ])
       | _ -> (ss, inner_cond))
-  (* The guard of a label of a switch is tested in [label_tests],
+  (* The guard of a case of a switch is tested in [case_tests],
    * after the bindings of the pattern; a guard nested in a pattern is
    * not. *)
   | G.PatWhen (inner, _guardTODO) ->
@@ -3998,16 +3998,17 @@ and break_skips_switch : Lang.t -> bool = function
       true
   | _ -> false
 
-(* Languages in which `break` and `next` outside a loop leave the block that
- * holds them (a lambda in the IL), with the value they give, if any: Ruby
- * and Crystal. *)
+(* Languages in which `next` and `break` outside a loop act on the block
+ * that holds them, a lambda in the IL: `next v` ends the block with [v], and
+ * `break v` also ends the call that yielded to the block, with [v]. Both are
+ * given as a return from the lambda: Ruby and Crystal. *)
 and jumps_leave_block : Lang.t -> bool = function
   | Ruby
   | Crystal ->
       true
   | _ -> false
 
-(* `break v` or `next v` leaving a block: the block returns [v]. *)
+(* `next v` or `break v` outside a loop: the block's lambda returns [v]. *)
 and leave_block env tok (lbl_ident : G.label_ident) : stmts =
   let ss, e =
     match lbl_ident with
@@ -4523,7 +4524,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
               {
                 e =
                   Operator
-                    ( (label_test_operator env.lang, tok),
+                    ( (case_test_operator env.lang, tok),
                       [
                         Unnamed { e = Literal l; eorig = related_tok tok };
                         Unnamed switch_expr;
@@ -4548,7 +4549,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
               {
                 e =
                   Operator
-                    ( (label_test_operator env.lang, tok),
+                    ( (case_test_operator env.lang, tok),
                       [ Unnamed c'; Unnamed switch_expr ] );
                 eorig = related_tok tok;
               }
@@ -4563,7 +4564,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
              * [PatLiteral] (when nested), [PatList]/[PatTuple] (length +
              * per-slot recursion), [PatType], and via [pattern_to_expr]
              * any future patterns the helper grows to support. A PatWhen
-             * guard is not part of this condition: [label_tests]
+             * guard is not part of this condition: [case_tests]
              * tests it after the bindings of its pattern. *)
             let pm_ss, pm_cond = pattern_match_cond env switch_expr pat in
             (ss @ pm_ss, pm_cond :: es)
@@ -4631,7 +4632,7 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
       let case_ss, jump =
         match switch_expr_opt with
         | Some cond ->
-            ([], label_tests env cond tok translate_cases label cases jumps)
+            ([], case_tests env cond tok translate_cases label cases jumps)
         | None ->
             let case_ss, case = translate_cases env cases in
             ( case_ss,
@@ -4642,8 +4643,8 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
 
       let body = [ mk_s (Label label) ] @ new_stmts in
       (* A branch with a PatWhen guard breaks like any other: its body is
-       * reached only through a label that matched, with its guard if it has
-       * one; a failed label or guard has already gone on to the next label
+       * reached only through a case that matched, with its guard if it has
+       * one; a failed case or guard has already gone on to the next case
        * or branch. *)
       let break_if_no_fallthrough =
         if no_switch_fallthrough env.lang then
@@ -4652,17 +4653,17 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
       in
       (case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
 
-(* The tests of a branch of a switch with a scrutinee: its labels in order.
- * A label is tested after the expressions of the earlier labels and
- * branches have been evaluated, side effects included (Elixir's `cond`
- * conditions, such as `y = source()`). A label that matches binds its
- * pattern, as a LetPattern does, then a guard ([PatWhen]) is tested, which
- * may read the bindings. When a label or its guard fails, matching goes on
- * with the next label, then with [jumps], the tests of the next branches.
+(* The tests of a branch of a switch with a scrutinee: its cases in order.
+ * A case is tested after the expressions of the earlier cases and branches
+ * have been evaluated, side effects included (Elixir's `cond` conditions,
+ * such as `y = source()`). A case that matches binds its pattern, as a
+ * LetPattern does, then a guard ([PatWhen]) is tested, which may read the
+ * bindings. When a case or its guard fails, matching goes on with the next
+ * case, then with [jumps], the tests of the next branches.
  * Each test ends in a jump, to [body_label] or to the next test, and the
  * bindings sit here rather than before the body, which a previous body may
  * fall into. *)
-and label_tests env cond tok translate_cases body_label cases jumps : stmts =
+and case_tests env cond tok translate_cases body_label cases jumps : stmts =
   let goto label = mk_s (Goto (tok, label)) in
   let rec tests = function
     | [] -> jumps

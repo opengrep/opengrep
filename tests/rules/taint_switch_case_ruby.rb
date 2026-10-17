@@ -71,7 +71,7 @@ def constant_slot_matches
   end
 end
 
-def regexp_label_matches_a_string
+def regexp_when_value_matches_a_string
   x = taint_source()
   case "abc"
   when /a/
@@ -89,7 +89,7 @@ def regexp_constant_slot_matches_a_string
   end
 end
 
-def integer_label_matches_a_float
+def integer_when_value_matches_a_float
   x = taint_source()
   case 1.0
   in 1

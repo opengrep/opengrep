@@ -127,7 +127,7 @@ fun breakSkipsTheRestOfTheLoop(ks: List<Int>) {
   }
 }
 
-fun emptyArmKeepsTheWhen(k: Int) {
+fun emptyBranchKeepsTheWhen(k: Int) {
   var y = 0
   when (k) {
     1 -> { y = taint_source() }

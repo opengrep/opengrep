@@ -44,7 +44,7 @@ class SwitchCase {
     }
   }
 
-  void namedElementBindsNothing(int j) {
+  void subpatternIdentifierBindsNothing(int j) {
     var a = 0;
     var k = taint_source();
     if ((k, j) is (a: FOO, b: var y)) {
@@ -53,7 +53,7 @@ class SwitchCase {
     }
   }
 
-  void namedElementPatternStillBinds(int j) {
+  void subpatternPatternStillBinds(int j) {
     var k = taint_source();
     if ((j, k) is (a: FOO, b: var y)) {
       // ruleid: taint-switch-case-csharp
@@ -61,7 +61,7 @@ class SwitchCase {
     }
   }
 
-  int namedElementTestsItsPosition(int j) {
+  int subpatternTestsItsPosition(int j) {
     var x = taint_source();
     return (2, j) switch {
       // ok: taint-switch-case-csharp
@@ -70,7 +70,7 @@ class SwitchCase {
     };
   }
 
-  int namedElementHolds(int j) {
+  int subpatternHolds(int j) {
     var x = taint_source();
     return (1, j) switch {
       // ruleid: taint-switch-case-csharp

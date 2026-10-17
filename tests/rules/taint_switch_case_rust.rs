@@ -62,7 +62,7 @@ fn later_arm_reachable(k: i32) {
     }
 }
 
-fn label_is_not_bound() {
+fn constant_pattern_is_not_bound() {
     let k = taint_source();
     match k {
         FOO => {

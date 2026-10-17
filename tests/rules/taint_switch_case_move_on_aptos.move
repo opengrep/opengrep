@@ -10,7 +10,7 @@ module 0x1::m {
         }
     }
 
-    fun labelIsNotBound(): u64 {
+    fun constantInArmIsNotBound(): u64 {
         let k = taint_source();
         match (k) {
             // ok: taint-switch-case-move-on-aptos

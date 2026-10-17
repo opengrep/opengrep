@@ -3027,9 +3027,9 @@ and m_finally a b =
 
 and m_case_and_body a b =
   match (a, b) with
-  (* A label that is only `...` stands for any number of labels, of any
+  (* A case that is only `...` stands for any number of cases, of any
    * form, as `...` does in other lists. A `default` (or `else`) branch is
-   * not a case label: only a pattern branch with a `default` matches it. *)
+   * not a case: only a pattern branch with a `default` matches it. *)
   | CasesAndBody (a1, a2), CasesAndBody (b1, b2) ->
       let is_default = function
         | G.Default _ -> true

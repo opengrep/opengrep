@@ -2450,10 +2450,10 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
   in
   v2
 
-(* A case label that is not a constant pattern, read as a Dart 3 pattern.
+(* A case that is not a constant pattern, read as a Dart 3 pattern.
  * Inside a pattern a bare identifier is a constant pattern and `_` the
  * wildcard: a variable is declared only with `var`, `final` or a type,
- * none of which this grammar parses in a label.
+ * none of which this grammar parses in a case.
  * See https://dart.dev/language/pattern-types. A form that is not a
  * pattern the grammar can parse keeps [expr_to_pattern]. *)
 and map_case_pattern (env : env) (x : CST.argument) : pattern =
@@ -2463,7 +2463,7 @@ and map_case_pattern (env : env) (x : CST.argument) : pattern =
   | _ -> H2.expr_to_pattern (map_expression env x)
 
 and map_case_real_pattern (env : env) (x : CST.real_expression) : pattern =
-  if is_constant_real x then value_pattern (map_real_expression env x)
+  if is_constant_real x then constant_pattern (map_real_expression env x)
   else
     match x with
     (* Logical-or and logical-and patterns. *)
@@ -2576,11 +2576,11 @@ and map_case_element (env : env) (x : CST.element) : pattern =
 
 (* A map pattern key is a constant expression. *)
 and map_case_key (env : env) (x : CST.argument) : pattern =
-  value_pattern (map_expression env x)
+  constant_pattern (map_expression env x)
 
 (* A constant matched by value: a literal, or another constant
  * expression. *)
-and value_pattern (e : expr) : pattern =
+and constant_pattern (e : expr) : pattern =
   match e.e with
   | L lit -> PatLiteral lit
   | _ -> OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ E e ])
