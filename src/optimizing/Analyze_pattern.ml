@@ -82,8 +82,7 @@ class ['self] extract_strings_and_mvars_visitor =
       (* Same rationale for pattern identifiers synthesised by a
        * *_to_generic converter (e.g. Dart's `!cascade` receiver binder or
        * Clojure's threading temporary): when [id_info] is marked hidden the
-       * ident must not
-       * leak into the prefilter regex. *)
+       * ident must not leak into the prefilter regex. *)
       method! visit_pattern env x =
         match x with
         | PatId (_, { id_flags; _ }) when IdFlags.is_hidden !id_flags -> ()
