@@ -2127,9 +2127,10 @@ and positional_pattern_element (env : env) (x : CST.argument) : G.pattern =
         match v3 with
         | `Decl_exp x -> H2.expr_to_pattern (declaration_expression env x)
         | `Exp (`Lvalue_exp (`Tuple_exp x)) -> positional_pattern env x
-        | `Exp x ->
-            G.OtherPat
-              (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E (expression env x) ])
+        | `Exp x -> (
+            match expression env x with
+            | { e = G.Ellipsis tok; _ } -> G.PatEllipsis tok
+            | e -> G.OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ]))
       in
       match v1 with
       | None -> pat
