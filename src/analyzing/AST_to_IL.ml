@@ -3978,7 +3978,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Python
   | Python2
   | Python3
-  | Scala ->
+  | Scala
+  | Vb ->
       true
   | _ -> false
 
