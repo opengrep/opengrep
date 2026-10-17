@@ -2495,25 +2495,14 @@ and map_case_real_pattern (env : env) (x : CST.real_expression) : pattern =
               | None -> []
             in
             PatList (token env l, elems, token env r)
-        (* An empty map pattern matches any map: a type test for Map. The
-         * name is not in the source, so it is hidden from the prefilter. *)
-        | `Choice_lit (`Lit (`Set_or_map_lit (None, None, l, None, _))), [] ->
-            PatType
-              (TyN (Id (("Map", token env l), empty_id_info ~hidden:true ()))
-              |> G.t)
-        (* Map pattern: entries matched by key. *)
+        (* Map pattern, `{}` included: entries matched by key. *)
+        | `Choice_lit (`Lit (`Set_or_map_lit (None, None, l, None, r))), [] ->
+            H2.map_pattern (token env l, [], token env r)
         | ( `Choice_lit
               (`Lit (`Set_or_map_lit (None, None, l, Some (v1, v2, _), r))),
             [] ) -> (
-            match map_case_pairs env (v1 :: List_.map snd v2) with
-            | Some pairs ->
-                let entries =
-                  List_.map
-                    (fun (k, v) ->
-                      PatKeyVal (map_case_key env k, map_case_pattern env v))
-                    pairs
-                in
-                PatList (token env l, entries, token env r)
+            match map_case_entries env (v1 :: List_.map snd v2) with
+            | Some entries -> H2.map_pattern (token env l, entries, token env r)
             | None -> H2.expr_to_pattern (map_real_expression env x))
         (* Object pattern `T(f: p, ...)`: the type, then each named field;
          * `T()` tests the type alone. *)
@@ -2539,15 +2528,16 @@ and map_case_real_pattern (env : env) (x : CST.real_expression) : pattern =
     | _ -> H2.expr_to_pattern (map_real_expression env x)
 
 (* The entries of a map pattern, or [None] when an element is not a
- * `key: value` pair. In a rule, a `...` stands for the other entries,
- * which a map pattern ignores anyway, so it is left out. *)
-and map_case_pairs (env : env) (elems : CST.element list) :
-    (CST.argument * CST.argument) list option =
+ * `key: value` pair. In a rule, a `...` stands for the other entries. *)
+and map_case_entries (env : env) (elems : CST.element list) :
+    pattern list option =
   List.fold_right
     (fun elem acc ->
       match (elem, acc, env.extra) with
-      | `Pair (k, _colon, v), Some xs, _ -> Some ((k, v) :: xs)
-      | `Exp (`Semg_ellips _), Some xs, Pattern -> Some xs
+      | `Pair (k, _colon, v), Some xs, _ ->
+          Some (PatKeyVal (map_case_key env k, map_case_pattern env v) :: xs)
+      | `Exp (`Semg_ellips tok), Some xs, Pattern ->
+          Some (PatEllipsis (token env tok) :: xs)
       | _ -> None)
     elems (Some [])
 

@@ -215,6 +215,12 @@ let is_map_pair_pattern (p : pattern) : bool =
       true
   | _ -> false
 
+(* A map pattern whose entries (map pairs and, in a rule, `...`) would
+ * otherwise read as a list pattern, as an empty map or a map of only `...`
+ * does: the [PatList] of the entries, tagged "MapPattern". *)
+let map_pattern ((l, entries, r) : pattern list bracket) : pattern =
+  OtherPat (("MapPattern", l), [ P (PatList (l, entries, r)) ])
+
 (* In Go/Swift a pattern can be a complex expressions. It is just
  * matched for equality with the thing it's matched against, so in that
  * case it should be a pattern like | _ when expr = x.
@@ -322,6 +328,9 @@ let rec pattern_to_expr p =
   | PatEllipsis t -> Ellipsis t
   | PatTyped (p, ty) -> Cast (ty, fake "", pattern_to_expr p)
   | OtherPat (("ExprToPattern", _), [ E e ]) -> e.e
+  (* A map pattern ([map_pattern]) reads as a map, not as a list. *)
+  | OtherPat (("MapPattern", _), [ P (PatList (t1, xs, t2)) ]) ->
+      Container (Dict, (t1, xs |> List_.map pattern_to_expr, t2))
   | OtherPat (tag, [ P p ]) -> OtherExpr (tag, [ E (pattern_to_expr p) ])
   | _ -> raise NotAnExpr)
   |> G.e

@@ -3247,6 +3247,8 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
     | G.PatId (id, id_info) ->
         let il_name = AST_to_IL.var_of_id_info id id_info in
         (il_name, List.rev offset) :: acc
+    (* A map pattern ([AST_generic_helpers.map_pattern]): its entries. *)
+    | G.OtherPat (("MapPattern", _), [ G.P inner ]) -> go offset inner acc
     | G.PatTyped (inner, _) -> go offset inner acc
     | G.PatTuple (_, pats, _) | G.PatList (_, pats, _)
       when pats <> [] && List.for_all is_map_pair pats ->

@@ -147,12 +147,10 @@ let rec expr_to_pattern (e : G.expr) : G.pattern =
   | G.Container (G.Tuple, (t1, xs, t2)) ->
       G.PatTuple (t1, List_.map expr_to_pattern xs, t2)
   | G.L l -> G.PatLiteral l
-  (* An empty map pattern `%{}` matches any map: a type test for Map. The
-   * type is not in the source, so it is hidden from the prefilter. *)
-  | G.Container (G.Dict, (t1, [], _)) ->
-      G.PatType
-        (G.TyN (G.Id (("Map", t1), G.empty_id_info ~hidden:true ())) |> G.t)
-  | G.Container ((List | Dict), (t1, xs, t2)) ->
+  (* A map pattern, `%{}` and `%{...}` included, is not a list pattern. *)
+  | G.Container (G.Dict, (t1, xs, t2)) ->
+      H.map_pattern (t1, List_.map expr_to_pattern xs, t2)
+  | G.Container (G.List, (t1, xs, t2)) ->
       G.PatList (t1, List_.map expr_to_pattern xs, t2)
   | G.Constructor (n, (_, args, _)) ->
       G.PatConstructor (n, List_.map expr_to_pattern args)
