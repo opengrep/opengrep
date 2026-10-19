@@ -938,64 +938,72 @@ and v_definition x : G.definition list =
   | GivenDef v1 -> v_given_definition v1
   | VarDefs v1 -> v_variable_definitions v1
 
-and v_given_definition { gsig; gkind } =
-  let v1 =
+(* A given instance is a definition with the `given` attribute: an alias
+   given (`given x: T = e`) is a final lazy variable, or a method when it
+   takes type or context parameters; a structural given (`given T with ...`)
+   is an object, or a class when it takes parameters (Scala 3 reference,
+   "Given Instances"). An anonymous given has no identifier. *)
+and v_given_definition { gtok; gattrs; gsig; gkind } : G.definition list =
+  let given_entity = G.OtherEntity (("given", gtok), []) in
+  let name, tparams, params =
     match gsig with
-    | None -> []
+    | None -> (given_entity, None, [])
     | Some { g_id; g_tparams; g_using; g_colon = _ } ->
-        let g_id =
+        let name =
           match g_id with
-          | None -> []
-          | Some id -> [ G.I (v_ident id) ]
+          | Some id -> G.EN (H.name_of_id (v_ident id))
+          | None -> given_entity
         in
-        let g_tparams =
-          match v_type_parameters g_tparams with
-          | None -> []
-          | Some (_, xs, _) -> [ G.Anys (xs |> List_.map (fun x -> G.Tp x)) ]
-        in
-        let g_using =
-          [
-            G.Anys
-              (v_list v_bindings g_using |> List_.flatten
-              |> List_.map (fun x -> G.Pa x));
-          ]
-        in
-        g_id @ g_tparams @ g_using
+        let params = v_list v_bindings g_using |> List_.flatten in
+        (name, v_type_parameters g_tparams, params)
   in
-  let v2 =
+  let attrs =
+    G.OtherAttribute (("given", gtok), []) :: v_list v_attribute gattrs
+  in
+  let has_params = Option.is_some tparams || not (List_.null params) in
+  let attrs, kind =
     match gkind with
-    | GivenStructural (constr_apps, body) ->
-        let v1 =
-          v_list v_constr_app constr_apps
-          |> List_.map (fun (ty, argss) ->
-                 let flat_args =
-                   List.concat_map (fun (_, args, _) -> args) argss
-                 in
-                 G.Anys
-                   [ G.T ty; G.Anys (List_.map (fun x -> G.Ar x) flat_args) ])
-        in
-        let v2 =
-          match body with
-          | None -> []
-          | Some body ->
-              let body = v_template_body body in
-              [ G.S (G.Block body |> G.s) ]
-        in
-        v1 @ v2
     | GivenType (ty, exp) ->
-        let v1 = [ G.T (v_type_ ty) ] in
-        let v2 =
-          match exp with
-          | None -> []
-          | Some exp -> [ G.E (v_expr exp) ]
+        let ty = v_type_ ty and exp = v_option v_expr exp in
+        if has_params then
+          let fbody =
+            match exp with
+            | Some e -> G.FBExpr e
+            | None -> G.FBDecl G.sc
+          in
+          ( attrs,
+            G.FuncDef
+              {
+                G.fkind = (G.Method, gtok);
+                fparams = fb params;
+                frettype = Some ty;
+                fbody;
+              } )
+        else
+          let attrs =
+            G.KeywordAttr (G.Const, gtok) :: G.KeywordAttr (G.Lazy, gtok) :: attrs
+          in
+          (attrs, G.VarDef { G.vinit = exp; vtype = Some ty; vtok = G.no_sc })
+    | GivenStructural (constr_apps, body) ->
+        let cextends =
+          v_list v_constr_app constr_apps
+          |> List_.map (fun ((ty, argss) : G.type_ * G.arguments list) ->
+                 match argss with
+                 | [] -> (ty, None)
+                 | args :: _ -> (ty, Some args))
         in
-        v1 @ v2
+        ( attrs,
+          G.ClassDef
+            {
+              G.ckind = ((if has_params then G.Class else G.Object), gtok);
+              cextends;
+              cmixins = [];
+              cimplements = [];
+              cparams = fb params;
+              cbody = v_class_body body;
+            } )
   in
-  let todo_kind = ("given", Tok.unsafe_fake_tok "given") in
-  [
-    ( { name = G.OtherEntity (todo_kind, []); attrs = []; tparams = None },
-      G.OtherDef (todo_kind, v1 @ [ G.Anys v2 ]) );
-  ]
+  [ ({ G.name; attrs; tparams }, kind) ]
 
 and v_end_marker { end_tok; end_kind } : G.stmt =
   G.OtherStmt (OS_Todo, [ G.Tk end_tok; G.Tk end_kind ]) |> G.s
@@ -1222,13 +1230,13 @@ and v_template_definition
   (* TODO? flatten? *)
   let cparams = fb (v_list v_bindings v_cparams |> List_.flatten) in
   let cextends, cmixins = v_template_parents v_cparents in
-  let body = v_option v_template_body v_cbody in
-  let cbody =
-    match body with
-    | None -> G.empty_body
-    | Some (lb, xs, rb) -> (lb, xs |> List_.map (fun st -> G.F st), rb)
-  in
+  let cbody = v_class_body v_cbody in
   { G.ckind; cextends; cmixins; cimplements = []; cparams; cbody }
+
+and v_class_body (body : template_body option) : G.field list G.bracket =
+  match v_option v_template_body body with
+  | None -> G.empty_body
+  | Some (lb, xs, rb) -> (lb, xs |> List_.map (fun st -> G.F st), rb)
 
 and v_template_parents
     { cextends = v_cextends; cwith = v_cwith; cderives = _ } =

@@ -618,7 +618,12 @@ and given_kind =
   (* combination of both alias instance and abstract instance *)
   | GivenType of type_ * expr option
 
-and given_definition = { gsig : given_sig option; gkind : given_kind }
+and given_definition = {
+  gtok : tok; (* 'given' *)
+  gattrs : attribute list;
+  gsig : given_sig option;
+  gkind : given_kind;
+}
 
 (* ------------------------------------------------------------------------- *)
 (* Typedef *)
