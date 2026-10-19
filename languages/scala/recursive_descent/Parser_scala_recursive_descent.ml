@@ -1702,7 +1702,7 @@ let path ~thisOK ~typeOK in_ : path =
              nextToken in_;
              (* ast: t := This(tpnme.Empty) *)
              let t = This (None, ii) in
-             if (not thisOK) || in_.token =~= DOT ab then (
+             if (not thisOK) || isSelectionDot in_ then (
                accept (DOT ab) in_;
                (t, selectors ~typeOK in_))
              else (t, [])
@@ -1728,7 +1728,7 @@ let path ~thisOK ~typeOK in_ : path =
                    nextToken in_;
                    (* ast: t = This(name.toTypeName) *)
                    let t = This (Some name, ii) in
-                   if (not thisOK) || in_.token =~= DOT ab then (
+                   if (not thisOK) || isSelectionDot in_ then (
                      accept (DOT ab) in_;
                      (t, selectors ~typeOK in_))
                    else (t, [])
