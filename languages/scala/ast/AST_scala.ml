@@ -576,6 +576,8 @@ and template_definition = {
 and template_parents = {
   cextends : (type_ * arguments list) option;
   cwith : type_ list;
+  (* scala3: https://docs.scala-lang.org/scala3/reference/contextual/derivation.html *)
+  cderives : (tok (* 'derives' *) * type_ list) option;
 }
 
 and template_body = (self_type option * block) bracket
@@ -634,7 +636,7 @@ type any = Pr of program | Ex of expr | Ss of block | Tk of tok
 (* Helpers *)
 (*****************************************************************************)
 
-let empty_cparents = { cextends = None; cwith = [] }
+let empty_cparents = { cextends = None; cwith = []; cderives = None }
 let attrs_of_mods xs = List_.map (fun x -> M x) xs
 let attrs_of_annots xs = List_.map (fun x -> A x) xs
 let mods_with_annots mods annots = attrs_of_annots annots @ attrs_of_mods mods

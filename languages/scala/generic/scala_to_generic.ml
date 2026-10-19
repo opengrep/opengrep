@@ -924,8 +924,17 @@ and v_type_parameters v : G.type_parameters option =
 and v_definition x : G.definition list =
   match x with
   | DefEnt (v1, v2) ->
-      let v1 = v_entity v1 and v2 = v_definition_kind v2 in
-      [ (v1, v2) ]
+      let ent = v_entity v1 and def = v_definition_kind v2 in
+      (* a derives clause asks for instances of type classes, which the
+         class does not extend; it is an attribute of the class *)
+      let derives =
+        match v2 with
+        | Template { cparents = { cderives = Some (tok, tys); _ }; _ } ->
+            let tys = List_.map (fun (ty : type_) -> G.T (v_type_ ty)) tys in
+            [ G.OtherAttribute (("derives", tok), tys) ]
+        | _ -> []
+      in
+      [ ({ ent with G.attrs = ent.G.attrs @ derives }, def) ]
   | EnumCaseDef (attrs, v1) ->
       let attrs = v_list v_attribute attrs in
       v_enum_case_definition attrs v1
@@ -1203,7 +1212,8 @@ and v_template_definition
   in
   { G.ckind; cextends; cmixins; cimplements = []; cparams; cbody }
 
-and v_template_parents { cextends = v_cextends; cwith = v_cwith } =
+and v_template_parents
+    { cextends = v_cextends; cwith = v_cwith; cderives = _ } =
   let parents =
     match v_cextends with
     | None -> []
