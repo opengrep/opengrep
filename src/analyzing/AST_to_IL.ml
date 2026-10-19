@@ -588,6 +588,11 @@ and pattern env pat : stmts * lval * stmts =
   | G.PatType _ ->
       let lval = fresh_lval env (Tok.unsafe_fake_tok "_pattype") in
       ([], lval, [])
+  (* A Scala `given T` pattern binds an anonymous given instance, which no
+   * code refers to by name. *)
+  | G.OtherPat (("given", tok), [ G.T _ ]) ->
+      let lval = fresh_lval env tok in
+      ([], lval, [])
   | G.OtherPat (("NotPattern", tok), [ G.P _ ]) ->
       let lval = fresh_lval env tok in
       ([], lval, [])
@@ -1233,6 +1238,13 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
                  Some (field, Some (record_field_offset t2 dot_ident), p))
       |> pm_lower_entries env scrutinee
   | G.PatType { t = G.TyN name; _ } ->
+      ([], pm_lower_type scrutinee name)
+  (* A Scala `given T` pattern tests the type of the value, as `_: T` does;
+   * for `C[A]` the test is on `C`, as type arguments are erased. *)
+  | G.OtherPat (("given", _), [ G.T { t = G.TyN name; _ } ])
+  | G.OtherPat
+      (("given", _), [ G.T { t = G.TyApply ({ t = G.TyN name; _ }, _); _ } ])
+    ->
       ([], pm_lower_type scrutinee name)
   (* C# relational patterns (`< 5`, `>= 0`, …) and Kotlin `when` range tests
    * (`in r`, `!in r`). The frontend records only the

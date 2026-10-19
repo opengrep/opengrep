@@ -232,6 +232,8 @@ and pattern =
   | PatUnderscoreStar of tok (* '_' *) * tok (* '*' *)
   | PatDisj of pattern * tok (* | *) * pattern
   | PatQuoted of quoted
+  (* scala3: an anonymous given of the type *)
+  | PatGiven of tok (* 'given' *) * type_
   (* semgrep-ext: *)
   | PatEllipsis of tok
 

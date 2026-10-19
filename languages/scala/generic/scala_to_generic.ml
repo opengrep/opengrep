@@ -439,6 +439,9 @@ and v_pattern = function
       | QuotedType (quote_tok, (_, v1, _)) ->
           let ty = v_type_ v1 in
           G.OtherPat (("QuotedBlock", quote_tok), [ G.T ty ]))
+  | PatGiven (v1, v2) ->
+      let v2 = v_type_ v2 in
+      G.OtherPat (("given", v1), [ G.T v2 ])
   | PatEllipsis v1 -> G.PatEllipsis v1
 
 and todo_expr msg any = G.OtherExpr ((msg, fake msg), any) |> G.e
