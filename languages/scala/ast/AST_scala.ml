@@ -498,7 +498,10 @@ and extension = {
   ext_methods : ext_method list;
 }
 
-and ext_method = ExtDef of definition | ExtExport of import
+and ext_method =
+  | ExtDef of definition
+  | ExtExport of import
+  | ExtEnd of end_marker
 
 (* ------------------------------------------------------------------------- *)
 (* Enums *)

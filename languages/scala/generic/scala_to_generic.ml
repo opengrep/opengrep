@@ -1039,6 +1039,7 @@ and v_ext_method ext_method : G.any list =
   match ext_method with
   | ExtDef def -> v_definition def |> List_.map (fun def -> G.Def def)
   | ExtExport import -> v_import import |> List_.map (fun dir -> G.Dir dir)
+  | ExtEnd end_marker -> [ G.S (v_end_marker end_marker) ]
 
 and v_constr_app (ty, args) = (v_type_ ty, v_list v_arguments args)
 
