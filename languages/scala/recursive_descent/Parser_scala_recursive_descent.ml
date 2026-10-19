@@ -4185,6 +4185,18 @@ let extMethods in_ =
     x
   else [ extMethod in_ ]
 
+(* `extension` is a soft keyword: it starts an extension only when `(` or
+   `[` follows (Parsers.scala, followingIsExtension). *)
+let isExtensionStart (in_ : env) : bool =
+  match (in_.token, in_next_token in_.rest) with
+  | ID_LOWER ("extension", _), Some (LPAREN _ | LBRACKET _) -> true
+  | _ -> false
+
+let isTemplateStatIntroSoftKeyword (in_ : env) : bool =
+  match in_.token with
+  | ID_LOWER ("extension", _) -> isExtensionStart in_
+  | tok -> TH.isTemplateStatIntroSoftKeyword tok
+
 let extension in_ =
   let ext_tok = TH.info_of_tok in_.token in
   let owner = ("extension", ext_tok) in
@@ -4283,7 +4295,7 @@ let blockStatSeqInner in_ : top_stat option =
   | ID_LOWER ("end", _) ->
       let x = endMarker in_ in
       Some (End x)
-  | ID_LOWER ("extension", _) ->
+  | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
   | Kimport _ ->
@@ -4423,7 +4435,7 @@ let templateStat in_ : template_stat option =
   | ID_LOWER ("end", _) ->
       let x = endMarker in_ in
       Some (End x)
-  | ID_LOWER ("extension", _) ->
+  | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
   | t when TH.isDefIntro t || is_modifier in_ || TH.isAnnotation t ->
@@ -4468,7 +4480,7 @@ let topStat in_ : top_stat option =
   | ID_LOWER ("end", _) ->
       let x = endMarker in_ in
       Some (End x)
-  | ID_LOWER ("extension", _) ->
+  | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
   (* This used to be a TmplDef, but in Scala 3, this can actually be any Def.
@@ -4515,7 +4527,7 @@ let templateStatSeq ~isPre in_ : self_type option * block =
          If we did not do this, template stats that start with those would always
          enter this expression case, even though they denote something else.
       *)
-      && not (TH.isTemplateStatIntroSoftKeyword in_.token)
+      && not (isTemplateStatIntroSoftKeyword in_)
     then (
       let first = expr ~location:InTemplate in_ in
       match in_.token with
