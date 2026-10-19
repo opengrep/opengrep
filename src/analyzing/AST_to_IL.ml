@@ -399,6 +399,18 @@ let case_test_operator (lang : Lang.t) : G.operator =
       G.PhysEq
   | _ -> G.Eq
 
+(* The test of a case value against the scrutinee; the value is the receiver
+ * of Ruby's and Crystal's `===`. *)
+let case_value_test (lang : Lang.t) (tok : Tok.t) ~(eorig : orig)
+    (scrutinee : exp) (value : exp) : exp =
+  let op = case_test_operator lang in
+  let args =
+    match op with
+    | G.PhysEq -> [ value; scrutinee ]
+    | _ -> [ scrutinee; value ]
+  in
+  mk_e (Operator ((op, tok), mk_unnamed_args args)) eorig
+
 (* The comparison of a test pattern whose subject is implicit: a C#
  * relational pattern (`< 5`) or a Kotlin range test (`in r`). The front end
  * records the operator as the tag of an [OtherPat] holding the rhs. *)
@@ -412,17 +424,37 @@ let relational_pattern_operator (tag : string) : G.operator option =
   | "!in" -> Some G.NotIn
   | _ -> None
 
-(* Rust: an identifier pattern that refers to a constant or a unit struct
- * matches by value and binds nothing (Rust Reference, Identifier patterns).
- * [Naming_AST] resolves such a pattern to that definition and a binder to
- * itself, so the definition site tells the two apart. *)
-let is_rust_path_pattern (env : env) ((_, tok) : G.ident) (id_info : G.id_info)
-    : bool =
-  match (env.lang, !(id_info.G.id_resolved), Tok.loc_of_tok tok) with
-  | Lang.Rust, Some (_, sid), Ok loc ->
-      let _, _, line, col = G.SId.to_loc sid in
-      not (Int.equal line loc.Tok.pos.line && Int.equal col loc.Tok.pos.column)
-  | _ -> false
+(* Whether [pat] binds a variable. An argument of an [OtherPat] other than an
+ * expression or a pattern is taken to bind one. *)
+let rec pattern_binds (pat : G.pattern) : bool =
+  match pat with
+  | G.PatId (_, id_info) -> not (IdFlags.is_path_pattern !(id_info.G.id_flags))
+  | G.PatAs _ -> true
+  | G.PatLiteral _
+  | G.PatWildcard _
+  | G.PatType _
+  | G.PatEllipsis _ ->
+      false
+  | G.PatConstructor (_, pats)
+  | G.PatTuple (_, pats, _)
+  | G.PatList (_, pats, _) ->
+      List.exists pattern_binds pats
+  | G.PatRecord (_, fields, _) ->
+      List.exists (fun ((_ : G.dotted_ident), (p : G.pattern)) -> pattern_binds p) fields
+  | G.PatKeyVal (p1, p2)
+  | G.PatDisj (p1, p2)
+  | G.DisjPat (p1, p2) ->
+      pattern_binds p1 || pattern_binds p2
+  | G.PatTyped (p, _)
+  | G.PatWhen (p, _) ->
+      pattern_binds p
+  | G.OtherPat (_, anys) ->
+      List.exists
+        (function
+          | G.P p -> pattern_binds p
+          | G.E _ -> false
+          | _ -> true)
+        anys
 
 (* A field offset, as an IL name with empty id_info and the default sid:
  * the shape of a caller-side field access on an unresolved id_info and of a
@@ -550,7 +582,7 @@ and pattern env pat : stmts * lval * stmts =
       let lval = fresh_lval env (Tok.unsafe_fake_tok "_patlit") in
       ([], lval, [])
   (* Tests that bind nothing: a type test, a negated pattern, a relational
-   * or range test, a Rust constant or unit struct ([is_rust_path_pattern]).
+   * or range test, a Rust constant or unit struct ([IdFlags.is_path_pattern]).
    * Their operands are evaluated by the test itself ([pattern_match_cond]),
    * not again here. *)
   | G.PatType _ ->
@@ -563,7 +595,7 @@ and pattern env pat : stmts * lval * stmts =
     when Option.is_some (relational_pattern_operator tag) ->
       let lval = fresh_lval env tok in
       ([], lval, [])
-  | G.PatId (((_, tok) as id), id_info) when is_rust_path_pattern env id id_info
+  | G.PatId ((_, tok), id_info) when IdFlags.is_path_pattern !(id_info.G.id_flags)
     ->
       let lval = fresh_lval env tok in
       ([], lval, [])
@@ -1085,20 +1117,14 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
   in
   let value_test (g_exp : G.expr) : stmts * IL.exp =
     let ss, value_il = expr env g_exp in
-    let op = case_test_operator env.lang in
-    let args =
-      match op with
-      | G.PhysEq -> [ value_il; scrutinee ]
-      | _ -> [ scrutinee; value_il ]
-    in
-    (ss, mk_e (Operator ((op, op_tok), mk_unnamed_args args)) NoOrig)
+    (ss, case_value_test env.lang op_tok ~eorig:NoOrig scrutinee value_il)
   in
   match pat with
   | G.PatWildcard tok
   | G.PatEllipsis tok
   | G.OtherPat (("PatternHole", tok), []) ->
       ([], true_at tok)
-  | G.PatId (id, id_info) when is_rust_path_pattern env id id_info ->
+  | G.PatId (id, id_info) when IdFlags.is_path_pattern !(id_info.G.id_flags) ->
       value_test (G.N (G.Id (id, id_info)) |> G.e)
   | G.PatId ((_, tok), _) -> ([], true_at tok)
   | G.PatAs (inner, _) -> pattern_match_cond env scrutinee inner
@@ -4522,16 +4548,8 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
       (fun (ss, es) -> function
         | G.Case (tok, G.PatLiteral l) ->
             ( ss,
-              {
-                e =
-                  Operator
-                    ( (case_test_operator env.lang, tok),
-                      [
-                        Unnamed { e = Literal l; eorig = related_tok tok };
-                        Unnamed switch_expr;
-                      ] );
-                eorig = related_tok tok;
-              }
+              case_value_test env.lang tok ~eorig:(related_tok tok) switch_expr
+                (mk_e (Literal l) (related_tok tok))
               :: es )
         | G.Case (_tok, (G.OtherPat ((tag, _), [ E _ ]) as pat))
           when Option.is_some (relational_pattern_operator tag) ->
@@ -4540,20 +4558,15 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
              * equality. Route it through [pattern_match_cond], which rebuilds
              * [switch_expr <op> rhs]. Must come before the generic
              * [OtherPat (_, [E c])] equality shortcut below, which would
-             * otherwise turn it into [rhs == switch_expr]. *)
+             * otherwise turn it into [switch_expr == rhs]. *)
             let pm_ss, pm_cond = pattern_match_cond env switch_expr pat in
             (ss @ pm_ss, pm_cond :: es)
         | G.Case (tok, G.OtherPat (_, [ E c ]))
         | G.CaseEqualExpr (tok, c) ->
             let c_ss, c' = expr env c in
             ( ss @ c_ss,
-              {
-                e =
-                  Operator
-                    ( (case_test_operator env.lang, tok),
-                      [ Unnamed c'; Unnamed switch_expr ] );
-                eorig = related_tok tok;
-              }
+              case_value_test env.lang tok ~eorig:(related_tok tok) switch_expr
+                c'
               :: es )
         | G.Default tok ->
             (* Default is not tested: cases_and_bodies_to_stmts leaves it out
@@ -4698,7 +4711,9 @@ and case_tests env cond tok translate_cases body_label cases jumps : stmts =
         let next_label = fresh_label env ~label:"__switch_next" tok in
         let case_ss, case_cond = translate_cases env [ case ] in
         let bind pat =
-          pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
+          if pattern_binds pat then
+            pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
+          else []
         in
         let on_match =
           match case with

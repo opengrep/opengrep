@@ -1253,7 +1253,9 @@ class ['self] resolve_visitor env lang =
       | PatId (id, id_info)
         when Lang.equal lang Lang.Rust && is_resolvable_name_ctx env lang -> (
           match path_pattern_item_opt env id with
-          | Some resolved -> set_resolved env id_info resolved
+          | Some resolved ->
+              set_resolved env id_info resolved;
+              id_info.id_flags := IdFlags.set_path_pattern !(id_info.id_flags)
           | None -> declare_and_visit id id_info)
       | (PatId (id, id_info) | PatAs (_, (id, id_info)))
         when is_resolvable_name_ctx env lang ->
