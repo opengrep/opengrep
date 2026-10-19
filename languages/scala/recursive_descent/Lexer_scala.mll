@@ -543,9 +543,9 @@ and in_interpolated_triple state = parse
 
   | "\"\"\""  { pop_mode state; T_INTERPOLATED_END (tokinfo lexbuf) }
   | "\"" { StringLiteral (tok lexbuf, tokinfo lexbuf) }
-  (* not in original spec *)
-  | escapeSeq as s { StringLiteral (s, tokinfo lexbuf) }
-  | [^'"''$''\\']+ as s { StringLiteral (s, tokinfo lexbuf) }
+  (* a backslash has no lexical meaning in a triple-quoted string, so the
+     string ends at the first three quotes even after a backslash *)
+  | [^'"''$']+ as s { StringLiteral (s, tokinfo lexbuf) }
   | "${" { push_mode state ST_IN_CODE; LBRACE (tokinfo lexbuf) }
   (* for metavariables, we keep the $ sign, which we strip later if not in semgrep mode *)
   | ("$" metavar_id_after_dollar) as s { ID_DOLLAR (s, tokinfo lexbuf) }
