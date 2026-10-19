@@ -310,6 +310,18 @@ let rec skip_trivia ~(newlines : bool) (toks : T.token list) : T.token list =
   | Nl _ :: rest when newlines -> skip_trivia ~newlines rest
   | _ -> toks
 
+(* the tokens after the group in parentheses or brackets that starts toks *)
+let after_group (toks : T.token list) : T.token list =
+  let rec loop (toks : T.token list) (depth : int) : T.token list =
+    match toks with
+    | [] -> []
+    | (LBRACKET _ | LPAREN _) :: rest -> loop rest (depth + 1)
+    | (RBRACKET _ | RPAREN _) :: rest when depth <= 1 -> rest
+    | (RBRACKET _ | RPAREN _) :: rest -> loop rest (depth - 1)
+    | _ :: rest -> loop rest depth
+  in
+  loop toks 0
+
 (* Does a token for which ~target holds come before the end of the line,
    outside nested groups? A token for which ~stop holds, or a closing
    bracket of a group that the tokens did not open, ends the search. *)
@@ -4248,6 +4260,39 @@ let extMethods in_ =
     x
   else [ extMethod in_ ]
 
+(* `extension` is a soft keyword: it starts an extension only when `(` or
+   `[` follows (Parsers.scala, followingIsExtension), and the `(`, also after
+   type parameters, starts a parameter, `x:`, `using`, a modifier or an
+   annotation; `extension (0)` and `extension[Int](x)` are Scala 2 calls. *)
+let isExtensionStart (in_ : env) : bool =
+  match in_.token with
+  | ID_LOWER ("extension", _) -> (
+      let toks = skip_trivia ~newlines:false in_.rest in
+      let toks =
+        match toks with
+        | LBRACKET _ :: _ -> skip_trivia ~newlines:true (after_group toks)
+        | _ -> toks
+      in
+      match toks with
+      | LPAREN _ :: rest -> (
+          match skip_trivia ~newlines:true rest with
+          | ID_LOWER (("using" | "inline" | "erased"), _) :: _
+          | AT _ :: _
+          | Ellipsis _ :: _ ->
+              true
+          | (ID_LOWER _ | ID_UPPER _ | ID_BACKQUOTED _ | USCORE _) :: rest -> (
+              match skip_trivia ~newlines:true rest with
+              | COLON _ :: _ -> true
+              | _ -> false)
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
+
+let isTemplateStatIntroSoftKeyword (in_ : env) : bool =
+  match in_.token with
+  | ID_LOWER ("extension", _) -> isExtensionStart in_
+  | tok -> TH.isTemplateStatIntroSoftKeyword tok
+
 let extension in_ =
   let ext_tok = TH.info_of_tok in_.token in
   let owner = ("extension", ext_tok) in
@@ -4346,7 +4391,7 @@ let blockStatSeqInner in_ : top_stat option =
   | ID_LOWER ("end", _) ->
       let x = endMarker in_ in
       Some (End x)
-  | ID_LOWER ("extension", _) ->
+  | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
   | Kimport _ ->
@@ -4486,7 +4531,7 @@ let templateStat in_ : template_stat option =
   | ID_LOWER ("end", _) ->
       let x = endMarker in_ in
       Some (End x)
-  | ID_LOWER ("extension", _) ->
+  | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
   | t when TH.isDefIntro t || is_modifier in_ || TH.isAnnotation t ->
@@ -4531,7 +4576,7 @@ let topStat in_ : top_stat option =
   | ID_LOWER ("end", _) ->
       let x = endMarker in_ in
       Some (End x)
-  | ID_LOWER ("extension", _) ->
+  | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
   (* This used to be a TmplDef, but in Scala 3, this can actually be any Def.
@@ -4606,7 +4651,7 @@ let templateStatSeq ~isPre in_ : self_type option * block =
          If we did not do this, template stats that start with those would always
          enter this expression case, even though they denote something else.
       *)
-      && not (TH.isTemplateStatIntroSoftKeyword in_.token)
+      && not (isTemplateStatIntroSoftKeyword in_)
     then (
       let first = expr ~location:InTemplate in_ in
       match in_.token with
