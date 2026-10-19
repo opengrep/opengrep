@@ -904,7 +904,9 @@ and v_type_parameter
   let _argTODO = v_type_parameters v_tpparams in
   let _argTODO = v_type_bounds v_tpbounds in
   let _argTODO = v_list v_type_ v_tpviewbounds in
-  let _argTODO = v_list v_type_ v_tpcolons in
+  let _argTODO =
+    v_list (fun ((t, _) : type_ * ident option) -> v_type_ t) v_tpcolons
+  in
   let tp_bounds = [] in
   (* TODO *)
   TP { G.tp_id; tp_variance; tp_attrs; tp_bounds; tp_default = None }

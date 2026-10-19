@@ -4082,6 +4082,35 @@ let paramClauses ~ofCaseClass owner _contextBoundBuf in_ : bindings list =
  *  TypeParam             ::= Id TypeParamClauseOpt TypeBounds {`<%` Type} {`:` Type}
  *  }}}
 *)
+(* Does an `as` follow, outside nested groups, before the end of the
+   context bound that starts at the current token? *)
+let followedByAsInContextBound (in_ : env) : bool =
+  let in_ = copy_env in_ in
+  let rec loop (depth : int) =
+    match in_.token with
+    | ID_LOWER ("as", _) when Int.equal depth 0 -> true
+    | (COMMA _ | RBRACKET _ | RBRACE _ | RPAREN _ | EOF _)
+      when Int.equal depth 0 ->
+        false
+    | EOF _ -> false
+    | tok ->
+        let depth =
+          match tok with
+          | LPAREN _
+          | LBRACKET _
+          | LBRACE _ ->
+              depth + 1
+          | RPAREN _
+          | RBRACKET _
+          | RBRACE _ ->
+              depth - 1
+          | _ -> depth
+        in
+        nextToken in_;
+        loop depth
+  in
+  loop 0
+
 let rec typeParamClauseOpt _owner _contextBoundBuf in_ : type_parameters option
     =
   in_
@@ -4123,11 +4152,27 @@ let rec typeParamClauseOpt _owner _contextBoundBuf in_ : type_parameters option
                      *)
                     viewbounds += t
                   done;
+                  (* Scala 3: ContextBound ::= Type [`as` id], and
+                     `: {ContextBound, ...}` holds several *)
+                  (* in a context bound, `as` is not an infix type
+                     operator (Parsers.scala, infixType) *)
+                  let contextBound (in_ : env) : type_ * ident option =
+                    if followedByAsInContextBound in_ then (
+                      let t = annotType in_ in
+                      accept (ID_LOWER ("as", ab)) in_;
+                      (t, Some (ident in_)))
+                    else (typ in_, None)
+                  in
                   while in_.token =~= COLON ab do
                     skipToken in_;
-                    let t = typ in_ in
                     (* AST: contextBoundBuf += AppliedTypeTree(t, List(Ident(pname)))*)
-                    colons += t
+                    match in_.token with
+                    | LBRACE _ ->
+                        let _, xs, _ =
+                          inBraces (commaSeparated contextBound) in_
+                        in
+                        colons ++= List.rev xs
+                    | _ -> colons += contextBound in_
                   done;
                   {
                     tpannots;
