@@ -298,8 +298,13 @@ and v_type_kind = function
         |> List_.map (fun (t : G.type_) -> G.Param (G.param_of_type ~pattrs t))
       in
       G.TyFun (ts, v3)
-  | TyPoly (v1, _v2, v3) ->
-      let v1 = v_list (v_binding None) v1 in
+  | TyPoly ((_, v1, _), _v2, v3) ->
+      (* the type parameters, without their bounds *)
+      let v1 =
+        v1
+        |> List_.map (fun (tp : type_parameter) ->
+               G.Param (G.param_of_id (v_ident_or_wildcard tp.tpname)))
+      in
       let v3 = v_type_ v3 in
       G.TyFun (v1, v3)
   | TyDependent (v1, _v2, v3) ->
@@ -525,6 +530,8 @@ and v_expr e : G.expr =
   | Lambda v1 ->
       let v1 = v_function_definition v1 in
       G.Lambda v1 |> G.e
+  (* type parameters are erased at run time; the lambda remains *)
+  | PolyLambda (_tparams, _tok, v3) -> v_expr v3
   | New (v1, v2) -> (
       let v1 = v_tok v1 and v2 = v_template_definition v2 in
       match v2 with

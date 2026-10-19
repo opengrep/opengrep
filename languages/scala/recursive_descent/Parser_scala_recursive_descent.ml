@@ -758,6 +758,12 @@ let rec skipMatching in_ =
   done;
   skipToken in_
 
+(* Is the group at the current `[` or `(` followed by `=>`? *)
+let isGroupBeforeArrow (in_ : env) : bool =
+  let in_ = copy_env in_ in
+  skipMatching in_;
+  in_.token =~= ARROW ab
+
 (* ------------------------------------------------------------------------- *)
 (* indentation *)
 (* ------------------------------------------------------------------------- *)
@@ -1492,9 +1498,7 @@ let indentedExprOrBlockStatSeqUntil_ =
 
 let packageOrPackageObject_ = ref (fun _ _ -> failwith "forward ref not set")
 let typeCaseClauses_ = ref (fun _ -> failwith "forward ref not set")
-
-let paramClauseInner_ =
-  ref (fun ~caseParam:_ ~endTok:_ _ _ -> failwith "forward ref not set")
+let typeParamClauseOpt_ = ref (fun _ _ -> failwith "forward ref not set")
 
 let paramType_ =
   ref (fun ?repeatedParameterOK _ ->
@@ -1664,19 +1668,14 @@ let rec typ in_ : type_ =
 and funType in_ : type_ =
   let owner = ("", Tok.unsafe_fake_tok "") in
   match in_.token with
-  | LBRACKET _ ->
-      (* I still don't know why this is necessary. *)
-      let caseParam = ref [] in
-      let _, (params, _), _ =
-        inBrackets
-          (fun in_ ->
-            !paramClauseInner_ ~caseParam ~endTok:(RBRACKET ab) owner in_)
-          in_
-      in
-      let ii = TH.info_of_tok in_.token in
-      skipToken in_;
-      let ty = typ in_ in
-      TyPoly (params, ii, ty)
+  | LBRACKET _ -> (
+      match !typeParamClauseOpt_ owner in_ with
+      | None -> error "type parameters expected" in_
+      | Some tparams ->
+          let ii = TH.info_of_tok in_.token in
+          skipToken in_;
+          let ty = typ in_ in
+          TyPoly (tparams, ii, ty))
   | _ -> (
       let type_args = funTypeArgs in_ in
       let ii = TH.info_of_tok in_.token in
@@ -2681,6 +2680,18 @@ and simpleExpr ?(is_block_expr = false) in_ : expr =
                canApply := false;
                let x = blockExpr in_ in
                BlockExpr x
+           (* Scala 3 polymorphic function literal: `[A] => expr` *)
+           | LBRACKET _ when isGroupBeforeArrow in_ ->
+               canApply := false;
+               let owner = ("", TH.info_of_tok in_.token) in
+               let tparams =
+                 match !typeParamClauseOpt_ owner in_ with
+                 | Some tparams -> tparams
+                 | None -> error "type parameters expected" in_
+               in
+               let iarrow = TH.info_of_tok in_.token in
+               accept (ARROW ab) in_;
+               PolyLambda (tparams, iarrow, expr in_)
            | QUOTE quote ->
                let x = quoted quote in_ in
                Quoted x
@@ -4791,7 +4802,8 @@ let blockStatSeqInner (location : location) in_ : top_stat option =
       in
       acceptStatSepOptOrEndCase in_;
       Some res
-  | t when TH.isExprIntro t ->
+  | t when TH.isExprIntro t || (t =~= LBRACKET ab && isGroupBeforeArrow in_) ->
+      (* `[A] =>` starts a polymorphic function literal *)
       let x = statement location in_ in
       acceptStatSepOptOrEndCase in_;
       Some (E x)
@@ -5558,12 +5570,6 @@ let isGivenSigAfterIdent in_ =
      such as `given Ord[Int]:` *)
   in_.token =~= COLON ab && not (isIndentAfterColon in_)
 
-(* Is the group at the current `[` or `(` followed by `=>`? *)
-let isGroupBeforeArrow (in_ : env) : bool =
-  let in_ = copy_env in_ in
-  skipMatching in_;
-  in_.token =~= ARROW ab
-
 (* The parameters of a SIP-64 given condition `(...) =>`: types (FunArgTypes)
    or parameters (DefTermParamClause), which are context parameters. *)
 let givenConditionParams (iarrow : tok) (in_ : env) : bindings =
@@ -5763,7 +5769,7 @@ let _ =
   paramType_ := paramType;
 
   typeCaseClauses_ := typeCaseClauses;
-  paramClauseInner_ := paramClauseInner;
+  (typeParamClauseOpt_ := fun owner in_ -> typeParamClauseOpt owner None in_);
   ()
 
 (** {{{
