@@ -1772,7 +1772,7 @@ let interpolatedString_ =
 
 let exprTypeArgs_ = ref (fun _ -> failwith "forward ref not set")
 let annotTypeRest_ = ref (fun _ -> failwith "forward ref not set")
-let template_ = ref (fun _ -> failwith "forward ref not set")
+let template_ = ref (fun ~commaOK:_ _ -> failwith "forward ref not set")
 let defOrDcl_ = ref (fun _ _ -> failwith "forward ref not set")
 let tmplDef_ = ref (fun _ -> failwith "forward ref not set")
 let blockStatSeq_ = ref (fun _ -> failwith "forward ref not set")
@@ -2923,7 +2923,7 @@ and simpleExpr ?(is_block_expr = false) in_ : expr =
            | Knew ii ->
                canApply := false;
                skipToken in_;
-               let cparents, cbody = !template_ in_ in
+               let cparents, cbody = !template_ ~commaOK:false in_ in
                (* ast: gen.mkNew(parents, self, stats) *)
                let def =
                  { ckind = (Singleton, ii); cparams = []; cparents; cbody }
@@ -5300,9 +5300,11 @@ let templateBodyOpt ~parenMeansSyntaxError in_ : template_body option =
 (** {{{
  *  ClassParents       ::= AnnotType {`(` [Exprs] `)`} {with AnnotType}
  *  TraitParents       ::= AnnotType {with AnnotType}
+ *  ConstrApps         ::= ConstrApp ({`,` ConstrApp} | {`with` ConstrApp})
+ *  ^ Scala 3
  *  }}}
 *)
-let templateParents in_ : template_parents =
+let templateParents ~(commaOK : bool) in_ : template_parents =
   let readAppliedParent () =
     let parent = startAnnotType in_ in
     let args =
@@ -5318,7 +5320,9 @@ let templateParents in_ : template_parents =
   let parent, args = readAppliedParent () in
   let cwith = ref [] in
   (* less: could use separatedToken (Kwith ab) instead of while *)
-  while in_.token =~= Kwith ab do
+  (* Scala 3 also separates the parents of a definition with commas, but not
+     those of `new`, whose commas belong to an enclosing list *)
+  while in_.token =~= Kwith ab || (commaOK && in_.token =~= COMMA ab) do
     nextToken in_;
     let parent, args = readAppliedParent () in
     (* stricter? *)
@@ -5335,31 +5339,31 @@ let templateParents in_ : template_parents =
  *  }}}
 *)
 
-let afterTemplate in_ body =
+let afterTemplate ~(commaOK : bool) in_ body =
   match in_.token with
   | Kwith _ (* crazy? && self eq noSelfType *) ->
       (* CHECK: "use traint parameters instead" when scala3 *)
       let _earlyDefs = body (* CHECK: map ensureEarlyDef AST: filter *) in
       nextToken in_;
-      let parents = templateParents in_ in
+      let parents = templateParents ~commaOK in_ in
       let body1opt = templateBodyOpt ~parenMeansSyntaxError:false in_ in
       (* AST: earlyDefs @ *)
       (parents, body1opt)
   | _ -> (AST.empty_cparents, Some body)
 
-let template in_ : template_parents * template_body option =
+let template ~(commaOK : bool) in_ : template_parents * template_body option =
   in_
   |> with_logging "template" (fun () ->
          newLineOptWhenFollowedBy (LBRACE ab) in_;
          match in_.token with
          | COLON _ when isIndentAfterColon in_ ->
              let body = templateBody ~isPre:true in_ in
-             afterTemplate in_ body
+             afterTemplate ~commaOK in_ body
          | LBRACE _ ->
              let body = templateBody ~isPre:true in_ in
-             afterTemplate in_ body
+             afterTemplate ~commaOK in_ body
          | _ ->
-             let parents = templateParents in_ in
+             let parents = templateParents ~commaOK in_ in
              let bodyopt = templateBodyOpt ~parenMeansSyntaxError:false in_ in
              (parents, bodyopt))
 
@@ -5377,7 +5381,7 @@ let templateOpt ckind vparams in_ : template_definition =
     | Kextends _
     | SUBTYPE _ (* CHECK: deprecated in 2.12.5 *) ->
         nextToken in_;
-        template in_
+        template ~commaOK:true in_
     | _ ->
         newLineOptWhenFollowedBy (LBRACE ab) in_;
         let bodyopt =
