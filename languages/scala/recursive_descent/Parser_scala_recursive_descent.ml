@@ -3400,13 +3400,13 @@ and enumerators in_ : enumerators =
   in_
   |> with_logging "enumerators" (fun () ->
          let enums = ref [] in
-         let x = enumerator ~isFirst:true in_ in
+         let x = enumerator in_ in
          enums += x;
          while
            TH.isStatSep in_.token && not (lookingAhead isEnumeratorsEnd in_)
          do
            nextToken in_;
-           let x = enumerator ~isFirst:false in_ in
+           let x = enumerator in_ in
            enums += x
          done;
          List.rev !enums)
@@ -3431,7 +3431,7 @@ and guard_loop in_ : guard list =
     (* ast: makeFilter (g)::xs *)
     Option.to_list g @ xs
 
-and enumerator ~isFirst ?(allowNestedIf = true) in_ : enumerator =
+and enumerator ?(allowNestedIf = true) in_ : enumerator =
   in_
   |> with_logging "enumerator" (fun () ->
          match in_.token with
@@ -3439,14 +3439,14 @@ and enumerator ~isFirst ?(allowNestedIf = true) in_ : enumerator =
              nextToken in_;
              GEllipsis tok
          | _ ->
-             let g = generator ~eqOK:(not isFirst) ~allowNestedIf in_ in
+             let g = generator ~allowNestedIf in_ in
              G g)
 
 (** {{{
  *  Generator ::= Pattern1 (`<-` | `=`) Expr [Guard]
  *  }}}
 *)
-and generator ~eqOK ~allowNestedIf in_ : generator =
+and generator ~allowNestedIf in_ : generator =
   in_
   |> with_logging "generator" (fun () ->
          let hasVal = in_.token =~= Kval ab in
@@ -3458,7 +3458,8 @@ and generator ~eqOK ~allowNestedIf in_ : generator =
          let hasEq = in_.token =~= EQUALS ab in
          (* CHECK: scala3: "`val` keyword in for comprehension is" *)
          let ieq = TH.info_of_tok in_.token in
-         if hasEq && eqOK then nextToken in_ else accept (LARROW ab) in_;
+         (* Scala 3 (SIP-62): the first enumerator can be an alias too *)
+         if hasEq then nextToken in_ else accept (LARROW ab) in_;
          let rhs = expr in_ in
          let tail = if allowNestedIf then guard_loop in_ else [] in
          (* ast: gen.mkGenerator(genPos, pat, hasEq, rhs) :: tail *)
