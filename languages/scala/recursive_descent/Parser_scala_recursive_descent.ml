@@ -2709,7 +2709,30 @@ and expr0 ?(is_block_expr = false) (location : location) (in_ : env) : expr =
          | Kimplicit ii ->
              skipToken in_;
              implicitClosure (Implicit, ii) location in_
+         (* Scala 3 `inline if` and `inline x match` (Parsers.scala, expr1)
+            are read as `if` and `match`, which they mean at run time;
+            otherwise `inline` is an identifier, as in `inline(x)` *)
+         | ID_LOWER ("inline", _) when startsInlineConditional in_ ->
+             skipToken in_;
+             expr0 location in_
          | _ -> parseOther location in_)
+
+(* Is `inline` followed by `if`, or by an operand that a `match` follows on
+   the same line, outside nested groups? *)
+and startsInlineConditional (in_ : env) : bool =
+  let match_follows (toks : T.token list) : bool =
+    foundOnLine
+      ~target:(fun (tok : T.token) -> tok =~= Kmatch ab)
+      ~stop:(fun (_ : T.token) -> false)
+      toks
+  in
+  match in_next_token in_.rest with
+  | Some (Kif _) -> true
+  | Some tok ->
+      TH.isExprIntro tok
+      && (not (TH.isOperator tok))
+      && match_follows in_.rest
+  | None -> false
 
 and parseOther ?(is_block_expr = false) location (in_ : env) : expr =
   in_
