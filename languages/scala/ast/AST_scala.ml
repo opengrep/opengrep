@@ -186,6 +186,8 @@ and type_ =
   (* https://docs.scala-lang.org/scala3/reference/new-types/dependent-function-types.html *)
   | TyDependent of (ident * type_) list * tok (* '=>' *) * type_
   | TyTuple of type_ list bracket
+  (* scala3.7: (name: T, ...) *)
+  | TyNamedTuple of (ident * type_) list bracket
   | TyRepeated of type_ * tok (* '*' *)
   | TyByName of tok (* => *) * type_
   | TyAnnotated of type_ * annotation list (* at least one *)
@@ -217,6 +219,8 @@ and pattern =
   | PatLiteral of literal
   | PatName of stable_id
   | PatTuple of pattern list bracket
+  (* scala3.7: name = pattern, in a tuple or the arguments of an extractor *)
+  | PatNamed of ident * tok (* = *) * pattern
   | PatVarid of varid_or_wildcard
   (* ast_orig: just Typed *)
   | PatTypedVarid of varid_or_wildcard * tok (* : *) * type_
@@ -245,6 +249,8 @@ and pattern =
 and expr =
   | L of literal
   | Tuple of expr list bracket
+  (* scala3.7: (name = e, ...) *)
+  | NamedTuple of named_tuple_element list bracket
   (* this path can be just 'this' *)
   | Name of path
   | ExprUnderscore of tok (* '_' *)
@@ -292,6 +298,12 @@ and arguments =
 (* less: no keyword argument in Scala? *)
 
 and argument = expr
+
+(* an element of a named tuple, or `...` in a pattern *)
+and named_tuple_element =
+  | NamedElement of ident * tok (* = *) * expr
+  | NamedEllipsis of tok
+
 and case_clauses = (pattern, block) case_clause list
 and type_case_clauses = (((* _ *) tok, type_) Either_.t, type_) case_clause list
 

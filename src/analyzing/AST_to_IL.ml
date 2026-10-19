@@ -1212,6 +1212,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
         (match pat with
         | G.OtherPat (_, [ G.E e ]) -> e
         | _ -> AST_generic_helpers.pattern_to_expr pat)
+  (* A tuple of `name = pattern` elements, as a Scala named-tuple pattern:
+   * each pattern against the element of its name, as for a map pattern. *)
+  | G.PatTuple (l, pats, r) when H.is_map_pair_list pats ->
+      pattern_match_cond env scrutinee (G.PatList (l, pats, r))
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
   (* A map pattern (map pairs, see [H.is_map_pair_pattern]): each value

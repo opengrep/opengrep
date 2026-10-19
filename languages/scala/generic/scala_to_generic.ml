@@ -42,6 +42,14 @@ let v_bool = id
 let v_list = List_.map
 let v_option = Option.map
 
+(* the identifier that a backquoted identifier denotes, as `kind` for
+   `` `kind` ``: Scanners.scala drops the backquotes *)
+let unquoted_ident ((s, tok) : string * Tok.t) : string * Tok.t =
+  let n = String.length s in
+  if n >= 2 && Char.equal s.[0] '`' && Char.equal s.[n - 1] '`' then
+    (String.sub s 1 (n - 2), tok)
+  else (s, tok)
+
 let cases_to_lambda lb cases : G.function_definition =
   (* An indented block of cases, as after `xs.map:`, has fake brackets; the
    * first `case` keyword gives the parameter and the match a location *)
@@ -326,6 +334,18 @@ and v_type_kind = function
   | TyTuple v1 ->
       let v1 = v_bracket (v_list v_type_) v1 in
       G.TyTuple v1
+  | TyNamedTuple v1 ->
+      let ((lp, _, _) as fields) =
+        v1
+        |> v_bracket
+             (v_list (fun ((id, ty) : ident * type_) ->
+                  G.basic_field
+                    (unquoted_ident (v_ident id))
+                    None
+                    (Some (v_type_ ty))))
+      in
+      (* no keyword marks the kind, so its token is a fake one at the `(` *)
+      G.TyRecordAnon ((G.Class, Tok.fake_tok lp ""), fields)
   | TyRepeated (v1, v2) ->
       let v1 = v_type_ v1 and v2 = v_tok v2 in
       todo_type "TyRepeated" [ G.T v1; G.Tk v2 ]
@@ -405,6 +425,11 @@ and v_pattern = function
   | PatTuple v1 ->
       let v1 = v_bracket (v_list v_pattern) v1 in
       G.PatTuple v1
+  | PatNamed (v1, _v2, v3) ->
+      (* the name selects an element and binds nothing, so the key is a
+         literal, which the IL lowers to a field offset *)
+      let v1 = unquoted_ident (v_ident v1) and v3 = v_pattern v3 in
+      G.PatKeyVal (G.PatLiteral (G.String (fb v1)), v3)
   | PatVarid v1 ->
       let v1 = v_varid_or_wildcard v1 in
       G.PatId (v1, G.empty_id_info ())
@@ -477,6 +502,25 @@ and v_expr e : G.expr =
   | Tuple v1 ->
       let v1 = v_bracket (v_list v_expr) v1 in
       G.Container (G.Tuple, v1) |> G.e
+  (* a named tuple is a record of its elements *)
+  | NamedTuple v1 ->
+      v1
+      |> v_bracket
+           (v_list (fun (element : named_tuple_element) ->
+                match element with
+                | NamedElement (id, _, e) ->
+                    (* an element is a field of the record, not a variable *)
+                    let ent = G.basic_entity (unquoted_ident (v_ident id)) in
+                    let def =
+                      {
+                        G.vinit = Some (v_expr e);
+                        vtype = None;
+                        vtok = G.no_sc;
+                      }
+                    in
+                    G.fld (ent, G.FieldDefColon def)
+                | NamedEllipsis tok -> G.field_ellipsis tok))
+      |> fun fields -> G.Record fields |> G.e
   | Name v1 ->
       let sref, ids = v_path v1 in
       let start =

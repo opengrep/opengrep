@@ -1968,22 +1968,26 @@ and funType in_ : type_ =
           TyPoly (tparams, ii, ty))
   | _ -> (
       let type_args = funTypeArgs in_ in
-      let ii = TH.info_of_tok in_.token in
-      (* one of two kinds of arrows *)
-      skipToken in_;
-      let ty = typ in_ in
-      match type_args with
-      | Left3 ty_args -> TyDependent (ty_args, ii, ty)
-      | Middle3 tys -> TyFunction2 (tys, ii, ty)
-      | Right3 l_ty -> TyFunction1 (l_ty, ii, ty))
+      match (type_args, in_.token) with
+      (* Scala 3.7: typed elements without an arrow form a named tuple type *)
+      | Left3 ty_args, tok when not (tok =~= ARROW ab || tok =~= CTXARROW ab) ->
+          TyNamedTuple ty_args
+      | _ -> (
+          let ii = TH.info_of_tok in_.token in
+          (* one of two kinds of arrows *)
+          skipToken in_;
+          let ty = typ in_ in
+          match type_args with
+          | Left3 ty_args -> TyDependent (Tok.unbracket ty_args, ii, ty)
+          | Middle3 tys -> TyFunction2 (tys, ii, ty)
+          | Right3 l_ty -> TyFunction1 (l_ty, ii, ty)))
 
 and funTypeArgs in_ :
-    ((ident * type_) list, type_ list bracket, type_) Either_.either3 =
+    ((ident * type_) list bracket, type_ list bracket, type_) Either_.either3 =
   match in_.token with
   | LPAREN _ ->
       if is_typed_fun_param_after_lparen in_ then
-        inParens (commaSeparated typedFunParam) in_ |> Tok.unbracket |> fun l ->
-        Left3 l
+        Left3 (inParens (commaSeparated typedFunParam) in_)
       else inParens types in_ |> fun x -> Middle3 x
   | _ -> Right3 (infixType FirstOp in_)
 
@@ -2494,7 +2498,18 @@ and pattern3 in_ : pattern =
  *  SeqPatterns ::= SeqPattern { `,` SeqPattern }
  *  }}}
 *)
-and patterns in_ = commaSeparated pattern in_
+and patterns in_ = commaSeparated namedOrPositionalPattern in_
+
+(* Scala 3.7: `name = pattern` matches an element of a named tuple or a field
+   of a case class *)
+and namedOrPositionalPattern in_ : pattern =
+  match (in_.token, in_next_token in_.rest) with
+  | (ID_LOWER _ | ID_UPPER _ | ID_BACKQUOTED _), Some (EQUALS _) ->
+      let id = ident in_ in
+      let ieq = TH.info_of_tok in_.token in
+      accept (EQUALS ab) in_;
+      PatNamed (id, ieq, pattern in_)
+  | _ -> pattern in_
 
 (* ------------------------------------------------------------------------- *)
 (* Outside SeqContextSensitive *)
@@ -2953,11 +2968,34 @@ and simpleExpr ?(is_block_expr = false) in_ : expr =
             * expressions when part of a short lambda (arrow).
             *)
            | LPAREN _ -> (
-               let ((_, xs, _) as tuple) =
+               let ((lp, xs, rp) as tuple) =
                  makeParens (commaSeparated expr) in_
+               in
+               (* Scala 3.7: elements that all assign to an identifier form a
+                  named tuple; one such element stays an assignment. In a
+                  pattern, `...` stands for further elements. *)
+               let tuple_element (x : expr) : named_tuple_element option =
+                 match x with
+                 | Assign (Name (Id id, []), ieq, e) ->
+                     Some (NamedElement (id, ieq, e))
+                 | Ellipsis tok -> Some (NamedEllipsis tok)
+                 | _ -> None
+               in
+               let is_name_element (x : expr) : bool =
+                 match tuple_element x with
+                 | Some (NamedElement _) -> true
+                 | Some (NamedEllipsis _)
+                 | None ->
+                     false
                in
                match xs with
                | [ x ] -> x
+               | _ :: _ :: _
+                 when List.exists is_name_element xs
+                      && List.for_all
+                           (fun (x : expr) -> Option.is_some (tuple_element x))
+                           xs ->
+                   NamedTuple (lp, List.filter_map tuple_element xs, rp)
                | _ -> Tuple tuple)
            | LBRACE _ ->
                canApply := false;
