@@ -11,7 +11,8 @@ type definition_kind =
   | Function (* outside a class *)
   | Method (* in a class body *)
   | Class
-  | Type_alias
+  | Type_definition (* a type of its own: an enumeration, a record, a variant *)
+  | Type_alias (* another name for a type, as a C typedef *)
   | Type_parameter
   | Module (* a module alias *)
   | Import
@@ -21,6 +22,7 @@ type use_position =
   | Expression
   | Callee (* the function of a call *)
   | Type_position (* in a type *)
+  | Elaborated_type (* in a type with its keyword, as [struct s] in C *)
   | Qualifier (* the first part of a qualified name *)
   | Name (* any other place: a constructor, an attribute *)
 
@@ -40,11 +42,12 @@ module type NAMESPACES = sig
      order of its namespaces. *)
   val searched_by : use_position -> t list list
 
-  (* A class or a type alias rebinds a name that an import binds. *)
+  (* A class, a type definition or a type alias rebinds a name that an import
+     binds. *)
   val class_rebinds_import : bool
 
-  (* A class or a type alias is in scope in its own definition; otherwise it
-     binds once its definition is visited. *)
+  (* A class, a type definition or a type alias is in scope in its own
+     definition; otherwise it binds once its definition is visited. *)
   val class_in_scope_in_its_definition : bool
 end
 
@@ -60,7 +63,8 @@ module Single : NAMESPACES = struct
   let class_in_scope_in_its_definition = true
 end
 
-(* A single namespace, in which classes and type aliases bind nothing. *)
+(* A single namespace, in which classes, types and type parameters bind
+   nothing. *)
 module Single_without_type_bindings : NAMESPACES = struct
   include Single
 
@@ -73,6 +77,7 @@ module Single_without_type_bindings : NAMESPACES = struct
     | Static_import ->
         Single.of_definition kind
     | Class
+    | Type_definition
     | Type_alias
     | Type_parameter ->
         []

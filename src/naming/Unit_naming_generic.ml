@@ -646,4 +646,64 @@ let tests parse_program =
               Alcotest.failf
                 "expected two definitions and two uses of T, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "c tag refers to the structure, not the function of the same name"
+        (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/c/tag_and_function.c")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.C ast;
+          (* the uses in a type are [struct stat *buf] and [struct stat st],
+             the use in an expression is the call *)
+          match
+            ( def_sids_of_name ast "stat",
+              type_resolutions_of_name ast "stat",
+              resolutions_of_name ast "stat" )
+          with
+          | [ structure; function_ ], [ Some (_, buf); Some (_, st) ], [ Some (_, call) ]
+            ->
+              Alcotest.(check bool) "the parameter's type refers to the structure"
+                true
+                (AST_generic.SId.equal structure buf);
+              Alcotest.(check bool) "the variable's type refers to the structure"
+                true
+                (AST_generic.SId.equal structure st);
+              Alcotest.(check bool) "the call refers to the function" true
+                (AST_generic.SId.equal function_ call)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, two type uses and one call of stat, \
+                 found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "c name with the keyword struct refers to the tag, without it to the \
+         typedef"
+        (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/c/tag_and_typedef.c")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.C ast;
+          (* the uses in a type are [struct node *next] in the structure, the
+             typedef's [struct node], [node *head] and the local
+             [struct node *next] *)
+          match (def_sids_of_name ast "node", type_resolutions_of_name ast "node")
+          with
+          | ( [ structure; typedef ],
+              [ Some (_, field); Some (_, aliased); Some (_, head); Some (_, local) ]
+            ) ->
+              Alcotest.(check bool) "the field's type refers to the structure" true
+                (AST_generic.SId.equal structure field);
+              Alcotest.(check bool) "the typedef refers to the structure" true
+                (AST_generic.SId.equal structure aliased);
+              Alcotest.(check bool) "the parameter's type refers to the typedef"
+                true
+                (AST_generic.SId.equal typedef head);
+              Alcotest.(check bool) "the local's type refers to the structure" true
+                (AST_generic.SId.equal structure local)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and four type uses of node, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
     ]

@@ -20,6 +20,7 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
       [ Method ]
   (* a single-type import imports a type *)
   | Class
+  | Type_definition
   | Type_alias
   | Type_parameter
   | Import ->
@@ -31,7 +32,9 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
 
 let searched_by : Lang_namespaces.use_position -> t list list = function
   | Callee -> [ [ Method ] ]
-  | Type_position -> [ [ Type ] ]
+  | Type_position
+  | Elaborated_type ->
+      [ [ Type ] ]
   | Expression
   | Qualifier ->
       [ [ Variable ]; [ Type ] ]

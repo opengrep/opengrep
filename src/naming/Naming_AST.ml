@@ -376,6 +376,7 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
   let expression = groups Expression
   and callee = groups Callee
   and type_position = groups Type_position
+  and elaborated_type = groups Elaborated_type
   and qualifier = groups Qualifier
   and name = groups Name in
   {
@@ -388,6 +389,7 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
       | Expression -> expression
       | Callee -> callee
       | Type_position -> type_position
+      | Elaborated_type -> elaborated_type
       | Qualifier -> qualifier
       | Name -> name);
     class_rebinds_import = N.class_rebinds_import;
@@ -930,10 +932,10 @@ let declare_in_scope (env : env) (lang : Lang.t)
   List.iter (fun (ns : namespace_hash) -> add ns id resolved env.names) namespaces;
   set_resolved env id_info resolved
 
-(* A class or a type alias binds its name in the scope enclosing its
-   definition, with no type. At the top level it binds in the imported scope,
-   as a function does. Where it does not rebind an import, its name takes the
-   import's resolution. *)
+(* A class, a type definition or a type alias binds its name in the scope
+   enclosing its definition, with no type. At the top level it binds in the
+   imported scope, as a function does. Where it does not rebind an import, its
+   name takes the import's resolution. *)
 let declare_class_or_type (env : env) (lang : Lang.t) (entity : entity)
     (kind : Lang_namespaces.definition_kind) : unit =
   match (entity.name, namespace_of env kind) with
@@ -1046,6 +1048,18 @@ let function_definition_kind (env : env) : Lang_namespaces.definition_kind =
   | InFunction ->
       Function
 
+let type_definition_kind (def : type_definition) :
+    Lang_namespaces.definition_kind =
+  match def.tbody with
+  | AliasType _ -> Type_alias
+  | OrType _
+  | AndType _
+  | NewType _
+  | AbstractType _
+  | Exception _
+  | OtherTypeKind _ ->
+      Type_definition
+
 let declare_class_members env lang (c : class_definition) : unit =
   if is_resolvable_name_ctx env lang then
     let _, fields, _ = c.cbody in
@@ -1063,8 +1077,8 @@ let declare_class_members env lang (c : class_definition) : unit =
                  frettype
            | DefStmt (entity, ClassDef _) ->
                declare_class_or_type env lang entity Class
-           | DefStmt (entity, TypeDef _) ->
-               declare_class_or_type env lang entity Type_alias
+           | DefStmt (entity, TypeDef def) ->
+               declare_class_or_type env lang entity (type_definition_kind def)
            | _ -> ())
 
 let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
@@ -1411,8 +1425,9 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
             { macroparams = []; macrobody = [ E ({ e = L _; _ } as e) ] } ) ->
           declare_var env lang id id_info ~is_macro:true ~explicit:true (Some e) None;
           super#visit_definition venv x
-      | entity, (TypeDef _ as kind) ->
-          with_class_or_type_binding env lang entity Type_alias (fun () ->
+      | entity, (TypeDef def as kind) ->
+          with_class_or_type_binding env lang entity (type_definition_kind def)
+            (fun () ->
               self#visit_class_or_type_entity venv entity;
               self#visit_definition_kind venv kind)
       (* general case, just recurse *)
@@ -1843,10 +1858,23 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       if !recurse then super#visit_expr venv x
 
     method! visit_type_ venv x =
-      if !(env.in_type) then super#visit_type_ venv x
-      else
-        Common.save_excursion_unsafe env.in_type true (fun () ->
-            super#visit_type_ venv x)
+      match x.t with
+      (* The C and C++ front end represents a type written with its keyword
+         as an [OtherType] that carries the keyword, as in [struct s],
+         [union u] and [class c], or "EnumName", for [enum e]. *)
+      | OtherType
+          ( (("struct" | "union" | "class" | "EnumName"), _),
+            [ T { t = TyN (Id (id, id_info)); t_attrs = [] } ] )
+        when Lang.is_c_cpp lang ->
+          List.iter (self#visit_attribute venv) x.t_attrs;
+          if Option.is_none !(id_info.id_resolved) then
+            Common.save_excursion_unsafe env.in_type true (fun () ->
+                lookup_position_opt ~class_attr:false Elaborated_type id env
+                |> Option.iter (set_resolved env id_info))
+      | _ when !(env.in_type) -> super#visit_type_ venv x
+      | _ ->
+          Common.save_excursion_unsafe env.in_type true (fun () ->
+              super#visit_type_ venv x)
 
     (* TODO: support other types of statements that create block scopes. *)
     method! visit_stmt venv x =
@@ -1887,6 +1915,7 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   match lang with
   | Lang.Java -> (module Namespaces_java)
   | Lang.Kotlin -> (module Namespaces_kotlin)
+  | Lang.C -> (module Namespaces_c)
   | Lang.Go -> (module Lang_namespaces.Single)
   | Lang.Python
   | Lang.Python2

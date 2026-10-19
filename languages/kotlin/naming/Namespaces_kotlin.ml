@@ -18,6 +18,7 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Method ->
       [ Function ]
   | Class
+  | Type_definition
   | Type_alias
   | Type_parameter
   | Import
@@ -28,7 +29,9 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
 let searched_by : Lang_namespaces.use_position -> t list list = function
   (* a function or a constructor is chosen before the invoke of a variable *)
   | Callee -> [ [ Function; Classifier ]; [ Variable ] ]
-  | Type_position -> [ [ Classifier ] ]
+  | Type_position
+  | Elaborated_type ->
+      [ [ Classifier ] ]
   | Expression
   | Qualifier ->
       [ [ Variable ]; [ Classifier ] ]
