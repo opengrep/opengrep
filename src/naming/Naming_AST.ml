@@ -1916,6 +1916,7 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   | Lang.Java -> (module Namespaces_java)
   | Lang.Kotlin -> (module Namespaces_kotlin)
   | Lang.C -> (module Namespaces_c)
+  | Lang.Csharp -> (module Namespaces_csharp)
   | Lang.Go -> (module Lang_namespaces.Single)
   | Lang.Python
   | Lang.Python2

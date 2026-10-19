@@ -1,0 +1,8 @@
+(library
+ (public_name parser_csharp.naming)
+ (name parser_csharp_naming)
+ (wrapped false)
+ (libraries
+   ast_generic
+ )
+)

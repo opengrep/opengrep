@@ -706,4 +706,43 @@ let tests parse_program =
                 "expected two definitions and four type uses of node, found %d \
                  and %d"
                 (List.length definitions) (List.length uses));
+      t "c# type refers to the enum, not the property of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/csharp/property_and_type.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* the uses in a type include the property's type, the return type
+             of [Pick] and the type of [chosen]; the use in an expression is
+             the initialiser of [chosen] *)
+          let refers_to (expected : AST_generic.SId.t) (what : string)
+              (uses : AST_generic.resolved_name option list) : unit =
+            uses
+            |> List.iteri
+                 (fun (i : int) (use : AST_generic.resolved_name option) ->
+                   match use with
+                   | Some (_, sid) ->
+                       Alcotest.(check bool)
+                         (spf "use #%d of Color refers to the %s" i what)
+                         true
+                         (AST_generic.SId.equal expected sid)
+                   | None -> Alcotest.failf "use #%d of Color is unresolved" i)
+          in
+          match
+            ( def_sids_of_name ast "Color",
+              type_resolutions_of_name ast "Color",
+              resolutions_of_name ast "Color" )
+          with
+          | [ enum; property ], (_ :: _ :: _ :: _ as types), (_ :: _ as expressions)
+            ->
+              refers_to enum "enum" types;
+              refers_to property "property" expressions
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, three type uses and an expression \
+                 use of Color, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
     ]

@@ -13,6 +13,7 @@
    semgrep.typing
    parser_javascript.ast ; ugly for Ast_js.default_entity
    parser_cpp.naming
+   parser_csharp.naming
    parser_java.naming
    parser_kotlin.naming
    parser_python.naming
