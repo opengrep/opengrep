@@ -5498,6 +5498,8 @@ let templateBodyOpt ~parenMeansSyntaxError in_ : template_body option =
  *  }}}
 *)
 let derivesClauseOpt (in_ : env) : (tok * type_ list) option =
+  (* the clause can start the next line *)
+  newLineOptWhenFollowedBy (ID_LOWER ("derives", ab)) in_;
   match in_.token with
   | ID_LOWER ("derives", ii) ->
       nextToken in_;
