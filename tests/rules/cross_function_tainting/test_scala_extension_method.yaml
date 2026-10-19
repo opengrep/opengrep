@@ -1,0 +1,12 @@
+rules:
+  - id: scala_extension_method_receiver
+    message: Tainted receiver of an extension method reaches a sink
+    languages:
+      - scala
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)
