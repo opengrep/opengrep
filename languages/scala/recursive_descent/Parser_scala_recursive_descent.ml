@@ -5760,9 +5760,74 @@ let isGivenSigAfterIdent in_ =
       skipToken in_;
       skipParams in_)
   in
+  (* is the next line `T =` or `T with`, the type of a given and its
+     definition? *)
+  let typeOnNextLine (in_ : env) : bool =
+    match skip_trivia ~newlines:true in_.rest with
+    (* a statement of the body, as `inline def f = 0` or `given Ord[Int]` *)
+    | ID_LOWER (("given" | "extension" | "export" | "end"), _) :: _ -> false
+    | tok :: _ when TH.isSoftModifier tok -> false
+    (* an assignment, `x = 1` *)
+    | ID_LOWER _ :: rest
+      when (match skip_trivia ~newlines:false rest with
+           | EQUALS _ :: _ -> true
+           | _ -> false) ->
+        false
+    | (ID_UPPER _ | ID_LOWER _ | ID_BACKQUOTED _ | LPAREN _) :: _ as toks ->
+        foundOnLine
+          ~target:(fun (tok : T.token) ->
+            match tok with
+            | EQUALS _
+            | Kwith _ ->
+                true
+            | _ -> false)
+          ~stop:(fun (_ : T.token) -> false)
+          toks
+    | _ -> false
+  in
   skipParams in_;
+  (* a colon at the end of a line starts the template body of a SIP-64 given
+     such as `given Ord[Int]:`, unless the next line holds the type of a
+     given, as in `given x:` followed by `Ord[Int] with` *)
   in_.token =~= COLON ab
+  && ((not (isIndentAfterColon in_)) || typeOnNextLine in_)
 
+(* Is the group at the current `[` or `(` followed by `=>`? *)
+let isGroupBeforeArrow (in_ : env) : bool =
+  let in_ = copy_env in_ in
+  skipMatching in_;
+  in_.token =~= ARROW ab
+
+(* The parameters of a SIP-64 given condition `(...) =>`: types (FunArgTypes)
+   or parameters (DefTermParamClause), which are context parameters. *)
+let givenConditionParams (iarrow : tok) (in_ : env) : bindings =
+  let owner = ("given", iarrow) in
+  let lp, params, rp =
+    inParens
+      (fun (in_ : env) ->
+        (* the parameters are context parameters, also with `using` *)
+        if isUsingClauseStart in_ then nextToken in_;
+        match in_.token with
+        | RPAREN _ -> []
+        | tok
+          when TH.isTypeIntroToken tok
+               && lookingAhead
+                    (fun (in_ : env) -> not (in_.token =~= COLON ab))
+                    in_ ->
+            types in_ |> List_.map (fun (ty : type_) -> ParamType ty)
+        | _ -> commaSeparated (param owner [] false) in_)
+      in_
+  in
+  (lp, (params, Some iarrow), rp)
+
+(** {{{
+ *  GivenDef ::= [GivenSig] (AnnotType [`=` Expr] | StructuralInstance)
+ *            |  [id `:`] {GivenConditional `=>`} GivenImpl       (SIP-64)
+ *  GivenConditional ::= DefTypeParamClause | DefTermParamClause
+ *                    |  `(` FunArgTypes `)` | GivenType
+ *  GivenImpl ::= GivenType ([`=` Expr] | TemplateBody)
+ *  }}}
+ *)
 let givenDef in_ : given_definition =
   let given_sig =
     match in_.token with
@@ -5771,9 +5836,61 @@ let givenDef in_ : given_definition =
         Some (givenSig in_)
     | LBRACKET _ (* DefTypeParamClause *)
     | LPAREN _ (* UsingParamClause *)
-    | COLON _ (* none of them *) ->
+      when isGivenSigAfterIdent (copy_env in_) ->
         Some (givenSig in_)
+    | COLON _ (* none of them *) -> Some (givenSig in_)
     | _ -> None
+  in
+  (* SIP-64 conditions: type parameters and context parameters before `=>`;
+     the type after the last one is the type of the instance *)
+  let rec conditions (arrow : tok option) (tparams : type_parameters option)
+      (usings : bindings list) :
+      tok option * type_parameters option * bindings list * type_ =
+    let arrow_or (tok : tok) : tok option =
+      Some (Option.value arrow ~default:tok)
+    in
+    match in_.token with
+    | LBRACKET _ when isGroupBeforeArrow in_ ->
+        let owner = ("given", TH.info_of_tok in_.token) in
+        let tps = typeParamClauseOpt owner None in_ in
+        let iarrow = TH.info_of_tok in_.token in
+        accept (ARROW ab) in_;
+        conditions (arrow_or iarrow) (concat_type_params tparams tps) usings
+    | LPAREN _ when isGroupBeforeArrow in_ ->
+        let iarrow =
+          let in_ = copy_env in_ in
+          skipMatching in_;
+          TH.info_of_tok in_.token
+        in
+        let params = givenConditionParams iarrow in_ in
+        accept (ARROW ab) in_;
+        conditions (arrow_or iarrow) tparams (usings @ [ params ])
+    | _ -> (
+        let ty = annotType in_ in
+        match in_.token with
+        | ARROW iarrow ->
+            nextToken in_;
+            let params = fb iarrow ([ ParamType ty ], Some iarrow) in
+            conditions (arrow_or iarrow) tparams (usings @ [ params ])
+        | _ -> (arrow, tparams, usings, ty))
+  in
+  let arrow, tparams, usings, initAnnotType = conditions None None [] in
+  let given_sig =
+    match (given_sig, arrow) with
+    | sig_, None -> sig_
+    | Some sig_, Some _ ->
+        let g_tparams = concat_type_params sig_.g_tparams tparams in
+        Some { sig_ with g_tparams; g_using = sig_.g_using @ usings }
+    | None, Some iarrow ->
+        (* the arrow separates the signature from the instance type, as the
+           colon of the Scala 3.0 syntax does *)
+        Some
+          {
+            g_id = None;
+            g_tparams = tparams;
+            g_using = usings;
+            g_colon = iarrow;
+          }
   in
   (* how to differentiate structuralInstance versus AnnotType?
      they both start with a type...
@@ -5789,7 +5906,6 @@ let givenDef in_ : given_definition =
      So let's parse an AnnotType, and then look for a `(`, `with`, or `=`.
      This will tell us whether we enter the first or second case, respectively.
   *)
-  let initAnnotType = annotType in_ in
   match in_.token with
   | EQUALS _ ->
       (* must be AnnotType `=` Expr *)
@@ -5809,6 +5925,15 @@ let givenDef in_ : given_definition =
   | Kwith _ ->
       (* otherwise, StructuraLInstance *)
       { gsig = given_sig; gkind = structuralInstance (initAnnotType, []) in_ }
+  (* SIP-64: GivenType TemplateBody; Scala 3.0: GivenType `{` ... `}` *)
+  | LBRACE _
+  | COLON _
+    when in_.token =~= LBRACE ab || isIndentAfterColon in_ ->
+      let body = templateBody ~isPre:false in_ in
+      {
+        gsig = given_sig;
+        gkind = GivenStructural ([ (initAnnotType, []) ], Some body);
+      }
   | _ ->
       (* must be AnnotType *)
       { gsig = given_sig; gkind = GivenType (initAnnotType, None) }
