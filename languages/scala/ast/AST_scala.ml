@@ -429,7 +429,7 @@ and type_parameter = {
   tpparams : type_parameters option;
   tpbounds : type_bounds;
   tpviewbounds : (* <% *) type_ list;
-  tpcolons : (* : *) type_ list;
+  tpcolons : (* : *) (type_ * ident option (* as id *)) list;
 }
 
 and variance =
