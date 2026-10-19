@@ -2696,10 +2696,11 @@ let rec expr ?(location = Local) (in_ : env) : expr =
     && TH.isExprIntro in_.token
     && indent_of in_.line_indents (TH.info_of_tok in_.token) > in_.stat_width
   then
-    (* the region is an operand, which a selection on the line after it can
-       continue *)
+    (* the region is an operand, which a selection, an operator, an
+       ascription or a match on the line after it can continue *)
     let e = !indentedExprOrBlockStatSeqUntil_ ~location ~until:None in_ in
-    simpleExprRest ~canApply:false e in_
+    let e = postfixExprRest (simpleExprRest ~canApply:false e in_) in_ in
+    parseOtherRest location e in_
   else
     let is_block_expr = isIndentedBlockExprStart in_ in
     expr0 ~is_block_expr location in_
@@ -2752,8 +2753,40 @@ and parseOther ?(is_block_expr = false) location (in_ : env) : expr =
   in_
   |> with_logging
        (spf "parseOther(location = %s)" (show_location location))
+       (fun () -> parseOtherRest location (postfixExpr ~is_block_expr in_) in_)
+
+(* the assignment, ascription, match or lambda that follows a postfix
+   expression *)
+and parseOtherRest (location : location) (postfix : expr) (in_ : env) : expr =
+  in_
+  |> with_logging
+       (spf "parseOtherRest(location = %s)" (show_location location))
        (fun () ->
-         let t = ref (postfixExpr ~is_block_expr in_) in
+         let t = ref postfix in
+         (* pad: we may actually be inside a binding, and not an expression here,
+          * for example in 'foo((x: Path) => (...))' we can have parsed
+          * x and seeing the colon.
+          *)
+         let ascription (icolon : tok) : unit =
+           t := stripParens !t;
+           skipToken in_;
+           match in_.token with
+           | USCORE _ -> (
+               skipToken in_;
+               match in_.token with
+               | STAR _ (* STILL?: was isIdent && name = "*" *) -> nextToken in_
+               (* AST: t = Typed(t, Ident(WILDCARD_STAR)) *)
+               | _ -> error "* expected" in_)
+           | x when TH.isAnnotation x ->
+               let _tsTODO = annotations ~skipNewLines:false in_ in
+               (* AST: fold around t makeAnnotated *)
+               ()
+           | _ ->
+               let tpt = typeOrInfixType location in_ in
+               (* AST: if isWildcard(t) ... *)
+               (* ast: Typed(t, tpt) *)
+               t := TypedExpr (!t, icolon, tpt)
+         in
          (match in_.token with
          | EQUALS ii ->
              skipToken in_;
@@ -2762,40 +2795,23 @@ and parseOther ?(is_block_expr = false) location (in_ : env) : expr =
              let e = expr in_ in
              (* ast: mkAssign(t, e) *)
              t := Assign (!t, ii, e)
-         (* pad: we may actually be inside a binding, and not an expression here,
-          * for example in 'foo((x: Path) => (...))' we can have parsed
-          * x and seeing the colon.
-          *)
-         | COLON icolon -> (
-             t := stripParens !t;
-             skipToken in_;
-             match in_.token with
-             | USCORE _ -> (
-                 skipToken in_;
-                 match in_.token with
-                 | STAR _ (* STILL?: was isIdent && name = "*" *) ->
-                     nextToken in_
-                 (* AST: t = Typed(t, Ident(WILDCARD_STAR)) *)
-                 | _ -> error "* expected" in_)
-             | x when TH.isAnnotation x ->
-                 let _tsTODO = annotations ~skipNewLines:false in_ in
-                 (* AST: fold around t makeAnnotated *)
-                 ()
-             | _ ->
-                 let tpt = typeOrInfixType location in_ in
-                 (* AST: if isWildcard(t) ... *)
-                 (* ast: Typed(t, tpt) *)
-                 t := TypedExpr (!t, icolon, tpt))
-         | Kmatch _ ->
-             (* a match can be the scrutinee of a following match *)
-             while in_.token =~= Kmatch ab do
-               let ii = TH.info_of_tok in_.token in
-               skipToken in_;
-               let xs = inBracesOrIndented caseClauses in_ in
-               (* ast: t:= Match(stripParens(t)) *)
-               t := Match (stripParens !t, ii, xs)
-             done
+         | COLON icolon -> ascription icolon
          | _ -> ());
+         (* an expression, an ascribed one (`x: @unchecked match`) and a
+            match can be the scrutinee of a match *)
+         if in_.token =~= Kmatch ab then (
+           while in_.token =~= Kmatch ab do
+             let ii = TH.info_of_tok in_.token in
+             skipToken in_;
+             let xs = inBracesOrIndented caseClauses in_ in
+             (* ast: t:= Match(stripParens(t)) *)
+             t := Match (stripParens !t, ii, xs)
+           done;
+           (* a match can be ascribed, as in `x match ...` followed by a line
+              `: T` *)
+           match in_.token with
+           | COLON icolon -> ascription icolon
+           | _ -> ());
          (* AST: disambiguate between self types "x: Int =>" and orphan function
           * literals "(x: Int) => ???"
           * "(this: Int) =>" is parsed as an erroneous function literal but emits
@@ -3515,6 +3531,7 @@ and parensCondOrExpr (alt : T.token) (in_ : env) : expr bracket =
     cond)
   else if conditionContinues alt in_ then (
     let e = postfixExprRest (simpleExprRest ~canApply:true e in_) in_ in
+    let e = parseOtherRest Local e in_ in
     newLinesOpt in_;
     accept alt in_;
     newLinesOpt in_;
