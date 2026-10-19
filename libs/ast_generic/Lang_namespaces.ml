@@ -9,7 +9,7 @@ type namespace_hash = int
 (* A definition other than a variable, as name resolution tells them apart. *)
 type definition_kind =
   | Function (* outside a class *)
-  | Method (* in a class body *)
+  | Method (* in a class body, or of kind [Method], as a Go method *)
   | Constructor (* a function the front end marks with [KeywordAttr Ctor] *)
   | Class
   | Interface

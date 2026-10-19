@@ -1042,14 +1042,15 @@ let with_type_parameters (env : env) (tparams : type_parameters option)
           f ())
   | _ -> f ()
 
-let function_definition_kind (env : env) (entity : entity) :
-    Lang_namespaces.definition_kind =
+let function_definition_kind (env : env) (entity : entity)
+    (def : function_definition) : Lang_namespaces.definition_kind =
   if is_constructor entity then Constructor
   else
-    match top_context env with
-    | InClass -> Method
-    | AtToplevel
-    | InFunction ->
+    match (top_context env, fst def.fkind) with
+    | InClass, _
+    | _, Method ->
+        Method
+    | (AtToplevel | InFunction), (Function | LambdaKind | Arrow | BlockCases) ->
         Function
 
 let class_definition_kind (def : class_definition) :
@@ -1081,10 +1082,12 @@ let declare_class_members env lang (c : class_definition) : unit =
                  VarDef { vinit; vtype; vtok = _ } ) ->
                declare_var env lang id id_info ~explicit:true vinit vtype
            | DefStmt
-               (({ name = EN (Id (id, id_info)); _ } as entity), FuncDef { frettype; _ })
+               ( ({ name = EN (Id (id, id_info)); _ } as entity),
+                 FuncDef ({ frettype; _ } as def) )
              when env.function_namespace ->
-               declare_func env lang (function_definition_kind env entity) id
-                 id_info frettype
+               declare_func env lang
+                 (function_definition_kind env entity def)
+                 id id_info frettype
            | DefStmt (entity, ClassDef def) ->
                declare_class_or_type env lang entity (class_definition_kind def)
            | DefStmt (entity, TypeDef def) ->
@@ -1134,10 +1137,10 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       List.iter (self#visit_attribute venv) attrs;
       Option.iter (self#visit_type_parameters venv) tparams
 
-    (* A plain name in a class or type definition is a defining occurrence,
-       which [declare_class_or_type] binds: a lookup would find whatever
-       variable or field of that name is in scope. *)
-    method private visit_class_or_type_entity (venv : unit) (entity : entity) =
+    (* A plain name in a class or type definition, or in a function definition
+       that binds nothing, is a defining occurrence: a lookup would find
+       whatever variable or field of that name is in scope. *)
+    method private visit_defining_entity (venv : unit) (entity : entity) =
       match entity with
       | { name = EN (Id _); attrs; tparams } ->
           self#visit_attributes_and_type_parameters venv attrs tparams
@@ -1206,7 +1209,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                     env.names (fun () ->
                       declare_type_parameters env entity.tparams;
                       declare_class_members env lang c;
-                      self#visit_class_or_type_entity venv entity;
+                      self#visit_defining_entity venv entity;
                       self#visit_class_definition venv c)));
           resolve_constructors env entity c
       (* `const x = require('y');` (or var, or let)
@@ -1335,7 +1338,8 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
         when is_resolvable_name_ctx env lang ->
           super#visit_definition venv x;
           self#visit_pattern venv pat
-      | ({ name = EN (Id (id, id_info)); _ } as entity), FuncDef { frettype; _ }
+      | ( ({ name = EN (Id (id, id_info)); _ } as entity),
+          FuncDef ({ frettype; _ } as def) )
         when is_resolvable_name_ctx env lang ->
           (* A function definition resolves to a sid that carries the def's
            * site, [(name, file, line, col)], the key [Function_id] uses, so
@@ -1366,11 +1370,11 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
            * import came later, breaking
            *   semgrep-rules/python/django/security/audit/raw-query.py.
            * But do we need a special scope for imported functions? *)
+          let kind = function_definition_kind env entity def in
           (if env.function_namespace then
-             declare_func env lang (function_definition_kind env entity) id
-               id_info frettype
+             declare_func env lang kind id id_info frettype
            else if is_resolvable_name_ctx env lang then
-             match namespace_of env (function_definition_kind env entity) with
+             match namespace_of env kind with
              | [] -> ()
              | namespaces ->
                  (* The scope a definition binds its name in: the file's
@@ -1388,7 +1392,11 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                  declare_in_scope env lang namespaces scope add
                    ~keep_type:true id id_info);
           with_type_parameters env (fst x).tparams (fun () ->
-              super#visit_definition venv x)
+              match namespace_of env kind with
+              | [] ->
+                  self#visit_defining_entity venv entity;
+                  self#visit_definition_kind venv (snd x)
+              | _ :: _ -> super#visit_definition venv x)
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
           let s = String.lowercase_ascii (Tok.content_of_tok tok) in
@@ -1439,7 +1447,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       | entity, (TypeDef def as kind) ->
           with_class_or_type_binding env lang entity (type_definition_kind def)
             (fun () ->
-              self#visit_class_or_type_entity venv entity;
+              self#visit_defining_entity venv entity;
               self#visit_definition_kind venv kind)
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
@@ -1948,7 +1956,7 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   | Lang.Cpp -> (module Namespaces_cpp)
   | Lang.Csharp -> (module Namespaces_csharp)
   | Lang.Ts -> (module Namespaces_typescript)
-  | Lang.Go -> (module Lang_namespaces.Single)
+  | Lang.Go -> (module Namespaces_go)
   | Lang.Python
   | Lang.Python2
   | Lang.Python3 ->

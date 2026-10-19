@@ -650,6 +650,39 @@ let tests parse_program =
               Alcotest.failf
                 "expected two definitions and two uses of T, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "go method binds nothing, so a type of its name keeps its binding"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/go/type_and_method_of_one_name.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* the uses in a type are the receiver's and the parameter's *)
+          match
+            (def_sids_of_name ast "Error", type_resolutions_of_name ast "Error")
+          with
+          | [ type_ ], [ Some (_, receiver); Some (_, parameter) ] ->
+              Alcotest.(check bool) "the receiver's type refers to the type" true
+                (AST_generic.SId.equal type_ receiver);
+              Alcotest.(check bool) "the parameter's type refers to the type"
+                true
+                (AST_generic.SId.equal type_ parameter)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one bound definition and two type uses of Error, \
+                 found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "go interface method binds nothing" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/go/interface_method.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          Alcotest.(check int) "bound definitions of String" 0
+            (List.length (def_sids_of_name ast "String"));
+          check_resolutions ast "String" [ "Unresolved" ]);
       t "c and c++ structure with its keyword refers to the structure, not the \
          function of the same name"
         (fun () ->
