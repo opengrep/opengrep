@@ -43,6 +43,13 @@ let v_list = List_.map
 let v_option = Option.map
 
 let cases_to_lambda lb cases : G.function_definition =
+  (* An indented block of cases, as after `xs.map:`, has fake brackets; the
+   * first `case` keyword gives the parameter and the match a location *)
+  let lb =
+    match cases with
+    | G.CasesAndBody (G.Case (tok, _) :: _, _) :: _ when Tok.is_fake lb -> tok
+    | _ -> lb
+  in
   (* Use the generic implicit-param name so the prefilter exclusion in
    * Pattern.is_special_identifier (via AST_generic.is_implicit_param)
    * applies — otherwise rules over `{ case ... }` blocks are filtered out. *)
