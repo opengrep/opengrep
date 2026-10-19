@@ -577,7 +577,7 @@ and template_definition = {
 (* scala3: intersection types so more symetric *)
 and template_parents = {
   cextends : (type_ * arguments list) option;
-  cwith : type_ list;
+  cwith : (type_ * arguments list) list;
   (* scala3: https://docs.scala-lang.org/scala3/reference/contextual/derivation.html *)
   cderives : (tok (* 'derives' *) * type_ list) option;
 }

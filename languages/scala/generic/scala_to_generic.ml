@@ -1216,22 +1216,25 @@ and v_template_definition
 
 and v_template_parents
     { cextends = v_cextends; cwith = v_cwith; cderives = _ } =
-  let parents =
-    match v_cextends with
-    | None -> []
-    | Some (v1, v2) ->
-        let v1 = v_type_ v1 in
-        let v2 = v_list v_arguments v2 in
-        let parent =
-          match v2 with
-          | [] -> (v1, None)
-          | [ args ] -> (v1, Some args)
-          | args :: _otherargsTODO -> (v1, Some args)
-        in
-        [ parent ]
+  let parent ((v1, v2) : type_ * arguments list) :
+      G.type_ * G.arguments option =
+    let v1 = v_type_ v1 in
+    let v2 = v_list v_arguments v2 in
+    match v2 with
+    | [] -> (v1, None)
+    | [ args ] -> (v1, Some args)
+    | args :: _otherargsTODO -> (v1, Some args)
   in
-  let v2 = v_list v_type_ v_cwith in
-  (parents, v2)
+  let parents = v_cextends |> Option.to_list |> List_.map parent in
+  (* a later parent with arguments (a trait with parameters) keeps its
+     arguments as an extended parent; the others are mixins *)
+  let with_args, mixins =
+    v_cwith
+    |> List.partition (fun ((_, args) : type_ * arguments list) ->
+           not (List_.null args))
+  in
+  ( parents @ List_.map parent with_args,
+    mixins |> List_.map (fun ((ty, _) : type_ * arguments list) -> v_type_ ty) )
 
 and v_template_body v =
   v_bracket

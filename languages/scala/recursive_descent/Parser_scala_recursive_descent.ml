@@ -5330,6 +5330,7 @@ let derivesClauseOpt (in_ : env) : (tok * type_ list) option =
  *  ClassParents       ::= AnnotType {`(` [Exprs] `)`} {with AnnotType}
  *  TraitParents       ::= AnnotType {with AnnotType}
  *  ConstrApps         ::= ConstrApp ({`,` ConstrApp} | {`with` ConstrApp})
+ *  ConstrApp          ::= SimpleType1 {Annotation} {ParArgumentExprs}
  *  ^ Scala 3
  *  }}}
 *)
@@ -5353,10 +5354,9 @@ let templateParents ~(commaOK : bool) in_ : template_parents =
      those of `new`, whose commas belong to an enclosing list *)
   while in_.token =~= Kwith ab || (commaOK && in_.token =~= COMMA ab) do
     nextToken in_;
-    let parent, args = readAppliedParent () in
-    (* stricter? *)
-    if args <> [] then error "only the first parent type can have arguments" in_;
-    cwith += parent
+    (* Scala 3: a later parent that is a trait with parameters takes
+       arguments *)
+    cwith += readAppliedParent ()
   done;
   let cderives = derivesClauseOpt in_ in
   { cextends = Some (parent, args); cwith = List.rev !cwith; cderives }
@@ -5535,16 +5535,13 @@ let classDef ?(isTrait = false) ?isCase attrs in_ : definition =
            if not isTrait then constructorAnnotations in_ else []
          in
 
-         let constrMods, vparamss =
-           if isTrait then ([], [] (* AST: (Modifiers(Flags.TRAIT), List()) *))
-           else
-             let constrMods = accessModifierOpt in_ in
-             let vparamss =
-               paramClauses ~ofCaseClass:(isCase <> None) name
-                 classContextBounds in_
-             in
-             (Option.to_list constrMods, vparamss)
+         let constrMods = if isTrait then None else accessModifierOpt in_ in
+         (* Scala 3: traits take parameters too *)
+         let vparamss =
+           paramClauses ~ofCaseClass:(Option.is_some isCase) name
+             classContextBounds in_
          in
+         let constrMods = Option.to_list constrMods in
 
          let kind = ((if isTrait then Trait else Class), ikind) in
          let mods =
