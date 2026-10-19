@@ -4991,6 +4991,17 @@ let templateBodyOpt ~parenMeansSyntaxError in_ : template_body option =
  *  TraitParents       ::= AnnotType {with AnnotType}
  *  }}}
 *)
+(** {{{
+ *  InheritClauses ::= [`extends` ConstrApps] [`derives` QualId {`,` QualId}]
+ *  }}}
+*)
+let derivesClauseOpt (in_ : env) : (tok * type_ list) option =
+  match in_.token with
+  | ID_LOWER ("derives", ii) ->
+      nextToken in_;
+      Some (ii, commaSeparated startAnnotType in_)
+  | _ -> None
+
 let templateParents ~(commaOK : bool) in_ : template_parents =
   let readAppliedParent () =
     let parent = startAnnotType in_ in
@@ -5016,7 +5027,8 @@ let templateParents ~(commaOK : bool) in_ : template_parents =
     if args <> [] then error "only the first parent type can have arguments" in_;
     cwith += parent
   done;
-  { cextends = Some (parent, args); cwith = List.rev !cwith }
+  let cderives = derivesClauseOpt in_ in
+  { cextends = Some (parent, args); cwith = List.rev !cwith; cderives }
 
 (** {{{
  *  ClassTemplate ::= [EarlyDefs with] ClassParents [TemplateBody]
@@ -5070,13 +5082,14 @@ let templateOpt ckind vparams in_ : template_definition =
         nextToken in_;
         template ~commaOK:true in_
     | _ ->
+        let cderives = derivesClauseOpt in_ in
         newLineOptWhenFollowedBy (LBRACE ab) in_;
         let bodyopt =
           (* AST: mods.isTrait || name.isTermName *)
           let parenMeansSyntaxError = true in
           templateBodyOpt ~parenMeansSyntaxError in_
         in
-        (AST.empty_cparents, bodyopt)
+        ({ AST.empty_cparents with cderives }, bodyopt)
   in
   (* AST: Template(parents, self, anyvalConstructor()::body))
    * CHECK: "package object inheritance is deprecated"
