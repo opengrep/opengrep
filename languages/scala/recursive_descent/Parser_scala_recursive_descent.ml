@@ -2448,8 +2448,10 @@ and pattern3 in_ : pattern =
          let checkWildStar in_ =
            warning "checkWildStar, incomplete";
            (* crazy: if top = USCORE && sequenceOK && peekingAhead ... *)
-           match in_.token with
-           | STAR ii ->
+           (* a sequence wildcard ends the argument patterns; a `*` followed
+              by a pattern is an infix operator *)
+           match (in_.token, skip_trivia ~newlines:true in_.rest) with
+           | STAR ii, (RPAREN _ | COMMA _) :: _ ->
                nextToken in_;
                Some ii
            | _ -> None
@@ -2479,6 +2481,12 @@ and pattern3 in_ : pattern =
              (* ast: x *)
              match top with
              | PatVarid ("_", iuscore) -> PatUnderscoreStar (iuscore, istar)
+             (* Scala 3: `xs*` binds the rest of the sequence *)
+             | PatVarid varid -> PatVarargs (varid, istar)
+             | PatName (Id ((s, _) as id), [])
+               when Domain.DLS.get Flag_parsing.sgrep_mode
+                    && AST_generic.is_metavar_name s ->
+                 PatVarargs (id, istar)
              (* stricter: *)
              | _ -> error "star patterns works only with wildcard" in_))
 

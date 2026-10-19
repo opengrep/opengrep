@@ -230,6 +230,8 @@ and pattern =
   | PatInfix of pattern * ident * pattern
   (* less: only last element of a pattern list? *)
   | PatUnderscoreStar of tok (* '_' *) * tok (* '*' *)
+  (* scala3: xs*, which replaces xs @ _* *)
+  | PatVarargs of varid * tok (* '*' *)
   | PatDisj of pattern * tok (* | *) * pattern
   | PatQuoted of quoted
   (* scala3: an anonymous given of the type *)
