@@ -3661,15 +3661,16 @@ and enumerators in_ : enumerators =
 
 (* pad: this was duplicated in enumerator and generator in the original code*)
 and guard_loop in_ : guard list =
+  (* a guard can follow a statement separator; any other token that
+     precedes an `if` ends the enumerators, as in `for (x <- xs) if (c) f(x)` *)
   let is_if =
-    in_.token =~= Kif ab
-    || lookingAhead
-         (fun in_' ->
-           if in_'.token =~= Kif ab then (
-             nextToken in_;
-             true)
-           else false)
-         in_
+    match in_.token with
+    | Kif _ -> true
+    | (SEMI _ | NEWLINE _ | NEWLINES _)
+      when lookingAhead (fun (in_ : env) -> in_.token =~= Kif ab) in_ ->
+        nextToken in_;
+        true
+    | _ -> false
   in
   if not is_if then []
   else
