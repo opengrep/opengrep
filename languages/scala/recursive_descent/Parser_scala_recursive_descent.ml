@@ -1347,6 +1347,13 @@ let selector in_ : ident =
   (* ast: Select(t, id) *)
   id
 
+(* a `.` that selects a member; `.match` continues the expression instead *)
+let isSelectionDot (in_ : env) : bool =
+  match (in_.token, in_next_token in_.rest) with
+  | DOT _, Some (Kmatch _) -> false
+  | DOT _, _ -> true
+  | _ -> false
+
 let rec selectors ~typeOK in_ : dotted_ident =
   match in_.token with
   | Ktype ii when typeOK ->
@@ -1355,7 +1362,7 @@ let rec selectors ~typeOK in_ : dotted_ident =
       [ ("type", ii) ]
   | _ ->
       let t1 = selector in_ in
-      if in_.token =~= DOT ab then (
+      if isSelectionDot in_ then (
         skipToken in_;
         t1 :: selectors ~typeOK in_)
       else [ t1 ]
@@ -1418,14 +1425,14 @@ let path ~thisOK ~typeOK in_ : path =
              accept (DOT ab) in_;
              let x = selector in_ in
              let t = Super (None, ii, mixins, x) in
-             if in_.token =~= DOT ab then (
+             if isSelectionDot in_ then (
                skipToken in_;
                (t, selectors ~typeOK in_))
              else (t, [])
          | _ ->
              let name = ident in_ in
              (* ast: t := Ident(name) and special stuff in BACKQUOTED_IDENT *)
-             if in_.token =~= DOT ab then (
+             if isSelectionDot in_ then (
                skipToken in_;
                match in_.token with
                | Kthis ii ->
@@ -1444,7 +1451,7 @@ let path ~thisOK ~typeOK in_ : path =
                    accept (DOT ab) in_;
                    let x = selector in_ in
                    let t = Super (Some name, ii, mixins, x) in
-                   if in_.token =~= DOT ab then (
+                   if isSelectionDot in_ then (
                      skipToken in_;
                      (t, selectors ~typeOK in_))
                    else (t, [])
@@ -2428,11 +2435,15 @@ and parseOther ?(is_block_expr = false) location (in_ : env) : expr =
                  (* AST: if isWildcard(t) ... *)
                  (* ast: Typed(t, tpt) *)
                  t := TypedExpr (!t, icolon, tpt))
-         | Kmatch ii ->
-             skipToken in_;
-             let xs = inBracesOrIndented caseClauses in_ in
-             (* ast: t:= Match(stripParens(t)) *)
-             t := Match (stripParens !t, ii, xs)
+         | Kmatch _ ->
+             (* a match can be the scrutinee of a following match *)
+             while in_.token =~= Kmatch ab do
+               let ii = TH.info_of_tok in_.token in
+               skipToken in_;
+               let xs = inBracesOrIndented caseClauses in_ in
+               (* ast: t:= Match(stripParens(t)) *)
+               t := Match (stripParens !t, ii, xs)
+             done
          | _ -> ());
          (* AST: disambiguate between self types "x: Int =>" and orphan function
           * literals "(x: Int) => ???"
@@ -2671,6 +2682,12 @@ and simpleExprRest ~canApply t in_ : expr =
              | Ellipsis ii ->
                  nextToken in_;
                  let x = stripParens (DotAccessEllipsis (t, ii)) in
+                 simpleExprRest ~canApply:true x in_
+             (* Scala 3: `x.match { ... }` (Parsers.scala, selectorOrMatch) *)
+             | Kmatch imatch ->
+                 nextToken in_;
+                 let xs = inBracesOrIndented caseClauses in_ in
+                 let x = Match (stripParens t, imatch, xs) in
                  simpleExprRest ~canApply:true x in_
              | _ ->
                  let id = selector (*t*) in_ in
