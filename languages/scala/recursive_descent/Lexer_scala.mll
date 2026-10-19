@@ -195,18 +195,26 @@ let hexDigits = hexDigit | hexDigit hexDigitsAndUnderscores? hexDigit
 let hexNumeral = ("0x" | "0X") hexDigits
 let hexIntegerLiteral = hexNumeral integerTypeSuffix?
 
+(* Scala 2.13 and 3: 0b101 *)
+let binaryDigit = ['0' '1']
+let binaryDigits = binaryDigit (binaryDigit | '_')*
+let binaryNumeral = ("0b" | "0B") binaryDigits
+let binaryIntegerLiteral = binaryNumeral integerTypeSuffix?
+
 let integerLiteral =
   decimalIntegerLiteral
 | hexIntegerLiteral
+| binaryIntegerLiteral
 
 
-let exponentPart = ['E''e'] ['+''-']? digit digit*
+(* underscores can separate the digits of each part *)
+let exponentPart = ['E''e'] ['+''-']? digits
 let floatType = ['F''f''D''d']
 let floatingPointLiteral =
-   digit digit* '.' digit digit* exponentPart? floatType?
- |              '.' digit digit* exponentPart? floatType?
- | digit digit*                  exponentPart  floatType?
- | digit digit*                  exponentPart? floatType
+   digits '.' digits exponentPart? floatType?
+ |        '.' digits exponentPart? floatType?
+ | digits            exponentPart  floatType?
+ | digits            exponentPart? floatType
 
 (* note: old Scala spec was wrong and was using stringLiteral *)
 let id = plainid | '`' (charNoBackQuoteOrNewline | escapeSeq)+ '`'
@@ -224,8 +232,23 @@ let alphaid = upper idrest | varid
  * but s"$xxx${1}" should actually be parsed as $xxx and then ${1}, which
  * means xxx$ is not a valid id (even though the official spec says it is)
  *)
+(* A non-ASCII code point that can continue an identifier in the text of an
+   interpolated string, which goes on after the identifier. Only letters and
+   digits do (Scanners.scala, getIdentRest); this excludes the common blocks
+   of punctuation and symbols: U+0080 to U+00BF, U+00D7, U+00F7, U+2000 to
+   U+2BFF and U+3000 to U+303F. *)
+let utf8_ident_part =
+  ['\195'] (utf8_tail_byte # ['\151' '\183'])
+| ['\196'-'\223'] utf8_tail_byte
+| ['\224' '\225'] utf8_tail_byte utf8_tail_byte
+| '\226' ['\176'-'\191'] utf8_tail_byte
+| '\227' ['\129'-'\191'] utf8_tail_byte
+| ['\228'-'\239'] utf8_tail_byte utf8_tail_byte
+| utf8_4
+
 let id_after_dollar =
-  ['A'-'Z''a'-'z''_'] (['A'-'Z''a'-'z''_'] | digit)* ('_' op)?
+  (['A'-'Z''a'-'z''_'] | utf8_ident_part)
+  (['A'-'Z''a'-'z''_'] | digit | utf8_ident_part)* ('_' op)?
 
 let metavar_id_after_dollar =
   ['A'-'Z''_'] (['A'-'Z''_'] | digit)*
@@ -525,6 +548,8 @@ and in_interpolated_double state = parse
   | ("$" metavar_id_after_dollar) as s { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$" (id_after_dollar as s) { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$$" { StringLiteral("$", tokinfo lexbuf) }
+  (* Scala 3: an escaped double quote *)
+  | "$\"" { StringLiteral("\"", tokinfo lexbuf) }
 
   | eof  { error "end of file in interpolated string" lexbuf;
            pop_mode state;
@@ -551,6 +576,8 @@ and in_interpolated_triple state = parse
   | ("$" metavar_id_after_dollar) as s { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$" (id_after_dollar as s) { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$$" { StringLiteral("$", tokinfo lexbuf) }
+  (* Scala 3: an escaped double quote *)
+  | "$\"" { StringLiteral("\"", tokinfo lexbuf) }
 
   | eof  { error "end of file in interpolated2 string" lexbuf;
            pop_mode state;
