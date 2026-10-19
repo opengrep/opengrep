@@ -4587,6 +4587,8 @@ let usingParamClauses ~owner in_ =
 let extMethod in_ : ext_method =
   match in_.token with
   | ID_LOWER ("export", _) -> ExtExport (exportClause in_)
+  (* the end marker of a method, as in `end apply` *)
+  | ID_LOWER ("end", _) when isEndMarker in_ -> ExtEnd (endMarker in_)
   | _ ->
       let annots = annotations ~skipNewLines:true in_ in
       let mods = modifiers in_ in
