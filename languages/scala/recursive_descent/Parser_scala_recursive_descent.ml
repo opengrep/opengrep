@@ -4088,7 +4088,8 @@ let usingParamClauseInner ~caseParam owner implicitmod in_ =
       *)
       nextToken in_;
       (* an annotation or `inline` starts a parameter, as in
-         `(using @constructorOnly ctx: Context)` or `(using inline z: Show[A])` *)
+         `(using @constructorOnly ctx: Context)` or
+         `(using inline z: Show[A])` *)
       let starts_inline_param =
         match (in_.token, in_next_token in_.rest) with
         | ID_LOWER ("inline", _), Some tok -> TH.isIdentBool tok
@@ -5181,6 +5182,8 @@ let templateBodyOpt ~parenMeansSyntaxError in_ : template_body option =
  *  }}}
 *)
 let derivesClauseOpt (in_ : env) : (tok * type_ list) option =
+  (* the clause can start the next line *)
+  newLineOptWhenFollowedBy (ID_LOWER ("derives", ab)) in_;
   match in_.token with
   | ID_LOWER ("derives", ii) ->
       nextToken in_;
