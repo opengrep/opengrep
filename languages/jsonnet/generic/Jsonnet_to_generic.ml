@@ -131,7 +131,7 @@ let rec map_expr env v : G.expr =
       G.OtherExpr (("RecordWith", l), [ G.E e1; G.E e2 ]) |> G.e
   | Lambda v ->
       let def = map_function_definition env v in
-      G.Lambda def |> G.e
+      G.Lambda (def, None) |> G.e
   | I v ->
       let v = map_import env v in
       v

@@ -15,7 +15,7 @@ rule.yml
                                    (Call (
                                       { e = (IdSpecial ((Op Eq), ()));
                                         e_id = 0; e_range = None;
-                                        is_implicit_return = false;
+                                        implicit_return = Not_returned;
                                         facts = <opaque> },
                                       ((),
                                        [(Arg
@@ -34,7 +34,7 @@ rule.yml
                                                      id_flags = ref (0) }
                                                    )));
                                              e_id = 0; e_range = None;
-                                             is_implicit_return = false;
+                                             implicit_return = Not_returned;
                                              facts = <opaque> });
                                          (Arg
                                             { e =
@@ -53,13 +53,13 @@ rule.yml
                                                       id_flags = ref (0) }
                                                     )));
                                               e_id = 0; e_range = None;
-                                              is_implicit_return = false;
+                                              implicit_return = Not_returned;
                                               facts = <opaque> })
                                          ],
                                        ())
                                       ));
                                    e_id = 0; e_range = None;
-                                   is_implicit_return = false;
+                                   implicit_return = Not_returned;
                                    facts = <opaque> }),
                               Python));
                            pstr = ("$X == $X", ()); pid = <MASKED> });

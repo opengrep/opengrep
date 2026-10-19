@@ -36,12 +36,12 @@ let macro_expand_1 (expr : G.expr) : G.expr =
                  (G.Params [(G.ParamPattern (_pat, _classic) as param)])
                  :: (G.E expr) :: []) ->
     G.Lambda
-      {
+      ({
         G.fparams = Tok.unsafe_fake_bracket [param];
         frettype = None;
         fkind = (G.LambdaKind, fn_tok);
         fbody = G.FBExpr expr;
-      }
+      }, None)
     |> G.e
 
   | G.OtherExpr ((("When" | "WhenNot"), when_tok),

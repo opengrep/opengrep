@@ -1,0 +1,13 @@
+rules:
+  - id: cpp_lambda_capture_initialiser_evaluated
+    message: an initialised capture takes its value where the lambda is created
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

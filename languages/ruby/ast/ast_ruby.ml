@@ -223,8 +223,9 @@ type expr =
    *)
   | Splat of tok (* '*', but also ',' in mlhs *) * expr option
   | Rescue of expr * (* rescue *) tok * expr
-  (* true = {}, false = do/end *)
-  | CodeBlock of bool bracket * formal_param list option * stmts
+  (* true = {}, false = do/end; then the parameters, and the block-local
+   * variables declared after ';' in the parameters, as in [|a; b, c|] *)
+  | CodeBlock of bool bracket * formal_param list option * block_local list * stmts
   | Lambda of tok * formal_param list option * stmts
   | Match of expr * (* => or in *) tok * pattern
   | S of stmt
@@ -456,6 +457,11 @@ and formal_param =
   | Formal_fwd of (* ... *) tok
   (* sgrep-ext: *)
   | ParamEllipsis of tok
+
+and block_local =
+  | BlockLocal of ident
+  (* sgrep-ext: [|x; ...|] *)
+  | BlockLocalEllipsis of tok
 
 and class_kind =
   | C of class_or_module_name * (tok (* < *) * expr) option

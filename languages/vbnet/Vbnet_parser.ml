@@ -4493,9 +4493,9 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
-            fbody = G.FBStmt (G.Block (fb [G.ExprStmt ({expr with is_implicit_return = true}, Tok.unsafe_sc) |> G.s]) |> G.s) }
+            fbody = G.FBStmt (G.Block (fb [G.ExprStmt ({expr with implicit_return = Returned}, Tok.unsafe_sc) |> G.s]) |> G.s) }
       in
-      pure (G.Lambda fdef |> G.e)
+      pure (G.Lambda (fdef, None) |> G.e)
     end;
     begin
       (* single_line_lambda_expression -> lambda_modifier* 'Sub' parameter_list single_line_statement *)
@@ -4512,7 +4512,7 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
             frettype = None;
             fbody = G.FBStmt (stmt_of_stmts ~always_block:true stmts) }
       in
-      pure (G.Lambda fdef |> G.e)
+      pure (G.Lambda (fdef, None) |> G.e)
     end;
   ]
 ) __n
@@ -4539,7 +4539,7 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
             frettype = None;
             fbody = G.FBStmt stmt }
       in
-      pure (G.Lambda fdef |> G.e)
+      pure (G.Lambda (fdef, None) |> G.e)
     end;
     begin
       (* multi_line_lambda_expression -> lambda_modifier* 'Sub' parameter_list @lookahead('<LINE_TERMINATOR>') statements_block ':'? 'End' 'Sub' *)
@@ -4559,7 +4559,7 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
             frettype = None;
             fbody = G.FBStmt stmt }
       in
-      pure (G.Lambda fdef |> G.e)
+      pure (G.Lambda (fdef, None) |> G.e)
     end;
   ]
 ) __n

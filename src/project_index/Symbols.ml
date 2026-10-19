@@ -390,7 +390,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             super#visit_definition scope' (ent, def_kind)
         end
       | G.FuncDef fdef
-      | G.VarDef { G.vinit = Some { G.e = G.Lambda fdef; _ }; _ } ->
+      | G.VarDef { G.vinit = Some { G.e = G.Lambda (fdef, _); _ }; _ } ->
           self#record_function scope ent def_kind fdef
       | G.VarDef { G.vinit = Some init; _ } -> begin
           (if cfg.Index_lang_rules.dict_literal_is_object_definition then
@@ -536,7 +536,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       match stmt.G.s with
       | G.ExprStmt (e, _) -> (
         match Visit_function_defs.extract_lambda_assignment ~lang e with
-        | Some ((ent : G.entity), (fdef : G.function_definition)) ->
+        | Some ((ent : G.entity), (fdef : G.function_definition), _) ->
           self#record_function scope ent (G.FuncDef fdef) fdef
         | None -> super#visit_stmt scope stmt)
       | _ -> super#visit_stmt scope stmt

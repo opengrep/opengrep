@@ -16,6 +16,7 @@ val string_of_run :
    level (redacted). *)
 val log_command : Cmd.t -> unit
 val capture_and_log_stderr : (unit -> 'a) -> 'a
+val resolve_program : Cmd.t -> (Bos.Cmd.t, [> Rresult.R.msg ]) result
 
 val string_of_run_with_stderr :
   trim:bool ->
@@ -31,10 +32,3 @@ val lines_of_run :
 
 val status_of_run :
   ?quiet:bool -> Cmd.t -> (Bos.OS.Cmd.status, [> Rresult.R.msg ]) result
-
-val with_open_process_in : string -> (in_channel -> 'a) -> 'a
-
-(* old style *)
-exception CmdError of Unix.process_status * string
-
-val cmd_to_list : ?verbose:bool -> string -> string list

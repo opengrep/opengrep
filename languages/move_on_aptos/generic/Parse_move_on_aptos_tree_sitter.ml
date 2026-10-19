@@ -1784,7 +1784,7 @@ and map_expr (env : env) (x : CST.expr) =
           fbody = G.FBExpr body;
         }
       in
-      G.Lambda func_def |> G.e
+      G.Lambda (func_def, None) |> G.e
   | `Ellips tok -> (* "..." *) G.Ellipsis (token env tok) |> G.e
   | `Deep_ellips x -> map_deep_ellipsis env x
 

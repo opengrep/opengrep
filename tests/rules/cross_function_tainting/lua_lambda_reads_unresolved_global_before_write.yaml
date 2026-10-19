@@ -1,0 +1,13 @@
+rules:
+  - id: lua_lambda_reads_unresolved_global_before_write
+    message: a lambda captures a variable that naming does not resolve
+    languages:
+      - lua
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

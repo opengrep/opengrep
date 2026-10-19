@@ -52,6 +52,9 @@ type t = {
   class_accessor_methods : string list;
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
+  (* A call of a bare name that resolves to nothing is a call of a method of
+     the receiver ([user] for a [def user] in Ruby). *)
+  bare_calls_are_receiver_methods : bool;
 }
 
 let empty = {
@@ -66,6 +69,7 @@ let empty = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let python = {
@@ -90,6 +94,7 @@ let python = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let ruby = {
@@ -122,6 +127,7 @@ let ruby = {
   class_accessor_methods = ["class"];
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
+  bare_calls_are_receiver_methods = true;
 }
 
 let crystal = ruby
@@ -154,6 +160,7 @@ let javascript = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let typescript = {
@@ -184,6 +191,7 @@ let java = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let kotlin = {
@@ -217,6 +225,7 @@ let kotlin = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let scala = {
@@ -243,6 +252,7 @@ let scala = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let csharp = {
@@ -270,6 +280,7 @@ let csharp = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let go = {
@@ -289,6 +300,7 @@ let go = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let rust = {
@@ -315,6 +327,7 @@ let rust = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let swift = {
@@ -341,6 +354,7 @@ let swift = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let php = {
@@ -358,6 +372,7 @@ let php = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let cpp = {
@@ -375,6 +390,7 @@ let cpp = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let c = {
@@ -394,6 +410,7 @@ let ocaml_lang = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let lua = {
@@ -408,6 +425,7 @@ let lua = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let dart = {
@@ -445,6 +463,7 @@ let dart = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let elixir = {
@@ -467,6 +486,7 @@ let elixir = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let julia = {
@@ -483,6 +503,7 @@ let julia = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let clojure = {
@@ -511,6 +532,7 @@ let clojure = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let apex = {
@@ -525,6 +547,7 @@ let apex = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let vb = {
@@ -539,6 +562,7 @@ let vb = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
+  bare_calls_are_receiver_methods = false;
 }
 
 let get (lang : Lang.t) : t =

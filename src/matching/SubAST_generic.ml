@@ -171,7 +171,9 @@ let subexprs_of_expr with_symbolic_propagation e =
       (* in theory we should go deeper in any *)
       subexprs_of_any_list anys
   | RawExpr x -> Raw_tree.anys x |> subexprs_of_any_list
-  | Lambda def -> subexprs_of_stmt (H.funcbody_to_stmt def.fbody)
+  | Lambda (def, captures) ->
+      H.capture_initialiser_exprs captures
+      @ subexprs_of_stmt (H.funcbody_to_stmt def.fbody)
   | Xml { xml_attrs; xml_body; _ } ->
       List_.filter_map
         (function
@@ -278,7 +280,7 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | RegexpTemplate _ -> []
   | AnonClass _def -> []
   (* TODO: Why not go into lambda? *)
-  | Lambda _def -> []
+  | Lambda (_def, _) -> []
   | TypedMetavar _
   | DeepEllipsis _
   | DotAccessEllipsis _
@@ -369,7 +371,7 @@ class ['self] lambdas_in_expr_visitor =
     inherit [_] AST_generic.iter_no_id_info
 
     (* TODO Should we recurse into the Lambda? *)
-    method! visit_Lambda aref def = Stack_.push def aref
+    method! visit_Lambda aref def _captures = Stack_.push def aref
   end
 
 let lambdas_in_expr_visitor_instance = new lambdas_in_expr_visitor

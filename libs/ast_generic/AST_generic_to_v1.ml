@@ -271,9 +271,10 @@ and map_expr x : B.expr =
         | _dropped_template ->
             let fk' = map_tok fk in
             `Regexp ((fk', ("", map_tok l), fk'), None))
-  | Lambda v1 ->
+  | Lambda (v1, v2) ->
       let v1 = map_function_definition v1 in
-      `Lambda v1
+      let v2 = map_of_option map_captures v2 in
+      `Lambda { v1 with B.fcaptures = v2 }
   | AnonClass v1 ->
       let v1 = map_class_definition v1 in
       `AnonClass v1
@@ -1136,7 +1137,53 @@ and map_function_definition
   let v_fbody = map_function_body v_fbody in
   let v_frettype = map_of_option map_type_ v_frettype in
   let v_fparams = map_parameters v_fparams in
-  { B.fkind; fparams = v_fparams; frettype = v_frettype; fbody = v_fbody }
+  {
+    B.fkind;
+    fparams = v_fparams;
+    frettype = v_frettype;
+    fcaptures = None;
+    fbody = v_fbody;
+  }
+
+and map_captures { G.cdefault; cexplicit; clocals } =
+  let cdefault = map_of_option (map_wrap map_capture_mode) cdefault in
+  let cexplicit = map_of_list map_capture cexplicit in
+  let clocals =
+    map_of_list (fun (id, id_info) -> (map_ident id, map_id_info id_info)) clocals
+  in
+  { B.cdefault; cexplicit; clocals }
+
+and map_capture = function
+  | CaptureVar (v0, v1, v2, v3, v4) ->
+      let v0 = map_of_list map_attribute v0
+      and v1 = map_ident v1
+      and v2 = map_id_info v2
+      and v3 = map_wrap map_capture_mode v3
+      and v4 = map_of_option map_capture_init v4 in
+      `CaptureVar (v0, v1, v2, v3, v4)
+  | CaptureThis (v0, v1, v2) ->
+      let v0 = map_of_list map_attribute v0
+      and v1 = map_tok v1
+      and v2 = map_wrap map_capture_mode v2 in
+      `CaptureThis (v0, v1, v2)
+  | CaptureEllipsis v1 ->
+      let v1 = map_tok v1 in
+      `CaptureEllipsis v1
+
+and map_capture_init = function
+  | InitAssign (v1, v2) ->
+      let v1 = map_tok v1 and v2 = map_expr v2 in
+      `InitAssign (v1, v2)
+  | InitDirect v1 ->
+      let v1 = map_bracket (map_of_list map_expr) v1 in
+      `InitDirect v1
+  | InitList v1 ->
+      let v1 = map_bracket (map_of_list map_expr) v1 in
+      `InitList v1
+
+and map_capture_mode = function
+  | ByCopy -> `ByCopy
+  | ByReference -> `ByReference
 
 and map_function_body = function
   | FBStmt v1 ->
@@ -1385,6 +1432,11 @@ and map_any x : B.any =
   | Params v1 ->
       let v1 = map_of_list map_parameter v1 in
       `Anys (v1 |> map_of_list (fun x -> `Pa x))
+  | Captures v1 ->
+      let v1 = map_of_list map_capture v1 in
+      `Anys (v1 |> map_of_list (fun x -> `Capture x))
+  | BlockLocals v1 ->
+      `Anys (v1 |> map_of_list (fun (id, _) -> `I (map_ident id)))
   | I v1 ->
       let v1 = map_ident v1 in
       `I v1

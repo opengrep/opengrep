@@ -264,7 +264,7 @@ let expr_of_body_or_clauses tk (x : body_or_clauses_generic) : G.expr =
       G.stmt_to_expr block
   | Right clauses ->
       let fdef = stab_clauses_to_function_definition tk clauses in
-      G.Lambda fdef |> G.e
+      G.Lambda (fdef, None) |> G.e
 
 (* following Elixir semantic (unsugaring do/end block in keywords) *)
 let kwds_of_do_block (bl : do_block_generic) : keywords_generic =
@@ -1046,7 +1046,7 @@ and map_expr env v : G.expr =
       let xs = map_clauses env v2 in
       let fdef = stab_clauses_to_function_definition tfn xs in
       let fdef = { fdef with fkind = (G.LambdaKind, tfn) } in
-      G.Lambda fdef |> G.e
+      G.Lambda (fdef, None) |> G.e
   | Capture (tamp, v2) ->
       (* Convert capture with placeholders to lambda wrapped in ShortLambda *)
       let e = map_expr env v2 in

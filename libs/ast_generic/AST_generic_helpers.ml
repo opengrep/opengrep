@@ -440,7 +440,7 @@ let assign_to_vardef_opt ((e1, _teq, e2) : G.expr * G.tok * G.expr) =
 let funcdef_to_lambda (ent, def) resolved =
   let idinfo = { (empty_id_info ()) with id_resolved = ref resolved } in
   let name_or_expr = entity_name_to_expr ent.name (Some idinfo) in
-  let v = Lambda def |> G.e in
+  let v = Lambda (def, None) |> G.e in
   Assign (name_or_expr, Tok.unsafe_fake_tok "=", v) |> G.e
 
 let funcbody_to_stmt = function
@@ -448,6 +448,25 @@ let funcbody_to_stmt = function
   | FBExpr e -> G.exprstmt e
   | FBDecl sc -> Block (sc, [], sc) |> G.s
   | FBNothing -> Block (Tok.unsafe_fake_bracket []) |> G.s
+
+let capture_init_exprs (init : capture_init) : expr list =
+  match init with
+  | InitAssign (_, e) -> [ e ]
+  | InitDirect (_, es, _)
+  | InitList (_, es, _) ->
+      es
+
+let capture_initialiser_exprs (captures : captures option) : expr list =
+  match captures with
+  | None -> []
+  | Some { cexplicit; _ } ->
+      cexplicit
+      |> List.concat_map (function
+           | CaptureVar (_, _, _, _, Some init) -> capture_init_exprs init
+           | CaptureVar (_, _, _, _, None)
+           | CaptureThis _
+           | CaptureEllipsis _ ->
+               [])
 
 let has_keyword_attr kwd attrs =
   attrs

@@ -2019,7 +2019,7 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
               fbody = G.FBExpr body;
             }
           in
-          G.Lambda func_def |> G.e
+          G.Lambda (func_def, None) |> G.e
       | `If_exp x -> map_if_expression env x
       | `While_exp (v1, v2, v3, v4, v5) ->
           let while_ = (* "while" *) token env v1 in

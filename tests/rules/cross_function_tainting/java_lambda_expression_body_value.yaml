@@ -1,0 +1,12 @@
+rules:
+  - id: java_lambda_expression_body_value
+    message: the expression body of a lambda is its value
+    languages: [java]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

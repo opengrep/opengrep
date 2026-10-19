@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-field-receiver
+    message: A method called on a field of the receiver reads that field's object, not the receiver
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

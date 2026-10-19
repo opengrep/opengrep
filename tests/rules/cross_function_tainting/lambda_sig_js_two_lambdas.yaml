@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-js-two-lambdas
+    message: Two anonymous lambdas in one function each keep their own signature
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

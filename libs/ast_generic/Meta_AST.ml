@@ -345,9 +345,10 @@ and vof_expr e =
       let v1 = vof_bracket vof_expr v1 in
       let v2 = OCaml.vof_option (vof_wrap OCaml.vof_string) v2 in
       OCaml.VSum ("RegexpTemplate", [ v1; v2 ])
-  | Lambda v1 ->
+  | Lambda (v1, v2) ->
       let v1 = vof_function_definition v1 in
-      OCaml.VSum ("Lambda", [ v1 ])
+      let v2 = OCaml.vof_option vof_captures v2 in
+      OCaml.VSum ("Lambda", [ v1; v2 ])
   | AnonClass v1 ->
       let v1 = vof_class_definition v1 in
       OCaml.VSum ("AnonClass", [ v1 ])
@@ -1293,6 +1294,55 @@ and vof_function_definition
   let bnds = bnd :: bnds in
   OCaml.VDict bnds
 
+and vof_captures { cdefault; cexplicit; clocals } =
+  let bnds = [] in
+  let arg =
+    OCaml.vof_list
+      (fun (id, id_info) -> OCaml.VTuple [ vof_ident id; vof_id_info id_info ])
+      clocals
+  in
+  let bnd = ("clocals", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_list vof_capture cexplicit in
+  let bnd = ("cexplicit", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_option (vof_wrap vof_capture_mode) cdefault in
+  let bnd = ("cdefault", arg) in
+  let bnds = bnd :: bnds in
+  OCaml.VDict bnds
+
+and vof_capture = function
+  | CaptureVar (v0, v1, v2, v3, v4) ->
+      let v0 = OCaml.vof_list vof_attribute v0
+      and v1 = vof_ident v1
+      and v2 = vof_id_info v2
+      and v3 = vof_wrap vof_capture_mode v3
+      and v4 = OCaml.vof_option vof_capture_init v4 in
+      OCaml.VSum ("CaptureVar", [ v0; v1; v2; v3; v4 ])
+  | CaptureThis (v0, v1, v2) ->
+      let v0 = OCaml.vof_list vof_attribute v0
+      and v1 = vof_tok v1
+      and v2 = vof_wrap vof_capture_mode v2 in
+      OCaml.VSum ("CaptureThis", [ v0; v1; v2 ])
+  | CaptureEllipsis v1 ->
+      let v1 = vof_tok v1 in
+      OCaml.VSum ("CaptureEllipsis", [ v1 ])
+
+and vof_capture_init = function
+  | InitAssign (v1, v2) ->
+      let v1 = vof_tok v1 and v2 = vof_expr v2 in
+      OCaml.VSum ("InitAssign", [ v1; v2 ])
+  | InitDirect v1 ->
+      let v1 = vof_bracket (OCaml.vof_list vof_expr) v1 in
+      OCaml.VSum ("InitDirect", [ v1 ])
+  | InitList v1 ->
+      let v1 = vof_bracket (OCaml.vof_list vof_expr) v1 in
+      OCaml.VSum ("InitList", [ v1 ])
+
+and vof_capture_mode = function
+  | ByCopy -> OCaml.VSum ("ByCopy", [])
+  | ByReference -> OCaml.VSum ("ByReference", [])
+
 and vof_parameters v = vof_bracket (OCaml.vof_list vof_parameter) v
 
 and vof_parameter = function
@@ -1581,6 +1631,16 @@ and vof_any = function
   | Params v1 ->
       let v1 = OCaml.vof_list vof_parameter v1 in
       OCaml.VSum ("Params", [ v1 ])
+  | Captures v1 ->
+      let v1 = OCaml.vof_list vof_capture v1 in
+      OCaml.VSum ("Captures", [ v1 ])
+  | BlockLocals v1 ->
+      let v1 =
+        OCaml.vof_list
+          (fun (v1, v2) -> OCaml.VTuple [ vof_ident v1; vof_id_info v2 ])
+          v1
+      in
+      OCaml.VSum ("BlockLocals", [ v1 ])
   | Flds v1 ->
       let v1 = OCaml.vof_list vof_field v1 in
       OCaml.VSum ("Flds", [ v1 ])

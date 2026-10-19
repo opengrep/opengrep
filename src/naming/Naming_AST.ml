@@ -270,13 +270,6 @@ let lookup_nonlocal_scope id scopes =
       let _ = error tok "no outerscope" in
       None
 
-(* for a PHP closure [use]: the variable of the scope enclosing the closure,
- * the file's variables when the closure is at the top level *)
-let lookup_enclosing_scope (s, _) scopes =
-  match !(scopes.blocks) with
-  | _ :: xxs -> lookup s (xxs @ [ !(scopes.global) ])
-  | [] -> None
-
 let has_block_scope (lang : Lang.t) =
   match lang with
   (* These languages don't have block scope *)
@@ -653,16 +646,22 @@ let resolved_name_kind env lang =
           EnclosedVar
       | _ -> raise Impossible)
 
+(* A new variable [id] of kind [kind], for the scope being built; its
+ * [id_info] is set to it. *)
+let new_binding env (kind : resolved_name_kind) (id : ident)
+    (id_info : id_info) (typ : type_ option) : scope_key * scope_info =
+  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
+  let resolved = { entname = (kind, sid); enttype = typ } in
+  set_resolved env id_info resolved;
+  (var_key id, resolved)
+
 (* !also set the id_info of the parameter as a side effect! *)
 let params_of_parameters env params : scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
        | Param { pname = Some id; pinfo = id_info; ptype = typ; _ }
        | ParamReceiver { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
-           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
-           let resolved = { entname = (Parameter, sid); enttype = typ } in
-           set_resolved env id_info resolved;
-           Some (var_key id, resolved)
+           Some (new_binding env Parameter id id_info typ)
        (* Destructuring parameter: the synthetic [parameter_classic]
         * carries a [!!_implicit_param!] binder that needs to be resolved
         * as a regular Parameter, so AST_to_IL can generate a
@@ -671,10 +670,7 @@ let params_of_parameters env params : scope =
         * [visit_function_definition] iterates [x.fparams] inside the
         * function scope and visits each pattern. *)
        | ParamPattern (_pat, { pname = Some id; pinfo = id_info; ptype = typ; _ }) ->
-           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
-           let resolved = { entname = (Parameter, sid); enttype = typ } in
-           set_resolved env id_info resolved;
-           Some (var_key id, resolved)
+           Some (new_binding env Parameter id id_info typ)
        (* Ruby [&callback] block parameter and PHP [&$var] by-reference
         * parameter are both produced as
         * [OtherParam("Ref", [Pa(Param(...))])] by their respective AST
@@ -689,10 +685,7 @@ let params_of_parameters env params : scope =
          when (match env.lang with
                | Lang.Ruby | Lang.Php -> true
                | _ -> false) ->
-           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
-           let resolved = { entname = (Parameter, sid); enttype = typ } in
-           set_resolved env id_info resolved;
-           Some (var_key id, resolved)
+           Some (new_binding env Parameter id id_info typ)
        | _ -> None)
 
 let js_get_angular_constructor_args env attrs defs =
@@ -824,12 +817,17 @@ class ['self] resolve_visitor env lang =
     (* !the defs! *)
     (* ---------- *)
     method! visit_function_definition venv x =
+      self#visit_function_with_captures venv [] x
+
+    (* [captures]: the scope entries of a lambda's captures, see the [Lambda]
+       case of [visit_expr]. *)
+    method private visit_function_with_captures venv (captures : scope) x =
       (* todo: add the function as a Global. In fact we should do a first
        * pass for some languages to add all of them first, because
        * Go for example allow the use of forward function reference
        * (no need to declarare prototype and forward decls as in C).
        *)
-      let new_params = params_of_parameters env x.fparams in
+      let new_params = captures @ params_of_parameters env x.fparams in
       (* A PHP function or closure body sees no enclosing local; a method
          body sees its class's scope, for the class constants; an arrow
          function sees everything. *)
@@ -1066,8 +1064,6 @@ class ['self] resolve_visitor env lang =
             match s with
             | "global" -> lookup_global_scope
             | "nonlocal" -> lookup_nonlocal_scope
-            (* a PHP closure [use ($x)] *)
-            | "use" -> lookup_enclosing_scope
             | _ ->
                 error tok (spf "unrecognized UseOuterDecl directive: %s" s);
                 lookup_global_scope
@@ -1334,6 +1330,22 @@ class ['self] resolve_visitor env lang =
           super#visit_expr venv x;
           declare_var env lang id id_info ~explicit:true (Some e2) None;
           recurse := false
+      | AssignOp ({ e = Container (Tuple, (_, elems, _)); _ }, (Eq, tok), e2)
+        when lang =*= Lang.Go
+             && String.equal (Tok.content_of_tok tok) ":="
+             && is_resolvable_name_ctx env lang ->
+          self#visit_expr venv e2;
+          elems
+          |> List.iter (fun (elem : expr) ->
+                 match (elem.e, !(env.names.blocks)) with
+                 | N (Id (((s, _) as id), id_info)), current :: _
+                   when (not (String.equal s "_"))
+                        && Option.is_none (lookup s [ current ]) ->
+                     declare_var env lang id id_info ~explicit:true None None
+                 | _ ->
+                     Common.save_excursion_unsafe env.in_lvalue true (fun () ->
+                         self#visit_expr venv elem));
+          recurse := false
       | Assign ({ e = N (Id (id, id_info)); _ }, _, e2)
         when Option.is_none (lookup_for_implicit_assign_opt id env)
              && assign_implicitly_declares lang
@@ -1503,6 +1515,42 @@ class ['self] resolve_visitor env lang =
           in
           with_new_function_scope new_params env.names (fun () ->
               self#visit_stmt venv body);
+          recurse := false
+      (* A capture the lambda lists is the variable of that name where the
+       * lambda is written. One with an initialiser, and a block-local
+       * variable, is a new variable of the lambda (the initialiser is
+       * evaluated where the lambda is written). *)
+      | Lambda (fdef, Some { cexplicit; clocals; _ }) ->
+          let captures =
+            cexplicit
+            |> List_.filter_map (function
+                 | CaptureVar (_, id, id_info, (mode, _), None) -> (
+                     match (lookup_scope_opt id env, lang, mode) with
+                     | Some resolved, _, _ ->
+                         set_resolved env id_info resolved;
+                         Some (var_key id, resolved)
+                     (* PHP: [use (&$v)] creates [$v] where the closure is
+                      * written when no variable [$v] exists there. *)
+                     | None, Lang.Php, ByReference ->
+                         declare_var env lang id id_info ~explicit:true None
+                           None;
+                         let* resolved = lookup_scope_opt id env in
+                         Some (var_key id, resolved)
+                     | None, _, _ -> None)
+                 | CaptureVar (_, id, id_info, _, Some init) ->
+                     H.capture_init_exprs init
+                     |> List.iter (self#visit_expr venv);
+                     Some (new_binding env LocalVar id id_info None)
+                 | CaptureThis _
+                 | CaptureEllipsis _ ->
+                     None)
+          in
+          let locals =
+            clocals
+            |> List_.map (fun (id, id_info) ->
+                   new_binding env LocalVar id id_info None)
+          in
+          self#visit_function_with_captures venv (captures @ locals) fdef;
           recurse := false
       | _ -> ());
       if !recurse then super#visit_expr venv x

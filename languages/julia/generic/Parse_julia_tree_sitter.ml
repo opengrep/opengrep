@@ -321,12 +321,12 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
           *)
           ExprStmt
             ( Lambda
-                {
+                ({
                   fkind = (LambdaKind, func_tok);
                   fparams;
                   frettype;
                   fbody = FBStmt body;
-                }
+                }, None)
               |> G.e,
               G.sc )
           |> G.s)
@@ -1232,12 +1232,12 @@ and map_do_clause (env : env) ((v1, v2, v3, v4) : CST.do_clause) =
   let body = map_source_file_stmt env v3 in
   let _v4 = (* "end" *) token env v4 in
   Lambda
-    {
+    ({
       fkind = (LambdaKind, v1);
       fparams = fb fparams;
       frettype = None;
       fbody = FBStmt body;
-    }
+    }, None)
   |> G.e
 
 and map_do_parameter_list (env : env) ((v1, v2) : CST.do_parameter_list) :
@@ -1306,12 +1306,12 @@ and map_operation (env : env) (x : CST.operation) =
       let v2_arrow = (* "->" *) token env v2 in
       let v3 = map_anon_choice_exp_b833738 env v3 in
       Lambda
-        {
+        ({
           fkind = (LambdaKind, v2_arrow);
           fparams;
           frettype = None;
           fbody = FBExpr v3;
-        }
+        }, None)
       |> G.e
   | `Juxt_exp (v1, v2) ->
       (* As far as I can tell, this allows literals like "2x" to be syntactic sugar for

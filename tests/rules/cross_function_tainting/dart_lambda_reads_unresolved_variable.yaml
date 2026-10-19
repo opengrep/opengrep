@@ -1,0 +1,13 @@
+rules:
+  - id: dart_lambda_reads_unresolved_variable
+    message: a lambda captures a variable that naming does not resolve
+    languages:
+      - dart
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

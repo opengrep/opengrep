@@ -1342,12 +1342,12 @@ and map_fn_form
       |> G.s
     in
     G.Lambda
-      {
+      ({
         G.fparams = Tok.unsafe_fake_bracket param_implicit;
         frettype = None;
         fkind = (G.LambdaKind, fn_tok);
         fbody = G.FBStmt body_stmt;
-      }
+      }, None)
     |> G.e
   | _ -> raise_parse_error "Invalid fn form."
 

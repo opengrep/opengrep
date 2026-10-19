@@ -137,6 +137,8 @@ let add_metavars (tbl : ast_node_table) metavars =
       | Raw _
       | Ss _
       | Params _
+      | Captures _
+      | BlockLocals _
       | Xmls _
       | Text _
       | Any _ ->

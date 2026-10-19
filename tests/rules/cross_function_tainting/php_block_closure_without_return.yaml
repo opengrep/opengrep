@@ -1,0 +1,12 @@
+rules:
+  - id: php_block_closure_without_return
+    message: a block body returns a value only through return
+    languages: [php]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

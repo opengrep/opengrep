@@ -146,6 +146,17 @@ val m_list_in_any_order :
   ('a, 'b) general_matcher ->
   ('a list, 'b list) general_matcher
 
+(* As [m_list_in_any_order]; the elements of the second list that no element
+ * of the first matches are bound to [mvar], by [mvalue_of_rest], in their
+ * order in that list: a [$...X] in a list matched in any order. [rest_ok]
+ * constrains them. *)
+val m_list_in_any_order_binding_rest :
+  ?rest_ok:('b list -> bool) ->
+  mvar:Metavariable.mvar AST_generic.wrap ->
+  mvalue_of_rest:('b list -> Metavariable.mvalue) ->
+  ('a, 'b) general_matcher ->
+  ('a list, 'b list) general_matcher
+
 val m_comb_unit : 'a -> 'a comb_result
 (** Unit operation for the comb_result monad. *)
 

@@ -1198,8 +1198,9 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
   | G.Comprehension (a1, a2), B.Comprehension (b1, b2) ->
       let* () = m_container_operator a1 b1 in
       m_bracket m_comprehension a2 b2
-  | G.Lambda a1, B.Lambda b1 ->
-      m_function_definition a1 b1 >>= fun () -> return ()
+  | G.Lambda (a1, a2), B.Lambda (b1, b2) ->
+      let* () = m_function_definition a1 b1 in
+      m_lambda_captures a2 b2
   | G.AnonClass a1, B.AnonClass b1 -> m_class_definition a1 b1
   | G.IdSpecial a1, B.IdSpecial b1 -> m_wrap m_special a1 b1
   (* This is mainly for Go which generates an AssignOp (Eq)
@@ -2492,7 +2493,8 @@ and m_attributes a b =
  * in a function. Here, `a` must come from a return statement.
  *)
 and m_implicit_return (a : G.expr) (b : B.expr) tin =
-  if tin.config.implicit_return && b.is_implicit_return then m_expr_root a b tin
+  if tin.config.implicit_return && G.is_implicitly_returned_in_source b then
+    m_expr_root a b tin
   else fail () tin
 
 (*****************************************************************************)
@@ -3271,19 +3273,15 @@ and m_definition_kind a b =
   | G.EnumEntryDef a1, B.EnumEntryDef b1 -> m_enum_entry_definition a1 b1
   | G.FuncDef a1, B.FuncDef b1 -> m_function_definition a1 b1
   (* iso: FuncDef pattern can match VarDef with Lambda (arrow function) *)
-  | G.FuncDef a1, B.VarDef { B.vinit = Some { e = B.Lambda b1; _ }; _ }
-  | B.VarDef { B.vinit = Some { e = B.Lambda a1; _ }; _ }, G.FuncDef b1  ->
-      if_config
-        (fun x -> x.arrow_is_function)
-        ~then_:(m_function_definition a1 b1)
-        ~else_:(fail ())
+  | G.FuncDef a1, B.VarDef { B.vinit = Some { e = B.Lambda (b1, _); _ }; _ } ->
+      m_function_as_lambda a1 b1
+  | B.VarDef { B.vinit = Some { e = B.Lambda (a1, a2); _ }; _ }, G.FuncDef b1 ->
+      m_lambda_as_function (a1, a2) b1
   (* iso: FuncDef pattern can match FieldDefColon with Lambda (arrow function in object literal) *)
-  | G.FuncDef a1, B.FieldDefColon { B.vinit = Some { e = B.Lambda b1; _ }; _ }
-  | B.FieldDefColon { B.vinit = Some { e = B.Lambda a1; _ }; _ }, G.FuncDef b1 ->  
-      if_config
-        (fun x -> x.arrow_is_function)
-        ~then_:(m_function_definition a1 b1)
-        ~else_:(fail ())
+  | G.FuncDef a1, B.FieldDefColon { B.vinit = Some { e = B.Lambda (b1, _); _ }; _ } ->
+      m_function_as_lambda a1 b1
+  | B.FieldDefColon { B.vinit = Some { e = B.Lambda (a1, a2); _ }; _ }, G.FuncDef b1 ->
+      m_lambda_as_function (a1, a2) b1
   (* In C and C++ a function declaration at file scope is a [FuncDef] whose
      body is [FBDecl], while the same text written as a pattern carries the
      variable shape the conversion gives it everywhere else. *)
@@ -3384,6 +3382,157 @@ and m_function_kind a b =
   else
     (* iso: we don't care if it's a Function or Arrow *)
     if_config (fun x -> x.arrow_is_function) ~then_:(return ()) ~else_:(fail ())
+
+and m_function_as_lambda a b =
+  if_config
+    (fun x -> x.arrow_is_function)
+    ~then_:(m_function_definition a b)
+    ~else_:(fail ())
+
+(* A function declaration has no captures: a lambda pattern stating some
+ * does not match it. *)
+and m_lambda_as_function (a, a_captures) b =
+  let* () = m_function_as_lambda a b in
+  m_lambda_captures a_captures None
+
+(* A pattern without a capture list constrains nothing. A capture list
+ * written in a pattern is the lambda's, in any order: each capture of the
+ * pattern is a distinct capture of the lambda, with the same mode and
+ * initialiser, and the lambda has no other; the same default, none when the
+ * pattern writes none; the same block-local variables. A lambda without a
+ * capture list has none of these. [...] in the pattern's list allows more
+ * captures, more block-local variables and any default the pattern does not
+ * write; so does [$...C], which binds the captures the pattern does not
+ * write, in their order in the lambda, all by reference when the pattern
+ * writes [&$...C], and [$...Y] among block-local variables binds those the
+ * pattern does not write. *)
+and m_lambda_captures a b =
+  match a with
+  | None -> return ()
+  | Some a ->
+      let b =
+        Option.value b
+          ~default:{ B.cdefault = None; cexplicit = []; clocals = [] }
+      in
+      let metavar_ellipsis ((s, _) as mvar : G.ident) : G.ident option =
+        if Mvar.is_metavar_ellipsis s then Some mvar else None
+      in
+      let capture_metavar_ellipsis (capture : G.capture) : G.ident option =
+        match capture with
+        | G.CaptureVar (_, id, _, _, None) -> metavar_ellipsis id
+        | G.CaptureVar _
+        | G.CaptureThis _
+        | G.CaptureEllipsis _ ->
+            None
+      in
+      (* [&$...C]: the captures it binds are all by reference *)
+      let by_reference_rest =
+        a.G.cexplicit
+        |> List.exists (function
+             | G.CaptureVar (_, id, _, (G.ByReference, _), None) ->
+                 Option.is_some (metavar_ellipsis id)
+             | G.CaptureVar _
+             | G.CaptureThis _
+             | G.CaptureEllipsis _ ->
+                 false)
+      in
+      let all_by_reference (captures : G.capture list) : bool =
+        captures
+        |> List.for_all (function
+             | G.CaptureVar (_, _, _, (mode, _), _)
+             | G.CaptureThis (_, _, (mode, _)) -> (
+                 match mode with
+                 | G.ByReference -> true
+                 | G.ByCopy -> false)
+             | G.CaptureEllipsis _ -> false)
+      in
+      let capture_mvars =
+        List_.filter_map capture_metavar_ellipsis a.G.cexplicit
+      in
+      let local_mvars =
+        List_.filter_map (fun (id, _) -> metavar_ellipsis id) a.G.clocals
+      in
+      let has_ellipsis, a_explicit =
+        a.G.cexplicit
+        |> List.filter (fun capture ->
+               Option.is_none (capture_metavar_ellipsis capture))
+        |> has_ellipsis_and_filter_ellipsis_gen (function
+             | G.CaptureEllipsis _ -> true
+             | G.CaptureVar _
+             | G.CaptureThis _ ->
+                 false)
+      in
+      let a_locals =
+        a.G.clocals
+        |> List.filter (fun (id, _) -> Option.is_none (metavar_ellipsis id))
+      in
+      let has_ellipsis =
+        has_ellipsis
+        || not (List.is_empty capture_mvars && List.is_empty local_mvars)
+      in
+      (* the pattern's elements in any order; the lambda's elements left over
+       * bound to the pattern's [$...X], which cannot split them with
+       * another *)
+      let m_in_any_order ?rest_ok ~mvalue_of_rest mvars f xsa xsb =
+        match mvars with
+        | [] -> m_list_in_any_order ~less_is_ok:has_ellipsis f xsa xsb
+        | [ mvar ] ->
+            m_list_in_any_order_binding_rest ?rest_ok ~mvar ~mvalue_of_rest f
+              xsa xsb
+        (* rejected by [Check_pattern] *)
+        | _ :: _ -> fail ()
+      in
+      let m_default =
+        if has_ellipsis then m_option_none_can_match_some else m_option
+      in
+      let* () =
+        m_default (m_wrap m_capture_mode) a.G.cdefault b.B.cdefault
+      in
+      let* () =
+        m_in_any_order
+          ?rest_ok:(if by_reference_rest then Some all_by_reference else None)
+          ~mvalue_of_rest:(fun captures -> MV.Captures captures)
+          capture_mvars m_capture a_explicit b.B.cexplicit
+      in
+      m_in_any_order
+        ~mvalue_of_rest:(fun locals -> MV.BlockLocals locals)
+        local_mvars m_ident_and_id_info a_locals b.B.clocals
+
+and m_capture a b =
+  match (a, b) with
+  | G.CaptureVar (a0, a1, a2, a3, a4), B.CaptureVar (b0, b1, b2, b3, b4) ->
+      let* () = m_attributes a0 b0 in
+      let* () = m_ident_and_id_info (a1, a2) (b1, b2) in
+      let* () = m_capture_mode (fst a3) (fst b3) in
+      (* with an initialiser the capture is a new variable of the lambda *)
+      (m_option m_capture_init) a4 b4
+  | G.CaptureThis (a0, _, a2), B.CaptureThis (b0, _, b2) ->
+      let* () = m_attributes a0 b0 in
+      m_capture_mode (fst a2) (fst b2)
+  | G.CaptureVar _, _
+  | G.CaptureThis _, _
+  | G.CaptureEllipsis _, _ ->
+      fail ()
+
+and m_capture_init a b =
+  match (a, b) with
+  | G.InitAssign (_, a1), B.InitAssign (_, b1) -> m_expr a1 b1
+  | G.InitDirect a1, B.InitDirect b1
+  | G.InitList a1, B.InitList b1 ->
+      m_bracket m_container_ordered_elements a1 b1
+  | G.InitAssign _, _
+  | G.InitDirect _, _
+  | G.InitList _, _ ->
+      fail ()
+
+and m_capture_mode a b =
+  match (a, b) with
+  | G.ByCopy, B.ByCopy
+  | G.ByReference, B.ByReference ->
+      return ()
+  | G.ByCopy, B.ByReference
+  | G.ByReference, B.ByCopy ->
+      fail ()
 
 and m_function_definition a b =
   Trace_matching.(if on then print_function_definition_pair a b);
@@ -4093,6 +4242,8 @@ and m_any a b =
   | G.Name a1, B.Name b1 -> m_name a1 b1
   | G.Args a1, B.Args b1 -> m_list__m_argument a1 b1
   | G.Params a1, B.Params b1 -> m_list m_parameter a1 b1
+  | G.Captures a1, B.Captures b1 -> m_list m_capture a1 b1
+  | G.BlockLocals a1, B.BlockLocals b1 -> m_list m_ident_and_id_info a1 b1
   | G.Xmls a1, B.Xmls b1 -> m_list m_xml_body a1 b1
   | G.Anys a1, B.Anys b1 -> m_list m_any a1 b1
   (* boilerplate *)
@@ -4152,6 +4303,8 @@ and m_any a b =
   | G.Name _, _
   | G.Args _, _
   | G.Params _, _
+  | G.Captures _, _
+  | G.BlockLocals _, _
   | G.Xmls _, _
   | G.ForOrIfComp _, _
   | G.Anys _, _

@@ -334,6 +334,13 @@ end = struct
   }
   [@@deriving show, eq, ord, hash, sexp]
 
+  (* [identity] first: names compared during an analysis mostly share
+     [file], whose comparison walks the whole path. *)
+  let compare a b =
+    match compare_identity a.identity b.identity with
+    | 0 -> String.compare a.file b.file
+    | c -> c
+
   (* Caller supplies the real [file] (single-file lowered program); a placeless
      [Error] token still gets the real file with zeroed position. *)
   let site_of_tok ?name tok =
@@ -763,8 +770,11 @@ and expr = {
   (* used to quickly get the range of an expression *)
   mutable e_range : (Tok.location * Tok.location) option;
       [@equal fun _a _b -> true] [@hash.ignore]
-  (* whether this expression is implicitly a return value in a function *)
-  mutable is_implicit_return : bool; [@hash.ignore]
+  (* whether this expression is implicitly a return value in a function;
+   * a fact of its place, not of the expression, so two expressions that
+   * differ only in it are equal *)
+  mutable implicit_return : implicit_return;
+      [@equal fun _a _b -> true] [@hash.ignore]
   (* known truths about this expression derived from the cfg for when.
    * for example, a fact of foo() in the expression
    *
@@ -783,6 +793,16 @@ and expr = {
 
 and fact = Equal of name * expr | NotEqual of name * expr
 and facts = fact list
+
+(* How an expression is returned without a [return] keyword: by the source,
+ * as the last expression of a block or the expression body of a lambda, or
+ * by a front end's translation of a construct into a lambda it builds, as a
+ * C# query clause ([select e] becomes [x => e]). Search takes only the
+ * first for a written [return]; the IL returns both. *)
+and implicit_return =
+  | Not_returned
+  | Returned
+  | Returned_by_translation
 
 and expr_kind =
   (* basic (atomic) values *)
@@ -886,8 +906,11 @@ and expr_kind =
       * (expr option (* lower *) * expr option (* upper *) * expr option)
         (* step *)
         bracket
-  (* very special value. 'fbody' is usually an FExpr. *)
-  | Lambda of function_definition
+  (* very special value. 'fbody' is usually an FExpr.
+   * The captures are the lambda's capture list as written, [None] when the
+   * source has none: C++ [[...]], PHP and Hack [use (...)], Swift
+   * [[...] in], Rust [move], Ruby block-local variables [|a; b|]. *)
+  | Lambda of function_definition * captures option
   (* also a special value; usually an argument of a New
    * (used in Java/Javascript/Scala/...)
    * TODO: rename as NewAnonClass and add the token for 'new'
@@ -1834,7 +1857,7 @@ and definition_kind =
    * want to access a global we need to disambiguate with creating a new
    * local.
    *)
-  | UseOuterDecl of tok (* 'global' or 'nonlocal' in Python, 'use' in PHP *)
+  | UseOuterDecl of tok (* 'global' or 'nonlocal' in Python, 'global' in PHP *)
   (* e.g., MacroDecl and MacroVar in C++, method alias in Ruby,
    * BitField in C/C++, Event/Modifier in Solidity, impl in Rust
    *)
@@ -1892,6 +1915,44 @@ and function_definition = {
   (* newscope: *)
   fbody : function_body;
 }
+
+(* The variables a closure captures and how, as its capture list states. *)
+and captures = {
+  (* How the variables the closure uses but does not list are captured:
+   * C++ [[=]] and [[&]], Rust [move]. *)
+  cdefault : capture_mode wrap option;
+  cexplicit : capture list;
+  (* The closure's block-local variables, which shadow enclosing ones
+   * instead of capturing them: Ruby [|a; b|]. *)
+  clocals : (ident * id_info) list;
+}
+
+(* The attributes are the capture's modifiers, e.g. Swift [weak], [unowned]. *)
+and capture =
+  (* [[x]], [[&x]]; with an initialiser, [[y = e]] or [[&r = x]], it declares
+   * a new variable of the closure. *)
+  | CaptureVar of
+      attribute list * ident * id_info * capture_mode wrap * capture_init option
+  (* The receiver: C++ [[this]] (by reference) and [[*this]] (a copy of the
+   * object); Swift [[self]]. *)
+  | CaptureThis of attribute list * tok * capture_mode wrap
+  (* sgrep-ext: [...] in a pattern's capture list (C++) or block-local
+   * variables (Ruby [|x; ...|]): the lambda may have more captures, more
+   * block-local variables and a default the pattern does not write. *)
+  | CaptureEllipsis of tok
+
+(* The initialiser of a capture, in the form the source writes it. *)
+and capture_init =
+  (* copy-initialisation: [[y = e]], [[y = {e}]], Swift [[y = e]] *)
+  | InitAssign of tok * expr
+  (* direct-initialisation: C++ [[y(e1, e2)]] *)
+  | InitDirect of expr list bracket
+  (* direct-list-initialisation: C++ [[y{e1, e2}]] *)
+  | InitList of expr list bracket
+
+and capture_mode =
+  | ByCopy
+  | ByReference
 
 (* We don't really care about the function_kind in semgrep, but who
  * knows, maybe one day we will. We care about the token in the
@@ -2265,6 +2326,8 @@ and any =
   | Flds of field list
   | Args of argument list
   | Params of parameter list
+  | Captures of capture list
+  | BlockLocals of (ident * id_info) list
   | Xmls of xml_body list
   | Partial of partial
   | Name of name
@@ -2364,9 +2427,27 @@ let e ekind =
     e = ekind;
     e_id = 0;
     e_range = None;
-    is_implicit_return = false;
+    implicit_return = Not_returned;
     facts = [];
   }
+
+(* [e] is returned without a [return] keyword, by the source or by a front
+ * end's translation: the IL returns it. *)
+let is_implicitly_returned (e : expr) : bool =
+  match e.implicit_return with
+  | Returned
+  | Returned_by_translation ->
+      true
+  | Not_returned -> false
+
+(* The source returns [e] without a [return] keyword: search takes it for a
+ * written [return]. *)
+let is_implicitly_returned_in_source (e : expr) : bool =
+  match e.implicit_return with
+  | Returned -> true
+  | Not_returned
+  | Returned_by_translation ->
+      false
 
 (* directives *)
 let d dkind = { d = dkind; d_attrs = [] }

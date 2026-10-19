@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-go-captured-receiver
+    message: A closure inside a method reads a field of the method's receiver
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

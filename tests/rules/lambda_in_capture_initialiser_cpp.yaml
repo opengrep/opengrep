@@ -1,0 +1,11 @@
+rules:
+  - id: lambda_in_capture_initialiser_cpp
+    message: a lambda in a capture initialiser is analysed as any other
+    languages:
+      - cpp
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

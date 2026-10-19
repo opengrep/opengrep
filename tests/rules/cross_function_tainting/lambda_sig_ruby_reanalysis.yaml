@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-ruby-reanalysis
+    message: A block in a method extracted more than once in a fixpoint finds a flow through a method whose signature a later round gives
+    languages: [ruby]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

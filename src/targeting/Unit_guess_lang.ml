@@ -67,16 +67,13 @@ let contents_tests : (string * Lang.t * string * string * exec * success) list =
     ("crystal exec", Crystal, "hello_cr", "#!/usr/bin/env crystal\n", Exec, OK);
   ]
 
-let mkdir path = if not (Sys.file_exists path) then Unix.mkdir path 0o777
-
 (*
-   Create a temporary file with the specified name, in a local tmp folder.
-   We don't delete the files when we're done because it's easier when
-   troubleshooting tests.
+   Create a temporary file with the specified name, in a temporary folder of
+   its own: tests run in parallel, and several use the same file name.
+   The folder is removed when the test is done.
 *)
 let with_file name contents exec f =
-  let dir = Fpath.v "tmp" in
-  mkdir !!dir;
+  UTmp.with_temp_dir ~prefix:"guess_lang_" @@ fun dir ->
   let path = dir / name in
   let oc = open_out_bin !!path in
   (match exec with

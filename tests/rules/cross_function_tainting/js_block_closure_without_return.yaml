@@ -1,0 +1,12 @@
+rules:
+  - id: js_block_closure_without_return
+    message: a block body returns a value only through return
+    languages: [javascript]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

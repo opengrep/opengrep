@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_block_local_variables
+    message: a block-local variable is the block's own, not the enclosing variable
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

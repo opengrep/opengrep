@@ -382,8 +382,9 @@ and bare_parameters (env : env) ((v1, v2) : CST.bare_parameters) :
   in
   v1 :: v2
 
+(* The parameters and the block-local variables ([|a; b|]). *)
 and block_parameters (env : env) ((v1, v2, v3, v4, v5) : CST.block_parameters) :
-    AST.formal_param list bracket =
+    AST.formal_param list bracket * AST.block_local list =
   let pipe1 = token2 env v1 in
   let v2 =
     match v2 with
@@ -405,16 +406,22 @@ and block_parameters (env : env) ((v1, v2, v3, v4, v5) : CST.block_parameters) :
     | Some _tok -> ()
     | None -> ()
   in
-  let _v4SEMICOLONPARAMS =
+  (* sgrep-ext: in a pattern, '...' is an identifier of the grammar there *)
+  let block_local (tok : CST.identifier) : AST.block_local =
+    match (fst env.extra, str env tok) with
+    | Pattern, ("...", t) -> BlockLocalEllipsis t
+    | (Pattern | Program), id -> BlockLocal id
+  in
+  let block_locals =
     match v4 with
     | Some (v1, v2, v3) ->
         let _v1 = token2 env v1 in
-        let v2 = str env v2 in
+        let v2 = block_local v2 in
         let v3 =
           List_.map
             (fun (v1, v2) ->
               let _v1 = token2 env v1 in
-              let v2 = str env v2 in
+              let v2 = block_local v2 in
               v2)
             v3
         in
@@ -422,7 +429,7 @@ and block_parameters (env : env) ((v1, v2, v3, v4, v5) : CST.block_parameters) :
     | None -> []
   in
   let pipe2 = token2 env v5 in
-  (pipe1, v2, pipe2)
+  ((pipe1, v2, pipe2), block_locals)
 
 and formal_parameter (env : env) (x : CST.formal_parameter) : AST.formal_param =
   match x with
@@ -1341,11 +1348,11 @@ and lambda (env : env) ((v1, v2, v3) : CST.lambda) =
     match v3 with
     | `Blk x -> (
         match block env x with
-        | CodeBlock (_, _, stmts) -> stmts
+        | CodeBlock (_, _, _, stmts) -> stmts
         | other -> [ other ])
     | `Do_blk x -> (
         match do_block env x with
-        | CodeBlock (_, _, stmts) -> stmts
+        | CodeBlock (_, _, _, stmts) -> stmts
         | other -> [ other ])
   in
   Lambda (v1, v2, stmts)
@@ -1988,17 +1995,17 @@ and do_block (env : env) ((v1, v2, v3, v4, v5) : CST.do_block) : AST.expr =
     | Some x -> terminator env x
     | None -> ()
   in
-  let params_opt =
+  let params_opt, block_locals =
     match v3 with
     | Some (v1, v2) ->
-        let v1 = block_parameters env v1 |> Tok.unbracket in
+        let params, block_locals = block_parameters env v1 in
         let _v2 =
           match v2 with
           | Some x -> terminator env x
           | None -> ()
         in
-        Some v1
-    | None -> None
+        (Some (Tok.unbracket params), block_locals)
+    | None -> (None, [])
   in
   (* We do this _to_exprs thing instead of calling just body_statements because
      we don't want to wrap the contents of this block in yet another block.
@@ -2010,14 +2017,16 @@ and do_block (env : env) ((v1, v2, v3, v4, v5) : CST.do_block) : AST.expr =
     | Some v4 -> body_statement_to_exprs env v4
   in
   let tend = (* "tend" *) token2 env v5 in
-  CodeBlock ((tdo, false, tend), params_opt, exprs)
+  CodeBlock ((tdo, false, tend), params_opt, block_locals, exprs)
 
 and block (env : env) ((v1, v2, v3, v4) : CST.block) =
   let lb = token2 env v1 in
-  let params_opt =
+  let params_opt, block_locals =
     match v2 with
-    | Some x -> Some (block_parameters env x |> Tok.unbracket)
-    | None -> None
+    | Some x ->
+        let params, block_locals = block_parameters env x in
+        (Some (Tok.unbracket params), block_locals)
+    | None -> (None, [])
   in
   let v3 =
     match v3 with
@@ -2025,7 +2034,7 @@ and block (env : env) ((v1, v2, v3, v4) : CST.block) =
     | None -> []
   in
   let rb = token2 env v4 in
-  CodeBlock ((lb, true, rb), params_opt, v3)
+  CodeBlock ((lb, true, rb), params_opt, block_locals, v3)
 
 and assignment (env : env) (x : CST.assignment) =
   match x with

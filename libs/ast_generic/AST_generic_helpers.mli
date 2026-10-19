@@ -43,6 +43,14 @@ val funcdef_to_lambda :
 
 val funcbody_to_stmt : AST_generic.function_body -> AST_generic.stmt
 
+val capture_init_exprs : AST_generic.capture_init -> AST_generic.expr list
+(** The expressions of a capture's initialiser. *)
+
+val capture_initialiser_exprs :
+  AST_generic.captures option -> AST_generic.expr list
+(** The expressions of the initialisers of a lambda's captures, which are
+    evaluated where the lambda is created. *)
+
 (* name building *)
 
 val name_of_id : ?case_insensitive:bool -> ?hidden:bool -> AST_generic.ident -> AST_generic.name

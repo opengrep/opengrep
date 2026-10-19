@@ -774,8 +774,40 @@ type function_definition = {
   fkind: function_kind wrap_;
   fparams: parameters;
   frettype: type_ nullable; (* return type *)
+  (* only on a Lambda: its capture list as written, C++ [...], PHP and Hack
+   * use (...), Swift [...] in, Rust move, Ruby |a; b| (in AST_generic, the
+   * Lambda's captures) *)
+  ?fcaptures: captures option;
   fbody: function_body;
 }
+
+type captures = {
+  ?cdefault: capture_mode wrap_ option;
+  cexplicit: capture list;
+  (* Ruby block-local variables |a; b| *)
+  clocals: (ident * id_info) list;
+}
+
+type capture = [
+  | CaptureVar of
+      (attribute list * ident * id_info * capture_mode wrap_
+       * capture_init nullable)
+  | CaptureThis of (attribute list * tok * capture_mode wrap_)
+  (* ... in a pattern *)
+  | CaptureEllipsis of tok
+]
+
+(* the form of the initialiser: = e, (e...), {e...} *)
+type capture_init = [
+  | InitAssign of (tok * expr)
+  | InitDirect of expr list bracket
+  | InitList of expr list bracket
+]
+
+type capture_mode = [
+  | ByCopy
+  | ByReference
+]
 
 type function_kind = [
   | Function
@@ -1007,6 +1039,7 @@ type any = [
   | Fld of field
   | Ar of argument
   | Pa of parameter
+  | Capture of capture
   | Ta of type_argument
   | Tp of type_parameter
   | Ce of catch_exn

@@ -502,7 +502,7 @@ and v_expr e : G.expr =
       G.Assign (v1, v2, v3) |> G.e
   | Lambda v1 ->
       let v1 = v_function_definition v1 in
-      G.Lambda v1 |> G.e
+      G.Lambda (v1, None) |> G.e
   | New (v1, v2) -> (
       let v1 = v_tok v1 and v2 = v_template_definition v2 in
       match v2 with
@@ -535,7 +535,7 @@ and v_expr e : G.expr =
       let lb, kind, _rb = v_block_expr v1 in
       match kind with
       | Either.Left stats -> expr_of_block stats
-      | Either.Right cases -> G.Lambda (cases_to_lambda lb cases) |> G.e)
+      | Either.Right cases -> G.Lambda (cases_to_lambda lb cases, None) |> G.e)
   (* TODO: should move Match under S in ast_scala.ml *)
   | Match (v1, v2, v3) ->
       let v1 = v_expr v1
@@ -575,7 +575,7 @@ and v_arguments = function
       match kind with
       | Either.Left stats -> (lb, [ G.Arg (expr_of_block stats) ], rb)
       | Either.Right cases ->
-          (lb, [ G.Arg (G.Lambda (cases_to_lambda lb cases) |> G.e) ], rb))
+          (lb, [ G.Arg (G.Lambda (cases_to_lambda lb cases, None) |> G.e) ], rb))
 
 and v_argument ?(is_using = false) v =
   let v = v_expr v in
@@ -1104,7 +1104,7 @@ and v_fbody body : G.function_body =
           G.FBStmt st
       | Either.Right cases ->
           let def = cases_to_lambda lb cases in
-          G.FBExpr (G.Lambda def |> G.e))
+          G.FBExpr (G.Lambda (def, None) |> G.e))
   | FExpr (v1, v2) ->
       let _v1 = v_tok v1 and v2 = v_expr v2 in
       G.FBExpr v2

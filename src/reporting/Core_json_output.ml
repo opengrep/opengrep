@@ -46,12 +46,16 @@ let range_of_any_opt startp_of_match_range any =
    *)
   | Ss []
   | Params []
+  | Captures []
+  | BlockLocals []
   | Args []
   | Xmls [] ->
       Some empty_range
   (* TODO? Flds [] ? Pr []? *)
   | Ss _
   | Params _
+  | Captures _
+  | BlockLocals _
   | Args _
   | Xmls _
   | E _

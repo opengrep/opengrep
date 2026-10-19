@@ -1,0 +1,13 @@
+rules:
+  - id: go_lambda_reads_unresolved_short_variable
+    message: a lambda captures a variable that naming does not resolve
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

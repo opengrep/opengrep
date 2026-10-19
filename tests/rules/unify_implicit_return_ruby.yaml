@@ -1,0 +1,10 @@
+rules:
+  - id: unify_implicit_return_ruby
+    message: the same expression twice
+    languages:
+      - ruby
+    severity: WARNING
+    pattern: |
+      g($E)
+      ...
+      $E

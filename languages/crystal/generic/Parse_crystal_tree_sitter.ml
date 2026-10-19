@@ -879,11 +879,11 @@ and map_block_arg env = function
   | `Brace (l, params, body, r) ->
       let body = Option.value ~default:[] (Option.map (map_statements env) body) in
       let fparams = map_block_params env params in
-      G.Arg (G.Lambda { fkind = (G.LambdaKind, token env l); fparams; frettype = None; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) } |> G.e)
+      G.Arg (G.Lambda ({ fkind = (G.LambdaKind, token env l); fparams; frettype = None; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) }, None) |> G.e)
   | `Do (l, params, body, _rescue, r) ->
       let body = Option.value ~default:[] (Option.map (map_statements env) body) in
       let fparams = map_block_params env params in
-      G.Arg (G.Lambda { fkind = (G.LambdaKind, token env l); fparams; frettype = None; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) } |> G.e)
+      G.Arg (G.Lambda ({ fkind = (G.LambdaKind, token env l); fparams; frettype = None; fbody = G.FBStmt (G.Block (token env l, body, token env r) |> G.s) }, None) |> G.e)
 
 and map_block_params env = function
   | None -> fb []

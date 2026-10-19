@@ -378,12 +378,12 @@ and expr e =
       let fparams = parameters v1 in
       let v2 = stmt v2 in
       G.Lambda
-        {
+        ({
           G.fparams = fb fparams;
           frettype = None;
           fbody = G.FBStmt v2;
           fkind = (G.Arrow, t);
-        }
+        }, None)
   | SwitchE (v0, v1, v2) ->
       let v0 = info v0 in
       let v1 = expr v1

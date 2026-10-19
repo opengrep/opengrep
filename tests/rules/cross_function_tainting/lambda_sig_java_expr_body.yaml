@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-sig-java-expr-body
+    message: An expression-bodied lambda returns its expression
+    languages: [java]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

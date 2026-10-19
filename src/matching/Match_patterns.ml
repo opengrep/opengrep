@@ -723,6 +723,8 @@ let check ~hook ?(has_as_metavariable = false) ?mvar_context
            | XmlAt pattern -> Stack_.push (pattern, rule) xml_attribute_rules
            | Args _
            | Params _
+           | Captures _
+           | BlockLocals _
            | Xmls _
            | I _
            | Str _
