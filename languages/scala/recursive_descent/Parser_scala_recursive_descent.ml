@@ -488,7 +488,8 @@ let rec getLastIndentationRegion sepRegions =
 let startsNewLine in_ =
   let rec loop = function
     | Nl _ :: _
-    | NEWLINE _ :: _ ->
+    | NEWLINE _ :: _
+    | NEWLINES _ :: _ ->
         true
     | Space _ :: rest
     | Comment _ :: rest
@@ -861,9 +862,7 @@ let nextToken in_ =
      (* CHECK: scala3: "Line starts with an operator that in future" *)
      && not (isLeadingInfixOperator in_)
    then
-     match () with
-     (* STILL?: | _ when pastBlankLine in_ -> insertNL ~newlines:true in_ *)
-     | _ -> insertNL in_
+     insertNL ~newlines:(pastBlankLine in_) in_
    else
      (* Determine if this next token should emit an INDENT or DEDENT *)
      (* According to the Dotty compiler, emitting a NEWLINE is exclusive with
@@ -3735,7 +3734,8 @@ and annotations ~skipNewLines in_ : annotation list =
          readAnnots
            (fun iat in_ ->
              let t, args = annotationExpr in_ in
-             if skipNewLines then newLineOpt in_;
+             (* also a blank line, as in Scala 2 *)
+             if skipNewLines then newLinesOpt in_;
              (iat, t, args))
            in_)
 
@@ -4077,7 +4077,8 @@ let modifiers in_ =
      *)
     | ID_LOWER _ when is_modifier in_ ->
         loop (List.rev (localModifiers in_) @ mods)
-    | NEWLINE _ ->
+    | NEWLINE _
+    | NEWLINES _ ->
         nextToken in_;
         loop mods
     | _ -> List.rev mods
@@ -4755,7 +4756,8 @@ let extMethodsInner in_ : ext_method list =
   List.rev !exts
 
 let extMethods in_ =
-  newLineOpt in_;
+  (* Parsers.scala, observeIndented: a blank line may precede the methods *)
+  newLinesOpt in_;
   opportunisticIndent in_;
   if Option.is_some (passedIndent in_) || in_.token =~= LBRACE ab then
     let _, x, _ = inBracesOrIndented extMethodsInner in_ in
