@@ -3082,6 +3082,10 @@ and parseFor in_ : stmt =
         let e = expr in_ in
         (* ast: gen.mkFor(enums, gen.Yield(expr())) *)
         Yield (ii, e)
+    (* Scala 3: `for enums do expr` *)
+    | Kdo _ ->
+        nextToken in_;
+        NoYield (expr in_)
     | _ ->
         let e = expr in_ in
         (* ast: gen.mkFor(enums, expr()) *)
