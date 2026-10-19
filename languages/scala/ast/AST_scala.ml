@@ -649,3 +649,12 @@ let is_variable_name s =
 
 let basic_param id =
   { p_name = id; p_type = None; p_attrs = []; p_default = None }
+
+(* the type parameters of two clauses as one clause, the first ones first *)
+let concat_type_params (xs : 'a list bracket option)
+    (ys : 'a list bracket option) : 'a list bracket option =
+  match (xs, ys) with
+  | Some (lb, xs, rb), Some (_, ys, _) -> Some (lb, xs @ ys, rb)
+  | None, tparams
+  | tparams, None ->
+      tparams
