@@ -3703,17 +3703,31 @@ let exportClause in_ : import =
    So in order to identify if it is a modifier, we need an extra lookahead.
 *)
 let is_modifier in_ =
-  let next_is_soft_modifier_follower =
-    lookingAhead (fun in_ -> TH.isSoftModifierFollower in_.token) in_
+  (* soft modifiers and newlines may come between the soft modifier and the
+     hard modifier or definition keyword that follows it *)
+  let rec followed_by_modifier_or_definition (in_ : env) =
+    match in_.token with
+    | NEWLINE _
+    | NEWLINES _ ->
+        nextToken in_;
+        followed_by_modifier_or_definition in_
+    | tok when TH.isSoftModifier tok ->
+        nextToken in_;
+        followed_by_modifier_or_definition in_
+    | Kcase _ ->
+        lookingAhead
+          (fun (in_ : env) ->
+            match in_.token with
+            | Kclass _
+            | Kobject _ ->
+                true
+            | _ -> false)
+          in_
+    | tok -> TH.isSoftModifierFollower tok
   in
   TH.isModifier in_.token
-  ||
-  match in_.token with
-  | ID_LOWER ("inline", _)
-  | ID_LOWER ("opaque", _)
-  | ID_LOWER ("open", _) ->
-      next_is_soft_modifier_follower
-  | __else__ -> false
+  || TH.isSoftModifier in_.token
+     && lookingAhead followed_by_modifier_or_definition in_
 
 (* coupling: TH.isLocalModifier *)
 let modifier_of_isLocalModifier_opt in_ =
@@ -3726,6 +3740,8 @@ let modifier_of_isLocalModifier_opt in_ =
   | ID_LOWER ("inline", ii) when is_modifier in_ -> Some (Inline, ii)
   | ID_LOWER ("open", ii) when is_modifier in_ -> Some (Open, ii)
   | ID_LOWER ("opaque", ii) when is_modifier in_ -> Some (Opaque, ii)
+  | ID_LOWER ("transparent", ii) when is_modifier in_ -> Some (Transparent, ii)
+  | ID_LOWER ("infix", ii) when is_modifier in_ -> Some (InfixModifier, ii)
   | _ -> None
 
 (** {{{
@@ -4653,7 +4669,9 @@ let blockStatSeqInner (location : location) in_ : top_stat option =
       let res = I x in
       acceptStatSepOptOrEndCase in_;
       Some res
-  | t when isDefIntro in_ || TH.isLocalModifier t || TH.isAnnotation t ->
+  | t
+    when isDefIntro in_ || TH.isLocalModifier t || TH.isAnnotation t
+         || (TH.isSoftModifier t && is_modifier in_) ->
       let res =
         match in_.token with
         | Kimplicit ii ->

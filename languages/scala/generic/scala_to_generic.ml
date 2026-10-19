@@ -853,6 +853,8 @@ and v_modifier_kind = function
   | Inline -> Either.Right "inline"
   | Open -> Either.Right "open"
   | Opaque -> Either.Right "opaque"
+  | Transparent -> Either.Right "transparent"
+  | InfixModifier -> Either.Right "infix"
   | CaseClassOrObject -> Either.Left G.RecordClass
   | PackageObject -> Either.Right "PackageObject"
   | Val -> Either.Left G.Const
