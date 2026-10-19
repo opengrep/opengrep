@@ -27,7 +27,7 @@ opam init --no-setup --bare
 # brew uninstall --force semgrep
 brew uninstall --force tree-sitter
 
-SWITCH_NAME="${1:-5.5.0}"
+SWITCH_NAME="${1:-5.5.1}"
 
 #coupling: this should be the same version as ocaml_version in .github/workflows/build-test-osx.yml
 if opam switch "${SWITCH_NAME}" 2>/dev/null; then
