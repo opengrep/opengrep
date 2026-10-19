@@ -319,6 +319,15 @@ and v_type_kind = function
   | TyTuple v1 ->
       let v1 = v_bracket (v_list v_type_) v1 in
       G.TyTuple v1
+  | TyNamedTuple v1 ->
+      let ((lp, _, _) as fields) =
+        v1
+        |> v_bracket
+             (v_list (fun ((id, ty) : ident * type_) ->
+                  G.basic_field (v_ident id) None (Some (v_type_ ty))))
+      in
+      (* no keyword marks the kind, so its token is a fake one at the `(` *)
+      G.TyRecordAnon ((G.Class, Tok.fake_tok lp ""), fields)
   | TyRepeated (v1, v2) ->
       let v1 = v_type_ v1 and v2 = v_tok v2 in
       todo_type "TyRepeated" [ G.T v1; G.Tk v2 ]
@@ -398,6 +407,11 @@ and v_pattern = function
   | PatTuple v1 ->
       let v1 = v_bracket (v_list v_pattern) v1 in
       G.PatTuple v1
+  | PatNamed (v1, _v2, v3) ->
+      (* the name selects an element and binds nothing, so the key is a
+         literal, which the IL lowers to a field offset *)
+      let v1 = v_ident v1 and v3 = v_pattern v3 in
+      G.PatKeyVal (G.PatLiteral (G.String (fb v1)), v3)
   | PatVarid v1 ->
       let v1 = v_varid_or_wildcard v1 in
       G.PatId (v1, G.empty_id_info ())
@@ -470,6 +484,13 @@ and v_expr e : G.expr =
   | Tuple v1 ->
       let v1 = v_bracket (v_list v_expr) v1 in
       G.Container (G.Tuple, v1) |> G.e
+  (* a named tuple is a record of its elements *)
+  | NamedTuple v1 ->
+      v1
+      |> v_bracket
+           (v_list (fun ((id, _, e) : ident * tok * expr) ->
+                G.basic_field (v_ident id) (Some (v_expr e)) None))
+      |> fun fields -> G.Record fields |> G.e
   | Name v1 ->
       let sref, ids = v_path v1 in
       let start =
