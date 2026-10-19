@@ -4166,8 +4166,10 @@ let param _owner implicitmod _caseParam in_ : binding =
            (* crazy?: if owner.isTypeName *)
            let xs = modifiers in_ in
            let inline =
-             match in_.token with
-             | ID_LOWER ("inline", ii) ->
+             match (in_.token, in_next_token in_.rest) with
+             (* followed by `:`, `inline` is the parameter's identifier *)
+             | ID_LOWER ("inline", _), Some (COLON _) -> []
+             | ID_LOWER ("inline", ii), _ ->
                  nextToken in_;
                  [ (Inline, ii) ]
              | _ -> []
@@ -4810,9 +4812,32 @@ let isExtensionStart (in_ : env) : bool =
       | _ -> false)
   | _ -> false
 
+(* `enum` is a Scala 3 keyword and a Scala 2 identifier: it starts an enum
+   definition only when the identifier of the enum follows, and then the end
+   of the line or what can follow the identifier of a class, as in
+   `enum Color {` or `enum -->[A, B] {`. `enum max 1` and `enum + 1` are
+   Scala 2 expressions. *)
+let isDefIntro (in_ : env) : bool =
+  match in_.token with
+  | ID_LOWER ("enum", _) -> (
+      match skip_trivia ~newlines:false in_.rest with
+      | (ID_LOWER _ | ID_UPPER _ | ID_BACKQUOTED _ | OP _) :: rest -> (
+          match skip_trivia ~newlines:false rest with
+          | []
+          | ( Nl _ | SEMI _ | EOF _ | RBRACE _ | LBRACKET _ | LPAREN _
+            | LBRACE _ | COLON _ | Kextends _ | Kprivate _ | Kprotected _
+            | AT _
+            | ID_LOWER ("derives", _) )
+            :: _ ->
+              true
+          | _ -> false)
+      | _ -> false)
+  | tok -> TH.isDefIntro tok
+
 let isTemplateStatIntroSoftKeyword (in_ : env) : bool =
   match in_.token with
   | ID_LOWER ("extension", _) -> isExtensionStart in_
+  | ID_LOWER ("enum", _) -> isDefIntro in_
   | ID_LOWER ("end", _) -> isEndMarker in_
   | tok -> TH.isTemplateStatIntroSoftKeyword tok
 
@@ -4925,7 +4950,7 @@ let blockStatSeqInner (location : location) in_ : top_stat option =
       let res = I x in
       acceptStatSepOptOrEndCase in_;
       Some res
-  | t when TH.isDefIntro t || TH.isLocalModifier t || TH.isAnnotation t ->
+  | t when isDefIntro in_ || TH.isLocalModifier t || TH.isAnnotation t ->
       let res =
         match in_.token with
         | Kimplicit ii ->
@@ -5070,7 +5095,7 @@ let templateStat in_ : template_stat option =
   | ID_LOWER ("extension", _) when isExtensionStart in_ ->
       let x = extension in_ in
       Some (Ext x)
-  | t when TH.isDefIntro t || is_modifier in_ || TH.isAnnotation t ->
+  | t when isDefIntro in_ || is_modifier in_ || TH.isAnnotation t ->
       let x = nonLocalDefOrDcl in_ in
       Some (D x)
   | t when TH.isExprIntro t ->
@@ -5118,7 +5143,7 @@ let topStat in_ : top_stat option =
   (* This used to be a TmplDef, but in Scala 3, this can actually be any Def.
      Def is a superset of TmplDef anyways, so we lose nothing here.
   *)
-  | t when TH.isAnnotation t || TH.isDefIntro t || is_modifier in_ ->
+  | t when TH.isAnnotation t || isDefIntro in_ || is_modifier in_ ->
       let x = nonLocalDefOrDcl in_ in
       Some (D x)
   | _ -> None

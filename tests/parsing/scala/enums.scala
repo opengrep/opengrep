@@ -21,3 +21,9 @@ enum Foo {
   case A[+T] @foo private (x : Int) (y : Int) extends Foo (3, 4, 5) with Bar (3, 4, 5)
   case A, B, C
 }
+
+object SymbolicEnum {
+  enum =:=[A, B] {
+    case Refl[C]() extends (C =:= C)
+  }
+}
