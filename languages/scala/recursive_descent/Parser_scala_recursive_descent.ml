@@ -5770,7 +5770,8 @@ let compilationUnit in_ : top_stat list =
                 (* ast: makePackaging(pkg, xs) *)
                 ts ++= List.rev xs
             | _ ->
-                let xs = inBraces topStatSeq in_ in
+                (* Scala 3: `package p:` and an indented body *)
+                let xs = inBracesOrColonIndented topStatSeq in_ in
                 let pack = Packaging ((ipackage, pkg), xs) in
                 (* ast: makePackaging(pkg, xs) *)
                 ts += pack;
