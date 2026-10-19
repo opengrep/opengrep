@@ -23,6 +23,7 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Constructor -> []
   (* a single-type import imports a type *)
   | Class
+  | Interface
   | Type_definition
   | Type_alias
   | Type_parameter
@@ -36,7 +37,8 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
 let searched_by : Lang_namespaces.use_position -> t list list = function
   | Callee -> [ [ Method ] ]
   | Type_position
-  | Elaborated_type ->
+  | Elaborated_type
+  | Base_class ->
       [ [ Type ] ]
   | Expression
   | Qualifier ->

@@ -15,6 +15,7 @@ let variables = Ordinary
 
 let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Class
+  | Interface
   | Type_definition ->
       [ Class_or_enumeration ]
   (* a constructor has no name: the name in its declaration is the class's
@@ -39,7 +40,8 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   | Expression
   | Callee
   | Type_position
-  | Name ->
+  | Name
+  | Base_class ->
       [ [ Ordinary; Class_or_enumeration ] ]
 
 let class_rebinds_import = true

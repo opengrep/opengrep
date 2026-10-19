@@ -24,6 +24,7 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Constructor -> []
   (* a using alias refers to a namespace or a type *)
   | Class
+  | Interface
   | Type_definition
   | Type_alias
   | Type_parameter
@@ -38,7 +39,8 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
       [ [ Variable; Type ] ]
   | Type_position
   | Elaborated_type
-  | Qualifier ->
+  | Qualifier
+  | Base_class ->
       [ [ Type ] ]
   (* an attribute refers to a type *)
   | Name -> [ [ Type ]; [ Variable ] ]

@@ -378,7 +378,8 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
   and type_position = groups Type_position
   and elaborated_type = groups Elaborated_type
   and qualifier = groups Qualifier
-  and name = groups Name in
+  and name = groups Name
+  and base_class = groups Base_class in
   {
     variables = N.namespace_hash N.variables;
     of_definition =
@@ -391,7 +392,8 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
       | Type_position -> type_position
       | Elaborated_type -> elaborated_type
       | Qualifier -> qualifier
-      | Name -> name);
+      | Name -> name
+      | Base_class -> base_class);
     class_rebinds_import = N.class_rebinds_import;
     class_in_scope_in_its_definition = N.class_in_scope_in_its_definition;
   }
@@ -1050,6 +1052,12 @@ let function_definition_kind (env : env) (entity : entity) :
     | InFunction ->
         Function
 
+let class_definition_kind (def : class_definition) :
+    Lang_namespaces.definition_kind =
+  match def.ckind with
+  | Interface, _ -> Interface
+  | (Class | Trait | Object), _ -> Class
+
 let type_definition_kind (def : type_definition) :
     Lang_namespaces.definition_kind =
   match def.tbody with
@@ -1077,8 +1085,8 @@ let declare_class_members env lang (c : class_definition) : unit =
              when env.function_namespace ->
                declare_func env lang (function_definition_kind env entity) id
                  id_info frettype
-           | DefStmt (entity, ClassDef _) ->
-               declare_class_or_type env lang entity Class
+           | DefStmt (entity, ClassDef def) ->
+               declare_class_or_type env lang entity (class_definition_kind def)
            | DefStmt (entity, TypeDef def) ->
                declare_class_or_type env lang entity (type_definition_kind def)
            | _ -> ())
@@ -1181,7 +1189,8 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       match x with
      | { attrs; _ } as entity, ClassDef c ->
           declare_unit_struct env lang entity;
-          with_class_or_type_binding env lang entity Class (fun () ->
+          with_class_or_type_binding env lang entity (class_definition_kind c)
+            (fun () ->
               let class_params = params_of_parameters env c.cparams in
               with_new_context InClass env (fun () ->
                   let special_class_params =
@@ -1878,6 +1887,24 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
           Common.save_excursion_unsafe env.in_type true (fun () ->
               super#visit_type_ venv x)
 
+    method! visit_class_definition venv x =
+      match x.ckind with
+      | Interface, _ -> super#visit_class_definition venv x
+      | (Class | Trait | Object), _ ->
+          x.cextends
+          |> List.iter (fun ((parent, args) : class_parent) ->
+                 match parent.t with
+                 | TyN (Id (id, id_info)) ->
+                     Common.save_excursion_unsafe env.in_type true (fun () ->
+                         List.iter (self#visit_attribute venv) parent.t_attrs;
+                         if Option.is_none !(id_info.id_resolved) then
+                           lookup_position_opt ~class_attr:false Base_class id
+                             env
+                           |> Option.iter (set_resolved env id_info));
+                     Option.iter (self#visit_arguments venv) args
+                 | _ -> self#visit_class_parent venv (parent, args));
+          super#visit_class_definition venv { x with cextends = [] }
+
     (* TODO: support other types of statements that create block scopes. *)
     method! visit_stmt venv x =
       match x.s with
@@ -1920,6 +1947,7 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   | Lang.C -> (module Namespaces_c)
   | Lang.Cpp -> (module Namespaces_cpp)
   | Lang.Csharp -> (module Namespaces_csharp)
+  | Lang.Ts -> (module Namespaces_typescript)
   | Lang.Go -> (module Lang_namespaces.Single)
   | Lang.Python
   | Lang.Python2

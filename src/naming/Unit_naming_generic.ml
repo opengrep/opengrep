@@ -215,6 +215,7 @@ let tests parse_program =
             ("csharp", "cs");
             ("kotlin", "kt");
             ("rust", "rs");
+            ("typescript", "ts");
           ]
           |> List.concat_map (fun ((dir, extension) : string * string) ->
                  Common2.glob
@@ -871,4 +872,100 @@ let tests parse_program =
                        "%s: expected two type uses and one expression use of lv, \
                         which refers to the variable, found %d and %d"
                        path (List.length types) (List.length expressions)));
+      t "typescript type refers to the interface, expression to the const of \
+         the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/interface_and_const.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match
+            ( def_sids_of_name ast "Shape",
+              type_resolutions_of_name ast "Shape",
+              resolutions_of_name ast "Shape" )
+          with
+          | ( [ constant; interface ],
+              [ Some (_, type_use) ],
+              [ Some (_, expression_use) ] ) ->
+              Alcotest.(check bool) "the const and the interface are distinct"
+                false
+                (AST_generic.SId.equal constant interface);
+              Alcotest.(check bool) "the type refers to the interface" true
+                (AST_generic.SId.equal interface type_use);
+              Alcotest.(check bool) "the expression refers to the const" true
+                (AST_generic.SId.equal constant expression_use)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, a resolved type use and a resolved \
+                 expression use of Shape, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "typescript class is referred to as a type and as a value" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/class_value_and_type.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match
+            ( def_sids_of_name ast "Point",
+              type_resolutions_of_name ast "Point",
+              resolutions_of_name ast "Point" )
+          with
+          | [ class_ ], [ Some (_, type_use) ], [ Some (_, construction) ] ->
+              Alcotest.(check bool) "the type refers to the class" true
+                (AST_generic.SId.equal class_ type_use);
+              Alcotest.(check bool) "new Point() refers to the class" true
+                (AST_generic.SId.equal class_ construction)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected one definition, a resolved type use and a resolved \
+                 expression use of Point, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "typescript class heritage refers to the const of its name" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/class_extends_variable.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match (def_sids_of_name ast "Base", type_resolutions_of_name ast "Base") with
+          | [ constant ], [ Some (_, parent) ] ->
+              Alcotest.(check bool) "the parent refers to the const" true
+                (AST_generic.SId.equal constant parent)
+          | definitions, parents ->
+              Alcotest.failf
+                "expected one definition and a resolved parent Base, found %d \
+                 and %d"
+                (List.length definitions) (List.length parents));
+      t "typescript interface heritage refers to the interface, not the const \
+         of its name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/interface_extends_interface.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match
+            (def_sids_of_name ast "Shape", type_resolutions_of_name ast "Shape")
+          with
+          | [ constant; interface ], [ Some (_, parent) ] ->
+              Alcotest.(check bool) "the const and the interface are distinct"
+                false
+                (AST_generic.SId.equal constant interface);
+              Alcotest.(check bool) "the parent refers to the interface" true
+                (AST_generic.SId.equal interface parent)
+          | definitions, parents ->
+              Alcotest.failf
+                "expected two definitions and a resolved parent Shape, found %d \
+                 and %d"
+                (List.length definitions) (List.length parents));
     ]

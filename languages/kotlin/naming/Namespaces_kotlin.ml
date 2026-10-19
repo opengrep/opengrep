@@ -19,6 +19,7 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Constructor ->
       [ Function ]
   | Class
+  | Interface
   | Type_definition
   | Type_alias
   | Type_parameter
@@ -31,7 +32,8 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   (* a function or a constructor is chosen before the invoke of a variable *)
   | Callee -> [ [ Function; Classifier ]; [ Variable ] ]
   | Type_position
-  | Elaborated_type ->
+  | Elaborated_type
+  | Base_class ->
       [ [ Classifier ] ]
   | Expression
   | Qualifier ->

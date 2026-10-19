@@ -17,6 +17,7 @@
    parser_java.naming
    parser_kotlin.naming
    parser_python.naming
+   parser_typescript.naming
  )
  (preprocess
     (pps

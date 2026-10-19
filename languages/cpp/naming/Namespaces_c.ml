@@ -14,6 +14,7 @@ let variables = Ordinary
 
 let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Class
+  | Interface
   | Type_definition ->
       [ Tag ]
   | Function
@@ -32,7 +33,8 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   | Callee
   | Type_position
   | Qualifier
-  | Name ->
+  | Name
+  | Base_class ->
       [ [ Ordinary ] ]
 
 let class_rebinds_import = true

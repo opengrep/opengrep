@@ -12,6 +12,7 @@ type definition_kind =
   | Method (* in a class body *)
   | Constructor (* a function the front end marks with [KeywordAttr Ctor] *)
   | Class
+  | Interface
   | Type_definition (* a type of its own: an enumeration, a record, a variant *)
   | Type_alias (* another name for a type, as a C typedef *)
   | Type_parameter
@@ -25,6 +26,7 @@ type use_position =
   | Type_position (* in a type *)
   | Elaborated_type (* in a type with its keyword, as [struct s] in C *)
   | Qualifier (* the first part of a qualified name *)
+  | Base_class (* a parent of a class other than an interface *)
   | Name (* any other place: a constructor, an attribute *)
 
 module type NAMESPACES = sig
@@ -79,6 +81,7 @@ module Single_without_type_bindings : NAMESPACES = struct
     | Static_import ->
         Single.of_definition kind
     | Class
+    | Interface
     | Type_definition
     | Type_alias
     | Type_parameter ->
