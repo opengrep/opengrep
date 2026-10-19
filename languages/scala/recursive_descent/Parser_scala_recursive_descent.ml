@@ -3990,8 +3990,11 @@ let usingParamClauseInner ~caseParam owner implicitmod in_ =
           but these are not easy to distinguish from each other :(
       *)
       nextToken in_;
+      (* an annotation starts a parameter, as in
+         `(using @constructorOnly ctx: Context)` *)
       let is_type =
         TH.isTypeIntroToken in_.token
+        && (not (TH.isAnnotation in_.token))
         && lookingAhead (fun in_ -> not (in_.token =~= COLON ab)) in_
       in
       if is_type then
