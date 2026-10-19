@@ -182,7 +182,7 @@ and type_ =
   (* https://docs.scala-lang.org/scala3/reference/contextual/context-functions.html *)
   | TyContextFunction of type_ list bracket * tok (* '?=>' *) * type_
   (* https://docs.scala-lang.org/scala3/reference/new-types/polymorphic-function-types.html *)
-  | TyPoly of binding list * tok (* '=>' *) * type_
+  | TyPoly of type_parameters * tok (* '=>' *) * type_
   (* https://docs.scala-lang.org/scala3/reference/new-types/dependent-function-types.html *)
   | TyDependent of (ident * type_) list * tok (* '=>' *) * type_
   | TyTuple of type_ list bracket
@@ -268,6 +268,8 @@ and expr =
   | Assign of lhs * tok (* = *) * expr
   | Match of expr * tok (* 'match' *) * case_clauses bracket
   | Lambda of function_definition
+  (* scala3: [A] => (x: A) => e *)
+  | PolyLambda of type_parameters * tok (* '=>' *) * expr
   | New of tok * template_definition
   | Quoted of quoted
   | BlockExpr of block_expr
