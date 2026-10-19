@@ -3716,6 +3716,9 @@ and generator ~eqOK ~allowNestedIf in_ : generator =
   |> with_logging "generator" (fun () ->
          let hasVal = in_.token =~= Kval ab in
          if hasVal then nextToken in_;
+         (* Scala 3 (and Scala 2.13 with -Xsource:3): `case` marks a pattern
+            that filters, which is how Scala 2 treats every pattern *)
+         if in_.token =~= Kcase ab then nextToken in_;
          let pat = noSeq pattern1 in_ in
          let hasEq = in_.token =~= EQUALS ab in
          (* CHECK: scala3: "`val` keyword in for comprehension is" *)
