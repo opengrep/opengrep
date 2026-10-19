@@ -202,22 +202,25 @@ let tests parse_program =
                     | None -> Alcotest.failf "unresolved CMD in %s" ext)
               | _ -> Alcotest.failf "missing declaration or CMD uses in %s" ext));
       t "regression files" (fun () ->
-          let dir = Filename.concat tests_path "naming/python" in
-          let files1 = Common2.glob (spf "%s/*.py" dir) in
-          let dir = Filename.concat tests_path "naming/go" in
-          let files2 = Common2.glob (spf "%s/*.go" dir) in
-          let dir = Filename.concat tests_path "naming/js" in
-          let files3 = Common2.glob (spf "%s/*.js" dir) in
-          let dir = Filename.concat tests_path "naming/java" in
-          let files4 = Common2.glob (spf "%s/*.java" dir) in
-          let dir = Filename.concat tests_path "naming/ruby" in
-          let files5 = Common2.glob (spf "%s/*.rb" dir) in
-          let dir = Filename.concat tests_path "naming/crystal" in
-          let files6 = Common2.glob (spf "%s/*.cr" dir) in
-          let dir = Filename.concat tests_path "naming/php" in
-          let files7 = Common2.glob (spf "%s/*.php" dir) in
-
-          files1 @ files2 @ files3 @ files4 @ files5 @ files6 @ files7
+          [
+            ("python", "py");
+            ("go", "go");
+            ("js", "js");
+            ("java", "java");
+            ("ruby", "rb");
+            ("crystal", "cr");
+            ("php", "php");
+            ("c", "c");
+            ("cpp", "cpp");
+            ("csharp", "cs");
+            ("kotlin", "kt");
+            ("rust", "rs");
+          ]
+          |> List.concat_map (fun ((dir, extension) : string * string) ->
+                 Common2.glob
+                   (spf "%s/*.%s"
+                      (Filename.concat tests_path ("naming/" ^ dir))
+                      extension))
           |> Fpath_.of_strings
           |> List.iter (fun file ->
                  try
@@ -828,4 +831,44 @@ let tests parse_program =
               Alcotest.failf
                 "expected two definitions and one use of Item, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "c and c++ tag defined with a variable of its name does not refer to \
+         the variable"
+        (fun () ->
+          (* in [struct lv { int x; } lv;] the structure's definition and the
+             variable's type share the name; the uses in a type are the
+             variable's type and [struct lv *p], the use in an expression is
+             [&lv] *)
+          [ "naming/c/struct_and_variable.c"; "naming/cpp/struct_and_variable.cpp" ]
+          |> List.iter (fun (path : string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match
+                   ( def_sids_of_name ast "lv",
+                     type_resolutions_of_name ast "lv",
+                     resolutions_of_name ast "lv" )
+                 with
+                 | definitions, (_ :: _ :: _ as types), [ Some (_, variable) ]
+                   when List.exists (AST_generic.SId.equal variable) definitions
+                   ->
+                     types
+                     |> List.iteri
+                          (fun (i : int) (use : AST_generic.resolved_name option)
+                          ->
+                            match use with
+                            | Some (_, sid) ->
+                                Alcotest.(check bool)
+                                  (spf "%s: type use #%d of lv is not the \
+                                        variable"
+                                     path i)
+                                  false
+                                  (AST_generic.SId.equal variable sid)
+                            | None ->
+                                Alcotest.failf "%s: type use #%d of lv is unresolved"
+                                  path i)
+                 | _, types, expressions ->
+                     Alcotest.failf
+                       "%s: expected two type uses and one expression use of lv, \
+                        which refers to the variable, found %d and %d"
+                       path (List.length types) (List.length expressions)));
     ]
