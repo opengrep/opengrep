@@ -538,9 +538,8 @@ let isUnaryOp = function
       true
   | _ -> false
 
-(* an operator identifier or a backquoted identifier, as in Scanners.scala,
-   isOperator *)
-let isOperator (tok : token) : bool =
+(* an identifier made of operator characters *)
+let isSymbolicOperator (tok : token) : bool =
   match tok with
   | OP _
   | STAR _
@@ -548,9 +547,17 @@ let isOperator (tok : token) : bool =
   | MINUS _
   | BANG _
   | TILDE _
-  | PIPE _
-  | ID_BACKQUOTED _ ->
+  | PIPE _ ->
       true
+  | _ -> false
+
+(* an operator identifier or a backquoted identifier, as in Scanners.scala,
+   isOperator *)
+let isOperator (tok : token) : bool =
+  isSymbolicOperator tok
+  ||
+  match tok with
+  | ID_BACKQUOTED _ -> true
   | _ -> false
 
 (* TODO? correct? *)
