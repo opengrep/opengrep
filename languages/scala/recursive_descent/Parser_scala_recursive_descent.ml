@@ -3070,7 +3070,9 @@ and parseTry in_ : stmt =
             accept (RBRACE ab) in_;
             Flag_parsing.sgrep_guard
               (Some (ii, CatchCases (l, [ CaseEllipsis ii ], r)))
-        | Kcase ab ->
+        (* an indented `case` starts an indented block of case clauses, which
+           the expression case below parses *)
+        | Kcase ab when Option.is_none (passedIndent in_) ->
             skipToken in_;
             let cc = exprCaseClause ab in_ in
             (* Technically, the body of this case should be an `expr`, and

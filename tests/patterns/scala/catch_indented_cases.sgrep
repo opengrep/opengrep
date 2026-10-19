@@ -1,0 +1,1 @@
+try g() catch { case e: RuntimeException => 1 }
