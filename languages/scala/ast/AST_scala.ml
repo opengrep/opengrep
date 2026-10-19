@@ -620,7 +620,11 @@ and given_definition = { gsig : given_sig option; gkind : given_kind }
 (* ------------------------------------------------------------------------- *)
 and type_definition = { ttok : tok; (* 'type' *) tbody : type_definition_kind }
 
-and type_definition_kind = TDef of tok (* = *) * type_ | TDcl of type_bounds
+and type_definition_kind =
+  | TDef of tok (* = *) * type_
+  | TDcl of type_bounds
+  (* scala3: opaque types and match types, e.g. `type T <: U = V` *)
+  | TDefBounded of type_bounds * tok (* = *) * type_
 [@@deriving show { with_path = false }]
 
 (*****************************************************************************)
