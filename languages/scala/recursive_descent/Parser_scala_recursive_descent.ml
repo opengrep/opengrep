@@ -341,20 +341,20 @@ let startsNewLine in_ =
   in
   loop in_.passed
 
-(* The indentation width of the innermost region, where regions in braces,
-   parentheses and brackets count as well (see region_widths). *)
-let currentRegionWidth (in_ : env) : int =
-  let rec loop (sepRegions : T.token list) =
-    match sepRegions with
-    | DEDENT (_, width) :: _ -> width
-    | (RBRACE info | RPAREN info | RBRACKET info) :: rest -> (
-        match IntMap.find_opt (Tok.bytepos_of_tok info) in_.region_widths with
-        | Some width -> width
-        | None -> loop rest)
-    | _ :: rest -> loop rest
-    | [] -> raise Common.Impossible
-  in
-  loop in_.sepRegions
+(* The indentation width of the innermost region of sepRegions, where
+   regions in braces, parentheses and brackets count as well (see
+   region_widths). *)
+let rec regionWidth (in_ : env) (sepRegions : T.token list) : int =
+  match sepRegions with
+  | DEDENT (_, width) :: _ -> width
+  | (RBRACE info | RPAREN info | RBRACKET info) :: rest -> (
+      match IntMap.find_opt (Tok.bytepos_of_tok info) in_.region_widths with
+      | Some width -> width
+      | None -> regionWidth in_ rest)
+  | _ :: rest -> regionWidth in_ rest
+  | [] -> raise Common.Impossible
+
+let currentRegionWidth (in_ : env) : int = regionWidth in_ in_.sepRegions
 
 (* Does the current token start a new line indented further than the
    innermost region? This is the condition under which the Scala 3 scanner
@@ -527,6 +527,51 @@ let afterLineEnd in_ =
         m "%s: %s, result = %b" "afterLineEnd" (T.show in_.token) b);
   b
 
+(* Is there a blank line between the previous token and the current one? *)
+let pastBlankLine (in_ : env) : bool =
+  let rec loop (passed : T.token list) (line_is_blank : bool) =
+    match passed with
+    | Space _ :: rest -> loop rest line_is_blank
+    | Nl _ :: rest -> line_is_blank || loop rest true
+    | Comment _ :: rest -> loop rest false
+    | _ -> false
+  in
+  loop in_.passed false
+
+(* Scala 3 (Scanners.scala, isLeadingInfixOperator): an operator that starts
+   a line continues the expression of the previous line when no blank line
+   precedes it, when whitespace and a token that can start an operand follow
+   it, and when it is not to the left of the innermost indentation region
+   unless it is to the right of the enclosing one. *)
+let isLeadingInfixOperator (in_ : env) : bool =
+  let starts_operand (tok : T.token) : bool =
+    TH.isExprIntro tok && ((not (TH.isOperator tok)) || TH.isUnaryOp tok)
+  in
+  let rec next_token (toks : T.token list) (crossed_newline : bool) :
+      (T.token * bool) option =
+    match toks with
+    | (Space _ | Comment _) :: rest -> next_token rest crossed_newline
+    | Nl _ :: rest -> next_token rest true
+    | tok :: _ -> Some (tok, crossed_newline)
+    | [] -> None
+  in
+  let col = Tok.col_of_tok (TH.info_of_tok in_.token) in
+  TH.isOperator in_.token
+  && (match in_.rest with
+     | (Space _ | Nl _) :: _ -> true
+     | _ -> false)
+  && (not (pastBlankLine in_))
+  && (match next_token in_.rest false with
+     | Some (tok, false) -> starts_operand tok
+     | Some (tok, true) ->
+         starts_operand tok && col <= Tok.col_of_tok (TH.info_of_tok tok)
+     | None -> false)
+  &&
+  match in_.sepRegions with
+  | [ DEDENT _ ] -> true
+  | DEDENT (_, width) :: outer -> width <= col || regionWidth in_ outer < col
+  | _ -> true
+
 (* ------------------------------------------------------------------------- *)
 (* Lexing tricks *)
 (* ------------------------------------------------------------------------- *)
@@ -598,11 +643,11 @@ let nextToken in_ =
         | _ -> false)
      && (* STILL?: not applyBracePatch *)
      true
+     (* CHECK: scala3: "Line starts with an operator that in future" *)
+     && not (isLeadingInfixOperator in_)
    then
      match () with
      (* STILL?: | _ when pastBlankLine in_ -> insertNL ~newlines:true in_ *)
-     (* STILL?: | _ when TH.isLeadingInfixOperator *)
-     (* CHECK: scala3: "Line starts with an operator that in future" *)
      | _ -> insertNL in_
    else
      (* Determine if this next token should emit an INDENT or DEDENT *)
@@ -618,7 +663,7 @@ let nextToken in_ =
              region, we might not necessarily have to.
          *)
          in_.is_indented <- Some (line, width)
-     | Some (Dedent (line, width)) ->
+     | Some (Dedent (line, width)) when not (isLeadingInfixOperator in_) ->
          (* Push a DEDENT token onto our token stream.
              This is so we can consume it in `statSeq`
 
@@ -627,7 +672,9 @@ let nextToken in_ =
          *)
          in_.rest <- in_.token :: in_.rest;
          in_.token <- DEDENT (line, width)
-     | None -> ());
+     | Some (Dedent _)
+     | None ->
+         ());
   postProcessToken in_;
   ()
 

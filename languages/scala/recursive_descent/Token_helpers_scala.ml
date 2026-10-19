@@ -538,6 +538,21 @@ let isUnaryOp = function
       true
   | _ -> false
 
+(* an operator identifier or a backquoted identifier, as in Scanners.scala,
+   isOperator *)
+let isOperator (tok : token) : bool =
+  match tok with
+  | OP _
+  | STAR _
+  | PLUS _
+  | MINUS _
+  | BANG _
+  | TILDE _
+  | PIPE _
+  | ID_BACKQUOTED _ ->
+      true
+  | _ -> false
+
 (* TODO? correct? *)
 let nme_MACROkw = "macro"
 
