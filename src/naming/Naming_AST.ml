@@ -973,6 +973,13 @@ let with_class_or_type_binding (env : env) (lang : Lang.t) (entity : entity)
   visit ();
   if not before then declare_class_or_type env lang entity kind
 
+let is_constructor (entity : entity) : bool =
+  List.exists
+    (function
+      | KeywordAttr (Ctor, _) -> true
+      | _ -> false)
+    entity.attrs
+
 (* A constructor is not a member of its class: its name refers to the class
    (JLS 8.8). It takes the class's binding at its own site, which is what
    identifies the constructor as a function. *)
@@ -989,20 +996,12 @@ let resolve_constructors (env : env) (entity : entity)
           |> List.iter (fun (F stmt : field) ->
                  match stmt.s with
                  | DefStmt
-                     ({ name = EN (Id (ctor_id, ctor_info)); attrs; _ }, FuncDef _)
-                   when List.exists
-                          (function
-                            | KeywordAttr (Ctor, _) -> true
-                            | _ -> false)
-                          attrs -> (
-                     match !(ctor_info.id_resolved) with
-                     | Some _ ->
-                         ctor_info.id_resolved :=
-                           Some
-                             ( class_kind,
-                               SId.of_tok ~binding ~file:env.file (snd ctor_id)
-                             )
-                     | None -> ())
+                     (({ name = EN (Id (ctor_id, ctor_info)); _ } as ctor), FuncDef _)
+                   when is_constructor ctor ->
+                     ctor_info.id_resolved :=
+                       Some
+                         ( class_kind,
+                           SId.of_tok ~binding ~file:env.file (snd ctor_id) )
                  | _ -> ()))
   | _ -> ()
 
@@ -1041,12 +1040,15 @@ let with_type_parameters (env : env) (tparams : type_parameters option)
           f ())
   | _ -> f ()
 
-let function_definition_kind (env : env) : Lang_namespaces.definition_kind =
-  match top_context env with
-  | InClass -> Method
-  | AtToplevel
-  | InFunction ->
-      Function
+let function_definition_kind (env : env) (entity : entity) :
+    Lang_namespaces.definition_kind =
+  if is_constructor entity then Constructor
+  else
+    match top_context env with
+    | InClass -> Method
+    | AtToplevel
+    | InFunction ->
+        Function
 
 let type_definition_kind (def : type_definition) :
     Lang_namespaces.definition_kind =
@@ -1071,10 +1073,10 @@ let declare_class_members env lang (c : class_definition) : unit =
                  VarDef { vinit; vtype; vtok = _ } ) ->
                declare_var env lang id id_info ~explicit:true vinit vtype
            | DefStmt
-               ({ name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ })
+               (({ name = EN (Id (id, id_info)); _ } as entity), FuncDef { frettype; _ })
              when env.function_namespace ->
-               declare_func env lang (function_definition_kind env) id id_info
-                 frettype
+               declare_func env lang (function_definition_kind env entity) id
+                 id_info frettype
            | DefStmt (entity, ClassDef _) ->
                declare_class_or_type env lang entity Class
            | DefStmt (entity, TypeDef def) ->
@@ -1324,7 +1326,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
         when is_resolvable_name_ctx env lang ->
           super#visit_definition venv x;
           self#visit_pattern venv pat
-      | { name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ }
+      | ({ name = EN (Id (id, id_info)); _ } as entity), FuncDef { frettype; _ }
         when is_resolvable_name_ctx env lang ->
           (* A function definition resolves to a sid that carries the def's
            * site, [(name, file, line, col)], the key [Function_id] uses, so
@@ -1356,10 +1358,10 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
            *   semgrep-rules/python/django/security/audit/raw-query.py.
            * But do we need a special scope for imported functions? *)
           (if env.function_namespace then
-             declare_func env lang (function_definition_kind env) id id_info
-               frettype
+             declare_func env lang (function_definition_kind env entity) id
+               id_info frettype
            else if is_resolvable_name_ctx env lang then
-             match namespace_of env (function_definition_kind env) with
+             match namespace_of env (function_definition_kind env entity) with
              | [] -> ()
              | namespaces ->
                  (* The scope a definition binds its name in: the file's
@@ -1916,6 +1918,7 @@ let namespaces_of_lang (lang : Lang.t) : (module Lang_namespaces.NAMESPACES) =
   | Lang.Java -> (module Namespaces_java)
   | Lang.Kotlin -> (module Namespaces_kotlin)
   | Lang.C -> (module Namespaces_c)
+  | Lang.Cpp -> (module Namespaces_cpp)
   | Lang.Csharp -> (module Namespaces_csharp)
   | Lang.Go -> (module Lang_namespaces.Single)
   | Lang.Python

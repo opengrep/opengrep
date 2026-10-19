@@ -16,7 +16,8 @@ let variables = Variable
 
 let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Function
-  | Method ->
+  | Method
+  | Constructor ->
       [ Method ]
   (* a single-type import imports a type *)
   | Class

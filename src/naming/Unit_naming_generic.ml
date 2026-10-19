@@ -646,36 +646,43 @@ let tests parse_program =
               Alcotest.failf
                 "expected two definitions and two uses of T, found %d and %d"
                 (List.length definitions) (List.length uses));
-      t "c tag refers to the structure, not the function of the same name"
+      t "c and c++ structure with its keyword refers to the structure, not the \
+         function of the same name"
         (fun () ->
-          let file =
-            Fpath.v (Filename.concat tests_path "naming/c/tag_and_function.c")
-          in
-          let ast = parse_program file in
-          Naming_AST.resolve Lang.C ast;
           (* the uses in a type are [struct stat *buf] and [struct stat st],
              the use in an expression is the call *)
-          match
-            ( def_sids_of_name ast "stat",
-              type_resolutions_of_name ast "stat",
-              resolutions_of_name ast "stat" )
-          with
-          | [ structure; function_ ], [ Some (_, buf); Some (_, st) ], [ Some (_, call) ]
-            ->
-              Alcotest.(check bool) "the parameter's type refers to the structure"
-                true
-                (AST_generic.SId.equal structure buf);
-              Alcotest.(check bool) "the variable's type refers to the structure"
-                true
-                (AST_generic.SId.equal structure st);
-              Alcotest.(check bool) "the call refers to the function" true
-                (AST_generic.SId.equal function_ call)
-          | definitions, types, expressions ->
-              Alcotest.failf
-                "expected two definitions, two type uses and one call of stat, \
-                 found %d, %d and %d"
-                (List.length definitions) (List.length types)
-                (List.length expressions));
+          [ "naming/c/tag_and_function.c"; "naming/cpp/class_and_function.cpp" ]
+          |> List.iter (fun (path : string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match
+                   ( def_sids_of_name ast "stat",
+                     type_resolutions_of_name ast "stat",
+                     resolutions_of_name ast "stat" )
+                 with
+                 | ( [ structure; function_ ],
+                     [ Some (_, buf); Some (_, st) ],
+                     [ Some (_, call) ] ) ->
+                     Alcotest.(check bool)
+                       (spf "%s: the parameter's type refers to the structure"
+                          path)
+                       true
+                       (AST_generic.SId.equal structure buf);
+                     Alcotest.(check bool)
+                       (spf "%s: the variable's type refers to the structure" path)
+                       true
+                       (AST_generic.SId.equal structure st);
+                     Alcotest.(check bool)
+                       (spf "%s: the call refers to the function" path)
+                       true
+                       (AST_generic.SId.equal function_ call)
+                 | definitions, types, expressions ->
+                     Alcotest.failf
+                       "%s: expected two definitions, two type uses and one call \
+                        of stat, found %d, %d and %d"
+                       path (List.length definitions) (List.length types)
+                       (List.length expressions)));
       t "c name with the keyword struct refers to the tag, without it to the \
          typedef"
         (fun () ->
@@ -743,6 +750,44 @@ let tests parse_program =
               Alcotest.failf
                 "expected two definitions, three type uses and an expression \
                  use of Color, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "c++ class in its own body refers to the class, not its constructor"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/cpp/constructor_and_class.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* the uses in a type are the result and the parameter of [assign]
+             and the result of [make]; the use in an expression is [Foo(1)] *)
+          match
+            ( def_sids_of_name ast "Foo",
+              type_resolutions_of_name ast "Foo",
+              resolutions_of_name ast "Foo" )
+          with
+          | ( [ class_; constructor ],
+              ([ _; _; _ ] as types),
+              [ Some (_, construction) ] ) ->
+              Alcotest.(check bool) "the constructor refers to the class" true
+                (AST_generic.SId.equal class_ constructor);
+              types
+              |> List.iteri
+                   (fun (i : int) (use : AST_generic.resolved_name option) ->
+                     match use with
+                     | Some (_, sid) ->
+                         Alcotest.(check bool)
+                           (spf "type use #%d of Foo refers to the class" i)
+                           true
+                           (AST_generic.SId.equal class_ sid)
+                     | None -> Alcotest.failf "type use #%d of Foo is unresolved" i);
+              Alcotest.(check bool) "Foo(1) refers to the class" true
+                (AST_generic.SId.equal class_ construction)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, three type uses and one expression \
+                 use of Foo, found %d, %d and %d"
                 (List.length definitions) (List.length types)
                 (List.length expressions));
     ]

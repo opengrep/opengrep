@@ -18,6 +18,7 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
       [ Tag ]
   | Function
   | Method
+  | Constructor
   | Type_alias
   | Type_parameter
   | Module

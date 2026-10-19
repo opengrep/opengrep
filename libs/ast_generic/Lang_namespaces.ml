@@ -10,6 +10,7 @@ type namespace_hash = int
 type definition_kind =
   | Function (* outside a class *)
   | Method (* in a class body *)
+  | Constructor (* a function the front end marks with [KeywordAttr Ctor] *)
   | Class
   | Type_definition (* a type of its own: an enumeration, a record, a variant *)
   | Type_alias (* another name for a type, as a C typedef *)
@@ -72,6 +73,7 @@ module Single_without_type_bindings : NAMESPACES = struct
     match kind with
     | Function
     | Method
+    | Constructor
     | Module
     | Import
     | Static_import ->

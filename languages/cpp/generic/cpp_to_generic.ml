@@ -128,6 +128,24 @@ let map_def_in_stmt f st =
   (* less: raise an error? *)
   | _ -> st
 
+(* A member function that has the name of its class is a constructor: no other
+   member may have that name ([class.mem]). *)
+let mark_constructors (class_name : G.name) (c : G.class_definition) :
+    G.class_definition =
+  let (class_s, _), _ = H.id_of_name class_name in
+  let mark ((ent, def) : G.definition) : G.definition =
+    match (ent.G.name, def) with
+    | G.EN (G.Id ((s, tok), _)), G.FuncDef _ when String.equal s class_s ->
+        ({ ent with G.attrs = ent.G.attrs @ [ G.KeywordAttr (G.Ctor, tok) ] }, def)
+    | _ -> (ent, def)
+  in
+  let l, fields, r = c.cbody in
+  {
+    c with
+    G.cbody =
+      (l, List_.map (fun (G.F stmt : G.field) -> G.F (map_def_in_stmt mark stmt)) fields, r);
+  }
+
 let is_primitive_type = function
   | TPrimitive _ -> true
   | TypeName (_, _, IdIdent (tyname, _)) -> (
@@ -1876,7 +1894,7 @@ and map_class_definition env (v1, v2) : G.name option * G.class_definition =
   in
   let v1 = map_of_option (map_a_class_name env) v1
   and v2 = map_class_definition_bis env v2 in
-  (v1, v2)
+  (v1, Option.fold ~none:v2 ~some:(fun n -> mark_constructors n v2) v1)
 
 and map_class_definition_bis env
     { c_kind = v_c_kind; c_inherit = v_c_inherit; c_members = v_c_members } :
