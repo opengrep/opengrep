@@ -790,4 +790,42 @@ let tests parse_program =
                  use of Foo, found %d, %d and %d"
                 (List.length definitions) (List.length types)
                 (List.length expressions));
+      t "java call refers to the method of the class's name, not the constructor"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/method_with_the_class_name.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the definitions are the class, the method [void Foo()] and the
+             constructor; the use is the call in [run] *)
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ _class; method_; _constructor ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the method" true
+                (AST_generic.SId.equal method_ call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected three definitions and one use of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "c# class in its own body refers to the class, not its constructor"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/csharp/class_in_its_body.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* the use is [Item] in [Item.Total()], in the constructor *)
+          match (def_sids_of_name ast "Item", resolutions_of_name ast "Item") with
+          | [ class_; constructor ], [ Some (_, use) ] ->
+              Alcotest.(check bool) "the constructor refers to the class" true
+                (AST_generic.SId.equal class_ constructor);
+              Alcotest.(check bool) "the use refers to the class" true
+                (AST_generic.SId.equal class_ use)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and one use of Item, found %d and %d"
+                (List.length definitions) (List.length uses));
     ]

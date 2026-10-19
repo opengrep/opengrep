@@ -16,9 +16,11 @@ let variables = Variable
 
 let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Function
-  | Method
-  | Constructor ->
+  | Method ->
       [ Method ]
+  (* a constructor is not a member, and no invocation refers to it by name
+     (JLS 8.8): its name refers to its class *)
+  | Constructor -> []
   (* a single-type import imports a type *)
   | Class
   | Type_definition

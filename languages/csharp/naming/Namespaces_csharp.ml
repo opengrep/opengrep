@@ -17,9 +17,11 @@ let variables = Variable
 let of_definition : Lang_namespaces.definition_kind -> t list = function
   | Function
   | Method
-  | Constructor
   | Module ->
       [ Variable ]
+  (* no simple name refers to a constructor (C# 12.8.4): its name refers to
+     its class *)
+  | Constructor -> []
   (* a using alias refers to a namespace or a type *)
   | Class
   | Type_definition
