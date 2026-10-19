@@ -1,0 +1,1 @@
+$XS.foreach($X => if ($C) println($X))

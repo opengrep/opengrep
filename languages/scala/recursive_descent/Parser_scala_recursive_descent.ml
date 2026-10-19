@@ -820,6 +820,19 @@ let enterIndentRegion in_ =
       in_.is_indented <- None;
       in_.sepRegions <- DEDENT (line, width) :: in_.sepRegions
 
+(* Scala 3 reference, "Indentation and Braces": a closing `)`, `]` or `}`
+   closes every indentation region opened inside its group, and a `,` closes
+   an indentation region that is enclosed in parentheses or brackets. Such a
+   token ends the region without being consumed. *)
+let closesIndentRegionInGroup (in_ : env) : bool =
+  match (in_.token, in_.sepRegions) with
+  | (RPAREN _ | RBRACKET _ | RBRACE _), DEDENT _ :: _ -> true
+  | COMMA _, DEDENT _ :: (RPAREN _ | RBRACKET _) :: _ -> true
+  | _ -> false
+
+let isStatSeqEnd (in_ : env) : bool =
+  TH.isStatSeqEnd in_.token || closesIndentRegionInGroup in_
+
 (* Adjust sepREgions to end the current indent region, if we're
    at the end.
 *)
@@ -833,7 +846,9 @@ let closeIndentRegion in_ =
   | DEDENT _, DEDENT _ :: rest ->
       in_.sepRegions <- rest;
       skipToken in_
-  | _ -> failwith "expected closing dedent (probably not emitted correctly)"
+  | _, DEDENT _ :: rest when closesIndentRegionInGroup in_ ->
+      in_.sepRegions <- rest
+  | _ -> error "expected closing dedent (probably not emitted correctly)" in_
 
 (* If this next token is indented, it's quite likely we're inside of an implicit
    indented blockExpr, which can start off an `expr`.
@@ -889,7 +904,7 @@ let acceptStatSep in_ =
          | _ -> accept (SEMI ab) in_)
 
 let acceptStatSepOpt in_ =
-  if not (TH.isStatSeqEnd in_.token) then acceptStatSep in_
+  if not (isStatSeqEnd in_) then acceptStatSep in_
 
 let newLineOpt in_ =
   match in_.token with
@@ -4229,7 +4244,7 @@ let extension in_ =
 let statSeq ?(errorMsg = "illegal start of definition") ?(rev = false) stat in_
     =
   let stats = ref [] in
-  while not (TH.isStatSeqEnd in_.token) do
+  while not (isStatSeqEnd in_) do
     (match stat in_ with
     | Some x -> stats += x
     | None -> if TH.isStatSep in_.token then () else error errorMsg in_);
@@ -4301,7 +4316,7 @@ let blockStatSeqInner in_ : top_stat option =
 
 let blockStatSeq in_ : block_stat list =
   let stats = ref [] in
-  while (not (TH.isStatSeqEnd in_.token)) && not (isCaseDefEnd in_) do
+  while (not (isStatSeqEnd in_)) && not (isCaseDefEnd in_) do
     match blockStatSeqInner in_ with
     | None -> ()
     | Some x -> stats += x
@@ -4365,6 +4380,7 @@ let indentedExprOrBlockStatSeqUntil ?until in_ =
               | _ -> ());
               (x, false)
           | DEDENT _ -> (x, true)
+          | _ when closesIndentRegionInGroup in_ -> (x, true)
           | _ ->
               (BlockExpr (BEBlock (E x :: blockStatSeq in_) |> surround), true))
       | Some other ->
