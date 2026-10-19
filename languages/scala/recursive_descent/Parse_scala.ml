@@ -43,7 +43,11 @@ let tokens input_source =
           Lexer_scala.in_interpolated_double state lexbuf
       | Lexer_scala.ST_IN_INTERPOLATED_TRIPLE ->
           Lexer_scala.in_interpolated_triple state lexbuf
+      | Lexer_scala.ST_IN_XML_TAG -> Lexer_scala.in_xml_tag state lexbuf
+      | Lexer_scala.ST_IN_XML_CONTENT ->
+          Lexer_scala.in_xml_content state lexbuf
     in
+    state.last_token <- Some tok;
     tok
   in
   (* set to false to parse correctly arrows *)

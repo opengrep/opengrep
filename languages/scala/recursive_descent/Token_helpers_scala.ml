@@ -57,6 +57,13 @@ let visitor_info_of_tok f = function
      | InterpStart(ii) -> InterpStart(f ii)
   *)
   | T_INTERPOLATED_START (s, ii) -> T_INTERPOLATED_START (s, f ii)
+  | T_XML_OPEN (s, ii) -> T_XML_OPEN (s, f ii)
+  | T_XML_ATTR (s, ii) -> T_XML_ATTR (s, f ii)
+  | T_XML_ATTR_VALUE (s, ii) -> T_XML_ATTR_VALUE (s, f ii)
+  | T_XML_TAG_END ii -> T_XML_TAG_END (f ii)
+  | T_XML_SELF_CLOSE ii -> T_XML_SELF_CLOSE (f ii)
+  | T_XML_TEXT (s, ii) -> T_XML_TEXT (s, f ii)
+  | T_XML_CLOSE (s, ii) -> T_XML_CLOSE (s, f ii)
   | T_INTERPOLATED_STRING (s, ii) -> T_INTERPOLATED_STRING (s, f ii)
   | ID_DOLLAR (s, ii) -> ID_DOLLAR (s, f ii)
   | ID_LOWER (s, ii) -> ID_LOWER (s, f ii)
@@ -233,7 +240,8 @@ let inLastOfStat x =
   | Kreturn _
   | USCORE _
   | Ktype _
-  (* less: | XMLSTART  *)
+  | T_XML_CLOSE _
+  | T_XML_SELF_CLOSE _
   | RPAREN _
   | RBRACKET _
   | RBRACE _
@@ -447,7 +455,7 @@ let isExprIntro x =
   | LPAREN _
   | LBRACE _
   | QUOTE _
-  (* | XMLSTART  *)
+  | T_XML_OPEN _
   (* semgrep-ext: *)
   | Ellipsis _
   | LDots _ ->

@@ -58,15 +58,34 @@ type state_mode =
   (* started with x""", finished with """ *)
   | ST_IN_INTERPOLATED_TRIPLE
 
+  (* in an XML start tag, between `<name` and `>` or `/>` *)
+  | ST_IN_XML_TAG
+  (* in the content of an XML element, between `>` and `</name>` *)
+  | ST_IN_XML_CONTENT
+
 let default_state = ST_IN_CODE
 
 type state = {
   mode: state_mode list ref;
+  (* the last token returned, which decides whether a `<` starts XML *)
+  mutable last_token: Token_scala.token option;
 }
 
 let create () = {
   mode = ref [default_state];
+  last_token = None;
 }
+
+(* Scanners.scala, fetchLT: a `<` starts an XML literal after a space, a
+   newline, `(`, `{` or a token that ends with `>` *)
+let xml_start_allowed (state : state) : bool =
+  match state.last_token with
+  | None
+  | Some (Space _ | Nl _ | LPAREN _ | LBRACE _) ->
+      true
+  | Some tok ->
+      let s = Tok.content_of_tok (Token_helpers_scala.info_of_tok tok) in
+      String.length s > 0 && Char.equal s.[String.length s - 1] '>'
 
 let current_mode state =
     match !(state.mode) with
@@ -253,6 +272,9 @@ let id_after_dollar =
 let metavar_id_after_dollar =
   ['A'-'Z''_'] (['A'-'Z''_'] | digit)*
 
+(* XML names, with namespace prefixes *)
+let xml_name = ['A'-'Z''a'-'z''_'] ['A'-'Z''a'-'z''_''0'-'9'':''.''-']*
+
 (*****************************************************************************)
 (* Rule initial *)
 (*****************************************************************************)
@@ -375,6 +397,21 @@ rule token state = parse
   | "'" {
     QUOTE (tokinfo lexbuf)
   }
+
+  (* ----------------------------------------------------------------------- *)
+  (* XML *)
+  (* ----------------------------------------------------------------------- *)
+  (* the name of a start tag is followed by whitespace, `>` or `/`; otherwise
+     the `<` is an operator, as in `(x <y)` *)
+  | '<' (xml_name as s) [' ' '\t' '\n' '\r' '>' '/'] {
+      Parsing_helpers.yyback 1 lexbuf;
+      if xml_start_allowed state then (
+        push_mode state ST_IN_XML_TAG;
+        T_XML_OPEN (s, tokinfo lexbuf))
+      else (
+        Parsing_helpers.yyback (String.length s) lexbuf;
+        OP ("<", tokinfo lexbuf))
+    }
 
   (* ----------------------------------------------------------------------- *)
   (* Keywords and ident *)
@@ -586,6 +623,53 @@ and in_interpolated_triple state = parse
        error("unrecognised symbol in interpolated2 string:"^tok lexbuf) lexbuf;
        Unknown(tokinfo lexbuf)
        }
+
+(*****************************************************************************)
+(* XML *)
+(*****************************************************************************)
+and in_xml_tag state = parse
+  | (whiteSpace | newline)+ { Space (tokinfo lexbuf) }
+  | xml_name as s { T_XML_ATTR (s, tokinfo lexbuf) }
+  | '=' { EQUALS (tokinfo lexbuf) }
+  | '"' ([^ '"']* as s) '"' { T_XML_ATTR_VALUE (s, tokinfo lexbuf) }
+  | '\'' ([^ '\'']* as s) '\'' { T_XML_ATTR_VALUE (s, tokinfo lexbuf) }
+  | '{' { push_mode state ST_IN_CODE; LBRACE (tokinfo lexbuf) }
+  | "/>" { pop_mode state; T_XML_SELF_CLOSE (tokinfo lexbuf) }
+  | '>' {
+      pop_mode state;
+      push_mode state ST_IN_XML_CONTENT;
+      T_XML_TAG_END (tokinfo lexbuf)
+    }
+  | eof { error "end of file in XML tag" lexbuf;
+          pop_mode state;
+          EOF (tokinfo lexbuf) }
+  | _ { error ("unrecognised symbol in XML tag:" ^ tok lexbuf) lexbuf;
+        Unknown (tokinfo lexbuf) }
+
+and in_xml_content state = parse
+  | "</" (xml_name as s) whiteSpace* '>' {
+      pop_mode state;
+      T_XML_CLOSE (s, tokinfo lexbuf)
+    }
+  | '<' (xml_name as s) {
+      push_mode state ST_IN_XML_TAG;
+      T_XML_OPEN (s, tokinfo lexbuf)
+    }
+  (* comments, character data sections and processing instructions are
+     character data here *)
+  | "<!--" ([^ '-'] | '-' [^ '-'])* "-->"
+  | "<![CDATA[" ([^ ']'] | ']' [^ ']'] | "]]" [^ '>'])* "]]>"
+  | "<?" ([^ '?'] | '?' [^ '>'])* "?>"
+      { T_XML_TEXT (tok lexbuf, tokinfo lexbuf) }
+  (* a doubled brace stands for one brace of character data *)
+  | "{{" { T_XML_TEXT ("{", tokinfo lexbuf) }
+  | "}}" { T_XML_TEXT ("}", tokinfo lexbuf) }
+  | '{' { push_mode state ST_IN_CODE; LBRACE (tokinfo lexbuf) }
+  | [^ '<' '{' '}']+ { T_XML_TEXT (tok lexbuf, tokinfo lexbuf) }
+  | eof { error "end of file in XML content" lexbuf;
+          pop_mode state;
+          EOF (tokinfo lexbuf) }
+  | _ { T_XML_TEXT (tok lexbuf, tokinfo lexbuf) }
 
 (*****************************************************************************)
 (* Rule comment *)

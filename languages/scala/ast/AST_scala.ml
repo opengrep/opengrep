@@ -278,6 +278,8 @@ and expr =
   | PolyLambda of type_parameters * tok (* '=>' *) * expr
   | New of tok * template_definition
   | Quoted of quoted
+  (* XML literals, one or more adjacent elements *)
+  | Xml of xml list
   | BlockExpr of block_expr
   | S of stmt
   (* semgrep-ext: *)
@@ -298,6 +300,24 @@ and arguments =
 (* less: no keyword argument in Scala? *)
 
 and argument = expr
+
+and xml = {
+  xml_kind : xml_kind;
+  xml_attrs : xml_attribute list;
+  xml_body : xml_body list;
+}
+
+and xml_kind =
+  | XmlClassic of tok (* < *) * ident * tok (* > *) * tok (* </name> *)
+  | XmlSingleton of tok (* < *) * ident * tok (* /> *)
+
+and xml_attribute = ident * tok (* = *) * xml_attr_value
+and xml_attr_value = XmlAttrString of string wrap | XmlAttrExpr of expr
+
+and xml_body =
+  | XmlText of string wrap
+  | XmlExpr of expr bracket
+  | XmlXml of xml
 and case_clauses = (pattern, block) case_clause list
 and type_case_clauses = (((* _ *) tok, type_) Either_.t, type_) case_clause list
 
