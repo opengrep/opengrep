@@ -4087,11 +4087,17 @@ let usingParamClauseInner ~caseParam owner implicitmod in_ =
           but these are not easy to distinguish from each other :(
       *)
       nextToken in_;
-      (* an annotation starts a parameter, as in
-         `(using @constructorOnly ctx: Context)` *)
+      (* an annotation or `inline` starts a parameter, as in
+         `(using @constructorOnly ctx: Context)` or `(using inline z: Show[A])` *)
+      let starts_inline_param =
+        match (in_.token, in_next_token in_.rest) with
+        | ID_LOWER ("inline", _), Some tok -> TH.isIdentBool tok
+        | _ -> false
+      in
       let is_type =
         TH.isTypeIntroToken in_.token
         && (not (TH.isAnnotation in_.token))
+        && (not starts_inline_param)
         && lookingAhead (fun in_ -> not (in_.token =~= COLON ab)) in_
       in
       if is_type then
