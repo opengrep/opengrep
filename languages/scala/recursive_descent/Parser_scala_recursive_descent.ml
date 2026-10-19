@@ -1642,7 +1642,9 @@ let rec typ in_ : type_ =
              makeExistentialTypeTree t ii in_
          | Kmatch ii ->
              skipToken in_;
-             let _, type_case_clauses, _ = inBraces !typeCaseClauses_ in_ in
+             let _, type_case_clauses, _ =
+               inBracesOrIndented !typeCaseClauses_ in_
+             in
              TyMatch (t, ii, type_case_clauses)
          | _ -> t)
 
@@ -4326,10 +4328,16 @@ let typeDefOrDcl attrs in_ : definition =
     | SUPERTYPE _
     | SUBTYPE _
     | RBRACE _
-    | EOF _ ->
+    | EOF _ -> (
         let xs = typeBounds in_ in
-        (* AST: TypeDef(mods | Flags.DEFERRED, name, tparams, typeBounds()) *)
-        TDcl xs
+        (* Scala 3: TypeDef ::= id ... TypeAndCtxBounds [`=` Type] *)
+        match in_.token with
+        | EQUALS ii ->
+            nextToken in_;
+            TDefBounded (xs, ii, typ in_)
+        | _ ->
+            (* AST: TypeDef(mods | Flags.DEFERRED, name, tparams, typeBounds()) *)
+            TDcl xs)
     | _ -> error "`=`, `>:`, or `<:` expected" in_
   in
   let ent = { name; tparams; attrs } in

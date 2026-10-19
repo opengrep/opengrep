@@ -1254,6 +1254,9 @@ and v_type_definition_kind = function
       let _v1TODO = v_type_bounds v1 in
       (* abstract type with constraints? *)
       G.AbstractType (fake "")
+  | TDefBounded (v1, v2, v3) ->
+      let _v1TODO = v_type_bounds v1 and _v2 = v_tok v2 and v3 = v_type_ v3 in
+      G.NewType v3
 
 let v_program v = v_list v_top_stat v |> List_.flatten
 
