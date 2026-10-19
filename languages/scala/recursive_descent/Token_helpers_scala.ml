@@ -103,6 +103,7 @@ let visitor_info_of_tok f = function
   | LARROW ii -> LARROW (f ii)
   | SUBTYPE ii -> SUBTYPE (f ii)
   | ARROW ii -> ARROW (f ii)
+  | CTXARROW ii -> CTXARROW (f ii)
   | EQUALS ii -> EQUALS (f ii)
   | BANG ii -> BANG (f ii)
   | AT ii -> AT (f ii)
@@ -190,6 +191,7 @@ let inFirstOfStat x =
   | COLON _
   | EQUALS _
   | ARROW _
+  | CTXARROW _
   | LARROW _
   | SUBTYPE _
   | VIEWBOUND _
@@ -486,6 +488,7 @@ let isIndentationToken = function
   | COLON _
   | EQUALS _
   | ARROW _
+  | CTXARROW _
   | LARROW _
   | Kif _
   | Kwith _

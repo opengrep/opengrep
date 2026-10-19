@@ -1,0 +1,1 @@
+Open { $X ?=> sink($X) }
