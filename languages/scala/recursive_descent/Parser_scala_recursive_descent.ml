@@ -953,6 +953,60 @@ let isGroupBeforeArrow (in_ : env) : bool =
   skipMatching in_;
   in_.token =~= ARROW ab
 
+(* Scala 3 capture checking: `T^` and `T^{c, d}` annotate a type with the
+   capabilities that its values capture. The annotations have no run-time
+   meaning and are dropped. A `^` is a capture annotation when a capture set
+   or a token that cannot start a type follows it; otherwise it is an infix
+   type operator. A capture set holds references, while braces that hold a
+   declaration are a refinement, the operand of `A ^ { type B }`. As capture
+   checking code writes it, the `^` follows the type and the capture set the
+   `^` without a space; `A ^ B`, `A ^ {}` and `A ^` before a line `B` are
+   infix types, and so is `A^` before a line `B` indented further. *)
+let isCaptureAnnotation (in_ : env) : bool =
+  let after_type =
+    match in_.passed with
+    | (Space _ | Comment _ | Nl _) :: _ -> false
+    | _ -> true
+  in
+  after_type
+  &&
+  match (in_.token, in_next_token in_.rest) with
+  | OP ("^", _), Some (LBRACE _) ->
+      (match in_.rest with
+      | LBRACE _ :: _ -> true
+      | _ -> false)
+      &&
+      lookingAhead
+        (fun (in_ : env) ->
+          nextToken in_;
+          let rec first_inner (in_ : env) : T.token =
+            match in_.token with
+            | NEWLINE _
+            | NEWLINES _ ->
+                nextToken in_;
+                first_inner in_
+            | tok -> tok
+          in
+          not (TH.isDclIntro (first_inner in_)))
+        in_
+  (* at the end of a line, before a type on a line indented further than
+     the region, as a continuation line, it is an infix type operator *)
+  | OP ("^", _), Some (Nl _) -> (
+      match skip_trivia ~newlines:true in_.rest with
+      | tok :: _ when TH.isTypeIntroToken tok ->
+          indent_of in_.line_indents (TH.info_of_tok tok)
+          <= regionWidth in_ in_.sepRegions
+      | _ -> true)
+  | OP ("^", _), Some tok -> not (TH.isTypeIntroToken tok)
+  | OP ("^", _), None -> true
+  | _ -> false
+
+let skipCaptureAnnotation (in_ : env) : unit =
+  nextToken in_;
+  match in_.token with
+  | LBRACE _ -> skipMatching in_
+  | _ -> ()
+
 (* ------------------------------------------------------------------------- *)
 (* indentation *)
 (* ------------------------------------------------------------------------- *)
@@ -2052,7 +2106,10 @@ and infixTypeRest t _modeTODO in_ : type_ =
              (* ast: mkOp(x) *)
              TyInfix (t, tycon, t2)
          in
-         if TH.isIdentBool in_.token then
+         if isCaptureAnnotation in_ then (
+           skipCaptureAnnotation in_;
+           infixTypeRest t _modeTODO in_)
+         else if TH.isIdentBool in_.token then
            match checkRepeatedParam in_ with
            | None -> asInfix in_
            | Some ii -> TyRepeated (t, ii)
