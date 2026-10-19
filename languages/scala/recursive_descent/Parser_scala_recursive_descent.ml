@@ -3350,6 +3350,12 @@ and parseIf in_ : stmt =
     !indentedExprOrBlockStatSeqUntil_ ~location:InBlock
       ~until:(Some (Kelse ab)) in_
   in
+  (* Expr1 ::= `if` `(` Expr `)` {nl} Expr [[semi] `else` Expr] *)
+  (match in_.token with
+  | SEMI _
+    when lookingAhead (fun (in_ : env) -> in_.token =~= Kelse ab) in_ ->
+      nextToken in_
+  | _ -> ());
   let elsep =
     match in_.token with
     | Kelse ii ->
