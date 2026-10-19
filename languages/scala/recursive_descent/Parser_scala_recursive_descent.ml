@@ -967,6 +967,17 @@ let isIndentAfterColon in_ =
   | COLON _ -> lookingAhead (fun in_ -> Option.is_some (passedIndent in_)) in_
   | _ -> false
 
+(* `using` is a soft keyword: followed by `=`, `:`, `,`, `.` or `)` it is the
+   identifier of a named argument, a parameter or an expression, as in Scala 2
+   code such as `@JsonSerialize(using = classOf[S])`. *)
+let isUsingClauseStart (in_ : env) : bool =
+  match (in_.token, in_next_token in_.rest) with
+  | ( ID_LOWER ("using", _),
+      Some (EQUALS _ | COLON _ | COMMA _ | DOT _ | RPAREN _) ) ->
+      false
+  | ID_LOWER ("using", _), _ -> true
+  | _ -> false
+
 (* Scala 3 fewer braces (Scanners.scala, COLONfollow): a `:` can introduce an
    argument only after an alphanumeric identifier, a backquoted identifier,
    `this`, `super`, `new`, `)` or `]`. *)
@@ -3120,7 +3131,7 @@ and parArgumentExprs in_ : arguments =
       (fun in_ ->
         match in_.token with
         | RPAREN _ -> ([], false)
-        | ID_LOWER ("using", _) ->
+        | ID_LOWER ("using", _) when isUsingClauseStart in_ ->
             accept (ID_LOWER ("using", ab)) in_;
             (commaSeparated expr in_, true)
         | _ ->
@@ -4246,7 +4257,7 @@ let paramClauseInner ~caseParam ~endTok owner in_ : binding list * tok option =
       | _ -> []
     in
     match in_.token with
-    | ID_LOWER ("using", _) ->
+    | ID_LOWER ("using", _) when isUsingClauseStart in_ ->
         usingParamClauseInner ~caseParam owner implicitmod in_
     | __else__ -> (commaSeparated (param owner implicitmod !caseParam) in_, None)
 
@@ -4830,7 +4841,7 @@ let extension in_ =
       inParens
         (fun in_ ->
           match in_.token with
-          | ID_LOWER ("using", _) ->
+          | ID_LOWER ("using", _) when isUsingClauseStart in_ ->
               Left (usingParamClauseInner ~caseParam owner [] in_)
           | _ -> Right (param owner [] caseParam in_))
         in_
