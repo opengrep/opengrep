@@ -516,6 +516,13 @@ let isIndentationToken = function
 *)
 let isSoftModifierFollower x = isModifier x || isDefIntro x
 
+(* https://docs.scala-lang.org/scala3/reference/soft-modifier.html *)
+let isSoftModifier (tok : token) : bool =
+  match tok with
+  | ID_LOWER (("inline" | "opaque" | "open" | "transparent" | "infix"), _) ->
+      true
+  | _ -> false
+
 let isCaseDefEnd = function
   | RBRACE _
   | Kcase _
