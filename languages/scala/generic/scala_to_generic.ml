@@ -421,6 +421,13 @@ and v_pattern = function
   | PatUnderscoreStar (v1, v2) ->
       let v1 = v_tok v1 and v2 = v_tok v2 in
       todo_pattern "PatUnderscoreStar" [ G.Tk v1; G.Tk v2 ]
+  | PatVarargs (v1, v2) ->
+      (* the generic form of `xs @ _*` *)
+      let v1 = v_varid v1 and v2 = v_tok v2 in
+      let rest =
+        todo_pattern "PatUnderscoreStar" [ G.Tk (Tok.fake_tok v2 "_"); G.Tk v2 ]
+      in
+      G.PatAs (rest, (v1, G.empty_id_info ()))
   | PatDisj (v1, v2, v3) ->
       let v1 = v_pattern v1 and _v2 = v_tok v2 and v3 = v_pattern v3 in
       G.PatDisj (v1, v3)

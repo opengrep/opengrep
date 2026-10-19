@@ -629,6 +629,19 @@ and pattern env pat : stmts * lval * stmts =
             | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
               when Lang.is_js env.lang ->
                 (List.rev acc, Some (rest_pat, i), [])
+            (* Scala sequence wildcard: [rest*] and [rest @ _*] as the
+             * last argument pattern → trailing
+             * PatAs(OtherPat("PatUnderscoreStar", …), rest); rest covers
+             * [i..]. A bare sequence wildcard binds nothing. *)
+            | [
+             G.PatAs
+               (G.OtherPat (("PatUnderscoreStar", _), _), (id, id_info));
+            ]
+              when env.lang =*= Lang.Scala ->
+                (List.rev acc, Some (G.PatId (id, id_info), i), [])
+            | [ G.OtherPat (("PatUnderscoreStar", _), _) ]
+              when env.lang =*= Lang.Scala ->
+                (List.rev acc, None, [])
             (* Rust rest marker: [a, .., z] / (a, .., z) / P(m, ..). It
              * skips any number of elements and binds nothing itself.
              * Slots before it are exact. Slots after it are end-relative,
