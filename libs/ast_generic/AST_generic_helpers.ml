@@ -240,11 +240,19 @@ let unwrap_map_pair_pattern (p : pattern) : pattern =
 (* A map pattern whose entries (map pairs and, in a rule, `...`) would
  * otherwise read as a list pattern, as an empty map or a map of only `...`
  * does: the entries, then the closing bracket, tagged "MapPattern" with the
- * opening bracket. *)
-let map_pattern ((l, entries, r) : pattern list bracket) : pattern =
-  OtherPat (("MapPattern", l), List_.map (fun p -> P p) entries @ [ Tk r ])
+ * opening bracket, or "ClosedMapPattern" for a pattern that matches only a
+ * map with no other keys (Ruby `in {}`, `**nil`). *)
+let map_pattern ?(closed : bool = false)
+    ((l, entries, r) : pattern list bracket) : pattern =
+  let tag = if closed then "ClosedMapPattern" else "MapPattern" in
+  OtherPat ((tag, l), List_.map (fun p -> P p) entries @ [ Tk r ])
 
-(* The bracketed entries of a map pattern ([map_pattern]). *)
+let is_closed_map_pattern (p : pattern) : bool =
+  match p with
+  | OtherPat (("ClosedMapPattern", _), _) -> true
+  | _ -> false
+
+(* The bracketed entries of a pattern built by [map_pattern]. *)
 let map_pattern_entries (p : pattern) : pattern list bracket option =
   let rec entries acc = function
     | [ Tk r ] -> Some (List.rev acc, r)
@@ -252,7 +260,7 @@ let map_pattern_entries (p : pattern) : pattern list bracket option =
     | _ -> None
   in
   match p with
-  | OtherPat (("MapPattern", l), anys) ->
+  | OtherPat ((("MapPattern" | "ClosedMapPattern"), l), anys) ->
       Option.map (fun (es, r) -> (l, es, r)) (entries [] anys)
   | _ -> None
 
@@ -363,8 +371,8 @@ let rec pattern_to_expr p =
   | PatEllipsis t -> Ellipsis t
   | PatTyped (p, ty) -> Cast (ty, fake "", pattern_to_expr p)
   | OtherPat (("ExprToPattern", _), [ E e ]) -> e.e
-  (* A map pattern ([map_pattern]) reads as a map. *)
-  | OtherPat (("MapPattern", _), _) -> (
+  (* A pattern built by [map_pattern] reads as a map. *)
+  | OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) -> (
       match map_pattern_entries p with
       | Some (t1, xs, t2) ->
           Container (Dict, (t1, xs |> List_.map pattern_to_expr, t2))

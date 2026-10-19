@@ -3,7 +3,9 @@ case m do
   %{} -> 1
 end
 
-# A rule `%{}` matches the empty map pattern only.
+# A rule `%{}` matches any map pattern: a map pattern matches a map with
+# other entries too.
+# ERROR: match
 case m do
   %{a: 1} -> 1
 end

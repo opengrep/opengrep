@@ -188,3 +188,21 @@ def next_in_a_block_keeps_the_other_path(items)
     sink(x)
   end
 end
+
+def hash_pattern_binds_its_value
+  x = taint_source()
+  case {a: x, b: 2}
+  in {a: y}
+    # ruleid: taint-switch-case-ruby
+    sink(y)
+  end
+end
+
+def hash_pattern_binds_the_value_of_its_key
+  x = taint_source()
+  case {a: x, b: 2}
+  in {b: y}
+    # ok: taint-switch-case-ruby
+    sink(y)
+  end
+end

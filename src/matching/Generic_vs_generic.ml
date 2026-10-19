@@ -3211,17 +3211,7 @@ and m_pattern a b =
   | G.PatConstructor (a1, a2), B.PatConstructor (b1, b2) ->
       m_name a1 b1 >>= fun () -> (m_list_with_ellipsis m_pattern) a2 b2
   | G.PatTuple a1, B.PatTuple b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
-  (* Two map patterns (lists of map pairs): each pair of the rule matches a
-   * pair of the target, in any order, and the target may have more pairs,
-   * as a map pattern matches a map with more entries. *)
-  | G.PatList ((_, a2, _) as a1), B.PatList ((_, b2, _) as b1) -> (
-      let as_lists () = m_bracket (m_list_with_ellipsis m_pattern) a1 b1 in
-      if not (List.exists H.is_map_pair_pattern a2) then as_lists ()
-      else
-        match (map_pattern_pairs a2, map_pattern_pairs b2) with
-        | Some pairs, Some target_pairs ->
-            m_list_in_any_order ~less_is_ok:true m_pattern pairs target_pairs
-        | _ -> as_lists ())
+  | G.PatList a1, B.PatList b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
   | G.PatRecord a1, B.PatRecord b1 ->
       m_bracket m_list__m_field_pattern a1 b1
   | G.PatKeyVal (a1, a2), B.PatKeyVal (b1, b2) ->
@@ -3238,9 +3228,31 @@ and m_pattern a b =
       m_pattern a1 b1 >>= fun () -> m_type_ a2 b2
   | G.PatWhen (a1, a2), B.PatWhen (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_expr a2 b2
-  | G.OtherPat (("MapPattern", _), _), B.OtherPat (("MapPattern", _), _) -> (
+  (* Two patterns built by [H.map_pattern]: each entry of the rule other than
+   * `...` matches an entry of the target, in any order. Without `...`, the
+   * rule matches a pattern of its own form only: an open one, whose target
+   * may have more entries, or a closed one, whose target has exactly its
+   * entries. With `...`, it matches any map pattern that has its entries. *)
+  | ( G.OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _),
+      B.OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) ) -> (
       match (H.map_pattern_entries a, H.map_pattern_entries b) with
-      | Some (_, xs, _), Some (_, ys, _) -> m_map_entries xs ys
+      | Some (_, xs, _), Some (_, ys, _) ->
+          let is_dots = function
+            | G.PatEllipsis _ -> true
+            | _ -> false
+          in
+          let closed = H.is_closed_map_pattern a in
+          let has_dots = List.exists is_dots xs in
+          if
+            (not has_dots)
+            && not (Bool.equal closed (H.is_closed_map_pattern b))
+          then fail ()
+          else
+            m_list_in_any_order
+              ~less_is_ok:((not closed) || has_dots)
+              m_pattern
+              (List.filter (Fun.negate is_dots) xs)
+              ys
       | _ -> fail ())
   | G.OtherPat (a1, a2), B.OtherPat (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list(*_with_ellipsis ?*) m_any) a2 b2
@@ -3270,33 +3282,6 @@ and m_field_pattern a b =
        * id_info) instead of binding twice in conflicting forms. *)
       m_pattern a2 b2
   | (a1, a2), (b1, b2) -> m_dotted_name a1 b1 >>= fun () -> m_pattern a2 b2
-
-(* The entries of two map patterns ([H.map_pattern]): each entry of the rule
- * other than `...` matches an entry of the target, in any order, and the
- * target may have more, as a map pattern matches a map with more entries;
- * a rule with no entries and no `...` matches only an empty map. *)
-and m_map_entries (xs : G.pattern list) (ys : G.pattern list) =
-  let is_dots = function
-    | G.PatEllipsis _ -> true
-    | _ -> false
-  in
-  match List.filter (fun x -> not (is_dots x)) xs with
-  | [] when List.exists is_dots xs || List.is_empty ys -> return ()
-  | [] -> fail ()
-  | entries -> m_list_in_any_order ~less_is_ok:true m_pattern entries ys
-
-(* The pairs of a map pattern, a non-empty list of map pairs
- * ([H.is_map_pair_pattern]) with any `...` left out, or [None] for another
- * list pattern. *)
-and map_pattern_pairs (pats : G.pattern list) : G.pattern list option =
-  let pairs =
-    List.filter
-      (function
-        | G.PatEllipsis _ -> false
-        | _ -> true)
-      pats
-  in
-  if H.is_map_pair_list pairs then Some pairs else None
 
 (* Subset-semantic, order-independent matching of [PatRecord] field lists.
  * Every pattern field must match some target field (by [m_field_pattern]),

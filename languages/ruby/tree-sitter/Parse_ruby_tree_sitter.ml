@@ -738,10 +738,10 @@ and pattern_expr_basic (env : env) (x : CST.pattern_expr_basic) =
   | `Hash_pat x -> (
       let qual, ps = hash_pattern env x in
       match qual with
-      | None -> PatList ps
+      | None -> PatHash ps
       | Some qual ->
           (* Could also make type where PatConstructor takes in patlist_arg list *)
-          PatConstructor (qual, [ PatList ps ]))
+          PatConstructor (qual, [ PatHash ps ]))
   | `Paren_pat (v1, v2, v3) ->
       let _v1 = (* "(" *) token2 env v1 in
       let v2 = pattern_expr env v2 in
@@ -814,8 +814,8 @@ and hash_pattern_any_rest (env : env) (x : CST.hash_pattern_any_rest) =
 
 and hash_splat_nil (env : env) ((v1, v2) : CST.hash_splat_nil) =
   let v1 = (* "**" *) token2 env v1 in
-  let v2 = (* "nil" *) str env v2 in
-  PArgSplat (v1, Some v2)
+  let v2 = (* "nil" *) token2 env v2 in
+  PArgSplatNil (v1, v2)
 
 and hash_splat_parameter (env : env) ((v1, v2) : CST.hash_splat_parameter) =
   let v1 = (* "**" *) token2 env v1 in
@@ -1162,7 +1162,7 @@ and pattern_top_expr_body (env : env) (x : CST.pattern_top_expr_body) =
   | `Pat_expr x -> pattern_expr env x
   | `Array_pat_n x -> PatList (array_pattern_n env x |> fb)
   | `Find_pat_body x -> PatList (find_pattern_body env x |> fb)
-  | `Hash_pat_body x -> PatList (hash_pattern_body env x |> fb)
+  | `Hash_pat_body x -> PatHash (hash_pattern_body env x |> fb)
 
 and expression (env : env) (x : CST.expression) : AST.expr =
   match x with

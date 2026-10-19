@@ -5,7 +5,9 @@ void f(Object k) {
       a();
   }
 
-  // A rule `{}` matches the empty map pattern only.
+  // A rule `{}` matches any map pattern: a map pattern matches a map with
+  // other entries too.
+  // ERROR: match
   switch (k) {
     case {'a': 1}:
       a();

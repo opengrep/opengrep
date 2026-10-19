@@ -808,10 +808,13 @@ and pattern env pat : stmts * lval * stmts =
   (* A subpattern `a: p` of a C# positional pattern binds what `p` binds; the
    * identifier binds nothing. *)
   | G.OtherPat (("Subpattern", _), [ G.I _; G.P inner ]) -> pattern env inner
-  (* A map pattern ([H.map_pattern]) binds what its entries bind. *)
-  | G.OtherPat (("MapPattern", _), _) -> (
+  (* A pattern built by [H.map_pattern] binds what its key-value entries
+   * bind. *)
+  | G.OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) -> (
       match H.map_pattern_entries pat with
-      | Some entries -> pattern env (G.PatList entries)
+      | Some (l, entries, r) ->
+          pattern env
+            (G.PatList (l, List.filter H.is_map_pair_pattern entries, r))
       | None -> todo (G.P pat))
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
@@ -1132,14 +1135,30 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
    * tested at the element's position. *)
   | G.OtherPat (("Subpattern", _), [ G.I _; G.P inner ]) ->
       pattern_match_cond env scrutinee inner
-  (* A map pattern ([H.map_pattern]) matches a map with other entries too:
-   * an empty one (Dart `{}`, Elixir `%{}`) tests only that the value is a
-   * map. *)
-  | G.OtherPat (("MapPattern", tok), _) -> (
+  (* A pattern built by [H.map_pattern] tests its key-value entries; an open one
+   * matches a map with other entries too, so without entries (Dart `{}`,
+   * Elixir `%{}`) it tests only that the value is a map, and a closed one
+   * also tests the number of entries. *)
+  | G.OtherPat ((("MapPattern" | "ClosedMapPattern"), tok), _) -> (
       match H.map_pattern_entries pat with
-      | Some (_, [], _) ->
-          ([], pm_lower_type scrutinee (G.Id (("Map", tok), G.empty_id_info ())))
-      | Some entries -> pattern_match_cond env scrutinee (G.PatList entries)
+      | Some (l, entries, r) ->
+          let pairs = List.filter H.is_map_pair_pattern entries in
+          let ss, pairs_cond =
+            match pairs with
+            | [] ->
+                ( [],
+                  pm_lower_type scrutinee
+                    (G.Id (("Map", tok), G.empty_id_info ())) )
+            | _ -> pattern_match_cond env scrutinee (G.PatList (l, pairs, r))
+          in
+          if H.is_closed_map_pattern pat then
+            ( ss,
+              pm_conjoin op_tok
+                [
+                  pairs_cond;
+                  pm_len_cond op_tok scrutinee G.Eq (List.length pairs);
+                ] )
+          else (ss, pairs_cond)
       | None -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok)))
   (* A typed pattern tests the type of the value when the type is a name
    * ([pm_lower_type]), then its inner pattern. *)

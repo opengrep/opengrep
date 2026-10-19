@@ -19,9 +19,13 @@ val is_map_pair_list : AST_generic.pattern list -> bool
 val unwrap_map_pair_pattern : AST_generic.pattern -> AST_generic.pattern
 
 (* A map pattern: its entries and brackets, tagged "MapPattern", so that an
- * empty map or a map of only `...` is not a list pattern. *)
+ * empty map or a map of only `...` is not a list pattern; with [~closed],
+ * tagged "ClosedMapPattern": it matches only a map with no other keys. *)
 val map_pattern :
+  ?closed:bool ->
   AST_generic.pattern list AST_generic.bracket -> AST_generic.pattern
+
+val is_closed_map_pattern : AST_generic.pattern -> bool
 
 (* The bracketed entries of a map pattern built by [map_pattern]. *)
 val map_pattern_entries :

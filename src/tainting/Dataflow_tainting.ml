@@ -3230,10 +3230,15 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
     | G.PatId (id, id_info) ->
         let il_name = AST_to_IL.var_of_id_info id id_info in
         (il_name, List.rev offset) :: acc
-    (* A map pattern ([AST_generic_helpers.map_pattern]): its entries. *)
-    | G.OtherPat (("MapPattern", _), _) -> (
+    (* A pattern built by [AST_generic_helpers.map_pattern] binds what its
+     * key-value entries bind, each at the offset of its key. *)
+    | G.OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) -> (
         match AST_generic_helpers.map_pattern_entries pat with
-        | Some entries -> go offset (G.PatList entries) acc
+        | Some (l, entries, r) ->
+            let pairs =
+              List.filter AST_generic_helpers.is_map_pair_pattern entries
+            in
+            go offset (G.PatList (l, pairs, r)) acc
         | None -> acc)
     | G.PatTyped (inner, _) -> go offset inner acc
     | G.PatTuple (_, pats, _) | G.PatList (_, pats, _)
