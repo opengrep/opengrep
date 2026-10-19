@@ -1,5 +1,3 @@
-open Common
-
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -25,10 +23,6 @@ let log_command cmd =
   Logs.info (fun m ->
       m "Running external command: %s" (Redact.apply (Cmd.to_string cmd)))
 
-let log_shell_command cmd =
-  (* nosemgrep: no-logs-in-library *)
-  Logs.info (fun m -> m "Running shell command: %s" (Redact.apply cmd))
-
 (* Capture error output and log it at the same level as 'log_command' above.
 
    This uses a utility function from Testo which is weird since it's
@@ -42,39 +36,41 @@ let capture_and_log_stderr func =
     Logs.info (fun m -> m "error output: %s" (Redact.apply err));
   res
 
-(*****************************************************************************)
-(* Old Common.cmd_to_list *)
-(*****************************************************************************)
+let path_sep : char = if Sys.win32 then ';' else ':'
 
-exception CmdError of Unix.process_status * string
+let absolute_path_entries () : string list =
+  Option.value ~default:"" (USys.getenv_opt "PATH")
+  |> String.split_on_char path_sep
+  |> List.filter (fun (dir : string) ->
+         match Fpath.of_string dir with
+         | Ok path -> Fpath.is_abs path
+         | Error _ -> false)
 
-let process_output_to_list ?(verbose = false) command =
-  (* alt: use Cmd.with_open_process_in *)
-  (* nosemgrep: forbid-exec *)
-  let chan = UUnix.open_process_in command in
-  let res = ref ([] : string list) in
-  let rec process_otl_aux () =
-    let e = input_line chan in
-    res := e :: !res;
-    if verbose then
-      (* nosemgrep: no-logs-in-library *)
-      Logs.info (fun m -> m "%s" e);
-    process_otl_aux ()
+let restrict_program_search () : unit =
+  if Option.is_some (USys.getenv_opt "PATH") then
+    UUnix.putenv "PATH"
+      (String.concat (String.make 1 path_sep) (absolute_path_entries ()));
+  if Sys.win32 then UUnix.putenv "NoDefaultCurrentDirectoryInExePath" "1"
+
+let resolve_program (cmd : Cmd.t) : (Bos.Cmd.t, [> Rresult.R.msg ]) result =
+  let Cmd.Name name, _ = cmd in
+  let file_name =
+    if Sys.win32 && not (String.ends_with ~suffix:".exe" name) then
+      name ^ ".exe"
+    else name
   in
-  try process_otl_aux () with
-  | End_of_file ->
-      let stat = Unix.close_process_in chan in
-      (List.rev !res, stat)
-
-let cmd_to_list ?verbose command =
-  let l, exit_status = process_output_to_list ?verbose command in
-  match exit_status with
-  | Unix.WEXITED 0 -> l
-  | _ ->
-      raise
-        (CmdError
-           ( exit_status,
-             spf "CMD = %s, RESULT = %s" command (String.concat "\n" l) ))
+  (* Bos.OS.Cmd.resolve accepts any entry that passes an execute access
+     check, a directory included *)
+  let search =
+    absolute_path_entries ()
+    |> List.filter_map (fun (dir : string) ->
+           if
+             UFile.is_reg ~follow_symlinks:true
+               (Fpath.v (Filename.concat dir file_name))
+           then Some (Fpath.v dir)
+           else None)
+  in
+  Cmd.bos_apply (Bos.OS.Cmd.resolve ~search) cmd
 
 (*****************************************************************************)
 (* API *)
@@ -84,9 +80,9 @@ let string_of_run ~trim cmd =
   log_command cmd;
   capture_and_log_stderr (fun () ->
       (* nosemgrep: forbid-exec *)
-      let out = Cmd.bos_apply Bos.OS.Cmd.run_out cmd in
+      let out = Result.map Bos.OS.Cmd.run_out (resolve_program cmd) in
       (* nosemgrep: forbid-exec *)
-      Bos.OS.Cmd.out_string ~trim out)
+      Result.bind out (Bos.OS.Cmd.out_string ~trim))
 
 (* The method of using Testo.with_capture here is odd, but is copied from
  * capture_and_log_stderr as defined above--see that function for the
@@ -98,9 +94,9 @@ let string_of_run_with_stderr ~trim cmd =
   let res, err =
     Testo.with_capture UStdlib.stderr (fun () ->
         (* nosemgrep: forbid-exec *)
-        let out = Cmd.bos_apply Bos.OS.Cmd.run_out cmd in
+        let out = Result.map Bos.OS.Cmd.run_out (resolve_program cmd) in
         (* nosemgrep: forbid-exec *)
-        Bos.OS.Cmd.out_string ~trim out)
+        Result.bind out (Bos.OS.Cmd.out_string ~trim))
   in
   (res, err)
 
@@ -108,21 +104,13 @@ let lines_of_run ~trim cmd =
   log_command cmd;
   capture_and_log_stderr (fun () ->
       (* nosemgrep: forbid-exec *)
-      let out = Cmd.bos_apply Bos.OS.Cmd.run_out cmd in
+      let out = Result.map Bos.OS.Cmd.run_out (resolve_program cmd) in
       (* nosemgrep: forbid-exec *)
-      Bos.OS.Cmd.out_lines ~trim out)
+      Result.bind out (Bos.OS.Cmd.out_lines ~trim))
 
 (* nosemgrep: forbid-exec *)
 let status_of_run ?quiet cmd =
   log_command cmd;
   capture_and_log_stderr (fun () ->
       (* nosemgrep: forbid-exec *)
-      Cmd.bos_apply (Bos.OS.Cmd.run_status ?quiet) cmd)
-
-(* TODO: switch to type Cmd.t for cmd *)
-let with_open_process_in (cmd : string) f =
-  log_shell_command cmd;
-  capture_and_log_stderr (fun () ->
-      (* nosemgrep: forbid-exec *)
-      let chan = UUnix.open_process_in cmd in
-      Common.protect ~finally:(fun () -> close_in chan) (fun () -> f chan))
+      Result.bind (resolve_program cmd) (Bos.OS.Cmd.run_status ?quiet))

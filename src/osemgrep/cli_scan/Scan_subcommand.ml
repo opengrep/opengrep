@@ -1131,7 +1131,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 
-  Output.check_destinations conf.output_conf;
+  Output.check_destinations ~targets:conf.target_roots conf.output_conf;
 
   let conf =
     if conf.common.profile then (

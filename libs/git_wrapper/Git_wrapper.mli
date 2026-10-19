@@ -16,6 +16,10 @@ exception Error of string
  *)
 val command : < Cap.exec > -> Cmd.args -> string
 
+(* A git command: the arguments after the options given to every git
+   command. *)
+val git_cmd : Cmd.args -> Cmd.t
+
 (* Like command, for a git command needing configuration entries whose
  * values must stay out of the command line (e.g. credentials). The
  * entries reach only this child process, through the GIT_CONFIG_*

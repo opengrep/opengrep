@@ -169,25 +169,37 @@ let apply_edits_to_text path text edits =
     Log.warn (fun m -> m "file %s has overapping textedits" !!path);
     Overlap { partial_result = fixed_text; conflicting_edits })
 
+type application = {
+  modified_files : Fpath.t list;
+  skipped_files : Fpath.t list;
+  conflicting_edits : t list;
+}
+
 let apply_edits ~dryrun edits =
   let edits_by_file = partition_edits_by_file edits in
-  let all_conflicting_edits = ref [] in
-  Hashtbl.iter
-    (fun (path : Fpath.t) file_edits ->
-      let file_text = UFile.read_file path in
-      let file_edits =
-        List_.map (remove_newline_for_empty_replacement file_text) file_edits
-      in
-      let new_text =
-        match apply_edits_to_text path file_text file_edits with
-        | Success x -> x
-        | Overlap { partial_result; conflicting_edits } ->
-            Stack_.push conflicting_edits all_conflicting_edits;
-            partial_result
-      in
-      (* TOPORT: when dryrun, report fixed lines *)
-      if not dryrun then UFile.write_file ~file:path new_text)
-    edits_by_file;
-  let modified_files = Hashtbl.to_seq_keys edits_by_file |> List.of_seq in
-  let conflicting_edits = List_.flatten !all_conflicting_edits in
-  (modified_files, conflicting_edits)
+  let modified_files, skipped_files, conflicting_edits =
+    Hashtbl.fold
+      (fun (path : Fpath.t) file_edits (modified, skipped, conflicts) ->
+        let apply (write : string -> bool) =
+          let file_text = UFile.read_file path in
+          let file_edits =
+            List_.map (remove_newline_for_empty_replacement file_text) file_edits
+          in
+          let new_text, conflicts =
+            match apply_edits_to_text path file_text file_edits with
+            | Success x -> (x, conflicts)
+            | Overlap { partial_result; conflicting_edits } ->
+                (partial_result, conflicting_edits @ conflicts)
+          in
+          if write new_text then (path :: modified, skipped, conflicts)
+          else (modified, path :: skipped, conflicts)
+        in
+        match UFile.entry path with
+        | UFile.Reg { links = 1; _ } as expected ->
+            (* TOPORT: when dryrun, report fixed lines *)
+            if dryrun then apply (fun (_ : string) -> true)
+            else apply (UFile.write_single_entry ~file:path ~expected)
+        | _ -> (modified, path :: skipped, conflicts))
+      edits_by_file ([], [], [])
+  in
+  { modified_files; skipped_files; conflicting_edits }

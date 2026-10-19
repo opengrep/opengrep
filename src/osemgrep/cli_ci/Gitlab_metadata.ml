@@ -115,7 +115,7 @@ class meta (caps : < Cap.exec >) ?subdir ~cli_baseline_ref env =
             Git_metadata.resolve_commit_ref caps ~origin:"the baseline rev"
               (Git_metadata.Commit_rev rev)
         | Some (Find_targets.Merge_base_of rev) -> (
-            let cmd = (Cmd.Name "git", [ "merge-base"; rev; "HEAD" ]) in
+            let cmd = Git_wrapper.git_cmd [ "merge-base"; rev; "HEAD" ] in
             match CapExec.string_of_run caps#exec ~trim:true cmd with
             | Ok (str, (_, `Exited 0)) ->
                 Digestif.SHA1.consistent_of_hex_opt str

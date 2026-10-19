@@ -50,11 +50,13 @@ val skin_ctx :
 val is_interfile_rule_id :
   taint_interfile:bool -> Rule.hrules -> Rule_ID.t -> bool
 
-(* Aborts on a destination we will not write to: a URL, a symlink, or one
- * named by both -o and a --<format>-output flag. Called at CLI-parsing time
- * so that the scan does not run first.
+(* Aborts on a destination that is not written to: a URL, a symbolic link,
+ * a file with other hard links, a relative path inside one of [targets]
+ * that resolves outside it, or one given by both -o and a
+ * --<format>-output flag. Called before the scan so that the scan does not
+ * run first.
  *)
-val check_destinations : conf -> unit
+val check_destinations : targets:Scanning_root.t list -> conf -> unit
 
 val setup_stdout : conf -> unit
 
