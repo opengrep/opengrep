@@ -84,6 +84,8 @@ let debug_newline = ref false
 (* Types  *)
 (*****************************************************************************)
 
+module IntMap = Map.Make (Int)
+
 type env = {
   (* imitating the Scala implementation *)
   mutable token : T.token;
@@ -110,7 +112,60 @@ type env = {
      this should be used in conjunction with nextToken/fetchToken
   *)
   mutable is_indented : (int * int) option;
+  (* indentation width of the region opened by a `{`, `(` or `[`, keyed by
+     the byte position of the opening token; see region_widths *)
+  region_widths : int IntMap.t;
 }
+
+(* Scala 3 reference, "Indentation and Braces": a region in braces has the
+   indentation width of the first token that starts a new line after the
+   `{`; a region in parentheses or brackets has the width of the token that
+   follows the opening token when that token starts a new line, and the
+   width of the enclosing region otherwise (no entry in the map).
+*)
+let region_widths (toks : T.token list) : int IntMap.t =
+  let _pending, _after_newline, widths =
+    toks
+    |> List.fold_left
+         (fun ( (pending : (T.token * int) list),
+                (after_newline : bool),
+                (widths : int IntMap.t) ) (tok : T.token) ->
+           match tok with
+           | Space _
+           | Comment _ ->
+               (pending, after_newline, widths)
+           | Nl _ -> (pending, true, widths)
+           | _ ->
+               let info = TH.info_of_tok tok in
+               let pending, widths =
+                 if after_newline then
+                   ( [],
+                     pending
+                     |> List.fold_left
+                          (fun (widths : int IntMap.t)
+                               ((_, pos) : T.token * int) ->
+                            IntMap.add pos (Tok.col_of_tok info) widths)
+                          widths )
+                 else
+                   ( pending
+                     |> List.filter (fun ((opening, _) : T.token * int) ->
+                            match opening with
+                            | LBRACE _ -> true
+                            | _ -> false),
+                     widths )
+               in
+               let pending =
+                 match tok with
+                 | LBRACE _
+                 | LPAREN _
+                 | LBRACKET _ ->
+                     (tok, Tok.bytepos_of_tok info) :: pending
+                 | _ -> pending
+               in
+               (pending, false, widths))
+         ([], false, IntMap.empty)
+  in
+  widths
 
 let mk_env toks =
   match toks with
@@ -130,6 +185,7 @@ let mk_env toks =
         *)
         sepRegions = [ T.DEDENT (0, 0) ];
         is_indented = None;
+        region_widths = region_widths toks;
       }
 
 (* We sometimes need to lookahead tokens, and call fetchToken and revert;
@@ -284,6 +340,35 @@ let startsNewLine in_ =
     | _ -> false
   in
   loop in_.passed
+
+(* The indentation width of the innermost region, where regions in braces,
+   parentheses and brackets count as well (see region_widths). *)
+let currentRegionWidth (in_ : env) : int =
+  let rec loop (sepRegions : T.token list) =
+    match sepRegions with
+    | DEDENT (_, width) :: _ -> width
+    | (RBRACE info | RPAREN info | RBRACKET info) :: rest -> (
+        match IntMap.find_opt (Tok.bytepos_of_tok info) in_.region_widths with
+        | Some width -> width
+        | None -> loop rest)
+    | _ :: rest -> loop rest
+    | [] -> raise Common.Impossible
+  in
+  loop in_.sepRegions
+
+(* Does the current token start a new line indented further than the
+   innermost region? This is the condition under which the Scala 3 scanner
+   inserts an <indent>. *)
+let isIndentedLine (in_ : env) : bool =
+  match in_.token with
+  | NEWLINE _
+  | NEWLINES _
+  | DEDENT _
+  | EOF _ ->
+      false
+  | tok ->
+      startsNewLine in_
+      && Tok.col_of_tok (TH.info_of_tok tok) > currentRegionWidth in_
 
 let getPreviousToken in_ =
   let rec loop passed =
@@ -617,6 +702,60 @@ let isIndentAfterColon in_ =
   match in_.token with
   | COLON _ -> lookingAhead (fun in_ -> Option.is_some (passedIndent in_)) in_
   | _ -> false
+
+(* Scala 3 fewer braces (Scanners.scala, COLONfollow): a `:` can introduce an
+   argument only after an alphanumeric identifier, a backquoted identifier,
+   `this`, `super`, `new`, `)` or `]`. *)
+let isColonArgumentStart (in_ : env) : bool =
+  match in_.token with
+  | COLON _ -> (
+      match getPreviousToken in_ with
+      | Some
+          ( ID_LOWER _ | ID_UPPER _ | ID_DOLLAR _ | ID_BACKQUOTED _ | RPAREN _
+          | RBRACKET _ | Kthis _ | Ksuper _ | Knew _ ) ->
+          true
+      | _ -> false)
+  | _ -> false
+
+(* The block after the `:` and the body after the arrow of a colon lambda are
+   parsed with inIndented, which enters the region that nextToken recorded
+   in is_indented. *)
+let isIndentedRegionStart (in_ : env) : bool =
+  isIndentedLine in_ && Option.is_some (passedIndent in_)
+
+(* `f:` at the end of a line, followed by an indented block *)
+let isColonAtEndOfLine (in_ : env) : bool =
+  lookingAhead isIndentedRegionStart in_
+
+(* `f: x =>`, `f: _ =>` or `f: (params) =>` at the end of a line, followed by
+   an indented body (Parsers.scala, followingIsLambdaAfterColon). A
+   capitalised name after the colon is the type of a Scala 2 typed lambda,
+   `x: T =>`, not a lambda parameter. *)
+let followingIsColonLambda (in_ : env) : bool =
+  lookingAhead
+    (fun (in_ : env) ->
+      let has_params =
+        match in_.token with
+        | USCORE _ ->
+            nextToken in_;
+            true
+        | LPAREN _ ->
+            skipMatching in_;
+            true
+        | ID_UPPER _ -> false
+        | tok when TH.isIdentBool tok ->
+            nextToken in_;
+            true
+        | _ -> false
+      in
+      has_params
+      &&
+      match in_.token with
+      | ARROW _ ->
+          nextToken in_;
+          isIndentedRegionStart in_
+      | _ -> false)
+    in_
 
 (* Adjust sepRegions to enter a new indent region, if we've
    passed by one.
@@ -2254,9 +2393,45 @@ and simpleExprRest ~canApply t in_ : expr =
              skipToken in_;
              (* AST: MethodValue(stripParens(t)) *)
              t
+         | COLON _ when canApply && isColonArgumentStart in_ -> (
+             match colonArgumentOpt in_ with
+             | Some args ->
+                 simpleExprRest ~canApply:true (Apply (t, [ args ])) in_
+             | None -> t)
          | _ ->
              in_
              |> with_logging "simpleExprRest: nothing to consume" (fun () -> t))
+
+(* Scala 3 fewer braces: a `:` followed by an indented block, or by a lambda
+   whose body is an indented block, passes that block or lambda as the last
+   argument (Parsers.scala, colonAtEOLOpt and detectColonLambda). *)
+and colonArgumentOpt (in_ : env) : arguments option =
+  if isColonAtEndOfLine in_ then (
+    skipToken in_;
+    Some (ArgBlock (blockExpr in_)))
+  else if followingIsColonLambda in_ then (
+    skipToken in_;
+    let params = simpleExpr in_ in
+    let iarrow = TH.info_of_tok in_.token in
+    accept (ARROW ab) in_;
+    (* as in Parsers.scala (block ~simplify), an indented block that is a
+       single expression is that expression *)
+    let body =
+      match blockExpr in_ with
+      | _, BEBlock [ E e ], _ -> FExpr (iarrow, e)
+      | block -> FBlock block
+    in
+    let lambda =
+      Lambda
+        {
+          fkind = (LambdaArrow, iarrow);
+          fparams = [ convertToParams iarrow params ];
+          frettype = None;
+          fbody = Some body;
+        }
+    in
+    Some (Args (fb (Tok.unsafe_fake_tok "") [ lambda ])))
+  else None
 
 (* and literal in_ = ...
  *  is now at the top because it's also used by SimplePattern
