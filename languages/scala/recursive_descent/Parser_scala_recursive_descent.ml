@@ -5932,7 +5932,7 @@ let givenConditionParams (iarrow : tok) (in_ : env) : bindings =
  *  GivenImpl ::= GivenType ([`=` Expr] | TemplateBody)
  *  }}}
  *)
-let givenDef in_ : given_definition =
+let givenDef (gtok : tok) (gattrs : attribute list) in_ : given_definition =
   let given_sig =
     match in_.token with
     | _ when TH.isIdentBool in_.token && lookingAhead isGivenSigAfterIdent in_
@@ -6015,32 +6015,39 @@ let givenDef in_ : given_definition =
       (* must be AnnotType `=` Expr *)
       accept (EQUALS ab) in_;
       let exp_opt = Some (expr in_) in
-      { gsig = given_sig; gkind = GivenType (initAnnotType, exp_opt) }
+      let gkind = GivenType (initAnnotType, exp_opt) in
+      { gtok; gattrs; gsig = given_sig; gkind }
   | LPAREN _ ->
       (* This means that our ConstrApp has arguments, and we are in
          StructuralInstance
       *)
       let first_constr_app_arguments = constrAppRest in_ in
       {
+        gtok;
+        gattrs;
         gsig = given_sig;
         gkind =
           structuralInstance (initAnnotType, first_constr_app_arguments) in_;
       }
   | Kwith _ ->
       (* otherwise, StructuraLInstance *)
-      { gsig = given_sig; gkind = structuralInstance (initAnnotType, []) in_ }
+      let gkind = structuralInstance (initAnnotType, []) in_ in
+      { gtok; gattrs; gsig = given_sig; gkind }
   (* SIP-64: GivenType TemplateBody; Scala 3.0: GivenType `{` ... `}` *)
   | LBRACE _
   | COLON _
     when in_.token =~= LBRACE ab || isIndentAfterColon in_ ->
       let body = templateBody ~isPre:false in_ in
       {
+        gtok;
+        gattrs;
         gsig = given_sig;
         gkind = GivenStructural ([ (initAnnotType, []) ], Some body);
       }
   | _ ->
       (* must be AnnotType *)
-      { gsig = given_sig; gkind = GivenType (initAnnotType, None) }
+      let gkind = GivenType (initAnnotType, None) in
+      { gtok; gattrs; gsig = given_sig; gkind }
 
 (* ------------------------------------------------------------------------- *)
 (* TmplDef *)
@@ -6075,9 +6082,9 @@ let tmplDef attrs in_ : definition =
       | _ -> error "expecting class or object after a case" in_)
   | ID_LOWER ("enum", _) -> enumDef attrs in_
   (* "given" is a soft keyword *)
-  | ID_LOWER ("given", _) ->
+  | ID_LOWER ("given", gtok) ->
       skipToken in_;
-      GivenDef (givenDef in_)
+      GivenDef (givenDef gtok attrs in_)
   | _ -> error "expected start of definition" in_
 
 (*****************************************************************************)
