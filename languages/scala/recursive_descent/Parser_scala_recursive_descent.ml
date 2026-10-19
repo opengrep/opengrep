@@ -393,6 +393,14 @@ let convertToParams tk e =
   | Tuple (lb, xs, rb) -> (lb, (xs |> List_.map (convertToParam tk), None), rb)
   | _ -> fb tk ([ convertToParam tk e ], None)
 
+(* The parameters of a context function literal `x ?=> e` are context
+   parameters, as those of a `using` clause. *)
+let lambdaParams (arrow : T.token) (iarrow : tok) (e : expr) : bindings =
+  let lb, (params, _), rb = convertToParams iarrow e in
+  match arrow with
+  | CTXARROW _ -> (lb, (params, Some iarrow), rb)
+  | _ -> (lb, (params, None), rb)
+
 let makeMatchFromExpr e =
   match e with
   | BlockExpr (lb, BECases cases, rb) -> CatchCases (lb, cases, rb)
@@ -1024,12 +1032,12 @@ let isLambdaParamsGroup (toks : T.token list) : bool =
   | RPAREN _ :: _ -> true
   | toks -> element toks
 
-(* `f: x =>`, `f: _ =>` or `f: (params) =>` at the end of a line, followed by
-   an indented body (Parsers.scala, followingIsLambdaAfterColon). A
-   statement `x: T =>` whose `T` is capitalised or a parenthesised type,
-   `(A, B)`, is a Scala 2 typed lambda: the Scala 3 reading, a call of `x`
-   with a lambda whose parameters are `T` or `A` and `B`, is not written in
-   practice. *)
+(* `f: x =>`, `f: _ =>` or `f: (params) =>` at the end of a line, or the same
+   with `?=>`, followed by an indented body (Parsers.scala,
+   followingIsLambdaAfterColon). A statement `x: T =>` whose `T` is
+   capitalised or a parenthesised type, `(A, B)`, is a Scala 2 typed lambda:
+   the Scala 3 reading, a call of `x` with a lambda whose parameters are `T`
+   or `A` and `B`, is not written in practice. *)
 let followingIsColonLambda (in_ : env) : bool =
   let typed_lambda = colonAfterNameStartingStatement in_ in
   lookingAhead
@@ -1053,7 +1061,8 @@ let followingIsColonLambda (in_ : env) : bool =
       has_params
       &&
       match in_.token with
-      | ARROW _ ->
+      | ARROW _
+      | CTXARROW _ ->
           nextToken in_;
           isIndentedRegionStart in_
       | _ -> false)
@@ -1897,6 +1906,10 @@ let rec typ in_ : type_ =
              let t2 = typ in_ in
              (* ast: makeFunctionTypeTree t t2 *)
              TyFunction1 (t, ii, t2)
+         | CTXARROW ii ->
+             skipToken in_;
+             let t2 = typ in_ in
+             TyContextFunction (fb ii [ t ], ii, t2)
          | KforSome ii ->
              skipToken in_;
              makeExistentialTypeTree t ii in_
@@ -2043,6 +2056,10 @@ and tupleInfixType in_ : type_ =
              let t = typ in_ in
              (* ast: makeSafeFunctionType(ts, t) *)
              TyFunction2 (ts, ii, t)
+         | CTXARROW ii ->
+             skipToken in_;
+             let t = typ in_ in
+             TyContextFunction (ts, ii, t)
          (* CHECK: if is.isEmpty "Illegal literal type (), use Unit instead" *)
          | _ ->
              (* CHECK: ts foreach checkNotByNameOrVarargs *)
@@ -2709,13 +2726,17 @@ and parseOther ?(is_block_expr = false) location (in_ : env) : expr =
            false
          in
          (match in_.token with
-         | ARROW ii when location <> InTemplate || lhsIsTypedParamList !t ->
+         | (ARROW ii | CTXARROW ii) as arrow
+           when (match location with
+                | InTemplate -> false
+                | _ -> true)
+                || lhsIsTypedParamList !t ->
              skipToken in_;
              let fbody =
                if location <> InBlock then FExpr (ii, expr in_)
                else FBlock (fb ii (BEBlock (block in_)))
              in
-             let params = convertToParams ii !t in
+             let params = lambdaParams arrow ii !t in
              let def =
                {
                  fkind = (LambdaArrow, ii);
@@ -2966,8 +2987,9 @@ and colonArgumentOpt (in_ : env) : arguments option =
   else if followingIsColonLambda in_ then (
     skipToken in_;
     let params = simpleExpr in_ in
-    let iarrow = TH.info_of_tok in_.token in
-    accept (ARROW ab) in_;
+    let arrow = in_.token in
+    let iarrow = TH.info_of_tok arrow in
+    nextToken in_;
     (* the colon stands for the braces of `f { x => ... }`, so the argument
        is a block that holds the lambda, whose body is a block *)
     let body = FBlock (blockExpr in_) in
@@ -2975,7 +2997,7 @@ and colonArgumentOpt (in_ : env) : arguments option =
       Lambda
         {
           fkind = (LambdaArrow, iarrow);
-          fparams = [ convertToParams iarrow params ];
+          fparams = [ lambdaParams arrow iarrow params ];
           frettype = None;
           fbody = Some body;
         }

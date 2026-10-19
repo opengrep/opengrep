@@ -293,6 +293,18 @@ and v_type_kind = function
         v1 |> Tok.unbracket |> List_.map (fun t -> G.Param (G.param_of_type t))
       in
       G.TyFun (ts, v3)
+  | TyContextFunction (v1, v2, v3) ->
+      let v1 = v_bracket (v_list v_type_) v1
+      and v2 = v_tok v2
+      and v3 = v_type_ v3 in
+      (* the parameters of a context function type are context parameters,
+         as those of a `using` clause *)
+      let pattrs = [ G.OtherAttribute (("using", v2), []) ] in
+      let ts =
+        v1 |> Tok.unbracket
+        |> List_.map (fun (t : G.type_) -> G.Param (G.param_of_type ~pattrs t))
+      in
+      G.TyFun (ts, v3)
   | TyPoly (v1, _v2, v3) ->
       let v1 = v_list (v_binding None) v1 in
       let v3 = v_type_ v3 in

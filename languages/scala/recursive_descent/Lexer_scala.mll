@@ -301,6 +301,8 @@ rule token state = parse
   | "<-"    { LARROW (tokinfo lexbuf) }
   (* case body and short lambdas *)
   | "=>"    { ARROW (tokinfo lexbuf) }
+  (* context functions *)
+  | "?=>"   { CTXARROW (tokinfo lexbuf) }
 
   | "<%"    { VIEWBOUND (tokinfo lexbuf) }
   | "<:"    { SUBTYPE (tokinfo lexbuf) }
