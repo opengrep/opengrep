@@ -2415,7 +2415,37 @@ and expr0 ?(is_block_expr = false) (location : location) (in_ : env) : expr =
          | Kimplicit ii ->
              skipToken in_;
              implicitClosure (Implicit, ii) location in_
+         (* Scala 3 `inline if` and `inline x match` (Parsers.scala, expr1)
+            are read as `if` and `match`, which they mean at run time;
+            otherwise `inline` is an identifier, as in `inline(x)` *)
+         | ID_LOWER ("inline", _) when startsInlineConditional in_ ->
+             skipToken in_;
+             expr0 location in_
          | _ -> parseOther location in_)
+
+(* Is `inline` followed by `if`, or by an operand that a `match` follows on
+   the same line, outside nested groups? *)
+and startsInlineConditional (in_ : env) : bool =
+  let rec match_follows (toks : T.token list) (depth : int) : bool =
+    match toks with
+    | [] -> false
+    | (Space _ | Comment _) :: rest -> match_follows rest depth
+    | Kmatch _ :: _ when Int.equal depth 0 -> true
+    | Nl _ :: rest -> (not (Int.equal depth 0)) && match_follows rest depth
+    | EOF _ :: _ -> false
+    | (LPAREN _ | LBRACKET _ | LBRACE _) :: rest ->
+        match_follows rest (depth + 1)
+    | (RPAREN _ | RBRACKET _ | RBRACE _) :: rest ->
+        (not (Int.equal depth 0)) && match_follows rest (depth - 1)
+    | _ :: rest -> match_follows rest depth
+  in
+  match in_next_token in_.rest with
+  | Some (Kif _) -> true
+  | Some tok ->
+      TH.isExprIntro tok
+      && (not (TH.isOperator tok))
+      && match_follows in_.rest 0
+  | None -> false
 
 and parseOther ?(is_block_expr = false) location (in_ : env) : expr =
   in_
