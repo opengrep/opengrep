@@ -118,6 +118,9 @@ type env = {
   (* the indentation width of the first token of each line, keyed by its
      byte position; see line_indents *)
   line_indents : int IntMap.t;
+  (* the tokens after the `}` that matches each `{`, keyed by the byte
+     position of the `{`; see brace_ends *)
+  brace_ends : T.token list IntMap.t;
   (* the column of the first token of the statement being parsed; a line
      after `=` must be indented further to continue the statement in an
      indentation region (see expr) *)
@@ -243,6 +246,21 @@ let indent_prefixes (toks : T.token list) : string IntMap.t =
   in
   prefixes
 
+(* the tokens after the `}` that matches each `{`, keyed by the byte position
+   of the `{` *)
+let brace_ends (toks : T.token list) : T.token list IntMap.t =
+  let rec loop (toks : T.token list) (opened : int list)
+      (ends : T.token list IntMap.t) : T.token list IntMap.t =
+    match (toks, opened) with
+    | [], _ -> ends
+    | LBRACE info :: rest, _ ->
+        loop rest (Tok.bytepos_of_tok info :: opened) ends
+    | RBRACE _ :: rest, pos :: opened ->
+        loop rest opened (IntMap.add pos rest ends)
+    | _ :: rest, _ -> loop rest opened ends
+  in
+  loop toks [] IntMap.empty
+
 let mk_env toks =
   match toks with
   | [] ->
@@ -264,6 +282,7 @@ let mk_env toks =
         is_indented = None;
         region_widths = region_widths indents toks;
         line_indents = indents;
+        brace_ends = brace_ends toks;
         stat_width = 0;
         indent_prefixes = indent_prefixes toks;
       }
@@ -912,6 +931,7 @@ let rec skipMatching in_ =
     match in_.token with
     | LPAREN _ -> RPAREN ab
     | LBRACKET _ -> RBRACKET ab
+    | LBRACE _ -> RBRACE ab
     | _ -> failwith "precondition failure"
   in
   skipToken in_;
@@ -1038,6 +1058,119 @@ let followingIsColonLambda (in_ : env) : bool =
           isIndentedRegionStart in_
       | _ -> false)
     in_
+
+(* Is the `do` at the current token a Scala 2 `do { ... } while (c)`, with
+   `while` right after the block on the same line? *)
+let isDoWhile (in_ : env) : bool =
+  in_.token =~= Kdo ab
+  && lookingAhead
+       (fun (in_ : env) ->
+         match in_.token with
+         | LBRACE _ ->
+             skipMatching in_;
+             in_.token =~= Kwhile ab
+         | _ -> false)
+       in_
+
+(* Parsers.scala, followedByToken: does `query` follow before the end of the
+   statement, outside nested groups? *)
+let followedByToken (query : T.token) (in_ : env) : bool =
+  let stops (tok : T.token) : bool =
+    TH.isDefIntro tok || TH.isModifier tok
+    ||
+    match tok with
+    | Kimport _
+    | Kpackage _
+    | Kif _
+    | Kelse _
+    | Kwhile _
+    | Kdo _
+    | Kfor _
+    | Kyield _
+    | Knew _
+    | Ktry _
+    | Kcatch _
+    | Kfinally _
+    | Kthrow _
+    | Kreturn _
+    | Kmatch _
+    | SEMI _
+    | DEDENT _
+    | EOF _ ->
+        true
+    | _ -> false
+  in
+  let opens (tok : T.token) : bool =
+    match tok with
+    | LPAREN _
+    | LBRACKET _
+    | LBRACE _ ->
+        true
+    | _ -> false
+  in
+  let closes (tok : T.token) : bool =
+    match tok with
+    | RPAREN _
+    | RBRACKET _
+    | RBRACE _ ->
+        true
+    | _ -> false
+  in
+  let isQuery (in_ : env) : bool =
+    in_.token =~= query && not (isDoWhile in_)
+  in
+  let in_ = copy_env in_ in
+  (* `then` and `do` after a dot are member names, as in Scala 2 *)
+  let rec loop (depth : int) (prev : T.token) : bool =
+    let tok = in_.token in
+    if Int.equal depth 0 && isQuery in_ && not (prev =~= DOT ab) then true
+    else if Int.equal depth 0 && (stops tok || closes tok) then false
+    else
+      match tok with
+      | EOF _ -> false
+      (* a newline ends the statement unless an infix operator ends the line
+         or the query starts the next line *)
+      | (NEWLINE _ | NEWLINES _)
+        when Int.equal depth 0 && not (TH.isSymbolicOperator prev) ->
+          nextToken in_;
+          isQuery in_
+      | _ ->
+          let depth =
+            if closes tok then depth - 1
+            else if opens tok then depth + 1
+            else depth
+          in
+          nextToken in_;
+          loop depth tok
+  in
+  loop 0 in_.token
+
+(* Parsers.scala, toBeContinued: the expression after a parenthesised
+   condition continues when it is on the same line and either cannot start a
+   statement or reaches `alt`. *)
+let conditionContinues (alt : T.token) (in_ : env) : bool =
+  match in_.token with
+  | NEWLINE _
+  | NEWLINES _ ->
+      false
+  (* a block, as in Scala 2 `if (c) { ... }`: what follows its `}` on the
+     same line decides, without scanning the block again for each enclosing
+     condition *)
+  | LBRACE info -> (
+      match
+        IntMap.find_opt (Tok.bytepos_of_tok info) in_.brace_ends
+        |> Option.map (skip_trivia ~newlines:false)
+      with
+      | Some (tok :: _) when tok =~= alt -> true
+      (* as in followedByToken, the query can start the next line, unless
+         it starts a Scala 2 `do { ... } while (c)` *)
+      | Some (Nl _ :: rest) -> (
+          match skip_trivia ~newlines:true rest with
+          | tok :: _ when tok =~= alt -> followedByToken alt in_
+          | _ -> false)
+      | Some ([] | (EOF _ | SEMI _ | RBRACE _ | Kelse _) :: _) -> false
+      | _ -> followedByToken alt in_)
+  | tok -> (not (TH.inFirstOfStat tok)) || followedByToken alt in_
 
 (* Adjust sepRegions to enter a new indent region, if we've
    passed by one.
@@ -2605,51 +2738,50 @@ and postfixExpr ?(is_block_expr = false) in_ : expr =
   in_
   |> with_logging "postfixExpr" (fun () ->
          (* TODO: AST: opstack, reduce *)
-         let rec loop top in_ =
-           in_
-           |> with_logging "postfixExpr:loop" (fun () ->
-                  (* In Scala 3, we can have if statements that look like
-                     if <expr> then <expr> else <expr>
-
-                     Except, in Scala 3, `then` is also a soft keyword.
-
-                     This means that without this check, we would parse
-                       <expr> then
-                     as a postfix application of `then` to <expr>.
-                  *)
-                  if
-                    (not (TH.isIdentBool in_.token))
-                    || in_.token =~= ID_LOWER ("then", ab)
-                  then
-                    in_
-                    |> with_logging "postfixExpr:loop: noIdentBool, stop"
-                         (fun () -> top)
-                  else
-                    (* isIdentBool is true; remember that operators are identifiers and
-                     * that Scala allows any identifier in infix position
-                     *)
-                    (* AST: pushOpInfo(reduceExprStack(base, top)) *)
-                    let id, _targsTODO = pushOpInfo top in_ in
-                    newLineOptWhenFollowing TH.isExprIntro in_;
-                    skipDedentBeforeOperand in_;
-                    if TH.isExprIntro in_.token then
-                      let res = prefixExpr in_ in
-                      match res with
-                      (*| None -> (* AST: reduceExprStack(base, top) *) None
-                        | Some *)
-                      | next ->
-                          let next = Infix (top, id, next) in
-                          loop next in_
-                    else
-                      in_
-                      |> with_logging "postfixExpr:loop: noExprIntro, stop"
-                           (fun () ->
-                             (* AST: finishPostfixOp(base, popOpInfo()) *)
-                             Postfix (top, id)))
-         in
          let res = prefixExpr ~is_block_expr in_ in
          (* AST: reduceExprStack (res) *)
-         loop res in_)
+         postfixExprRest res in_)
+
+and postfixExprRest (top : expr) (in_ : env) : expr =
+  in_
+  |> with_logging "postfixExpr:loop" (fun () ->
+         (* In Scala 3, we can have if statements that look like
+            if <expr> then <expr> else <expr>
+
+            Except, in Scala 3, `then` is also a soft keyword.
+
+            This means that without this check, we would parse
+              <expr> then
+            as a postfix application of `then` to <expr>.
+         *)
+         if
+           (not (TH.isIdentBool in_.token))
+           || in_.token =~= ID_LOWER ("then", ab)
+         then
+           in_
+           |> with_logging "postfixExpr:loop: noIdentBool, stop" (fun () ->
+                  top)
+         else
+           (* isIdentBool is true; remember that operators are identifiers and
+            * that Scala allows any identifier in infix position
+            *)
+           (* AST: pushOpInfo(reduceExprStack(base, top)) *)
+           let id, _targsTODO = pushOpInfo top in_ in
+           newLineOptWhenFollowing TH.isExprIntro in_;
+           skipDedentBeforeOperand in_;
+           if TH.isExprIntro in_.token then
+             let res = prefixExpr in_ in
+             match res with
+             (*| None -> (* AST: reduceExprStack(base, top) *) None
+               | Some *)
+             | next ->
+                 let next = Infix (top, id, next) in
+                 postfixExprRest next in_
+           else
+             in_
+             |> with_logging "postfixExpr:loop: noExprIntro, stop" (fun () ->
+                    (* AST: finishPostfixOp(base, popOpInfo()) *)
+                    Postfix (top, id)))
 
 (** {{{
  *  PrefixExpr   ::= [`-` | `+` | `~` | `!`] SimpleExpr
@@ -3178,10 +3310,7 @@ and parseIf in_ : stmt =
   skipToken in_;
   let cond =
     match in_.token with
-    | LPAREN _ ->
-        let cond = parensCondExpr in_ in
-        newLinesOpt in_;
-        cond
+    | LPAREN _ -> parensCondOrExpr (ID_LOWER ("then", ab)) in_
     | _ ->
         let e = expr in_ in
         (* So we can parse things like
@@ -3222,15 +3351,33 @@ and parensCondExpr in_ : expr bracket =
   (* AST: if isWildcard(r) *)
   (lp, r, rp)
 
+(* The condition of an `if` or a `while` that starts with `(` (Parsers.scala,
+   condExpr): the parenthesised expression is a Scala 2 condition, unless
+   `alt` (`then` or `do`) follows it, or the expression continues after it
+   and reaches `alt` (`if (a) && (b) then`). *)
+and parensCondOrExpr (alt : T.token) (in_ : env) : expr bracket =
+  let ((_, e, _) as cond) = parensCondExpr in_ in
+  newLineOptWhenFollowedBy alt in_;
+  if in_.token =~= alt && not (isDoWhile in_) then (
+    nextToken in_;
+    newLinesOpt in_;
+    cond)
+  else if conditionContinues alt in_ then (
+    let e = postfixExprRest (simpleExprRest ~canApply:true e in_) in_ in
+    newLinesOpt in_;
+    accept alt in_;
+    newLinesOpt in_;
+    fb (Tok.unsafe_fake_tok "") e)
+  else (
+    newLinesOpt in_;
+    cond)
+
 and parseWhile in_ : stmt =
   let ii = TH.info_of_tok in_.token in
   skipToken in_;
   let cond =
     match in_.token with
-    | LPAREN _ ->
-        let cond = parensCondExpr in_ in
-        newLinesOpt in_;
-        cond
+    | LPAREN _ -> parensCondOrExpr (Kdo ab) in_
     | _ ->
         let e = expr in_ in
         newLinesOpt in_;
@@ -3331,8 +3478,9 @@ and parseFor in_ : stmt =
         let e = expr in_ in
         (* ast: gen.mkFor(enums, gen.Yield(expr())) *)
         Yield (ii, e)
-    (* Scala 3: `for enums do expr` *)
-    | Kdo _ ->
+    (* Scala 3: `for enums do expr`, unless the body is a Scala 2
+       `do { ... } while (c)` *)
+    | Kdo _ when not (isDoWhile in_) ->
         nextToken in_;
         NoYield (expr in_)
     | _ ->
