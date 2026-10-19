@@ -2236,6 +2236,10 @@ and simplePattern in_ : pattern =
              nextToken in_;
              let x = literal ~isNegated:ii ~inPattern:true in_ in
              PatLiteral x
+         (* SimplePattern ::= `given` RefinedType (Parsers.scala) *)
+         | ID_LOWER ("given", ii) ->
+             nextToken in_;
+             PatGiven (ii, startAnnotType in_)
          | x when TH.isIdentBool x || x =~= Kthis ab -> (
              let t = stableId in_ in
              (* less: if t = Ident("-") literal isNegated:true inPattern:true *)
