@@ -20,6 +20,18 @@ let fake = G.fake
 
 let name_of_id id = G.Id (id, G.empty_id_info ())
 let expr_of_id id = G.N (name_of_id id) |> G.e
+
+(* [@x] is the instance variable [x] of [self], as in the Ruby front end;
+   [obj.@x] is the field [x] of [obj]. *)
+let field_of_instance_var ((name, tok) : string * Tok.t) : G.ident =
+  (String.sub name 1 (String.length name - 1), tok)
+
+let expr_of_instance_var ((_, tok) as instance_var : string * Tok.t) : G.expr =
+  G.DotAccess
+    ( G.IdSpecial (G.Self, tok) |> G.e,
+      tok,
+      G.FN (name_of_id (field_of_instance_var instance_var)) )
+  |> G.e
 let expr_of_name name = G.N name |> G.e
 let todo_stmt env label tok =
   G.DirectiveStmt { d = G.OtherDirective ((label, token env tok), []); d_attrs = [] } |> G.s
@@ -274,7 +286,8 @@ let import_stmt tok module_name =
 
 let rec map_lhs_name env = function
   | `Unde tok -> expr_of_id (str env tok)
-  | `Id tok | `Semg_meta tok | `Inst_var tok | `Class_var tok | `Spec_var tok | `Prop tok ->
+  | `Inst_var tok -> expr_of_instance_var (str env tok)
+  | `Id tok | `Semg_meta tok | `Class_var tok | `Spec_var tok | `Prop tok ->
       expr_of_id (str env tok)
   | `Macro_var (tok, _) -> expr_of_id (str env tok)
   | `Assign_call x ->
@@ -285,7 +298,8 @@ let rec map_lhs_name env = function
   | `Index_op x -> map_index_operator env x
 
 and map_op_lhs_name env = function
-  | `Id tok | `Semg_meta tok | `Inst_var tok | `Class_var tok ->
+  | `Inst_var tok -> expr_of_instance_var (str env tok)
+  | `Id tok | `Semg_meta tok | `Class_var tok ->
       expr_of_id (str env tok)
   | `Macro_var (tok, _) -> expr_of_id (str env tok)
   | `Assign_call x ->
@@ -524,8 +538,9 @@ and map_expression_inner env x =
   | `Tuple (l, e, rest, _comma, r) ->
       G.Container (G.Tuple, (token env l, map_expression env e :: List_.map (fun (_c, e) -> map_expression env e) rest, token env r))
       |> G.e
-  | `Self tok | `Id tok | `Inst_var tok | `Class_var tok | `Spec_var tok
-  | `Global_match_data_index tok ->
+  | `Self tok -> G.IdSpecial (G.Self, token env tok) |> G.e
+  | `Inst_var tok -> expr_of_instance_var (str env tok)
+  | `Id tok | `Class_var tok | `Spec_var tok | `Global_match_data_index tok ->
       expr_of_id (str env tok)
   | `Cst c -> expr_of_name (name_of_constant env c)
   | `Gene_inst_type (c, _lp, _args, _rp) -> expr_of_name (name_of_constant env c)
@@ -794,7 +809,8 @@ and map_dot_call env = function
   | `Dot_call (recv, dot, name) ->
       let field =
         match name with
-        | `Id tok | `Semg_meta tok | `Id_meth_call tok | `Inst_var tok -> G.FN (name_of_id (str env tok))
+        | `Id tok | `Semg_meta tok | `Id_meth_call tok -> G.FN (name_of_id (str env tok))
+        | `Inst_var tok -> G.FN (name_of_id (field_of_instance_var (str env tok)))
         | `Cst c -> G.FN (name_of_constant env c)
         | `Op_tok op -> G.FN (name_of_id (id_of_method_name env (`Op_tok op)))
       in
@@ -1062,8 +1078,30 @@ and map_base_method_def env (tok, recv, name, params, ret, _forall) body =
     | None -> fb []
     | Some (lp, params, rp) -> (token env lp, Option.value ~default:[] (Option.map (map_param_list env) params), token env rp)
   in
-  let body = G.Block (fb (Option.value ~default:[] (Option.map (map_statements env) body))) |> G.s in
+  (* [def m(@x)] takes [x] and assigns it to the instance variable [@x]. *)
+  let instance_var_assigns =
+    match params with
+    | None -> []
+    | Some (_lp, params, _rp) ->
+        Option.value ~default:[] (Option.map (instance_var_params env) params)
+        |> List_.map (fun (instance_var : string * Tok.t) ->
+               G.Assign
+                 ( expr_of_instance_var instance_var,
+                   snd instance_var,
+                   expr_of_id (field_of_instance_var instance_var) )
+               |> G.e |> G.exprstmt)
+  in
+  let stmts = Option.value ~default:[] (Option.map (map_statements env) body) in
+  let body = G.Block (fb (instance_var_assigns @ stmts)) |> G.s in
   (ent, G.FuncDef { fkind = (G.Method, token env tok); fparams; frettype = map_return_type env ret; fbody = G.FBStmt body })
+
+and instance_var_params env = function
+  | `Choice_param_rep_COMMA_choice_param_opt_COMMA_opt_blk_param (first, rest, _block) ->
+      first :: List_.map snd rest
+      |> List.filter_map (function
+           | `Param (_attrs, _external_name, `Inst_var tok, _ty, _default) -> Some (str env tok)
+           | _ -> None)
+  | `Blk_param _ -> []
 
 and map_fun_def env (tok, name, _extern, params, ret) body =
   let id =
@@ -1124,7 +1162,8 @@ and map_param_id env = function
   | `Macro_var (tok, _) -> str env tok
 
 and map_regular_param_id env = function
-  | `Id tok | `Semg_meta tok | `Id_meth_call tok | `Inst_var tok | `Class_var tok -> str env tok
+  | `Id tok | `Semg_meta tok | `Id_meth_call tok | `Class_var tok -> str env tok
+  | `Inst_var tok -> field_of_instance_var (str env tok)
   | `Macro_var (tok, _) -> str env tok
 
 and map_fun_param_id env = function
@@ -1137,11 +1176,16 @@ and map_macro_def env ((tok, name, _params), _start, _content, _end) =
   (ent, G.MacroDef { macroparams = []; macrobody = [ G.Tk (token env tok) ] })
 
 and map_type_declaration env (lhs, colon, _space, ty, init) =
-  let lhs = GH.expr_to_pattern (map_typed_lhs env lhs) in
-  let pat = G.PatTyped (lhs, map_bare_type env ty) in
-  match init with
-  | Some (_eq, e) -> G.LetPattern (pat, map_expression env e) |> G.e
-  | None -> G.OtherExpr (("TypeDeclaration", token env colon), [ G.P pat ]) |> G.e
+  match (lhs, init) with
+  | `Inst_var tok, Some (eq, e) ->
+      G.Assign (expr_of_instance_var (str env tok), token env eq, map_expression env e)
+      |> G.e
+  | _ -> (
+      let lhs = GH.expr_to_pattern (map_typed_lhs env lhs) in
+      let pat = G.PatTyped (lhs, map_bare_type env ty) in
+      match init with
+      | Some (_eq, e) -> G.LetPattern (pat, map_expression env e) |> G.e
+      | None -> G.OtherExpr (("TypeDeclaration", token env colon), [ G.P pat ]) |> G.e)
 
 and map_typed_lhs env = function
   | `Id tok | `Semg_meta tok | `Id_meth_call tok | `Inst_var tok | `Class_var tok -> expr_of_id (str env tok)
@@ -1149,7 +1193,8 @@ and map_typed_lhs env = function
 
 and map_multi_lhs_name env = function
   | `Unde tok -> expr_of_id (str env tok)
-  | `Id tok | `Semg_meta tok | `Inst_var tok | `Class_var tok ->
+  | `Inst_var tok -> expr_of_instance_var (str env tok)
+  | `Id tok | `Semg_meta tok | `Class_var tok ->
       expr_of_id (str env tok)
   | `Macro_var (tok, _) -> expr_of_id (str env tok)
   | `Assign_call x ->
