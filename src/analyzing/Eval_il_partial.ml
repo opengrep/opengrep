@@ -147,6 +147,36 @@ let int_of_literal = function
   | G.Int (opt, _) -> opt
   | ___else___ -> None
 
+(* Whether an integer and a float can be equal under [op], as in `1 == 1.0`.
+ * Elixir is not listed: its `case` is tested with [Eq] too, and there `1.0`
+ * does not match `1`. Go and C# are not listed: a variable declared as an
+ * interface or as `object` holds its literal's value here but not its type,
+ * and there an integer never equals a float. *)
+let int_can_equal_float (lang : Lang.t) (op : G.operator) : bool =
+  match (lang, op) with
+  | (Lang.Js | Lang.Ts), (G.Eq | G.NotEq | G.PhysEq | G.NotPhysEq) -> true
+  | ( ( Lang.Python | Lang.Python2 | Lang.Python3 | Lang.Java | Lang.C
+      | Lang.Cpp | Lang.Scala | Lang.Dart | Lang.Ruby | Lang.Php | Lang.Vb ),
+      (G.Eq | G.NotEq) ) ->
+      true
+  | _ -> false
+
+(* Two literals of the same kind among integers, floats, strings, symbols,
+ * booleans and nil. *)
+let literals_of_one_kind (cs : G.svalue list) : bool =
+  match cs with
+  | [ G.Lit l1; G.Lit l2 ] -> (
+      match (l1, l2) with
+      | G.Int _, G.Int _
+      | G.Float _, G.Float _
+      | G.String _, G.String _
+      | G.Atom _, G.Atom _
+      | G.Bool _, G.Bool _
+      | G.Null _, G.Null _ ->
+          true
+      | _ -> false)
+  | _ -> false
+
 let literal_of_string ?tok s : G.literal =
   let tok =
     match tok with
@@ -310,7 +340,18 @@ and eval_op memo (env : env) wop args =
   | G.Or, [ G.Lit (G.Bool (false, _)); c ] when Lang.equal env.lang Lang.Python
     ->
       c (* Python: False or 42 -> 42 *)
-  (* Equality / inequality fold uniformly via [eq] on [G.svalue], so any
+  (* Ruby's and Crystal's `===`, which their front ends write as [PhysEq],
+   * is case equality: its result depends on the class of the receiver (a
+   * Regexp matches, a Range includes, a class tests membership,
+   * `1 === 1.0`). It agrees with `==` only between two literals of the same
+   * kind among integers, floats, strings, symbols, booleans and nil;
+   * otherwise it is not decided on the operands' values. *)
+  | G.PhysEq, _
+    when (Lang.equal env.lang Lang.Ruby || Lang.equal env.lang Lang.Crystal)
+         && not (literals_of_one_kind cs) ->
+      G.Cst G.Cbool
+  (* Equality / inequality fold via [eq] on [G.svalue], or by numeric value
+   * for an integer and a float ([int_can_equal_float]), so any
    * two [Lit] operands — Bool, Int, String, etc. — produce a [Lit Bool].
    * [PhysEq]/[NotPhysEq] are JS [===]/[!==] and OCaml [==]/[!=]; folding
    * them on literals gives the same result as value equality since
@@ -325,7 +366,14 @@ and eval_op memo (env : env) wop args =
    * language, one lexing. *)
   | ( (G.Eq | G.NotEq | G.PhysEq | G.NotPhysEq),
       [ (G.Lit l1 as c1); (G.Lit l2 as c2) ] ) ->
-      let equal = eq c1 c2 in
+      let equal =
+        match (l1, l2) with
+        | G.Int (Some i, _), G.Float (Some f, _)
+        | G.Float (Some f, _), G.Int (Some i, _)
+          when int_can_equal_float env.lang op ->
+            Float.equal (Int64.to_float i) f
+        | _ -> eq c1 c2
+      in
       let lexed_inequality_unsound =
         (not equal)
         &&

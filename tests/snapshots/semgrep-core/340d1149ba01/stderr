@@ -1,17 +1,17 @@
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'commit' '-m' 'Add files'
 [<MASKED TIMESTAMP>][INFO]: Opengrep version: <MASKED>
 [<MASKED TIMESTAMP>][INFO]: Getting the rules
 [<MASKED TIMESTAMP>][INFO]: loading local config from rules.yml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from rules.yml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--cached' '<TMP>/<MASKED>'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--others' '--exclude-standard' '<TMP>/<MASKED>'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--cached' '<TMP>/<MASKED>'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--others' '--exclude-standard' '<TMP>/<MASKED>'
 [<MASKED TIMESTAMP>][INFO]: running 1 rules from 1 config rules.yml
 Rules:
 - eqeq-bad

@@ -1,0 +1,17 @@
+rules:
+  - id: test-destructure-arity-taint
+    message: |
+      A multi-arity leg whose parameter is a Clojure destructure is taken by
+      every call with its number of arguments; the sink in the leg must fire
+      for a caller whose map lacks the key or is nil, or whose vector is
+      shorter than the destructure.
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

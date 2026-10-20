@@ -347,6 +347,8 @@ and pattern =
   | PatTuple of pattern list bracket
   | PatConstructor of qualified * pattern list
   | PatList of patlist_arg list bracket
+  (* a hash pattern: `{a: 1}`, `Const(a: 1)`, `a: 1` *)
+  | PatHash of patlist_arg list bracket
   | PatWhen of pattern * expr
   | PatAs of pattern * ident
   (* This is an example of "variable pinning", which lets a variable's value be
@@ -360,6 +362,8 @@ and pattern =
 
 and patlist_arg =
   | PArgSplat of tok * ident option
+  (* `**nil` in a hash pattern: no other keys *)
+  | PArgSplatNil of tok * tok
   | PArgKeyVal of pattern * (* : *) tok * pattern option
   | PArgPat of pattern
   (* sgrep-ext: *)

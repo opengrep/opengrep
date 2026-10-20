@@ -3349,14 +3349,14 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let ident = ident env v2 in
       (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
       let type_params = Option.map (map_type_parameters env) v3 in
-      let fields, _where_clauseTODO =
+      let fields, _where_clauseTODO, unit_struct =
         match v4 with
         | `Opt_where_clause_field_decl_list (v1, v2) ->
             let where_clause =
               Option.map (fun x -> map_where_clause env x) v1
             in
             let fields = map_field_declaration_list env v2 in
-            (fields, where_clause)
+            (fields, where_clause, [])
         | `Orde_field_decl_list_opt_where_clause_SEMI (v1, v2, v3) ->
             (* Unit structs *)
             let fields = map_ordered_field_declaration_list env v1 in
@@ -3364,12 +3364,13 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
               Option.map (fun x -> map_where_clause env x) v2
             in
             let _semicolon = token env v3 (* ";" *) in
-            (fields, where_clause)
+            (fields, where_clause, [])
         | `SEMI tok ->
-            let _semicolon = token env tok in
+            let semicolon = token env tok in
             (* ";" *)
             let fields = (G.fake "{", [], G.fake "}") in
-            (fields, None)
+            (* `struct U;` also defines the constant `U`. *)
+            (fields, None, [ G.OtherAttribute (("UnitStruct", semicolon), []) ])
       in
       let class_def =
         {
@@ -3384,7 +3385,7 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       let ent =
         {
           G.name = G.EN (G.Id (ident, G.empty_id_info ()));
-          attrs = map_visibility env v0 @ outer_attrs;
+          attrs = map_visibility env v0 @ outer_attrs @ unit_struct;
           tparams = type_params;
         }
       in

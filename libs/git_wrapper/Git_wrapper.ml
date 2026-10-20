@@ -51,6 +51,12 @@ module Log = Log_git_wrapper.Log
  *)
 let git : Cmd.name = Cmd.Name "git"
 
+(* Options given to every git command. A bare repository is used only when
+   given explicitly, never one found from the working directory, which can be
+   inside the scanned files. *)
+let git_options : Cmd.args = [ "-c"; "safe.bareRepository=explicit" ]
+let git_cmd (args : Cmd.args) : Cmd.t = (git, git_options @ args)
+
 type status = {
   added : string list;
   modified : string list;
@@ -154,7 +160,7 @@ let opt (o : string option) : string list =
    Usage:
 
    let do_something ?(foo = false) () =
-     let cmd = (git, [ "do-something" ] @ flag "--foo" foo) in
+     let cmd = git_cmd ([ "do-something" ] @ flag "--foo" foo) in
      ...
 *)
 let flag name (is_set : bool) : string list =
@@ -280,7 +286,7 @@ Failed to run %s. Possible reasons:
 
 (* Similar to Sys.command, but specific to git *)
 let command (caps : < Cap.exec >) (args : Cmd.args) : string =
-  let cmd : Cmd.t = (git, args) in
+  let cmd : Cmd.t = git_cmd args in
   match CapExec.string_of_run caps#exec ~trim:true cmd with
   | Ok (str, (_, `Exited 0)) -> str
   | Ok _
@@ -294,7 +300,7 @@ let command (caps : < Cap.exec >) (args : Cmd.args) : string =
  * ignores them. *)
 let command_with_config (_caps : < Cap.exec >)
     ~(config : (string * string) list) (args : Cmd.args) : string =
-  let cmd : Cmd.t = (git, args) in
+  let cmd : Cmd.t = git_cmd args in
   let env =
     let current =
       match Bos.OS.Env.current () with
@@ -316,10 +322,11 @@ let command_with_config (_caps : < Cap.exec >)
   UCmd.log_command cmd;
   let result =
     UCmd.capture_and_log_stderr (fun () ->
+        let program = UCmd.resolve_program cmd in
         (* nosemgrep: forbid-exec *)
-        let out = Cmd.bos_apply (Bos.OS.Cmd.run_out ~env) cmd in
+        let out = Result.map (Bos.OS.Cmd.run_out ~env) program in
         (* nosemgrep: forbid-exec *)
-        Bos.OS.Cmd.out_string ~trim:true out)
+        Result.bind out (Bos.OS.Cmd.out_string ~trim:true))
   in
   match result with
   | Ok (str, (_, `Exited 0)) -> str
@@ -339,7 +346,7 @@ let parse_version (str : string) : (int * int) option =
 (* GIT_CONFIG_COUNT and friends exist since git 2.31; older git silently
  * ignores them *)
 let supports_config_env (caps : < Cap.exec >) : bool =
-  match CapExec.string_of_run caps#exec ~trim:true (git, [ "--version" ]) with
+  match CapExec.string_of_run caps#exec ~trim:true (git_cmd [ "--version" ]) with
   | Ok (str, (_, `Exited 0)) -> (
       match parse_version str with
       | Some (major, minor) -> major > 2 || (major =|= 2 && minor >= 31)
@@ -390,7 +397,7 @@ let ls_files ?(cwd = Fpath.v ".") ?(exclude_standard = false) ?(kinds = [])
   let roots = root_paths |> List_.map Fpath.to_string in
   let kinds = kinds |> List_.map string_of_ls_files_kind in
   let cmd =
-    ( git,
+    git_cmd (
       (* Unlike the default, '-z' causes the file path to not be quoted
          when they contain special characters, simplifying parsing. *)
       [ "-C"; !!cwd; "ls-files"; "-z" ]
@@ -485,7 +492,7 @@ let ls_files_relative ?exclude_standard ?kinds ~(project_root : Rpath.t)
 
 (* TODO: somehow avoid error message on stderr in case this is not a git repo *)
 let project_root_for_files_in_dir dir =
-  let cmd = (git, [ "-C"; !!dir; "rev-parse"; "--show-toplevel" ]) in
+  let cmd = git_cmd [ "-C"; !!dir; "rev-parse"; "--show-toplevel" ] in
   match UCmd.string_of_run ~trim:true cmd with
   | Ok (path, (_, `Exited 0)) -> Some (Fpath.v path)
   | _ -> None
@@ -500,7 +507,7 @@ let project_root_for_file_or_files_in_dir path =
 let is_tracked_by_git file = project_root_for_file file |> Option.is_some
 
 let checkout ?cwd ?git_ref () =
-  let cmd = (git, cd cwd @ [ "checkout" ] @ opt git_ref) in
+  let cmd = git_cmd (cd cwd @ [ "checkout" ] @ opt git_ref) in
   match UCmd.status_of_run ~quiet:true cmd with
   | Ok (`Exited 0) -> ()
   | _ -> raise (Error "Could not checkout git ref")
@@ -524,7 +531,7 @@ let checkout ?cwd ?git_ref () =
 let sparse_shallow_filtered_checkout (url : Uri.t) path =
   let path = Fpath.to_string path in
   let cmd =
-    ( git,
+    git_cmd (
       [
         "clone";
         "--depth=1";
@@ -546,7 +553,7 @@ let sparse_shallow_filtered_checkout (url : Uri.t) path =
 let sparse_checkout_add ?cwd folders =
   let folders = List_.map Fpath.to_string folders in
   let cmd =
-    ( git,
+    git_cmd (
       cd cwd
       @ [ "sparse-checkout"; "add"; "--sparse-index"; "--cone" ]
       @ folders )
@@ -580,7 +587,7 @@ let shallow_clone ?ref_ (url : Uri.t) (dst : Fpath.t) : (unit, string) result =
     | None -> []
   in
   let cmd =
-    ( git,
+    git_cmd (
       [ "clone"; "--depth=1" ]
       @ branch_args
       (* '--' terminates option parsing: without it a URL such as '--help' or
@@ -620,7 +627,7 @@ let failed_git_command_msg ~(exit_code : int option) ~(output : string)
 (* TODO: use better types? sha1? *)
 let merge_base (commit : string) : string =
   let args = [ "merge-base"; commit; "HEAD" ] in
-  let cmd = (git, args) in
+  let cmd = git_cmd args in
   match UCmd.string_of_run_with_stderr ~trim:true cmd with
   | Ok (merge_base, (_, `Exited 0)), _ -> merge_base
   | Ok (_, (_, status)), stderr ->
@@ -661,9 +668,9 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   let temp_dir = rand_dir () in
   let cmd : Cmd.t =
     match branch with
-    | None -> (git, [ "worktree"; "add"; !!temp_dir; commit ])
+    | None -> git_cmd [ "worktree"; "add"; !!temp_dir; commit ]
     | Some new_branch ->
-        (git, [ "worktree"; "add"; !!temp_dir; commit; "-b"; new_branch ])
+        git_cmd [ "worktree"; "add"; !!temp_dir; commit; "-b"; new_branch ]
   in
   match UCmd.status_of_run ~quiet:true cmd with
   | Ok (`Exited 0) ->
@@ -683,7 +690,7 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
            when a .gitattributes normalises line endings that the blobs
            do not have; git then refuses to remove the worktree unless
            forced. It is a throwaway directory, so forcing is safe. *)
-        let cmd = (git, [ "worktree"; "remove"; "--force"; !!temp_dir ]) in
+        let cmd = git_cmd [ "worktree"; "remove"; "--force"; !!temp_dir ] in
         match UCmd.status_of_run ~quiet:true cmd with
         | Ok (`Exited 0) ->
             Log.info (fun m -> m "Finished cleaning up git worktree")
@@ -717,7 +724,7 @@ let path_from_cwd ?(cwd : Fpath.t option) () : string -> string =
 
 let status ?cwd ?commit () =
   let cmd =
-    ( git,
+    git_cmd (
       cd cwd
       @ [
           "diff";
@@ -824,12 +831,12 @@ let dirty_lines_of_file ?cwd ?(git_ref = "HEAD") file =
   in
   let cmd =
     (* --error-unmatch Returns a non 0 exit code if a file is not tracked by git. This way further on in this function we don't try running git diff on untracked files, as this isn't allowed. *)
-    (git, cd cwd @ [ "ls-files"; "--error-unmatch"; !!file ])
+    git_cmd (cd cwd @ [ "ls-files"; "--error-unmatch"; !!file ])
   in
   match (UCmd.status_of_run ~quiet:true cmd, git_ref = "HEAD") with
   | _, false
   | Ok (`Exited 0), _ ->
-      let cmd = (git, cd cwd @ [ "diff"; "-U0"; git_ref; !!file ]) in
+      let cmd = git_cmd (cd cwd @ [ "diff"; "-U0"; git_ref; !!file ]) in
       let lines =
         match UCmd.string_of_run ~trim:true cmd with
         | Ok (lines, (_, `Exited 1))
@@ -844,7 +851,7 @@ let dirty_lines_of_file ?cwd ?(git_ref = "HEAD") file =
 
 let dirty_paths ?cwd () =
   let cmd =
-    (git, cd cwd @ [ "status"; "--porcelain"; "--ignore-submodules" ])
+    git_cmd (cd cwd @ [ "status"; "--porcelain"; "--ignore-submodules" ])
   in
   let lines =
     match UCmd.lines_of_run ~trim:false cmd with
@@ -857,19 +864,19 @@ let dirty_paths ?cwd () =
   files
 
 let init ?cwd ?(branch = "main") () =
-  let cmd = (git, cd cwd @ [ "init"; "-b"; branch ]) in
+  let cmd = git_cmd (cd cwd @ [ "init"; "-b"; branch ]) in
   match UCmd.status_of_run cmd with
   | Ok (`Exited 0) -> ()
   | _ -> raise (Error "Error running git init")
 
 let config_set ?cwd key value =
-  let cmd = (git, cd cwd @ [ "config"; key; value ]) in
+  let cmd = git_cmd (cd cwd @ [ "config"; key; value ]) in
   match UCmd.status_of_run cmd with
   | Ok (`Exited 0) -> ()
   | _ -> raise (Error "Error setting git config entry")
 
 let config_get ?cwd key =
-  let cmd = (git, cd cwd @ [ "config"; key ]) in
+  let cmd = git_cmd (cd cwd @ [ "config"; key ]) in
   match UCmd.string_of_run ~trim:true cmd with
   | Ok (data, (_, `Exited 0)) -> Some data
   | Ok (_empty, (_, `Exited 1)) -> None
@@ -877,13 +884,13 @@ let config_get ?cwd key =
 
 let add ?cwd ?(force = false) files =
   let files = List_.map Fpath.to_string files in
-  let cmd = (git, cd cwd @ [ "add" ] @ flag "--force" force @ files) in
+  let cmd = git_cmd (cd cwd @ [ "add" ] @ flag "--force" force @ files) in
   match UCmd.status_of_run cmd with
   | Ok (`Exited 0) -> ()
   | _ -> raise (Error "Error running git add")
 
 let commit ?cwd msg =
-  let cmd = (git, cd cwd @ [ "commit"; "-m"; msg ]) in
+  let cmd = git_cmd (cd cwd @ [ "commit"; "-m"; msg ]) in
   match UCmd.status_of_run cmd with
   | Ok (`Exited 0) -> ()
   | Ok (`Exited i) ->
@@ -902,7 +909,7 @@ let clean_project_url (url : string) : Uri.t =
 
 (* TODO: should return Uri.t option *)
 let project_url ?cwd () : string option =
-  let cmd = (git, cd cwd @ [ "ls-remote"; "--get-url" ]) in
+  let cmd = git_cmd (cd cwd @ [ "ls-remote"; "--get-url" ]) in
   match UCmd.string_of_run ~trim:true cmd with
   | Ok (url, _) -> Some (Uri.to_string (clean_project_url url))
   | Error _ ->
@@ -983,10 +990,10 @@ let time_to_str (timestamp : float) : string =
 let logs ?cwd ?since (_caps_exec : < Cap.exec >) : contribution list =
   let cmd : Cmd.t =
     match since with
-    | None -> (git, cd cwd @ [ "log"; git_log_format ])
+    | None -> git_cmd (cd cwd @ [ "log"; git_log_format ])
     | Some time ->
         let after = spf "--after=\"%s\"" (time_to_str time) in
-        (git, cd cwd @ [ "log"; after; git_log_format ])
+        git_cmd (cd cwd @ [ "log"; after; git_log_format ])
   in
   match UCmd.lines_of_run ~trim:true cmd with
   | Ok (lines, (_, `Exited 0)) ->
@@ -1000,7 +1007,7 @@ let logs ?cwd ?since (_caps_exec : < Cap.exec >) : contribution list =
       []
 
 let cat_file_blob ?cwd (hash : hash) =
-  let cmd = (git, cd cwd @ [ "cat-file"; "blob"; Hash.to_hex hash ]) in
+  let cmd = git_cmd (cd cwd @ [ "cat-file"; "blob"; Hash.to_hex hash ]) in
   match UCmd.string_of_run ~trim:false cmd with
   | Ok (s, (_, `Exited 0)) -> Ok s
   | Ok (s, _)
@@ -1008,7 +1015,7 @@ let cat_file_blob ?cwd (hash : hash) =
       Error s
 
 let gc ?cwd () =
-  let cmd = (git, cd cwd @ [ "gc"; "--quiet" ]) in
+  let cmd = git_cmd (cd cwd @ [ "gc"; "--quiet" ]) in
   match UCmd.status_of_run ~quiet:true cmd with
   | Ok (`Exited 0) -> ()
   | _ -> raise (Error "git gc failed")

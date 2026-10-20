@@ -1,0 +1,5 @@
+switch ($K) {
+  case < ...:
+    a();
+    break;
+}

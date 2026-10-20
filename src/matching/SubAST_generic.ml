@@ -380,6 +380,34 @@ let lambdas_in_expr e =
 (* XXX: Shortcut, because we don't use the cache due to performance degradation. *)
 let lambdas_in_expr_memo = lambdas_in_expr
 
+(* The outermost expressions a pattern holds: a literal, the value of a
+ * value pattern, the operand of a relational or range test. *)
+class ['self] exprs_of_pattern_visitor =
+  object (_self : 'self)
+    inherit [_] AST_generic.iter_no_id_info
+    method! visit_expr aref e = Stack_.push e aref
+    method! visit_PatLiteral aref lit = Stack_.push (L lit |> AST_generic.e) aref
+  end
+
+let exprs_of_pattern_visitor_instance = new exprs_of_pattern_visitor
+
+let subexprs_of_pattern (pat : pattern) : expr list =
+  do_visit_with_ref exprs_of_pattern_visitor_instance (P pat)
+
+(* The expressions of a case of a switch: its value, or those of its
+ * pattern ([subexprs_of_pattern]). *)
+let subexprs_of_case (c : case) : expr list =
+  match c with
+  | CaseEqualExpr (_, e) -> [ e ]
+  | Case (_, pat) -> subexprs_of_pattern pat
+  | Default _
+  | OtherCase _ ->
+      []
+
+(* The expressions of the cases of a branch of a switch. *)
+let subexprs_of_cases (cs : case list) : expr list =
+  List.concat_map subexprs_of_case cs
+
 (*****************************************************************************)
 (* Really substmts_of_stmts *)
 (*****************************************************************************)

@@ -200,6 +200,70 @@ let expr_to_stmt e =
   | StmtExpr stmt -> stmt
   | _ -> ExprStmt (e, sc) |> G.s
 
+(* A [PatList] / [PatConstructor] holds "map pairs" when every element is a
+ * [PatKeyVal] in the canonical [(lookup_key, binding_pattern)] order,
+ * possibly wrapped by exactly one [OtherPat("MapPairKeyword" |
+ * "MapPairArrow", …)]. That tag is emitted by the Elixir parser to
+ * preserve the source-level [:] vs [=>] distinction for rule matching;
+ * no other parser uses it, and no parser nests it. *)
+let is_map_pair_pattern (p : pattern) : bool =
+  match p with
+  | PatKeyVal (_, _) -> true
+  | OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ P (PatKeyVal (_, _)) ] ) ->
+      true
+  | _ -> false
+
+(* The tag of a Java switch rule (`case 1 -> s`) among the cases of its
+ * branch: the branch has the form of a switch rule. *)
+let is_switch_rule_arrow (c : case) : bool =
+  match c with
+  | OtherCase (("->", _), []) -> true
+  | _ -> false
+
+(* A non-empty list of map pairs ([is_map_pair_pattern]). *)
+let is_map_pair_list (ps : pattern list) : bool =
+  match ps with
+  | [] -> false
+  | _ :: _ -> List.for_all is_map_pair_pattern ps
+
+(* The [PatKeyVal] of a map pair, without Elixir's map-pair tag. *)
+let unwrap_map_pair_pattern (p : pattern) : pattern =
+  match p with
+  | OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ P (PatKeyVal (_, _) as inner) ] ) ->
+      inner
+  | _ -> p
+
+(* A map pattern whose entries (map pairs and, in a rule, `...`) would
+ * otherwise read as a list pattern, as an empty map or a map of only `...`
+ * does: the entries, then the closing bracket, tagged "MapPattern" with the
+ * opening bracket, or "ClosedMapPattern" for a pattern that matches only a
+ * map with no other keys (Ruby `in {}`, `**nil`). *)
+let map_pattern ?(closed : bool = false)
+    ((l, entries, r) : pattern list bracket) : pattern =
+  let tag = if closed then "ClosedMapPattern" else "MapPattern" in
+  OtherPat ((tag, l), List_.map (fun p -> P p) entries @ [ Tk r ])
+
+let is_closed_map_pattern (p : pattern) : bool =
+  match p with
+  | OtherPat (("ClosedMapPattern", _), _) -> true
+  | _ -> false
+
+(* The bracketed entries of a pattern built by [map_pattern]. *)
+let map_pattern_entries (p : pattern) : pattern list bracket option =
+  let rec entries acc = function
+    | [ Tk r ] -> Some (List.rev acc, r)
+    | P e :: rest -> entries (e :: acc) rest
+    | _ -> None
+  in
+  match p with
+  | OtherPat ((("MapPattern" | "ClosedMapPattern"), l), anys) ->
+      Option.map (fun (es, r) -> (l, es, r)) (entries [] anys)
+  | _ -> None
+
 (* In Go/Swift a pattern can be a complex expressions. It is just
  * matched for equality with the thing it's matched against, so in that
  * case it should be a pattern like | _ when expr = x.
@@ -307,6 +371,12 @@ let rec pattern_to_expr p =
   | PatEllipsis t -> Ellipsis t
   | PatTyped (p, ty) -> Cast (ty, fake "", pattern_to_expr p)
   | OtherPat (("ExprToPattern", _), [ E e ]) -> e.e
+  (* A pattern built by [map_pattern] reads as a map. *)
+  | OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) -> (
+      match map_pattern_entries p with
+      | Some (t1, xs, t2) ->
+          Container (Dict, (t1, xs |> List_.map pattern_to_expr, t2))
+      | None -> raise NotAnExpr)
   | OtherPat (tag, [ P p ]) -> OtherExpr (tag, [ E (pattern_to_expr p) ])
   | _ -> raise NotAnExpr)
   |> G.e

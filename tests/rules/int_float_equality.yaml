@@ -1,0 +1,10 @@
+rules:
+- id: int-float-equality
+  mode: taint
+  pattern-sources:
+    - pattern: taint_source()
+  pattern-sinks:
+    - pattern: sink(...)
+  message: Tainted value reaches sink
+  severity: WARNING
+  languages: [python]

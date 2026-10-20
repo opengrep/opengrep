@@ -147,7 +147,10 @@ let rec expr_to_pattern (e : G.expr) : G.pattern =
   | G.Container (G.Tuple, (t1, xs, t2)) ->
       G.PatTuple (t1, List_.map expr_to_pattern xs, t2)
   | G.L l -> G.PatLiteral l
-  | G.Container ((List | Dict), (t1, xs, t2)) ->
+  (* A map pattern, `%{}` and `%{...}` included, is not a list pattern. *)
+  | G.Container (G.Dict, (t1, xs, t2)) ->
+      H.map_pattern (t1, List_.map expr_to_pattern xs, t2)
+  | G.Container (G.List, (t1, xs, t2)) ->
       G.PatList (t1, List_.map expr_to_pattern xs, t2)
   | G.Constructor (n, (_, args, _)) ->
       G.PatConstructor (n, List_.map expr_to_pattern args)
@@ -174,14 +177,11 @@ let rec expr_to_pattern (e : G.expr) : G.pattern =
         [ G.Arg ({ e = G.L (G.String _); _ } as l);
           G.Arg ({ e = G.N _; _ } as r) ] ->
           G.PatConstructor (n, [ expr_to_pattern l; expr_to_pattern r ])
-      | G.N (G.Id (("^", _), _)),
+      (* A pin `^x` matches the current value of `x` and binds nothing,
+       * as Ruby's pin does. *)
+      | G.N (G.Id (("^", caret), _)),
         [ G.Arg ({ e = G.N _; _ } as rhs) ] ->
-          let tmp = "__tmp", Tok.unsafe_fake_tok "__tmp" in
-          let tmp_info = G.empty_id_info ~hidden:true () in
-          let lhs = G.N (G.Id (tmp, tmp_info)) |> G.e in
-          let op = G.IdSpecial (G.Op G.Eq, Tok.unsafe_fake_tok "==") |> G.e in
-          let cmp = G.Call (op, Tok.unsafe_fake_bracket [ G.Arg lhs; G.Arg rhs ]) |> G.e in
-          G.PatWhen (G.PatId (tmp, tmp_info), cmp)
+          G.OtherPat (("PatPin", caret), [ G.E rhs ])
       | _ -> OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ])
       end
   (* TODO: PatKeyVal and more *)
@@ -864,10 +864,10 @@ and map_vardef env v1 v2 =
   in
   G.StmtExpr def_stmt |> G.e
 
-(* TODO: Elixir also has these patterns:
- *   ^x = 0 meaning x cannot be re-assigned later, and
+(* TODO: Elixir also has this pattern:
  *   [x|y] = [0, 1, 2] where x maps to 0, and y maps to the rest
- * and expr_to_pattern doesn't cover these cases.
+ * and expr_to_pattern doesn't cover it. (A pin, as in `^x = 0`, matches the
+ * current value of x; expr_to_pattern gives it as a PatPin.)
  *)
 and map_letpattern env v1 v2 =
   let e1 = expr_to_pattern (map_expr env v1) in

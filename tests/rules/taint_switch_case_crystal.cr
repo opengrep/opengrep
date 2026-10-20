@@ -48,3 +48,102 @@ def condition_only_case(condition)
     sink(taint_source())
   end
 end
+
+def regexp_when_value_matches_a_string
+  x = taint_source()
+  case "abc"
+  when /a/
+    # ruleid: taint-switch-case-crystal
+    sink(x)
+  end
+end
+
+def integer_when_value_matches_a_float
+  x = taint_source()
+  case 1.0
+  when 1
+    # ruleid: taint-switch-case-crystal
+    sink(x)
+  end
+end
+
+def integer_when_value_does_not_match_another_integer
+  x = taint_source()
+  case 2
+  when 1
+    # ok: taint-switch-case-crystal
+    sink(x)
+  end
+end
+
+def break_leaves_the_loop(k)
+  y = 0
+  while more()
+    case k
+    when 1
+      y = taint_source()
+      break
+    end
+    y = 0
+  end
+  # ruleid: taint-switch-case-crystal
+  sink(y)
+end
+
+def break_skips_the_rest_of_the_loop(k)
+  while more()
+    y = 0
+    case k
+    when 1
+      y = taint_source()
+      break
+    end
+    # ok: taint-switch-case-crystal
+    sink(y)
+  end
+end
+
+def break_in_a_block_leaves_the_block(items)
+  y = 0
+  items.each do |i|
+    case i
+    when 1
+      y = taint_source()
+      break
+    end
+    y = 0
+  end
+  # ruleid: taint-switch-case-crystal
+  sink(y)
+end
+
+def next_in_a_block_skips_the_rest_of_it(items)
+  items.each do |i|
+    y = taint_source()
+    next
+    # ok: taint-switch-case-crystal
+    sink(y)
+  end
+end
+
+def break_in_a_block_skips_the_rest_of_it(items)
+  items.each do |i|
+    y = 0
+    case i
+    when 1
+      y = taint_source()
+      break
+    end
+    # ok: taint-switch-case-crystal
+    sink(y)
+  end
+end
+
+def next_in_a_block_keeps_the_other_path(items)
+  items.each do |i|
+    x = taint_source()
+    next if i == 1
+    # ruleid: taint-switch-case-crystal
+    sink(x)
+  end
+end

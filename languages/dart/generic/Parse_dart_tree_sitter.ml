@@ -54,8 +54,14 @@ let forward_reference_map_template_substitution =
  * [map_expression] drops `const`, so the decision is made on the CST. *)
 let rec is_constant_pattern (x : CST.argument) : bool =
   match x with
-  | `Choice_assign_exp
-      (`Real_exp_rep_casc_sect (`Choice_cond_exp (`Un_exp e), [])) -> (
+  | `Choice_assign_exp (`Real_exp_rep_casc_sect (e, [])) -> is_constant_real e
+  | _ -> false
+
+(* The same decision for an operand of `||` or `&&`, which the grammar
+ * holds as a [real_expression]. *)
+and is_constant_real (x : CST.real_expression) : bool =
+  match x with
+  | `Choice_cond_exp (`Un_exp e) -> (
       match e with
       | `Post_exp (`Prim_rep_sele (p, sels)) -> is_constant_primary p sels
       | `Un_exp_
@@ -2434,17 +2440,150 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
     match v2 with
     | `Case_buil_exp_COLON (v1, v2, v3) ->
         let v1 = (* case_builtin *) token env v1 in
-        let is_constant = is_constant_pattern v2 in
-        let v2 = map_expression env v2 in
         let _v3 = (* ":" *) token env v3 in
-        if is_constant then CaseEqualExpr (v1, v2)
-        else Case (v1, H2.expr_to_pattern v2)
+        if is_constant_pattern v2 then CaseEqualExpr (v1, map_expression env v2)
+        else Case (v1, map_case_pattern env v2)
     | `Defa_COLON (v1, v2) ->
         let v1 = (* "default" *) token env v1 in
         let _v2 = (* ":" *) token env v2 in
         Default v1
   in
   v2
+
+(* A case that is not a constant pattern, read as a Dart 3 pattern.
+ * Inside a pattern a bare identifier is a constant pattern and `_` the
+ * wildcard: a variable is declared only with `var`, `final` or a type,
+ * none of which this grammar parses in a case.
+ * See https://dart.dev/language/pattern-types. A form that is not a
+ * pattern the grammar can parse keeps [expr_to_pattern]. *)
+and map_case_pattern (env : env) (x : CST.argument) : pattern =
+  match x with
+  | `Choice_assign_exp (`Real_exp_rep_casc_sect (e, [])) ->
+      map_case_real_pattern env e
+  | _ -> H2.expr_to_pattern (map_expression env x)
+
+and map_case_real_pattern (env : env) (x : CST.real_expression) : pattern =
+  if is_constant_real x then constant_pattern (map_real_expression env x)
+  else
+    match x with
+    (* Logical-or and logical-and patterns. *)
+    | `Choice_cond_exp (`Logi_or_exp (v1, v2)) ->
+        List.fold_left
+          (fun acc (_tok, e) -> PatDisj (acc, map_case_real_pattern env e))
+          (map_case_real_pattern env v1)
+          v2
+    | `Choice_cond_exp (`Logi_and_exp (v1, v2)) ->
+        List.fold_left
+          (fun acc (tok, e) ->
+            OtherPat
+              ( ("AndPattern", (* "&&" *) token env tok),
+                [ P acc; P (map_case_real_pattern env e) ] ))
+          (map_case_real_pattern env v1)
+          v2
+    | `Choice_cond_exp (`Un_exp (`Post_exp (`Prim_rep_sele (p, sels)))) -> (
+        match (p, sels) with
+        | `Choice_lit (`Id ((_, "_") as tok)), [] ->
+            PatWildcard (token env tok)
+        (* A parenthesized pattern only groups. *)
+        | `Choice_lit (`LPAR_exp_RPAR (_, arg, _)), [] ->
+            map_case_pattern env arg
+        (* List pattern. *)
+        | `Choice_lit (`Lit (`List_lit (None, None, l, elems, r))), [] ->
+            let elems =
+              match elems with
+              | Some x -> map_case_elements env x
+              | None -> []
+            in
+            PatList (token env l, elems, token env r)
+        (* Map pattern, `{}` included: entries matched by key. *)
+        | `Choice_lit (`Lit (`Set_or_map_lit (None, None, l, None, r))), [] ->
+            H2.map_pattern (token env l, [], token env r)
+        | ( `Choice_lit
+              (`Lit (`Set_or_map_lit (None, None, l, Some (v1, v2, _), r))),
+            [] ) -> (
+            match map_case_entries env (v1 :: List_.map snd v2) with
+            | Some entries -> H2.map_pattern (token env l, entries, token env r)
+            | None -> H2.expr_to_pattern (map_real_expression env x))
+        (* Object pattern `T(f: p, ...)`: the type, then each named field;
+         * `T()` tests the type alone. *)
+        | ( `Choice_lit (`Id id),
+            [ `Choice_excl_op (`Arg_part (None, (l, args_opt, r))) ] ) -> (
+            let named =
+              match args_opt with
+              | None -> Some []
+              | Some (args, _) -> map_case_named_args env args
+            in
+            match named with
+            | Some named ->
+                let fields =
+                  List_.map
+                    (fun (label, arg) ->
+                      ([ map_label env label ], map_case_pattern env arg))
+                    named
+                in
+                let ty = TyN (Id (str env id, empty_id_info ())) |> G.t in
+                PatTyped (PatRecord (token env l, fields, token env r), ty)
+            | None -> H2.expr_to_pattern (map_real_expression env x))
+        | _ -> H2.expr_to_pattern (map_real_expression env x))
+    | _ -> H2.expr_to_pattern (map_real_expression env x)
+
+(* The entries of a map pattern, or [None] when an element is not a
+ * `key: value` pair. In a rule, a `...` stands for the other entries. *)
+and map_case_entries (env : env) (elems : CST.element list) :
+    pattern list option =
+  List.fold_right
+    (fun elem acc ->
+      match (elem, acc, env.extra) with
+      | `Pair (k, _colon, v), Some xs, _ ->
+          Some (PatKeyVal (map_case_key env k, map_case_pattern env v) :: xs)
+      | `Exp (`Semg_ellips tok), Some xs, Pattern ->
+          Some (PatEllipsis (token env tok) :: xs)
+      | _ -> None)
+    elems (Some [])
+
+(* The named arguments of an object pattern, or [None] when an argument
+ * is positional. In a rule, a `...` stands for the other fields, which an
+ * object pattern ignores anyway, so it is left out. *)
+and map_case_named_args (env : env) ((v1, v2) : CST.argument_list) :
+    (CST.label * CST.argument) list option =
+  List.fold_right
+    (fun arg acc ->
+      match (arg, acc, env.extra) with
+      | `Named_arg (label, a), Some xs, _ -> Some ((label, a) :: xs)
+      | `Arg (`Semg_ellips _), Some xs, Pattern -> Some xs
+      | _ -> None)
+    (v1 :: List_.map snd v2)
+    (Some [])
+
+and map_case_elements (env : env)
+    ((v1, v2, _v3) : CST.anon_elem_rep_COMMA_elem_opt_COMMA_4ec364f) :
+    pattern list =
+  map_case_element env v1 :: List_.map (fun (_, x) -> map_case_element env x) v2
+
+(* An element of a list pattern. A rest element `...` matches the elements
+ * left over, and `...p` matches them against [p]. *)
+and map_case_element (env : env) (x : CST.element) : pattern =
+  let rest tok pats =
+    PatConstructor (Id (("...", tok), empty_id_info ()), pats)
+  in
+  match (x, env.extra) with
+  | `Exp (`Semg_ellips tok), Program -> rest (token env tok) []
+  | `Exp arg, _ -> map_case_pattern env arg
+  | `Spread_elem (dots, None, arg), _ ->
+      rest (token env dots) [ map_case_pattern env arg ]
+  | (`Spread_elem _ | `Pair _ | `If_elem _ | `For_elem _), _ ->
+      H2.expr_to_pattern (map_element env x)
+
+(* A map pattern key is a constant expression. *)
+and map_case_key (env : env) (x : CST.argument) : pattern =
+  constant_pattern (map_expression env x)
+
+(* A constant matched by value: a literal, or another constant
+ * expression. *)
+and constant_pattern (e : expr) : pattern =
+  match e.e with
+  | L lit -> PatLiteral lit
+  | _ -> OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ E e ])
 
 and map_template_substitution (env : env) ((v1, v2) : CST.template_substitution) =
   let s1, t1 = (* "$" *) str env v1 in

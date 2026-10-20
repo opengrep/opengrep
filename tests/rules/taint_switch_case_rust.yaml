@@ -1,0 +1,17 @@
+rules:
+- id: taint-switch-case-rust
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink
+  severity: WARNING
+  languages: [rust]
+- id: switch-case-constant-propagation-rust
+  pattern: exec(7)
+  message: Match arms preserve the constant binding
+  severity: WARNING
+  languages: [rust]

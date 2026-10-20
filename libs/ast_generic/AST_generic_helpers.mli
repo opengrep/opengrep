@@ -4,6 +4,33 @@ val str_of_ident : AST_generic.ident -> string
 
 exception NotAnExpr
 
+(* A [PatList] / [PatConstructor] holds "map pairs" when every element is
+ * one of these: a [PatKeyVal], possibly wrapped by Elixir's map-pair tag. *)
+val is_map_pair_pattern : AST_generic.pattern -> bool
+
+(* The tag of a Java switch rule (`case 1 -> s`) among the cases of its
+ * branch. *)
+val is_switch_rule_arrow : AST_generic.case -> bool
+
+(* A non-empty list of map pairs ([is_map_pair_pattern]). *)
+val is_map_pair_list : AST_generic.pattern list -> bool
+
+(* The [PatKeyVal] of a map pair, without Elixir's map-pair tag. *)
+val unwrap_map_pair_pattern : AST_generic.pattern -> AST_generic.pattern
+
+(* A map pattern: its entries and brackets, tagged "MapPattern", so that an
+ * empty map or a map of only `...` is not a list pattern; with [~closed],
+ * tagged "ClosedMapPattern": it matches only a map with no other keys. *)
+val map_pattern :
+  ?closed:bool ->
+  AST_generic.pattern list AST_generic.bracket -> AST_generic.pattern
+
+val is_closed_map_pattern : AST_generic.pattern -> bool
+
+(* The bracketed entries of a map pattern built by [map_pattern]. *)
+val map_pattern_entries :
+  AST_generic.pattern -> AST_generic.pattern list AST_generic.bracket option
+
 val expr_to_pattern : AST_generic.expr -> AST_generic.pattern
 
 (* This executes some simplifications, such as not producing

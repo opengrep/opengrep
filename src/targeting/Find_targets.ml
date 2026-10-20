@@ -394,6 +394,7 @@ type dir_status =
   | Dir_not_ignored
   | Dir_ignored of Gitignore.selection_event list
   | Dir_reported
+  | Dir_not_real
 
 (* the ppath of a scanning root without the trailing slash marker of a
    directory, as the ancestors of a file are built *)
@@ -423,8 +424,13 @@ let filter_paths
      its ppath. Dropping segments below the root from the fpath gives the
      fpath of an ancestor. Nothing is known of the prefix, which may go
      through a symlink, so an ignored ancestor above the root is not
-     reported here: the file is, by the filter below, as pysemgrep did. *)
-  let under_ignored_dir (fppath : Fppath.t) : bool =
+     reported here: the file is, by the filter below, as pysemgrep did.
+
+     The files under a directory below a scanning root that is not a real
+     directory, such as a symlink, are dropped too: git lists what its index
+     holds, and a repository can come with a symlink where its index has a
+     directory. *)
+  let under_dropped_dir (fppath : Fppath.t) : bool =
     (* the ancestors from the project root down; [below] is the number of
        segments of the file under the ancestor being looked at *)
     let rec loop (dir_ppath : Ppath.t) (in_root : bool)
@@ -436,6 +442,7 @@ let filter_paths
       | segment :: remaining ->
           let dir_ppath = Ppath.add_seg dir_ppath segment in
           let below = below - 1 in
+          let below_root = in_root in
           let in_root = in_root || Hashtbl.mem roots dir_ppath in
           let status =
             match Hashtbl.find_opt dirs dir_ppath with
@@ -448,12 +455,19 @@ let filter_paths
                 let status =
                   match status with
                   | Gitignore.Ignored -> Dir_ignored selection_events
+                  | Gitignore.Not_ignored
+                    when below_root
+                         && not
+                              (UFile.is_dir ~follow_symlinks:false
+                                 (parent_n below fppath.fpath)) ->
+                      Dir_not_real
                   | Gitignore.Not_ignored -> Dir_not_ignored
                 in
                 Hashtbl.replace dirs dir_ppath status;
                 status
           in
           match (status, in_root) with
+          | Dir_not_real, _ -> true
           | Dir_not_ignored, _ -> loop dir_ppath in_root remaining below
           | (Dir_ignored _ | Dir_reported), false -> false
           | Dir_ignored selection_events, true ->
@@ -481,7 +495,7 @@ let filter_paths
   in
   target_files
   |> List.iter (fun fppath ->
-         if under_ignored_dir fppath then ()
+         if under_dropped_dir fppath then ()
          else
          match
            filter_path ?kind:(kind_of_scanning_root fppath) ign include_filter

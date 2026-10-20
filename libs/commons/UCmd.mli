@@ -17,6 +17,18 @@ val string_of_run :
 val log_command : Cmd.t -> unit
 val capture_and_log_stderr : (unit -> 'a) -> 'a
 
+(* The command with its program looked up only in the absolute entries of
+   PATH, as a regular file that can be executed; with PATH unset, no program
+   is found. *)
+val resolve_program : Cmd.t -> (Bos.Cmd.t, [> Rresult.R.msg ]) result
+
+(* Removes the entries of PATH that are not absolute paths from the process
+   environment, so that the programs started afterwards, and the programs
+   they start, search only those; on Windows, also sets
+   NoDefaultCurrentDirectoryInExePath, so that cmd.exe and the system do not
+   search the current directory first. Called once at start-up. *)
+val restrict_program_search : unit -> unit
+
 val string_of_run_with_stderr :
   trim:bool ->
   Cmd.t ->
@@ -31,10 +43,3 @@ val lines_of_run :
 
 val status_of_run :
   ?quiet:bool -> Cmd.t -> (Bos.OS.Cmd.status, [> Rresult.R.msg ]) result
-
-val with_open_process_in : string -> (in_channel -> 'a) -> 'a
-
-(* old style *)
-exception CmdError of Unix.process_status * string
-
-val cmd_to_list : ?verbose:bool -> string -> string list

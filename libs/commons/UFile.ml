@@ -263,6 +263,60 @@ let is_lnk_or_reg path =
   | _ -> false
   | exception UUnix.Unix_error _ -> false
 
+type reg = { links : int; dev : int; ino : int }
+type entry = Absent | Unreadable | Link | Dir | Reg of reg | Special
+
+let entry (path : Fpath.t) : entry =
+  match UUnix.lstat !!path with
+  | { st_kind = S_LNK; _ } -> Link
+  | { st_kind = S_DIR; _ } -> Dir
+  | { st_kind = S_REG; st_nlink; st_dev; st_ino; _ } ->
+      Reg { links = st_nlink; dev = st_dev; ino = st_ino }
+  | _ -> Special
+  | exception UUnix.Unix_error ((ENOENT | ENOTDIR), _, _) -> Absent
+  | exception UUnix.Unix_error _ -> Unreadable
+
+(* Unix.openfile has no flag against following a symbolic link, so the open
+   descriptor is checked to be the file of [expected], by device and inode,
+   with one directory entry, before the file is truncated. An entry that is
+   not there is created with O_EXCL. *)
+let write_single_entry ~(file : Fpath.t) ~(expected : entry) (data : string) :
+    bool =
+  let write (fd : UUnix.file_descr) : unit =
+    UUnix.ftruncate fd 0;
+    let (_written : int) =
+      UUnix.write_substring fd data 0 (String.length data)
+    in
+    ()
+  in
+  match expected with
+  | Absent ->
+      let fd =
+        UUnix.openfile !!file [ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC ] 0o666
+      in
+      Common.protect
+        ~finally:(fun () -> UUnix.close fd)
+        (fun () ->
+          write fd;
+          true)
+  | Reg { links = 1; dev; ino } ->
+      let fd = UUnix.openfile !!file [ O_WRONLY; O_CLOEXEC ] 0 in
+      Common.protect
+        ~finally:(fun () -> UUnix.close fd)
+        (fun () ->
+          match UUnix.fstat fd with
+          | { st_kind = S_REG; st_nlink = 1; st_dev; st_ino; _ }
+            when Int.equal st_dev dev && Int.equal st_ino ino ->
+              write fd;
+              true
+          | _ -> false)
+  | Reg _
+  | Unreadable
+  | Link
+  | Dir
+  | Special ->
+      false
+
 (* This function isn't very useful but we offer it for completeness. *)
 let is_dir_or_lnk path =
   match (UUnix.lstat !!path).st_kind with

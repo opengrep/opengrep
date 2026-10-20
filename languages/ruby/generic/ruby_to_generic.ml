@@ -728,6 +728,8 @@ and pattern pat =
   let promote expr =
     match expr with
     | G.L l -> G.PatLiteral l
+    (* A search-pattern `...` case, as [H.expr_to_pattern] gives it. *)
+    | G.Ellipsis t -> G.PatEllipsis t
     | _ -> G.OtherPat (("expr", G.fake "expr"), [ G.E (G.e expr) ])
   in
   match pat with
@@ -757,6 +759,18 @@ and pattern pat =
       in
       G.PatConstructor (name, List_.map pattern ps)
   | PatList (l, ps, r) -> G.PatList (l, List_.map patlist_arg ps, r)
+  (* A hash pattern matches a hash with other keys too, unless it is empty
+   * or has `**nil`. *)
+  | PatHash (l, ps, r) ->
+      let closed =
+        List.is_empty ps
+        || List.exists
+             (function
+               | PArgSplatNil _ -> true
+               | _ -> false)
+             ps
+      in
+      H.map_pattern ~closed (l, List_.map patlist_arg ps, r)
   | PatWhen (pat, exp) -> G.PatWhen (pattern pat, expr exp)
   | PatAs (pat, id) -> G.PatAs (pattern pat, (ident id, G.empty_id_info ()))
   | PatPin (_tk, exp) ->
@@ -781,6 +795,7 @@ and patlist_arg = function
       in
       G.PatKeyVal (pattern p1, p2)
   | PArgPat p -> pattern p
+  | PArgSplatNil (tk1, tk2) -> G.OtherPat (("PArgSplatNil", tk1), [ G.Tk tk2 ])
   | PArgEllipsis tok -> PatEllipsis tok
 
 and type_ e =

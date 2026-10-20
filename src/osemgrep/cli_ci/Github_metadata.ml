@@ -237,7 +237,7 @@ let find_branchoff_point_from_github_api (caps : < Cap.network ; Cap.exec >)
    for an existing object, non-zero otherwise) *)
 let commit_is_local (caps : < Cap.exec >) (sha : Digestif.SHA1.t) : bool =
   let cmd =
-    ( Cmd.Name "git",
+    Git_wrapper.git_cmd (
       [ "cat-file"; "-e"; Digestif.SHA1.to_hex sha ^ "^{commit}" ] )
   in
   match CapExec.status_of_run caps#exec ~quiet:true cmd with
@@ -323,7 +323,7 @@ let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
     | Some base -> Some base
     | None -> (
         let cmd =
-          ( Cmd.Name "git",
+          Git_wrapper.git_cmd (
             [
               "merge-base";
               Digestif.SHA1.to_hex base_branch_hash;

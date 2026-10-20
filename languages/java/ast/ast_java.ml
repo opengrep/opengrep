@@ -285,7 +285,12 @@ and stmt =
   | Assert of Tok.t * expr * expr option (* assert e or assert e : e2 *)
 
 and stmts = stmt list
-and case = Case of (Tok.t * expr) | Default of Tok.t
+and case =
+  | Case of (Tok.t * expr)
+  | Default of Tok.t
+  (* The `->` of a switch rule (`case 1 -> s`), whose body does not fall
+   * into the next one. *)
+  | SwitchRuleArrow of Tok.t
 and cases = case list
 
 and for_control =

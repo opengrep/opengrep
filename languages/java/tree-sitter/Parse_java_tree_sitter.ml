@@ -1008,8 +1008,8 @@ and switch_block (env : env) ((v1, v2, v3) : CST.switch_block) =
           stmt_blocks
     | `Rep_switch_rule rules ->
         List_.map
-          (fun (label, _tok, stmt) ->
-            ( switch_label env label,
+          (fun (label, arrow, stmt) ->
+            ( switch_label env label @ [ SwitchRuleArrow (token env arrow) ],
               let s =
                 match stmt with
                 | `Exp_stmt x -> `Exp_stmt x

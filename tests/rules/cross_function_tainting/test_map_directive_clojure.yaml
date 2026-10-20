@@ -1,0 +1,18 @@
+rules:
+  - id: test-map-directive-taint
+    message: |
+      Field-sensitive taint through the directives of a Clojure map
+      destructure. The callee destructures with [:keys], [:strs], [:syms]
+      or a quoted symbol key and sinks [body]; taint at the caller-side key
+      that the destructure looks up must fire, but taint at another key
+      must not.
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

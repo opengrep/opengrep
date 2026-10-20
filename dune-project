@@ -3,10 +3,6 @@
 ;; This file is used both to configure 'dune' as usual, and
 ;; to autogenerate the semgrep.opam for 'opam'.
 
-(pin
- (url "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0-opengrep")
- (package (name memprof-limits)))
-
 ;; classic dune-project settings
 (name semgrep)
 (using menhir 2.1)
@@ -500,7 +496,7 @@ For more information see https://opengrep.dev.
     ppx_inline_test
     (ppx_sexp_conv (>= v0.16.0))
     ppx_expect
-    (visitors (= 20260520))
+    (visitors (= "dev"))
     ; regexps
     re
     ; we're currently "vendoring" pcre2 in libs/pcre2

@@ -84,3 +84,27 @@ function caseReadsExistingTaint(mode) {
   // ruleid: taint-switch-case-js
   sink(value);
 }
+
+function defaultFirst(k) {
+  const x = taint_source();
+  switch (k) {
+    default:
+      // ruleid: taint-switch-case-js
+      sink(x);
+      break;
+    case 1:
+      break;
+  }
+}
+
+function caseBreaksBeforeDefault(k) {
+  let y = 0;
+  switch (k) {
+    case 1:
+      y = taint_source();
+      break;
+    default:
+      // ok: taint-switch-case-js
+      sink(y);
+  }
+}

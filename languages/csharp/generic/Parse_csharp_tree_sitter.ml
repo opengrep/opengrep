@@ -2127,15 +2127,17 @@ and positional_pattern_element (env : env) (x : CST.argument) : G.pattern =
         match v3 with
         | `Decl_exp x -> H2.expr_to_pattern (declaration_expression env x)
         | `Exp (`Lvalue_exp (`Tuple_exp x)) -> positional_pattern env x
-        | `Exp x ->
-            G.OtherPat
-              (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E (expression env x) ])
+        | `Exp x -> (
+            match expression env x with
+            | { e = G.Ellipsis tok; _ } -> G.PatEllipsis tok
+            | e -> G.OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ]))
       in
       match v1 with
       | None -> pat
-      | Some id ->
-          G.PatTuple
-            (Tok.unsafe_fake_bracket [ G.PatId (id, G.empty_id_info ()); pat ]))
+      (* A subpattern `a: p`: the identifier refers to the tuple element at
+       * this position, and `p` is tested there; the identifier binds
+       * nothing. *)
+      | Some id -> G.OtherPat (("Subpattern", snd id), [ G.I id; G.P pat ]))
   | `Semg_vari_meta _ -> H2.expr_to_pattern (H2.argument_to_expr (argument env x))
 
 (* TODO: generate directly pattern so no need to use H2.expr_to_pattern *)

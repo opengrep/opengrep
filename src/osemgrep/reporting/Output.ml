@@ -329,16 +329,87 @@ let check_destination (dest : string) : unit =
     Error.abort
       (spf "Sending output to a URL (%s) is not supported yet by opengrep" dest);
   (* the scanned repository can ship a symlink here, and writing through it
-   * would truncate whatever it resolves to *)
-  if UFile.is_lnk (Fpath.v dest) then
-    Error.abort (spf "Output is symlink: %s" dest)
+   * would truncate whatever it resolves to; a hard link is the same file as
+   * its other entries *)
+  match UFile.entry (Fpath.v dest) with
+  | UFile.Link -> Error.abort (spf "Output is symlink: %s" dest)
+  | UFile.Reg { links; _ } when links > 1 ->
+      Error.abort
+        (spf "Cannot write output to %s: it has other hard links" dest)
+  | UFile.Absent
+  | UFile.Unreadable
+  | UFile.Dir
+  | UFile.Reg _
+  | UFile.Special ->
+      ()
+
+(* A relative destination inside a scan target must resolve inside it: the
+ * scanned files can hold a symbolic link to a directory elsewhere. The
+ * missing directories of the destination are created later, below the
+ * deepest existing one, which is the one resolved. *)
+let check_destination_in_targets (targets : Scanning_root.t list)
+    (dest : string) : unit =
+  let cwd = Fpath.v (Sys.getcwd ()) in
+  let dest_path = Fpath.v dest in
+  let absolute (path : Fpath.t) : Fpath.t =
+    Fpath.normalize (Fpath.append cwd path)
+  in
+  let rec deepest_existing (path : Fpath.t) : Fpath.t =
+    let path = Fpath.rem_empty_seg path in
+    match UFile.entry path with
+    | UFile.Absent when not (Fpath.is_root path) ->
+        deepest_existing (Fpath.parent path)
+    | _ -> path
+  in
+  if Fpath.is_rel dest_path then
+    targets
+    |> List.iter (fun (root : Scanning_root.t) ->
+           if
+             UFile.is_dir_or_reg ~follow_symlinks:true
+               (Scanning_root.to_fpath root)
+           then
+             let dir = Scanning_root.directory root in
+             let inside =
+               match
+                 Fpath.relativize
+                   ~root:(absolute dir.as_written)
+                   (absolute dest_path)
+               with
+               | Some rel -> not (Fpath.is_parent_dir ~prefix:true rel)
+               | None -> false
+             in
+             if inside then
+               (* not normalised: a '..' after a symbolic link goes to the
+                  parent of the link's target *)
+               match
+                 Rpath.of_fpath
+                   (deepest_existing
+                      (Fpath.parent (Fpath.append cwd dest_path)))
+               with
+               | Ok path
+                 when Fpath.is_prefix
+                        (Fpath.to_dir_path dir.canonical)
+                        (Fpath.to_dir_path (Rpath.to_fpath path)) ->
+                   ()
+               | Ok _
+               | Error _ ->
+                   Error.abort
+                     (spf
+                        "Cannot write output to %s: it resolves outside the \
+                         scanned directory %s"
+                        dest
+                        (Fpath.to_string dir.as_written)))
 
 (* Called before the scan, so that a destination we will not write to costs
  * nothing. Also aborts on the conflicts reported by effective_outputs. *)
-let check_destinations (conf : conf) : unit =
+let check_destinations ~(targets : Scanning_root.t list) (conf : conf) : unit =
   effective_outputs conf
   |> List.iter (fun ((dest : string option), (_kind : Output_format.t)) ->
-         Option.iter check_destination dest)
+         Option.iter
+           (fun (dest : string) ->
+             check_destination dest;
+             check_destination_in_targets targets dest)
+           dest)
 
 (* the actual output on stdout, and the file destinations *)
 let dispatch
@@ -385,13 +456,29 @@ let dispatch
         let parent = Fpath.parent file |> Fpath.rem_empty_seg in
         (* a destination we cannot write to is the user's mistake, not ours,
          * so report it without the backtrace of an unexpected exception.
-         * The parent directory is created only when it is missing, so a
-         * parent that is a file is reported by the open of the destination,
-         * whose message already names it; a failure to create a missing
-         * parent names no path, so the destination is added to it. *)
+         * The parent directory is created only when it is missing. The
+         * message of a Unix error, from creating it or from opening the
+         * destination, names no path, so the destination is added to it; a
+         * Sys_error message already names the path. *)
         (try
            if not (Sys.file_exists !!parent) then UFile.make_directories parent;
-           UFile.write_file ~file str
+           (* the entry is examined again here, after the scan *)
+           match UFile.entry file with
+           (* a device or a named pipe, such as /dev/null, is written by a
+              plain open: it is neither truncated nor created. A directory
+              fails in that open, with the system's message; an entry that
+              cannot be examined is opened the same way. *)
+           | UFile.Special
+           | UFile.Dir
+           | UFile.Unreadable ->
+               UFile.write_file ~file str
+           | expected ->
+               if not (UFile.write_single_entry ~file ~expected str) then
+                 Error.abort
+                   (spf
+                      "Cannot write output to %s: it is a symbolic link or \
+                       has other hard links"
+                      dest)
          with
         | Unix.Unix_error (err, _, _) ->
             Error.abort

@@ -1,0 +1,12 @@
+rules:
+- id: taint-switch-case-move-on-sui
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink
+  severity: WARNING
+  languages: [move_on_sui]

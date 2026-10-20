@@ -1,0 +1,17 @@
+# Targets filter_irrelevant_rules.
+#
+# A Clojure map binding form must not make the prefilter require a word that
+# its source does not contain, such as a constructor name or a keyword key
+# derived from a :keys binder.
+rules:
+  - id: clojure-map-binding-form
+    pattern: (let [{$X :a} $M] ...)
+    message: map binding form
+    languages: [clojure]
+    severity: WARNING
+
+  - id: clojure-map-binding-directive
+    pattern: (let [{:keys [x]} $M] ...)
+    message: map binding directive
+    languages: [clojure]
+    severity: WARNING

@@ -59,6 +59,13 @@ val is_constant : t -> bool
 
 val set_constant : t -> t
 
+val is_path_pattern : t -> bool
+(** Flag 'is_path_pattern' marks a Rust identifier pattern that refers to a
+    constant or a unit struct in scope: it matches by value and binds
+    nothing (Rust Reference, Identifier patterns). Set by Naming_AST. *)
+
+val set_path_pattern : t -> t
+
 val union : t -> t -> t
 (** Union two sets of flags. *)
 

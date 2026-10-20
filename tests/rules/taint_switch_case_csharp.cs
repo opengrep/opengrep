@@ -19,4 +19,87 @@ class SwitchCase {
       _ => 0,
     };
   }
+
+  void guardAmongLabelsFails() {
+    var x = taint_source();
+    object k = 3;
+    switch (k) {
+      case 1:
+      case int n when n > 5:
+        // ok: taint-switch-case-csharp
+        sink(x);
+        break;
+    }
+  }
+
+  void guardAmongLabelsHolds() {
+    var x = taint_source();
+    object k = 7;
+    switch (k) {
+      case 1:
+      case int n when n > 5:
+        // ruleid: taint-switch-case-csharp
+        sink(x);
+        break;
+    }
+  }
+
+  void subpatternIdentifierBindsNothing(int j) {
+    var a = 0;
+    var k = taint_source();
+    if ((k, j) is (a: FOO, b: var y)) {
+      // ok: taint-switch-case-csharp
+      sink(a);
+    }
+  }
+
+  void subpatternPatternStillBinds(int j) {
+    var k = taint_source();
+    if ((j, k) is (a: FOO, b: var y)) {
+      // ruleid: taint-switch-case-csharp
+      sink(y);
+    }
+  }
+
+  int subpatternTestsItsPosition(int j) {
+    var x = taint_source();
+    return (2, j) switch {
+      // ok: taint-switch-case-csharp
+      (a: 1, b: var y) => sink(x),
+      _ => 0,
+    };
+  }
+
+  int subpatternHolds(int j) {
+    var x = taint_source();
+    return (1, j) switch {
+      // ruleid: taint-switch-case-csharp
+      (a: 1, b: var y) => sink(x),
+      _ => 0,
+    };
+  }
+
+  void defaultSharesABranch(int k) {
+    var x = taint_source();
+    switch (k) {
+      case 1:
+      default:
+        // ruleid: taint-switch-case-csharp
+        sink(x);
+        break;
+    }
+  }
+
+  void caseBreaksBeforeDefault(int k) {
+    var y = 0;
+    switch (k) {
+      case 1:
+        y = taint_source();
+        break;
+      default:
+        // ok: taint-switch-case-csharp
+        sink(y);
+        break;
+    }
+  }
 }

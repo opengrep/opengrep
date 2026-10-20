@@ -3172,8 +3172,9 @@ let input_env ~lang ~enter_env ~(flow : F.cfg) mapping ni =
  * yields [id] at the same offset as [inner]'s root plus [inner]'s
  * own leaves.
  *
- * Map/dict destructures (Clojure [{:keys [body]}] / [{body :body}],
- * Elixir [%{body: body}]) arrive as a [PatList]/[PatConstructor] of
+ * Map/dict destructures (Clojure [{body :body}], Elixir [%{body: body}]
+ * and [%S{body: body}]) arrive as a pattern built by [map_pattern], a
+ * [PatList] or a [PatConstructor] of
  * [PatKeyVal(lookup_key, binding)] — possibly wrapped in a single
  * [OtherPat("MapPairKeyword" | "MapPairArrow", …)] for Elixir's
  * [:]/[=>] source-level distinction. In that case the offset is the
@@ -3225,31 +3226,29 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
              (mk_field (prefix ^ String_.strip_wrapping_char ':' s, tok)))
     | _ -> None
   in
-  let unwrap_map_pair (p : G.pattern) : G.pattern =
-    match p with
-    | G.OtherPat
-        ( (("MapPairKeyword" | "MapPairArrow"), _),
-          [ G.P (G.PatKeyVal (_, _) as inner) ] ) ->
-        inner
-    | _ -> p
-  in
-  let is_map_pair (p : G.pattern) : bool =
-    match p with
-    | G.PatKeyVal (_, _) -> true
-    | G.OtherPat
-        ( (("MapPairKeyword" | "MapPairArrow"), _),
-          [ G.P (G.PatKeyVal (_, _)) ] ) ->
-        true
-    | _ -> false
-  in
   let rec go offset pat acc =
     match pat with
     | G.PatId (id, id_info) ->
         let il_name = AST_to_IL.var_of_id_info id id_info in
         (il_name, List.rev offset) :: acc
+    (* A pattern built by [AST_generic_helpers.map_pattern] binds what its
+     * key-value entries bind, each at the offset of its key. *)
+    | G.OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) -> (
+        match AST_generic_helpers.map_pattern_entries pat with
+        | Some (l, entries, r) ->
+            let entries =
+              if Lang.equal lang Lang.Clojure then
+                Macro_expand_clojure.map_binding_entries entries
+              else entries
+            in
+            let pairs =
+              List.filter AST_generic_helpers.is_map_pair_pattern entries
+            in
+            go offset (G.PatList (l, pairs, r)) acc
+        | None -> acc)
     | G.PatTyped (inner, _) -> go offset inner acc
     | G.PatTuple (_, pats, _) | G.PatList (_, pats, _)
-      when pats <> [] && List.for_all is_map_pair pats ->
+      when AST_generic_helpers.is_map_pair_list pats ->
         (* Map/dict destructure: project by key, not by position. *)
         List.fold_left (go_map_pair offset) acc pats
     | G.PatTuple (_, pats, _) | G.PatList (_, pats, _) ->
@@ -3289,9 +3288,9 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
         in
         emit acc 0 pats
     | G.PatConstructor (_, pats)
-      when pats <> [] && List.for_all is_map_pair pats ->
-        (* Clojure [:keys] / [Assoc] destructure wraps its key-value
-         * pairs in a [PatConstructor]; treat like a map destructure. *)
+      when AST_generic_helpers.is_map_pair_list pats ->
+        (* An Elixir struct pattern wraps its key-value pairs in a
+         * [PatConstructor]; treat like a map destructure. *)
         List.fold_left (go_map_pair offset) acc pats
     | G.PatRecord (_, fields, _) ->
         List.fold_left
@@ -3306,7 +3305,7 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
         go offset inner acc
     | _ -> acc
   and go_map_pair offset acc pat =
-    match unwrap_map_pair pat with
+    match AST_generic_helpers.unwrap_map_pair_pattern pat with
     | G.PatKeyVal (key_pat, val_pat) -> (
         match ofld_of_key_pat key_pat with
         | Some k -> go (k :: offset) val_pat acc

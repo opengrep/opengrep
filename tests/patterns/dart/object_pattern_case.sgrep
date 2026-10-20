@@ -1,0 +1,4 @@
+switch ($K) {
+  case Point(...):
+    a();
+}
