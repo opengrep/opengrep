@@ -29,6 +29,15 @@ type use_position =
   | Base_class (* a parent of a class other than an interface *)
   | Name (* any other place: a constructor, an attribute *)
 
+(* The scopes in which a class, a type definition or a type alias rebinds or
+   shadows a name that an import binds. Elsewhere the import keeps the name,
+   and the definition's name takes the import's resolution. *)
+type import_rebinding =
+  | Every_scope
+  | Inner_scopes (* not the top level, where an import outranks the
+                    declarations of the file *)
+  | No_scope
+
 module type NAMESPACES = sig
   type t
 
@@ -45,9 +54,9 @@ module type NAMESPACES = sig
      order of its namespaces. *)
   val searched_by : use_position -> t list list
 
-  (* A class, a type definition or a type alias rebinds a name that an import
-     binds. *)
-  val class_rebinds_import : bool
+  (* The scopes in which a class, a type definition or a type alias rebinds a
+     name that an import binds. *)
+  val class_rebinds_import : import_rebinding
 
   (* A class, a type definition or a type alias is in scope in its own
      definition; otherwise it binds once its definition is visited. *)
@@ -62,7 +71,7 @@ module Single : NAMESPACES = struct
   let variables = Value
   let of_definition (_ : definition_kind) : t list = [ Value ]
   let searched_by (_ : use_position) : t list list = [ [ Value ] ]
-  let class_rebinds_import = true
+  let class_rebinds_import = Every_scope
   let class_in_scope_in_its_definition = true
 end
 

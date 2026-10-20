@@ -37,7 +37,7 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   | Base_class ->
       [ [ Ordinary ] ]
 
-let class_rebinds_import = true
+let class_rebinds_import = Lang_namespaces.Every_scope
 
 (* a tag is in scope just after its appearance in its declaration (C11
    6.2.1), as in [struct node { struct node *next; }] *)

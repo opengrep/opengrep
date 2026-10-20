@@ -296,6 +296,34 @@ let tests parse_program =
                 "expected one definition and one resolved use of Foo, found %d \
                  and %d"
                 (List.length definitions) (List.length uses));
+      t "kotlin import outranks a top-level class of its name, and a nested \
+         class shadows it"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/kotlin/import_and_class_of_one_name.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          (* the uses are the call in g and the call in m *)
+          match (def_sids_of_name ast "foo", resolutions_of_name ast "foo") with
+          | ( [ _top_level; nested ],
+              [ top_level_call; (Some (_, nested_call) as nested_use) ] ) ->
+              Alcotest.(check string) "the call in g refers to the import"
+                "ImportedEntity"
+                (kind_of_resolution top_level_call);
+              Alcotest.(check bool) "the call in m does not refer to the import"
+                false
+                (String.equal "ImportedEntity" (kind_of_resolution nested_use));
+              Alcotest.(check bool) "the call in m refers to the nested class"
+                true
+                (AST_generic.SId.equal nested nested_call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two uses of foo, the second \
+                 resolved, found %d and %d"
+                (List.length definitions) (List.length uses));
       t "python redefinition rebinds the same name" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/redefined_def.py")

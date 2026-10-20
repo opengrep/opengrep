@@ -326,7 +326,7 @@ type namespaces = {
   variables : namespace_hash;
   of_definition : Lang_namespaces.definition_kind -> namespace_hash list;
   searched_by : Lang_namespaces.use_position -> namespace_hash list list;
-  class_rebinds_import : bool;
+  class_rebinds_import : Lang_namespaces.import_rebinding;
   class_in_scope_in_its_definition : bool;
 }
 
@@ -943,8 +943,20 @@ let declare_class_or_type (env : env) (lang : Lang.t) (entity : entity)
   match (entity.name, namespace_of env kind) with
   | EN (Id (id, id_info)), (_ :: _ as namespaces)
     when is_resolvable_name_ctx env lang -> (
+      let top_level, scope, add =
+        match !(env.names.blocks) with
+        | [] -> (true, !(env.names.imported), add_imported_scope)
+        | current :: _ -> (false, current, add_current_scope)
+      in
+      let rebinds_import =
+        match env.namespaces.class_rebinds_import with
+        | Every_scope -> true
+        | Inner_scopes -> not top_level
+        | No_scope -> false
+      in
       let import =
-        if not env.namespaces.class_rebinds_import then
+        if rebinds_import then None
+        else
           match lookup_scope_opt id env with
           | Some { entname = (ImportedEntity _ | ImportedModule _), _; _ } as
             import ->
@@ -952,16 +964,10 @@ let declare_class_or_type (env : env) (lang : Lang.t) (entity : entity)
           | Some _
           | None ->
               None
-        else None
       in
       match import with
       | Some import -> set_resolved env id_info import
       | None ->
-          let scope, add =
-            match !(env.names.blocks) with
-            | [] -> (!(env.names.imported), add_imported_scope)
-            | current :: _ -> (current, add_current_scope)
-          in
           declare_in_scope env lang namespaces scope add ~keep_type:false id
             id_info)
   | _ -> ()

@@ -44,7 +44,7 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   | Base_class ->
       [ [ Ordinary; Class_or_enumeration ] ]
 
-let class_rebinds_import = true
+let class_rebinds_import = Lang_namespaces.Every_scope
 
 (* the class's name is in scope in its own definition, as its
    injected-class-name ([class.pre]) *)

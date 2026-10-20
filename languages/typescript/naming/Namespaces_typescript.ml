@@ -41,5 +41,5 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   | Elaborated_type ->
       [ [ Type ] ]
 
-let class_rebinds_import = true
+let class_rebinds_import = Lang_namespaces.Every_scope
 let class_in_scope_in_its_definition = true

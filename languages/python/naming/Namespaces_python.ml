@@ -6,5 +6,5 @@
    fallback class in the [except ImportError] of [from lxml import etree]. *)
 include Lang_namespaces.Single
 
-let class_rebinds_import = false
+let class_rebinds_import = Lang_namespaces.No_scope
 let class_in_scope_in_its_definition = false

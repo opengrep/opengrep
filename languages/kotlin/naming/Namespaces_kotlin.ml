@@ -1,6 +1,11 @@
 (* Kotlin keeps variables and properties, functions, and classifiers apart: a
    property, a function and a class may have the same name. Where a name could
-   refer to a variable or a classifier, the variable is chosen. *)
+   refer to a variable or a classifier, the variable is chosen. An explicit
+   import outranks the declarations of the file's package: a call without a
+   receiver considers the callables explicitly imported, then those declared
+   in the same package (Kotlin specification, Overload resolution), and a
+   constructor is a callable. A top-level class therefore does not rebind an
+   import of its name, while a nested or local class shadows it. *)
 type t =
   | Variable
   | Function
@@ -41,5 +46,5 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
   (* an annotation refers to a classifier *)
   | Name -> [ [ Classifier ]; [ Variable ] ]
 
-let class_rebinds_import = true
+let class_rebinds_import = Lang_namespaces.Inner_scopes
 let class_in_scope_in_its_definition = true
