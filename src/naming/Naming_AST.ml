@@ -365,8 +365,7 @@ let fresh_binding (env : env) : int =
   env.next_binding := binding + 1;
   binding
 
-(* The groups of each use position are computed once, so a lookup allocates
-   nothing. *)
+(* The groups of each use position are computed once, not at each lookup. *)
 let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
     namespaces =
   let groups (position : Lang_namespaces.use_position) :

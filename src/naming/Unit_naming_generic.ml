@@ -711,6 +711,32 @@ let tests parse_program =
           Alcotest.(check int) "bound definitions of String" 0
             (List.length (def_sids_of_name ast "String"));
           check_resolutions ast "String" [ "Unresolved" ]);
+      t "c++ base class refers to the class, not the variable of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/cpp/base_class_and_variable.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* the use in a type is the base class, the use in an expression the
+             assignment *)
+          match
+            ( def_sids_of_name ast "B",
+              type_resolutions_of_name ast "B",
+              resolutions_of_name ast "B" )
+          with
+          | [ class_; variable ], [ Some (_, base) ], [ Some (_, assigned) ] ->
+              Alcotest.(check bool) "the base class refers to the class" true
+                (AST_generic.SId.equal class_ base);
+              Alcotest.(check bool) "the assignment refers to the variable" true
+                (AST_generic.SId.equal variable assigned)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, a resolved base class and a resolved \
+                 expression use of B, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
       t "c and c++ structure with its keyword refers to the structure, not the \
          function of the same name"
         (fun () ->

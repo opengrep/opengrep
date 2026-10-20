@@ -33,15 +33,17 @@ let of_definition : Lang_namespaces.definition_kind -> t list = function
 let searched_by : Lang_namespaces.use_position -> t list list = function
   | Elaborated_type -> [ [ Class_or_enumeration ] ]
   (* the name before [::] refers to a namespace or a type, not to a variable
-     or a function ([basic.lookup.qual.general]): in a scope, a class or an
-     enumeration comes before an ordinary name, as a typedef name or a
+     or a function ([basic.lookup.qual.general]), and the name of a base class
+     is found by a type-only lookup ([class.derived]): in a scope, a class or
+     an enumeration comes before an ordinary name, as a typedef name or a
      namespace alias *)
-  | Qualifier -> [ [ Class_or_enumeration; Ordinary ] ]
+  | Qualifier
+  | Base_class ->
+      [ [ Class_or_enumeration; Ordinary ] ]
   | Expression
   | Callee
   | Type_position
-  | Name
-  | Base_class ->
+  | Name ->
       [ [ Ordinary; Class_or_enumeration ] ]
 
 let class_rebinds_import = Lang_namespaces.Every_scope
