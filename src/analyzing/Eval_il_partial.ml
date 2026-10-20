@@ -161,6 +161,22 @@ let int_can_equal_float (lang : Lang.t) (op : G.operator) : bool =
       true
   | _ -> false
 
+(* Two literals of the same kind among integers, floats, strings, symbols,
+ * booleans and nil. *)
+let literals_of_one_kind (cs : G.svalue list) : bool =
+  match cs with
+  | [ G.Lit l1; G.Lit l2 ] -> (
+      match (l1, l2) with
+      | G.Int _, G.Int _
+      | G.Float _, G.Float _
+      | G.String _, G.String _
+      | G.Atom _, G.Atom _
+      | G.Bool _, G.Bool _
+      | G.Null _, G.Null _ ->
+          true
+      | _ -> false)
+  | _ -> false
+
 let literal_of_string ?tok s : G.literal =
   let tok =
     match tok with
@@ -332,19 +348,7 @@ and eval_op memo (env : env) wop args =
    * otherwise it is not decided on the operands' values. *)
   | G.PhysEq, _
     when (Lang.equal env.lang Lang.Ruby || Lang.equal env.lang Lang.Crystal)
-         &&
-         match cs with
-         | [ G.Lit l1; G.Lit l2 ] -> (
-             match (l1, l2) with
-             | G.Int _, G.Int _
-             | G.Float _, G.Float _
-             | G.String _, G.String _
-             | G.Atom _, G.Atom _
-             | G.Bool _, G.Bool _
-             | G.Null _, G.Null _ ->
-                 false
-             | _ -> true)
-         | _ -> true ->
+         && not (literals_of_one_kind cs) ->
       G.Cst G.Cbool
   (* Equality / inequality fold via [eq] on [G.svalue], or by numeric value
    * for an integer and a float ([int_can_equal_float]), so any
