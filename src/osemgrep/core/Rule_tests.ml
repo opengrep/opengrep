@@ -1,4 +1,3 @@
-open Fpath_.Operators
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -93,10 +92,8 @@ let relatively_eq parent_target target parent_config config =
 let get_config_filenames original_config =
   if UFile.is_reg ~follow_symlinks:true original_config then [ original_config ]
   else
-    let configs = Common2.glob (Common.spf "%s/**" !!original_config) in
-    configs
-    |> List_.filter_map (fun file ->
-           let fpath = Fpath.v file in
+    UFile.files_of_dirs_or_files_no_vcs_nofilter [ original_config ]
+    |> List_.filter_map (fun fpath ->
            if
              is_config_suffix fpath
              && (not (String.starts_with ~prefix:"." (Fpath.basename fpath)))
@@ -145,11 +142,12 @@ let get_config_test_filenames ~original_config ~configs ~original_target =
   if is_file original_config && original_target_is_file then
     [ (original_config, [ original_target ]) ]
   else
+    let target_root =
+      if original_target_is_file then Fpath.parent original_target
+      else original_target
+    in
     let targets =
-      (if original_target_is_file then
-         Common2.glob (Common.spf "%s/**" !!(Fpath.parent original_target))
-       else Common2.glob (Common.spf "%s/**" !!original_target))
-      |> List_.map Fpath.v
+      UFile.files_of_dirs_or_files_no_vcs_nofilter [ target_root ]
       |> List.filter is_file
     in
 
