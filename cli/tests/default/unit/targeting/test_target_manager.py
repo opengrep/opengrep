@@ -562,3 +562,45 @@ def test_ignore_baseline_handler(monkeypatch, tmp_path):
     assert {str(dir_a_poetry), str(dir_b_poetry), str(dir_c_poetry)} == {
         str(path) for path in all_files
     }, "Should include unchanged lockfiles as well"
+
+
+@pytest.mark.kinda_slow
+def test_baseline_files_under_target_path(monkeypatch, tmp_path):
+    """
+    Test verifies a baseline scan of a directory returns only the files
+    changed under it, and a baseline scan of the current directory returns
+    every changed file
+    """
+    monkeypatch.chdir(tmp_path)
+
+    # Initialize State
+    subprocess.check_call(["git", "init"])
+    subprocess.check_call(
+        ["git", "config", "user.email", "baselinehandlertest@semgrep.com"]
+    )
+    subprocess.check_call(["git", "config", "user.name", "Baseline TestHandler"])
+    subprocess.check_call(["git", "checkout", "-B", "main"])
+
+    Path("base.py").write_text("base = 0\n")
+    subprocess.check_call(["git", "add", "."])
+    subprocess.check_call(["git", "commit", "-m", "first"])
+    base_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], encoding="utf-8"
+    ).strip()
+
+    # Add sub/a.py and other/b.py after base_commit
+    sub_a = Path("sub") / "a.py"
+    other_b = Path("other") / "b.py"
+    for path in (sub_a, other_b):
+        path.parent.mkdir()
+        path.write_text(f"{path.stem} = 1\n")
+    subprocess.check_call(["git", "add", "."])
+    subprocess.check_call(["git", "commit", "-m", "second"])
+
+    baseline_handler = BaselineHandler(base_commit, True)
+    assert_path_sets_equal(
+        Target("sub", baseline_handler=baseline_handler).files(), {sub_a}
+    )
+    assert_path_sets_equal(
+        Target(".", baseline_handler=baseline_handler).files(), {sub_a, other_b}
+    )

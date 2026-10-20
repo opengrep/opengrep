@@ -493,6 +493,19 @@ class Target:
         """
         return self._is_valid_file_or_dir(path) and path.is_file()
 
+    def _is_under_target_path(self, path: Path) -> bool:
+        target_path = os.path.normcase(os.path.abspath(self.path))
+        try:
+            return (
+                os.path.commonpath(
+                    [target_path, os.path.normcase(os.path.abspath(path))]
+                )
+                == target_path
+            )
+        # Raised on Windows when the two paths are on different drives.
+        except ValueError:
+            return False
+
     def _parse_git_output_nulsep(self, output: str) -> FrozenSet[Path]:
         """
         Convert a null-delimited list of files to a set of path objects
@@ -517,10 +530,12 @@ class Target:
         if self.baseline_handler is None:
             raise RuntimeError("Can't get git diff file list without a baseline commit")
         git_status = self.baseline_handler.status
+        # `BaselineHandler.status` holds the files changed under the current
+        # directory, which can be outside `self.path`.
         return frozenset(
             path
             for path in git_status.added + git_status.modified
-            if self._is_valid_file(path)
+            if self._is_under_target_path(path) and self._is_valid_file(path)
         )
 
     def files_from_git_ls(self) -> FrozenSet[Path]:
