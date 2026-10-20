@@ -771,6 +771,10 @@ and map_form (env : env) (x : CST.form) : G.expr =
           let v4 = map_form env v4 in
           R.Tuple [ v2; raw_of_expr v4 ] )
     |> expr_of_raw
+  (* A quoted symbol is a symbol value, the literal Scala's 'x also gives. *)
+  | `Quot_lit (_meta, quote_tk, _gaps, `Sym_lit (_, ((_, s) as sym_tk)))
+    when not (in_pattern env && String.equal s "...") ->
+    G.L (G.Atom (token env quote_tk, H.str env sym_tk)) |> G.e
   (* TODO: Handle this. *)
   | `Quot_lit (v1, v2, v3, v4) ->
      (* TODO: function (quote ...) behaves the same. *)
@@ -1061,16 +1065,16 @@ and map_binding_form_vec_lit
 and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
   : G.pattern =
   let lb, rb = token env lb, token env rb in
-  let forms = forms_in_source env srcs in
-  let make_pat constr_name tk pats =
-      G.PatConstructor ((Id ((constr_name, tk), G.empty_id_info ())),
-                        pats)
-  in 
-  let rec with_or_as s_pat tk_pat pats rest =
-    match rest with
-    | [ `Kwd_lit ((_loc, ":or") as tk_or); `Map_lit default_val ] ->
-       make_pat s_pat tk_pat @@
-       pats @
+  (* The entries of the form, as clojure.core/destructure reads them: each
+   * pair of forms is an entry, in any order. *)
+  let rec entries acc as_opt forms =
+    match forms with
+    | [] -> (List.rev acc, as_opt)
+    | `Sym_lit (_meta, ((_, "...") as ellipsis_tk)) :: rest
+      when in_pattern env ->
+      entries (G.PatEllipsis (token env ellipsis_tk) :: acc) as_opt rest
+
+    | `Kwd_lit ((_loc, ":or") as tk_or) :: `Map_lit default_val :: rest ->
        (* TODO: This won't trace (source...) in default_val to a sink in the
         * body, we need to create instantiation code that relates to the variable
         * to which the default value may be assigned. An If-Not-Nil-Assign will
@@ -1079,114 +1083,111 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
         * is a map of default values; we can have several. Careful with ordering
         * to capture any shadowing that may occur (should not happen in correct
         * code). *)
-       [ G.OtherPat (("OrValuePat", (token env tk_or)),
-                     [G.E (map_map_form env default_val)]) ]
+       let or_pat =
+         G.OtherPat (("OrValuePat", (token env tk_or)),
+                     [G.E (map_map_form env default_val)])
+       in
+       entries (or_pat :: acc) as_opt rest
 
-    | [ `Kwd_lit ((_loc, ":as") as _kwd_tk);
-        `Sym_lit (_meta, ((_, s_sym) as sym_tk)) ]
-      when 
+    | `Kwd_lit (_loc, ":as")
+      :: `Sym_lit (_meta, ((_, s_sym) as sym_tk)) :: rest
+      when
         (* The symbol after :as must be a simple symbol, and not ellipsis. *)
         not (String.equal s_sym "..."
              || (s_sym =~ qualified_name_regex_str)) ->
-      let ident = H.str env sym_tk in
-      G.PatAs (make_pat s_pat tk_pat pats, (ident, empty_id_info ()))
+      entries acc (Some (H.str env sym_tk)) rest
 
-    | ((`Kwd_lit ((_loc_or, s_or) as kwd_or)
-        :: `Map_lit map_or
-        :: `Kwd_lit ((_loc_as, s_as) as kwd_as)
-        :: `Sym_lit ((_meta, ((_, s_sym) as sym_tk)) as sym_as) :: []
-       | `Kwd_lit ((_loc_as, s_as) as kwd_as)
-         :: `Sym_lit ((_meta, ((_, s_sym) as sym_tk)) as sym_as)
-         :: `Kwd_lit ((_loc_or, s_or) as kwd_or)
-         :: `Map_lit map_or :: []))
-      when String.equal s_or ":or" ->
-      let pats' =
-        pats @ [ G.OtherPat (("OrValuePat", (token env kwd_or)),
-                             [G.E (map_map_form env map_or)]) ]
-        in 
-        with_or_as s_pat tk_pat pats' [ `Kwd_lit kwd_as; `Sym_lit sym_as ]
+    (* Special shorthand binding form, eg, {:keys [x y]}. *)
+    | `Kwd_lit ((_loc, s) as kwd) :: `Vec_lit vec :: rest
+      when Option.is_some (Macro_expand_clojure.map_binding_directive s) ->
+      entries (map_binding_directive env kwd vec :: acc) as_opt rest
 
-    | [] -> make_pat s_pat tk_pat pats
+    (* Standard map binding, eg, {x :a, [y z] :b, z "str-key"}. *)
+    | bind_form :: key_form :: rest ->
+      let bound = map_binding_form env bind_form in
+      (* TODO: PatRecord of (dotted_ident * pattern) list bracket *)
+      let lookup_key = map_binding_key env key_form in
+      (* Canonical [PatKeyVal(lookup_key, binding)]: first argument
+       * is the map lookup key (the atom/string that selects the
+       * field on the incoming value), second is the pattern that
+       * receives what was fetched. *)
+      entries (G.PatKeyVal (lookup_key, bound) :: acc) as_opt rest
 
-    | _ -> raise_parse_error "invalid :or or :and in map binding form."
+    | [_] -> raise_parse_error "Invalid map binding form."
   in
-  match forms with
+  let pats, as_opt = entries [] None (forms_in_source env srcs) in
+  let map_pat = GH.map_pattern (lb, pats, rb) in
+  match as_opt with
+  | None -> map_pat
+  | Some ident -> G.PatAs (map_pat, (ident, empty_id_info ()))
 
-  (* Special shorthand binding form, eg, {:keys [x y]}. *)
-  | `Kwd_lit ((_loc, s) as tk) (* TODO: This also allows :keyz, restrict! *)
-    :: `Vec_lit ((_meta, (lb, vec_srcs, rb)) : CST.map_lit) :: rest ->
-    (* Example: {:keys [z x/a ::x]} *)
-    let pats = List_.map
-        (function
-          | `Sym_lit ((_meta, (loc, s)) as x) ->
-            let bound = map_sym_lit_pat_qualified env x in
-            let atom_kind, tok_colon, atom_name =
-              map_kwd_expr_aux env (loc, ":" ^ s)
-            in
-            let lookup_key =
-              G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
-            in
-            (* Canonical [PatKeyVal(lookup_key, binding)]: first argument
-             * is the map lookup key (the atom/string that selects the
-             * field on the incoming value), second is the pattern that
-             * receives what was fetched. *)
-            G.PatKeyVal (lookup_key, bound)
-          | `Kwd_lit ((_loc, s) as kwd)
-            when String.starts_with ~prefix:"::" s ->
-             let s, t = H.str env kwd in
-             (* Remove prefix "::" *)
-             (* TODO: We can use env namespace here, probably should. *)
-             let s_no_colon = String.sub s 2 (String.length s - 2) in
-             let _tok_colon, tok_name =
-               Tok.split_tok_at_bytepos 2 t
-             in
-             let bound =
-               G.PatId ((s_no_colon, tok_name), G.empty_id_info ())
-             in
-            let atom_kind, tok_colon, atom_name =
-              map_kwd_expr_aux env kwd
-            in
-            let lookup_key =
-              G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
-            in
-            G.PatKeyVal (lookup_key, bound)
-          | _ -> raise_parse_error ~related_ast:(G.Tk (token env tk))
-                   "Invalid associative binding form"
-        )
-        (forms_in_source env vec_srcs)
+(* The key of a standard entry of a map binding form: the form the value is
+ * looked up with. *)
+and map_binding_key (env : env) (form : CST.form) : G.pattern =
+  match form with
+  | `Kwd_lit kwd_lit ->
+    let atom_kind, tok_colon, atom_name =
+      map_kwd_expr_aux env kwd_lit
     in
-    with_or_as s (token env tk) pats rest
-
-  (* Standard map binding, eg, {x :a, [y z] :b, z "str-key"}. *)
-  | _bind_form :: (`Kwd_lit _ | `Str_lit _) :: _ ->
-    let map_value_key_pattern = function
-      | `Kwd_lit kwd_lit ->
-        let atom_kind, tok_colon, atom_name =
-          map_kwd_expr_aux env kwd_lit
-        in
-        G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
-      | `Str_lit str_tok ->
-        let s, t = H.str env str_tok in
-        let s_no_quotes = String.sub s 1 (String.length s - 2) in
-        G.PatLiteral (G.String (Tok.unsafe_fake_bracket (s_no_quotes, t)))
-    in
-    let rec keyval_and_rest acc = function
-      | bind_form :: (`Kwd_lit _ | `Str_lit _ as kv) :: rest_forms ->
-        let bound = map_binding_form env bind_form in
-        (* TODO: PatRecord of (dotted_ident * pattern) list bracket *)
-        let lookup_key = map_value_key_pattern kv in
-        keyval_and_rest
-          (G.PatKeyVal (lookup_key, bound) :: acc)
-          rest_forms
-      | (`Kwd_lit _or_as  :: _  as rest_forms)-> List.rev acc, rest_forms
-      | [] -> List.rev acc, []
-      | _ -> raise_parse_error "Invalid map binding form."
-    in
-    let pats, rest = keyval_and_rest [] forms in
-    with_or_as "Assoc" (Tok.unsafe_fake_tok "assoc") pats rest
-
+    G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
+  | `Str_lit str_tok ->
+    let s, t = H.str env str_tok in
+    let s_no_quotes = String.sub s 1 (String.length s - 2) in
+    G.PatLiteral (G.String (Tok.unsafe_fake_bracket (s_no_quotes, t)))
   | _ ->
-    raise_parse_error "Invalid map binding form."
+    let e = map_form env form in
+    (match e.G.e with
+     | G.L lit -> G.PatLiteral lit
+     | _ -> G.OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [G.E e]))
+
+(* A directive of a map binding form, as written: the directive keyword and
+ * the vector of its binders.
+ * Example: {:keys [z x/a ::x]} *)
+and map_binding_directive (env : env) (kwd : CST.kwd_lit)
+    ((_meta, (lb, srcs, rb)) : CST.vec_lit) : G.pattern =
+  let atom_kind, tok_colon, atom_name = map_kwd_expr_aux env kwd in
+  let binders =
+    List_.map (map_binding_directive_binder env) (forms_in_source env srcs)
+  in
+  G.OtherPat
+    ( ("MapBindingDirective", token env kwd),
+      [ G.P (G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name]));
+        G.P (G.PatList (token env lb, binders, token env rb)) ] )
+
+(* A binder of a directive: a symbol, or a qualified symbol or a keyword,
+ * whose qualifier and colons are kept as idents before the binder. *)
+and map_binding_directive_binder (env : env) (form : CST.form) : G.pattern =
+  let qualified (prefix : G.ident list) ((s, t) : G.ident) : G.pattern =
+    let prefix, (s, t) =
+      if s =~ qualified_name_regex_str then
+        let before, after = Common.matched2 s in
+        let t_before, t_rest =
+          Tok.split_tok_at_bytepos (String.length before) t
+        in
+        let _t_slash, t_after = Tok.split_tok_at_bytepos 1 t_rest in
+        (prefix @ [ (before, t_before) ], (after, t_after))
+      else (prefix, (s, t))
+    in
+    match prefix with
+    | [] -> G.PatId ((s, t), G.empty_id_info ())
+    | (_, t_first) :: _ ->
+      G.OtherPat
+        ( ("QualifiedBinder", t_first),
+          List_.map (fun id -> G.I id) prefix
+          @ [ G.P (G.PatId ((s, t), G.empty_id_info ())) ] )
+  in
+  match form with
+  | `Sym_lit (_meta, ((_, "...") as tk)) when in_pattern env ->
+    G.PatEllipsis (token env tk)
+  | `Sym_lit (_meta, tk) -> qualified [] (H.str env tk)
+  | `Kwd_lit kwd ->
+    let s, t = H.str env kwd in
+    (* TODO: We can use env namespace here, probably should. *)
+    let colons = if String.starts_with ~prefix:"::" s then "::" else ":" in
+    let n = String.length colons in
+    let t_colons, t_name = Tok.split_tok_at_bytepos n t in
+    qualified [ (colons, t_colons) ] (String.sub s n (String.length s - n), t_name)
+  | _ -> raise_parse_error "Invalid associative binding form"
 
 and map_fn_params (env : env) (form : CST.form) : G.pattern (* list bracket *) =
   match form with

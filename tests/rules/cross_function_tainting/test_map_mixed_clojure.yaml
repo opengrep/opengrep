@@ -1,0 +1,16 @@
+rules:
+  - id: test-map-mixed-taint
+    message: |
+      Field-sensitive taint through a Clojure map destructure that mixes
+      [:keys] with other entries and puts [:or] first. Taint at the
+      caller-side [:body] must reach [body], taint at [:user] must not.
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

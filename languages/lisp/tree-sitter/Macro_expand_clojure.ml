@@ -209,3 +209,84 @@ let macro_expand_1 (expr : G.expr) : G.expr =
   | _ ->
     raise @@ Macroexpansion_error ("Not implemented", G.E expr)
 
+
+(* The name of a keyword or symbol, without its colons and its namespace:
+ * "keys" for ":keys", ":ns/keys" and "::keys". *)
+let unqualified_name (s : string) : string =
+  match String.rindex_opt s '/' with
+  | Some i -> String.sub s (i + 1) (String.length s - i - 1)
+  | None ->
+    let rec after_colons (i : int) : int =
+      if i < String.length s && Char.equal s.[i] ':' then after_colons (i + 1)
+      else i
+    in
+    let i = after_colons 0 in
+    String.sub s i (String.length s - i)
+
+(* The directives of a map binding form, named by the keyword's name with or
+ * without a namespace, as clojure.core/destructure reads them. *)
+type map_binding_directive = Keys | Strs | Syms
+
+let map_binding_directive (keyword : string) : map_binding_directive option =
+  match unqualified_name keyword with
+  | "keys" -> Some Keys
+  | "strs" -> Some Strs
+  | "syms" -> Some Syms
+  | _ -> None
+
+(* The key the IL gives a quoted symbol in a map: the symbol's name after a
+ * quote, apart from the string and the keyword of the same name. *)
+let quoted_symbol_key (symbol : string) : string = "'" ^ unqualified_name symbol
+
+(* The entries of a map binding form as the IL lowers them: each directive
+ * becomes one key-value pair per binder, with the key
+ * clojure.core/destructure derives from the binder (a keyword for :keys, a
+ * string for :strs, a symbol for :syms), and a quoted symbol key becomes the
+ * key of [quoted_symbol_key]. The keys exist only in the lowering. *)
+let map_binding_entries (entries : G.pattern list) : G.pattern list =
+  let string_key ((s, tok) : G.ident) : G.pattern =
+    G.PatLiteral (G.String (Tok.unsafe_fake_bracket (s, tok)))
+  in
+  let directive_pair (directive : map_binding_directive) (binder : G.pattern)
+    : G.pattern option =
+    (* The colons of a keyword binder (":" for any other), the name and the
+     * binding pattern. *)
+    let parts =
+      match binder with
+      | G.PatId (id, _) -> Some (":", id, binder)
+      | G.OtherPat (("QualifiedBinder", _), children) -> (
+          match (children, List.rev children) with
+          | G.I ("::", _) :: _, G.P (G.PatId (id, _) as p) :: _ ->
+            Some ("::", id, p)
+          | _, G.P (G.PatId (id, _) as p) :: _ -> Some (":", id, p)
+          | _ -> None)
+      | _ -> None
+    in
+    parts
+    |> Option.map (fun (colons, ((s, tok) as id), binder) ->
+           let key =
+             match directive with
+             | Keys ->
+               G.OtherPat
+                 ((colons, tok), [ G.Name (G.Id (id, G.empty_id_info ())) ])
+             | Strs -> string_key id
+             | Syms -> string_key (quoted_symbol_key s, tok)
+           in
+           G.PatKeyVal (key, binder))
+  in
+  entries
+  |> List.concat_map (function
+       | G.OtherPat
+           ( ("MapBindingDirective", _),
+             [ G.P (G.OtherPat (_, [ G.Name name ]));
+               G.P (G.PatList (_, binders, _)) ] ) -> (
+           let s =
+             match name with
+             | G.Id ((s, _), _) | G.IdQualified { name_last = (s, _), _; _ } -> s
+           in
+           match map_binding_directive s with
+           | Some directive -> List.filter_map (directive_pair directive) binders
+           | None -> [])
+       | G.PatKeyVal (G.PatLiteral (G.Atom (_, (s, tok))), binder) ->
+         [ G.PatKeyVal (string_key (quoted_symbol_key s, tok), binder) ]
+       | entry -> [ entry ])

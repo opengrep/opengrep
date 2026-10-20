@@ -376,7 +376,7 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatList _
   | G.PatRecord _
   (* [pattern] rewrites a constructor pattern into a tuple (or a map
-   * destructure for the Clojure [:keys] shape), so `let Some(x) = f()`
+   * destructure for an Elixir struct pattern), so `let Some(x) = f()`
    * binds `x` just like `let (x) = f()` would. *)
   | G.PatConstructor _ ->
       true
@@ -742,9 +742,9 @@ and pattern env pat : stmts * lval * stmts =
       (pre_ss @ inner_pre_ss, lval, post_ss)
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
     when H.is_map_pair_list pats ->
-      (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
-       * a flat list of [PatKeyVal]s over the incoming map. Lower as a
-       * map destructure rather than a positional tuple. *)
+      (* Elixir struct pattern [%S{a: x}]: the constructor wraps the
+       * key-value pairs over the incoming map. Lower as a map destructure
+       * rather than a positional tuple. *)
       pattern env (G.PatList (G.fake "[", pats, tok))
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
       pattern env (G.PatTuple (G.fake "(", pats, tok))
@@ -813,6 +813,11 @@ and pattern env pat : stmts * lval * stmts =
   | G.OtherPat ((("MapPattern" | "ClosedMapPattern"), _), _) -> (
       match H.map_pattern_entries pat with
       | Some (l, entries, r) ->
+          let entries =
+            if env.lang =*= Lang.Clojure then
+              CLJ_ME1.map_binding_entries entries
+            else entries
+          in
           pattern env
             (G.PatList (l, List.filter H.is_map_pair_pattern entries, r))
       | None -> todo (G.P pat))
@@ -1046,7 +1051,11 @@ and pm_lower_sequence env scrutinee ~allow_rest pats _tok =
     fixed
     |> List.map (fun (p, i) ->
            match pm_slot_of scrutinee i with
-           | Some slot -> pattern_match_cond env slot p
+           (* A Clojure slot is a binding form, which never fails: a short
+            * vector or a missing key binds nil. *)
+           | Some slot when not (env.lang =*= Lang.Clojure) ->
+               pattern_match_cond env slot p
+           | Some _
            | None ->
                ( [],
                  mk_e
@@ -1139,6 +1148,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
    * matches a map with other entries too, so without entries (Dart `{}`,
    * Elixir `%{}`) it tests only that the value is a map, and a closed one
    * also tests the number of entries. *)
+  (* A Clojure map binding form never fails: a missing key binds nil, and
+   * any value destructures. *)
+  | G.OtherPat (("MapPattern", tok), _) when env.lang =*= Lang.Clojure ->
+      ([], true_at tok)
   | G.OtherPat ((("MapPattern" | "ClosedMapPattern"), tok), _) -> (
       match H.map_pattern_entries pat with
       | Some (l, entries, r) ->
@@ -3492,6 +3505,14 @@ and clojure_atom_key_literal (e : G.expr) : exp option =
       Some
         (mk_e
            (Literal (G.String (Tok.unsafe_fake_bracket (prefix ^ bare, tok))))
+           (SameAs e))
+  (* A quoted symbol, ['x], is a key apart from ["x"] and [:x]. *)
+  | G.L (G.Atom (_, (s, tok))) ->
+      Some
+        (mk_e
+           (Literal
+              (G.String
+                 (Tok.unsafe_fake_bracket (CLJ_ME1.quoted_symbol_key s, tok))))
            (SameAs e))
   | _ -> None
 
