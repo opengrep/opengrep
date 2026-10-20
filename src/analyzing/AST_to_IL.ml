@@ -4704,15 +4704,10 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
         let tested =
           List.filter (fun c -> not (is_default c || H.is_switch_rule_arrow c)) cases
         in
-        let case_ss, jump =
-          match (tested, switch_expr_opt) with
-          | [], _ -> ([], jumps)
-          | _, Some cond ->
-              ([], case_tests env cond tok translate_cases label tested jumps)
-          | _, None ->
-              let case_ss, case = translate_cases env tested in
-              ( case_ss,
-                [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ] )
+        let jump =
+          match tested with
+          | [] -> jumps
+          | _ -> case_tests env switch_expr_opt tok translate_cases label tested jumps
         in
         let default_s =
           if List.exists is_default cases then [ mk_s (Label default_label) ]
@@ -4729,21 +4724,22 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           then [ mk_s (Goto (tok, break_label)) ]
           else []
         in
-        (case_ss @ jump, body @ break_if_no_fallthrough @ bodies)
+        (jump, body @ break_if_no_fallthrough @ bodies)
   in
   branches cases_and_bodies
 
-(* The tests of a branch of a switch with a scrutinee: its cases in order.
- * A case is tested after the expressions of the earlier cases and branches
- * have been evaluated, side effects included (Elixir's `cond` conditions,
- * such as `y = source()`). A case that matches binds its pattern, as a
- * LetPattern does, then a guard ([PatWhen]) is tested, which may read the
- * bindings. When a case or its guard fails, matching goes on with the next
- * case, then with [jumps], the tests of the next branches.
+(* The tests of a branch of a switch: its cases in order. A case is tested
+ * after the expressions of the earlier cases and branches have been
+ * evaluated, side effects included (Elixir's `cond` conditions, such as
+ * `y = source()`), and only when they have all failed. A case that matches
+ * binds its pattern against the scrutinee, as a LetPattern does, then a
+ * guard ([PatWhen]) is tested, which may read the bindings. When a case or
+ * its guard fails, matching goes on with the next case, then with [jumps],
+ * the tests of the next branches.
  * Each test ends in a jump, to [body_label] or to the next test, and the
  * bindings sit here rather than before the body, which a previous body may
  * fall into. *)
-and case_tests env cond tok translate_cases body_label cases jumps : stmts =
+and case_tests env cond_opt tok translate_cases body_label cases jumps : stmts =
   let goto label = mk_s (Goto (tok, label)) in
   let rec tests = function
     | [] -> jumps
@@ -4751,9 +4747,12 @@ and case_tests env cond tok translate_cases body_label cases jumps : stmts =
         let next_label = fresh_label env ~label:"__switch_next" tok in
         let case_ss, case_cond = translate_cases env [ case ] in
         let bind pat =
-          if pattern_binds pat then
-            pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
-          else []
+          match cond_opt with
+          | Some cond when pattern_binds pat ->
+              pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
+          | Some _
+          | None ->
+              []
         in
         let on_match =
           match case with
