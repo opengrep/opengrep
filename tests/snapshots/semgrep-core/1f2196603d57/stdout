@@ -1,0 +1,8 @@
+--- begin input files ---
+foo.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 1 insertion(+)
+ create mode 100644 foo.py
+{"version":"<MASKED>","results":[{"check_id":"-","path":"foo.py","start":{"line":2,"col":1,"offset":7},"end":{"line":2,"col":13,"offset":19},"extra":{"metavars":{"$X":{"start":{"line":2,"col":1,"offset":7},"end":{"line":2,"col":2,"offset":8},"abstract_content":"y"}},"message":"y = 23478921","metadata":{},"severity":"ERROR","fingerprint":"dcf469a4ed70b127baa1ad1e6b5e374be9bde9d9854d0cd4249a071da058ce96d1f19b517d08d8923b586835703a03f7c81461210dfbb84adbc7e9374384400d_0","lines":"y = 23478921","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["foo.py"]},"interfile_languages_used":[],"skipped_rules":[]}

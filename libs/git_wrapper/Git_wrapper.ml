@@ -642,7 +642,7 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
       in
       let cleanup () =
         cwd |> Fpath.to_string |> CapSys.chdir caps#chdir;
-        let cmd = git_cmd [ "worktree"; "remove"; !!temp_dir ] in
+        let cmd = git_cmd [ "worktree"; "remove"; "--force"; !!temp_dir ] in
         match UCmd.status_of_run ~quiet:true cmd with
         | Ok (`Exited 0) ->
             Log.info (fun m -> m "Finished cleaning up git worktree")
