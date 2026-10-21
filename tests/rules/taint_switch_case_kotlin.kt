@@ -111,3 +111,28 @@ fun emptyArmKeepsTheWhen(k: Int) {
   // ruleid: taint-switch-case-kotlin
   sink(y)
 }
+
+fun breakLeavesTheLoop(ks: List<Int>) {
+  var y = 0
+  for (k in ks) {
+    when (k) {
+      1 -> { y = taint_source(); break }
+      else -> {}
+    }
+    y = 0
+  }
+  // ruleid: taint-switch-case-kotlin
+  sink(y)
+}
+
+fun breakSkipsTheRestOfTheLoop(ks: List<Int>) {
+  for (k in ks) {
+    var y = 0
+    when (k) {
+      1 -> { y = taint_source(); break }
+      else -> {}
+    }
+    // ok: taint-switch-case-kotlin
+    sink(y)
+  }
+}

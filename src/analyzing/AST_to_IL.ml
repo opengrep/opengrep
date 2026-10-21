@@ -3798,6 +3798,41 @@ and no_switch_fallthrough : Lang.t -> bool = function
       true
   | _ -> false
 
+(* Languages in which a bare `break` inside a switch exits the enclosing
+ * loop: the switch (Kotlin `when`; Rust, Move and Python `match`; Ruby and
+ * Crystal `case`) is not a target of `break`. *)
+and break_skips_switch : Lang.t -> bool = function
+  | Kotlin
+  | Rust
+  | Move_on_sui
+  | Move_on_aptos
+  | Ruby
+  | Crystal
+  | Python
+  | Python2
+  | Python3 ->
+      true
+  | _ -> false
+
+(* Languages in which a `break` or `next` with no enclosing loop returns from
+ * the enclosing function, which the front end produces for a block or a
+ * lambda literal: Ruby and Crystal. *)
+and jumps_outside_loops_return : Lang.t -> bool = function
+  | Ruby
+  | Crystal ->
+      true
+  | _ -> false
+
+(* A `break v` or `next v` with no enclosing loop: a return of [v], or of
+ * unit without a value, from the function being lowered. *)
+and return_jump_value env tok (lbl_ident : G.label_ident) : stmts =
+  let ss, e =
+    match lbl_ident with
+    | G.LDynamic v -> expr env v
+    | _ -> expr_opt env tok None
+  in
+  ss @ [ mk_s (Return (tok, e)) ]
+
 and break_continue_labels env tok : stmts * stmts * env =
   let cont_label = fresh_label ~label:"__loop_continue" tok in
   let break_label = fresh_label ~label:"__loop_break" tok in
@@ -3815,7 +3850,8 @@ and break_continue_labels env tok : stmts * stmts * env =
 and switch_break_label env tok : label * stmts * env =
   let break_label = fresh_label ~label:"__switch_break" tok in
   let switch_env =
-    { env with break_labels = break_label :: env.break_labels }
+    if break_skips_switch env.lang then env
+    else { env with break_labels = break_label :: env.break_labels }
   in
   (break_label, [ mk_s (Label break_label) ], switch_env)
 
@@ -4144,9 +4180,14 @@ and stmt_aux env st : stmts =
       match lbl_ident with
       | G.LNone -> (
           match env.cont_label with
+          | None when jumps_outside_loops_return env.lang ->
+              return_jump_value env tok lbl_ident
           | None -> impossible (G.Tk tok)
           | Some lbl -> [ mk_s (Goto (tok, lbl)) ])
       | G.LId lbl -> [ mk_s (Goto (tok, label_of_label lbl)) ]
+      | G.LDynamic _
+        when Option.is_none env.cont_label && jumps_outside_loops_return env.lang ->
+          return_jump_value env tok lbl_ident
       | G.LInt _
       | G.LDynamic _ ->
           todo (G.S st))
@@ -4154,6 +4195,8 @@ and stmt_aux env st : stmts =
       match lbl_ident with
       | G.LNone -> (
           match env.break_labels with
+          | [] when jumps_outside_loops_return env.lang ->
+              return_jump_value env tok lbl_ident
           | [] -> impossible (G.Tk tok)
           | lbl :: _ -> [ mk_s (Goto (tok, lbl)) ])
       | G.LId lbl -> [ mk_s (Goto (tok, label_of_label lbl)) ]
@@ -4161,6 +4204,9 @@ and stmt_aux env st : stmts =
           match List.nth_opt env.break_labels i with
           | None -> impossible (G.Tk tok)
           | Some lbl -> [ mk_s (Goto (tok, lbl)) ])
+      | G.LDynamic _
+        when List.is_empty env.break_labels && jumps_outside_loops_return env.lang ->
+          return_jump_value env tok lbl_ident
       | G.LDynamic _ -> impossible (G.Tk tok))
   | G.Label (lbl, st) ->
       let lbl = label_of_label lbl in

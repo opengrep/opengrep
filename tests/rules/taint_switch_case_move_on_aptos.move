@@ -36,4 +36,29 @@ module 0x1::m {
             _ => sink(y),
         }
     }
+
+    fun breakLeavesTheLoop(k: u64): u64 {
+        let y = 0;
+        while (more()) {
+            match (k) {
+                MyConstant => { y = taint_source(); break },
+                _ => {},
+            };
+            y = 0;
+        };
+        // ruleid: taint-switch-case-move-on-aptos
+        sink(y)
+    }
+
+    fun breakSkipsTheRestOfTheLoop(k: u64) {
+        while (more()) {
+            let y = 0;
+            match (k) {
+                MyConstant => { y = taint_source(); break },
+                _ => {},
+            };
+            // ok: taint-switch-case-move-on-aptos
+            sink(y);
+        };
+    }
 }
