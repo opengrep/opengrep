@@ -1,0 +1,13 @@
+rules:
+  - id: python_recursive_untyped_receiver
+    message: taint passed to a recursive call through an untyped receiver
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

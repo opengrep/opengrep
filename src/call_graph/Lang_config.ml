@@ -602,6 +602,17 @@ let overloads_by_type (lang : Lang.t) : bool =
       true
   | _ -> false
 
+(* The canonical names of the generic types whose arguments are the members
+   of a union: in Python, [typing.Optional[X]] is [X | None] and
+   [typing.Union[X, Y]] is [X | Y]. *)
+let union_type_constructors (lang : Lang.t) : string list list =
+  match lang with
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3 ->
+      [ [ "typing"; "Optional" ]; [ "typing"; "Union" ] ]
+  | _ -> []
+
 let hof_method_names (lang : Lang.t) : string list =
   (get lang).hof_configs |> List.concat_map (function
     | MethodHOF { methods; _ }

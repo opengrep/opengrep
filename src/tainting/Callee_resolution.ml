@@ -311,8 +311,15 @@ let is_construction (lang : Lang.t) (e : G.expr) : bool =
         (Some method_name)
   | _ -> false
 
-let has_type_information (lang : Lang.t) (info : G.id_info) : bool =
-  Option.is_some (Ty_bare_name.instance_or_declared_type info)
+(* A receiver whose type is an array, tuple or function type, or whose
+   value is a construction, is not an instance of a class of the file that
+   the unique-method guess could pick. *)
+let excludes_unique_method_guess (lang : Lang.t) (info : G.id_info) : bool =
+  (match Ty_bare_name.instance_or_declared_type info with
+   | Some { G.t = G.TyArray _ | G.TyTuple _ | G.TyFun _; _ } -> true
+   | Some _
+   | None ->
+       false)
   ||
   match !(info.G.id_svalue) with
   | Some (G.Sym (e : G.expr)) -> is_construction lang e
@@ -509,18 +516,13 @@ let rec identify_callee ~(lang : Lang.t)
          pick_by_arity ~lang call_arity candidates)
   in
   let try_unique_method_call ~(method_name : string) : fn_id option =
-    match
-      try_unique_by_distinct_key
-        ~candidate_filter:(fun f ->
-          Option.is_some (Func_info.as_method f.fn_id))
-        ~distinct_key:(fun f ->
-          Option.map (fun (c, _) -> fst c.IL.ident)
-            (Func_info.as_method f.fn_id))
-        method_name
-    with
-    | Some (fn_id : fn_id) when Func_info.equal_fn_id fn_id caller_parent_path ->
-        None
-    | (Some _ | None) as resolved -> resolved
+    try_unique_by_distinct_key
+      ~candidate_filter:(fun f ->
+        Option.is_some (Func_info.as_method f.fn_id))
+      ~distinct_key:(fun f ->
+        Option.map (fun (c, _) -> fst c.IL.ident)
+          (Func_info.as_method f.fn_id))
+      method_name
   in
   let try_module_qn_call ~(base : string) ~(parts : string list)
       ~(method_name : string) : fn_id option =
@@ -794,7 +796,7 @@ let rec identify_callee ~(lang : Lang.t)
                augment / intrafile broadcast, else its declared type. *)
             let obj_class_names =
               match Ty_bare_name.instance_or_declared_type obj_id_info with
-              | Some (ty : G.type_) -> Ty_bare_name.class_names_of_ty ty
+              | Some (ty : G.type_) -> Ty_bare_name.class_names_of_ty lang ty
               | None -> []
             in
             let resolve_by_class (class_name : G.name) : fn_id option =
@@ -866,7 +868,7 @@ let rec identify_callee ~(lang : Lang.t)
                           | Some _ as r -> r
                           | None ->
                             (match
-                               if not (has_type_information lang obj_id_info)
+                               if not (excludes_unique_method_guess lang obj_id_info)
                                then
                                  try_unique_method_call
                                    ~method_name:method_name_str

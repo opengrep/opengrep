@@ -1,0 +1,13 @@
+rules:
+  - id: kotlin_receiver_nullable_type
+    message: taint from a method resolved through a nullable receiver type
+    languages:
+      - kotlin
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
