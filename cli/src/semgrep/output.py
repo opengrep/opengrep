@@ -50,6 +50,7 @@ from semgrep.state import DesignTreatment
 from semgrep.state import get_state
 from semgrep.target_manager import FileTargetingLog
 from semgrep.target_manager import TargetManager
+from semgrep.util import is_under_directory
 from semgrep.util import is_url
 from semgrep.util import terminal_wrap
 from semgrep.util import unit_str
@@ -108,6 +109,36 @@ def destination_not_written(destination: str) -> Optional[str]:
         return f"Output is symlink: {destination}"
     if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
         return f"Cannot write output to {destination}: it has other hard links"
+    return None
+
+
+def destination_outside_targets(
+    targets: Sequence[str], destination: str
+) -> Optional[str]:
+    # Mirrors the OCaml Output.check_destination_in_targets.
+    if os.path.isabs(destination):
+        return None
+    cwd = os.getcwd()
+    destination_path = os.path.join(cwd, destination)
+    deepest_existing = os.path.dirname(destination_path)
+    while not os.path.lexists(deepest_existing) and (
+        os.path.dirname(deepest_existing) != deepest_existing
+    ):
+        deepest_existing = os.path.dirname(deepest_existing)
+    for target in targets:
+        if os.path.isfile(target):
+            directory = os.path.dirname(target) or os.curdir
+        elif os.path.isdir(target):
+            directory = target
+        else:
+            continue
+        if is_under_directory(destination, directory) and not is_under_directory(
+            os.path.realpath(deepest_existing), os.path.realpath(directory)
+        ):
+            return (
+                f"Cannot write output to {destination}: it resolves outside "
+                f"the scanned directory {directory}"
+            )
     return None
 
 
@@ -526,13 +557,15 @@ class OutputHandler:
 
         self._final_raise(final_error)
 
-    def check_destinations(self) -> None:
+    def check_destinations(self, targets: Sequence[str]) -> None:
         # mirrors the OCaml Output.check_destinations: refuse a bad
         # destination before the scan, not after. URL destinations are
         # skipped: the wrapper supports posting to them.
         for destination, _format in self.settings.get_outputs():
             if destination is not None and not is_url(destination):
-                message = destination_not_written(destination)
+                message = destination_not_written(
+                    destination
+                ) or destination_outside_targets(targets, destination)
                 if message is not None:
                     error = SemgrepError(message)
                     # wrapper.py exits without printing a SemgrepError

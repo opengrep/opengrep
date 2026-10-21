@@ -1,5 +1,3 @@
-open Common
-
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -38,12 +36,40 @@ let capture_and_log_stderr func =
     Logs.info (fun m -> m "error output: %s" (Redact.apply err));
   res
 
+let path_sep : char = if Sys.win32 then ';' else ':'
+
+let absolute_path_entries () : string list =
+  Option.value ~default:"" (USys.getenv_opt "PATH")
+  |> String.split_on_char path_sep
+  |> List.filter (fun (dir : string) ->
+         match Fpath.of_string dir with
+         | Ok path -> Fpath.is_abs path
+         | Error _ -> false)
+
+let restrict_program_search () : unit =
+  if Option.is_some (USys.getenv_opt "PATH") then
+    UUnix.putenv "PATH"
+      (String.concat (String.make 1 path_sep) (absolute_path_entries ()));
+  if Sys.win32 then UUnix.putenv "NoDefaultCurrentDirectoryInExePath" "1"
+
 let resolve_program (cmd : Cmd.t) : (Bos.Cmd.t, [> Rresult.R.msg ]) result =
-  let/ dirs =
-    Bos.OS.Cmd.search_path_dirs
-      (Option.value ~default:"" (USys.getenv_opt "PATH"))
+  let Cmd.Name name, _ = cmd in
+  let file_name =
+    if Sys.win32 && not (String.ends_with ~suffix:".exe" name) then
+      name ^ ".exe"
+    else name
   in
-  let search = List.filter Fpath.is_abs dirs in
+  (* Bos.OS.Cmd.resolve accepts any entry that passes an execute access
+     check, a directory included *)
+  let search =
+    absolute_path_entries ()
+    |> List.filter_map (fun (dir : string) ->
+           if
+             UFile.is_reg ~follow_symlinks:true
+               (Fpath.v (Filename.concat dir file_name))
+           then Some (Fpath.v dir)
+           else None)
+  in
   Cmd.bos_apply (Bos.OS.Cmd.resolve ~search) cmd
 
 (*****************************************************************************)

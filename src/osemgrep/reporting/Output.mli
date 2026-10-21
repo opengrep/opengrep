@@ -41,11 +41,12 @@ val default : conf
 val too_much_data : string
 
 (* Aborts on a destination that is not written to: a URL, a symbolic link,
- * a file with other hard links, or one given by both -o and a
+ * a file with other hard links, a relative path inside one of [targets]
+ * that resolves outside it, or one given by both -o and a
  * --<format>-output flag. Called before the scan so that the scan does not
  * run first.
  *)
-val check_destinations : conf -> unit
+val check_destinations : targets:Scanning_root.t list -> conf -> unit
 
 (* Whether any of the outputs in conf wants the nosem-ignored matches, so
  * that they must be left in the results instead of being filtered out.

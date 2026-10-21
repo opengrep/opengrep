@@ -84,7 +84,7 @@ let resolve_commit_ref (caps : < Cap.exec >) ~(origin : string)
   | Commit_sha sha -> Some sha
   | Commit_rev rev -> (
       let cmd =
-        ( Cmd.Name "git",
+        Git_wrapper.git_cmd (
           [ "rev-parse"; "--verify"; "--quiet"; rev ^ "^{commit}" ] )
       in
       match CapExec.string_of_run caps#exec ~trim:true cmd with
@@ -229,7 +229,7 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
       match env._SEMGREP_REPO_URL with
       | Some repo_url -> Some repo_url
       | None -> (
-          let cmd = (Cmd.Name "git", [ "remote"; "get-url"; "origin" ]) in
+          let cmd = Git_wrapper.git_cmd [ "remote"; "get-url"; "origin" ] in
           match CapExec.string_of_run caps#exec ~trim:true cmd with
           | Ok (str, _status) ->
               Project_metadata.get_url_from_sstp_url (Some str)
@@ -245,7 +245,7 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
       match env._SEMGREP_BRANCH with
       | Some branch -> Some branch
       | None -> (
-          let cmd = (Cmd.Name "git", [ "rev-parse"; "--abbrev-ref"; "HEAD" ]) in
+          let cmd = Git_wrapper.git_cmd [ "rev-parse"; "--abbrev-ref"; "HEAD" ] in
           match CapExec.string_of_run caps#exec ~trim:true cmd with
           | Ok (branch, (_, `Exited 0)) -> Some branch
           | Ok _
@@ -261,7 +261,7 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
       with
       | Some _ as sha -> sha
       | None -> (
-          let cmd = (Cmd.Name "git", [ "rev-parse"; "HEAD" ]) in
+          let cmd = Git_wrapper.git_cmd [ "rev-parse"; "HEAD" ] in
           match CapExec.string_of_run caps#exec ~trim:true cmd with
           | Ok (str, (_, `Exited 0)) -> Digestif.SHA1.consistent_of_hex_opt str
           | Ok _

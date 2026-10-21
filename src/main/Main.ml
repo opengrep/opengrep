@@ -111,6 +111,7 @@ let check_experimental_flags (argv : string array) : unit =
  *)
 let () =
   Cap.main (fun (caps : Cap.all_caps) ->
+      UCmd.restrict_program_search ();
       let argv = CapSys.argv caps#argv in
       let argv0 =
         (* remove the possible ".exe" extension for Windows and ".bc" *)

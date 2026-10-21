@@ -348,7 +348,6 @@ def ci(
         max_log_list_entries=max_log_list_entries,
     )
     output_handler = OutputHandler(output_settings)
-    output_handler.check_destinations()
 
     per_product_excludes = {
         product: [*exclude] if exclude else [] for product in ALL_PRODUCTS
@@ -360,6 +359,7 @@ def ci(
     target = os.curdir
     if subdir:
         target += f"/{subdir}"
+    output_handler.check_destinations([target])
 
     # evaluating merge_base_ref can run a git fetch; wrapper.py exits
     # without printing a SemgrepError, so report the failure here

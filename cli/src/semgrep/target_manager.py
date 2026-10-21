@@ -52,6 +52,7 @@ from semgrep.semgrep_types import LANGUAGE
 from semgrep.semgrep_types import Language
 from semgrep.semgrep_types import Shebang
 from semgrep.types import FilteredFiles
+from semgrep.util import is_under_directory
 from semgrep.util import path_has_permissions, sub_check_output
 from semgrep.util import with_color
 from semgrep.verbose_logging import getLogger
@@ -493,19 +494,6 @@ class Target:
         """
         return self._is_valid_file_or_dir(path) and path.is_file()
 
-    def _is_under_target_path(self, path: Path) -> bool:
-        target_path = os.path.normcase(os.path.abspath(self.path))
-        try:
-            return (
-                os.path.commonpath(
-                    [target_path, os.path.normcase(os.path.abspath(path))]
-                )
-                == target_path
-            )
-        # Raised on Windows when the two paths are on different drives.
-        except ValueError:
-            return False
-
     def _parse_git_output_nulsep(self, output: str) -> FrozenSet[Path]:
         """
         Convert a null-delimited list of files to a set of path objects
@@ -530,12 +518,29 @@ class Target:
         if self.baseline_handler is None:
             raise RuntimeError("Can't get git diff file list without a baseline commit")
         git_status = self.baseline_handler.status
+
+        @lru_cache(maxsize=None)
+        def is_real_dir(path: Path) -> bool:
+            try:
+                return stat.S_ISDIR(os.lstat(path).st_mode)
+            except OSError:
+                return False
+
+        def is_under_real_dirs(path: Path) -> bool:
+            parts = Path(os.path.relpath(path, self.path)).parts
+            return all(
+                is_real_dir(self.path.joinpath(*parts[:i]))
+                for i in range(1, len(parts))
+            )
+
         # `BaselineHandler.status` holds the files changed under the current
         # directory, which can be outside `self.path`.
         return frozenset(
             path
             for path in git_status.added + git_status.modified
-            if self._is_under_target_path(path) and self._is_valid_file(path)
+            if is_under_directory(path, self.path)
+            and is_under_real_dirs(path)
+            and self._is_valid_file(path)
         )
 
     def files_from_git_ls(self) -> FrozenSet[Path]:

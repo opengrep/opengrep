@@ -300,12 +300,68 @@ let check_destination (dest : string) : unit =
   | UFile.Special ->
       ()
 
+let check_destination_in_targets (targets : Scanning_root.t list)
+    (dest : string) : unit =
+  let cwd = Fpath.v (Sys.getcwd ()) in
+  let dest_path = Fpath.v dest in
+  let absolute (path : Fpath.t) : Fpath.t =
+    Fpath.normalize (Fpath.append cwd path)
+  in
+  let rec deepest_existing (path : Fpath.t) : Fpath.t =
+    let path = Fpath.rem_empty_seg path in
+    match UFile.entry path with
+    | UFile.Absent when not (Fpath.is_root path) ->
+        deepest_existing (Fpath.parent path)
+    | _ -> path
+  in
+  if Fpath.is_rel dest_path then
+    targets
+    |> List.iter (fun (root : Scanning_root.t) ->
+           let root = Scanning_root.to_fpath root in
+           if UFile.is_dir_or_reg ~follow_symlinks:true root then
+             let dir =
+               if UFile.is_reg ~follow_symlinks:true root then
+                 Fpath.rem_empty_seg (Fpath.parent root)
+               else root
+             in
+             let inside =
+               match
+                 Fpath.relativize ~root:(absolute dir) (absolute dest_path)
+               with
+               | Some rel -> not (Fpath.is_parent_dir ~prefix:true rel)
+               | None -> false
+             in
+             if inside then
+               (* not normalised: a '..' after a symbolic link goes to the
+                  parent of the link's target *)
+               match
+                 Rpath.of_fpath
+                   (deepest_existing
+                      (Fpath.parent (Fpath.append cwd dest_path)))
+               with
+               | Ok path
+                 when Fpath.is_prefix
+                        (Fpath.to_dir_path (Rpath.canonical_exn dir))
+                        (Fpath.to_dir_path (Rpath.to_fpath path)) ->
+                   ()
+               | Ok _
+               | Error _ ->
+                   Error.abort
+                     (spf
+                        "Cannot write output to %s: it resolves outside the \
+                         scanned directory %s"
+                        dest (Fpath.to_string dir)))
+
 (* Called before the scan, so that a destination we will not write to costs
  * nothing. Also aborts on the conflicts reported by effective_outputs. *)
-let check_destinations (conf : conf) : unit =
+let check_destinations ~(targets : Scanning_root.t list) (conf : conf) : unit =
   effective_outputs conf
   |> Map_.iter (fun (dest : string option) (_kind : Output_format.t) ->
-         Option.iter check_destination dest)
+         Option.iter
+           (fun (dest : string) ->
+             check_destination dest;
+             check_destination_in_targets targets dest)
+           dest)
 
 let dispatch_output_format
     (caps : < Cap.stdout >)

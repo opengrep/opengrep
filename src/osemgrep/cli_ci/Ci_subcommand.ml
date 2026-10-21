@@ -195,12 +195,17 @@ let warn_ignored_flags (ci_conf : Ci_CLI.conf) : unit =
 let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
   warn_ignored_flags ci_conf;
-  (* post fallback, and inside the suppressed region: a bad destination is
-   * suppressed like any other error *)
-  Output.check_destinations conf.output_conf;
   match resolve_subdir ci_conf.subdir with
   | Error exit_code -> exit_code
   | Ok subdir -> (
+      (* not "./" ^ dir as in ci.py: pathlib normalises the "./" away but
+       * Fpath does not, and the diff filter in Diff_scan.scan_baseline
+       * compares against the plain relative paths git reports *)
+      let target = Option.value subdir ~default:"." in
+      let target_roots = [ Scanning_root.of_fpath (Fpath.v target) ] in
+      (* post fallback, and inside the suppressed region: a bad destination is
+       * suppressed like any other error *)
+      Output.check_destinations ~targets:target_roots conf.output_conf;
       if not (is_git_repo_root_approx ()) then
         Logs.app (fun m ->
             m
@@ -222,14 +227,10 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
       (* the targeting the flags could not know: the current directory (or
        * --subdir) as the only root, the ci excludes, and the baseline from
        * the CI metadata *)
-      (* not "./" ^ dir as in ci.py: pathlib normalises the "./" away but
-       * Fpath does not, and the diff filter in Diff_scan.scan_baseline
-       * compares against the plain relative paths git reports *)
-      let target = Option.value subdir ~default:"." in
       let conf : Scan_CLI.conf =
         {
           conf with
-          target_roots = [ Scanning_root.of_fpath (Fpath.v target) ];
+          target_roots;
           targeting_conf =
             {
               conf.targeting_conf with
