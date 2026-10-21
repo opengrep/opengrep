@@ -512,6 +512,17 @@ let extract_and_check
     extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
       ~taint_inst ~ast info
   in
+  (* The function keeps its converged entry: the re-extraction is not added
+     next to it, which would leave two signatures of one arity. *)
+  let updated_db =
+    let fid = Function_id.of_il_name info.name in
+    match Shape_and_sig.FunctionMap.find_opt fid db.Shape_and_sig.signatures with
+    | Some (converged : Shape_and_sig.SignatureSet.t) ->
+        { Shape_and_sig.signatures =
+            Shape_and_sig.FunctionMap.add fid converged
+              updated_db.Shape_and_sig.signatures }
+    | None -> updated_db
+  in
   (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
     match eff with

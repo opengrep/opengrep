@@ -49,8 +49,9 @@ val extract_signatures :
   fun_info ->
   Shape_and_sig.signature_database * Shape_and_sig.extended_sig list
 (** Extract a function's taint signature(s) into the db, returning the freshly
-    extracted signatures.  The SCC signature fixpoint replaces a function's
-    entry with these each iteration (accumulating them breaks [find_by_arity]).
+    extracted signatures.  The SCC signature fixpoint joins these, one
+    signature per arity, with the function's entry of the previous round
+    (accumulating them as separate signatures breaks [find_by_arity]).
     No finding detection. *)
 
 val extract_and_check :

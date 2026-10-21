@@ -15,6 +15,27 @@ module Sig_lattice = struct
      component stable while an effect's guard still refines (Clojure
      length-atom guards exist even with [effect_guards] off). *)
   let equal = SignatureSet.equal_with_guards
+
+  (* One signature per arity, carrying the effects of both. *)
+  let join (previous : t) (current : t) : t =
+    SignatureSet.fold
+      (fun (old : Shape_and_sig.extended_sig) (acc : t) ->
+        match
+          List.find_opt
+            (fun (sig_ : Shape_and_sig.extended_sig) ->
+              Shape_and_sig.equal_sig_arity sig_.arity old.arity)
+            (SignatureSet.elements acc)
+        with
+        | Some (sig_ : Shape_and_sig.extended_sig) ->
+            let effects =
+              Shape_and_sig.Effects.union sig_.sig_.Shape_and_sig.Signature.effects
+                old.sig_.Shape_and_sig.Signature.effects
+            in
+            acc |> SignatureSet.remove sig_
+            |> SignatureSet.add
+                 { sig_ with sig_ = { sig_.sig_ with Shape_and_sig.Signature.effects } }
+        | None -> SignatureSet.add old acc)
+      previous current
 end
 
 module Sig_store = struct

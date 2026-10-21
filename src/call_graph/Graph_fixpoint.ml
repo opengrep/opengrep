@@ -2,6 +2,7 @@ module type LATTICE = sig
   type t
 
   val equal : t -> t -> bool
+  val join : t -> t -> t
 end
 
 module type GRAPH = sig
@@ -34,6 +35,14 @@ module Make
 struct
   type analyze = G.V.t -> S.t -> S.t
 
+  (* Inside a cycle a node's value joins its value of the previous round, so
+     the rounds ascend even where a round's result does not contain the
+     previous one. *)
+  let analyze_in_cycle ~(analyze : analyze) (v : G.V.t) (store : S.t) : S.t =
+    let before = S.get v store in
+    let store' = analyze v store in
+    S.set v (L.join before (S.get v store')) store'
+
   let run_singleton ~graph ~(analyze : analyze) ~max_iter
       ~(on_max_iter : G.V.t list -> unit) (v : G.V.t) (store : S.t) : S.t =
     if not (G.mem_edge graph v v) then analyze v store
@@ -44,7 +53,7 @@ struct
           store)
         else
           let before = S.get v store in
-          let store' = analyze v store in
+          let store' = analyze_in_cycle ~analyze v store in
           let after = S.get v store' in
           if L.equal before after then store' else loop store' (iter + 1)
       in
@@ -59,7 +68,7 @@ struct
       else
         let snapshot = List.map (fun v -> (v, S.get v store)) members in
         let store' =
-          List.fold_left (fun s v -> analyze v s) store members
+          List.fold_left (fun s v -> analyze_in_cycle ~analyze v s) store members
         in
         let stable =
           List.for_all
