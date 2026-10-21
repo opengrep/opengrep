@@ -3789,7 +3789,11 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Move_on_aptos
   | Clojure
   | Elixir
-  | Kotlin ->
+  | Kotlin
+  | Python
+  | Python2
+  | Python3
+  | Scala ->
       true
   | _ -> false
 
