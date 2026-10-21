@@ -260,6 +260,7 @@ def run_rules(
     dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
     dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
     taint_intrafile: bool = False,
+    jobs: int,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -376,6 +377,7 @@ def run_rules(
                 [target.path for target in target_manager.targets],
                 allow_local_builds=allow_local_builds,
                 prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,
+                jobs=jobs,
             )
             join_rule_matches_set = RuleMatches(rule)
             for m in join_rule_matches:
@@ -611,6 +613,7 @@ def run_scan(
             configs,
             replacement=replacement,
             project_url=project_url,
+            jobs=engine_type.jobs(jobs),
             no_rewrite_rule_ids=no_rewrite_rule_ids,
         )
         progress.remove_task(task_id)
@@ -781,6 +784,7 @@ def run_scan(
         dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
         dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
         taint_intrafile=taint_intrafile,
+        jobs=engine_type.jobs(jobs),
     )
     profiler.save("core_time", core_start_time)
     semgrep_errors: List[SemgrepError] = config_errors + scan_errors
@@ -874,6 +878,7 @@ def run_scan(
                         dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
                         dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
                         taint_intrafile=taint_intrafile,
+                        jobs=engine_type.jobs(jobs),
                     )
                     rule_matches_by_rule = remove_matches_in_baseline(
                         rule_matches_by_rule,

@@ -16,6 +16,7 @@ def test_parse_exclude_rules_auto() -> None:
         lang=None,
         config_strs=("auto",),
         project_url="git@github.com/returntocorp/semgrep",
+        jobs=1,
     )
     all_rules = configs_obj.get_rules(False)
     rule_excluded: Any = map(lambda r: r.id, sample(all_rules, MAX_RULES_TO_EXCLUDE))

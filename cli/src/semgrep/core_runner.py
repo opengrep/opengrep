@@ -518,7 +518,7 @@ class CoreRunner:
         respect_rule_paths: bool = True,
     ):
         self._binary_path = engine_type.get_binary_path()
-        self._jobs = jobs or engine_type.default_jobs
+        self._jobs = engine_type.jobs(jobs)
         self._engine_type = engine_type
         self._timeout = timeout
         self._max_memory = max_memory
@@ -1143,7 +1143,7 @@ Could not find the opengrep-core executable. Your Opengrep install is likely cor
             raise SemgrepError("semgrep engine not found.")
 
         metachecks = Config.from_config_list(
-            ["p/semgrep-rule-lints"], None, force_jsonschema=True
+            ["p/semgrep-rule-lints"], None, force_jsonschema=True, jobs=self._jobs
         )[0].get_rules(True)
 
         parsed_errors = []

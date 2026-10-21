@@ -9,6 +9,7 @@ from semgrep.config_resolver import Config
 from semgrep.config_resolver import parse_config_string
 from semgrep.config_resolver import validate_single_rule
 from semgrep.constants import RULES_KEY
+from semgrep.engine import EngineType
 from semgrep.error import InvalidRuleSchemaError
 
 
@@ -87,7 +88,7 @@ def test_multiple_configs():
         tf1.flush()
         tf2.flush()
         config_list = [tf1.name, tf2.name]
-        config, errors = Config.from_config_list(config_list, None)
+        config, errors = Config.from_config_list(config_list, None, jobs=1)
         assert not errors
         rules = config.get_rules(True)
         assert len(rules) == 3
@@ -223,3 +224,13 @@ def test_invalid_rule_with_null():
 
     with pytest.raises(InvalidRuleSchemaError):
         parse_config_string("testfile", rule, None)
+
+
+@pytest.mark.quick
+def test_engine_type_jobs_is_jobs_at_most_cpu_count_else_default_jobs():
+    assert EngineType.OSS.jobs(1) == 1
+    assert (
+        EngineType.OSS.jobs(EngineType.OSS.get_cpu_count() + 1)
+        == EngineType.OSS.get_cpu_count()
+    )
+    assert EngineType.OSS.jobs(None) == EngineType.OSS.default_jobs

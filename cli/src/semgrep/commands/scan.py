@@ -718,6 +718,7 @@ def scan(
                     lang,
                     config or [],
                     project_url=get_project_url(),
+                    jobs=engine_type.jobs(jobs),
                     force_jsonschema=True,
                 )
 
