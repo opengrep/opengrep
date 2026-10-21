@@ -10,25 +10,63 @@ let t = Testo.create
 (* ran from the root of the semgrep repository *)
 let tests_path = "tests"
 
-(* The resolutions of every expression-level use of [name], in source
-   order. Definition-site names (def/var entities, directives) are not
-   expressions and are not collected. *)
-let resolutions_of_name ast name =
+(* Where a collected occurrence of a name is. *)
+type occurrence =
+  | In_expression
+  | In_type
+  | In_attribute (* an annotation or a decorator *)
+
+(* The resolutions of every [occurrence] of [name], in source order. *)
+let occurrence_resolutions (occurrence : occurrence)
+    (ast : AST_generic.program) (name : string) :
+    AST_generic.resolved_name option list =
   let acc = ref [] in
+  let collect (s : string) (id_info : AST_generic.id_info) : unit =
+    if String.equal s name then
+      acc := !(id_info.AST_generic.id_resolved) :: !acc
+  in
   let visitor =
     object
       inherit [_] AST_generic.iter_no_id_info as super
 
       method! visit_expr venv e =
-        (match e.AST_generic.e with
-        | AST_generic.N (AST_generic.Id ((s, _), id_info)) when s = name ->
-            acc := !(id_info.AST_generic.id_resolved) :: !acc
+        (match (occurrence, e.AST_generic.e) with
+        | In_expression, AST_generic.N (AST_generic.Id ((s, _), id_info)) ->
+            collect s id_info
         | _ -> ());
         super#visit_expr venv e
+
+      method! visit_type_ venv ty =
+        (match (occurrence, ty.AST_generic.t) with
+        | In_type, AST_generic.TyN (AST_generic.Id ((s, _), id_info)) ->
+            collect s id_info
+        | _ -> ());
+        super#visit_type_ venv ty
+
+      method! visit_attribute venv attr =
+        (match (occurrence, attr) with
+        | ( In_attribute,
+            AST_generic.NamedAttr (_, AST_generic.Id ((s, _), id_info), _) ) ->
+            collect s id_info
+        | _ -> ());
+        super#visit_attribute venv attr
     end
   in
   visitor#visit_program () ast;
   List.rev !acc
+
+(* The resolutions of every expression-level use of [name], in source
+   order. Definition-site names (def/var entities, directives) are not
+   expressions and are not collected. *)
+let resolutions_of_name (ast : AST_generic.program) (name : string) =
+  occurrence_resolutions In_expression ast name
+
+let type_resolutions_of_name (ast : AST_generic.program) (name : string) =
+  occurrence_resolutions In_type ast name
+
+let attribute_resolutions_of_name (ast : AST_generic.program) (name : string)
+    =
+  occurrence_resolutions In_attribute ast name
 
 let kind_of_resolution = function
   | None -> "Unresolved"
@@ -49,7 +87,7 @@ let check_resolutions ast name expected =
     (spf "resolutions of '%s'" name)
     expected actual
 
-(* The sid of the definition (def/class entity) named [name]. *)
+(* The sid of the first definition of [name] that has a binding. *)
 let def_sid_of_name ast name =
   let acc = ref None in
   let visitor =
@@ -70,7 +108,7 @@ let def_sid_of_name ast name =
   visitor#visit_program () ast;
   !acc
 
-(* The sids of every definition (def/class entity) named [name], in order. *)
+(* The sids of every definition of [name] that has a binding, in order. *)
 let def_sids_of_name ast name =
   let acc = ref [] in
   let visitor =
@@ -164,22 +202,26 @@ let tests parse_program =
                     | None -> Alcotest.failf "unresolved CMD in %s" ext)
               | _ -> Alcotest.failf "missing declaration or CMD uses in %s" ext));
       t "regression files" (fun () ->
-          let dir = Filename.concat tests_path "naming/python" in
-          let files1 = Common2.glob (spf "%s/*.py" dir) in
-          let dir = Filename.concat tests_path "naming/go" in
-          let files2 = Common2.glob (spf "%s/*.go" dir) in
-          let dir = Filename.concat tests_path "naming/js" in
-          let files3 = Common2.glob (spf "%s/*.js" dir) in
-          let dir = Filename.concat tests_path "naming/java" in
-          let files4 = Common2.glob (spf "%s/*.java" dir) in
-          let dir = Filename.concat tests_path "naming/ruby" in
-          let files5 = Common2.glob (spf "%s/*.rb" dir) in
-          let dir = Filename.concat tests_path "naming/crystal" in
-          let files6 = Common2.glob (spf "%s/*.cr" dir) in
-          let dir = Filename.concat tests_path "naming/php" in
-          let files7 = Common2.glob (spf "%s/*.php" dir) in
-
-          files1 @ files2 @ files3 @ files4 @ files5 @ files6 @ files7
+          [
+            ("python", "py");
+            ("go", "go");
+            ("js", "js");
+            ("java", "java");
+            ("ruby", "rb");
+            ("crystal", "cr");
+            ("php", "php");
+            ("c", "c");
+            ("cpp", "cpp");
+            ("csharp", "cs");
+            ("kotlin", "kt");
+            ("rust", "rs");
+            ("typescript", "ts");
+          ]
+          |> List.concat_map (fun ((dir, extension) : string * string) ->
+                 Common2.glob
+                   (spf "%s/*.%s"
+                      (Filename.concat tests_path ("naming/" ^ dir))
+                      extension))
           |> Fpath_.of_strings
           |> List.iter (fun file ->
                  try
@@ -195,6 +237,93 @@ let tests parse_program =
                  with
                  | Parsing_error.Syntax_error _ ->
                      Alcotest.failf "it should correctly parse %s" !!file));
+      t "python class and function of one name follow source order" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/python/class_then_def.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* the function rebinds the class's name, and the call refers to it *)
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_; function_ ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the function" true
+                (AST_generic.SId.equal function_ call);
+              Alcotest.(check bool) "the function rebinds the class's binding"
+                true
+                (Int.equal
+                   (AST_generic.SId.to_int class_)
+                   (AST_generic.SId.to_int function_))
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and one use of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "python base class of the same name refers to the earlier binding"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/python/class_extends_variable.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          let line (sid : AST_generic.SId.t) : int =
+            let _, _, line, _ = AST_generic.SId.to_loc sid in
+            line
+          in
+          (* Occurrences: the assignment, the base class, the call. *)
+          match resolutions_of_name ast "Foo" with
+          | [ Some (_, assigned); Some (_, base); Some (_, call) ] ->
+              Alcotest.(check int) "the base refers to the assignment"
+                (line assigned) (line base);
+              Alcotest.(check int) "the call refers to the class" 4 (line call)
+          | uses ->
+              Alcotest.failf "expected three resolved uses of Foo, found %d"
+                (List.length (List.filter Option.is_some uses)));
+      t "kotlin call refers to the class, not the parameter of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/kotlin/class_and_parameter.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_ ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the class" true
+                (AST_generic.SId.equal class_ call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one definition and one resolved use of Foo, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
+      t "kotlin import outranks a top-level class of its name, and a nested \
+         class shadows it"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/kotlin/import_and_class_of_one_name.kt")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Kotlin ast;
+          (* the uses are the call in g and the call in m *)
+          match (def_sids_of_name ast "foo", resolutions_of_name ast "foo") with
+          | ( [ _top_level; nested ],
+              [ top_level_call; (Some (_, nested_call) as nested_use) ] ) ->
+              Alcotest.(check string) "the call in g refers to the import"
+                "ImportedEntity"
+                (kind_of_resolution top_level_call);
+              Alcotest.(check bool) "the call in m does not refer to the import"
+                false
+                (String.equal "ImportedEntity" (kind_of_resolution nested_use));
+              Alcotest.(check bool) "the call in m refers to the nested class"
+                true
+                (AST_generic.SId.equal nested nested_call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two uses of foo, the second \
+                 resolved, found %d and %d"
+                (List.length definitions) (List.length uses));
       t "python redefinition rebinds the same name" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/redefined_def.py")
@@ -352,4 +481,578 @@ let tests parse_program =
           (* JS keeps the full-chain lookup: the bare assignment in setup()
              mutates the module-level `state`, it does not declare a local. *)
           check_resolutions ast "state" [ "Global"; "Global" ]);
+      t "java call of a static import refers to the import, not the class of \
+         the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/java/static_import_and_class.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the definition is the nested class; the use is the call in [f] *)
+          match (def_sids_of_name ast "max", resolutions_of_name ast "max") with
+          | [ class_ ], [ (Some (_, call) as use) ] ->
+              Alcotest.(check string) "the call refers to the import"
+                "ImportedEntity" (kind_of_resolution use);
+              Alcotest.(check bool) "the call does not refer to the class" false
+                (AST_generic.SId.equal class_ call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one definition and one use of max, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "java type parameter shadows the class of the same name" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/type_parameter_and_class.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the uses in a type are the return type of [get] and the type of
+             the parameter of [put], both the class's type parameter *)
+          match (def_sids_of_name ast "T", type_resolutions_of_name ast "T") with
+          | [ class_ ], ([ _; _ ] as uses) ->
+              uses
+              |> List.iteri
+                   (fun (i : int) (use : AST_generic.resolved_name option) ->
+                     match use with
+                     | Some (kind, sid) ->
+                         Alcotest.(check string)
+                           (spf "type use #%d of T is a type parameter" i)
+                           "Parameter" (kind_of_resolution (Some (kind, sid)));
+                         Alcotest.(check bool)
+                           (spf "type use #%d of T is not the class" i)
+                           false
+                           (AST_generic.SId.equal class_ sid)
+                     | None -> Alcotest.failf "type use #%d of T is unresolved" i)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one definition and two type uses of T, found %d and \
+                 %d"
+                (List.length definitions) (List.length uses));
+      t "an annotation refers to the imported type, not the variable of the same name"
+        (fun () ->
+          [
+            ("naming/java/annotation_and_field.java", "Inject");
+            ("naming/kotlin/annotation_and_property.kt", "Inject");
+          ]
+          |> List.iter (fun ((path, name) : string * string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 Alcotest.(check (list string))
+                   (spf "%s: resolutions of the annotation %s" path name)
+                   [ "ImportedEntity" ]
+                   (attribute_resolutions_of_name ast name
+                   |> List.map kind_of_resolution)));
+      t "a class or type definition does not resolve to the variable of the same name"
+        (fun () ->
+          (* a type alias next to a constant, and a nested class next to a
+             field: the use refers to the constant or the field, and the
+             alias or the class does not share its binding *)
+          [
+            ("naming/rust/type_alias_and_constant.rs", "T");
+            ("naming/java/nested_class_and_field.java", "Inner");
+            ("naming/kotlin/type_alias_and_variable.kt", "Foo");
+          ]
+          |> List.iter (fun ((path, name) : string * string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match (def_sids_of_name ast name, resolutions_of_name ast name)
+                 with
+                 | variable :: others, [ Some (_kind, use) ] ->
+                     Alcotest.(check bool)
+                       (spf "the use of %s refers to the variable" name)
+                       true
+                       (AST_generic.SId.equal variable use);
+                     Alcotest.(check bool)
+                       (spf "no other definition of %s shares its binding" name)
+                       true
+                       (List.for_all
+                          (fun (other : AST_generic.SId.t) ->
+                            not (AST_generic.SId.equal variable other))
+                          others)
+                 | definitions, uses ->
+                     Alcotest.failf
+                       "%s: expected a resolved definition and one resolved \
+                        use of %s, found %d and %d"
+                       path name (List.length definitions)
+                       (List.length (List.filter Option.is_some uses))));
+      t "a use in a type refers to the type, not the variable of the same name"
+        (fun () ->
+          (* the definitions are the variable, then the type; in Java the
+             uses in a type are a return type and the type of [new Inner()],
+             in Kotlin the type of [copy] *)
+          [
+            ("naming/java/nested_class_and_field.java", "Inner", 2);
+            ("naming/kotlin/type_alias_and_variable.kt", "Foo", 1);
+          ]
+          |> List.iter (fun ((path, name, count) : string * string * int) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 let uses = type_resolutions_of_name ast name in
+                 match def_sids_of_name ast name with
+                 | [ _variable; type_ ] when Int.equal (List.length uses) count
+                   ->
+                     uses
+                     |> List.iteri
+                          (fun (i : int) (use : AST_generic.resolved_name option)
+                          ->
+                            match use with
+                            | Some (_kind, sid) ->
+                                Alcotest.(check bool)
+                                  (spf "type use #%d of %s refers to the type" i
+                                     name)
+                                  true
+                                  (AST_generic.SId.equal type_ sid)
+                            | None ->
+                                Alcotest.failf
+                                  "%s: type use #%d of %s is unresolved" path i
+                                  name)
+                 | definitions ->
+                     Alcotest.failf
+                       "%s: expected two definitions and %d type uses of %s, \
+                        found %d and %d"
+                       path count name (List.length definitions)
+                       (List.length uses)));
+      t "python class binds its name in its scope" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/python/class_in_function.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment, the call of the class in
+             f, the read of the global in g. *)
+          check_resolutions ast "Foo" [ "Global"; "LocalVar"; "Global" ];
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ class_ ], [ Some (_, global); Some (_, call); Some (_, read) ] ->
+              Alcotest.(check bool) "the call refers to the class" true
+                (AST_generic.SId.equal class_ call);
+              Alcotest.(check bool) "the read refers to the global" true
+                (AST_generic.SId.equal global read)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one class and three uses of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "go local type is in scope in its own definition" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/go/recursive_local_type.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* the uses in a type are [*Node] in the struct and the type of [n] *)
+          match
+            (def_sids_of_name ast "Node", type_resolutions_of_name ast "Node")
+          with
+          | [ _variable; type_ ], [ Some (_, field); Some (_, local) ] ->
+              Alcotest.(check bool) "the field's type refers to the type" true
+                (AST_generic.SId.equal type_ field);
+              Alcotest.(check bool) "the variable's type refers to the type" true
+                (AST_generic.SId.equal type_ local)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two type uses of Node, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
+      t "go type binds its name in its block" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/go/type_in_function.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* Occurrences: the conversion to the type in f, the read of the
+             package variable in g. *)
+          check_resolutions ast "T" [ "LocalVar"; "Global" ];
+          match (def_sids_of_name ast "T", resolutions_of_name ast "T") with
+          | [ variable; type_ ], [ Some (_, conversion); Some (_, read) ] ->
+              Alcotest.(check bool) "the conversion refers to the type" true
+                (AST_generic.SId.equal type_ conversion);
+              Alcotest.(check bool) "the read refers to the variable" true
+                (AST_generic.SId.equal variable read)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and two uses of T, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "go method binds nothing, so a type of its name keeps its binding"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/go/type_and_method_of_one_name.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          (* the uses in a type are the receiver's and the parameter's *)
+          match
+            (def_sids_of_name ast "Error", type_resolutions_of_name ast "Error")
+          with
+          | [ type_ ], [ Some (_, receiver); Some (_, parameter) ] ->
+              Alcotest.(check bool) "the receiver's type refers to the type" true
+                (AST_generic.SId.equal type_ receiver);
+              Alcotest.(check bool) "the parameter's type refers to the type"
+                true
+                (AST_generic.SId.equal type_ parameter)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected one bound definition and two type uses of Error, \
+                 found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "go interface method binds nothing" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/go/interface_method.go")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Go ast;
+          Alcotest.(check int) "bound definitions of String" 0
+            (List.length (def_sids_of_name ast "String"));
+          check_resolutions ast "String" [ "Unresolved" ]);
+      t "c++ base class refers to the class, not the variable of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/cpp/base_class_and_variable.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* the use in a type is the base class, the use in an expression the
+             assignment *)
+          match
+            ( def_sids_of_name ast "B",
+              type_resolutions_of_name ast "B",
+              resolutions_of_name ast "B" )
+          with
+          | [ class_; variable ], [ Some (_, base) ], [ Some (_, assigned) ] ->
+              Alcotest.(check bool) "the base class refers to the class" true
+                (AST_generic.SId.equal class_ base);
+              Alcotest.(check bool) "the assignment refers to the variable" true
+                (AST_generic.SId.equal variable assigned)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, a resolved base class and a resolved \
+                 expression use of B, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "c and c++ structure with its keyword refers to the structure, not the \
+         function of the same name"
+        (fun () ->
+          (* the uses in a type are [struct stat *buf] and [struct stat st],
+             the use in an expression is the call *)
+          [ "naming/c/tag_and_function.c"; "naming/cpp/class_and_function.cpp" ]
+          |> List.iter (fun (path : string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match
+                   ( def_sids_of_name ast "stat",
+                     type_resolutions_of_name ast "stat",
+                     resolutions_of_name ast "stat" )
+                 with
+                 | ( [ structure; function_ ],
+                     [ Some (_, buf); Some (_, st) ],
+                     [ Some (_, call) ] ) ->
+                     Alcotest.(check bool)
+                       (spf "%s: the parameter's type refers to the structure"
+                          path)
+                       true
+                       (AST_generic.SId.equal structure buf);
+                     Alcotest.(check bool)
+                       (spf "%s: the variable's type refers to the structure" path)
+                       true
+                       (AST_generic.SId.equal structure st);
+                     Alcotest.(check bool)
+                       (spf "%s: the call refers to the function" path)
+                       true
+                       (AST_generic.SId.equal function_ call)
+                 | definitions, types, expressions ->
+                     Alcotest.failf
+                       "%s: expected two definitions, two type uses and one call \
+                        of stat, found %d, %d and %d"
+                       path (List.length definitions) (List.length types)
+                       (List.length expressions)));
+      t "c name with the keyword struct refers to the tag, without it to the \
+         typedef"
+        (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/c/tag_and_typedef.c")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.C ast;
+          (* the uses in a type are [struct node *next] in the structure, the
+             typedef's [struct node], [node *head] and the local
+             [struct node *next] *)
+          match (def_sids_of_name ast "node", type_resolutions_of_name ast "node")
+          with
+          | ( [ structure; typedef ],
+              [ Some (_, field); Some (_, aliased); Some (_, head); Some (_, local) ]
+            ) ->
+              Alcotest.(check bool) "the field's type refers to the structure" true
+                (AST_generic.SId.equal structure field);
+              Alcotest.(check bool) "the typedef refers to the structure" true
+                (AST_generic.SId.equal structure aliased);
+              Alcotest.(check bool) "the parameter's type refers to the typedef"
+                true
+                (AST_generic.SId.equal typedef head);
+              Alcotest.(check bool) "the local's type refers to the structure" true
+                (AST_generic.SId.equal structure local)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and four type uses of node, found %d \
+                 and %d"
+                (List.length definitions) (List.length uses));
+      t "c# type refers to the enum, not the property of the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/csharp/property_and_type.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* the uses in a type include the property's type, the return type
+             of [Pick] and the type of [chosen]; the use in an expression is
+             the initialiser of [chosen] *)
+          let refers_to (expected : AST_generic.SId.t) (what : string)
+              (uses : AST_generic.resolved_name option list) : unit =
+            uses
+            |> List.iteri
+                 (fun (i : int) (use : AST_generic.resolved_name option) ->
+                   match use with
+                   | Some (_, sid) ->
+                       Alcotest.(check bool)
+                         (spf "use #%d of Color refers to the %s" i what)
+                         true
+                         (AST_generic.SId.equal expected sid)
+                   | None -> Alcotest.failf "use #%d of Color is unresolved" i)
+          in
+          match
+            ( def_sids_of_name ast "Color",
+              type_resolutions_of_name ast "Color",
+              resolutions_of_name ast "Color" )
+          with
+          | [ enum; property ], (_ :: _ :: _ :: _ as types), (_ :: _ as expressions)
+            ->
+              refers_to enum "enum" types;
+              refers_to property "property" expressions
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, three type uses and an expression \
+                 use of Color, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "c++ class in its own body refers to the class, not its constructor"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/cpp/constructor_and_class.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* the uses in a type are the result and the parameter of [assign]
+             and the result of [make]; the use in an expression is [Foo(1)] *)
+          match
+            ( def_sids_of_name ast "Foo",
+              type_resolutions_of_name ast "Foo",
+              resolutions_of_name ast "Foo" )
+          with
+          | ( [ class_; constructor ],
+              ([ _; _; _ ] as types),
+              [ Some (_, construction) ] ) ->
+              Alcotest.(check bool) "the constructor refers to the class" true
+                (AST_generic.SId.equal class_ constructor);
+              types
+              |> List.iteri
+                   (fun (i : int) (use : AST_generic.resolved_name option) ->
+                     match use with
+                     | Some (_, sid) ->
+                         Alcotest.(check bool)
+                           (spf "type use #%d of Foo refers to the class" i)
+                           true
+                           (AST_generic.SId.equal class_ sid)
+                     | None -> Alcotest.failf "type use #%d of Foo is unresolved" i);
+              Alcotest.(check bool) "Foo(1) refers to the class" true
+                (AST_generic.SId.equal class_ construction)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, three type uses and one expression \
+                 use of Foo, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "java call refers to the method of the class's name, not the constructor"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/method_with_the_class_name.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the definitions are the class, the method [void Foo()] and the
+             constructor; the use is the call in [run] *)
+          match (def_sids_of_name ast "Foo", resolutions_of_name ast "Foo") with
+          | [ _class; method_; _constructor ], [ Some (_, call) ] ->
+              Alcotest.(check bool) "the call refers to the method" true
+                (AST_generic.SId.equal method_ call)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected three definitions and one use of Foo, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "c# class in its own body refers to the class, not its constructor"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path "naming/csharp/class_in_its_body.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* the use is [Item] in [Item.Total()], in the constructor *)
+          match (def_sids_of_name ast "Item", resolutions_of_name ast "Item") with
+          | [ class_; constructor ], [ Some (_, use) ] ->
+              Alcotest.(check bool) "the constructor refers to the class" true
+                (AST_generic.SId.equal class_ constructor);
+              Alcotest.(check bool) "the use refers to the class" true
+                (AST_generic.SId.equal class_ use)
+          | definitions, uses ->
+              Alcotest.failf
+                "expected two definitions and one use of Item, found %d and %d"
+                (List.length definitions) (List.length uses));
+      t "c and c++ tag defined with a variable of its name does not refer to \
+         the variable"
+        (fun () ->
+          (* in [struct lv { int x; } lv;] the structure's definition and the
+             variable's type share the name; the uses in a type are the
+             variable's type and [struct lv *p], the use in an expression is
+             [&lv] *)
+          [ "naming/c/struct_and_variable.c"; "naming/cpp/struct_and_variable.cpp" ]
+          |> List.iter (fun (path : string) ->
+                 let file = Fpath.v (Filename.concat tests_path path) in
+                 let ast = parse_program file in
+                 Naming_AST.resolve (Lang.lang_of_filename_exn file) ast;
+                 match
+                   ( def_sids_of_name ast "lv",
+                     type_resolutions_of_name ast "lv",
+                     resolutions_of_name ast "lv" )
+                 with
+                 | definitions, (_ :: _ :: _ as types), [ Some (_, variable) ]
+                   when List.exists (AST_generic.SId.equal variable) definitions
+                   ->
+                     types
+                     |> List.iteri
+                          (fun (i : int) (use : AST_generic.resolved_name option)
+                          ->
+                            match use with
+                            | Some (_, sid) ->
+                                Alcotest.(check bool)
+                                  (spf "%s: type use #%d of lv is not the \
+                                        variable"
+                                     path i)
+                                  false
+                                  (AST_generic.SId.equal variable sid)
+                            | None ->
+                                Alcotest.failf "%s: type use #%d of lv is unresolved"
+                                  path i)
+                 | _, types, expressions ->
+                     Alcotest.failf
+                       "%s: expected two type uses and one expression use of lv, \
+                        which refers to the variable, found %d and %d"
+                       path (List.length types) (List.length expressions)));
+      t "typescript type refers to the interface, expression to the const of \
+         the same name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/interface_and_const.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match
+            ( def_sids_of_name ast "Shape",
+              type_resolutions_of_name ast "Shape",
+              resolutions_of_name ast "Shape" )
+          with
+          | ( [ constant; interface ],
+              [ Some (_, type_use) ],
+              [ Some (_, expression_use) ] ) ->
+              Alcotest.(check bool) "the const and the interface are distinct"
+                false
+                (AST_generic.SId.equal constant interface);
+              Alcotest.(check bool) "the type refers to the interface" true
+                (AST_generic.SId.equal interface type_use);
+              Alcotest.(check bool) "the expression refers to the const" true
+                (AST_generic.SId.equal constant expression_use)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected two definitions, a resolved type use and a resolved \
+                 expression use of Shape, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "typescript class is referred to as a type and as a value" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/class_value_and_type.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match
+            ( def_sids_of_name ast "Point",
+              type_resolutions_of_name ast "Point",
+              resolutions_of_name ast "Point" )
+          with
+          | [ class_ ], [ Some (_, type_use) ], [ Some (_, construction) ] ->
+              Alcotest.(check bool) "the type refers to the class" true
+                (AST_generic.SId.equal class_ type_use);
+              Alcotest.(check bool) "new Point() refers to the class" true
+                (AST_generic.SId.equal class_ construction)
+          | definitions, types, expressions ->
+              Alcotest.failf
+                "expected one definition, a resolved type use and a resolved \
+                 expression use of Point, found %d, %d and %d"
+                (List.length definitions) (List.length types)
+                (List.length expressions));
+      t "typescript class heritage refers to the const of its name" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/class_extends_variable.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match (def_sids_of_name ast "Base", type_resolutions_of_name ast "Base") with
+          | [ constant ], [ Some (_, parent) ] ->
+              Alcotest.(check bool) "the parent refers to the const" true
+                (AST_generic.SId.equal constant parent)
+          | definitions, parents ->
+              Alcotest.failf
+                "expected one definition and a resolved parent Base, found %d \
+                 and %d"
+                (List.length definitions) (List.length parents));
+      t "typescript interface heritage refers to the interface, not the const \
+         of its name"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/typescript/interface_extends_interface.ts")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Ts ast;
+          match
+            (def_sids_of_name ast "Shape", type_resolutions_of_name ast "Shape")
+          with
+          | [ constant; interface ], [ Some (_, parent) ] ->
+              Alcotest.(check bool) "the const and the interface are distinct"
+                false
+                (AST_generic.SId.equal constant interface);
+              Alcotest.(check bool) "the parent refers to the interface" true
+                (AST_generic.SId.equal interface parent)
+          | definitions, parents ->
+              Alcotest.failf
+                "expected two definitions and a resolved parent Shape, found %d \
+                 and %d"
+                (List.length definitions) (List.length parents));
     ]

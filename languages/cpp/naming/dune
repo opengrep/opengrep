@@ -1,0 +1,8 @@
+(library
+ (public_name parser_cpp.naming)
+ (name parser_cpp_naming)
+ (wrapped false)
+ (libraries
+   ast_generic
+ )
+)

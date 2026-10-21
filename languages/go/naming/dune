@@ -1,0 +1,8 @@
+(library
+ (public_name parser_go.naming)
+ (name parser_go_naming)
+ (wrapped false)
+ (libraries
+   ast_generic
+ )
+)
