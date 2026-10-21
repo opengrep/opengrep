@@ -324,6 +324,21 @@ def test_hidden_rule__implicit(run_semgrep_in_tmp: RunSemgrep, snapshot):
 
 
 @pytest.mark.kinda_slow
+@pytest.mark.parametrize("rule_dir", ["ascii_message", "non_ascii_message"])
+def test_rule_directory_loads_without_utf8_locale(
+    run_semgrep_in_tmp: RunSemgrep, snapshot, rule_dir
+):
+    snapshot.assert_match(
+        run_semgrep_in_tmp(
+            f"rules/{rule_dir}/",
+            target_name="basic/stupid.py",
+            env={"LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"},
+        ).stdout,
+        "results.json",
+    )
+
+
+@pytest.mark.kinda_slow
 def test_nested_patterns_rule(run_semgrep_in_tmp: RunSemgrep, snapshot):
     snapshot.assert_match(
         run_semgrep_in_tmp("rules/nested-patterns.yaml").stdout, "results.json"
