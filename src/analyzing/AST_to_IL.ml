@@ -3973,12 +3973,6 @@ and parameters env params : param list =
         * like a named one does *)
        | G.OtherParam (("Ref", t), []) ->
            Param { pname = fresh_var env ~str:"block" t; pdefault = None }
-       (* Crystal: [@x] takes an argument like [x] does; the body assigns
-        * it to the field, see [instance_var_param_assigns]. *)
-       | G.OtherParam
-           (("InstanceVar", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
-         ->
-           Param { pname = var_of_id_info i pinfo; pdefault }
        | G.ParamHashSplat (_, { pname = Some i; pinfo; pdefault; _ }) ->
            (* **kwargs in Python / **opts in Ruby: treat as rest param *)
            ParamRest { pname = var_of_id_info i pinfo; pdefault }
@@ -4890,9 +4884,13 @@ and instance_var_param_assigns env (fparams : G.parameters) : stmts =
   Tok.unbracket fparams
   |> List.concat_map (fun (param : G.parameter) ->
          match param with
-         | G.OtherParam
-             (("InstanceVar", tok), [ G.Pa (G.Param { pname = Some i; pinfo; _ }) ])
-           ->
+         | G.Param { pname = Some i; pinfo; pattrs; _ }
+           when List.exists
+                  (function
+                    | G.OtherAttribute (("InstanceVar", _), []) -> true
+                    | _ -> false)
+                  pattrs ->
+             let tok = snd i in
              let field =
                G.DotAccess
                  (G.IdSpecial (G.Self, tok) |> G.e, tok, G.FN (G.Id (i, G.empty_id_info ())))

@@ -1121,13 +1121,14 @@ and map_block_param env (_attrs, tok, id, ty) =
 and map_param env (_attrs, _external_name, id, ty, default) =
   let ptype = Option.map (fun (_colon, ty) -> map_bare_type env ty) ty in
   let pdefault = Option.map (fun (_eq, e) -> map_expression env e) default in
+  let param = G.param_of_id ?ptype ?pdefault (map_regular_param_id env id) in
   match id with
   (* [def m(@x)] assigns its argument to the field [@x] of [self]. *)
   | `Inst_var tok ->
-      G.OtherParam
-        ( ("InstanceVar", token env tok),
-          [ G.Pa (G.Param (G.param_of_id ?ptype ?pdefault (str env tok))) ] )
-  | _ -> G.Param (G.param_of_id ?ptype ?pdefault (map_regular_param_id env id))
+      G.Param
+        { param with
+          G.pattrs = [ G.OtherAttribute (("InstanceVar", token env tok), []) ] }
+  | _ -> G.Param param
 
 and map_fun_param_list env (first, rest, _dots) =
   map_fun_param env first :: List_.map (fun (_comma, p) -> map_fun_param env p) rest
@@ -1152,27 +1153,18 @@ and map_macro_def env ((tok, name, _params), _start, _content, _end) =
   let ent = G.basic_entity id in
   (ent, G.MacroDef { macroparams = []; macrobody = [ G.Tk (token env tok) ] })
 
-and map_type_declaration env (lhs, colon, _space, ty, init) =
-  match lhs with
-  | `Inst_var tok ->
-      let ent =
-        { G.name = G.EDynamic (expr_of_instance_var (str env tok)); attrs = []; tparams = None }
-      in
-      let vinit = Option.map (fun (_eq, e) -> map_expression env e) init in
-      G.StmtExpr
-        (G.DefStmt (ent, G.VarDef { G.vinit; vtype = Some (map_bare_type env ty); vtok = G.no_sc })
-        |> G.s)
-      |> G.e
-  | _ -> (
-      let lhs = GH.expr_to_pattern (map_typed_lhs env lhs) in
-      let pat = G.PatTyped (lhs, map_bare_type env ty) in
-      match init with
-      | Some (_eq, e) -> G.LetPattern (pat, map_expression env e) |> G.e
-      | None -> G.OtherExpr (("TypeDeclaration", token env colon), [ G.P pat ]) |> G.e)
+and map_type_declaration env (lhs, _colon, _space, ty, init) =
+  let ent = { G.name = map_typed_lhs env lhs; attrs = []; tparams = None } in
+  let vinit = Option.map (fun (_eq, e) -> map_expression env e) init in
+  G.StmtExpr
+    (G.DefStmt (ent, G.VarDef { G.vinit; vtype = Some (map_bare_type env ty); vtok = G.no_sc })
+    |> G.s)
+  |> G.e
 
 and map_typed_lhs env = function
-  | `Id tok | `Semg_meta tok | `Id_meth_call tok | `Inst_var tok | `Class_var tok -> expr_of_id (str env tok)
-  | `Macro_var (tok, _) -> expr_of_id (str env tok)
+  | `Inst_var tok -> G.EDynamic (expr_of_instance_var (str env tok))
+  | `Id tok | `Semg_meta tok | `Id_meth_call tok | `Class_var tok | `Macro_var (tok, _) ->
+      G.EN (name_of_id (str env tok))
 
 and map_multi_lhs_name env = function
   | `Unde tok -> expr_of_id (str env tok)
