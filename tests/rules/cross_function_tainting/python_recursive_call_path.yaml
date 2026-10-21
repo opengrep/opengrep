@@ -1,0 +1,13 @@
+rules:
+  - id: python_recursive_call_path
+    message: taint returned by a self recursive function
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

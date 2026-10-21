@@ -1130,16 +1130,23 @@ let lookup_signature_with_object_context env fun_exp arity =
  * under analysis, return a synthesised signature built from the effects
  * accumulated so far. The surrounding dataflow fixpoint iterates, so each
  * pass picks up effects recorded by the previous one — converging to a
- * least-fixed-point over direct self-recursion. Both sids derive from the
- * same AST's def token, so the comparison is path-representation-free. *)
+ * least-fixed-point over direct self-recursion. *)
 let is_self_call env (fun_exp : IL.exp) : bool =
   match (fun_exp.e, env.func.name) with
   | Fetch { base = Var callee; rev_offset = [] }, Some self_name -> (
+      (* The driver makes the name of the function absolute; the definition
+         site keeps the path of the target as written. *)
+      let absolute (fid : Function_id.t) : Function_id.t =
+        match env.taint_inst.project_root with
+        | Some (root : Fpath.t) -> Function_id.make_absolute root fid
+        | None -> fid
+      in
       match !(callee.id_info.G.id_callee_definition) with
       | Some sid ->
           (not (G.SId.is_unsafe_default sid))
-          && Function_id.equal (Function_id.of_sid sid)
-               (Function_id.of_il_name self_name)
+          && Function_id.equal
+               (absolute (Function_id.of_sid sid))
+               (absolute (Function_id.of_il_name self_name))
       | None -> false)
   | _ -> false
 
