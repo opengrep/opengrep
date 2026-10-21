@@ -136,3 +136,19 @@ fun breakSkipsTheRestOfTheLoop(ks: List<Int>) {
     sink(y)
   }
 }
+
+fun conditionsShortCircuit() {
+  when {
+    // ok: taint-switch-case-kotlin
+    true, sink(taint_source()) -> {}
+    else -> {}
+  }
+}
+
+fun laterConditionAfterAFalseOne() {
+  when {
+    // ruleid: taint-switch-case-kotlin
+    false, sink(taint_source()) -> {}
+    else -> {}
+  }
+}

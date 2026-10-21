@@ -4439,9 +4439,13 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           lower_body xs (* TODO this is not tail recursive *)
       in
       let label = fresh_label ~label:"__switch_case" tok in
-      let case_ss, case = translate_cases env cases in
-      let jump =
-        mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps))
+      let tests =
+        match switch_expr_opt with
+        | Some _ ->
+            let case_ss, case = translate_cases env cases in
+            case_ss
+            @ [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ]
+        | None -> case_tests env tok translate_cases label cases jumps
       in
 
       (* Here we add bindings for the switch pattern, for the common case:
@@ -4492,7 +4496,23 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           [ mk_s (Goto (tok, break_label)) ]
         else []
       in
-      (pre_jump_ss @ case_ss @ [ jump ], body @ break_if_no_fallthrough @ bodies)
+      (pre_jump_ss @ tests, body @ break_if_no_fallthrough @ bodies)
+
+(* The tests of a branch of a switch without a scrutinee: its cases in order,
+   each evaluated only when the earlier ones have failed. *)
+and case_tests env tok translate_cases body_label cases jumps : stmts =
+  let goto label = mk_s (Goto (tok, label)) in
+  let rec tests = function
+    | [] -> jumps
+    | case :: rest ->
+        let next_label = fresh_label ~label:"__switch_next" tok in
+        let case_ss, case_cond = translate_cases env [ case ] in
+        case_ss
+        @ [ mk_s (IL.If (tok, case_cond, [ goto body_label ], [ goto next_label ]));
+            mk_s (Label next_label) ]
+        @ tests rest
+  in
+  tests cases
 
 and stmt env st : stmt list =
   (* A destructuring-assignment context never spans a statement boundary;
