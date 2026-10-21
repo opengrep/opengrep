@@ -35,34 +35,63 @@ let rec qualified_class_name_of_ty (ty : G.type_) : G.name option =
     qualified_class_name_of_ty inner
   | _ -> None
 
+(* An imported identifier refers to the canonical name of its import; an
+   unbound one, such as the module of a Python [import typing], to its
+   text. *)
+let rec canonical_name_of_expr (e : G.expr) : string list option =
+  match e.G.e with
+  | G.N (G.Id ((str, _), (info : G.id_info))) -> (
+      match !(info.G.id_resolved) with
+      | Some ((G.ImportedEntity canonical | G.ImportedModule canonical), _) ->
+          Some canonical
+      | Some _ -> None
+      | None -> Some [ str ])
+  | G.DotAccess (receiver, _, G.FN (G.Id ((str, _), _))) ->
+      Option.map
+        (fun (prefix : string list) -> prefix @ [ str ])
+        (canonical_name_of_expr receiver)
+  | _ -> None
+
 (* A member that is not a class, such as Python [None], contributes no
    class. *)
-let rec class_names_of_ty (ty : G.type_) : G.name list =
+let rec class_names_of_ty (lang : Lang.t) (ty : G.type_) : G.name list =
   match qualified_class_name_of_ty ty with
   | Some (name : G.name) -> [ name ]
   | None -> (
       match ty.G.t with
-      | G.TyOr (left, _, right) -> class_names_of_ty left @ class_names_of_ty right
-      | G.TyExpr (e : G.expr) -> class_names_of_type_expr e
+      | G.TyOr (left, _, right) ->
+          class_names_of_ty lang left @ class_names_of_ty lang right
+      | G.TyQuestion (inner, _) -> class_names_of_ty lang inner
+      | G.TyExpr (e : G.expr) -> class_names_of_type_expr lang e
       | _ -> [])
 
 (* Python writes [X | Y], [Optional[X]] and [Union[X, Y]] as expressions. *)
-and class_names_of_type_expr (e : G.expr) : G.name list =
+and class_names_of_type_expr (lang : Lang.t) (e : G.expr) : G.name list =
   match e.G.e with
   | G.Call ({ G.e = G.IdSpecial (G.Op G.BitOr, _); _ }, (_, args, _)) ->
     List.concat_map
       (fun (arg : G.argument) ->
         match arg with
-        | G.Arg (member : G.expr) -> class_names_of_type_expr member
+        | G.Arg (member : G.expr) -> class_names_of_type_expr lang member
         | _ -> [])
       args
-  | G.ArrayAccess ({ G.e = G.N (G.Id (("Optional", _), _)); _ }, (_, member, _)) ->
-    class_names_of_type_expr member
-  | G.ArrayAccess
-      ( { G.e = G.N (G.Id (("Union", _), _)); _ },
-        (_, { G.e = G.Container (G.Tuple, (_, members, _)); _ }, _) ) ->
-    List.concat_map class_names_of_type_expr members
+  | G.ArrayAccess (constructor, (_, (index : G.expr), _))
+    when is_union_type_constructor lang constructor ->
+    let members =
+      match index.G.e with
+      | G.Container (G.Tuple, (_, members, _)) -> members
+      | _ -> [ index ]
+    in
+    List.concat_map (class_names_of_type_expr lang) members
   | _ -> Option.to_list (qualified_class_name_of_ty (G.t (G.TyExpr e)))
+
+and is_union_type_constructor (lang : Lang.t) (e : G.expr) : bool =
+  match canonical_name_of_expr e with
+  | Some (canonical : string list) ->
+      List.exists
+        (List.equal String.equal canonical)
+        (Lang_config.union_type_constructors lang)
+  | None -> false
 
 let rec dotted_idents_of_expr (e : G.expr) : G.ident list option =
   match e.G.e with

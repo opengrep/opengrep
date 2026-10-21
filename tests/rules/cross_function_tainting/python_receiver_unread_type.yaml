@@ -1,0 +1,13 @@
+rules:
+  - id: python_receiver_unread_type
+    message: taint from the only method of its name when the receiver type is not read
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

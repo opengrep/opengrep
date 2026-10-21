@@ -13,8 +13,8 @@ val qualifier_of_name : G.name -> string option
 val qualified_class_name_of_ty : G.type_ -> G.name option
 
 (* The classes of a class type, or of the members of a union or optional
-   type ([A | B], [Optional[A]], [Union[A, B]]), left to right. *)
-val class_names_of_ty : G.type_ -> G.name list
+   type ([A | B], [A?], [Optional[A]], [Union[A, B]]), left to right. *)
+val class_names_of_ty : Lang.t -> G.type_ -> G.name list
 
 (* The qualified name of a type written as a dotted expression; [None] for
    every other shape. *)

@@ -15,12 +15,6 @@ class Finder
     sink(diffy.execute)
   end
 
-  def validate(schema)
-    # ok: ruby_receiver_of_other_class
-    sink(schema.validate)
-    source()
-  end
-
   def explicit_self
     # ruleid: ruby_receiver_of_other_class
     sink(self.execute)
