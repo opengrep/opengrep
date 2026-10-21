@@ -114,7 +114,9 @@ type status = {
 }
 [@@deriving show]
 
-(* git status *)
+(* git status. The paths are relative to [cwd], or to the current directory
+   when [cwd] is not given; the path of a changed file outside that directory
+   starts with a '..' segment. *)
 val status : ?cwd:Fpath.t -> ?commit:string -> unit -> status
 
 (*

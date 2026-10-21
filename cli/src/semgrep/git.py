@@ -255,7 +255,6 @@ class BaselineHandler:
             "-z",
             "--diff-filter=ACDMRTUXB",
             "--ignore-submodules",
-            "--relative",
             self._base_commit,
         ]
         try:
@@ -296,6 +295,13 @@ class BaselineHandler:
         status_output = zsplit(raw_output)
         logger.debug("Finished git diff. Parsing git status output")
         logger.debug(status_output)
+        git_root = os.path.realpath(get_git_root_path())
+        cwd = os.path.realpath(os.getcwd())
+
+        # Mirrors the OCaml Git_wrapper.path_from_cwd.
+        def from_cwd(name: str) -> str:
+            return os.path.relpath(os.path.join(git_root, name), cwd)
+
         added = []
         modified = []
         removed = []
@@ -303,12 +309,12 @@ class BaselineHandler:
         renamed = {}  # maps new names for renamed files to their old file paths
         while status_output:
             code = status_output.pop(0)
-            fname = status_output.pop(0)
+            fname = from_cwd(status_output.pop(0))
             new_fname = None
 
             # code is RXXX, where XXX is percent similarity
             if code[0] == StatusCode.Renamed:
-                new_fname = status_output.pop(0)
+                new_fname = from_cwd(status_output.pop(0))
 
             if not code.strip():
                 continue
@@ -400,7 +406,10 @@ class BaselineHandler:
                 logger.debug("Finished git checkout for baseline context")
 
                 # Change the working directory to the new working tree
-                os.chdir(Path(tmpdir) / relative_path)
+                worktree_cwd = Path(tmpdir) / relative_path
+                # the current directory need not exist at the baseline commit
+                worktree_cwd.mkdir(parents=True, exist_ok=True)
+                os.chdir(worktree_cwd)
 
                 # We are now in the temporary working tree, and scans should be
                 # identical to as if we had checked out the baseline commit

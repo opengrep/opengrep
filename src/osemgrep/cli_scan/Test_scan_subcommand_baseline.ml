@@ -41,6 +41,26 @@ let baseline_scan (caps : caps) ~(baseline : string) () : Exit_code.t =
           baseline;
         |])
 
+(* The paths a baseline scan of [root] reports, sorted. *)
+let baseline_paths (caps : caps) ~(baseline : string) (root : string) :
+    string list =
+  let exit_code, out =
+    Testo.with_capture stdout (fun () ->
+        without_settings (fun () ->
+            Scan_subcommand.main
+              (caps :> Scan_subcommand.caps)
+              [|
+                "opengrep-scan"; "--experimental"; "--json"; "--quiet"; "-e";
+                Printf.sprintf "$X = %s" sentinel; "-l"; "python";
+                "--baseline-commit"; baseline; root;
+              |]))
+  in
+  Exit_code.Check.ok exit_code;
+  (Semgrep_output_v1_j.cli_output_of_string out).results
+  |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+         Fpath.to_string m.path)
+  |> List.sort String.compare
+
 (*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
@@ -64,6 +84,47 @@ let test_worktree_dirty_from_eol_normalization (caps : caps) () =
           let (_ : string) = commit caps "add the sentinel" in
           baseline_scan caps ~baseline () |> Exit_code.Check.ok))
 
+(* From a subdirectory, a scanning root above it selects the changed files
+   outside the current directory too. *)
+let test_root_above_cwd_with_baseline (caps : caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo ~verbose:true
+        [
+          F.Dir ("sub", [ F.File ("a.py", "x = 1\n") ]);
+          F.Dir ("other", [ F.File ("b.py", "y = 1\n") ]);
+        ]
+        (fun _cwd ->
+          let baseline = String.trim (git caps [ "rev-parse"; "HEAD" ]) in
+          UFile.write_file ~file:(Fpath.v "sub/a.py") ("x = 1\n" ^ sentinel_line);
+          UFile.write_file ~file:(Fpath.v "other/b.py") ("y = 1\n" ^ sentinel_line);
+          let (_ : string) = git caps [ "add"; "." ] in
+          let (_ : string) = commit caps "two findings" in
+          Testutil_files.with_chdir (Fpath.v "sub") (fun () ->
+              Alcotest.(check (list string))
+                "the whole repository from one of its subdirectories"
+                [ "../other/b.py"; "a.py" ]
+                (baseline_paths caps ~baseline "..");
+              Alcotest.(check (list string))
+                "a sibling directory of the current one" [ "../other/b.py" ]
+                (baseline_paths caps ~baseline "../other"))))
+
+(* The current directory need not exist at the baseline commit. *)
+let test_cwd_absent_from_baseline (caps : caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo ~verbose:true
+        [ F.File ("old.py", "x = 1\n") ]
+        (fun _cwd ->
+          let baseline = String.trim (git caps [ "rev-parse"; "HEAD" ]) in
+          Unix.mkdir "new" 0o755;
+          UFile.write_file ~file:(Fpath.v "new/n.py") sentinel_line;
+          let (_ : string) = git caps [ "add"; "." ] in
+          let (_ : string) = commit caps "a new directory" in
+          Testutil_files.with_chdir (Fpath.v "new") (fun () ->
+              Alcotest.(check (list string))
+                "the finding of a directory the baseline does not have"
+                [ "n.py" ]
+                (baseline_paths caps ~baseline "."))))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -74,4 +135,8 @@ let tests (caps : caps) =
       t "worktree dirty from end-of-line normalisation"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (test_worktree_dirty_from_eol_normalization caps);
+      t "a scanning root above the current directory"
+        (test_root_above_cwd_with_baseline caps);
+      t "a current directory absent from the baseline commit"
+        (test_cwd_absent_from_baseline caps);
     ]
