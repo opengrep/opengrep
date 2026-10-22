@@ -65,6 +65,91 @@ let contents_tests : (string * Lang.t * string * string * exec * success) list =
       OK );
     ("php", Php, "foo.php", "", Nonexec, OK);
     ("crystal exec", Crystal, "hello_cr", "#!/usr/bin/env crystal\n", Exec, OK);
+    ( "aspnet handler in csharp",
+      Csharp,
+      "handler1.ashx",
+      "<%@ WebHandler Language=\"C#\" Class=\"H\" %>\n",
+      Nonexec,
+      OK );
+    ( "aspnet handler in csharp is not vb",
+      Vb,
+      "handler2.ashx",
+      "<%@ WebHandler Language=\"C#\" Class=\"H\" %>\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet web service in vb",
+      Vb,
+      "service1.asmx",
+      "<%@ WebService Language=\"VB\" Class=\"S\" %>\n",
+      Nonexec,
+      OK );
+    ( "aspnet web service in vb is not csharp",
+      Csharp,
+      "service2.asmx",
+      "<%@ WebService Language=\"VB\" Class=\"S\" %>\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler without language is vb",
+      Vb,
+      "handler3.ashx",
+      "<%@ WebHandler Class=\"H\" %>\n",
+      Nonexec,
+      OK );
+    ( "aspnet handler without language is not csharp",
+      Csharp,
+      "handler4.ashx",
+      "<%@ WebHandler Class=\"H\" %>\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler without directive is not csharp",
+      Csharp,
+      "handler5.ashx",
+      "class H {}\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler without directive is not vb",
+      Vb,
+      "handler6.ashx",
+      "class H {}\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler in jscript is not csharp",
+      Csharp,
+      "handler7.ashx",
+      "<%@ WebHandler Language=\"JScript\" Class=\"H\" %>\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler in jscript is not vb",
+      Vb,
+      "handler8.ashx",
+      "<%@ WebHandler Language=\"JScript\" Class=\"H\" %>\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler with unterminated directive",
+      Vb,
+      "handler9.ashx",
+      "<%@ WebHandler Class=\"H\"\n",
+      Nonexec,
+      XFAIL );
+    ( "aspnet handler header forms",
+      Csharp,
+      "handler10.ashx",
+      "\xEF\xBB\xBF<%@ Assembly Name=\"System.Web\" %>\r\n\
+       <% @ webhandler\n language='cs' class=H description=\"a %> b\" %>",
+      Nonexec,
+      OK );
+    ( "aspnet handler with unquoted language",
+      Vb,
+      "handler11.ashx",
+      "<%@ WebHandler Language=vb Class=H %>",
+      Nonexec,
+      OK );
+    ( "aspnet page is not a handler",
+      Csharp,
+      "page1.aspx",
+      "<%@ Page Language=\"C#\" %>\n",
+      Nonexec,
+      XFAIL );
   ]
 
 let mkdir path = if not (Sys.file_exists path) then Unix.mkdir path 0o777
@@ -104,6 +189,17 @@ let test_with_contents lang name contents exec expectation =
           ()
       | _ -> assert false)
 
+(* An upper-case extension selects a handler file exactly when it selects a
+   C# file: Filename.check_suffix ignores case on Windows only. *)
+let test_handler_extension_case () =
+  with_file "Upper1.CS" "" Nonexec (fun (cs_file : Fpath.t) ->
+      with_file "Upper2.ASHX" "<%@ WebHandler Language=\"C#\" Class=\"H\" %>\n"
+        Nonexec (fun (handler_file : Fpath.t) ->
+          let is_csharp (file : Fpath.t) : bool =
+            Result.is_ok (Guess_lang.inspect_file Csharp file)
+          in
+          assert (Bool.equal (is_csharp cs_file) (is_csharp handler_file))))
+
 let test_inspect_file =
   List_.map
     (fun (test_name, lang, path, expectation) ->
@@ -114,6 +210,7 @@ let test_inspect_file =
         t test_name (fun () ->
             test_with_contents lang file_name contents exec expectation))
       contents_tests
+  @ [ t "aspnet handler extension case as for csharp" test_handler_extension_case ]
 
 let tests =
   Testo.categorize_suites "Guess_lang"

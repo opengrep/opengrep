@@ -37,6 +37,13 @@ let lang_to_python_parsing_mode = function
   | Lang.Python3 -> Parse_python.Python3
   | s -> failwith (spf "not a python language:%s" (Lang.to_string s))
 
+(* An ASP.NET generic handler or web service is parsed with its leading
+   directives blanked, so that positions stay those of the file. *)
+let aspnet_handler_text (file : Fpath.t) : string option =
+  if Aspnet_directive.is_handler_file file then
+    Some (Aspnet_directive.blank_header (UFile.read_file file))
+  else None
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -221,7 +228,13 @@ let just_parse_with_lang lang file : Parsing_result2.t =
   | Lang.Apex ->
       run file [ TreeSitter Parse_apex_tree_sitter.parse ] (fun x -> x)
   | Lang.Csharp ->
-      run file [ TreeSitter Parse_csharp_tree_sitter.parse ] (fun x -> x)
+      let parse =
+        match aspnet_handler_text file with
+        | Some text ->
+            fun (file : Fpath.t) -> Parse_csharp_tree_sitter.parse_string file text
+        | None -> Parse_csharp_tree_sitter.parse
+      in
+      run file [ TreeSitter parse ] (fun x -> x)
   (* Neither pfff nor tree-sitter. Can't use run, because it supports
    * "partial" for tree-sitter only. *)
   (* TODO: Move this block of code somewhere else. *)
@@ -237,7 +250,11 @@ let just_parse_with_lang lang file : Parsing_result2.t =
           }
       in
       let open Vbnet_parser in
-      match Vbnet_parser.parse_file file with
+      match
+        match aspnet_handler_text file with
+        | Some text -> Vbnet_parser.parse_string file text
+        | None -> Vbnet_parser.parse_file file
+      with
       | Ok (ast, stat) ->
           make_res ast stat []
       | Partial (ast, stat, err) ->

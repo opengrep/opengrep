@@ -10,6 +10,8 @@
  (libraries
    commons
    semgrep.parsing
+   ; for Aspnet_directive
+   semgrep.targeting
 
    ; has an xxx.ast, xxx.menhir, xxx.tree_sitter, xxx.generic
    parser_go.menhir parser_go.tree_sitter parser_go.ast_generic
