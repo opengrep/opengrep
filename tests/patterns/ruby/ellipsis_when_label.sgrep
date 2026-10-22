@@ -1,0 +1,4 @@
+case $K
+when ...
+  a()
+end

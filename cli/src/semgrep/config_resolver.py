@@ -229,7 +229,7 @@ def read_config_at_path(loc: Path, base_path: Optional[Path] = None) -> ConfigFi
     if base_path:
         config_id = str(loc).replace(str(base_path), "")
 
-    return ConfigFile(config_id, loc.read_text(), str(loc))
+    return ConfigFile(config_id, loc.read_text(encoding="utf-8"), str(loc))
 
 
 def read_config_folder(loc: Path, relative: bool = False) -> List[ConfigFile]:
@@ -243,6 +243,8 @@ def read_config_folder(loc: Path, relative: bool = False) -> List[ConfigFile]:
 def parse_config_files(
     loaded_config_infos: List[ConfigFile],
     force_jsonschema: bool = False,
+    *,
+    jobs: int,
 ) -> Tuple[Dict[str, YamlTree], List[SemgrepError]]:
     """
     Parse a list of config files into rules
@@ -301,7 +303,7 @@ def parse_config_files(
             else:
                 return 'Error', e
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=jobs) as executor:
         results = list(executor.map(process_config_item, loaded_config_infos))
 
     # Merge results
@@ -321,12 +323,14 @@ def resolve_config(
     config_str: str,
     project_url: Optional[str] = None,
     force_jsonschema: bool = False,
+    *,
+    jobs: int,
 ) -> Tuple[Dict[str, YamlTree], List[SemgrepError]]:
     """resolves if config arg is a registry entry, a url, or a file, folder, or loads from defaults if None"""
     start_t = time.time()
     config_loader = ConfigLoader(config_str, project_url)
     config, errors = parse_config_files(
-        config_loader.load_config(), force_jsonschema=force_jsonschema
+        config_loader.load_config(), force_jsonschema=force_jsonschema, jobs=jobs
     )
     if config:
         logger.debug(f"loaded {len(config)} configs in {time.time() - start_t}")
@@ -397,6 +401,8 @@ class Config:
         configs: Sequence[str],
         project_url: Optional[str],
         force_jsonschema: bool = False,
+        *,
+        jobs: int,
     ) -> Tuple["Config", List[SemgrepError]]:
         """
         Takes in list of files/directories and returns Config object as well as
@@ -415,7 +421,7 @@ class Config:
                 # Patch config_id to fix
                 # https://github.com/semgrep/semgrep/issues/1912
                 resolved_config, config_errors = resolve_config(
-                    config, project_url, force_jsonschema=force_jsonschema
+                    config, project_url, force_jsonschema=force_jsonschema, jobs=jobs
                 )
                 errors.extend(config_errors)
                 if not resolved_config:
@@ -626,7 +632,7 @@ def parse_config_string(
     rules_tmp_path: Optional[str] = None
     try:
         fd, rules_tmp_path = mkstemp(suffix=".rules", prefix="semgrep-", text=True)
-        with os.fdopen(fd, "w") as fp:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
             fp.write(contents)
         logger.debug(f"Saving rules to {rules_tmp_path}")
     except Exception as e:
@@ -705,6 +711,7 @@ def get_config(
     config_strs: Sequence[str],
     *,
     project_url: Optional[str],
+    jobs: int,
     replacement: Optional[str] = None,
     no_rewrite_rule_ids: bool = False,
     force_jsonschema: bool = False,
@@ -725,7 +732,7 @@ def get_config(
         )
     else:
         config, errors = Config.from_config_list(
-            config_strs, project_url, force_jsonschema=force_jsonschema
+            config_strs, project_url, force_jsonschema=force_jsonschema, jobs=jobs
         )
 
     return config, errors

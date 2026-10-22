@@ -64,6 +64,18 @@ def path_has_permissions(path: Path, permissions: int) -> bool:
     return path.exists() and path.stat().st_mode & permissions == permissions
 
 
+def is_under_directory(path: Union[str, Path], directory: Union[str, Path]) -> bool:
+    directory = os.path.normcase(os.path.abspath(directory))
+    try:
+        return (
+            os.path.commonpath([directory, os.path.normcase(os.path.abspath(path))])
+            == directory
+        )
+    # Raised on Windows when the two paths are on different drives.
+    except ValueError:
+        return False
+
+
 def abort(message: str) -> None:
     click.secho(message, fg="red", err=True)
     sys.exit(2)

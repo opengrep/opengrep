@@ -90,7 +90,11 @@ def _git_merge(ref: str) -> str:
     ).strip()
 
 
-def run_sentinel_scan(check: bool = True, base_commit: Optional[str] = None):
+def run_sentinel_scan(
+    check: bool = True,
+    base_commit: Optional[str] = None,
+    target: Optional[str] = None,
+):
     env = {"LANG": "en_US.UTF-8"}
     env["SEMGREP_USER_AGENT_APPEND"] = "testing"
     unique_settings_file = tempfile.NamedTemporaryFile().name
@@ -109,6 +113,8 @@ def run_sentinel_scan(check: bool = True, base_commit: Optional[str] = None):
     ]
     if base_commit:
         cmd.extend(["--baseline-commit", base_commit])
+    if target:
+        cmd.append(target)
 
     try:
         return subprocess.run(
@@ -628,9 +634,38 @@ def test_renamed_file(git_tmp_path, snapshot, new_name):
 #    pass
 #
 #
-# TODO
-# def test_run_in_subdirectory(git_tmp_path, snapshot):
-#    pass
+def test_run_in_subdirectory(git_tmp_path, monkeypatch):
+    # From a subdirectory, a target above it selects the changed files outside
+    # the current directory too.
+    (git_tmp_path / "sub").mkdir()
+    (git_tmp_path / "other").mkdir()
+    (git_tmp_path / "sub" / "a.py").write_text("x = 1\n")
+    (git_tmp_path / "other" / "b.py").write_text("y = 1\n")
+    base_commit = _git_commit(1, add=True)
+
+    (git_tmp_path / "sub" / "a.py").write_text(f"x = 1\nx = {SENTINEL_1}\n")
+    (git_tmp_path / "other" / "b.py").write_text(f"y = 1\ny = {SENTINEL_1}\n")
+    _git_commit(2, add=True)
+
+    monkeypatch.chdir(git_tmp_path / "sub")
+    output = run_sentinel_scan(base_commit=base_commit, target="..")
+    assert os.path.join("..", "other", "b.py") in output.stdout
+    assert "a.py" in output.stdout
+
+
+def test_cwd_absent_from_baseline(git_tmp_path, monkeypatch):
+    # The current directory need not exist at the baseline commit.
+    (git_tmp_path / "a.py").write_text(f"x = {SENTINEL_1}\n")
+    base_commit = _git_commit(1, add=True)
+
+    (git_tmp_path / "a.py").write_text(f"x = {SENTINEL_1}\nz = 1\n")
+    (git_tmp_path / "new").mkdir()
+    (git_tmp_path / "new" / "n.py").write_text("y = 1\n")
+    _git_commit(2, add=True)
+
+    monkeypatch.chdir(git_tmp_path / "new")
+    output = run_sentinel_scan(base_commit=base_commit, target="..")
+    assert str(SENTINEL_1) not in output.stdout
 
 
 def test_unstaged_changes(git_tmp_path, snapshot):

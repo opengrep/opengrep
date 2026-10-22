@@ -17,6 +17,7 @@ val string_of_run :
 val log_command : Cmd.t -> unit
 val capture_and_log_stderr : (unit -> 'a) -> 'a
 val resolve_program : Cmd.t -> (Bos.Cmd.t, [> Rresult.R.msg ]) result
+val restrict_program_search : unit -> unit
 
 val string_of_run_with_stderr :
   trim:bool ->

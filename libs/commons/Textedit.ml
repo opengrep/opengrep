@@ -193,13 +193,12 @@ let apply_edits ~dryrun edits =
           if write new_text then (path :: modified, skipped, conflicts)
           else (modified, path :: skipped, conflicts)
         in
-        (* TOPORT: when dryrun, report fixed lines *)
-        if dryrun then apply (fun (_ : string) -> true)
-        else
-          match UFile.entry path with
-          | UFile.Reg { links = 1; _ } as expected ->
-              apply (UFile.write_single_entry ~file:path ~expected)
-          | _ -> (modified, path :: skipped, conflicts))
+        match UFile.entry path with
+        | UFile.Reg { links = 1; _ } as expected ->
+            (* TOPORT: when dryrun, report fixed lines *)
+            if dryrun then apply (fun (_ : string) -> true)
+            else apply (UFile.write_single_entry ~file:path ~expected)
+        | _ -> (modified, path :: skipped, conflicts))
       edits_by_file ([], [], [])
   in
   { modified_files; skipped_files; conflicting_edits }

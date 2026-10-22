@@ -3045,8 +3045,25 @@ and m_finally a b =
 
 and m_case_and_body a b =
   match (a, b) with
+  (* A label that is only `...` stands for any number of labels, of any
+   * form, as `...` does in other lists. A `default` (or `else`) branch is
+   * not a case label: only a pattern branch with a `default` matches it. *)
   | CasesAndBody (a1, a2), CasesAndBody (b1, b2) ->
-      (m_list m_case) a1 b1 >>= fun () -> m_stmt a2 b2
+      let is_default = function
+        | G.Default _ -> true
+        | _ -> false
+      in
+      if List.exists is_default b1 && not (List.exists is_default a1) then
+        fail ()
+      else
+        m_list_with_dots ~less_is_ok:false m_case
+          (function
+            | G.CaseEqualExpr (_, { e = G.Ellipsis _; _ })
+            | G.Case (_, G.PatEllipsis _) ->
+                true
+            | _ -> false)
+          a1 b1
+        >>= fun () -> m_stmt a2 b2
   | CaseEllipsis _, CasesAndBody _ -> return ()
   | CasesAndBody _, _
   | CaseEllipsis _, _ ->
@@ -3058,6 +3075,17 @@ and m_case a b =
       m_tok a0 b0 >>= fun () -> m_pattern a1 b1
   | G.CaseEqualExpr (a0, a1), B.CaseEqualExpr (b0, b1) ->
       m_tok a0 b0 >>= fun () -> m_expr a1 b1
+  (* A label that is only a metavariable matches every label, whether the
+   * target label is a value or a pattern. *)
+  | ( G.CaseEqualExpr (_, { e = G.N (G.Id ((str, tok), id_info)); _ }),
+      B.Case (_, b1) )
+    when Mvar.is_metavar_name str ->
+      m_pattern (G.PatId ((str, tok), id_info)) b1
+  (* A label that is only a deep ellipsis matches a pattern label holding
+   * an expression it matches. *)
+  | G.CaseEqualExpr (_, ({ e = G.DeepEllipsis _; _ } as a1)), B.Case (_, b1) ->
+      SubAST_generic.subexprs_of_pattern b1
+      |> List.fold_left (fun acc b -> acc >||> m_expr a1 b) (fail ())
   | G.Default a0, B.Default b0 -> m_tok a0 b0
   | G.OtherCase (a0, a1), B.OtherCase (b0, b1) ->
       let* () = m_todo_kind a0 b0 in
@@ -3117,6 +3145,19 @@ and m_pattern a b =
         (* this can happen with PatAs in exception handler in Python *)
       with
       | H.NotAnExpr -> envf (str, tok) (MV.P b2))
+  (* A value pattern that is only a metavariable matches any pattern, as a
+   * PatId metavariable does. A target value pattern with the same tag goes
+   * to the OtherPat arm below. *)
+  | ( G.OtherPat
+        ( ((("ExprToPattern" | "expr") as tag), _),
+          [ G.E { e = G.N (G.Id ((str, tok), id_info)); _ } ] ),
+      b2 )
+    when Mvar.is_metavar_name str
+         &&
+         match b2 with
+         | B.OtherPat ((tag2, _), _) -> not (String.equal tag tag2)
+         | _ -> true ->
+      m_pattern (G.PatId ((str, tok), id_info)) b2
   (* dots: *)
   | G.PatEllipsis _, _ -> return ()
   (* boilerplate *)

@@ -10,3 +10,13 @@ rules:
   message: Tainted value reaches sink
   severity: WARNING
   languages: [js]
+- id: switch-case-constant-propagation-js
+  pattern: exec(7)
+  message: Case labels preserve the constant binding
+  severity: WARNING
+  languages: [js]
+- id: switch-case-command-constant-js
+  pattern: exec("rm")
+  message: Case labels preserve the command constant
+  severity: WARNING
+  languages: [js]

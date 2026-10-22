@@ -220,7 +220,9 @@ def match_on_conditions(  # type: ignore
     return query
 
 
-def create_config_map(semgrep_config_strings: List[str]) -> Dict[str, Rule]:
+def create_config_map(
+    semgrep_config_strings: List[str], *, jobs: int
+) -> Dict[str, Rule]:
     """
     Create a mapping of Semgrep config strings to Rule objects.
     This will resolve the config strings into their Rule objects, as well.
@@ -230,7 +232,9 @@ def create_config_map(semgrep_config_strings: List[str]) -> Dict[str, Rule]:
     """
     config = {}
     for config_string in semgrep_config_strings:
-        resolved, config_errors = resolve_config(config_string, get_project_url())
+        resolved, config_errors = resolve_config(
+            config_string, get_project_url(), jobs=jobs
+        )
         # Some code-fu to get single rules
         config.update(
             {config_string: list(Config._validate(resolved)[0].values())[0][0]}
@@ -403,6 +407,8 @@ def run_join_rule(
     targets: List[Path],
     allow_local_builds: bool = False,
     prioritize_dependency_graph_generation: bool = False,
+    *,
+    jobs: int,
 ) -> Tuple[List[RuleMatch], List[SemgrepError]]:
     """
     Run a 'join' mode rule.
@@ -438,7 +444,7 @@ def run_join_rule(
 
     refs = join_contents.get("refs", [])
     semgrep_config_strings = [ref.get("rule") for ref in refs]
-    config_map = create_config_map(semgrep_config_strings)
+    config_map = create_config_map(semgrep_config_strings, jobs=jobs)
 
     join_rule_refs: List[Ref] = [
         Ref(
@@ -495,6 +501,7 @@ def run_join_rule(
             optimizations="all",
             allow_local_builds=allow_local_builds,
             prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,
+            jobs=jobs,
         )
 
     assert isinstance(output, dict)  # placate mypy

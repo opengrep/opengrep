@@ -1,0 +1,6 @@
+rules:
+  - id: assert-true-call
+    pattern: assertTrue(...)
+    message: Don’t call assertTrue
+    languages: [python]
+    severity: WARNING

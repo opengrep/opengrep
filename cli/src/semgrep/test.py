@@ -506,12 +506,11 @@ def generate_test_results(
         taint_intrafile=taint_intrafile,
         timeout=timeout,
         timeout_threshold=timeout_threshold,
+        jobs=1,
     )
     # XXX: Maybe no need for the pool if jobs = 1.
-    cpu_count = multiprocessing.cpu_count()
-    jobs = min(jobs, cpu_count) if (jobs is not None and jobs > 0) else cpu_count
     # print(f"Running with {jobs} jobs")
-    with multiprocessing.Pool(jobs) as pool:
+    with multiprocessing.Pool(engine_type.jobs(jobs)) as pool:
         results = pool.starmap(invoke_semgrep_fn, config_with_tests)
 
     config_with_errors, config_without_errors = partition(results, lambda r: bool(r[1]))
@@ -604,11 +603,12 @@ def generate_test_results(
         taint_intrafile=taint_intrafile,
         timeout=timeout,
         timeout_threshold=timeout_threshold,
+        jobs=1,
         # only option that differs from the earlier call to semgrep-core:
         autofix=True,
     )
 
-    with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+    with multiprocessing.Pool(engine_type.jobs(jobs)) as pool:
         results = pool.starmap(invoke_semgrep_with_autofix_fn, config_with_tempfiles)
 
     fixtest_comparisons = {

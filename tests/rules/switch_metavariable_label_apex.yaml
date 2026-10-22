@@ -1,0 +1,9 @@
+rules:
+- id: switch-metavariable-label-apex
+  pattern: |
+    switch on $K {
+      when $X { ... }
+    }
+  message: A metavariable label matches every label
+  severity: WARNING
+  languages: [apex]

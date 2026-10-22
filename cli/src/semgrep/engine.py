@@ -30,6 +30,13 @@ class EngineType(Enum):
         # Maxing out number of cores used to 16 if more not requested to not overload on large machines
         return min(16, self.get_cpu_count())
 
+    def jobs(self, jobs: Optional[int]) -> int:
+        return (
+            min(jobs, self.get_cpu_count())
+            if jobs is not None and jobs > 0
+            else self.default_jobs
+        )
+
     @property
     def default_max_memory(self) -> int:
         return 0  # unlimited

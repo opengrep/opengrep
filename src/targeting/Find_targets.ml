@@ -307,6 +307,11 @@ let ignore_path selection_events fpath =
       rule_id = None;
     }
 
+(* the path without its last n segments *)
+let rec parent_n (n : int) (path : Fpath.t) : Fpath.t =
+  if n <= 0 then Fpath.rem_empty_seg path
+  else parent_n (n - 1) (Fpath.parent path)
+
 let apply_include_filter status selection_events include_filter ppath =
   match status with
   | Gitignore.Ignored -> (status, selection_events)
@@ -357,15 +362,65 @@ let filter_path (ign : Gitignore.filter)
    obtained with 'git ls-files'. A strong postcondition is that the
    paths returned must correspond to existing regular files!
 *)
+(* the ppath of a scanning root without the trailing slash marker of a
+   directory, as the ancestors of a file are built *)
+let root_ppath (root : Fppath.t) : Ppath.t =
+  Ppath.create
+    ("" :: List.filter (fun (seg : string) -> not (String.equal seg ""))
+             (Ppath.relative_segments root.ppath))
+
 let filter_paths
     ((ign, include_filter) : Gitignore.filter * Include_filter.t option)
-    (target_files : Fppath.t list) : Fppath.t list * Out.skipped_target list =
+    (scanning_roots : Fppath.t list) (target_files : Fppath.t list) :
+    Fppath.t list * Out.skipped_target list =
   let (selected_paths : Fppath.t list ref) = ref [] in
   let (skipped : Out.skipped_target list ref) = ref [] in
   let add path = Stack_.push path selected_paths in
   let skip target = Stack_.push target skipped in
+  let (dirs : (Ppath.t, bool) Hashtbl.t) = Hashtbl.create 1024 in
+  let (roots : (Ppath.t, unit) Hashtbl.t) = Hashtbl.create 16 in
+  scanning_roots
+  |> List.iter (fun (root : Fppath.t) ->
+         Hashtbl.replace roots (root_ppath root) ());
+  (* The fpath of a file is the scanning root as given or as git reports it,
+     followed by its segments below the root, the same as in its ppath. *)
+  let goes_through_link (fppath : Fppath.t) : bool =
+    (* the ancestors from the project root down; [below] is the number of
+       segments of the file under the ancestor being looked at *)
+    let rec loop (dir_ppath : Ppath.t) (in_root : bool)
+        (remaining : string list) (below : int) : bool =
+      match remaining with
+      | []
+      | [ _ ] ->
+          false
+      | segment :: remaining ->
+          let dir_ppath = Ppath.add_seg dir_ppath segment in
+          let below = below - 1 in
+          let below_root = in_root in
+          let in_root = in_root || Hashtbl.mem roots dir_ppath in
+          let link =
+            match Hashtbl.find_opt dirs dir_ppath with
+            | Some link -> link
+            | None ->
+                let link =
+                  below_root
+                  && not
+                       (UFile.is_dir ~follow_symlinks:false
+                          (parent_n below fppath.fpath))
+                in
+                Hashtbl.replace dirs dir_ppath link;
+                link
+          in
+          link || loop dir_ppath in_root remaining below
+    in
+    let segments = Ppath.relative_segments fppath.ppath in
+    loop Ppath.root (Hashtbl.mem roots Ppath.root) segments
+      (List.length segments)
+  in
   target_files
   |> List.iter (fun fppath ->
+         if goes_through_link fppath then ()
+         else
          match filter_path ign include_filter fppath with
          | Keep -> (
              (* This section is similar to what we have in
@@ -780,7 +835,7 @@ let setup_path_filters conf (project_roots : Project.roots) :
 (* Work from a list of target paths obtained with git *)
 let filter_targets conf project_roots (all_files : Fppath.t list) =
   let ign = setup_path_filters conf project_roots in
-  filter_paths ign all_files
+  filter_paths ign project_roots.scanning_roots all_files
 
 let get_targets_from_filesystem conf (project_roots : Project.roots) =
   let ign, include_filter = setup_path_filters conf project_roots in

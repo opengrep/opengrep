@@ -683,7 +683,7 @@ def scan(
     # refuse a bad destination before the scan runs and before the
     # stdin/FIFO targets below are read
     output_handler = OutputHandler(output_settings)
-    output_handler.check_destinations()
+    output_handler.check_destinations([t for t in targets if t != "-"])
 
     # The 'optional_stdin_target' context manager must remain before
     # 'managed_output'. Output depends on file contents so we cannot have
@@ -718,6 +718,7 @@ def scan(
                     lang,
                     config or [],
                     project_url=get_project_url(),
+                    jobs=engine_type.jobs(jobs),
                     force_jsonschema=True,
                 )
 

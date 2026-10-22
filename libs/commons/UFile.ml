@@ -271,14 +271,14 @@ let write_single_entry ~(file : Fpath.t) ~(expected : entry) (data : string) :
       let fd =
         UUnix.openfile !!file [ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC ] 0o666
       in
-      Fun.protect
+      Common.protect
         ~finally:(fun () -> UUnix.close fd)
         (fun () ->
           write fd;
           true)
   | Reg { links = 1; dev; ino } ->
       let fd = UUnix.openfile !!file [ O_WRONLY; O_CLOEXEC ] 0 in
-      Fun.protect
+      Common.protect
         ~finally:(fun () -> UUnix.close fd)
         (fun () ->
           match UUnix.fstat fd with

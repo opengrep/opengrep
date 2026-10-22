@@ -404,10 +404,24 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatAs _ -> true
   | _ -> false
 
+(* The comparison of a test pattern whose subject is implicit: a C#
+ * relational pattern (`< 5`) or a Kotlin range test (`in r`). The front end
+ * records the operator as the tag of an [OtherPat] holding the rhs. *)
+let relational_pattern_operator (tag : string) : G.operator option =
+  match tag with
+  | "<" -> Some G.Lt
+  | "<=" -> Some G.LtE
+  | ">" -> Some G.Gt
+  | ">=" -> Some G.GtE
+  | "in" -> Some G.In
+  | "!in" -> Some G.NotIn
+  | _ -> None
+
 (* An Elixir `cond` branch condition is an expression, not a pattern:
  * [expr_to_pattern] tags it [OtherPat("ExprToPattern", …)] (possibly wrapped
- * in a singleton [PatTuple] by [pat_of_args_and_when]). Real `case` patterns
- * never take this shape, so it reliably marks a `cond` condition. *)
+ * in a singleton [PatTuple] by [pat_of_args_and_when]). Value labels of other
+ * languages (Swift, C# constant patterns) take the same shape, so this only
+ * marks a `cond` condition in Elixir. *)
 let rec is_expr_to_pattern (p : G.pattern) : bool =
   match p with
   | G.OtherPat (("ExprToPattern", _), _) -> true
@@ -541,6 +555,19 @@ and pattern env pat : stmts * lval * stmts =
       ([], lval, [])
   | G.PatLiteral _ ->
       let lval = fresh_lval (Tok.unsafe_fake_tok "_patlit") in
+      ([], lval, [])
+  (* Tests that bind nothing: a type test, a negated pattern, a relational
+   * or range test. Their operands are evaluated by the test itself
+   * ([pattern_match_cond]), not again here. *)
+  | G.PatType _ ->
+      let lval = fresh_lval (Tok.unsafe_fake_tok "_pattype") in
+      ([], lval, [])
+  | G.OtherPat (("NotPattern", tok), [ G.P _ ]) ->
+      let lval = fresh_lval tok in
+      ([], lval, [])
+  | G.OtherPat ((tag, tok), [ G.E _ ])
+    when Option.is_some (relational_pattern_operator tag) ->
+      let lval = fresh_lval tok in
       ([], lval, [])
   | G.PatId (id, id_info) ->
       let lval = lval_of_id_info id id_info in
@@ -1004,13 +1031,16 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       pattern_match_cond env scrutinee inner
   | G.PatWhen (inner, _guardTODO) ->
       pattern_match_cond env scrutinee inner
-  | G.PatLiteral _ ->
+  | G.PatLiteral _
+  | G.OtherPat (("ExprToPattern", _), [ G.E _ ]) ->
+      (* An expression nested in a tuple pattern compares with that slot;
+       * it must not turn into a binding or an unsupported condition. *)
       let g_exp = AST_generic_helpers.pattern_to_expr pat in
-      let ss, lit_il = expr env g_exp in
+      let ss, value_il = expr env g_exp in
       ( ss,
         mk_e
           (Operator
-             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed lit_il ]))
+             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed value_il ]))
           NoOrig )
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
@@ -1018,24 +1048,21 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       pm_lower_sequence env scrutinee ~allow_rest:true pats t2
   | G.PatType { t = G.TyN name; _ } ->
       ([], pm_lower_type scrutinee name)
-  (* C# relational patterns (`< 5`, `>= 0`, …). The frontend records only the
+  (* C# relational patterns (`< 5`, `>= 0`, …) and Kotlin `when` range tests
+   * (`in r`, `!in r`). The frontend records only the
    * operator and the rhs; the subject is implicit. We reconstruct the real
    * comparison [scrutinee <op> rhs] here, against the single (already
    * materialised) scrutinee, so it is evaluated once and stays anchored on
    * the scrutinee for cond evaluation. *)
-  | G.OtherPat ((("<" | "<=" | ">" | ">=") as op_str, tok), [ G.E rhs ]) ->
-      let op =
-        match op_str with
-        | "<" -> G.Lt
-        | "<=" -> G.LtE
-        | ">" -> G.Gt
-        | _ -> G.GtE
-      in
-      let ss, rhs_il = expr env rhs in
-      ( ss,
-        mk_e
-          (Operator ((op, tok), [ Unnamed scrutinee; Unnamed rhs_il ]))
-          NoOrig )
+  | G.OtherPat ((tag, tok), [ G.E rhs ]) -> (
+      match relational_pattern_operator tag with
+      | Some op ->
+          let ss, rhs_il = expr env rhs in
+          ( ss,
+            mk_e
+              (Operator ((op, tok), [ Unnamed scrutinee; Unnamed rhs_il ]))
+              NoOrig )
+      | None -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok)))
   | G.PatDisj (a, b) ->
       let sa, ca = pattern_match_cond env scrutinee a in
       let sb, cb = pattern_match_cond env scrutinee b in
@@ -3458,11 +3485,6 @@ and comprehension env (result_expr : G.expr)
   (loop_stmts, mk_e (Fetch tmp) NoOrig)
   
 and stmt_expr env ?g_expr st : stmts * exp =
-  let todo_here () =
-    match g_expr with
-    | None -> todo (G.E (G.e (G.StmtExpr st)))
-    | Some e_gen -> todo (G.E e_gen)
-  in
   match st.G.s with
   | G.ExprStmt (eorig, tok) ->
       let ss, e = expr env eorig in
@@ -3516,7 +3538,7 @@ and stmt_expr env ?g_expr st : stmts * exp =
         | Some e_gen -> SameAs e_gen
       in
       (ss @ [if_stmt], mk_e (Fetch fresh) eorig)
-  | G.Block (_, block, _) -> (
+  | G.Block (l, block, _) -> (
       (* See 'AST_generic.stmt_to_expr' *)
       match List.rev block with
       | st :: rev_sts ->
@@ -3524,7 +3546,9 @@ and stmt_expr env ?g_expr st : stmts * exp =
           let prefix_ss = List_.flatten list_of_lists in
           let last_ss, last_e = stmt_expr env st in
           (prefix_ss @ last_ss, last_e)
-      | __else__ -> todo_here ())
+      (* An empty block evaluates to the unit value (`Unit` in Kotlin, `()`
+       * in Rust and Scala, `nil` in Ruby and Elixir). *)
+      | [] -> ([], mk_unit l (Related (G.S st))))
   | G.Return (t, eorig, _) ->
       let ss_e, expression = expr_opt env t eorig in
       let ret_stmt = mk_s (Return (t, expression)) in
@@ -3580,7 +3604,7 @@ and stmt_expr env ?g_expr st : stmts * exp =
       (* In any case, let's make sure the statement is in the IL translation
        * so that e.g. taint can do its job. *)
       let new_stmts = stmt env st in
-      (* Do not call todo_here() here: it raises and would lose new_stmts.
+      (* Do not raise a [Fixme] here: it would lose new_stmts.
        * Instead, produce the fixme expression directly. *)
       let gany = match g_expr with
         | None -> G.E (G.e (G.StmtExpr st))
@@ -3761,10 +3785,53 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Ruby
   | Crystal
   | Rust
+  | Move_on_sui
+  | Move_on_aptos
   | Clojure
-  | Elixir ->
+  | Elixir
+  | Kotlin
+  | Python
+  | Python2
+  | Python3
+  | Scala
+  | Vb ->
       true
   | _ -> false
+
+(* Languages in which a bare `break` inside a switch exits the enclosing
+ * loop: the switch (Kotlin `when`; Rust, Move and Python `match`; Ruby and
+ * Crystal `case`) is not a target of `break`. *)
+and break_skips_switch : Lang.t -> bool = function
+  | Kotlin
+  | Rust
+  | Move_on_sui
+  | Move_on_aptos
+  | Ruby
+  | Crystal
+  | Python
+  | Python2
+  | Python3 ->
+      true
+  | _ -> false
+
+(* Languages in which a `break` or `next` with no enclosing loop returns from
+ * the enclosing function, which the front end produces for a block or a
+ * lambda literal: Ruby and Crystal. *)
+and jumps_outside_loops_return : Lang.t -> bool = function
+  | Ruby
+  | Crystal ->
+      true
+  | _ -> false
+
+(* A `break v` or `next v` with no enclosing loop: a return of [v], or of
+ * unit without a value, from the function being lowered. *)
+and return_jump_value env tok (lbl_ident : G.label_ident) : stmts =
+  let ss, e =
+    match lbl_ident with
+    | G.LDynamic v -> expr env v
+    | _ -> expr_opt env tok None
+  in
+  ss @ [ mk_s (Return (tok, e)) ]
 
 and break_continue_labels env tok : stmts * stmts * env =
   let cont_label = fresh_label ~label:"__loop_continue" tok in
@@ -3783,7 +3850,8 @@ and break_continue_labels env tok : stmts * stmts * env =
 and switch_break_label env tok : label * stmts * env =
   let break_label = fresh_label ~label:"__switch_break" tok in
   let switch_env =
-    { env with break_labels = break_label :: env.break_labels }
+    if break_skips_switch env.lang then env
+    else { env with break_labels = break_label :: env.break_labels }
   in
   (break_label, [ mk_s (Label break_label) ], switch_env)
 
@@ -4112,9 +4180,14 @@ and stmt_aux env st : stmts =
       match lbl_ident with
       | G.LNone -> (
           match env.cont_label with
+          | None when jumps_outside_loops_return env.lang ->
+              return_jump_value env tok lbl_ident
           | None -> impossible (G.Tk tok)
           | Some lbl -> [ mk_s (Goto (tok, lbl)) ])
       | G.LId lbl -> [ mk_s (Goto (tok, label_of_label lbl)) ]
+      | G.LDynamic _
+        when Option.is_none env.cont_label && jumps_outside_loops_return env.lang ->
+          return_jump_value env tok lbl_ident
       | G.LInt _
       | G.LDynamic _ ->
           todo (G.S st))
@@ -4122,6 +4195,8 @@ and stmt_aux env st : stmts =
       match lbl_ident with
       | G.LNone -> (
           match env.break_labels with
+          | [] when jumps_outside_loops_return env.lang ->
+              return_jump_value env tok lbl_ident
           | [] -> impossible (G.Tk tok)
           | lbl :: _ -> [ mk_s (Goto (tok, lbl)) ])
       | G.LId lbl -> [ mk_s (Goto (tok, label_of_label lbl)) ]
@@ -4129,6 +4204,9 @@ and stmt_aux env st : stmts =
           match List.nth_opt env.break_labels i with
           | None -> impossible (G.Tk tok)
           | Some lbl -> [ mk_s (Goto (tok, lbl)) ])
+      | G.LDynamic _
+        when List.is_empty env.break_labels && jumps_outside_loops_return env.lang ->
+          return_jump_value env tok lbl_ident
       | G.LDynamic _ -> impossible (G.Tk tok))
   | G.Label (lbl, st) ->
       let lbl = label_of_label lbl in
@@ -4268,10 +4346,10 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                 eorig = related_tok tok;
               }
               :: es )
-        | G.Case
-            (_tok, (G.OtherPat ((("<" | "<=" | ">" | ">="), _), [ E _ ]) as pat))
-          ->
-            (* Relational pattern (`case < 0:`): a structural cond, not an
+        | G.Case (_tok, (G.OtherPat ((tag, _), [ E _ ]) as pat))
+          when Option.is_some (relational_pattern_operator tag) ->
+            (* Relational pattern (`case < 0:`) or Kotlin range test
+             * (`in 1..5 ->`): a structural cond, not an
              * equality. Route it through [pattern_match_cond], which rebuilds
              * [switch_expr <op> rhs]. Must come before the generic
              * [OtherPat (_, [E c])] equality shortcut below, which would
@@ -4361,9 +4439,13 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           lower_body xs (* TODO this is not tail recursive *)
       in
       let label = fresh_label ~label:"__switch_case" tok in
-      let case_ss, case = translate_cases env cases in
-      let jump =
-        mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps))
+      let tests =
+        match switch_expr_opt with
+        | Some _ ->
+            let case_ss, case = translate_cases env cases in
+            case_ss
+            @ [ mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps)) ]
+        | None -> case_tests env tok translate_cases label cases jumps
       in
 
       (* Here we add bindings for the switch pattern, for the common case:
@@ -4414,7 +4496,23 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           [ mk_s (Goto (tok, break_label)) ]
         else []
       in
-      (pre_jump_ss @ case_ss @ [ jump ], body @ break_if_no_fallthrough @ bodies)
+      (pre_jump_ss @ tests, body @ break_if_no_fallthrough @ bodies)
+
+(* The tests of a branch of a switch without a scrutinee: its cases in order,
+   each evaluated only when the earlier ones have failed. *)
+and case_tests env tok translate_cases body_label cases jumps : stmts =
+  let goto label = mk_s (Goto (tok, label)) in
+  let rec tests = function
+    | [] -> jumps
+    | case :: rest ->
+        let next_label = fresh_label ~label:"__switch_next" tok in
+        let case_ss, case_cond = translate_cases env [ case ] in
+        case_ss
+        @ [ mk_s (IL.If (tok, case_cond, [ goto body_label ], [ goto next_label ]));
+            mk_s (Label next_label) ]
+        @ tests rest
+  in
+  tests cases
 
 and stmt env st : stmt list =
   (* A destructuring-assignment context never spans a statement boundary;

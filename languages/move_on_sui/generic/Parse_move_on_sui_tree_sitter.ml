@@ -1237,6 +1237,8 @@ let rec transpile_let_bind (env : env) (left : G.pattern) (right : G.expr) :
       match e.e with
       | G.IdSpecial (G.Spread, tok) ->
           [ G.F (G.IdSpecial (G.Spread, tok) |> G.e |> G.exprstmt) ]
+      (* A constant or an enum variant binds nothing. *)
+      | G.N _ -> []
       | _ ->
           Log.err (fun m ->
               m "Unsupported pattern in let binding %s \n\n \n %s "
@@ -1375,6 +1377,12 @@ let rec map_bind (env : env) (x : CST.bind) : G.pattern =
       let name_pattern =
         match name with
         | "_", tok -> G.PatWildcard tok
+        (* A variable name cannot start with an uppercase letter: such a
+         * name is a constant or an enum variant, matched by value. *)
+        | s, _ when String_.is_capitalized s ->
+            G.OtherPat
+              ( ("ExprToPattern", Tok.unsafe_fake_tok ""),
+                [ G.E (G.N name_name |> G.e) ] )
         | _ -> G.PatId (name, G.empty_id_info ())
       in
       let final_pattern =

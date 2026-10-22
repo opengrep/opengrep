@@ -823,7 +823,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
        * own handling of these destinations, and gets to keep it *)
       (* the modes above write no output, so only a scan checks its
          destinations *)
-      Output.check_destinations conf.output_conf;
+      Output.check_destinations ~targets:conf.target_roots conf.output_conf;
       run_scan_conf caps conf
 
 (*****************************************************************************)
