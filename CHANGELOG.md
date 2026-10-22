@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.32.0](https://github.com/opengrep/opengrep/releases/tag/v1.32.0) - 22-10-2026
+
+### Language support
+
+* C#: C# 14 support, with the upstream tree-sitter-c-sharp grammar by @maciejpirog in #887 (from #885)
+* More accurate taint analysis of switch statements with constant cases, and `case $X:` matches any case by @sk8erboi17 in #882 (from #859)
+* Kotlin: `when` branches with `is`, `in` or value conditions are matched and analysed as switch cases, and `...` stands for any conditions by @dimitris-m in #882 (from #880)
+* Kotlin, Ruby: taint analysis no longer skips a `when` or `case` with an empty branch, such as `else -> {}` by @dimitris-m in #882 (from #880)
+* Move: a capitalised identifier in a pattern is a constant by @dimitris-m in #882 (from #880)
+* Elixir: `%{}` in a pattern matches any map by @dimitris-m in #882 (from #880)
+* C#: rules can use `...` in positional patterns, as in `$O is (FOO, ...)` by @dimitris-m in #882 (from #880)
+
+### Improvements
+
+* Remove the `install-ci` command by @dimitris-m in #882 (from #871)
+* `--jobs` also limits the parallelism of rule loading, join rules and `test` on the python cli by @dimitris-m in #886
+
+### Bug fixes
+
+* taint: match arms do not fall through in Python, Scala, Move and VB by @dimitris-m in #882 (from #880)
+* taint: `break` inside a switch exits the enclosing loop in Kotlin, Rust, Move, Ruby, Crystal and Python by @dimitris-m in #882 (from #880)
+* taint: the conditions of a switch without a value, such as Kotlin `when { ... }`, are evaluated in order by @dimitris-m in #882 (from #880)
+* Rule files load correctly when the system locale is not UTF-8 by @dimitris-m in #883
+* baseline: a baseline scan run from a subdirectory scans exactly the changed files under its targets, including those outside the subdirectory by @dimitris-m in #882 (from #827)
+* baseline: with `--experimental`, the temporary worktree is always removed by @dimitris-m in #882 (from #827)
+
+### External Contributors
+
+* @sk8erboi17 had commits backported in #882 (from #859)
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.31.0...v1.32.0
+
+
 ## [1.31.0](https://github.com/opengrep/opengrep/releases/tag/v1.31.0) - 15-10-2026
 
 ### Improvements
