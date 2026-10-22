@@ -4064,14 +4064,22 @@ and add_extension_tparams (tparams : G.type_parameters option) (s : stmt) :
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)
+let program_of_cst (file : Fpath.t) (cst : CST.compilation_unit)
+    (_extras : CST.extra list) : G.program =
+  let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+  match compilation_unit env cst with
+  | G.Pr xs -> xs
+  | _ -> failwith "not a program"
+
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_c_sharp.Parse.file !!file)
-    (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
-      match compilation_unit env cst with
-      | G.Pr xs -> xs
-      | _ -> failwith "not a program")
+    (program_of_cst file)
+
+let parse_string (file : Fpath.t) (text : string) =
+  H.wrap_parser
+    (fun () -> Tree_sitter_c_sharp.Parse.string ~src_file:!!file text)
+    (program_of_cst file)
 
 let parse_pattern_aux str =
   (* ugly: coupling: see grammar.js of csharp.
