@@ -1333,8 +1333,9 @@ let lookup_all_signatures (db : signature_database) (name : Function_id.t)
   | Some sigs -> SignatureSet.elements sigs
   | None -> []
 
-(* The latest extraction replaces an equal signature: in a fixpoint, the
-   newest is the one to keep. *)
+(* The latest extraction replaces the signature of its arity: a function has
+   one signature per arity ([find_by_arity] cannot choose between two), and in
+   a fixpoint the newest is the one to keep. *)
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =
@@ -1342,7 +1343,12 @@ let add_signature (db : signature_database) (name : Function_id.t)
       (fun existing_sigs ->
         match existing_sigs with
         | Some sigs ->
-            Some (SignatureSet.add signature (SignatureSet.remove signature sigs))
+            Some
+              (SignatureSet.add signature
+                 (SignatureSet.filter
+                    (fun (x : extended_sig) ->
+                      not (equal_sig_arity x.arity signature.arity))
+                    sigs))
         | None -> Some (SignatureSet.singleton signature))
       db.signatures
   in

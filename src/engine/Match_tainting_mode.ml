@@ -467,6 +467,7 @@ let extract_signatures
   let db', sig_ =
     Taint_signature_extractor.extract_signature_with_file_context
       ~arity:arity_t ~db ?builtin_signature_db taint_inst ~name:info.name
+      ~class_name:info.class_name_str
       ~method_properties:info.method_properties ~call_graph:call_graph
       sig_cfg ast
   in
@@ -479,7 +480,8 @@ let extract_signatures
         let db'', sig_' =
           Taint_signature_extractor.extract_signature_with_file_context
             ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst
-            ~name:info.name ~method_properties:info.method_properties
+            ~name:info.name ~class_name:info.class_name_str
+            ~method_properties:info.method_properties
             ~call_graph:call_graph sig_cfg ast
         in
         (db'', fresh @ [ to_ext (sig_', arity_t') ])

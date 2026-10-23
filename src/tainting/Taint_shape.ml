@@ -790,6 +790,27 @@ let truncate_signature ~max_depth (s : Signature.t) : Signature.t =
   let effects = Effects.map (truncate_effect ~max_depth) s.effects in
   if phys_equal effects s.effects then s else { s with effects }
 
+(* Whether a [Fun] occurs in [shape], at any depth. *)
+let rec shape_has_fun (shape : shape) : bool =
+  match shape with
+  | Fun _ -> true
+  | Bot
+  | Arg _ ->
+      false
+  | Obj obj -> Fields.exists (fun _ (Cell (_, s) : cell) -> shape_has_fun s) obj
+
+(* The parameters whose shape occurs in [shape] ([Arg]), at any depth. *)
+let rec args_in_shape (shape : shape) : T.arg list =
+  match shape with
+  | Arg (arg, _) -> [ arg ]
+  | Bot
+  | Fun _ ->
+      []
+  | Obj obj ->
+      Fields.fold
+        (fun _ (Cell (_, s) : cell) (acc : T.arg list) -> args_in_shape s @ acc)
+        obj []
+
 (* The taint variables of a recursive function, widened: a [Var] or
  * [Shape_var] of a parameter at a non-empty path becomes the [Var] and the
  * [Shape_var] of the parameter. The [Var] gives the taint of the caller's
@@ -849,18 +870,29 @@ and widen_effect_taints (eff : Effect.t) : Effect.t =
       Effect.ToSink { tts with taints_with_precondition = (items, pre) }
   | Effect.ToReturn tr -> (
       match tr.data_shape with
-      | Obj _ ->
+      | Obj _ when not (shape_has_fun tr.data_shape) ->
           (* The object shape is folded into the taints of the returned value:
            * a field of a value without a shape is read as the whole value,
-           * so a caller gets one widened set, not one per cell. *)
+           * so a caller gets one widened set, not one per cell. A parameter
+           * whose shape the object holds ([Arg]) is substituted by the
+           * caller's argument, so it is kept as the parameter's taint
+           * variables. A [Fun] keeps the shape: a caller may call it. *)
           Effect.ToReturn
             { tr with
               data_taints =
                 widen_taints
-                  (Taints.union tr.data_taints
-                     (gather_all_taints_in_shape tr.data_shape));
+                  (List.fold_left
+                     (fun (acc : Taints.t) (arg : T.arg) ->
+                       let root : T.lval = { base = T.BArg arg; offset = [] } in
+                       acc
+                       |> Taints.add_taint { T.orig = T.Var root; tokens = [] }
+                       |> Taints.add_taint { T.orig = T.Shape_var root; tokens = [] })
+                     (Taints.union tr.data_taints
+                        (gather_all_taints_in_shape tr.data_shape))
+                     (args_in_shape tr.data_shape));
               data_shape = Bot;
               control_taints = widen_taints tr.control_taints }
+      | Obj _
       | Bot
       | Arg _
       | Fun _ ->

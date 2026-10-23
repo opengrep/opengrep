@@ -22,12 +22,15 @@ val extract_signature :
   Taint_rule_inst.t ->
   ?in_env:Taint_lval_env.t ->
   ?name:IL.name ->
+  class_name:string option ->
   ?signature_db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?call_graph:Call_graph.G.t option ->
   IL.fun_cfg ->
   extraction_result
-(** Extract both signature and taint mapping from a function *)
+(** Extract both signature and taint mapping from a function. A method
+    ([class_name]) reads the field taints of its class's constructors, and a
+    constructor stores them, as in [Dataflow_tainting.fixpoint]. *)
 
 val mk_global_assumptions_with_sids :
   Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
@@ -42,6 +45,7 @@ val extract_signature_with_file_context :
   ?db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   name:IL.name ->
+  class_name:string option ->
   ?method_properties:AST_generic.expr list ->
   ?call_graph:Call_graph.G.t option ->
   Taint_rule_inst.t ->

@@ -1,0 +1,11 @@
+rules:
+  - id: test-constructor-calls-method-reading-field
+    message: Taint stored in a field by the constructor reaches a method it calls
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
