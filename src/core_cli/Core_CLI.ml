@@ -854,7 +854,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
 
   (* coupling: lots of similarities with what we do in Scan_subcommand.ml *)
   Log_semgrep.setup ?log_to_file:!log_to_file
-    ?require_one_of_these_tags:None ~highlight_setting:On
+    ?require_one_of_these_tags:None ~highlight_setting:On ~pp_message:None
     ~level:
       (* TODO: command-line option or env variable to choose the log level *)
       (if !debug then Some Debug else Some Info)

@@ -322,3 +322,4 @@ let on_result = Skin_common.on_result look
 let pp_findings = Skin_common.pp_findings look
 let pp_matches = Skin_common.pp_by_file look
 let shows_status_bar = true
+let pp_log_message = Some Skin_common.pp_log_message

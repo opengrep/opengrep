@@ -427,3 +427,43 @@ let pp_findings (look : look) (ctx : Skin.ctx) ppf
   Findings_layout.pp_findings ~is_ci_invocation:ctx.is_ci_invocation
     ~pp_by_file:(pp_by_file look ctx) ~pp_ci_heading:look.pp_ci_heading
     ~pp_rules_fired:(pp_rules_fired look ctx) ppf cli_output
+
+(* The word before a message on stderr, coloured as the severity of a
+   finding in the simple skin; an app message has none. *)
+let log_word (level : Logs.level) : (string * Fmt.style) option =
+  match level with
+  | Logs.Error -> Some ("error", `Fg `Red)
+  | Logs.Warning -> Some ("warning", `Fg `Yellow)
+  | Logs.Info -> Some ("info", `Fg `Green)
+  | Logs.Debug -> Some ("debug", `Faint)
+  | Logs.App -> None
+
+(* the column of the text of a message, two after the widest word *)
+let log_margin : int =
+  [ Logs.Error; Logs.Warning; Logs.Info; Logs.Debug ]
+  |> List.fold_left
+       (fun (acc : int) (level : Logs.level) ->
+         match log_word level with
+         | Some ((word : string), (_ : Fmt.style)) ->
+             max acc (String.length word)
+         | None -> acc)
+       0
+  |> ( + ) 2
+
+(* "warning  a message", with the lines after the first indented to the
+   text *)
+let pp_log_message (level : Logs.level) (ppf : Format.formatter)
+    (txt : string) : unit =
+  match log_word level with
+  | None -> Fmt.string ppf txt
+  | Some (word, style) ->
+      String.split_on_char '\n' txt
+      |> List.iteri (fun (i : int) (line : string) ->
+             if Int.equal i 0 then
+               Fmt.pf ppf "%a%s%s"
+                 Fmt.(styled style string)
+                 word
+                 (String.make (log_margin - String.length word) ' ')
+                 line
+             else if String.equal line "" then Fmt.pf ppf "@\n"
+             else Fmt.pf ppf "@\n%s%s" (String.make log_margin ' ') line)

@@ -113,6 +113,15 @@ let color level =
   | Logs.Error -> Some "31" (*red*)
   | _else -> None
 
+(* Whether logging is on at a level that shows no info or debug message, the
+   default level of the CLI. *)
+let is_terse_level (level : Logs.level option) : bool =
+  match level with
+  | Some (Logs.App | Logs.Error | Logs.Warning) -> true
+  | Some (Logs.Info | Logs.Debug)
+  | None ->
+      false
+
 (* print an ANSI escape sequence - not worth to use an extra library
    (such as ANSIterminal) for this *)
 let pp_sgr ppf style =
@@ -204,10 +213,13 @@ let flush_to_sink (ppf : Format.formatter) (buf : Buffer.t)
 *)
 let mk_reporter ?(additional_reporters : Logs.reporter list = [])
     ?(to_terminal = false) ~dst ~require_one_of_these_tags
-    ~read_tags_from_env_vars:(env_vars : string list) ~highlight () =
+    ~read_tags_from_env_vars:(env_vars : string list) ~highlight
+    ~(pp_message : (Logs.level -> string Fmt.t) option) () =
   (* additional_reporters: the copy of the logs to a file, see setup.
      to_terminal: the reporter writes to stderr, and [redirect_stderr]
-     redirects its messages. *)
+     redirects its messages.
+     pp_message: prints an error or a warning of the application, already
+     rendered, in place of the header with the time. *)
   let require_one_of_these_tags =
     match read_comma_sep_strs_from_env_vars env_vars with
     | Some tags -> tags
@@ -220,6 +232,9 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = [])
      logs_mutex. *)
   let buf = Buffer.create 256 in
   let buf_ppf = Format.formatter_of_buffer buf in
+  (* the text of a message passed to [pp_message], reused in the same way *)
+  let msg_buf = Buffer.create 256 in
+  let msg_ppf = Format.formatter_of_buffer msg_buf in
   let report src level ~over k msgf =
     let src_name = Logs.Src.name src in
     let is_default_src = src_name = "application" in
@@ -255,17 +270,32 @@ let mk_reporter ?(additional_reporters : Logs.reporter list = [])
               Logs_fmt.pp_header (level, header) pp_tags tags
               (if is_default_src then "" else "(" ^ src_name ^ ")")
           in
-          match level with
-          | App ->
+          match (level, pp_message) with
+          | App, _ ->
               (* App level: no timestamp, tags, or other decorations *)
               Format.kfprintf k dst (fmt ^^ "@.")
-          | Error
-          | Warning
-          | Info ->
+          | (Error | Warning), Some (pp : Logs.level -> string Fmt.t)
+            when is_default_src && Option.is_none header ->
+              reset_like ~from:dst msg_ppf msg_buf;
+              (* Format breaks no line of the message: [pp] lays out its
+                 lines after a margin of its own, which would push a line
+                 broken at the width of [dst] past it. A box opened past the
+                 maximum indentation would break a line too. *)
+              Format.pp_set_margin msg_ppf max_int;
+              (let margin = UFormat.pp_get_margin msg_ppf () in
+               UFormat.pp_set_geometry msg_ppf ~max_indent:(margin - 1)
+                 ~margin);
+              Format.kfprintf
+                (fun (_ : Format.formatter) ->
+                  Format.pp_print_flush msg_ppf ();
+                  Format.kfprintf k dst "%a@." (pp level)
+                    (Buffer.contents msg_buf))
+                msg_ppf fmt
+          | (Error | Warning | Info), _ ->
               (* Print no tags for levels other than Debug since we can't
                  filter these messages by tag. *)
               pp_w_time ~tags:Logs.Tag.empty
-          | Debug ->
+          | Debug, _ ->
               (* Tag-based filtering *)
               if
                 select_all_debug_messages
@@ -343,7 +373,7 @@ let setup_basic ?(level = Some Logs.Warning) () =
   Logs.set_reporter
     (mk_reporter ~to_terminal:true ~dst:UFormat.err_formatter
        ~require_one_of_these_tags:[]
-       ~read_tags_from_env_vars:[] ~highlight:false ());
+       ~read_tags_from_env_vars:[] ~highlight:false ~pp_message:None ());
   ()
 
 (* The destination of the last file reporter. A process may call [setup] more
@@ -363,33 +393,39 @@ let () = UStdlib.at_exit close_log_file
 (* A reporter writing the same messages as the main one, without colours,
    to a file it truncates. *)
 let file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars
-    (file : Fpath.t) : Logs.reporter =
+    ~(pp_message : (Logs.level -> string Fmt.t) option) (file : Fpath.t) :
+    Logs.reporter =
   close_log_file ();
   let oc = UStdlib.open_out (Fpath.to_string file) in
   let dst = UFormat.formatter_of_out_channel oc in
   log_file_dst := Some (dst, oc);
   mk_reporter ~dst ~require_one_of_these_tags ~read_tags_from_env_vars
-    ~highlight:false ()
+    ~highlight:false ~pp_message ()
 
 let setup ?(highlight_setting = Console.get_highlight_setting ())
     ?log_to_file:opt_file ?copy_to_file ?(additional_reporters = [])
     ?(require_one_of_these_tags = default_tags)
     ?(read_level_from_env_vars = [ "LOG_LEVEL" ])
     ?(read_srcs_from_env_vars = [ "LOG_SRCS" ])
-    ?(read_tags_from_env_vars = [ "LOG_TAGS" ]) ~level () =
-  let additional_reporters =
-    match copy_to_file with
-    | None -> additional_reporters
-    | Some file ->
-        file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars file
-        :: additional_reporters
-  in
+    ?(read_tags_from_env_vars = [ "LOG_TAGS" ])
+    ~(pp_message : (Logs.level -> string Fmt.t) option) ~level () =
   (* Override the log level if it's provided by an environment variable!
      This is for debugging a command that gets called by some wrapper. *)
   let level : Logs.level option =
     match read_level_from_env read_level_from_env_vars with
     | Some level_from_env -> level_from_env
     | None -> level
+  in
+  (* the same printer on every destination, so that the copy of the
+     messages is that of stderr *)
+  let pp_message = if is_terse_level level then pp_message else None in
+  let additional_reporters =
+    match copy_to_file with
+    | None -> additional_reporters
+    | Some file ->
+        file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars
+          ~pp_message file
+        :: additional_reporters
   in
   let show_srcs : Re.re list =
     read_comma_sep_strs_from_env_vars read_srcs_from_env_vars
@@ -412,8 +448,8 @@ let setup ?(highlight_setting = Console.get_highlight_setting ())
   Logs.set_reporter
     (mk_reporter ~additional_reporters
        ~to_terminal:(Option.is_none opt_file)
-       ~dst ~require_one_of_these_tags
-       ~read_tags_from_env_vars ~highlight ());
+       ~dst ~require_one_of_these_tags ~read_tags_from_env_vars ~highlight
+       ~pp_message ());
   Logs.debug (fun m ->
       m "setup_logging: highlight_setting=%s, highlight=%B"
         (Console.show_highlight_setting highlight_setting)

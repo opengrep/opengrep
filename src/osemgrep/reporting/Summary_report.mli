@@ -1,6 +1,10 @@
 (* One error of the scan as a line of the text output: the level label, the
    message and its location. Printed on stderr, before the findings. *)
-val pp_cli_error : Format.formatter -> Semgrep_output_v1_t.cli_error -> unit
+val pp_cli_error :
+  pp_message:(Logs.level -> string Fmt.t) option ->
+  Format.formatter ->
+  Semgrep_output_v1_t.cli_error ->
+  unit
 
 (* The errors the text output reports: a warning only with --verbose, and
    never a timeout or a missing plugin, which have their own lines. *)

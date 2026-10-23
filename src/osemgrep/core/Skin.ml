@@ -90,6 +90,11 @@ module type S = sig
   val pp_matches : ctx -> Semgrep_output_v1_t.cli_match list Fmt.t
 
   val shows_status_bar : bool
+
+  (* How an error, a warning or a note is printed on stderr at the default
+     level: its level, then its text, already rendered. None keeps the
+     header of the log reporter, with the time and the level in capitals. *)
+  val pp_log_message : (Logs.level -> string Fmt.t) option
 end
 
 (*****************************************************************************)

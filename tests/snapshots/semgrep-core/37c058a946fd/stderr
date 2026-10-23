@@ -1,0 +1,25 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][WARNING]: cannot write the log file of $OPENGREP_LOG_FILE: <MASKED>; continuing without it
+
+
+┌<RULE>┐
+│ Scan Status │
+└<RULE>┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌<RULE>┐
+│ Scan Summary │
+└<RULE>┘
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+
+Ran 1 rule on 1 file: 1 finding.
+ASSERT exit code

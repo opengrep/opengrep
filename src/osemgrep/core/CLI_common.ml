@@ -101,7 +101,8 @@ let create_log_file (file : Fpath.t) : (unit, string) result =
       Error (Common.spf "%s: %s" arg (Unix.error_message err))
   | Sys_error (msg : string) -> Error msg
 
-let setup_logging ~force_color ~level =
+let setup_logging ~force_color
+    ~(pp_message : (Logs.level -> string Fmt.t) option) ~level =
   (* The file of $OPENGREP_LOG_FILE (or $SEMGREP_LOG_FILE) gets a copy of
    * the logs at the same level as stderr, so that it costs nothing unless
    * --verbose or --debug is passed too. pysemgrep wrote its own logs there
@@ -125,7 +126,7 @@ let setup_logging ~force_color ~level =
   let highlight_setting : Console.highlight_setting =
     if force_color then On else if !Semgrep_envvars.v.no_color then Off else Auto
   in
-  Log_semgrep.setup ?copy_to_file ~highlight_setting ~level ();
+  Log_semgrep.setup ?copy_to_file ~highlight_setting ~pp_message ~level ();
   log_file_error
   |> Option.iter (fun ((var : string), (msg : string)) ->
          Logs.warn (fun m ->

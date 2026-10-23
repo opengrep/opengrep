@@ -170,6 +170,12 @@ let normalize =
     mask_header_rule;
   ]
 
+(* The reason a log file cannot be written comes from the operating system,
+   whose wording differs between systems. *)
+let normalize_log_file_warning =
+  normalize
+  @ [ Testo.mask_line ~after:"$OPENGREP_LOG_FILE: " ~before:"; continuing" () ]
+
 (* [Testutil_git.mask_temp_git_hash] masks only the line of the root commit,
    so a test that commits again needs this mask too. It is wider and includes
    the first, so it is not in the list above: every snapshot there would lose
@@ -214,6 +220,15 @@ let test_traces (caps : Scan_subcommand.caps) (skin : string) () =
 let test_interfile_source (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
       Exit_code.Check.ok (scan caps ~files:interfile_files []))
+
+(* A log file under a regular file cannot be created, whoever runs the test,
+   so the scan prints a warning on stderr and continues. *)
+let test_warning (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
+      Semgrep_envvars.with_envvar "OPENGREP_LOG_FILE" "p.py/scan.log"
+        (fun () ->
+          Exit_code.Check.ok
+            (scan caps ~argv:pattern_argv ~files:pattern_files [])))
 
 (* --baseline-commit runs the scan twice, and each run prints a plan. The
    second, of the baseline scan, is marked as such: it covers the same paths
@@ -334,6 +349,14 @@ let tests (caps : caps) =
       t "vivid with -e" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (test_pattern narrow "vivid");
+      t "simple prints a warning after its level"
+        ~checked_output:(Testo.split_stdout_stderr ())
+        ~normalize:normalize_log_file_warning
+        (test_warning narrow "simple");
+      t "legacy prints a warning after the time"
+        ~checked_output:(Testo.split_stdout_stderr ())
+        ~normalize:normalize_log_file_warning
+        (test_warning narrow "legacy");
       t "-e findings carry no synthesised heading"
         (test_pattern_has_no_heading narrow);
       t "simple names the baseline scan's plan"

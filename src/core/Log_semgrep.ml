@@ -27,7 +27,8 @@ You can see the list of possible libraries above in this log as in
  * they can be set also with CLI flags and will be part of the man page.
  *)
 let setup ?log_to_file ?copy_to_file ?require_one_of_these_tags
-    ~(highlight_setting : Console.highlight_setting) ~level () =
+    ~(highlight_setting : Console.highlight_setting)
+    ~(pp_message : (Logs.level -> string Fmt.t) option) ~level () =
   UConsole.setup ~highlight_setting ();
   (* We override the default use of LOG_XXX env var in Logs_.setup() with
    * SEMGREP_LOG_XXX env vars because Gitlab was reporting perf problems due
@@ -78,7 +79,7 @@ let setup ?log_to_file ?copy_to_file ?require_one_of_these_tags
         "PYTEST_OPENGREP_LOG_TAGS"; "OPENGREP_LOG_TAGS";
         "PYTEST_SEMGREP_LOG_TAGS"; "SEMGREP_LOG_TAGS";
       ]
-    ~level ();
+    ~pp_message ~level ();
   Logs.debug (fun m -> m "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   Logs.debug (fun m -> m "%s" help_msg);
   Logs.debug (fun m -> m "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");

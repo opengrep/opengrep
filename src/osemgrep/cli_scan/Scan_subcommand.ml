@@ -803,7 +803,13 @@ let check_targets_with_rules ?(print_summary = true)
                    ~verbose:conf.output_conf.skipped_files
               |> List.iter (fun (error : Out.cli_error) ->
                      Logs.app (fun m ->
-                         m "%a" Summary_report.pp_cli_error error))
+                         m "%a"
+                           (Summary_report.pp_cli_error
+                              ~pp_message:
+                                (if Logs_.is_terse_level (Logs.level ()) then
+                                   Sk.pp_log_message
+                                 else None))
+                           error))
           | _ -> ());
 
           (* step 5: report the matches *)
@@ -992,14 +998,8 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
    request. *)
 let draws_status_bar (conf : Scan_CLI.conf) : bool =
   let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
-  let level_allows =
-    match Logs.level () with
-    | Some (Logs.App | Logs.Error | Logs.Warning) -> true
-    | Some (Logs.Info | Logs.Debug)
-    | None ->
-        false
-  in
-  (not conf.no_progress_bar) && (not conf.incremental_output) && level_allows
+  (not conf.no_progress_bar) && (not conf.incremental_output)
+  && Logs_.is_terse_level (Logs.level ())
   && Sk.shows_status_bar
 
 let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
@@ -1126,8 +1126,9 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
    * in CLI_common.setup_logging() we do the full setup (Logs_.setup()) now
    * that we have a conf object.
    *)
+  let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
-    ~level:conf.common.logging_level;
+    ~pp_message:Sk.pp_log_message ~level:conf.common.logging_level;
   Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 

@@ -663,7 +663,7 @@ let () =
      the index build, as the scan does under --verbose. *)
   if Option.is_some (Sys.getenv_opt "OPENGREP_LOG_SRCS") then
     Logs_.setup ~read_srcs_from_env_vars:[ "OPENGREP_LOG_SRCS" ]
-      ~level:(Some Logs.Info) ();
+      ~pp_message:None ~level:(Some Logs.Info) ();
   match Cmd.eval_value ~catch:false ~argv:Sys.argv main_cmd with
   | Ok (`Ok code) -> exit code
   | Ok (`Version | `Help) -> exit 0
