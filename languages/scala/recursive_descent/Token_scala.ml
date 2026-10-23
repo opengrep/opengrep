@@ -87,6 +87,16 @@ type token =
   | BANG of Tok.t
   | AT of Tok.t
   | ARROW of Tok.t
+  | CTXARROW of Tok.t
+  (* XML literals: `<name`, an attribute, an attribute value, `>`, `/>`,
+     character data and `</name>` *)
+  | T_XML_OPEN of (string * Tok.t)
+  | T_XML_ATTR of (string * Tok.t)
+  | T_XML_ATTR_VALUE of (string * Tok.t)
+  | T_XML_TAG_END of Tok.t
+  | T_XML_SELF_CLOSE of Tok.t
+  | T_XML_TEXT of (string * Tok.t)
+  | T_XML_CLOSE of (string * Tok.t)
   (* emitted only via lexing tricks *)
   | DEDENT of (* line *) int * (* width *) int
 [@@deriving show { with_path = false }]

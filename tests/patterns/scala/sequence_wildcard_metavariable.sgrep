@@ -1,0 +1,1 @@
+$X match { case Seq($A, $R*) => sink($R) }

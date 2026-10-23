@@ -58,15 +58,34 @@ type state_mode =
   (* started with x""", finished with """ *)
   | ST_IN_INTERPOLATED_TRIPLE
 
+  (* in an XML start tag, between `<name` and `>` or `/>` *)
+  | ST_IN_XML_TAG
+  (* in the content of an XML element, between `>` and `</name>` *)
+  | ST_IN_XML_CONTENT
+
 let default_state = ST_IN_CODE
 
 type state = {
   mode: state_mode list ref;
+  (* the last token returned, which decides whether a `<` starts XML *)
+  mutable last_token: Token_scala.token option;
 }
 
 let create () = {
   mode = ref [default_state];
+  last_token = None;
 }
+
+(* Scanners.scala, fetchLT: a `<` starts an XML literal after a space, a
+   newline, `(`, `{` or a token that ends with `>` *)
+let xml_start_allowed (state : state) : bool =
+  match state.last_token with
+  | None
+  | Some (Space _ | Nl _ | LPAREN _ | LBRACE _) ->
+      true
+  | Some tok ->
+      let s = Tok.content_of_tok (Token_helpers_scala.info_of_tok tok) in
+      String.length s > 0 && Char.equal s.[String.length s - 1] '>'
 
 let current_mode state =
     match !(state.mode) with
@@ -195,18 +214,26 @@ let hexDigits = hexDigit | hexDigit hexDigitsAndUnderscores? hexDigit
 let hexNumeral = ("0x" | "0X") hexDigits
 let hexIntegerLiteral = hexNumeral integerTypeSuffix?
 
+(* Scala 2.13 and 3: 0b101 *)
+let binaryDigit = ['0' '1']
+let binaryDigits = binaryDigit (binaryDigit | '_')*
+let binaryNumeral = ("0b" | "0B") binaryDigits
+let binaryIntegerLiteral = binaryNumeral integerTypeSuffix?
+
 let integerLiteral =
   decimalIntegerLiteral
 | hexIntegerLiteral
+| binaryIntegerLiteral
 
 
-let exponentPart = ['E''e'] ['+''-']? digit digit*
+(* underscores can separate the digits of each part *)
+let exponentPart = ['E''e'] ['+''-']? digits
 let floatType = ['F''f''D''d']
 let floatingPointLiteral =
-   digit digit* '.' digit digit* exponentPart? floatType?
- |              '.' digit digit* exponentPart? floatType?
- | digit digit*                  exponentPart  floatType?
- | digit digit*                  exponentPart? floatType
+   digits '.' digits exponentPart? floatType?
+ |        '.' digits exponentPart? floatType?
+ | digits            exponentPart  floatType?
+ | digits            exponentPart? floatType
 
 (* note: old Scala spec was wrong and was using stringLiteral *)
 let id = plainid | '`' (charNoBackQuoteOrNewline | escapeSeq)+ '`'
@@ -224,11 +251,29 @@ let alphaid = upper idrest | varid
  * but s"$xxx${1}" should actually be parsed as $xxx and then ${1}, which
  * means xxx$ is not a valid id (even though the official spec says it is)
  *)
+(* A non-ASCII code point that can continue an identifier in the text of an
+   interpolated string, which goes on after the identifier. Only letters and
+   digits do (Scanners.scala, getIdentRest); this excludes the common blocks
+   of punctuation and symbols: U+0080 to U+00BF, U+00D7, U+00F7, U+2000 to
+   U+2BFF and U+3000 to U+303F. *)
+let utf8_ident_part =
+  ['\195'] (utf8_tail_byte # ['\151' '\183'])
+| ['\196'-'\223'] utf8_tail_byte
+| ['\224' '\225'] utf8_tail_byte utf8_tail_byte
+| '\226' ['\176'-'\191'] utf8_tail_byte
+| '\227' ['\129'-'\191'] utf8_tail_byte
+| ['\228'-'\239'] utf8_tail_byte utf8_tail_byte
+| utf8_4
+
 let id_after_dollar =
-  ['A'-'Z''a'-'z''_'] (['A'-'Z''a'-'z''_'] | digit)* ('_' op)?
+  (['A'-'Z''a'-'z''_'] | utf8_ident_part)
+  (['A'-'Z''a'-'z''_'] | digit | utf8_ident_part)* ('_' op)?
 
 let metavar_id_after_dollar =
   ['A'-'Z''_'] (['A'-'Z''_'] | digit)*
+
+(* XML names, with namespace prefixes *)
+let xml_name = ['A'-'Z''a'-'z''_'] ['A'-'Z''a'-'z''_''0'-'9'':''.''-']*
 
 (*****************************************************************************)
 (* Rule initial *)
@@ -301,6 +346,8 @@ rule token state = parse
   | "<-"    { LARROW (tokinfo lexbuf) }
   (* case body and short lambdas *)
   | "=>"    { ARROW (tokinfo lexbuf) }
+  (* context functions *)
+  | "?=>"   { CTXARROW (tokinfo lexbuf) }
 
   | "<%"    { VIEWBOUND (tokinfo lexbuf) }
   | "<:"    { SUBTYPE (tokinfo lexbuf) }
@@ -350,6 +397,21 @@ rule token state = parse
   | "'" {
     QUOTE (tokinfo lexbuf)
   }
+
+  (* ----------------------------------------------------------------------- *)
+  (* XML *)
+  (* ----------------------------------------------------------------------- *)
+  (* the name of a start tag is followed by whitespace, `>` or `/`; otherwise
+     the `<` is an operator, as in `(x <y)` *)
+  | '<' (xml_name as s) [' ' '\t' '\n' '\r' '>' '/'] {
+      Parsing_helpers.yyback 1 lexbuf;
+      if xml_start_allowed state then (
+        push_mode state ST_IN_XML_TAG;
+        T_XML_OPEN (s, tokinfo lexbuf))
+      else (
+        Parsing_helpers.yyback (String.length s) lexbuf;
+        OP ("<", tokinfo lexbuf))
+    }
 
   (* ----------------------------------------------------------------------- *)
   (* Keywords and ident *)
@@ -523,6 +585,8 @@ and in_interpolated_double state = parse
   | ("$" metavar_id_after_dollar) as s { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$" (id_after_dollar as s) { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$$" { StringLiteral("$", tokinfo lexbuf) }
+  (* Scala 3: an escaped double quote *)
+  | "$\"" { StringLiteral("\"", tokinfo lexbuf) }
 
   | eof  { error "end of file in interpolated string" lexbuf;
            pop_mode state;
@@ -541,14 +605,16 @@ and in_interpolated_triple state = parse
 
   | "\"\"\""  { pop_mode state; T_INTERPOLATED_END (tokinfo lexbuf) }
   | "\"" { StringLiteral (tok lexbuf, tokinfo lexbuf) }
-  (* not in original spec *)
-  | escapeSeq as s { StringLiteral (s, tokinfo lexbuf) }
-  | [^'"''$''\\']+ as s { StringLiteral (s, tokinfo lexbuf) }
+  (* a backslash has no lexical meaning in a triple-quoted string, so the
+     string ends at the first three quotes even after a backslash *)
+  | [^'"''$']+ as s { StringLiteral (s, tokinfo lexbuf) }
   | "${" { push_mode state ST_IN_CODE; LBRACE (tokinfo lexbuf) }
   (* for metavariables, we keep the $ sign, which we strip later if not in semgrep mode *)
   | ("$" metavar_id_after_dollar) as s { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$" (id_after_dollar as s) { ID_DOLLAR (s, tokinfo lexbuf) }
   | "$$" { StringLiteral("$", tokinfo lexbuf) }
+  (* Scala 3: an escaped double quote *)
+  | "$\"" { StringLiteral("\"", tokinfo lexbuf) }
 
   | eof  { error "end of file in interpolated2 string" lexbuf;
            pop_mode state;
@@ -557,6 +623,53 @@ and in_interpolated_triple state = parse
        error("unrecognised symbol in interpolated2 string:"^tok lexbuf) lexbuf;
        Unknown(tokinfo lexbuf)
        }
+
+(*****************************************************************************)
+(* XML *)
+(*****************************************************************************)
+and in_xml_tag state = parse
+  | (whiteSpace | newline)+ { Space (tokinfo lexbuf) }
+  | xml_name as s { T_XML_ATTR (s, tokinfo lexbuf) }
+  | '=' { EQUALS (tokinfo lexbuf) }
+  | '"' ([^ '"']* as s) '"' { T_XML_ATTR_VALUE (s, tokinfo lexbuf) }
+  | '\'' ([^ '\'']* as s) '\'' { T_XML_ATTR_VALUE (s, tokinfo lexbuf) }
+  | '{' { push_mode state ST_IN_CODE; LBRACE (tokinfo lexbuf) }
+  | "/>" { pop_mode state; T_XML_SELF_CLOSE (tokinfo lexbuf) }
+  | '>' {
+      pop_mode state;
+      push_mode state ST_IN_XML_CONTENT;
+      T_XML_TAG_END (tokinfo lexbuf)
+    }
+  | eof { error "end of file in XML tag" lexbuf;
+          pop_mode state;
+          EOF (tokinfo lexbuf) }
+  | _ { error ("unrecognised symbol in XML tag:" ^ tok lexbuf) lexbuf;
+        Unknown (tokinfo lexbuf) }
+
+and in_xml_content state = parse
+  | "</" (xml_name as s) whiteSpace* '>' {
+      pop_mode state;
+      T_XML_CLOSE (s, tokinfo lexbuf)
+    }
+  | '<' (xml_name as s) {
+      push_mode state ST_IN_XML_TAG;
+      T_XML_OPEN (s, tokinfo lexbuf)
+    }
+  (* comments, character data sections and processing instructions are
+     character data here *)
+  | "<!--" ([^ '-'] | '-' [^ '-'])* "-->"
+  | "<![CDATA[" ([^ ']'] | ']' [^ ']'] | "]]" [^ '>'])* "]]>"
+  | "<?" ([^ '?'] | '?' [^ '>'])* "?>"
+      { T_XML_TEXT (tok lexbuf, tokinfo lexbuf) }
+  (* a doubled brace stands for one brace of character data *)
+  | "{{" { T_XML_TEXT ("{", tokinfo lexbuf) }
+  | "}}" { T_XML_TEXT ("}", tokinfo lexbuf) }
+  | '{' { push_mode state ST_IN_CODE; LBRACE (tokinfo lexbuf) }
+  | [^ '<' '{' '}']+ { T_XML_TEXT (tok lexbuf, tokinfo lexbuf) }
+  | eof { error "end of file in XML content" lexbuf;
+          pop_mode state;
+          EOF (tokinfo lexbuf) }
+  | _ { T_XML_TEXT (tok lexbuf, tokinfo lexbuf) }
 
 (*****************************************************************************)
 (* Rule comment *)

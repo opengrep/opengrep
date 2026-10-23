@@ -1,0 +1,12 @@
+rules:
+- id: taint-scala-sequence-rest
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink through the rest of a sequence pattern
+  severity: WARNING
+  languages: [scala]

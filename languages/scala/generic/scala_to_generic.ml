@@ -286,8 +286,25 @@ and v_type_kind = function
         v1 |> Tok.unbracket |> List_.map (fun t -> G.Param (G.param_of_type t))
       in
       G.TyFun (ts, v3)
-  | TyPoly (v1, _v2, v3) ->
-      let v1 = v_list (v_binding None) v1 in
+  | TyContextFunction (v1, v2, v3) ->
+      let v1 = v_bracket (v_list v_type_) v1
+      and v2 = v_tok v2
+      and v3 = v_type_ v3 in
+      (* the parameters of a context function type are context parameters,
+         as those of a `using` clause *)
+      let pattrs = [ G.OtherAttribute (("using", v2), []) ] in
+      let ts =
+        v1 |> Tok.unbracket
+        |> List_.map (fun (t : G.type_) -> G.Param (G.param_of_type ~pattrs t))
+      in
+      G.TyFun (ts, v3)
+  | TyPoly ((_, v1, _), _v2, v3) ->
+      (* the type parameters, without their bounds *)
+      let v1 =
+        v1
+        |> List_.map (fun (tp : type_parameter) ->
+               G.Param (G.param_of_id (v_ident_or_wildcard tp.tpname)))
+      in
       let v3 = v_type_ v3 in
       G.TyFun (v1, v3)
   | TyDependent (v1, _v2, v3) ->
@@ -302,6 +319,15 @@ and v_type_kind = function
   | TyTuple v1 ->
       let v1 = v_bracket (v_list v_type_) v1 in
       G.TyTuple v1
+  | TyNamedTuple v1 ->
+      let ((lp, _, _) as fields) =
+        v1
+        |> v_bracket
+             (v_list (fun ((id, ty) : ident * type_) ->
+                  G.basic_field (v_ident id) None (Some (v_type_ ty))))
+      in
+      (* no keyword marks the kind, so its token is a fake one at the `(` *)
+      G.TyRecordAnon ((G.Class, Tok.fake_tok lp ""), fields)
   | TyRepeated (v1, v2) ->
       let v1 = v_type_ v1 and v2 = v_tok v2 in
       todo_type "TyRepeated" [ G.T v1; G.Tk v2 ]
@@ -381,6 +407,11 @@ and v_pattern = function
   | PatTuple v1 ->
       let v1 = v_bracket (v_list v_pattern) v1 in
       G.PatTuple v1
+  | PatNamed (v1, _v2, v3) ->
+      (* the name selects an element and binds nothing, so the key is a
+         literal, which the IL lowers to a field offset *)
+      let v1 = v_ident v1 and v3 = v_pattern v3 in
+      G.PatKeyVal (G.PatLiteral (G.String (fb v1)), v3)
   | PatVarid v1 ->
       let v1 = v_varid_or_wildcard v1 in
       G.PatId (v1, G.empty_id_info ())
@@ -409,6 +440,13 @@ and v_pattern = function
   | PatUnderscoreStar (v1, v2) ->
       let v1 = v_tok v1 and v2 = v_tok v2 in
       todo_pattern "PatUnderscoreStar" [ G.Tk v1; G.Tk v2 ]
+  | PatVarargs (v1, v2) ->
+      (* the generic form of `xs @ _*` *)
+      let v1 = v_varid v1 and v2 = v_tok v2 in
+      let rest =
+        todo_pattern "PatUnderscoreStar" [ G.Tk (Tok.fake_tok v2 "_"); G.Tk v2 ]
+      in
+      G.PatAs (rest, (v1, G.empty_id_info ()))
   | PatDisj (v1, v2, v3) ->
       let v1 = v_pattern v1 and _v2 = v_tok v2 and v3 = v_pattern v3 in
       G.PatDisj (v1, v3)
@@ -420,9 +458,40 @@ and v_pattern = function
       | QuotedType (quote_tok, (_, v1, _)) ->
           let ty = v_type_ v1 in
           G.OtherPat (("QuotedBlock", quote_tok), [ G.T ty ]))
+  | PatGiven (v1, v2) ->
+      let v2 = v_type_ v2 in
+      G.OtherPat (("given", v1), [ G.T v2 ])
   | PatEllipsis v1 -> G.PatEllipsis v1
 
 and todo_expr msg any = G.OtherExpr ((msg, fake msg), any) |> G.e
+
+and v_xml ({ xml_kind; xml_attrs; xml_body } : xml) : G.xml =
+  let xml_kind =
+    match xml_kind with
+    | XmlClassic (ilt, id, igt, iclose) ->
+        G.XmlClassic (ilt, H.name_of_id id, igt, iclose)
+    | XmlSingleton (ilt, id, iclose) ->
+        G.XmlSingleton (ilt, H.name_of_id id, iclose)
+  in
+  let xml_attrs =
+    xml_attrs
+    |> List_.map (fun ((id, ieq, value) : xml_attribute) ->
+           let value =
+             match value with
+             | XmlAttrString s -> G.L (G.String (fb s)) |> G.e
+             | XmlAttrExpr e -> v_expr e
+           in
+           G.XmlAttr (id, ieq, value))
+  in
+  let xml_body =
+    xml_body
+    |> List_.map (fun (body : xml_body) ->
+           match body with
+           | XmlText s -> G.XmlText s
+           | XmlExpr (lb, e, rb) -> G.XmlExpr (lb, Some (v_expr e), rb)
+           | XmlXml xml -> G.XmlXml (v_xml xml))
+  in
+  { G.xml_kind; xml_attrs; xml_body }
 
 and v_expr e : G.expr =
   match e with
@@ -443,6 +512,13 @@ and v_expr e : G.expr =
   | Tuple v1 ->
       let v1 = v_bracket (v_list v_expr) v1 in
       G.Container (G.Tuple, v1) |> G.e
+  (* a named tuple is a record of its elements *)
+  | NamedTuple v1 ->
+      v1
+      |> v_bracket
+           (v_list (fun ((id, _, e) : ident * tok * expr) ->
+                G.basic_field (v_ident id) (Some (v_expr e)) None))
+      |> fun fields -> G.Record fields |> G.e
   | Name v1 ->
       let sref, ids = v_path v1 in
       let start =
@@ -503,6 +579,8 @@ and v_expr e : G.expr =
   | Lambda v1 ->
       let v1 = v_function_definition v1 in
       G.Lambda v1 |> G.e
+  (* type parameters are erased at run time; the lambda remains *)
+  | PolyLambda (_tparams, _tok, v3) -> v_expr v3
   | New (v1, v2) -> (
       let v1 = v_tok v1 and v2 = v_template_definition v2 in
       match v2 with
@@ -523,6 +601,19 @@ and v_expr e : G.expr =
       | _ ->
           let cl = G.AnonClass v2 |> G.e in
           G.Call (cl, fb []) |> G.e)
+  | Xml xmls -> (
+      match List_.map v_xml xmls with
+      | [ xml ] -> G.Xml xml |> G.e
+      | xmls ->
+          (* adjacent elements form a sequence of nodes *)
+          let fake_tok = Tok.unsafe_fake_tok "" in
+          G.Xml
+            {
+              G.xml_kind = G.XmlFragment (fake_tok, fake_tok);
+              xml_attrs = [];
+              xml_body = List_.map (fun (xml : G.xml) -> G.XmlXml xml) xmls;
+            }
+          |> G.e)
   | Quoted quote -> (
       match quote with
       | QuotedBlock (quote_tok, (_, v1, _)) ->
@@ -841,6 +932,8 @@ and v_modifier_kind = function
   | Inline -> Either.Right "inline"
   | Open -> Either.Right "open"
   | Opaque -> Either.Right "opaque"
+  | Transparent -> Either.Right "transparent"
+  | InfixModifier -> Either.Right "infix"
   | CaseClassOrObject -> Either.Left G.RecordClass
   | PackageObject -> Either.Right "PackageObject"
   | Val -> Either.Left G.Const
@@ -880,7 +973,9 @@ and v_type_parameter
   let _argTODO = v_type_parameters v_tpparams in
   let _argTODO = v_type_bounds v_tpbounds in
   let _argTODO = v_list v_type_ v_tpviewbounds in
-  let _argTODO = v_list v_type_ v_tpcolons in
+  let _argTODO =
+    v_list (fun ((t, _) : type_ * ident option) -> v_type_ t) v_tpcolons
+  in
   let tp_bounds = [] in
   (* TODO *)
   TP { G.tp_id; tp_variance; tp_attrs; tp_bounds; tp_default = None }
@@ -895,98 +990,136 @@ and v_type_parameters v : G.type_parameters option =
 and v_definition x : G.definition list =
   match x with
   | DefEnt (v1, v2) ->
-      let v1 = v_entity v1 and v2 = v_definition_kind v2 in
-      [ (v1, v2) ]
+      let ent = v_entity v1 and def = v_definition_kind v2 in
+      (* a derives clause asks for instances of type classes, which the
+         class does not extend; it is an attribute of the class *)
+      let derives =
+        match v2 with
+        | Template { cparents = { cderives = Some (tok, tys); _ }; _ } ->
+            let tys = List_.map (fun (ty : type_) -> G.T (v_type_ ty)) tys in
+            [ G.OtherAttribute (("derives", tok), tys) ]
+        | _ -> []
+      in
+      [ ({ ent with G.attrs = ent.G.attrs @ derives }, def) ]
   | EnumCaseDef (attrs, v1) ->
       let attrs = v_list v_attribute attrs in
       v_enum_case_definition attrs v1
   | GivenDef v1 -> v_given_definition v1
   | VarDefs v1 -> v_variable_definitions v1
 
-and v_given_definition { gsig; gkind } =
-  let v1 =
+(* A given instance is a definition with the `given` attribute: an alias
+   given (`given x: T = e`) is a final lazy variable, or a method when it
+   takes type or context parameters; a structural given (`given T with ...`)
+   is an object, or a class when it takes parameters (Scala 3 reference,
+   "Given Instances"). An anonymous given has no identifier. *)
+and v_given_definition { gtok; gattrs; gsig; gkind } : G.definition list =
+  let given_entity = G.OtherEntity (("given", gtok), []) in
+  let name, tparams, params =
     match gsig with
-    | None -> []
+    | None -> (given_entity, None, [])
     | Some { g_id; g_tparams; g_using; g_colon = _ } ->
-        let g_id =
+        let name =
           match g_id with
-          | None -> []
-          | Some id -> [ G.I (v_ident id) ]
+          | Some id -> G.EN (H.name_of_id (v_ident id))
+          | None -> given_entity
         in
-        let g_tparams =
-          match v_type_parameters g_tparams with
-          | None -> []
-          | Some (_, xs, _) -> [ G.Anys (xs |> List_.map (fun x -> G.Tp x)) ]
-        in
-        let g_using =
-          [
-            G.Anys
-              (v_list v_bindings g_using |> List_.flatten
-              |> List_.map (fun x -> G.Pa x));
-          ]
-        in
-        g_id @ g_tparams @ g_using
+        let params = v_list v_bindings g_using |> List_.flatten in
+        (name, v_type_parameters g_tparams, params)
   in
-  let v2 =
+  let attrs =
+    G.OtherAttribute (("given", gtok), []) :: v_list v_attribute gattrs
+  in
+  let has_params = Option.is_some tparams || not (List_.null params) in
+  let attrs, kind =
     match gkind with
-    | GivenStructural (constr_apps, body) ->
-        let v1 =
-          v_list v_constr_app constr_apps
-          |> List_.map (fun (ty, argss) ->
-                 let flat_args =
-                   List.concat_map (fun (_, args, _) -> args) argss
-                 in
-                 G.Anys
-                   [ G.T ty; G.Anys (List_.map (fun x -> G.Ar x) flat_args) ])
-        in
-        let v2 =
-          match body with
-          | None -> []
-          | Some body ->
-              let body = v_template_body body in
-              [ G.S (G.Block body |> G.s) ]
-        in
-        v1 @ v2
     | GivenType (ty, exp) ->
-        let v1 = [ G.T (v_type_ ty) ] in
-        let v2 =
-          match exp with
-          | None -> []
-          | Some exp -> [ G.E (v_expr exp) ]
+        let ty = v_type_ ty and exp = v_option v_expr exp in
+        if has_params then
+          let fbody =
+            match exp with
+            | Some e -> G.FBExpr e
+            | None -> G.FBDecl G.sc
+          in
+          ( attrs,
+            G.FuncDef
+              {
+                G.fkind = (G.Method, gtok);
+                fparams = fb params;
+                frettype = Some ty;
+                fbody;
+              } )
+        else
+          let attrs =
+            G.KeywordAttr (G.Const, gtok) :: G.KeywordAttr (G.Lazy, gtok) :: attrs
+          in
+          (attrs, G.VarDef { G.vinit = exp; vtype = Some ty; vtok = G.no_sc })
+    | GivenStructural (constr_apps, body) ->
+        let cextends =
+          v_list v_constr_app constr_apps
+          |> List_.map (fun ((ty, argss) : G.type_ * G.arguments list) ->
+                 match argss with
+                 | [] -> (ty, None)
+                 | args :: _ -> (ty, Some args))
         in
-        v1 @ v2
+        ( attrs,
+          G.ClassDef
+            {
+              G.ckind = ((if has_params then G.Class else G.Object), gtok);
+              cextends;
+              cmixins = [];
+              cimplements = [];
+              cparams = fb params;
+              cbody = v_class_body body;
+            } )
   in
-  let todo_kind = ("given", Tok.unsafe_fake_tok "given") in
-  [
-    ( { name = G.OtherEntity (todo_kind, []); attrs = []; tparams = None },
-      G.OtherDef (todo_kind, v1 @ [ G.Anys v2 ]) );
-  ]
+  [ ({ G.name; attrs; tparams }, kind) ]
 
 and v_end_marker { end_tok; end_kind } : G.stmt =
   G.OtherStmt (OS_Todo, [ G.Tk end_tok; G.Tk end_kind ]) |> G.s
 
+(* An extension method is a method whose first parameters are the receiver
+   and the using parameters of its extension, after the type parameters of the
+   extension (Scala 3 reference, "Translation of Extension Methods"). The
+   receiver is the object on which the method is called, as the receiver of
+   a Kotlin extension function is. *)
 and v_extension { ext_tok = _; ext_tparams; ext_using; ext_param; ext_methods }
     : G.stmt list =
-  let tparams =
-    match v_type_parameters ext_tparams with
-    | None -> G.Anys []
-    | Some (_, xs, _) -> G.Anys (xs |> List_.map (fun tp -> G.Tp tp))
+  (* each method gets its own conversion of the clauses it shares, so that
+     their bindings are distinct *)
+  let v_method ((ent, def) : G.definition) : G.definition =
+    match def with
+    | G.FuncDef fdef ->
+        let receiver =
+          match v_binding None ext_param with
+          | G.Param param -> G.ParamReceiver param
+          | param -> param
+        in
+        let using = v_list v_bindings ext_using |> List_.flatten in
+        let ext_tparams = v_type_parameters ext_tparams in
+        let tparams = concat_type_params ext_tparams ent.G.tparams in
+        let lb, params, rb = fdef.G.fparams in
+        let fparams = (lb, (receiver :: using) @ params, rb) in
+        ({ ent with G.tparams }, G.FuncDef { fdef with G.fparams })
+    | _ -> (ent, def)
   in
-  let using =
-    G.Anys
-      (v_list v_bindings ext_using |> List_.map (fun params -> G.Params params))
-  in
-  let params = G.Pa (v_binding None ext_param) in
-  let methods = G.Anys (List.concat_map v_ext_method ext_methods) in
-  (* Extensions are definitions and methods that extend an existing class. It's not
-     super important for semantic analysis right now.
-  *)
-  [ G.OtherStmt (OS_Extension, [ tparams; using; params; methods ]) |> G.s ]
-
-and v_ext_method ext_method : G.any list =
-  match ext_method with
-  | ExtDef def -> v_definition def |> List_.map (fun def -> G.Def def)
-  | ExtExport import -> v_import import |> List_.map (fun dir -> G.Dir dir)
+  ext_methods
+  |> List.concat_map (fun (ext_method : ext_method) ->
+         match ext_method with
+         | ExtDef def ->
+             v_definition def
+             |> List_.map (fun (def : G.definition) ->
+                    (* the range of a method is its own, without the
+                       receiver, type parameters and using clauses that it
+                       shares with the other methods of the extension *)
+                    let range = H.range_of_any_opt (G.Def def) in
+                    let stmt = G.DefStmt (v_method def) |> G.s in
+                    stmt.G.s_range <- range;
+                    stmt)
+         | ExtExport import ->
+             v_import import
+             |> List_.map (fun (dir : G.directive) ->
+                    G.DirectiveStmt dir |> G.s)
+         | ExtEnd end_marker -> [ v_end_marker end_marker ])
 
 and v_constr_app (ty, args) = (v_type_ ty, v_list v_arguments args)
 
@@ -1166,31 +1299,34 @@ and v_template_definition
   (* TODO? flatten? *)
   let cparams = fb (v_list v_bindings v_cparams |> List_.flatten) in
   let cextends, cmixins = v_template_parents v_cparents in
-  let body = v_option v_template_body v_cbody in
-  let cbody =
-    match body with
-    | None -> G.empty_body
-    | Some (lb, xs, rb) -> (lb, xs |> List_.map (fun st -> G.F st), rb)
-  in
+  let cbody = v_class_body v_cbody in
   { G.ckind; cextends; cmixins; cimplements = []; cparams; cbody }
 
-and v_template_parents { cextends = v_cextends; cwith = v_cwith } =
-  let parents =
-    match v_cextends with
-    | None -> []
-    | Some (v1, v2) ->
-        let v1 = v_type_ v1 in
-        let v2 = v_list v_arguments v2 in
-        let parent =
-          match v2 with
-          | [] -> (v1, None)
-          | [ args ] -> (v1, Some args)
-          | args :: _otherargsTODO -> (v1, Some args)
-        in
-        [ parent ]
+and v_class_body (body : template_body option) : G.field list G.bracket =
+  match v_option v_template_body body with
+  | None -> G.empty_body
+  | Some (lb, xs, rb) -> (lb, xs |> List_.map (fun st -> G.F st), rb)
+
+and v_template_parents
+    { cextends = v_cextends; cwith = v_cwith; cderives = _ } =
+  let parent ((v1, v2) : type_ * arguments list) =
+    let v1 = v_type_ v1 in
+    let v2 = v_list v_arguments v2 in
+    match v2 with
+    | [] -> (v1, None)
+    | [ args ] -> (v1, Some args)
+    | args :: _otherargsTODO -> (v1, Some args)
   in
-  let v2 = v_list v_type_ v_cwith in
-  (parents, v2)
+  let parents = v_cextends |> Option.to_list |> List_.map parent in
+  (* a later parent with arguments (a trait with parameters) keeps its
+     arguments as an extended parent; the others are mixins *)
+  let with_args, mixins =
+    v_cwith
+    |> List.partition (fun ((_, args) : type_ * arguments list) ->
+           not (List_.null args))
+  in
+  ( parents @ List_.map parent with_args,
+    mixins |> List_.map (fun ((ty, _) : type_ * arguments list) -> v_type_ ty) )
 
 and v_template_body v =
   v_bracket
@@ -1225,6 +1361,9 @@ and v_type_definition_kind = function
       let _v1TODO = v_type_bounds v1 in
       (* abstract type with constraints? *)
       G.AbstractType (fake "")
+  | TDefBounded (v1, v2, v3) ->
+      let _v1TODO = v_type_bounds v1 and _v2 = v_tok v2 and v3 = v_type_ v3 in
+      G.NewType v3
 
 let v_program v = v_list v_top_stat v |> List_.flatten
 
