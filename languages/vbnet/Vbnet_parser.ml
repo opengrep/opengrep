@@ -5922,9 +5922,11 @@ let opengrep_pattern : G.any parser =
 
 (* Entry points *)
 
+let parse_string (file : Fpath.t) (text : string) : G.program result =
+  tokenize_and_parse_string compilation_unit ~filepath:file text
+
 let parse_file (file : Fpath.t) : G.program result =
-  let content = UFile.read_file file in
-  tokenize_and_parse_string compilation_unit ~filepath:file content
+  parse_string file (UFile.read_file file)
 
 let parse_pattern (s : string) : G.any =
   let ts = Tokenize.tokenize s in

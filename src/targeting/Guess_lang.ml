@@ -240,11 +240,26 @@ let is_hack =
               (* optional '#!' line followed by '<?hh': *)
               regexp "^(?:#![^\\n]*\\n)?<\\?hh\\s" ) ) )
 
+let is_aspnet_handler_in (lang : Lang.t) =
+  And
+    ( Test_path Aspnet_directive.is_handler_file,
+      Test_path
+        (fun (path : Fpath.t) ->
+          match Aspnet_directive.scan (get_first_block path) with
+          | Some { language = Some directive_language; _ } ->
+              Lang.equal directive_language lang
+          | Some { language = None; _ }
+          | None ->
+              false) )
+
 let inspect_file_p (lang : Lang.t) path =
   let test =
     match lang with
     | Hack -> is_hack
     | Php -> And (matches_lang lang, Not is_hack)
+    | Csharp
+    | Vb ->
+        Or (matches_lang lang, is_aspnet_handler_in lang)
     | Dockerfile ->
         (* TODO: add support for exact file name to lang.json *)
         Or (is_named [ "Dockerfile"; "dockerfile" ], has_lang_extension lang)
@@ -256,7 +271,6 @@ let inspect_file_p (lang : Lang.t) path =
     | Clojure
     | Cpp
     | Crystal
-    | Csharp
     | Dart
     | Elixir
     | Go
@@ -287,7 +301,6 @@ let inspect_file_p (lang : Lang.t) path =
     | Swift
     | Terraform
     | Ts
-    | Vb
     | Vue
     | Xml
     | Yaml ->
