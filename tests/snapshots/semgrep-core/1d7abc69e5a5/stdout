@@ -1,0 +1,9 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 21 insertions(+)
+ create mode 100644 c.py
+ create mode 100644 rules.yml
+c.py:4:16:error(eqeq-bad):        return x == x:useless comparison
+c.py:7:12:error(eqeq-bad):    return y == y:useless comparison
+c.py:9:1:warning(print-debug):print(1 == 1):left-over debugging print
+c.py:9:7:error(eqeq-bad):print(1 == 1):useless comparison

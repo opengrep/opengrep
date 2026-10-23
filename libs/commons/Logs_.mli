@@ -37,6 +37,10 @@
    See also Testutil_logs.mli if you need to mask logs in tests.
 *)
 
+(* Whether logging is on at a level that shows no info or debug message, the
+   default level of the CLI. *)
+val is_terse_level : Logs.level option -> bool
+
 (* Enable basic logging (default level = Logs.Warning) so you can use Logging
  * calls even before a precise call to setup().
  *)
@@ -73,6 +77,11 @@ val setup_basic : ?level:Logs.level option -> unit -> unit
    'copy_to_file': a file, truncated, that receives the same messages as
    stderr, without colours.
 
+   'pp_message': prints an error or a warning of the application, already
+   rendered, in place of the header with the time and the level, when the
+   level is terse (see is_terse_level), on stderr and in its copy. The
+   messages of other sources keep the header.
+
    'additional_reporters' is a list of additonal loggers that will be called
    after the default logger. Useful for writing the logs to multiple
    destinations, e.g. an opentelemetry collector, a log file, etc.
@@ -108,6 +117,7 @@ val setup :
   ?read_level_from_env_vars:string list ->
   ?read_srcs_from_env_vars:string list ->
   ?read_tags_from_env_vars:string list ->
+  pp_message:(Logs.level -> string Fmt.t) option ->
   level:Logs.level option ->
   unit ->
   unit

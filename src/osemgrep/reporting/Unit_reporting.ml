@@ -279,8 +279,8 @@ let gutter_blank = " |"
 
 let test_location_highlighted_per_line () =
   let pp ?dedent () =
-    Findings_layout.pp_trace_location ?dedent ~prefix:"" ~gutter ~gutter_blank
-      ~highlight:[ `Bold ]
+    Findings_layout.pp_trace_location ?dedent ~first_prefix:"" ~prefix:""
+      ~gutter ~gutter_blank ~highlight:[ `Bold ] ~unhighlighted:[]
   in
   Alcotest.(check string)
     "ending left of the start" "2|    x = [source(]\n |        [1,]\n |    [)]\n"
@@ -292,6 +292,21 @@ let test_location_highlighted_per_line () =
   Alcotest.(check string)
     "dedented" "2|x = [source(]\n |    [1,]\n |[)]\n"
     (render_location ~contents:ends_left (pp ~dedent:true ()) (2, 9) (4, 6))
+
+(* A location whose file cannot be read prints its line number and an
+   ellipsis after the first prefix, so that a step of a trace keeps its
+   label; a readable one prints its code after the same prefix. *)
+let test_unreadable_location_keeps_its_prefix () =
+  let pp (ppf : Format.formatter) (loc : Out.location) : unit =
+    Findings_layout.pp_trace_location ~first_prefix:"sink " ~prefix:""
+      ~gutter ~gutter_blank ~highlight:[ `Bold ] ~unhighlighted:[] ppf loc
+  in
+  Alcotest.(check string)
+    "unreadable" "sink 4|\u{2026}\n"
+    (Fmt.str "%a" pp (location (Fpath.v "no/such/file.py") (4, 5) (4, 9)));
+  Alcotest.(check string)
+    "readable" "sink 2|    x = [source(]\n |        [1,]\n |    [)]\n"
+    (render_location ~contents:ends_left pp (2, 9) (4, 6))
 
 (* The legacy report prints what pysemgrep printed, including its column
    arithmetic: the highlight is cut out of the joined lines, and a location
@@ -314,6 +329,8 @@ let findings_layout_tests =
     [
       t "a location over several lines is highlighted on each"
         test_location_highlighted_per_line;
+      t "an unreadable location keeps its prefix"
+        test_unreadable_location_keeps_its_prefix;
       t "the legacy report cuts the highlight from the joined lines"
         test_legacy_location_cut_from_joined_lines;
     ]
@@ -341,11 +358,42 @@ let test_simple_indented_paragraph_fills_the_width () =
     \      more than one line of the report at this width.\n"
     (Fmt.str "%a" (Skin_common.pp_message ctx (Skin_simple.finding `Error)) message)
 
+(* a match in a method, with the enclosing context the engine computes for
+   --output-enclosing-context, innermost first *)
+let match_in_a_method : Out.cli_match =
+  Semgrep_output_v1_j.cli_match_of_string
+    {|{"check_id": "eqeq", "path": "a.py",
+       "start": {"line": 3, "col": 16, "offset": 0},
+       "end": {"line": 3, "col": 22, "offset": 0},
+       "extra": {"message": "m", "metadata": {}, "severity": "ERROR",
+                 "fingerprint": "f", "lines": "        return x == x",
+                 "enclosing_context": [
+                   {"kind": "function", "name": "balance"},
+                   {"kind": "class", "name": "Account"}]}}|}
+
+(* The enclosing context runs from the outermost definition to the
+   innermost, and a context too wide for the report continues under its
+   first definition. *)
+let test_simple_context_wraps_under_its_first_definition () =
+  let pp (width : int) : string =
+    let ctx = { (Output.skin_ctx Output.default) with Skin.width } in
+    Fmt.str "%a"
+      (Skin_common.pp_context ctx (Skin_simple.finding `Error))
+      match_in_a_method
+  in
+  Alcotest.(check string)
+    "on one line" "    in: class Account \u{203A} function balance\n"
+    (pp 60);
+  Alcotest.(check string)
+    "wrapped" "    in: class Account\n        function balance\n" (pp 30)
+
 let skin_simple_tests =
   Testo.categorize "Skin_simple"
     [
       t "an indented paragraph fills the width"
         test_simple_indented_paragraph_fills_the_width;
+      t "the enclosing context wraps under its first definition"
+        test_simple_context_wraps_under_its_first_definition;
     ]
 
 (*****************************************************************************)

@@ -803,7 +803,13 @@ let check_targets_with_rules ?(print_summary = true)
                    ~verbose:conf.output_conf.skipped_files
               |> List.iter (fun (error : Out.cli_error) ->
                      Logs.app (fun m ->
-                         m "%a" Summary_report.pp_cli_error error))
+                         m "%a"
+                           (Summary_report.pp_cli_error
+                              ~pp_message:
+                                (if Logs_.is_terse_level (Logs.level ()) then
+                                   Sk.pp_log_message
+                                 else None))
+                           error))
           | _ -> ());
 
           (* step 5: report the matches *)
@@ -992,14 +998,8 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
    request. *)
 let draws_status_bar (conf : Scan_CLI.conf) : bool =
   let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
-  let level_allows =
-    match Logs.level () with
-    | Some (Logs.App | Logs.Error | Logs.Warning) -> true
-    | Some (Logs.Info | Logs.Debug)
-    | None ->
-        false
-  in
-  (not conf.no_progress_bar) && (not conf.incremental_output) && level_allows
+  (not conf.no_progress_bar) && (not conf.incremental_output)
+  && Logs_.is_terse_level (Logs.level ())
   && Sk.shows_status_bar
 
 let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
@@ -1119,6 +1119,37 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
 (* Run 'scan' or 'test' or 'validate' or 'show' *)
 (*****************************************************************************)
 
+(* --output-enclosing-context adds the enclosing context of each match to
+   the JSON output, and to the text report of a skin that shows it. The
+   warning is logged once the skin prints the messages. *)
+let warn_if_enclosing_context_unused (conf : Scan_CLI.conf) : unit =
+  let shows_enclosing_context (name : Skin.name) : bool =
+    let module Sk = (val Skins.resolve name : Skin.S) in
+    Sk.shows_enclosing_context
+  in
+  let uses_context (format : Output_format.t) : bool =
+    match format with
+    | Output_format.Json -> true
+    | Output_format.Text -> shows_enclosing_context conf.output_conf.skin
+    | _else_ -> false
+  in
+  if
+    conf.matching_conf.track_enclosing_context
+    && not
+         (List.exists uses_context
+            (conf.output_conf.output_format
+            :: List_.map snd (Map_.to_list conf.output_conf.outputs)))
+  then
+    Logs.warn (fun m ->
+        m
+          "The --output-enclosing-context option has an effect only with \
+           --json or --json-output, or in the text report of these skins: \
+           %s."
+          (Skin.all_names
+          |> List.filter_map (fun ((label : string), (name : Skin.name)) ->
+                 if shows_enclosing_context name then Some label else None)
+          |> String.concat ", "))
+
 (* All the business logic after command-line parsing. Return the desired
    exit code. *)
 let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
@@ -1126,8 +1157,10 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
    * in CLI_common.setup_logging() we do the full setup (Logs_.setup()) now
    * that we have a conf object.
    *)
+  let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
-    ~level:conf.common.logging_level;
+    ~pp_message:Sk.pp_log_message ~level:conf.common.logging_level;
+  warn_if_enclosing_context_unused conf;
   Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 

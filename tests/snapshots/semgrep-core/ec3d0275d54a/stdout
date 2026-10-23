@@ -1,0 +1,26 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 21 insertions(+)
+ create mode 100644 c.py
+ create mode 100644 rules.yml
+c.py
+
+  error  eqeq-bad
+  useless comparison
+
+    in: class Account › function balance
+     4: return x == x
+
+    in: function check
+     7: return y == y
+
+  warn  print-debug
+  left-over debugging print
+
+     9: print(1 == 1)
+
+  error  eqeq-bad
+  useless comparison
+
+     9: print(1 == 1)
+

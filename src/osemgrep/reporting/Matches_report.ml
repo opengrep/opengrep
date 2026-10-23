@@ -77,7 +77,9 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding
   |> List.iter (fun (line : code_line) ->
          (* TODO(secrets): Apply masking to the bold part *)
          pp_wrapped_code_line ppf ~line_number:line.line_number ~width
-           ~bold_start:line.match_start ~bold_end:line.match_end line.text);
+           ~gutter_style:[] ~highlight:[ `Bold ] ~unhighlighted:[]
+           ~highlight_start:line.match_start
+           ~highlight_end:line.match_end line.text);
   if is_interfile m.check_id then pp_sources_of_sink ppf sink_findings;
   (if show_dataflow_traces then
      sink_findings

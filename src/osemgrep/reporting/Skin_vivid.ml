@@ -27,10 +27,6 @@ module M = Skin_model
 let finding_margin = "  "
 let stripe_glyph = "▌"
 
-(* A trace keeps the stripe of its match and is drawn under it as a tree,
-   one branch per step. *)
-let trace_inset = "  "
-
 (* "  " ^ "▌" ^ " " *)
 let prefix_width = 4
 
@@ -94,20 +90,36 @@ let severity_field_width : int =
    terminals. *)
 let band_style : Fmt.style list = [ `Bg (`Hi `Black); `Fg (`Hi `White) ]
 
-let styles (xs : Fmt.style list) (pp : 'a Fmt.t) : 'a Fmt.t =
-  List.fold_left (fun acc style -> Fmt.styled style acc) pp xs
+(* the margin of a finding and the stripe, in the colour of its severity *)
+let pp_stripe_glyph (color : tone) (ppf : Format.formatter) : unit =
+  Fmt.pf ppf "%s%a" finding_margin Fmt.(styled (`Fg color) string) stripe_glyph
 
-(* the stripe that starts every line of a finding, in the colour of its
-   severity *)
-let pp_stripe (color : tone) ppf : unit =
-  Fmt.pf ppf "%s%a " finding_margin Fmt.(styled (`Fg color) string) stripe_glyph
+(* the stripe that starts every line of a finding *)
+let pp_stripe (color : tone) (ppf : Format.formatter) : unit =
+  Fmt.pf ppf "%t " (pp_stripe_glyph color)
 
 (* the stripe on an empty line, without a trailing space *)
-let pp_blank_stripe (color : tone) ppf : unit =
-  Fmt.pf ppf "%s%a@." finding_margin Fmt.(styled (`Fg color) string) stripe_glyph
+let pp_blank_stripe (color : tone) (ppf : Format.formatter) : unit =
+  Fmt.pf ppf "%t@." (pp_stripe_glyph color)
 
-let pp_band ppf (label : string) : unit =
-  Fmt.pf ppf "%a " (styles band_style Fmt.string) label
+let pp_band (ppf : Format.formatter) (label : string) : unit =
+  Fmt.pf ppf "%a " (Findings_layout.styles band_style Fmt.string) label
+
+(* a line number in its band, without the band's style *)
+let band_number ~(digits : int) (n : int) : string =
+  Printf.sprintf "%*s%*d%*s" band_padding "" digits n band_padding ""
+
+(* The stripe and a band, rendered for [ppf], for the lines a skin passes
+   as strings. *)
+let stripe_str (color : tone) (ppf : Format.formatter) : string =
+  Fmt.str_like ppf "%t" (pp_stripe_glyph color)
+
+let band_str (ppf : Format.formatter) (label : string) : string =
+  Fmt.str_like ppf "%a" pp_band label
+
+(* the matched code, on a background in the colour of the severity *)
+let match_style (color : tone) : Fmt.style list =
+  [ `Bg color; `Fg (`Hi `White) ]
 
 (*****************************************************************************)
 (* A finding *)
@@ -130,33 +142,25 @@ let pp_code_line (color : tone) ~(digits : int) ~(width : int) ppf
          let a, b, c = Findings_layout.cut chunk from upto in
          pp_stripe color ppf;
          pp_band ppf
-           (if j = 0 then
-              Printf.sprintf "%*s%*d%*s" band_padding "" digits line.line_number
-                band_padding ""
+           (if Int.equal j 0 then band_number ~digits line.line_number
             else String.make (band_width digits) ' ');
          Fmt.pf ppf "%s%a%s@." a
-           (styles [ `Bg color; `Fg (`Hi `White) ] Fmt.string)
+           (Findings_layout.styles (match_style color) Fmt.string)
            b c)
 
-(* Every line of the trace starts with the stripe, so it is passed already
-   rendered, with the line numbers in the same band as those of the code. *)
-let trace (color : tone) ppf ~(digits : int) : Skin_common.trace_look =
-  let bar =
-    Fmt.str_like ppf "%s%a" finding_margin
-      Fmt.(styled (`Fg color) string)
-      stripe_glyph
-  in
-  let banded (label : string) : string =
-    Fmt.str_like ppf "%a " (styles band_style Fmt.string) label
-  in
+(* A trace keeps the stripe of its match and is drawn under its code as a
+   tree, one branch per step. Every line of the trace starts with the stripe,
+   so it is passed already rendered, with the line numbers in the same band
+   as those of the code. *)
+let trace (color : tone) (ppf : Format.formatter) ~(code_digits : int)
+    ~(digits : int) : Skin_common.trace_look =
   {
-    line_prefix = bar ^ trace_inset;
-    gutter =
-      (fun (n : int) ->
-        banded
-          (Printf.sprintf "%*s%*d%*s" band_padding "" digits n band_padding ""));
-    gutter_blank = banded (String.make (band_width digits) ' ');
-    highlight = [ `Bg color; `Fg (`Hi `White) ];
+    line_prefix =
+      stripe_str color ppf ^ " " ^ String.make (band_width code_digits + 1) ' ';
+    gutter = (fun (n : int) -> band_str ppf (band_number ~digits n));
+    gutter_blank = band_str ppf (String.make (band_width digits) ' ');
+    highlight = match_style color;
+    unhighlighted = [];
   }
 
 (* Every line of a finding starts with the stripe: the heading (a filled
@@ -169,8 +173,10 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
     pp_body_margin = pp_stripe color;
     body_width = prefix_width;
     pp_blank = pp_blank_stripe color;
+    blank_before_fix = true;
     badge = Printf.sprintf " %-*s " severity_field_width (severity_word severity);
-    pp_badge = styles [ `Bg color; `Fg (`Hi `White); `Bold ] Fmt.string;
+    pp_badge =
+      Findings_layout.styles [ `Bg color; `Fg (`Hi `White); `Bold ] Fmt.string;
     pp_rule_id = Fmt.(styled `Faint string);
     code_width =
       (fun ~width ~digits -> width - prefix_width - band_width digits - 1);
@@ -180,12 +186,18 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
         Fmt.pf ppf "%a@."
           Fmt.(styled `Faint string)
           (String.make (band_width digits) ' ' ^ txt));
+    pp_context_label =
+      (fun (ppf : Format.formatter) ->
+        Fmt.pf ppf "%a " Fmt.(styled `Faint string) "in");
+    context_label_width = String.length "in ";
+    pp_context_name = Fmt.(styled (`Fg `Cyan) string);
     pp_from_label =
       (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled `Faint string) "from");
     from_label_width = String.length "from ";
+    pp_from_location = Fmt.(styled (`Fg `Cyan) string);
     trace = trace color;
     pp_fix_label =
-      (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled (`Fg (`Hi `Green)) string) "fix");
+      (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled `Faint string) "fix");
     fix_label_width = String.length "fix ";
   }
 
@@ -233,7 +245,7 @@ let pp_ci_section ppf ~(badge : bool) (label : string)
      spaces *)
   let text = if badge then Printf.sprintf " %s " label else label in
   Fmt.pf ppf "%a %a@.@."
-    (styles style Fmt.string)
+    (Findings_layout.styles style Fmt.string)
     text
     Fmt.(styled `Faint string)
     (Printf.sprintf "· %s" (String_.unit_str count "finding"))
@@ -315,3 +327,5 @@ let on_result = Skin_common.on_result look
 let pp_findings = Skin_common.pp_findings look
 let pp_matches = Skin_common.pp_by_file look
 let shows_status_bar = true
+let pp_log_message = Some Skin_common.pp_log_message
+let shows_enclosing_context = true

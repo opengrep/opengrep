@@ -145,7 +145,8 @@ let interpret conf (file : Fpath.t) : JSON.t =
       json))
 
 let run (conf : conf) : unit =
-  CLI_common.setup_logging ~force_color:true ~level:conf.common.logging_level;
+  CLI_common.setup_logging ~force_color:true ~pp_message:None
+    ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf =\n%s" (show_conf conf));
 
   match conf.dump with

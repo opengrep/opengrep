@@ -22,8 +22,13 @@ val o_logging : Logs.level option Cmdliner.Term.t
  * configuration *)
 val o_force_color : default:bool -> bool Cmdliner.Term.t
 
-(* small wrapper around Logs_helper.setup_logging and Logging_helpers.setup *)
-val setup_logging : force_color:bool -> level:Logs.level option -> unit
+(* small wrapper around Logs_helper.setup_logging and Logging_helpers.setup;
+ * [pp_message] is that of Logs_.setup, from the skin of the report *)
+val setup_logging :
+  force_color:bool ->
+  pp_message:(Logs.level -> string Fmt.t) option ->
+  level:Logs.level option ->
+  unit
 
 (* for --profile *)
 val o_profile : bool Cmdliner.Term.t

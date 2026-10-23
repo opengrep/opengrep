@@ -17,8 +17,10 @@ module OutJ = Semgrep_output_v1_t
 
 (* python: SemgrepError.format_for_terminal in error.py: the level label,
    then the message with its location. The label takes the colour the rest
-   of the text output gives that severity. *)
-let pp_cli_error ppf (error : OutJ.cli_error) : unit =
+   of the text output gives that severity. [pp_message], when given, prints
+   the level and the message in place of the label in brackets. *)
+let pp_cli_error ~(pp_message : (Logs.level -> string Fmt.t) option) ppf
+    (error : OutJ.cli_error) : unit =
   (* A rule matching on the project's dependencies is skipped, which the user
      has to act on to get the findings that rule would report: the line is
      labelled a warning. The error itself keeps the info level, which is what
@@ -28,16 +30,23 @@ let pp_cli_error ppf (error : OutJ.cli_error) : unit =
     | UnsupportedSupplyChainRule -> `Warning
     | _else_ -> error.level
   in
-  let (label : string), (style : Fmt.style) =
-    match level with
-    | `Error -> ("[ERROR]", `Fg `Red)
-    | `Warning -> ("[WARN]", `Fg `Yellow)
-    | `Info -> ("[INFO]", `Fg `Green)
-  in
-  Fmt.pf ppf "%a %s"
-    Fmt.(styled style string)
-    label
-    (Option.value ~default:"" error.message)
+  let message = Option.value ~default:"" error.message in
+  match pp_message with
+  | Some (pp : Logs.level -> string Fmt.t) ->
+      pp
+        (match level with
+        | `Error -> Logs.Error
+        | `Warning -> Logs.Warning
+        | `Info -> Logs.Info)
+        ppf message
+  | None ->
+      let (label : string), (style : Fmt.style) =
+        match level with
+        | `Error -> ("[ERROR]", `Fg `Red)
+        | `Warning -> ("[WARN]", `Fg `Yellow)
+        | `Info -> ("[INFO]", `Fg `Green)
+      in
+      Fmt.pf ppf "%a %s" Fmt.(styled style string) label message
 
 (* python: OutputHandler.handle_semgrep_errors, which reports a warning
    only with --verbose and leaves the timeouts and the rules needing a

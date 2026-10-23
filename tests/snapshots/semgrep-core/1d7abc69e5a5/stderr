@@ -1,0 +1,14 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'commit' '-m' 'Add files'
+warning  The --output-enclosing-context option has an effect only with --json or --json-output, or in the text report of these skins: simple, vivid.
+1 file · 2 rules
+
+Scan was limited to files tracked by git.
+
+4 findings in 1 file
+ASSERT exit code

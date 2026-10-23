@@ -969,7 +969,7 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
 (* Run the conf *)
 (*****************************************************************************)
 let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
-  CLI_common.setup_logging ~force_color:conf.force_color
+  CLI_common.setup_logging ~force_color:conf.force_color ~pp_message:None
     ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Test_CLI.show_conf conf));
   let matching_diagnosis = conf.matching_diagnosis in
