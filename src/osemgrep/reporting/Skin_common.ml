@@ -60,6 +60,11 @@ type finding_look = {
   pp_code_line : digits:int -> width:int -> Findings_layout.code_line Fmt.t;
   (* the note on the lines of the match left out, after the body margin *)
   pp_more_lines : digits:int -> string Fmt.t;
+  (* the label before the enclosing context of a match, and its width *)
+  pp_context_label : Format.formatter -> unit;
+  context_label_width : int;
+  (* the name of a definition in the enclosing context, after its kind *)
+  pp_context_name : string Fmt.t;
   (* the label before a source, and its width *)
   pp_from_label : Format.formatter -> unit;
   from_label_width : int;
@@ -159,6 +164,44 @@ let code_line_width (ctx : Skin.ctx) (look : finding_look) ~(digits : int) :
   Findings_layout.safe_width
     (if ctx.max_chars_per_line > 0 then min ctx.max_chars_per_line available
      else available)
+
+(* "in: class Factory › function make" above the code of a match, with
+   --output-enclosing-context. The kinds and the separators are faint, so
+   that the names stand out. A context too wide for the report continues
+   on the next line, under the first definition. *)
+let pp_context (ctx : Skin.ctx) (look : finding_look) (ppf : Format.formatter)
+    (m : OutJ.cli_match) : unit =
+  let faint : string Fmt.t = Fmt.(styled `Faint string) in
+  let separator = " › " in
+  let width =
+    Findings_layout.safe_width
+      (ctx.width - look.body_width - look.context_label_width)
+  in
+  let columns ((word : string), (name : string)) : int =
+    Utf8.length word + 1 + Utf8.length name
+  in
+  (* each line with the columns it takes, its definitions in reverse *)
+  Findings_layout.enclosing_context m
+  |> List.fold_left
+       (fun (acc : (int * (string * string) list) list)
+            (elem : string * string) ->
+         match acc with
+         | (used, line) :: rest
+           when used + Utf8.length separator + columns elem <= width ->
+             (used + Utf8.length separator + columns elem, elem :: line)
+             :: rest
+         | _ -> (columns elem, [ elem ]) :: acc)
+       []
+  |> List.rev
+  |> List.iteri (fun (i : int) ((_ : int), (line : (string * string) list)) ->
+         look.pp_body_margin ppf;
+         if Int.equal i 0 then look.pp_context_label ppf
+         else Fmt.string ppf (String.make look.context_label_width ' ');
+         List.rev line
+         |> List.iteri (fun (j : int) ((word : string), (name : string)) ->
+                if j > 0 then faint ppf separator;
+                Fmt.pf ppf "%a %a" faint word look.pp_context_name name);
+         Fmt.pf ppf "@.")
 
 let pp_code (ctx : Skin.ctx) (look : finding_look) ~(digits : int)
     (ppf : Format.formatter)
@@ -268,6 +311,7 @@ let pp_finding ?(group : OutJ.cli_match list = []) ?(heading = true)
       m
   in
   let digits = code_digits m lines in
+  pp_context ctx finding_look ppf m;
   pp_code ctx finding_look ~digits ppf code;
   let origins =
     Findings_layout.origins ~is_interfile:ctx.is_interfile

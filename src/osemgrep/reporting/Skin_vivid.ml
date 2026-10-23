@@ -186,6 +186,11 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
         Fmt.pf ppf "%a@."
           Fmt.(styled `Faint string)
           (String.make (band_width digits) ' ' ^ txt));
+    pp_context_label =
+      (fun (ppf : Format.formatter) ->
+        Fmt.pf ppf "%a " Fmt.(styled `Faint string) "in");
+    context_label_width = String.length "in ";
+    pp_context_name = Fmt.(styled (`Fg `Cyan) string);
     pp_from_label =
       (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled `Faint string) "from");
     from_label_width = String.length "from ";
@@ -323,3 +328,4 @@ let pp_findings = Skin_common.pp_findings look
 let pp_matches = Skin_common.pp_by_file look
 let shows_status_bar = true
 let pp_log_message = Some Skin_common.pp_log_message
+let shows_enclosing_context = true

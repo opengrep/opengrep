@@ -148,3 +148,6 @@ let shows_status_bar = false
 
 (* errors and warnings keep the header of the log reporter *)
 let pp_log_message = None
+
+(* the earlier report did not show the enclosing context *)
+let shows_enclosing_context = false

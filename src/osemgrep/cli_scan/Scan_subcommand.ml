@@ -1119,6 +1119,37 @@ let run_scan_conf ?(on_output : unit -> unit = ignore) (caps : < caps ; .. >)
 (* Run 'scan' or 'test' or 'validate' or 'show' *)
 (*****************************************************************************)
 
+(* --output-enclosing-context adds the enclosing context of each match to
+   the JSON output, and to the text report of a skin that shows it. The
+   warning is logged once the skin prints the messages. *)
+let warn_if_enclosing_context_unused (conf : Scan_CLI.conf) : unit =
+  let shows_enclosing_context (name : Skin.name) : bool =
+    let module Sk = (val Skins.resolve name : Skin.S) in
+    Sk.shows_enclosing_context
+  in
+  let uses_context (format : Output_format.t) : bool =
+    match format with
+    | Output_format.Json -> true
+    | Output_format.Text -> shows_enclosing_context conf.output_conf.skin
+    | _else_ -> false
+  in
+  if
+    conf.matching_conf.track_enclosing_context
+    && not
+         (List.exists uses_context
+            (conf.output_conf.output_format
+            :: List_.map snd (Map_.to_list conf.output_conf.outputs)))
+  then
+    Logs.warn (fun m ->
+        m
+          "The --output-enclosing-context option has an effect only with \
+           --json or --json-output, or in the text report of these skins: \
+           %s."
+          (Skin.all_names
+          |> List.filter_map (fun ((label : string), (name : Skin.name)) ->
+                 if shows_enclosing_context name then Some label else None)
+          |> String.concat ", "))
+
 (* All the business logic after command-line parsing. Return the desired
    exit code. *)
 let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
@@ -1129,6 +1160,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~pp_message:Sk.pp_log_message ~level:conf.common.logging_level;
+  warn_if_enclosing_context_unused conf;
   Output.setup_stdout conf.output_conf;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 

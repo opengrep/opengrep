@@ -358,11 +358,42 @@ let test_simple_indented_paragraph_fills_the_width () =
     \      more than one line of the report at this width.\n"
     (Fmt.str "%a" (Skin_common.pp_message ctx (Skin_simple.finding `Error)) message)
 
+(* a match in a method, with the enclosing context the engine computes for
+   --output-enclosing-context, innermost first *)
+let match_in_a_method : Out.cli_match =
+  Semgrep_output_v1_j.cli_match_of_string
+    {|{"check_id": "eqeq", "path": "a.py",
+       "start": {"line": 3, "col": 16, "offset": 0},
+       "end": {"line": 3, "col": 22, "offset": 0},
+       "extra": {"message": "m", "metadata": {}, "severity": "ERROR",
+                 "fingerprint": "f", "lines": "        return x == x",
+                 "enclosing_context": [
+                   {"kind": "function", "name": "balance"},
+                   {"kind": "class", "name": "Account"}]}}|}
+
+(* The enclosing context runs from the outermost definition to the
+   innermost, and a context too wide for the report continues under its
+   first definition. *)
+let test_simple_context_wraps_under_its_first_definition () =
+  let pp (width : int) : string =
+    let ctx = { (Output.skin_ctx Output.default) with Skin.width } in
+    Fmt.str "%a"
+      (Skin_common.pp_context ctx (Skin_simple.finding `Error))
+      match_in_a_method
+  in
+  Alcotest.(check string)
+    "on one line" "    in: class Account \u{203A} function balance\n"
+    (pp 60);
+  Alcotest.(check string)
+    "wrapped" "    in: class Account\n        function balance\n" (pp 30)
+
 let skin_simple_tests =
   Testo.categorize "Skin_simple"
     [
       t "an indented paragraph fills the width"
         test_simple_indented_paragraph_fills_the_width;
+      t "the enclosing context wraps under its first definition"
+        test_simple_context_wraps_under_its_first_definition;
     ]
 
 (*****************************************************************************)

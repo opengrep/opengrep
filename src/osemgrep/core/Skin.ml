@@ -95,6 +95,10 @@ module type S = sig
      level: its level, then its text, already rendered. None keeps the
      header of the log reporter, with the time and the level in capitals. *)
   val pp_log_message : (Logs.level -> string Fmt.t) option
+
+  (* whether the text report shows the enclosing context of a match, which
+     --output-enclosing-context computes *)
+  val shows_enclosing_context : bool
 end
 
 (*****************************************************************************)

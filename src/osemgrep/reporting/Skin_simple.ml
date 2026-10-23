@@ -51,14 +51,15 @@ let code_column = line_number_width + separator_width
 (* a trace is drawn from the column of the code above it *)
 let trace_margin = String.make code_column ' '
 
-(* The lines under the code have no common margin: each label carries its
-   own indentation. A label is right-aligned in the column of the line
-   numbers, so that its colon is under theirs and the text after it starts
-   at the column of the code. *)
+(* The lines of a label around the code have no common margin: each label
+   carries its own indentation. A label is right-aligned in the column of
+   the line numbers, so that its colon is in line with theirs and the text
+   after it starts at the column of the code. *)
 let gutter_label (word : string) : string =
   String.make (max 0 (line_number_width - String.length word)) ' '
   ^ word ^ separator
 
+let context_label = gutter_label "in"
 let from_label = gutter_label "from"
 let fix_label = gutter_label "fix"
 
@@ -131,6 +132,10 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
     pp_more_lines =
       (fun ~digits:_ ppf (txt : string) ->
         Fmt.pf ppf "%s%a@." body pp_annotation txt);
+    pp_context_label =
+      (fun (ppf : Format.formatter) -> pp_annotation ppf context_label);
+    context_label_width = String.length context_label;
+    pp_context_name = Fmt.string;
     pp_from_label =
       (fun (ppf : Format.formatter) -> pp_annotation ppf from_label);
     from_label_width = String.length from_label;
@@ -232,3 +237,4 @@ let pp_findings = Skin_common.pp_findings look
 let pp_matches = Skin_common.pp_by_file look
 let shows_status_bar = true
 let pp_log_message = Some Skin_common.pp_log_message
+let shows_enclosing_context = true

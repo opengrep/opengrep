@@ -1342,10 +1342,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
     } in
 
-    if output_enclosing_context && not json then
-      Logs.warn (fun m ->
-          m
-            "The --output-enclosing-context option has no effect without --json.");
     let target_roots, imply_always_select_explicit_targets =
       replace_target_roots_by_regular_files_where_needed caps target_roots
     in

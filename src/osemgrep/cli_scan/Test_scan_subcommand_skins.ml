@@ -88,6 +88,20 @@ def go():
     sink(y)
 |}
 
+(* A match in a method, one in a function, and one at the top level, which
+   has no enclosing context. *)
+let context_py =
+  {|
+class Account:
+    def balance(self, x):
+        return x == x
+
+def check(y):
+    return y == y
+
+print(1 == 1)
+|}
+
 (* An interfile rule whose source is in another file than its sink, so that
    the report shows the source under the code of the match, and the fix
    under the source. *)
@@ -139,6 +153,9 @@ let taint_files : F.t list =
   [ F.File ("rules.yml", taint_rule); F.File ("t.py", taint_py) ]
 
 let pattern_files : F.t list = [ F.File ("p.py", pattern_py) ]
+
+let context_files : F.t list =
+  [ F.File ("rules.yml", two_rules); F.File ("c.py", context_py) ]
 
 let interfile_files : F.t list =
   [
@@ -216,6 +233,19 @@ let test_traces (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
       Exit_code.Check.ok
         (scan caps ~files:taint_files [ "--dataflow-traces" ]))
+
+let test_enclosing_context (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:context_files [ "--output-enclosing-context" ]))
+
+(* The emacs output has no enclosing context, so the scan warns that the
+   option has no effect there, in the form of the skin. *)
+let test_enclosing_context_unused (caps : Scan_subcommand.caps) () =
+  with_skin "simple" (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:context_files
+           [ "--output-enclosing-context"; "--emacs" ]))
 
 let test_interfile_source (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
@@ -337,6 +367,15 @@ let tests (caps : caps) =
       t "vivid with dataflow traces"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_traces narrow "vivid");
+      t "simple with the enclosing context"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_enclosing_context narrow "simple");
+      t "vivid with the enclosing context"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_enclosing_context narrow "vivid");
+      t "simple warns that the emacs output has no enclosing context"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_enclosing_context_unused narrow);
       t "simple with an interfile source"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_source narrow "simple");

@@ -887,6 +887,14 @@ let code_lines ~(max_lines_per_finding : int) (m : OutJ.cli_match) :
            { line_number; text; match_start; match_end }),
     if keep = total then None else Some (total - keep) )
 
+(* The definitions that enclose a match, with --output-enclosing-context,
+   from the outermost to the innermost, each as its kind and its name. The
+   engine records them innermost first. *)
+let enclosing_context (m : OutJ.cli_match) : (string * string) list =
+  m.extra.enclosing_context |> Option.value ~default:[]
+  |> List.rev_map (fun (elem : OutJ.enclosing_context_elem) ->
+         (elem.kind, elem.name))
+
 (* What a report shows under the code of a finding: one entry for the
    finding, or for each finding of [group], which share its sink. For an
    interfile rule, the location and the code of the [source] of each, since
