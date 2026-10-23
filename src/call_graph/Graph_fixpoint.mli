@@ -17,6 +17,11 @@ module type LATTICE = sig
 
   val equal : t -> t -> bool
   (** Equality on the lattice. Used as the fixed-point termination test. *)
+
+  val join : t -> t -> t
+  (** The least upper bound. Once a round of a cycle repeats the values of
+      an earlier round, a node's new value is joined with its value of the
+      previous round. *)
 end
 
 module type GRAPH = sig

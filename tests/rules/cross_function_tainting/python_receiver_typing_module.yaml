@@ -1,0 +1,13 @@
+rules:
+  - id: python_receiver_typing_module
+    message: taint from a method resolved through a typing optional or union receiver type
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

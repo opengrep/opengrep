@@ -1,0 +1,13 @@
+rules:
+  - id: ruby_ctor_calls_field_reader
+    message: taint written by the constructor and read by a method it calls
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

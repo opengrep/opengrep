@@ -50,7 +50,7 @@ type t = {
   invoke_methods : string list;
   dynamic_send_methods : string list;
   class_accessor_methods : string list;
-  (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
+  (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). The call graph then also records each call of a nested lambda as a call of its enclosing function. *)
   skip_nested_in_extract_calls : bool;
 }
 
@@ -601,6 +601,17 @@ let overloads_by_type (lang : Lang.t) : bool =
   | Lang.Apex ->
       true
   | _ -> false
+
+(* The canonical names of the generic types whose arguments are the members
+   of a union: in Python, [typing.Optional[X]] is [X | None] and
+   [typing.Union[X, Y]] is [X | Y]. *)
+let union_type_constructors (lang : Lang.t) : string list list =
+  match lang with
+  | Lang.Python
+  | Lang.Python2
+  | Lang.Python3 ->
+      [ [ "typing"; "Optional" ]; [ "typing"; "Union" ] ]
+  | _ -> []
 
 let hof_method_names (lang : Lang.t) : string list =
   (get lang).hof_configs |> List.concat_map (function
