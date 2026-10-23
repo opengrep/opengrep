@@ -91,9 +91,34 @@ end
 
 module Dot = Graph.Graphviz.Dot (Display)
     
+(* The graph is hash-table backed, so its own vertex order follows the hash
+   of a [Function_id] key, which contains the file path: the order of two
+   functions with no edge between them would depend on the path. The
+   traversals below order vertices by [Function_id.compare] instead. *)
+module G_ordered = struct
+  include G
+
+  let sorted (vertices : V.t list) = List.sort Function_id.compare vertices
+  let iter_vertex f g = fold_vertex List.cons g [] |> sorted |> List.iter f
+  let iter_succ f g v = fold_succ List.cons g v [] |> sorted |> List.iter f
+end
+
 (* OCamlgraph: Use built-in algorithms *)
-module Topo = Graph.Topological.Make (G)
-module SCC = Graph.Components.Make (G)
+module SCC = Graph.Components.Make (G_ordered)
+
+(* A topological order of the graph: [SCC.scc_list] numbers the components
+   so that an edge from [u] to [v] never puts [v]'s component after [u]'s,
+   so its reverse lists every vertex after the vertices it has an edge from.
+   [Graph.Topological.Make_stable] checks a path between every pair of
+   vertices on a cycle, quadratic in time and memory. *)
+module Topo = struct
+  let fold (f : G.V.t -> 'acc -> 'acc) (g : G.t) (acc : 'acc) : 'acc =
+    List.rev (SCC.scc_list g)
+    |> List.fold_left
+         (fun (acc : 'acc) (component : G.V.t list) ->
+           List.fold_left (fun (acc : 'acc) (v : G.V.t) -> f v acc) acc component)
+         acc
+end
 
 (** Helpers **)
 

@@ -1,0 +1,11 @@
+rules:
+  - id: test-field-of-one-of-two-constructors
+    message: Taint stored in a field by a constructor reaches a method
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

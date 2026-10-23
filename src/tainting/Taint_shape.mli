@@ -167,3 +167,14 @@ val enum_in_cell : cell -> (Taint.offset list * Taint.taints) Seq.t
  *
  * would return a sequence with the pair (.a, "tainted").
  *)
+
+val join_returns : lang:Lang.t -> Shape_and_sig.Effects.t -> Shape_and_sig.Effects.t
+(** The [ToReturn] effects of one effect guard joined into one, as a caller
+    joins the values a call returns with [unify_cell]; the other effects are
+    unchanged. *)
+
+val widen_signature_taints : Shape_and_sig.Signature.t -> Shape_and_sig.Signature.t
+(** Every taint variable of a parameter at a non-empty path, in every taint
+    set and shape of the signature, replaced by the [Var] and the [Shape_var]
+    of the parameter, and the object shape of a returned value folded into
+    its taints: the widening of a recursive function's signature. *)

@@ -92,6 +92,8 @@ let compare_metavar_env env1 env2 =
   Metavariable.compare_bindings env1 env2
 
 let compare_matches pm1 pm2 =
+  if phys_equal pm1 pm2 then 0
+  else
   match
     String.compare
       (Rule_ID.to_string pm1.PM.rule_id.id)
@@ -270,6 +272,8 @@ let lval_of_arg arg = { base = BArg arg; offset = [] }
 
 type source = {
   call_trace : R.taint_source call_trace;
+  origin : PM.t * R.taint_source;
+      (* [pm_of_trace call_trace]: a call pushed onto the trace keeps it. *)
   label : string;
       (* This is needed because we may change the label of a taint,
          from the original source that it came from.
@@ -293,20 +297,34 @@ let compare_precondition (_ts1, f1) (_ts2, f2) =
      See 'pick_taint' below for details. *)
   R.compare_precondition f1 f2
 
+(* [String.compare (a1 ^ b1) (a2 ^ b2)], without building the strings. *)
+let compare_concat (a1 : string) (b1 : string) (a2 : string) (b2 : string) : int
+    =
+  let n1 = String.length a1 + String.length b1
+  and n2 = String.length a2 + String.length b2 in
+  let char_at (a : string) (b : string) (i : int) : char =
+    let la = String.length a in
+    if i < la then String.unsafe_get a i else String.unsafe_get b (i - la)
+  in
+  let rec loop (i : int) : int =
+    if i >= n1 || i >= n2 then Int.compare n1 n2
+    else
+      match Char.compare (char_at a1 b1 i) (char_at a2 b2 i) with
+      | 0 -> loop (i + 1)
+      | c -> c
+  in
+  loop 0
+
 let compare_source
-    { call_trace = call_trace1; label = label1; precondition = precondition1 }
-    { call_trace = call_trace2; label = label2; precondition = precondition2 } =
+    { origin = pm1, ts1; label = label1; precondition = precondition1; _ }
+    { origin = pm2, ts2; label = label2; precondition = precondition2; _ } =
   (* Comparing metavariable environments this way is not robust, e.g.:
    * [("$A",e1);("$B",e2)] is not considered equal to [("$B",e2);("$A",e1)].
    * For our purposes, this is OK.
    *)
-  let pm1, ts1 = pm_of_trace call_trace1
-  and pm2, ts2 = pm_of_trace call_trace2 in
   match compare_matches pm1 pm2 with
   | 0 -> (
-      let l1 = label1 ^ ts1.R.label in
-      let l2 = label2 ^ ts2.R.label in
-      match String.compare l1 l2 with
+      match compare_concat label1 ts1.R.label label2 ts2.R.label with
       | 0 -> (
           (* It's important that we include preconditions as a distinguishing factor
              between two taints.
@@ -345,7 +363,7 @@ let compare_orig orig1 orig2 =
 let compare_taint taint1 taint2 =
   (* THINK: Right now we disregard the trace because we just want to keep one
    * potential path. *)
-  compare_orig taint1.orig taint2.orig
+  if phys_equal taint1 taint2 then 0 else compare_orig taint1.orig taint2.orig
 
 let rec show_precondition = function
   | R.PLabel str -> str
@@ -357,7 +375,7 @@ let rec show_precondition = function
   | R.PAnd _ -> "(and ...)"
   | R.POr _ -> "(or ...)"
 
-let rec show_source { call_trace; label; precondition } =
+let rec show_source { call_trace; label; precondition; _ } =
   (* We want to show the actual label, not the originating label.
      This may change, for instance, if we have ever propagated this taint to
      a different label.
@@ -452,8 +470,10 @@ module Taint_set = struct
   (* Equality/order on the taint identities (keys) only, matching the
      previous [Set.Make] over taint-only bundle compare: guards and
      trace details do not participate. *)
-  let equal set1 set2 = Taints.equal (fun _ _ -> true) set1 set2
-  let compare set1 set2 = Taints.compare (fun _ _ -> 0) set1 set2
+  let equal set1 set2 = phys_equal set1 set2 || Taints.equal (fun _ _ -> true) set1 set2
+
+  let compare set1 set2 =
+    if phys_equal set1 set2 then 0 else Taints.compare (fun _ _ -> 0) set1 set2
   let to_seq set = Taints.to_seq set |> Seq.map snd
   let elements set = set |> to_seq |> List.of_seq
 
@@ -530,6 +550,8 @@ module Taint_set = struct
   and pick_best_taint taint1 taint2 =
     (* Here we assume that 'compare taint1 taint2 = 0' so we could keep any
        * of them, but we want "the best" one, e.g. the one with the shortest trace. *)
+    if phys_equal taint1 taint2 then taint2
+    else
     match (taint1.orig, taint2.orig) with
     | Var _, Var _
     | Shape_var _, Shape_var _
@@ -888,6 +910,7 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
         (Src
            {
              call_trace = PM (pm, source);
+             origin = (pm, source);
              label = source.label;
              precondition = None;
            })
@@ -900,7 +923,12 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
       in
       Some
         (Src
-           { call_trace = PM (pm, source); label = source.label; precondition })
+           {
+             call_trace = PM (pm, source);
+             origin = (pm, source);
+             label = source.label;
+             precondition;
+           })
 
 let taint_of_pm ~incoming pm =
   match src_of_pm ~incoming pm with

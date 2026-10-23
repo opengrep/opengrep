@@ -373,18 +373,58 @@ let overlap_with ~match_range r =
   float_of_int (r.Range.end_ - r.Range.start + 1)
   /. float_of_int (r1.Range.end_ - r1.Range.start + 1)
 
-let any_is_in_matches_OSS rule matches ~get_id any =
+(* The matches whose range contains a given range, in their original order.
+   The matches are sorted by start, with the largest end among each prefix:
+   a binary search finds the last match starting at or before the range, and
+   the walk back stops once no earlier match reaches the range's end. A spec
+   that matches every parameter of a large file has thousands of matches, and
+   the lookup runs for the expressions of every node the analysis visits. *)
+let containing_matches_index (matches : (RM.t * 'spec) list) :
+    Range.t -> (RM.t * 'spec) list =
+  let sorted =
+    matches
+    |> List.mapi (fun i m -> (i, m))
+    |> List.stable_sort (fun (_, (a, _)) (_, (b, _)) ->
+           Int.compare a.RM.r.Range.start b.RM.r.Range.start)
+    |> Array.of_list
+  in
+  let max_end =
+    snd
+      (Array.fold_left_map
+         (fun cur (_, (rwm, _)) ->
+           let cur = Int.max cur rwm.RM.r.Range.end_ in
+           (cur, cur))
+         min_int sorted)
+  in
+  (* The number of matches starting at or before [start]. *)
+  let rec count_starting_by start lo hi =
+    if lo >= hi then lo
+    else
+      let mid = Int.div (lo + hi) 2 in
+      let _, (rwm, _) = sorted.(mid) in
+      if rwm.RM.r.Range.start <= start then count_starting_by start (mid + 1) hi
+      else count_starting_by start lo mid
+  in
+  fun (r : Range.t) ->
+    let rec walk j acc =
+      if j < 0 || max_end.(j) < r.Range.end_ then acc
+      else
+        let ((_, (rwm, _)) as m) = sorted.(j) in
+        walk (j - 1) (if Range.( $<=$ ) r rwm.RM.r then m :: acc else acc)
+    in
+    walk (count_starting_by r.Range.start 0 (Array.length sorted) - 1) []
+    |> List.sort (fun (i, _) (j, _) -> Int.compare i j)
+    |> List_.map snd
+
+let any_is_in_matches_OSS rule containing ~get_id any =
   let ( let* ) = option_bind_list in
   let* r = range_of_any any in
-  matches
-  |> List_.filter_map (fun (rwm, spec) ->
-         if Range.( $<=$ ) r rwm.RM.r then
-           Some
-             (let spec_pm = RM.range_to_pattern_match_adjusted rule rwm in
-              let overlap = overlap_with ~match_range:rwm.RM.r r in
-              Taint_spec_match.
-                { spec; spec_id = get_id spec; spec_pm; range = r; overlap })
-         else None)
+  containing r
+  |> List_.map (fun (rwm, spec) ->
+         let spec_pm = RM.range_to_pattern_match_adjusted rule rwm in
+         let overlap = overlap_with ~match_range:rwm.RM.r r in
+         Taint_spec_match.
+           { spec; spec_id = get_id spec; spec_pm; range = r; overlap })
 
 let is_exact_match ~match_range r =
   let overlap = overlap_with ~match_range r in
@@ -421,22 +461,25 @@ let any_is_in_propagators_matches_OSS rule matches any :
              @ [])
 
 let mk_taint_spec_match_preds rule matches =
+  let sources = containing_matches_index matches.sources in
+  let sanitizers = containing_matches_index matches.sanitizers in
+  let sinks = containing_matches_index matches.sinks in
   Taint_rule_inst.
     {
       is_source =
         (fun any ->
-          any_is_in_matches_OSS rule matches.sources any
+          any_is_in_matches_OSS rule sources any
             ~get_id:(fun (ts : R.taint_source) -> ts.source_id));
       is_propagator =
         (fun any ->
           any_is_in_propagators_matches_OSS rule matches.propagators any);
       is_sanitizer =
         (fun any ->
-          any_is_in_matches_OSS rule matches.sanitizers any
+          any_is_in_matches_OSS rule sanitizers any
             ~get_id:(fun (ts : R.taint_sanitizer) -> ts.sanitizer_id));
       is_sink =
         (fun any ->
-          any_is_in_matches_OSS rule matches.sinks any
+          any_is_in_matches_OSS rule sinks any
             ~get_id:(fun (ts : R.taint_sink) -> ts.sink_id));
     }
 

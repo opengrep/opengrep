@@ -98,6 +98,9 @@ val lval_of_arg : arg -> lval
 
 type source = {
   call_trace : Rule.taint_source call_trace;
+  origin : Core_match.t * Rule.taint_source;
+      (** [pm_of_trace call_trace], kept with the trace: a call pushed onto
+          the trace does not change it. *)
   label : string;
       (** The label of this particular taint.
        * This may not agree with the source of the `call_trace`, because
