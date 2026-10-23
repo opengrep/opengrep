@@ -34,12 +34,12 @@ let fold :
     IL.(
       fun acc par ->
         match par with
-        | Param { pname = name; pdefault }
-        | ParamReceiver { pname = name; pdefault }
-        | ParamRest { pname = name; pdefault }
-        | ParamKwd { pname = name; pdefault } ->
+        | Param { pname = name; pdefault; _ }
+        | ParamReceiver { pname = name; pdefault; _ }
+        | ParamRest { pname = name; pdefault; _ }
+        | ParamKwd { pname = name; pdefault; _ } ->
             f acc name.ident name.id_info pdefault
-        | ParamPattern ({ pname = name; pdefault }, pat) ->
+        | ParamPattern ({ pname = name; pdefault; _ }, pat) ->
             let acc = f acc name.ident name.id_info pdefault in
             let ids = Visit_pattern_ids.visit (G.P pat) in
             List.fold_left
@@ -68,11 +68,11 @@ let fold_top_level :
     IL.(
       fun acc par ->
         match par with
-        | Param { pname = name; pdefault }
-        | ParamReceiver { pname = name; pdefault }
-        | ParamRest { pname = name; pdefault }
-        | ParamKwd { pname = name; pdefault }
-        | ParamPattern ({ pname = name; pdefault }, _) ->
+        | Param { pname = name; pdefault; _ }
+        | ParamReceiver { pname = name; pdefault; _ }
+        | ParamRest { pname = name; pdefault; _ }
+        | ParamKwd { pname = name; pdefault; _ }
+        | ParamPattern ({ pname = name; pdefault; _ }, _) ->
             f acc name.ident name.id_info pdefault
         | IL.ParamFixme -> acc)
     acc params

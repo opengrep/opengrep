@@ -21,6 +21,7 @@ module T = Taint
 module Taints = T.Taint_set
 open Shape_and_sig.Shape
 module Fields = Shape_and_sig.Fields
+module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
@@ -789,6 +790,99 @@ let truncate_signature ~max_depth (s : Signature.t) : Signature.t =
   let effects = Effects.map (truncate_effect ~max_depth) s.effects in
   if phys_equal effects s.effects then s else { s with effects }
 
+(* The taint variables of a recursive function, widened: a [Var] or
+ * [Shape_var] of a parameter at a non-empty path becomes the [Var] and the
+ * [Shape_var] of the parameter. The [Var] gives the taint of the caller's
+ * argument itself, which is what a path of an argument without a shape gives,
+ * and the [Shape_var] every taint below it ([Sig_inst.instantiate_taint_var]).
+ * The paths a recursion composes have no bound in breadth. *)
+let widen_taint (taint : T.taint) : T.taint list =
+  match taint.T.orig with
+  | T.Var ({ base = T.BArg _; offset = _ :: _ } as lval)
+  | T.Shape_var ({ base = T.BArg _; offset = _ :: _ } as lval) ->
+      let root = { lval with offset = [] } in
+      [ { taint with T.orig = T.Var root }; { taint with T.orig = T.Shape_var root } ]
+  | T.Var _
+  | T.Shape_var _
+  | T.Src _
+  | T.Control ->
+      [ taint ]
+
+let widen_taints (taints : Taints.t) : Taints.t =
+  Taints.fold
+    (fun (b : T.guarded_taint) (acc : Taints.t) ->
+      List.fold_left
+        (fun (acc : Taints.t) (t : T.taint) -> Taints.add { b with T.taint = t } acc)
+        acc (widen_taint b.T.taint))
+    taints Taints.empty
+
+let rec widen_shape_taints (shape : shape) : shape =
+  match shape with
+  | Bot
+  | Arg _ ->
+      shape
+  | Obj obj -> Obj (Fields.map widen_cell_taints obj)
+  | Fun sig_ ->
+      Fun { sig_ with Signature.effects = Effects.map widen_effect_taints sig_.Signature.effects }
+
+and widen_cell_taints (Cell (xtaint, shape) : cell) : cell =
+  let xtaint =
+    match xtaint with
+    | `Tainted taints -> `Tainted (widen_taints taints)
+    | (`None | `Clean) as other -> other
+  in
+  Cell (xtaint, widen_shape_taints shape)
+
+and widen_effect_taints (eff : Effect.t) : Effect.t =
+  match eff with
+  | Effect.ToSink tts ->
+      let items, pre = tts.taints_with_precondition in
+      let items =
+        List.concat_map
+          (fun (item : Effect.taint_to_sink_item) ->
+            List_.map
+              (fun (t : T.taint) -> { item with Effect.taint = t })
+              (widen_taint item.taint))
+          items
+        |> List.sort_uniq (fun (a : Effect.taint_to_sink_item) (b : Effect.taint_to_sink_item) -> T.compare_taint a.taint b.taint)
+      in
+      Effect.ToSink { tts with taints_with_precondition = (items, pre) }
+  | Effect.ToReturn tr -> (
+      match tr.data_shape with
+      | Obj _ ->
+          (* The object shape is folded into the taints of the returned value:
+           * a field of a value without a shape is read as the whole value,
+           * so a caller gets one widened set, not one per cell. *)
+          Effect.ToReturn
+            { tr with
+              data_taints =
+                widen_taints
+                  (Taints.union tr.data_taints
+                     (gather_all_taints_in_shape tr.data_shape));
+              data_shape = Bot;
+              control_taints = widen_taints tr.control_taints }
+      | Bot
+      | Arg _
+      | Fun _ ->
+          Effect.ToReturn
+            { tr with
+              data_taints = widen_taints tr.data_taints;
+              data_shape = widen_shape_taints tr.data_shape;
+              control_taints = widen_taints tr.control_taints })
+  | Effect.ToLval ttl -> Effect.ToLval { ttl with taints = widen_taints ttl.taints }
+  | Effect.ToSinkInCall r ->
+      let widen_arg (arg : (Taints.t * shape) IL.argument) =
+        match arg with
+        | IL.Unnamed (taints, shape) ->
+            IL.Unnamed (widen_taints taints, widen_shape_taints shape)
+        | IL.Named (ident, (taints, shape)) ->
+            IL.Named (ident, (widen_taints taints, widen_shape_taints shape))
+      in
+      Effect.ToSinkInCall { r with args_taints = List_.map widen_arg r.args_taints }
+
+let widen_signature_taints (s : Signature.t) : Signature.t =
+  { s with effects = Effects.map widen_effect_taints s.effects }
+
 (*********************************************************)
 (* Find an offset *)
 (*********************************************************)
@@ -1142,3 +1236,46 @@ and enum_in_obj obj =
          enum_in_cell cell
          |> Seq.map (fun (offset, taints) -> (o :: offset, taints)))
   |> Seq.concat
+
+(* A caller folds the [ToReturn] effects of a call into one value with
+   [unify_cell] after conjoining each effect's guard onto its
+   taints (see [Dataflow_tainting]), so the [ToReturn] effects of one guard
+   are kept as that join: a signature holds one [ToReturn] per guard. *)
+let join_returns ~(lang : Lang.t) (effects : Effects.t) : Effects.t =
+  let returns, others =
+    Effects.partition
+      (function
+        | Effect.ToReturn _ -> true
+        | Effect.ToSink _ | Effect.ToLval _ | Effect.ToSinkInCall _ -> false)
+      effects
+  in
+  let join (j : Effect.taints_to_return) (r : Effect.taints_to_return) :
+      Effect.taints_to_return =
+    let (Cell (xtaint, shape)) =
+      unify_cell ~lang
+        (Cell (Xtaint.of_taints r.data_taints, r.data_shape))
+        (Cell (Xtaint.of_taints j.data_taints, j.data_shape))
+    in
+    { j with
+      data_taints = Xtaint.to_taints xtaint;
+      data_shape = shape;
+      control_taints = Taints.union j.control_taints r.control_taints }
+  in
+  Effects.fold
+    (fun (eff : Effect.t) (acc : Effect.taints_to_return list) ->
+      match eff with
+      | Effect.ToReturn r -> (
+          match
+            List.partition
+              (fun (j : Effect.taints_to_return) ->
+                Effect_guard.equal j.guards r.guards)
+              acc
+          with
+          | [ j ], rest -> join j r :: rest
+          | _, _ -> r :: acc)
+      | Effect.ToSink _ | Effect.ToLval _ | Effect.ToSinkInCall _ -> acc)
+    returns []
+  |> List.fold_left
+       (fun (set : Effects.t) (r : Effect.taints_to_return) ->
+         Effects.add (Effect.ToReturn r) set)
+       others

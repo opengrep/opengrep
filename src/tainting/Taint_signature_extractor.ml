@@ -397,7 +397,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     {
       Signature.params;
       params_il = func_cfg.params;
-      effects = effects_with_preconditions;
+      effects = Taint_shape.join_returns ~lang:taint_inst.lang effects_with_preconditions;
     }
   in
   Log.debug (fun m ->

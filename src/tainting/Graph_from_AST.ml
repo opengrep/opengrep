@@ -856,13 +856,17 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
   visitor#visit_program (None, []) ast;
 
   (* Now select the innermost (smallest) function for each range *)
+  let top_level_fn_id = [ None; Some (top_level_name_of_ast ast) ] in
+  (* The functions are kept in a list, in the order they are selected, and
+     in a set for the membership test. *)
+  let add_selected ((seen, selected) : FnIdSet.t * fn_id list) (fn_id : fn_id)
+      : FnIdSet.t * fn_id list =
+    if FnIdSet.mem fn_id seen then (seen, selected)
+    else (FnIdSet.add fn_id seen, fn_id :: selected)
+  in
   List.fold_left (fun matching_funcs range ->
     let _, funcs_list = Hashtbl.find range_table range in
-    if List.is_empty funcs_list then
-      let top_level_fn_id = [ None; Some (top_level_name_of_ast ast) ] in
-      if List.exists (Func_info.equal_fn_id top_level_fn_id) matching_funcs
-      then matching_funcs
-      else top_level_fn_id :: matching_funcs
+    if List.is_empty funcs_list then add_selected matching_funcs top_level_fn_id
     else
       (* Prefer a named encloser over a lambda: a lambda isn't a call-graph vertex, so a source/sink on it would prune the enclosing function. *)
       let is_lambda_fn_id (fn_id : fn_id) =
@@ -888,9 +892,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       in
       match innermost with
       | None -> matching_funcs
-      | Some (innermost_fn_id, _) ->
-        if List.exists (Func_info.equal_fn_id innermost_fn_id) matching_funcs
-        then matching_funcs
-        else innermost_fn_id :: matching_funcs
-  ) [] ranges
+      | Some (innermost_fn_id, _) -> add_selected matching_funcs innermost_fn_id
+  ) (FnIdSet.empty, []) ranges
+  |> snd
   |> List.filter_map fn_id_to_node

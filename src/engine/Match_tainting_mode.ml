@@ -796,7 +796,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   ~call_graph:relevant_graph ~lang ~db
                   ~taint_inst:(taint_inst_of node) ~ast info
               in
-              Sig_fixpoint.store node fresh db'
+              Sig_fixpoint.store ~lang
+                ~widen:(taint_inst_of node).Taint_rule_inst.recursive node fresh db'
           in
           let signature_db_after_order =
             Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
@@ -924,8 +925,7 @@ let check_rules ~match_hook
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
   (* Check for language support warnings when taint_intrafile is enabled *)
-  (Dataflow_tainting.reset_constructor ();
-   (* Clear the per-domain guard-cond intern table: rules run on a domain in
+  ((* Clear the per-domain guard-cond intern table: rules run on a domain in
     * sequence, so a previous rule's canonical conds must not leak into this
     * one. *)
    Effect_guard.reset_intern ();
@@ -1058,6 +1058,10 @@ let check_rules ~match_hook
                    ^ "\nruleid: "
                    ^ (rule.id |> fst |> Rule_ID.to_string))
                  (fun () ->
+                   (* The constructor table is keyed by file and class only:
+                      a rule starts without the constructor taint of the
+                      rule before it. *)
+                   Dataflow_tainting.reset_constructor ();
                    let report, _signature_db =
                      check_rule per_file_formula_cache rule match_hook
                        ?builtin_signature_db:rule_builtin_signature_db

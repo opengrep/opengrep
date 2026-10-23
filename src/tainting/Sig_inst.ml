@@ -139,6 +139,9 @@ let sig_cache_store (cache : sig_inst_cache) (callee : IL.exp)
 type inst_var = {
   inst_lval : T.lval -> (Taints.t * shape) option;
       (** How to instantiate a 'Taint.lval', aka "data taint variable". *)
+  inst_shape_var : T.lval -> Taints.t option;
+      (** How to instantiate a 'Taint.Shape_var': every taint in the shape
+          that [inst_lval] gives. *)
   inst_ctrl : unit -> Taints.t;
       (** How to instantiate a 'Taint.Control', aka "control taint variable". *)
   inst_lval_to_name :
@@ -178,6 +181,30 @@ type inst_var = {
           verbatim into the caller's taints, where its names can never be
           resolved. *)
 }
+
+module Lval_map = Map.Make (struct
+  type t = T.lval
+
+  let compare = T.compare_lval
+end)
+
+(* [inst_shape_var] from [inst_lval], gathering the taints of each l-value
+   once: one instantiation reads the [Shape_var] of a parameter in every
+   cell and taint set of the signature that holds it. *)
+let mk_inst_shape_var (inst_lval : T.lval -> (Taints.t * shape) option) :
+    T.lval -> Taints.t option =
+  let gathered = ref Lval_map.empty in
+  fun (lval : T.lval) ->
+    match Lval_map.find_opt lval !gathered with
+    | Some taints -> taints
+    | None ->
+        let taints =
+          inst_lval lval
+          |> Option.map (fun ((_taints, shape) : Taints.t * shape) ->
+                 Shape.gather_all_taints_in_shape shape)
+        in
+        gathered := Lval_map.add lval taints !gathered;
+        taints
 
 (* TODO: Right now this is only for source traces, not for sink traces...
  * In fact, we should probably not have two traces but just one, but more
@@ -326,14 +353,12 @@ let subst_in_precondition inst_var taint =
                | Some (call_taints, _call_shape) ->
                    call_taints |> Taints.to_taint_list)
            | Shape_var lval -> (
-               match inst_var.inst_lval lval with
+               (* Taint shape-variable, stands for the taints reachable
+                * through the shape of the 'lval', it's like a delayed
+                * call to 'Shape.gather_all_taints_in_shape'. *)
+               match inst_var.inst_shape_var lval with
                | None -> []
-               | Some (_call_taints, call_shape) ->
-                   (* Taint shape-variable, stands for the taints reachable
-                    * through the shape of the 'lval', it's like a delayed
-                    * call to 'Shape.gather_all_taints_in_shape'. *)
-                   Shape.gather_all_taints_in_shape call_shape
-                   |> Taints.to_taint_list)
+               | Some taints -> Taints.to_taint_list taints)
            | Control -> inst_var.inst_ctrl () |> Taints.to_taint_list)
   in
   T.map_preconditions subst taint
@@ -344,11 +369,7 @@ let instantiate_taint_var inst_var taint =
   | Var lval -> inst_var.inst_lval lval
   | Shape_var lval ->
       (* This is just a delayed 'gather_all_taints_in_shape'. *)
-      let* taints =
-        inst_var.inst_lval lval
-        |> Option.map (fun (_taints, shape) ->
-               Shape.gather_all_taints_in_shape shape)
-      in
+      let* taints = inst_var.inst_shape_var lval in
       Some (taints, Bot)
   | Control ->
       (* 'Control' is pretty much like a taint variable so we handle all together. *)
@@ -1741,6 +1762,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   let inst_var =
     {
       inst_lval = lval_to_taints;
+      inst_shape_var = mk_inst_shape_var lval_to_taints;
       inst_ctrl = taints_in_ctrl;
       inst_lval_to_name;
       f_params = taint_sig.params;
@@ -1915,6 +1937,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           taints
           |> instantiate_taints
                { inst_lval = lval_to_taints;
+                 inst_shape_var = inst_var.inst_shape_var;
                  (* Note that control taints do not propagate to l-values. *)
                  inst_ctrl = (fun _ -> Taints.empty);
                  inst_lval_to_name;

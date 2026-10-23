@@ -59,6 +59,11 @@ type t = {
      JavaScript), a bare name is looked up in the enclosing scopes, which
      exclude the class body. *)
   bare_call_reaches_methods : bool;
+  (* An array or scalar argument is copied into the parameter, and an object
+     is passed by its handle (PHP): an update of a parameter that is not by
+     reference reaches the caller only through an object, that is, through a
+     property access on its path. *)
+  arrays_passed_by_value : bool;
 }
 
 let empty = {
@@ -74,6 +79,7 @@ let empty = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let python = {
@@ -99,6 +105,7 @@ let python = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let ruby = {
@@ -132,6 +139,7 @@ let ruby = {
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let crystal = ruby
@@ -165,6 +173,7 @@ let javascript = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let typescript = {
@@ -196,6 +205,7 @@ let java = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let kotlin = {
@@ -230,6 +240,7 @@ let kotlin = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let scala = {
@@ -257,6 +268,7 @@ let scala = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let csharp = {
@@ -285,6 +297,7 @@ let csharp = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let go = {
@@ -305,6 +318,7 @@ let go = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let rust = {
@@ -332,6 +346,7 @@ let rust = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let swift = {
@@ -359,6 +374,7 @@ let swift = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let php = {
@@ -377,6 +393,7 @@ let php = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = true;
 }
 
 let cpp = {
@@ -395,6 +412,7 @@ let cpp = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let c = {
@@ -415,6 +433,7 @@ let ocaml_lang = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let lua = {
@@ -430,6 +449,7 @@ let lua = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let dart = {
@@ -468,6 +488,7 @@ let dart = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let elixir = {
@@ -491,6 +512,7 @@ let elixir = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let julia = {
@@ -508,6 +530,7 @@ let julia = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let clojure = {
@@ -537,6 +560,7 @@ let clojure = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = false;
+  arrays_passed_by_value = false;
 }
 
 let apex = {
@@ -552,6 +576,7 @@ let apex = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 let vb = {
@@ -567,6 +592,7 @@ let vb = {
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
   bare_call_reaches_methods = true;
+  arrays_passed_by_value = false;
 }
 
 (* A function of a contract, its own or inherited, is called by a bare

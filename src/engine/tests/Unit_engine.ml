@@ -920,6 +920,87 @@ let taint_partial_parse_tests () =
         (check_partial_parse ~taint_intrafile:true);
     ]
 
+(*****************************************************************************)
+(* Taint signature fixpoint *)
+(*****************************************************************************)
+
+(* Signatures extracted from the fixtures in [tests/taint_signatures]. *)
+let signature_fixpoint_tests () =
+  let dir = tests_path / "taint_signatures" in
+  (* [load name] gives [extract db fun_name]: the signatures [fun_name]
+     extracts against [db], and the database with them. *)
+  let load name =
+    let file = dir / (name ^ ".js") in
+    let lang = Lang.Js in
+    let rules = Parse_rule.parse (dir / (name ^ ".yaml")) |> Result.get_ok in
+    let _, taint_rules, _, _ = Rule.partition_rules rules in
+    let rule = List.hd taint_rules in
+    let ast = Parse_target.parse_and_resolve_name_fail_if_partial lang file in
+    let xconf = Match_env.default_xconfig in
+    let xconf =
+      { xconf with config = { xconf.config with taint_intrafile = true } }
+    in
+    let per_file_formula_cache =
+      Formula_cache.mk_specialized_formula_cache taint_rules
+    in
+    let taint_inst, _, _ =
+      Match_taint_spec.taint_config_of_rule ~per_file_formula_cache xconf lang
+        file (ast, []) rule
+      |> Option.get
+    in
+    let infos = Match_tainting_mode.build_info_map ~lang ast in
+    fun db fun_name ->
+      let info =
+        Shape_and_sig.FunctionMap.bindings infos
+        |> List.find_map (fun (_, (info : Match_tainting_mode.fun_info)) ->
+               if String.equal (fst info.name.IL.ident) fun_name then Some info
+               else None)
+        |> Option.get
+      in
+      let db, sigs =
+        Match_tainting_mode.extract_signatures ~lang ~db ~taint_inst ~ast info
+      in
+      (db, List_.map (fun (s : Shape_and_sig.extended_sig) -> s.sig_) sigs)
+  in
+  let effects sigs =
+    List.concat_map
+      (fun (s : Shape_and_sig.Signature.t) ->
+        Shape_and_sig.Effects.elements s.effects)
+      sigs
+  in
+  (* [ping] and [pong] call each other: rounds of the fixpoint over the two
+     leave [ping]'s sink effects as they are, the precondition a parameter's
+     label adds conjoined once, not once per round. *)
+  let fixpoint name =
+    t ("taint signature fixpoint " ^ name) (fun () ->
+        let extract = load name in
+        let db, sigs1 =
+          extract (Shape_and_sig.empty_signature_database ()) "ping"
+        in
+        let db, _ = extract db "pong" in
+        let db, _ = extract db "ping" in
+        let db, _ = extract db "pong" in
+        let _, sigs2 = extract db "ping" in
+        let sink_preconditions sigs =
+          effects sigs
+          |> List.filter_map (function
+               | Shape_and_sig.Effect.ToSink
+                   { taints_with_precondition = _, pre; _ } ->
+                   Some pre
+               | _ -> None)
+          |> List.sort Rule.compare_precondition
+        in
+        let pres1 = sink_preconditions sigs1 in
+        if List_.null pres1 then failwith "no sink effect in the first round";
+        if
+          not
+            (List.equal
+               (fun a b -> Int.equal (Rule.compare_precondition a b) 0)
+               pres1 (sink_preconditions sigs2))
+        then failwith "the sink effects change from one round to the next")
+  in
+  Testo.categorize "taint signature" [ fixpoint "precondition_fixpoint" ]
+
 let tests () =
   List_.flatten
     [
@@ -936,4 +1017,5 @@ let tests () =
       lang_tainting_tests ();
       taint_partial_parse_tests ();
       lang_classification_tests ();
+      signature_fixpoint_tests ();
     ]

@@ -47,8 +47,9 @@ let recursive_members (graph : Call_graph.G.t)
          | [ fid ] -> if Call_graph.G.mem_edge graph fid fid then [ fid ] else []
          | _ -> members)
 
-let store ?(max_shape_depth : int option) (fid : Function_id.t)
-    (fresh : Shape_and_sig.extended_sig list) (db : db) : db =
+let store ~(lang : Lang.t) ~(widen : bool) ?(max_shape_depth : int option)
+    (fid : Function_id.t) (fresh : Shape_and_sig.extended_sig list) (db : db) :
+    db =
   let cut (xs : Shape_and_sig.extended_sig) : Shape_and_sig.extended_sig =
     match max_shape_depth with
     | None -> xs
@@ -57,9 +58,35 @@ let store ?(max_shape_depth : int option) (fid : Function_id.t)
           Shape_and_sig.sig_ =
             Taint_shape.truncate_signature ~max_depth xs.Shape_and_sig.sig_ }
   in
+  let stored = Sig_store.get fid db in
+  let join_with_stored (xs : Shape_and_sig.extended_sig) :
+      Shape_and_sig.extended_sig =
+    let sig_ = xs.Shape_and_sig.sig_ in
+    let effects =
+      SignatureSet.fold
+        (fun (old : Shape_and_sig.extended_sig) (acc : Shape_and_sig.Effects.t) ->
+          if
+            Shape_and_sig.equal_sig_arity old.Shape_and_sig.arity
+              xs.Shape_and_sig.arity
+          then
+            Shape_and_sig.Effects.union acc
+              old.Shape_and_sig.sig_.Shape_and_sig.Signature.effects
+          else acc)
+        stored sig_.Shape_and_sig.Signature.effects
+    in
+    let joined =
+      { sig_ with
+        Shape_and_sig.Signature.effects = Taint_shape.join_returns ~lang effects }
+    in
+    (* The taint variables of a member of a cycle are widened so that the
+       cycle reaches a fixpoint. *)
+    { xs with
+      Shape_and_sig.sig_ =
+        (if widen then Taint_shape.widen_signature_taints joined else joined) }
+  in
   let set =
     List.fold_left
-      (fun acc xs -> SignatureSet.add (cut xs) acc)
+      (fun acc xs -> SignatureSet.add (cut (join_with_stored (cut xs))) acc)
       SignatureSet.empty fresh
   in
   Sig_store.set fid set db

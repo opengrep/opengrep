@@ -220,7 +220,7 @@ end = struct
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
+      | Fun sig1, Fun sig2 -> Signature.equal_with_guards sig1 sig2
       | Bot, _
       | Obj _, _
       | Arg _, _
@@ -234,8 +234,7 @@ end = struct
   let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
 
   (* Guard-aware twin of the chain above; structure identical, but cell
-   * taints compare via [Xtaint.equal_with_guards] and [Fun] shapes via
-   * [Signature.equal_with_guards]. *)
+   * taints compare via [Xtaint.equal_with_guards]. *)
   let rec equal_cell_with_guards_depth depth cell1 cell2 =
     if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
     else
@@ -465,6 +464,22 @@ and Effect : sig
       so an [Effects] set holds one element per guard-less effect identity
       and fuses guards on insertion (see [fuse_guards]). *)
 
+  val compare_target : t -> t -> int
+  (** The order of effects by target: the sink, precondition and bindings of
+      a [ToSink]; the l-value of a [ToLval]; the callee, parameter, offset and
+      argument shapes of a [ToSinkInCall]. On a [ToReturn] it is [compare]. [compare] refines it, so effects with the same
+      target are adjacent in an [Effects] set. *)
+
+  val join_same_target : t -> t -> t
+  (** [join_same_target e1 e2], where [compare_target e1 e2 = 0] and
+      [joins_by_target e1], unites the taints of the two effects. *)
+
+  val joins_by_target : t -> bool
+  (** Whether an [Effects] set unites the taints of this effect with those of
+      an effect of the same target and guard: true of [ToLval],
+      [ToSinkInCall] and a [ToSink] without precondition, whose instantiation
+      maps their taints one by one. *)
+
   val fuse_guards : t -> t -> t
   (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with every
       guard-bearing payload fused disjunctively: the effect-level guard, the
@@ -562,6 +577,16 @@ end = struct
       { taint = taint2; sink_trace = _; guard = _ } =
     T.compare_taint taint1 taint2
 
+  (* A sink effect without its taints: the sink, the precondition and the
+   * metavariable bindings. *)
+  let compare_sink_target sink1 pre1 env1 sink2 pre2 env2 =
+    match compare_sink sink1 sink2 with
+    | 0 -> (
+        match R.compare_precondition pre1 pre2 with
+        | 0 -> T.compare_metavar_env env1 env2
+        | other -> other)
+    | other -> other
+
   (* The [compare_*] below ignore [guards]: an effect's identity is its
    * guard-less content, and [Effects] fuses the guards of same-identity
    * effects on insertion (see [fuse_guards]). *)
@@ -578,14 +603,8 @@ end = struct
         merged_env = env2;
         guards = _;
       } =
-    match compare_sink sink1 sink2 with
-    | 0 -> (
-        match List.compare compare_taint_to_sink_item ttsis1 ttsis2 with
-        | 0 -> (
-            match R.compare_precondition pre1 pre2 with
-            | 0 -> T.compare_metavar_env env1 env2
-            | other -> other)
-        | other -> other)
+    match compare_sink_target sink1 pre1 env1 sink2 pre2 env2 with
+    | 0 -> List.compare compare_taint_to_sink_item ttsis1 ttsis2
     | other -> other
 
   let compare_taints_to_return
@@ -613,25 +632,42 @@ end = struct
   let compare_taints_to_lval
       { taints = ts1; lval = lv1; guards = _ }
       { taints = ts2; lval = lv2; guards = _ } =
-    match Taints.compare ts1 ts2 with
-    | 0 -> T.compare_lval lv1 lv2
+    match T.compare_lval lv1 lv2 with
+    | 0 -> Taints.compare ts1 ts2
     | other -> other
 
-  let compare_arg (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
-    let compare_taints_and_shape (taints1, shape1) (taints2, shape2) =
-      match Taints.compare taints1 taints2 with
-      | 0 -> Shape.compare_shape shape1 shape2
-      | other -> other
-    in
+  (* The argument without its taints: its name and shape. *)
+  let compare_arg_target (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
     match (arg1, arg2) with
-    | Unnamed (taints1, shape1), Unnamed (taints2, shape2) ->
-        compare_taints_and_shape (taints1, shape1) (taints2, shape2)
-    | Named (name1, (taints1, shape1)), Named (name2, (taints2, shape2)) -> (
+    | Unnamed (_, shape1), Unnamed (_, shape2) ->
+        Shape.compare_shape shape1 shape2
+    | Named (name1, (_, shape1)), Named (name2, (_, shape2)) -> (
         match AST_generic.compare_ident name1 name2 with
-        | 0 -> compare_taints_and_shape (taints1, shape1) (taints2, shape2)
+        | 0 -> Shape.compare_shape shape1 shape2
         | other -> other)
     | Unnamed _, Named _ -> -1
     | Named _, Unnamed _ -> 1
+
+  let compare_arg_taints (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
+    match (arg1, arg2) with
+    | Unnamed (taints1, _), Unnamed (taints2, _)
+    | Named (_, (taints1, _)), Named (_, (taints2, _)) ->
+        Taints.compare taints1 taints2
+    | Unnamed _, Named _ -> -1
+    | Named _, Unnamed _ -> 1
+
+  let compare_sink_in_call_target (fexp1 : IL.exp) fvar1 foff1 args_taints1
+      (fexp2 : IL.exp) fvar2 foff2 args_taints2 =
+    (* Comparing "fvar"s is cheap so better to do it first. *)
+    match T.compare_arg fvar1 fvar2 with
+    | 0 -> (
+        match List.compare T.compare_offset foff1 foff2 with
+        | 0 -> (
+            match IL.compare_orig fexp1.eorig fexp2.eorig with
+            | 0 -> List.compare compare_arg_target args_taints1 args_taints2
+            | other -> other)
+        | other -> other)
+    | other -> other
 
   let compare r1 r2 =
     match (r1, r2) with
@@ -654,15 +690,11 @@ end = struct
             args_taints = args_taints2;
             guards = _;
           } ) -> (
-        (* Comparing "fvar"s is cheap so better to do it first. *)
-        match T.compare_arg fvar1 fvar2 with
-        | 0 -> (
-            match List.compare T.compare_offset foff1 foff2 with
-            | 0 -> (
-                match IL.compare_orig fexp1.eorig fexp2.eorig with
-                | 0 -> List.compare compare_arg args_taints1 args_taints2
-                | other -> other)
-            | other -> other)
+        match
+          compare_sink_in_call_target fexp1 fvar1 foff1 args_taints1 fexp2
+            fvar2 foff2 args_taints2
+        with
+        | 0 -> List.compare compare_arg_taints args_taints1 args_taints2
         | other -> other)
     | ToSink _, (ToReturn _ | ToLval _ | ToSinkInCall _) -> -1
     | ToReturn _, (ToLval _ | ToSinkInCall _) -> -1
@@ -670,6 +702,26 @@ end = struct
     | ToReturn _, ToSink _ -> 1
     | ToLval _, (ToSink _ | ToReturn _) -> 1
     | ToSinkInCall _, (ToSink _ | ToReturn _ | ToLval _) -> 1
+
+  let compare_target r1 r2 =
+    match (r1, r2) with
+    | ToSink tts1, ToSink tts2 ->
+        compare_sink_target tts1.sink (snd tts1.taints_with_precondition)
+          tts1.merged_env tts2.sink (snd tts2.taints_with_precondition)
+          tts2.merged_env
+    | ToLval ttl1, ToLval ttl2 -> T.compare_lval ttl1.lval ttl2.lval
+    | ToSinkInCall c1, ToSinkInCall c2 ->
+        compare_sink_in_call_target c1.callee c1.arg c1.arg_offset
+          c1.args_taints c2.callee c2.arg c2.arg_offset c2.args_taints
+    | _ -> compare r1 r2
+
+  (* A sink effect with a precondition is not joined: the precondition is
+   * solved over the taints of one effect, and over a union it could hold
+   * where it holds for neither. *)
+  let joins_by_target = function
+    | ToLval _ | ToSinkInCall _ -> true
+    | ToSink { taints_with_precondition = _, R.PBool true; _ } -> true
+    | ToSink _ | ToReturn _ -> false
 
   (*************************************)
   (* Pretty-printing *)
@@ -813,6 +865,38 @@ end = struct
             guards = Effect_guard.compose_or c1.guards c2.guards }
     | _ -> e1 (* unreachable: differing constructors compare non-zero *)
 
+  (* Precondition: [compare_target e1 e2 = 0] and [joins_by_target e1]. The
+   * union of the taints of two effects of one target; a taint in both keeps
+   * the item of [e1] with the two guards fused. *)
+  let join_same_target e1 e2 =
+    match (e1, e2) with
+    | ToSink tts1, ToSink tts2 ->
+        let items1, pre = tts1.taints_with_precondition in
+        let items2, _ = tts2.taints_with_precondition in
+        let items =
+          List.fold_left
+            (fun (acc : taint_to_sink_item list) (i2 : taint_to_sink_item) ->
+              if
+                List.exists
+                  (fun i1 -> Int.equal (compare_taint_to_sink_item i1 i2) 0)
+                  acc
+              then
+                List_.map
+                  (fun (i1 : taint_to_sink_item) ->
+                    if Int.equal (compare_taint_to_sink_item i1 i2) 0 then
+                      { i1 with guard = Effect_guard.compose_or i1.guard i2.guard }
+                    else i1)
+                  acc
+              else i2 :: acc)
+            items1 items2
+          |> List.sort compare_taint_to_sink_item
+        in
+        ToSink
+          { tts1 with
+            taints_with_precondition = (items, pre);
+            guards = Effect_guard.compose_or tts1.guards tts2.guards }
+    | _ -> fuse_guards e1 e2
+
   (* Whether two identity-equal effects ([compare] = 0) carry the same
    * guards, including every guard-bearing payload: [ToSink] item guards
    * and the bundle guards inside the [Taints.t] payloads (effect
@@ -867,7 +951,8 @@ end = struct
   include Set.Make (struct
     type t = Effect.t
 
-    let compare effect1 effect2 = Effect.compare effect1 effect2
+    let compare effect1 effect2 =
+      if phys_equal effect1 effect2 then 0 else Effect.compare effect1 effect2
   end)
 
   (* [Effect.compare] ignores guards, so the set holds one element per
@@ -883,13 +968,39 @@ end = struct
    * point; it compares every guard-bearing payload, not just the
    * effect-level guard — an item- or bundle-guard-only refinement must
    * not be discarded. *)
-  let add eff set =
+  let add_elt = add
+
+  (* An effect of the same target and effect-level guard as [eff], for an
+   * effect that joins by target. Such effects are adjacent in the set. *)
+  let find_same_target eff set =
+    if not (Effect.joins_by_target eff) then None
+    else
+      match find_first_opt (fun e -> Effect.compare_target e eff >= 0) set with
+      | None -> None
+      | Some first ->
+          to_seq_from first set
+          |> Seq.take_while (fun e -> Int.equal (Effect.compare_target e eff) 0)
+          |> Seq.find (fun e ->
+                 Effect_guard.equal (Effect.guards_of e) (Effect.guards_of eff))
+
+  (* An effect that joins by target is united with the effect of the same
+   * target and guard: the set holds one such effect per target and guard. *)
+  let rec add eff set =
     match find_opt eff set with
-    | None -> add eff set
     | Some existing ->
         let fused = Effect.fuse_guards existing eff in
         if Effect.guards_equal fused existing then set
         else add fused (remove existing set)
+    | None -> (
+        match find_same_target eff set with
+        | None -> add_elt eff set
+        | Some existing ->
+            let fused = Effect.join_same_target existing eff in
+            if
+              Int.equal (Effect.compare fused existing) 0
+              && Effect.guards_equal fused existing
+            then set
+            else add fused (remove existing set))
 
   let union s1 s2 =
     (* Fold the smaller set into the larger one. *)
@@ -1033,8 +1144,8 @@ end = struct
          | IL.ParamReceiver _ -> false
          | _ -> true)
     |> List_.map (function
-         | IL.Param { pname = { ident = s, _; _ }; pdefault = Some _ } -> POpt s
-         | IL.Param { pname = { ident = s, _; _ }; pdefault = None } -> P s
+         | IL.Param { pname = { ident = s, _; _ }; pdefault = Some _; _ } -> POpt s
+         | IL.Param { pname = { ident = s, _; _ }; pdefault = None; _ } -> P s
          (* function signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
          | IL.ParamKwd { pname = { ident = s, _; _ }; _ } -> PKwd s
@@ -1222,13 +1333,16 @@ let lookup_all_signatures (db : signature_database) (name : Function_id.t)
   | Some sigs -> SignatureSet.elements sigs
   | None -> []
 
+(* The latest extraction replaces an equal signature: in a fixpoint, the
+   newest is the one to keep. *)
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =
     FunctionMap.update name
       (fun existing_sigs ->
         match existing_sigs with
-        | Some sigs -> Some (SignatureSet.add signature sigs)
+        | Some sigs ->
+            Some (SignatureSet.add signature (SignatureSet.remove signature sigs))
         | None -> Some (SignatureSet.singleton signature))
       db.signatures
   in

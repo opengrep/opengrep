@@ -99,9 +99,12 @@ type func = {
           [Sig_inst.instantiate_function_signature] to rebind a callee's
           guards into this function's parameters when the called sig
           carries an unresolved guard. *)
-  param_sids : G.SId.t list;
-      (** [sid]s of [il_params], precomputed for the call-effect
-          [ToLval] consumer's bound-vs-free check. *)
+  bound_sids : G.SId.t list;
+      (** [sid]s of the variables bound in the function: its [il_params],
+          and, for a named function, the local variables it assigns. For
+          the call-effect [ToLval] consumer's bound-vs-free check. A lambda
+          has its parameters only: an assignment in its body may write a
+          variable of the enclosing function. *)
   best_matches : TM.Best_matches.t;
       (** Best matches for the taint sources/etc, see 'Taint_spec_match'. *)
   used_lambdas : IL.NameSet.t;
@@ -382,13 +385,31 @@ let add_this_field_to_lval_env env lval_env offset taints =
    else is free. [effects_from_arg_updates_at_exit] handles own params
    on the [BArg] side. *)
 let is_own_param (env : env) (var : IL.name) : bool =
-  List.exists (G.SId.equal var.IL.sid) env.func.param_sids
+  List.exists (G.SId.equal var.IL.sid) env.func.bound_sids
 
 let mk_param_sids (params : IL.param list) : G.SId.t list =
   List.filter_map
     (fun p ->
       Option.map (fun (n : IL.name) -> n.IL.sid) (IL_helpers.pname_of_param p))
     params
+
+(* The parameters of [fun_cfg] and the local variables its instructions
+   assign. *)
+let mk_bound_sids (fun_cfg : IL.fun_cfg) : G.SId.t list =
+  fun_cfg.cfg.graph#nodes#fold
+    (fun (acc : G.SId.t list) ((_, node) : int * IL.node) ->
+      match node.IL.n with
+      | IL.NInstr instr -> (
+          match IL_helpers.lvar_of_instr_opt instr with
+          | Some var -> (
+              match !(var.IL.id_info.G.id_resolved) with
+              | Some (G.LocalVar, _) -> var.IL.sid :: acc
+              | Some _
+              | None ->
+                  acc)
+          | None -> acc)
+      | _ -> acc)
+    (mk_param_sids fun_cfg.params)
 
 let unify_mvars_sets env mvars1 mvars2 =
   let xs =
@@ -3072,7 +3093,45 @@ let check_tainted_return env tok e : Taints.t * S.shape * Lval_env.t =
   record_effects env effects;
   (taints, shape, var_env')
 
-let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
+(* Whether the parameter numbered [index] as [Taint.arg] numbers parameters
+   (a receiver takes no index) is bound to the caller's variable. *)
+let param_by_reference (params : IL.param list) (index : int) : bool =
+  match
+    List.nth_opt
+      (List.filter
+         (function
+           | IL.ParamReceiver _ -> false
+           | IL.Param _ | IL.ParamRest _ | IL.ParamKwd _ | IL.ParamPattern _
+           | IL.ParamFixme ->
+               true)
+         params)
+      index
+  with
+  | Some
+      ( IL.Param name_param
+      | IL.ParamRest name_param
+      | IL.ParamKwd name_param
+      | IL.ParamPattern (name_param, _) ) ->
+      name_param.IL.by_reference
+  | Some (IL.ParamReceiver _ | IL.ParamFixme)
+  | None ->
+      false
+
+(* Whether an update of parameter [arg] at [offset] is visible to the caller:
+   in a language that copies arrays into a by-value parameter, only through
+   an object, that is, through a property access on the path. *)
+let update_reaches_caller ~(lang : Lang.t) ~(params : IL.param list)
+    (arg : T.arg) (offset : T.offset list) : bool =
+  (not (Lang_config.get lang).arrays_passed_by_value)
+  || param_by_reference params arg.T.index
+  || List.exists
+       (function
+         | T.Ofld _ -> true
+         | T.Oint _ | T.Ostr _ | T.Oslice _ | T.Oany -> false)
+       offset
+
+let effects_from_arg_updates_at_exit ~(lang : Lang.t) ~(params : IL.param list)
+    enter_env exit_env : Effect.t list =
   (* TOOD: We need to get a map of `lval` to `Taint.arg`, and if an extension
    * of `lval` has new taints, then we can compute its correspoding `Taint.arg`
    * extension and generate a `ToLval` effect too. *)
@@ -3101,8 +3160,17 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
                           { lval with offset = lval.offset @ offset }
                         in
                         let new_taints = Taints.diff exit_taints enter_taints in
+                        let reaches_caller =
+                          match lval.base with
+                          | T.BArg arg ->
+                              update_reaches_caller ~lang ~params arg
+                                lval.offset
+                          | T.BThis
+                          | T.BGlob _ ->
+                              true
+                        in
                         (* TODO: Also report if taints are _cleaned_. *)
-                        if not (Taints.is_empty new_taints) then
+                        if reaches_caller && not (Taints.is_empty new_taints) then
                           Some
                             (Effect.ToLval
                                {
@@ -3834,7 +3902,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   in
   log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-  effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
+  effects_from_arg_updates_at_exit ~lang:taint_inst.lang
+    ~params:fun_cfg.params enter_lval_env exit_lval_env
   |> record_effects env;
   (!(env.effects_acc), end_mapping)
 
@@ -3925,7 +3994,7 @@ and (fixpoint :
       name;
       sig_params = Signature.of_IL_params fun_cfg.params;
       il_params = fun_cfg.params;
-      param_sids = mk_param_sids fun_cfg.params;
+      bound_sids = mk_bound_sids fun_cfg;
       best_matches;
       used_lambdas;
     }
@@ -4181,7 +4250,7 @@ and (fixpoint :
                        sig_params =
                          Signature.of_IL_params lambda_cfg.params;
                        il_params = lambda_cfg.params;
-                       param_sids = mk_param_sids lambda_cfg.params;
+                       bound_sids = mk_param_sids lambda_cfg.params;
                        best_matches = lambda_best_matches;
                        used_lambdas = IL.NameSet.empty;
                      }
@@ -4245,9 +4314,17 @@ and (fixpoint :
                let storage_key =
                  Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
                in
-               Hashtbl.replace
-                 (Domain.DLS.get constructor_instance_vars)
-                 storage_key final_env
+               (* An instance is built by one of the constructors of its
+                  class, so a method starts from the union of their final
+                  environments. *)
+               let table = Domain.DLS.get constructor_instance_vars in
+               let class_env =
+                 match Hashtbl.find_opt table storage_key with
+                 | None -> final_env
+                 | Some stored ->
+                     Lval_env.union ~lang:taint_inst.lang stored final_env
+               in
+               Hashtbl.replace table storage_key class_env
            | None -> ())
      | None -> ());
   (effects, mapping)

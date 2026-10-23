@@ -190,7 +190,12 @@ let any_of_orig = function
 (* Parameters and arguments *)
 (*****************************************************************************)
 
-type name_param = { pname : name; pdefault : G.expr option }
+type name_param = {
+  pname : name;
+  pdefault : G.expr option;
+  by_reference : bool;
+      (** The parameter is bound to the caller's variable (PHP '&$x'). *)
+}
 [@@deriving show { with_path = false }, ord]
 
 type param =
@@ -233,11 +238,11 @@ class virtual ['self] iter_parent =
 
     method visit_param env param =
       match param with
-      | Param { pname; pdefault = _ }
-      | ParamReceiver { pname; pdefault = _ }
-      | ParamRest { pname; pdefault = _ }
-      | ParamKwd { pname; pdefault = _ }
-      | ParamPattern ({ pname; pdefault = _ }, _) ->
+      | Param { pname; pdefault = _; _ }
+      | ParamReceiver { pname; pdefault = _; _ }
+      | ParamRest { pname; pdefault = _; _ }
+      | ParamKwd { pname; pdefault = _; _ }
+      | ParamPattern ({ pname; pdefault = _; _ }, _) ->
           self#visit_name env pname
       | ParamFixme -> ()
 
