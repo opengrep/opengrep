@@ -279,8 +279,8 @@ let gutter_blank = " |"
 
 let test_location_highlighted_per_line () =
   let pp ?dedent () =
-    Findings_layout.pp_trace_location ?dedent ~prefix:"" ~gutter ~gutter_blank
-      ~highlight:[ `Bold ]
+    Findings_layout.pp_trace_location ?dedent ~first_prefix:"" ~prefix:""
+      ~gutter ~gutter_blank ~highlight:[ `Bold ] ~unhighlighted:[]
   in
   Alcotest.(check string)
     "ending left of the start" "2|    x = [source(]\n |        [1,]\n |    [)]\n"
@@ -292,6 +292,21 @@ let test_location_highlighted_per_line () =
   Alcotest.(check string)
     "dedented" "2|x = [source(]\n |    [1,]\n |[)]\n"
     (render_location ~contents:ends_left (pp ~dedent:true ()) (2, 9) (4, 6))
+
+(* A location whose file cannot be read prints its line number and an
+   ellipsis after the first prefix, so that a step of a trace keeps its
+   label; a readable one prints its code after the same prefix. *)
+let test_unreadable_location_keeps_its_prefix () =
+  let pp (ppf : Format.formatter) (loc : Out.location) : unit =
+    Findings_layout.pp_trace_location ~first_prefix:"sink " ~prefix:""
+      ~gutter ~gutter_blank ~highlight:[ `Bold ] ~unhighlighted:[] ppf loc
+  in
+  Alcotest.(check string)
+    "unreadable" "sink 4|\u{2026}\n"
+    (Fmt.str "%a" pp (location (Fpath.v "no/such/file.py") (4, 5) (4, 9)));
+  Alcotest.(check string)
+    "readable" "sink 2|    x = [source(]\n |        [1,]\n |    [)]\n"
+    (render_location ~contents:ends_left pp (2, 9) (4, 6))
 
 (* The legacy report prints what pysemgrep printed, including its column
    arithmetic: the highlight is cut out of the joined lines, and a location
@@ -314,6 +329,8 @@ let findings_layout_tests =
     [
       t "a location over several lines is highlighted on each"
         test_location_highlighted_per_line;
+      t "an unreadable location keeps its prefix"
+        test_unreadable_location_keeps_its_prefix;
       t "the legacy report cuts the highlight from the joined lines"
         test_legacy_location_cut_from_joined_lines;
     ]

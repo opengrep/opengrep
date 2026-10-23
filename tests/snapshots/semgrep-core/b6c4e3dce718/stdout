@@ -8,5 +8,5 @@ a.py
   error  eqeq-bad
   useless comparison
 
-    6 │ return x == x
+     6: return x == x
 

@@ -7,9 +7,9 @@ module OutJ = Semgrep_output_v1_t
  * of its colour.
  *
  * Each file is printed once above its findings; a finding is a severity, a
- * rule id and a message, with the code under them in a thin gutter. Colour
- * marks only the severity and the rule id, and the code starts four columns
- * from the margin rather than twelve.
+ * rule id and a message, with the code under them, each line after its
+ * number at the left edge. Colour marks only the severity and the rule id;
+ * the line numbers, the labels and the code around a match are faint.
  *
  * This module defines the look; Skin_common draws the report with it.
  *)
@@ -20,30 +20,47 @@ module M = Skin_model
 (* Measurements *)
 (*****************************************************************************)
 
-(* The column of the message and the gutter. Findings_layout.chunk_indentation
-   adds two columns of its own (those rich added in the python wrapper), so
-   an indent of 0 there starts here. *)
+(* The column of the message. Findings_layout.chunk_indentation adds two
+   columns of its own (those rich added in the python wrapper), so an indent
+   of 0 there starts here. *)
 let indent_size = 2
 let indent = String.make indent_size ' '
 
-(* The code and its parts (the snippet, its trace, the fix) are one level
-   deeper than the heading and the message. *)
+(* The note on the omitted lines of a finding is one level deeper than the
+   heading and the message. *)
 let body_size = indent_size + 2
 let body = String.make body_size ' '
 
 (* Findings_layout.chunk_indentation adds console_indent_size columns, so a
-   gutter with this indent starts at body_size. *)
-let gutter_indent = body_size - Findings_layout.console_indent_size
+   gutter with this indent starts at the left edge. *)
+let gutter_indent = -Findings_layout.console_indent_size
 
-let separator = " │ "
+(* A line number is right-aligned in a column of fixed width, so that the
+   code starts at the same column in every finding. *)
+let line_number_width = 6
+let separator = ": "
 
 (* A located line of a trace is under the path printed before it, which
    Findings_layout.esc_prefix indents by two columns. *)
 let trace_number_indent = "  "
 let separator_width = Utf8.length separator
 
-let from_label = "from: "
-let fix_label = "fix: "
+(* the column of the code, after its number and the separator *)
+let code_column = line_number_width + separator_width
+
+(* a trace is drawn from the column of the code above it *)
+let trace_margin = String.make code_column ' '
+
+(* The lines under the code have no common margin: each label carries its
+   own indentation. A label is right-aligned in the column of the line
+   numbers, so that its colon is under theirs and the text after it starts
+   at the column of the code. *)
+let gutter_label (word : string) : string =
+  String.make (max 0 (line_number_width - String.length word)) ' '
+  ^ word ^ separator
+
+let from_label = gutter_label "from"
+let fix_label = gutter_label "fix"
 
 (*****************************************************************************)
 (* Styling *)
@@ -65,49 +82,74 @@ let severity_word (severity : OutJ.match_severity) : string * Fmt.style =
   | `Experiment ->
       ("note", `Fg `Cyan)
 
+(* In the snippet and in a trace, the matched code is plain and the rest of
+   its lines faint, rather than the match bold, which some terminals render
+   as a heavier font and others as a brighter colour. *)
+let match_highlight : Fmt.style list = []
+let match_unhighlighted : Fmt.style list = [ `Faint ]
+
+(* the line numbers, in the snippet and in a trace, the labels and the note
+   on omitted lines *)
+let annotation_style : Fmt.style list = [ `Faint ]
+let pp_annotation : string Fmt.t =
+  Findings_layout.styles annotation_style Fmt.string
+
+(* a line number right-aligned in [width] columns and its separator, faint,
+   rendered for [ppf] *)
+let numbered (ppf : Format.formatter) (width : int) (n : int) : string =
+  Fmt.str_like ppf "%a" pp_annotation (Printf.sprintf "%*d%s" width n separator)
+
 (*****************************************************************************)
 (* A finding *)
 (*****************************************************************************)
 
 (* "  warn  os-system-concat", with the message under it at the same
-   indent, and the code, the sources and the fix one level deeper *)
+   indent, and the code under them, each line after its number *)
 let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
   let word, style = severity_word severity in
   {
     pp_head_margin = (fun ppf -> Fmt.string ppf indent);
     head_width = indent_size;
-    pp_body_margin = (fun ppf -> Fmt.string ppf body);
-    body_width = body_size;
+    pp_body_margin = (fun (_ : Format.formatter) -> ());
+    body_width = 0;
     pp_blank = (fun ppf -> Fmt.pf ppf "@.");
+    blank_before_fix = false;
     badge = word;
     pp_badge = Fmt.(styled style string);
     pp_rule_id = Fmt.(styled (`Fg `Cyan) string);
-    (* the gutter is part of what pp_wrapped_code_line fills *)
-    code_width = (fun ~width ~digits:_ -> width - body_size);
+    code_width = (fun ~width ~digits:_ -> width - code_column);
+    (* the line number is part of what pp_wrapped_code_line fills *)
     pp_code_line =
-      (fun ~digits ~width ppf (line : Findings_layout.code_line) ->
-        let number_width = digits + separator_width in
+      (fun ~digits:_ ~width ppf (line : Findings_layout.code_line) ->
         Findings_layout.pp_wrapped_code_line ~number_indent:gutter_indent
-          ~code_indent:(gutter_indent + number_width) ~number_width ~separator
-          ppf ~line_number:line.line_number ~width ~bold_start:line.match_start
-          ~bold_end:line.match_end line.text);
+          ~code_indent:(gutter_indent + code_column) ~number_width:code_column
+          ~separator ppf ~line_number:line.line_number
+          ~width:(width + code_column)
+          ~gutter_style:annotation_style ~highlight:match_highlight
+          ~unhighlighted:match_unhighlighted ~highlight_start:line.match_start
+          ~highlight_end:line.match_end line.text);
     pp_more_lines =
       (fun ~digits:_ ppf (txt : string) ->
-        Fmt.pf ppf "%a@." Fmt.(styled (`Fg `Cyan) string) txt);
-    pp_from_label = (fun ppf -> Fmt.string ppf from_label);
+        Fmt.pf ppf "%s%a@." body pp_annotation txt);
+    pp_from_label =
+      (fun (ppf : Format.formatter) -> pp_annotation ppf from_label);
     from_label_width = String.length from_label;
+    pp_from_location = Fmt.string;
+    (* the line numbers of a trace are as wide as the largest of them, after
+       the label of each step *)
     trace =
-      (fun _ppf ~digits ->
+      (fun (ppf : Format.formatter) ~code_digits:_ ~(digits : int) ->
         {
-          line_prefix = body;
+          line_prefix = trace_margin;
           gutter =
-            (fun (n : int) ->
-              Printf.sprintf "%s%*d%s" trace_number_indent digits n separator);
+            (fun (n : int) -> trace_number_indent ^ numbered ppf digits n);
           gutter_blank =
-            trace_number_indent ^ String.make digits ' ' ^ separator;
-          highlight = [ `Bold ];
+            trace_number_indent ^ String.make (digits + separator_width) ' ';
+          highlight = match_highlight;
+          unhighlighted = match_unhighlighted;
         });
-    pp_fix_label = (fun ppf -> Fmt.string ppf fix_label);
+    pp_fix_label =
+      (fun (ppf : Format.formatter) -> pp_annotation ppf fix_label);
     fix_label_width = String.length fix_label;
   }
 

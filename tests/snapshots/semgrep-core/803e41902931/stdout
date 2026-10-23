@@ -9,19 +9,19 @@ a.py
   error  eqeq-bad
   useless comparison
 
-    3 │ return a + b == a + b
+     3: return a + b == a + b
 
-    6 │ return x == x
+     6: return x == x
 
 sub/b.py
 
   warn  print-debug
   left-over debugging print
 
-    3 │ print(y)
+     3: print(y)
 
   error  eqeq-bad
   useless comparison
 
-    4 │ return y == y
+     4: return y == y
 

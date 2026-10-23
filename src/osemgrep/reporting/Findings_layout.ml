@@ -64,6 +64,17 @@ let autofix_text_width = text_width - 25
 let min_wrap_width = 10
 let safe_width (width : int) : int = max min_wrap_width width
 
+let styles (xs : Fmt.style list) (pp : 'a Fmt.t) : 'a Fmt.t =
+  List.fold_left
+    (fun (acc : 'a Fmt.t) (style : Fmt.style) -> Fmt.styled style acc)
+    pp xs
+
+(* an empty styled string would print only two escapes, so an empty span
+   prints nothing *)
+let pp_span (xs : Fmt.style list) (ppf : Format.formatter) (txt : string) :
+    unit =
+  if not (String.equal txt "") then styles xs Fmt.string ppf txt
+
 (* TODO: re-enable dynamic size in a separate PR to avoid too many test changes *)
 let fill_count = 40
 
@@ -480,18 +491,21 @@ let line_number_indent_size = 8
 let code_indent_size = 13
 let line_number_width = 5
 
-(* A line of code prefixed with its number, wrapped, with the bold part
-   [bold_start, bold_end) of the code carried across the wrapped chunks.
+(* A line of code prefixed with its number, wrapped, with the part
+   [highlight_start, highlight_end) of the code styled with [highlight] and
+   the rest of the code with [unhighlighted], across the wrapped chunks.
 
    The gutter is set by [number_indent] (the columns before the number),
    [number_width] (the width in which the number and its separator are
    right-aligned) and [code_indent] (the column where a wrapped chunk
-   resumes, usually number_indent + number_width). The defaults are those of
-   the legacy skin. *)
+   resumes, usually number_indent + number_width), and styled with
+   [gutter_style]. The defaults are those of the legacy skin. *)
 let pp_wrapped_code_line ?(number_indent = line_number_indent_size)
     ?(code_indent = code_indent_size) ?(number_width = line_number_width)
     ?(separator = "┆ ") ppf ~(line_number : int) ~(width : int)
-    ~(bold_start : int) ~(bold_end : int) (line : string) : unit =
+    ~(gutter_style : Fmt.style list) ~(highlight : Fmt.style list)
+    ~(unhighlighted : Fmt.style list) ~(highlight_start : int)
+    ~(highlight_end : int) (line : string) : unit =
   let prefix =
     (* python: f"{line_number}┆ ".rjust(5); the separator is one column of
        three bytes, so the padding counts code points *)
@@ -502,12 +516,14 @@ let pp_wrapped_code_line ?(number_indent = line_number_indent_size)
   let typed = prefix ^ line in
   let shift = String.length prefix in
   (* the tabs are expanded from the start of the line, its number
-     included, so the bold range moves with the text *)
+     included, so the highlighted range moves with the text *)
   let text, offset_of = munge_whitespace_with_offsets typed in
   let moved (i : int) : int =
     offset_of.(max 0 (min (String.length typed) (i + shift)))
   in
-  let bold_start = moved bold_start and bold_end = moved bold_end in
+  let code_start = moved 0
+  and highlight_start = moved highlight_start
+  and highlight_end = moved highlight_end in
   let indentation =
     chunk_indentation ~initial_indent:number_indent
       ~subsequent_indent:code_indent
@@ -516,12 +532,22 @@ let pp_wrapped_code_line ?(number_indent = line_number_indent_size)
     ~subsequent_indent:code_indent text
   |> List.iteri (fun (i : int) ((offset : int), (length : int)) ->
          let chunk = String.sub text offset length in
-         let bold_from = max 0 (min length (bold_start - offset)) in
-         let bold_to = max bold_from (min length (bold_end - offset)) in
-         let a, b, c = cut chunk bold_from bold_to in
-         Fmt.pf ppf "%s%s%a%s@." (indentation i) a
-           Fmt.(styled `Bold string)
-           b c)
+         let within (pos : int) : int = max 0 (min length (pos - offset)) in
+         (* the number and its separator are in the first chunk only *)
+         let code_from = within code_start in
+         let highlight_from = max code_from (within highlight_start) in
+         let highlight_to = max highlight_from (within highlight_end) in
+         let gutter = Str.first_chars chunk code_from in
+         let before, highlighted, after =
+           cut chunk highlight_from highlight_to
+         in
+         let before = Str.string_after before code_from in
+         (* the highlight is styled even when it is empty, so that the
+            legacy report keeps its escapes *)
+         Fmt.pf ppf "%s%a%a%a%a@." (indentation i) (pp_span gutter_style)
+           gutter (pp_span unhighlighted) before
+           (styles highlight Fmt.string)
+           highlighted (pp_span unhighlighted) after)
 
 (* The lines of an autofix replacement, for a skin to prefix one by one,
    without leading and trailing blank lines; an empty result means the fix
@@ -550,10 +576,29 @@ let fix_lines ?(first_col = 1) (fix : string) : string list =
 (* Taint traces *)
 (*****************************************************************************)
 
-(* One step of a taint trace flattened into a sequence: a label and the
-   locations it refers to. Every skin uses this sequence; only the drawing
-   differs. *)
-type trace_step = { label : string; locations : OutJ.location list }
+(* What the locations of a step are: the source, a call on the way from the
+   source, the intermediate variables, a call on the way to the sink, or the
+   sink. *)
+type step_kind =
+  | Source
+  | Source_call
+  | Intermediate
+  | Sink_call
+  | Sink
+
+(* coupling: a kind added to [step_kind] must be added here too, since the
+   labels of a trace are padded to the widest of these *)
+let step_kinds : step_kind list =
+  [ Source; Source_call; Intermediate; Sink_call; Sink ]
+
+(* One step of a taint trace flattened into a sequence: its kind, the label
+   of the legacy report, and the locations it refers to. Every skin uses
+   this sequence; only the drawing differs. *)
+type trace_step = {
+  kind : step_kind;
+  label : string;
+  locations : OutJ.location list;
+}
 
 let intermediate_label = "Taint flows through these intermediate variables:"
 
@@ -576,20 +621,36 @@ let intermediate_step (vars : OutJ.match_intermediate_var list) :
     trace_step list =
   match locations_of_vars vars with
   | [] -> []
-  | locations -> [ { label = intermediate_label; locations } ]
+  | locations ->
+      [ { kind = Intermediate; label = intermediate_label; locations } ]
 
+(* [reverse] holds for a source trace and not for a sink trace. *)
 let rec steps_of_call_trace ~(reverse : bool) (label : string)
     (trace : OutJ.match_call_trace) : trace_step list =
   match trace with
-  | OutJ.CliLoc (loc, _) -> [ { label; locations = [ loc ] } ]
+  | OutJ.CliLoc (loc, _) ->
+      [
+        {
+          kind = (if reverse then Source else Sink);
+          label;
+          locations = [ loc ];
+        };
+      ]
   | OutJ.CliCall ((loc, _), vars, inner) ->
       if reverse then
         (* a source trace is read from the origin outwards *)
         steps_of_call_trace ~reverse label inner
         @ intermediate_step vars
-        @ [ { label = "then call to:"; locations = [ loc ] } ]
+        @ [
+            {
+              kind = Source_call;
+              label = "then call to:";
+              locations = [ loc ];
+            };
+          ]
       else
-        ({ label; locations = [ loc ] } :: intermediate_step vars)
+        ({ kind = Sink_call; label; locations = [ loc ] }
+        :: intermediate_step vars)
         @ steps_of_call_trace ~reverse "then reaches:" inner
 
 let steps_of_dataflow_trace (trace : OutJ.match_dataflow_trace) :
@@ -676,35 +737,6 @@ let ellipsize ~(width : int) (s : string) : string =
     let characters = Array.length offsets - 1 in
     if characters <= width then s
     else String_.safe_sub s 0 offsets.(max 0 (width - 1)) ^ "…"
-
-(* The lines of a "from" clause, wrapped to [width]: the location of the
-   taint source and the code there. Each line is a pair (location, code), so
-   that a skin can colour the two differently.
-
-   The location is never shortened, since the reader opens it; the code is,
-   since a source that spans several lines arrives here on one line. The
-   code shares the last line of the location when it fits, and takes lines
-   of its own otherwise. *)
-let from_clause_lines ~(width : int) ~(located : string) ~(code : string) :
-    (string * string) list =
-  let wrap (txt : string) : string list =
-    wrap_lines ~filler:Textwrap ~width:(safe_width width) ~initial_indent:0
-      ~subsequent_indent:0 txt
-    |> List_.map snd
-  in
-  let code = ellipsize ~width code in
-  match wrap located with
-  | [] -> [ ("", code) ]
-  | located_lines ->
-      let last = List.length located_lines - 1 in
-      let tail = List.nth located_lines last in
-      if Utf8.length tail + 2 + Utf8.length code <= width then
-        located_lines
-        |> List.mapi (fun (i : int) (txt : string) ->
-               if i = last then (txt, code) else (txt, ""))
-      else
-        List_.map (fun (txt : string) -> (txt, "")) located_lines
-        @ List_.map (fun (txt : string) -> ("", txt)) (wrap code)
 
 (* python compatibility: the 22m and 24m are "normal color or
     intensity", and "underline off" *)
@@ -857,9 +889,9 @@ let code_lines ~(max_lines_per_finding : int) (m : OutJ.cli_match) :
 
 (* What a report shows under the code of a finding: one entry for the
    finding, or for each finding of [group], which share its sink. For an
-   interfile rule, the [source] of each, as its location "path:line" and its
-   code, since for a flow across files the sink does not show where the
-   untrusted value entered. With --dataflow-traces, the [trace] of each.
+   interfile rule, the location and the code of the [source] of each, since
+   for a flow across files the sink does not show where the untrusted value
+   entered. With --dataflow-traces, the [trace] of each.
 
    A blank line precedes the block when it starts with a source, and
    separates two entries only when each has a trace: the vertical line of a
@@ -868,7 +900,7 @@ let code_lines ~(max_lines_per_finding : int) (m : OutJ.cli_match) :
 type origin = {
   finding : OutJ.cli_match;
   gap_before : bool;
-  source : (string * string) option;
+  source : (OutJ.location * string) option;
   trace : OutJ.match_dataflow_trace option;
 }
 
@@ -884,13 +916,7 @@ let origins ~(is_interfile : Rule_ID.t -> bool) ~(show_dataflow_traces : bool)
              gap_before =
                (i = 0 && name_sources) || (i > 0 && show_dataflow_traces);
              source =
-               (if name_sources then
-                  source_of_finding finding
-                  |> Option.map (fun ((loc : OutJ.location), (code : string)) ->
-                         ( Printf.sprintf "%s:%d" (Fpath.to_string loc.path)
-                             loc.start.line,
-                           code ))
-                else None);
+               (if name_sources then source_of_finding finding else None);
              trace =
                (if show_dataflow_traces then finding.extra.dataflow_trace
                 else None);
@@ -962,16 +988,18 @@ let pp_findings ~(is_ci_invocation : bool)
 
 (* The path of a step outside the file of the finding, so that a trace
    across files can be followed. *)
-let pp_step_path ?(finding_path : Fpath.t option) ~(prefix : string) ppf
-    (loc : OutJ.location) : unit =
+let step_path ?(finding_path : Fpath.t option) (loc : OutJ.location) :
+    Fpath.t option =
   match finding_path with
-  | Some path when not (Fpath.equal loc.path path) ->
-      Fmt.pf ppf "%s%a@." prefix
-        Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
-        (Fpath.to_string loc.path)
+  | Some path when not (Fpath.equal loc.path path) -> Some loc.path
   | Some _
   | None ->
-      ()
+      None
+
+let pp_step_path ~(prefix : string) ppf (path : Fpath.t) : unit =
+  Fmt.pf ppf "%s%a@." prefix
+    Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
+    (Fpath.to_string path)
 
 let located_lines (loc : OutJ.location) : string list =
   let lines =
@@ -995,9 +1023,7 @@ let located_lines (loc : OutJ.location) : string list =
 let pp_joined_location ?(finding_path : Fpath.t option) ~(prefix : string)
     ~(gutter : int -> string) ~(gutter_blank : string)
     ~(highlight : Fmt.style list) ppf (loc : OutJ.location) : unit =
-  let pp_highlight : string Fmt.t =
-    List.fold_left (fun acc style -> Fmt.styled style acc) Fmt.string highlight
-  in
+  let pp_highlight : string Fmt.t = styles highlight Fmt.string in
   let start_line_num = loc.start.line in
   let start_col = max 0 (loc.start.col - 1) in
   let end_col =
@@ -1021,7 +1047,7 @@ let pp_joined_location ?(finding_path : Fpath.t option) ~(prefix : string)
        *)
     in
     let a, b, c = cut lines_to_print start_col end_col in
-    pp_step_path ?finding_path ~prefix ppf loc;
+    step_path ?finding_path loc |> Option.iter (pp_step_path ~prefix ppf);
     Fmt.pf ppf "%s%s%s%a%s@." prefix (gutter start_line_num) a pp_highlight b c
   with
   | ex ->
@@ -1061,75 +1087,95 @@ let covered_spans ~(start_col : int) ~(end_col : int) (lines : string list) :
    [finding_path] is the file of the finding: the path of a step in another
    file is printed, so that a trace across files can be followed.
 
+   [first_prefix] takes the place of [prefix] on the first line printed,
+   the path or the first located line, where a skin can put a label.
+
    [dedent] removes the common indentation of the located lines, so that a
    step deep inside a function is not shifted to the right. *)
 let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
-    ~(prefix : string) ~(gutter : int -> string) ~(gutter_blank : string)
-    ~(highlight : Fmt.style list) ppf (loc : OutJ.location) : unit =
-  let pp_highlight : string Fmt.t =
-    List.fold_left (fun acc style -> Fmt.styled style acc) Fmt.string highlight
+    ~(first_prefix : string) ~(prefix : string) ~(gutter : int -> string)
+    ~(gutter_blank : string) ~(highlight : Fmt.style list)
+    ~(unhighlighted : Fmt.style list) ppf (loc : OutJ.location) : unit =
+  let path = step_path ?finding_path loc in
+  path |> Option.iter (pp_step_path ~prefix:first_prefix ppf);
+  let lead (i : int) : string =
+    if Int.equal i 0 && Option.is_none path then first_prefix else prefix
   in
-  try
-    let located, dedented =
-      let located = located_lines loc in
-      if dedent then dedent_lines located else (located, 0)
-    in
-    let spans =
-      covered_spans
-        ~start_col:(max 0 (loc.start.col - 1 - dedented))
-        ~end_col:(max 0 (loc.end_.col - 1 - dedented))
-        located
-    in
-    pp_step_path ?finding_path ~prefix ppf loc;
-    List.combine located spans
-    |> List.iteri (fun (i : int) ((line : string), ((from : int), (upto : int))) ->
-           let gutter = if i = 0 then gutter loc.start.line else gutter_blank in
-           let before = String.sub line 0 from
-           and covered = String.sub line from (upto - from)
-           and after = Str.string_after line upto in
-           (* an empty styled string would print only two escapes *)
-           if String.equal covered "" then
-             Fmt.pf ppf "%s%s%s%s@." prefix gutter before after
-           else
-             Fmt.pf ppf "%s%s%s%a%s@." prefix gutter before pp_highlight covered
-               after)
-  with
-  | ex ->
+  match located_lines loc with
+  (* a file that cannot be read, or lines that it does not have *)
+  | exception ((Sys_error _ | Unix.Unix_error _ | Invalid_argument _) as ex)
+    ->
       Log.debug (fun m ->
           m "Could not read file %a (lines %d-%d): %s" Fpath.pp loc.path
             loc.start.line loc.end_.line
             (Exception.(catch ex |> to_string)));
       Log.debug (fun m -> m "Location: %a" OutJ.pp_location loc);
-      ()
+      (* the line number and an ellipsis for the code, so that a step of a
+         trace keeps its label *)
+      Fmt.pf ppf "%s%s%a@." (lead 0) (gutter loc.start.line)
+        (pp_span unhighlighted) "…"
+  | located ->
+      let located, dedented =
+        if dedent then dedent_lines located else (located, 0)
+      in
+      let spans =
+        covered_spans
+          ~start_col:(max 0 (loc.start.col - 1 - dedented))
+          ~end_col:(max 0 (loc.end_.col - 1 - dedented))
+          located
+      in
+      List.combine located spans
+      |> List.iteri
+           (fun (i : int) ((line : string), ((from : int), (upto : int))) ->
+             let gutter =
+               if Int.equal i 0 then gutter loc.start.line else gutter_blank
+             in
+             let before = String.sub line 0 from
+             and covered = String.sub line from (upto - from)
+             and after = Str.string_after line upto in
+             Fmt.pf ppf "%s%s%a%a%a@." (lead i) gutter (pp_span unhighlighted)
+               before (pp_span highlight) covered (pp_span unhighlighted) after)
 
 (* A trace drawn as a tree under the match: one branch per step, the last
-   one closing the tree, and a vertical line joining the branches to the
-   match above.
+   one closing the tree, and a vertical line joining the first branch to the
+   match above. The first line of a step starts with the [label] of its
+   kind, padded to the widest label of all kinds.
 
    [line_prefix] starts every line, and [glyph] renders the box-drawing
    characters, so that a skin sets their style and any text before them. *)
 let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
     ~(line_prefix : string) ~(glyph : string -> string)
     ~(gutter : int -> string) ~(gutter_blank : string)
-    ~(highlight : Fmt.style list) ppf (trace : OutJ.match_dataflow_trace) :
+    ~(highlight : Fmt.style list) ~(unhighlighted : Fmt.style list)
+    ~(label : step_kind -> string) ppf (trace : OutJ.match_dataflow_trace) :
     unit =
   let steps = steps_of_dataflow_trace trace in
   let last = List.length steps - 1 in
+  let width =
+    step_kinds
+    |> List.fold_left
+         (fun (acc : int) (kind : step_kind) ->
+           max acc (Utf8.length (label kind)))
+         0
+  in
+  (* the vertical line that joins the first step to the match *)
+  if not (List_.null steps) then Fmt.pf ppf "%s%s@." line_prefix (glyph "│");
   steps
   |> List.iteri (fun (i : int) (step : trace_step) ->
          let is_last = Int.equal i last in
-         (* the vertical line, which also joins the first step to the match *)
-         Fmt.pf ppf "%s%s@." line_prefix (glyph "│");
-         Fmt.pf ppf "%s%s%s@." line_prefix
-           (glyph (if is_last then "└─ " else "├─ "))
-           step.label;
-         let prefix =
-           line_prefix ^ glyph (if is_last then "   " else "│  ")
-         in
+         let branch = glyph (if is_last then "└─ " else "├─ ")
+         and stem = line_prefix ^ glyph (if is_last then "   " else "│  ") in
+         let txt = label step.kind in
+         let first_prefix =
+           line_prefix ^ branch ^ txt
+           ^ String.make (width - Utf8.length txt + 1) ' '
+         and prefix = stem ^ String.make (width + 1) ' ' in
          step.locations
-         |> List.iter
-              (pp_trace_location ?finding_path ~dedent ~prefix ~gutter
-                 ~gutter_blank ~highlight ppf))
+         |> List.iteri (fun (j : int) (loc : OutJ.location) ->
+                pp_trace_location ?finding_path ~dedent
+                  ~first_prefix:(if Int.equal j 0 then first_prefix else prefix)
+                  ~prefix ~gutter ~gutter_blank ~highlight ~unhighlighted ppf
+                  loc))
 
 (* The taint trace of a match as a flat sequence of steps, as the legacy
    report prints it. [indent] starts every line and [gutter] precedes the

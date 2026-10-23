@@ -1,0 +1,18 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 22 insertions(+)
+ create mode 100644 caller.py
+ create mode 100644 rules.yml
+ create mode 100644 sinks.py
+sinks.py
+
+  error  interfile-flow
+  tainted data reaches a sink in another file
+
+     3: sink(x)
+
+  from: caller.py
+     5: source()
+
+   fix: safe_sink(x)
+

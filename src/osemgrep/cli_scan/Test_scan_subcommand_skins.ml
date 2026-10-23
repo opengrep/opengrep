@@ -88,6 +88,38 @@ def go():
     sink(y)
 |}
 
+(* An interfile rule whose source is in another file than its sink, so that
+   the report shows the source under the code of the match, and the fix
+   under the source. *)
+let interfile_rule =
+  {|
+rules:
+  - id: interfile-flow
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink in another file"
+    languages: [python]
+    severity: ERROR
+    fix: safe_sink(x)
+|}
+
+let sinks_py = {|
+def run(x):
+    sink(x)
+|}
+
+let caller_py = {|
+from sinks import run
+
+def go():
+    run(source())
+|}
+
 (* A -e/--pattern run builds a rule with the id "-" and the pattern as its
    message; the report prints neither. One file and one match, so that the
    snapshot shows only the absence of the heading. *)
@@ -107,6 +139,13 @@ let taint_files : F.t list =
   [ F.File ("rules.yml", taint_rule); F.File ("t.py", taint_py) ]
 
 let pattern_files : F.t list = [ F.File ("p.py", pattern_py) ]
+
+let interfile_files : F.t list =
+  [
+    F.File ("rules.yml", interfile_rule);
+    F.File ("sinks.py", sinks_py);
+    F.File ("caller.py", caller_py);
+  ]
 
 (*****************************************************************************)
 (* Helpers *)
@@ -171,6 +210,10 @@ let test_traces (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
       Exit_code.Check.ok
         (scan caps ~files:taint_files [ "--dataflow-traces" ]))
+
+let test_interfile_source (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
+      Exit_code.Check.ok (scan caps ~files:interfile_files []))
 
 (* --baseline-commit runs the scan twice, and each run prints a plan. The
    second, of the baseline scan, is marked as such: it covers the same paths
@@ -279,6 +322,12 @@ let tests (caps : caps) =
       t "vivid with dataflow traces"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_traces narrow "vivid");
+      t "simple with an interfile source"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_source narrow "simple");
+      t "vivid with an interfile source"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_source narrow "vivid");
       t "simple with -e" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (test_pattern narrow "simple");

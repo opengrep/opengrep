@@ -9,14 +9,9 @@ t.py <RULE>
   ▌ tainted data reaches a sink
   ▌
   ▌   5   sink(y)
-  ▌  │
-  ▌  ├─ Taint comes from:
-  ▌  │    3   x = source()
-  ▌  │
-  ▌  ├─ Taint flows through these intermediate variables:
-  ▌  │    3   x = source()
-  ▌  │    4   y = x
-  ▌  │
-  ▌  └─ This is how taint reaches the sink:
-  ▌       5   sink(y)
+  ▌       │
+  ▌       ├─ source    3   x = source()
+  ▌       ├─ through   3   x = source()
+  ▌       │            4   y = x
+  ▌       └─ sink      5   sink(y)
 
