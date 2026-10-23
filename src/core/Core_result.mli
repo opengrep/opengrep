@@ -3,6 +3,8 @@ type processed_match = {
   pm : Core_match.t;
   (* semgrep-core is now responsible for the nosemgrep and autofix *)
   is_ignored : bool;
+  (* the text after "--" in the nosemgrep annotation, if ignored *)
+  justification : string option;
   autofix_edit : Textedit.t option;
 }
 [@@deriving show]
