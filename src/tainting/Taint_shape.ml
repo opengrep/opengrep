@@ -591,7 +591,7 @@ and gather_all_taints_in_shape_acc acc = function
       List.fold_left
         (fun acc off ->
           let lval = { T.base = T.BArg arg; offset = off } in
-          let taint = { T.orig = T.Shape_var lval; tokens = [] } in
+          let taint = { T.orig = T.Shape_var lval; tokens = Taint_trace.Nil } in
           Taints.add_taint taint acc)
         acc offsets
   | Fun _ ->

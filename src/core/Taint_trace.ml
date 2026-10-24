@@ -33,8 +33,118 @@
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-(* The locations of variables which taint propagates through *)
-type tainted_tokens = Tok.t list [@@deriving show, eq, ord]
+(* The path of a taint: the variables it propagates through, and the calls
+   to functions that it enters by a parameter and leaves by the return or by
+   an l-value. A path is a list of its own, so that a variable costs one
+   cell, as in a list of tokens.
+
+   While the analysis of a function runs, a path is newest first, and so is
+   the path in an effect of its signature; the instantiation of a call
+   reverses it once, into the call. The path that reaches a sink is put in
+   execution order (Dataflow_tainting.effects_of_tainted_sink), and so is
+   the path inside a call. *)
+type tainted_tokens =
+  | Nil
+  | Variable of Tok.t * tainted_tokens
+  | Through_call of through_call * tainted_tokens
+
+(* A call that the taint goes through: the name of the function called, when
+   it has one, the parameter by which the taint enters it, the rest of the
+   path inside the function, and the return by which the taint leaves it, if
+   it leaves by one. [size] is the number of tokens of the call, its name,
+   the parameter and the path inside, as the flat path carries them. *)
+and through_call = {
+  callee : Tok.t option;
+  parameter : Tok.t option;
+  inside : tainted_tokens;
+  return_tok : Tok.t option;
+  size : int;
+}
+[@@deriving show, eq, ord]
+
+let rec rev_append (path : tainted_tokens) (acc : tainted_tokens) :
+    tainted_tokens =
+  match path with
+  | Nil -> acc
+  | Variable (tok, rest) -> rev_append rest (Variable (tok, acc))
+  | Through_call (call, rest) -> rev_append rest (Through_call (call, acc))
+
+(* the path in reverse, at its outer level; the paths inside its calls keep
+   their order *)
+let rev (path : tainted_tokens) : tainted_tokens = rev_append path Nil
+
+(* the number of tokens of a path, as many as its flat form has *)
+let size (path : tainted_tokens) : int =
+  let rec count (acc : int) (path : tainted_tokens) : int =
+    match path with
+    | Nil -> acc
+    | Variable (_, rest) -> count (acc + 1) rest
+    | Through_call (call, rest) -> count (acc + call.size) rest
+  in
+  count 0 path
+
+(* Whether [a] has fewer tokens than [b]. Like List.compare_lengths, it walks
+   the two paths no further than it needs to. *)
+let fewer_tokens (a : tainted_tokens) (b : tainted_tokens) : bool =
+  (* whether [path] has more than [n] tokens *)
+  let rec more_than (n : int) (path : tainted_tokens) : bool =
+    n < 0
+    ||
+    match path with
+    | Nil -> false
+    | Variable (_, rest) -> more_than (n - 1) rest
+    | Through_call (call, rest) -> more_than (n - call.size) rest
+  in
+  let head_size (path : tainted_tokens) : int =
+    match path with
+    | Nil -> 0
+    | Variable _ -> 1
+    | Through_call (call, _) -> call.size
+  in
+  let tail (path : tainted_tokens) : tainted_tokens =
+    match path with
+    | Nil -> Nil
+    | Variable (_, rest)
+    | Through_call (_, rest) ->
+        rest
+  in
+  (* [diff] is the tokens of [a] walked so far minus those of [b] *)
+  let rec walk (diff : int) (a : tainted_tokens) (b : tainted_tokens) : bool =
+    match (a, b) with
+    | Nil, _ -> more_than diff b
+    | _, Nil -> not (more_than (-diff - 1) a)
+    | _ -> walk (diff + head_size a - head_size b) (tail a) (tail b)
+  in
+  walk 0 a b
+
+let through_call ~(callee : Tok.t option) ~(parameter : Tok.t option)
+    ~(inside : tainted_tokens) ~(return_tok : Tok.t option) : through_call =
+  let count (tok : Tok.t option) : int =
+    Option.fold ~none:0 ~some:(fun (_ : Tok.t) -> 1) tok
+  in
+  {
+    callee;
+    parameter;
+    inside;
+    return_tok;
+    size = count callee + count parameter + size inside;
+  }
+
+let rec map_toks (f : Tok.t -> Tok.t) (path : tainted_tokens) : tainted_tokens
+    =
+  match path with
+  | Nil -> Nil
+  | Variable (tok, rest) -> Variable (f tok, map_toks f rest)
+  | Through_call (call, rest) ->
+      Through_call
+        ( {
+            call with
+            callee = Option.map f call.callee;
+            parameter = Option.map f call.parameter;
+            inside = map_toks f call.inside;
+            return_tok = Option.map f call.return_tok;
+          },
+          map_toks f rest )
 
 (* The tokens associated with a single pattern match involved in a taint trace *)
 type pattern_match_tokens = Tok.t list [@@deriving show, eq, ord]

@@ -46,6 +46,11 @@ val cli_match_of_core_match :
   Out.core_match ->
   Out.cli_match
 
+(* The match, or the output, with its traces flat, as the JSON output
+   carries them: see Core_json_output.flat_dataflow_trace. *)
+val flat_cli_match : Out.cli_match -> Out.cli_match
+val flat_cli_output : Out.cli_output -> Out.cli_output
+
 val index_match_based_ids :
   interfile_dedup_by:Core_match.interfile_dedup_by ->
   Out.cli_match list ->

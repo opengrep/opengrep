@@ -664,7 +664,9 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
                  | Control ->
                      []
                in
-               let new_taint = { taint with tokens = List.rev taint.tokens } in
+               let new_taint =
+                 { taint with tokens = Taint_trace.rev taint.tokens }
+               in
                ({ item with taint = new_taint }, bindings))
       in
       (* If `unify_mvars` is set, then we will just do the previous behavior,
@@ -778,9 +780,8 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
       else
         Taints.elements taints
         |> List_.map (fun (b : T.guarded_taint) ->
-               let t = { b.taint with T.tokens = List.rev b.taint.T.tokens } in
                let single =
-                 Taints.add (T.lift_taint t) Taints.empty
+                 Taints.add (T.lift_taint b.taint) Taints.empty
                in
                Effect.ToReturn
                  {
@@ -3386,7 +3387,7 @@ let mk_lambda_in_env env lcfg =
                           { base = BArg taint_arg; offset }
                         in
                         let leaf_taint =
-                          T.{ orig = Var leaf_taint_lval; tokens = [] }
+                          T.{ orig = Var leaf_taint_lval; tokens = Taint_trace.Nil }
                         in
                         let leaf_taints =
                           T.Taint_set.add_taint leaf_taint source_taints
@@ -4079,7 +4080,7 @@ and (fixpoint :
                                     { base = BArg taint_arg; offset = [] }
                                   in
                                   let generic_taint =
-                                    Taint.{ orig = Var taint_lval; tokens = [] }
+                                    Taint.{ orig = Var taint_lval; tokens = Taint_trace.Nil }
                                   in
                                   let taint_set =
                                     Taint.Taint_set.singleton generic_taint
@@ -4123,7 +4124,7 @@ and (fixpoint :
                                                  Taint.
                                                    {
                                                      orig = Var leaf_taint_lval;
-                                                     tokens = [];
+                                                     tokens = Taint_trace.Nil;
                                                    }
                                                in
                                                let leaf_taints =

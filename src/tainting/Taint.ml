@@ -66,7 +66,7 @@ open Common
 (*****************************************************************************)
 
 type tainted_token = G.tok [@@deriving show]
-type tainted_tokens = tainted_token list [@@deriving show]
+type tainted_tokens = Taint_trace.tainted_tokens [@@deriving show]
 (* TODO: Given that the analysis is path-insensitive, the trace should capture
  * all potential paths. So a set of tokens seems more appropriate than a list.
  * TODO: May have to annotate each tainted token with a `call_trace` that explains
@@ -535,7 +535,7 @@ module Taint_set = struct
     | Shape_var _, Shape_var _
     | Control, Control ->
         (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
-        if List.compare_lengths taint1.tokens taint2.tokens < 0 then taint1
+        if Taint_trace.fewer_tokens taint1.tokens taint2.tokens then taint1
         else taint2
     | Src src1, Src src2 ->
         let precondition =
@@ -584,7 +584,7 @@ module Taint_set = struct
         else if call_trace_cmp > 0 then taint2
         else if
           (* same length *)
-          List.compare_lengths taint1.tokens taint2.tokens < 0
+          Taint_trace.fewer_tokens taint1.tokens taint2.tokens
         then taint1
         else taint2
     | (Src _ | Var _ | Shape_var _ | Control), _ ->
@@ -904,7 +904,7 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
 
 let taint_of_pm ~incoming pm =
   match src_of_pm ~incoming pm with
-  | Some orig -> Some { orig; tokens = [] }
+  | Some orig -> Some { orig; tokens = Taint_trace.Nil }
   | None -> None
 
 let taints_of_pms ~incoming pms =

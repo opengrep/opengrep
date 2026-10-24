@@ -134,6 +134,61 @@ def go():
     run(source())
 |}
 
+(* The source in a function that returns it, and the sink in a function
+   that receives it, so that the trace has a call on each side. *)
+let sources_py = {|
+def read():
+    data = source()
+    return data
+|}
+
+let calls_py = {|
+from sources import read
+from sinks import run
+
+def go():
+    run(read())
+|}
+
+(* Two functions that the taint goes through between the source and the
+   sink: one returns it, the other writes it to a field of its argument. *)
+let through_rule =
+  {|
+rules:
+  - id: through-calls
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [python]
+    severity: ERROR
+|}
+
+let through_py =
+  {|
+def pass_taint(x):
+    y = x
+    return y
+
+class Box:
+    def __init__(self):
+        self.v = None
+
+def fill(box, x):
+    box.v = x
+
+def go():
+    a = source()
+    b = pass_taint(a)
+    c = Box()
+    fill(c, b)
+    sink(c.v)
+|}
+
 (* A -e/--pattern run builds a rule with the id "-" and the pattern as its
    message; the report prints neither. One file and one match, so that the
    snapshot shows only the absence of the heading. *)
@@ -156,6 +211,17 @@ let pattern_files : F.t list = [ F.File ("p.py", pattern_py) ]
 
 let context_files : F.t list =
   [ F.File ("rules.yml", two_rules); F.File ("c.py", context_py) ]
+
+let through_files : F.t list =
+  [ F.File ("rules.yml", through_rule); F.File ("t.py", through_py) ]
+
+let calls_files : F.t list =
+  [
+    F.File ("rules.yml", interfile_rule);
+    F.File ("sources.py", sources_py);
+    F.File ("sinks.py", sinks_py);
+    F.File ("calls.py", calls_py);
+  ]
 
 let interfile_files : F.t list =
   [
@@ -238,6 +304,20 @@ let test_enclosing_context (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
       Exit_code.Check.ok
         (scan caps ~files:context_files [ "--output-enclosing-context" ]))
+
+(* A call that the taint goes through is drawn with the steps inside the
+   function under it, from its parameter to its return. *)
+let test_through_calls (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:through_files [ "--dataflow-traces" ]))
+
+(* A call to the function in which the source or the sink is is drawn with
+   the steps inside that function under it. *)
+let test_calls_in_trace (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:calls_files [ "--dataflow-traces" ]))
 
 (* The emacs output has no enclosing context, so the scan warns that the
    option has no effect there, in the form of the skin. *)
@@ -376,6 +456,18 @@ let tests (caps : caps) =
       t "simple warns that the emacs output has no enclosing context"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_enclosing_context_unused narrow);
+      t "simple with calls that the taint goes through"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_through_calls narrow "simple");
+      t "vivid with calls that the taint goes through"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_through_calls narrow "vivid");
+      t "simple with calls in a trace"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_calls_in_trace narrow "simple");
+      t "vivid with calls in a trace"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_calls_in_trace narrow "vivid");
       t "simple with an interfile source"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_source narrow "simple");
