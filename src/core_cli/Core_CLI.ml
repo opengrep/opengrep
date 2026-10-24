@@ -276,7 +276,9 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
         User should use an external tool like jq or ydump (latter comes with
         yojson) for pretty-printing json.
       *)
-      let s = Out.string_of_core_output res in
+      let s =
+        Out.string_of_core_output (Core_json_output.flat_core_output res)
+      in
       Logs.debug (fun m ->
           m "size of returned JSON string: %d" (String.length s));
       CapConsole.print caps#stdout s;

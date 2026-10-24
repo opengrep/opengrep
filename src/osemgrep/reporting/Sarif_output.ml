@@ -237,7 +237,7 @@ let thread_flow_location message
 
 let intermediate_var_locations intermediate_vars =
   intermediate_vars
-  |> List_.map (fun ({ location; content } : Out.match_intermediate_var) ->
+  |> List_.map (fun ({ location; content; _ } : Out.match_intermediate_var) ->
          let propagation_message_text =
            spf "Propagator : '%s' @ '%s:%d'" content
              (Fpath.to_string location.path)
@@ -296,7 +296,10 @@ let rec thread_flows
       call_flow_location :: (intermediate_var_locations @ nested_flows)
 
 let sarif_codeflow (cli_match : Out.cli_match) : Sarif.code_flow list option =
-  match cli_match.extra.dataflow_trace with
+  match
+    Option.map Semgrep_output_utils.flat_dataflow_trace
+      cli_match.extra.dataflow_trace
+  with
   | None
   | Some { Out.taint_source = None; _ } ->
       None

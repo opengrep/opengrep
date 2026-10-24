@@ -29,6 +29,12 @@ val position_range :
 val location_of_token_location : Tok.location -> Semgrep_output_v1_t.location
 val tokens_to_single_loc : Tok.t list -> Semgrep_output_v1_t.location option
 
+(* The trace with each call that the taint goes through inline, as the JSON
+   and SARIF outputs carry it. *)
+val flat_dataflow_trace :
+  Semgrep_output_v1_t.match_dataflow_trace ->
+  Semgrep_output_v1_t.match_dataflow_trace
+
 (*
    Sort results in the most natural way possible, typically preferring
    match location first.

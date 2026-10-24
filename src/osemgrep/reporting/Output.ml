@@ -125,7 +125,7 @@ let format ~(profiler : Profiler.t) ~(is_interfile : Rule_ID.t -> bool)
   | Incremental ->
       failwith (spf "format not supported here: %s" (Output_format.show kind))
   | Json ->
-      [ Out.string_of_cli_output cli_output ]
+      [ Out.string_of_cli_output (Cli_json_output.flat_cli_output cli_output) ]
   | Junit_xml -> [ Junit_xml_output.junit_xml_output cli_output ]
   | Gitlab_sast ->
       let start_time = start_time_from_profiler_opt profiler in
