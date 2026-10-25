@@ -1988,7 +1988,31 @@ and type_query (env : env) ((v1, v2, v3) : CST.type_query) : type_ =
     | Some args ->
         type_arguments env args |> Tok.unbracket |> List_.map (fun t -> Type t)
   in
-  TypeTodo (("Typeof", ttypeof), Expr e :: arguments)
+  (* An import in a type query is not a dynamic import. Keep it and its
+   * qualifiers in the type tree so expression visitors cannot match a runtime
+   * import call (and potentially autofix a type-only reference). *)
+  let rec import_type = function
+    | Apply (Id ("import", keyword), (_, args, _)) ->
+        Some
+          (TypeTodo (("ImportType", keyword), List_.map (fun e -> Expr e) args))
+    | ObjAccess (base, (_, dot), PN field) ->
+        Option.map
+          (fun ty ->
+            TypeTodo
+              (("QualifiedType", dot), [ Type ty; Type (TyName [ field ]) ]))
+          (import_type base)
+    | ArrAccess (base, (left, index, _)) ->
+        Option.map
+          (fun ty -> TypeTodo (("LookupType", left), [ Type ty; Expr index ]))
+          (import_type base)
+    | _ -> None
+  in
+  let subject =
+    match import_type e with
+    | Some ty -> Type ty
+    | None -> Expr e
+  in
+  TypeTodo (("Typeof", ttypeof), subject :: arguments)
 
 and map_anon_choice_type_id_e96bf13 (env : env)
     (x : CST.anon_choice_type_id_e96bf13) : expr =
