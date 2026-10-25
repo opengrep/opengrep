@@ -112,17 +112,18 @@ let tokens_to_single_loc (toks : Tok.t list) : location option =
 (*****************************************************************************)
 
 (* The variables with each call inline, as the JSON and SARIF outputs carry
-   them: the name of the function called, then its parameter and the
-   variables inside it. *)
+   them: the name of the function called, then the variables inside it,
+   without the return. *)
 let rec flat_intermediate_vars (vars : match_intermediate_var list) :
     match_intermediate_var list =
   vars
   |> List.concat_map (fun (var : match_intermediate_var) ->
-         match var.through_call with
-         | None -> [ var ]
-         | Some (call : match_through_call) ->
-             ({ var with through_call = None } :: Option.to_list call.parameter)
-             @ flat_intermediate_vars call.inside)
+         match (var.role, var.through_call) with
+         | Some `Return, _ -> []
+         | _, None -> [ { var with role = None } ]
+         | _, Some (call : match_through_call) ->
+             { var with role = None; through_call = None }
+             :: flat_intermediate_vars call.inside)
 
 let rec flat_call_trace (trace : match_call_trace) : match_call_trace
     =

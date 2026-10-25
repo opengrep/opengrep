@@ -2985,7 +2985,10 @@ let test_json_trace_through_call (caps : Scan_subcommand.caps) () =
            (v.content, v.location.start.line)));
   Alcotest.(check bool)
     "no call in the JSON" false
-    (String_.contains ~term:"through_call" json)
+    (String_.contains ~term:"through_call" json);
+  Alcotest.(check bool)
+    "no role in the JSON" false
+    (String_.contains ~term:{|"role"|} json)
 
 (* The thread flow of the SARIF output follows the same order, from the
    source to the sink. *)

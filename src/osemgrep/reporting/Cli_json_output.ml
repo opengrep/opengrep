@@ -394,10 +394,7 @@ let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
         v.through_call
         |> Option.map (fun (call : Out.match_through_call) ->
                {
-                 call with
-                 parameter =
-                   Option.map sanitize_intermediate_var call.parameter;
-                 inside = List_.map sanitize_intermediate_var call.inside;
+                 Out.inside = List_.map sanitize_intermediate_var call.inside;
                });
     }
   in

@@ -19,11 +19,13 @@ sinks.py <RULE>
   ▌       │  │                6   run(read())
   ▌       │  ├─ source           sources.py
   ▌       │  │                   3   data = source()
-  ▌       │  └─ through          sources.py
-  ▌       │                      3   data = source()
+  ▌       │  ├─ through          sources.py
+  ▌       │  │                   3   data = source()
+  ▌       │  └─ return           sources.py
+  ▌       │                      4   return data
   ▌       └─ sink in call     calls.py
   ▌          │                6   run(read())
-  ▌          ├─ through          2   def run(x):
+  ▌          ├─ arg              2   def run(x):
   ▌          └─ sink             3   sink(x)
   ▌
   ▌ fix safe_sink(x)

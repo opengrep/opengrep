@@ -317,40 +317,40 @@ let token_to_intermediate_var token : Out.match_intermediate_var option =
   | _ ->
     let* location = OutUtils.tokens_to_single_loc [ token ] in
     Some
-      (Out.{ location; content = content_of_loc location; through_call = None }
+      (Out.
+         {
+           location;
+           content = content_of_loc location;
+           role = None;
+           through_call = None;
+         }
         : Out.match_intermediate_var)
 
 (* A call that the taint goes through is the variable of the name of the
-   function, carrying the path inside it. A call without a name keeps its
-   parameter and that path among the variables around it. *)
+   function, carrying the path inside it. A call without a name keeps that
+   path among the variables around it. *)
 let rec tokens_to_intermediate_vars (path : Taint_trace.tainted_tokens) :
     Out.match_intermediate_var list =
+  let var ?(role : Out.match_intermediate_var_role option) (tok : Tok.t) :
+      Out.match_intermediate_var list =
+    token_to_intermediate_var tok
+    |> Option.map (fun (var : Out.match_intermediate_var) -> { var with role })
+    |> Option.to_list
+  in
   match path with
   | Taint_trace.Nil -> []
   | Taint_trace.Variable (tok, rest) ->
-      Option.to_list (token_to_intermediate_var tok)
-      @ tokens_to_intermediate_vars rest
-  | Taint_trace.Through_call
-      ({ callee; parameter; inside; return_tok; size = _ }, rest) ->
-      let parameter = Option.bind parameter token_to_intermediate_var in
+      var tok @ tokens_to_intermediate_vars rest
+  | Taint_trace.Parameter (tok, rest) ->
+      var ~role:`Parameter tok @ tokens_to_intermediate_vars rest
+  | Taint_trace.Return (tok, rest) ->
+      var ~role:`Return tok @ tokens_to_intermediate_vars rest
+  | Taint_trace.Through_call ({ callee; inside; size = _ }, rest) ->
       let inside = tokens_to_intermediate_vars inside in
       (match Option.bind callee token_to_intermediate_var with
       | Some (var : Out.match_intermediate_var) ->
-          [
-            {
-              var with
-              through_call =
-                Some
-                  {
-                    parameter;
-                    inside;
-                    return_location =
-                      Option.bind return_tok (fun (tok : Tok.t) ->
-                          OutUtils.tokens_to_single_loc [ tok ]);
-                  };
-            };
-          ]
-      | None -> Option.to_list parameter @ inside)
+          [ { var with through_call = Some { inside } } ]
+      | None -> inside)
       @ tokens_to_intermediate_vars rest
 
 (* the output with the traces flat, as the JSON of the engine carries them *)

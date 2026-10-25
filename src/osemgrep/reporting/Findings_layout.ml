@@ -677,57 +677,48 @@ type trace_node = {
 }
 
 (* The steps of a run of intermediate variables: each variable is a step,
-   without consecutive locations on the same line, and each call that the
-   taint goes through is a step with the path inside the function, and its
-   return, under it. *)
+   of the kind of its role in the function it is in, without consecutive
+   locations on the same line, and each call that the taint goes through is
+   a step with the path inside the function under it. *)
 let rec intermediate_nodes (vars : OutJ.match_intermediate_var list) :
     trace_node list =
-  (* the variables in reverse, with the calls they carry *)
-  let items =
-    vars
-    |> List.fold_left
-         (fun (acc :
-                (OutJ.location * OutJ.match_through_call option) list)
-              (var : OutJ.match_intermediate_var) ->
-           match (acc, var.through_call) with
-           | (previous, None) :: _, None when same_line previous var.location
-             ->
-               acc
-           | _ -> (var.location, var.through_call) :: acc)
-         []
+  let plain (var : OutJ.match_intermediate_var) : bool =
+    Option.is_none var.role && Option.is_none var.through_call
   in
   (* the steps in reverse *)
-  items
+  vars
   |> List.fold_left
-       (fun (acc : trace_node list)
-            ((loc : OutJ.location), (call : OutJ.match_through_call option)) ->
-         match call with
-         | None ->
-             { kind = Intermediate; location = loc; children = [] } :: acc
-         | Some (call : OutJ.match_through_call) ->
-             let parameter =
-               call.parameter
-               |> Option.to_list
-               |> List_.map (fun (param : OutJ.match_intermediate_var) ->
-                      {
-                        kind = Parameter;
-                        location = param.location;
-                        children = [];
-                      })
+       (fun ((acc : trace_node list),
+             (previous : OutJ.match_intermediate_var option))
+            (var : OutJ.match_intermediate_var) ->
+         match previous with
+         | Some previous
+           when plain previous && plain var
+                && same_line previous.location var.location ->
+             (acc, Some var)
+         | _ ->
+             let node =
+               match (var.role, var.through_call) with
+               | _, Some (call : OutJ.match_through_call) ->
+                   {
+                     kind = Intermediate_call;
+                     location = var.location;
+                     children = intermediate_nodes call.inside;
+                   }
+               | Some `Parameter, None ->
+                   { kind = Parameter; location = var.location; children = [] }
+               | Some `Return, None ->
+                   { kind = Return; location = var.location; children = [] }
+               | None, None ->
+                   {
+                     kind = Intermediate;
+                     location = var.location;
+                     children = [];
+                   }
              in
-             let return =
-               call.return_location
-               |> Option.to_list
-               |> List_.map (fun (return_loc : OutJ.location) ->
-                      { kind = Return; location = return_loc; children = [] })
-             in
-             {
-               kind = Intermediate_call;
-               location = loc;
-               children = parameter @ intermediate_nodes call.inside @ return;
-             }
-             :: acc)
-       []
+             (node :: acc, Some var))
+       ([], None)
+  |> fst |> List.rev
 
 (* [reverse] holds for a source trace and not for a sink trace. *)
 let rec nodes_of_call_trace ~(reverse : bool) (trace : OutJ.match_call_trace)
