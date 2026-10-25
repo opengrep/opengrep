@@ -2932,10 +2932,10 @@ def go():
     sink(b)
 |}
 
-let scan_with_traces (caps : Scan_subcommand.caps) ~(target : string)
+let scan_files_with_traces (caps : Scan_subcommand.caps) ~(files : F.t list)
     (args : string list) : string =
   Testutil_git.with_git_repo
-    [ F.File ("rules.yml", through_call_rule); F.File ("t.py", target) ]
+    (F.File ("rules.yml", through_call_rule) :: files)
     (fun _cwd ->
       let exit_code, output =
         Testo.with_capture stdout (fun () ->
@@ -2950,6 +2950,10 @@ let scan_with_traces (caps : Scan_subcommand.caps) ~(target : string)
       in
       Exit_code.Check.ok exit_code;
       output)
+
+let scan_with_traces (caps : Scan_subcommand.caps) ~(target : string)
+    (args : string list) : string =
+  scan_files_with_traces caps ~files:[ F.File ("t.py", target) ] args
 
 let scan_through_call (caps : Scan_subcommand.caps) (args : string list) :
     string =
@@ -2982,7 +2986,10 @@ let test_json_trace_through_call (caps : Scan_subcommand.caps) () =
            (v.content, v.location.start.line)));
   Alcotest.(check bool)
     "no call in the JSON" false
-    (String_.contains ~term:"through_call" json)
+    (String_.contains ~term:"through_call" json);
+  Alcotest.(check bool)
+    "no role in the JSON" false
+    (String_.contains ~term:{|"role"|} json)
 
 (* The thread flow of the SARIF output follows the same order, from the
    source to the sink. *)
@@ -3002,64 +3009,11 @@ let test_sarif_trace_through_call (caps : Scan_subcommand.caps) () =
     ((6 :: List_.map snd through_call_path) @ [ 8 ])
     lines
 
-(* The ways a taint goes through a call: it is returned inside an object,
-   passed to a callback, returned inside an object from where it is a
-   source, and written to a field of an argument. Each finding's
-   variables, from the trace to the source, the trace in the function and
-   the trace to the sink, are in execution order, each once. *)
-let calls_py =
-  {|class Box:
-    def __init__(self):
-        self.k = None
-
-def wrap(x):
-    d = Box()
-    z = x
-    d.k = z
-    return d
-
-def via_shape():
-    a = source()
-    w = wrap(a)
-    sink(w.k)
-
-def apply(f, x):
-    y = x
-    z = y
-    f(z)
-
-def snk(v):
-    sink(v)
-
-def via_callback():
-    a = source()
-    apply(snk, a)
-
-def make():
-    t = source()
-    d = Box()
-    d.k = t
-    return d
-
-def via_source_in_shape():
-    m = make()
-    sink(m.k)
-
-def fill(box, v):
-    box.k = v
-
-def via_lval():
-    b = source()
-    c = Box()
-    fill(c, b)
-    sink(c.k)
-|}
-
-let test_json_trace_of_each_call (caps : Scan_subcommand.caps) () =
-  let out =
-    Semgrep_output_v1_j.cli_output_of_string
-      (scan_with_traces caps ~target:calls_py [ "--json" ])
-  in
+(* The variables of the trace of a finding, with their lines: those of the
+   trace to the source, of the trace in the function and of the trace to the
+   sink. *)
+let trace_variables (m : Semgrep_output_v1_t.cli_match) : (string * int) list
+    =
   let names (vars : Semgrep_output_v1_t.match_intermediate_var list) :
       (string * int) list =
     vars
@@ -3072,30 +3026,165 @@ let test_json_trace_of_each_call (caps : Scan_subcommand.caps) () =
     | CliLoc _ -> []
     | CliCall (_, vars, inner) -> names vars @ call_vars inner
   in
-  let variables (m : Semgrep_output_v1_t.cli_match) : int * (string * int) list
-      =
-    ( m.start.line,
-      match m.extra.dataflow_trace with
-      | Some trace ->
-          (Option.fold ~none:[] ~some:call_vars trace.taint_source
-          @ names (Option.value ~default:[] trace.intermediate_vars))
-          @ Option.fold ~none:[] ~some:call_vars trace.taint_sink
-      | None -> [] )
+  match m.extra.dataflow_trace with
+  | Some trace ->
+      (Option.fold ~none:[] ~some:call_vars trace.taint_source
+      @ names (Option.value ~default:[] trace.intermediate_vars))
+      @ Option.fold ~none:[] ~some:call_vars trace.taint_sink
+  | None -> []
+
+(* The variables of the trace of each finding in the JSON output of a scan
+   of [target]: in execution order, each once. *)
+let check_json_trace (caps : Scan_subcommand.caps) ~(target : string)
+    (expected : (string * int) list) : unit =
+  let out =
+    Semgrep_output_v1_j.cli_output_of_string
+      (scan_with_traces caps ~target [ "--json" ])
   in
-  Alcotest.(check (list (pair int (list (pair string int)))))
-    "the variables of each finding"
+  Alcotest.(check (list (list (pair string int))))
+    "the variables of the trace" [ expected ]
+    (out.results |> List_.map trace_variables)
+
+(* The taint is returned inside an object. *)
+let returned_object_py =
+  {|class Box:
+    def __init__(self):
+        self.k = None
+
+def wrap(x):
+    d = Box()
+    z = x
+    d.k = z
+    return d
+
+def go():
+    a = source()
+    w = wrap(a)
+    sink(w.k)
+|}
+
+let test_json_trace_returned_object (caps : Scan_subcommand.caps) () =
+  check_json_trace caps ~target:returned_object_py
+    [ ("a", 12); ("wrap", 13); ("x", 5); ("z", 7); ("d", 8) ]
+
+(* The taint is passed to a callback. *)
+let callback_py =
+  {|def apply(f, x):
+    y = x
+    z = y
+    f(z)
+
+def snk(v):
+    sink(v)
+
+def go():
+    a = source()
+    apply(snk, a)
+|}
+
+let test_json_trace_callback (caps : Scan_subcommand.caps) () =
+  check_json_trace caps ~target:callback_py
+    [ ("a", 10); ("apply", 11); ("x", 1); ("y", 2); ("z", 3); ("v", 6) ]
+
+(* The source is in a function that returns it inside an object. *)
+let returned_source_py =
+  {|class Box:
+    def __init__(self):
+        self.k = None
+
+def make():
+    t = source()
+    d = Box()
+    d.k = t
+    return d
+
+def go():
+    m = make()
+    sink(m.k)
+|}
+
+let test_json_trace_returned_source (caps : Scan_subcommand.caps) () =
+  check_json_trace caps ~target:returned_source_py [ ("t", 6); ("d", 8) ]
+
+(* The taint is written to a field of an argument. *)
+let field_written_py =
+  {|class Box:
+    def __init__(self):
+        self.k = None
+
+def fill(box, v):
+    box.k = v
+
+def go():
+    b = source()
+    c = Box()
+    fill(c, b)
+    sink(c.k)
+|}
+
+let test_json_trace_field_written (caps : Scan_subcommand.caps) () =
+  check_json_trace caps ~target:field_written_py
+    [ ("b", 9); ("fill", 11); ("v", 5); ("box", 6); ("c", 11) ]
+
+(* --incremental-output prints each finding as it is found, with its trace
+   flat, as the JSON output does. *)
+let test_incremental_trace_through_call (caps : Scan_subcommand.caps) () =
+  let output = scan_through_call caps [ "--incremental-output"; "--json" ] in
+  let first_line =
+    match String.split_on_char '\n' output with
+    | line :: _ -> line
+    | [] -> ""
+  in
+  Alcotest.(check (list (pair string int)))
+    "the variables of the finding printed first" through_call_path
+    (trace_variables (Semgrep_output_v1_j.cli_match_of_string first_line));
+  Alcotest.(check bool)
+    "no call in the output" false
+    (String_.contains ~term:"through_call" output)
+
+(* A function in another file that the taint goes through: under
+   --taint-interfile the variables inside it carry the path of that file. *)
+let test_interfile_json_trace_through_call (caps : Scan_subcommand.caps) () =
+  let helper_py = {|def pass_taint(x):
+    y = x
+    return y
+|}
+  and main_py =
+    {|from helper import pass_taint
+
+def go():
+    a = source()
+    b = pass_taint(a)
+    sink(b)
+|}
+  in
+  let out =
+    Semgrep_output_v1_j.cli_output_of_string
+      (scan_files_with_traces caps
+         ~files:[ F.File ("helper.py", helper_py); F.File ("main.py", main_py) ]
+         [ "--json"; "--taint-interfile" ])
+  in
+  let vars =
+    out.results
+    |> List.concat_map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           match m.extra.dataflow_trace with
+           | Some { intermediate_vars = Some vars; _ } -> vars
+           | Some _
+           | None ->
+               [])
+    |> List_.map (fun (v : Semgrep_output_v1_t.match_intermediate_var) ->
+           (Fpath.to_string v.location.path, v.content, v.location.start.line))
+  in
+  Alcotest.(check (list (triple string string int)))
+    "the variables, with their files"
     [
-      (14, [ ("a", 12); ("wrap", 13); ("x", 5); ("z", 7); ("d", 8) ]);
-      ( 22,
-        [
-          ("a", 25); ("apply", 26); ("x", 16); ("y", 17); ("z", 18); ("v", 21);
-        ] );
-      (36, [ ("t", 29); ("d", 31) ]);
-      (45, [ ("b", 42); ("fill", 44); ("v", 38); ("box", 39); ("c", 44) ]);
+      ("main.py", "a", 4);
+      ("main.py", "pass_taint", 5);
+      ("helper.py", "x", 1);
+      ("helper.py", "y", 2);
+      ("main.py", "b", 5);
     ]
-    (out.results
-    |> List_.map variables
-    |> List.sort (fun ((a : int), _) ((b : int), _) -> Int.compare a b))
+    vars
 
 (* The legacy report prints the same variables as one flat step. *)
 let test_legacy_trace_through_call (caps : Scan_subcommand.caps) () =
@@ -3112,8 +3201,18 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_basic_output caps);
       t "a JSON dataflow trace through a call is flat"
         (test_json_trace_through_call caps);
-      t "the JSON dataflow trace of each kind of call is in execution order"
-        (test_json_trace_of_each_call caps);
+      t "the JSON dataflow trace of a call that returns an object"
+        (test_json_trace_returned_object caps);
+      t "the JSON dataflow trace of a call to a callback"
+        (test_json_trace_callback caps);
+      t "the JSON dataflow trace of a source returned in an object"
+        (test_json_trace_returned_source caps);
+      t "the JSON dataflow trace of a call that writes a field"
+        (test_json_trace_field_written caps);
+      t "an incremental dataflow trace through a call is flat"
+        (test_incremental_trace_through_call caps);
+      t "an interfile JSON dataflow trace through a call is flat"
+        (test_interfile_json_trace_through_call caps);
       t "a SARIF dataflow trace through a call is in execution order"
         (test_sarif_trace_through_call caps);
       t "a legacy dataflow trace through a call"

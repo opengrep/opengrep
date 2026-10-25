@@ -187,12 +187,10 @@ type inst_trace = {
     T.tainted_tokens ->
     Rule.taint_source T.call_trace ->
     Rule.taint_source T.call_trace option;
-      (** For sources we extend the call trace. *)
+      (** For sources we extend the call trace with the path of the effect,
+          see [add_source_call_to_trace]. *)
   fix_token_trace_for_var :
-    parameter:Tok.t option ->
-    var_tokens:T.tainted_tokens ->
-    T.tainted_tokens ->
-    T.tainted_tokens;
+    var_tokens:T.tainted_tokens -> T.tainted_tokens -> T.tainted_tokens;
       (** For variables we record the call in the path of the taint, see
           [add_call_to_token_trace]. *)
 }
@@ -265,22 +263,40 @@ let add_call_to_trace_if_callee_has_eorig ~callee tainted_tokens call_trace =
       None
 
 (* The path inside a callee, in execution order, from the path of an effect
-   of its signature, which is newest first, without the [parameter] it
-   starts at, which the call carries. *)
-let inside_of_effect_path ~(parameter : Tok.t option)
+   of its signature, which is newest first, to the return by which the taint
+   leaves, if it does. *)
+let inside_of_effect_path ~(return_tok : Tok.t option)
     (var_tokens : T.tainted_tokens) : T.tainted_tokens =
-  let inside = Taint_trace.rev var_tokens in
-  match (parameter, inside) with
-  | Some (param : Tok.t), Taint_trace.Variable (first, rest) -> (
-      match (Tok.loc_of_tok param, Tok.loc_of_tok first) with
-      | Ok param_loc, Ok first_loc when Tok.equal_location param_loc first_loc
-        ->
-          rest
-      | _ -> inside)
-  | _ -> inside
+  let return =
+    match return_tok with
+    | Some (tok : Tok.t) -> Taint_trace.Return (tok, Nil)
+    | None -> Nil
+  in
+  Taint_trace.rev_append var_tokens return
+
+(* E.g. (ToReturn) the call to 'bar' in:
+ *
+ *     1 def bar():
+ *     2     x = taint
+ *     3     return x
+ *     4
+ *     5 def foo():
+ *     6     y = bar()
+ *
+ * extends the call trace of the source to:
+ *
+ *     Call('bar' @l.6, ["x" @l.2; "return" @l.3], "taint" @l.2)
+ *)
+let add_source_call_to_trace ~(callee : IL.exp) ~(return_tok : Tok.t option)
+    (var_tokens : T.tainted_tokens)
+    (call_trace : Rule.taint_source T.call_trace) :
+    Rule.taint_source T.call_trace option =
+  add_call_to_trace_if_callee_has_eorig ~callee
+    (inside_of_effect_path ~return_tok var_tokens)
+    call_trace
 
 let add_call_to_token_trace ~(callee : IL.exp) ~(return_tok : Tok.t option)
-    ~(parameter : Tok.t option) ~(var_tokens : T.tainted_tokens)
+    ~(var_tokens : T.tainted_tokens)
     (caller_tokens : T.tainted_tokens) : T.tainted_tokens =
   (* E.g. (ToReturn) the call to 'bar' in:
    *
@@ -294,21 +310,10 @@ let add_call_to_token_trace ~(callee : IL.exp) ~(return_tok : Tok.t option)
    *
    * would result in this path (note that its outer level is reversed):
    *
-   *     ["t" @l.6;
-   *      Through_call ("bar" @l.6, "x" @l.1, ["y" @l.2], "return" @l.3)]
-   *)
-  Through_call
-    ( Taint_trace.through_call
-        ~callee:(get_ident_of_callee callee |> Option.map snd)
-        ~parameter
-        ~inside:(inside_of_effect_path ~parameter var_tokens)
-        ~return_tok,
-      caller_tokens )
-
-let add_lval_update_to_token_trace ~(callee : IL.exp)
-    ~(parameter : Tok.t option) ~(var_tokens : T.tainted_tokens)
-    (caller_tokens : T.tainted_tokens) : T.tainted_tokens =
-  (* E.g. (ToLval) the call to 'bar' in:
+   *     ["t" @l.6; Through_call ("bar" @l.6, [param "x" @l.1; "y" @l.2;
+   *                                         return "return" @l.3])]
+   *
+   * E.g. (ToLval, without a return) the call to 'bar' in:
    *
    *     1 s = set([])
    *     2
@@ -325,15 +330,22 @@ let add_lval_update_to_token_trace ~(callee : IL.exp)
    * would result in this path (note that its outer level is reversed), to
    * which the caller then adds the l-value that the call updates:
    *
-   *     [Through_call ("bar" @l.10, "x" @l.3, ["s" @l.5]); "t" @l.9]
+   *     [Through_call ("bar" @l.10, [param "x" @l.3; "s" @l.5]); "t" @l.9]
    *)
   Through_call
     ( Taint_trace.through_call
         ~callee:(get_ident_of_callee callee |> Option.map snd)
-        ~parameter
-        ~inside:(inside_of_effect_path ~parameter var_tokens)
-        ~return_tok:None,
+        ~inside:(inside_of_effect_path ~return_tok var_tokens),
       caller_tokens )
+
+(* The trace fixes of a call whose effect leaves the callee by [return_tok],
+   when it leaves by a return. *)
+let inst_trace_of_call ~(callee : IL.exp) ~(return_tok : Tok.t option) :
+    inst_trace =
+  {
+    add_call_to_trace_for_src = add_source_call_to_trace ~callee ~return_tok;
+    fix_token_trace_for_var = add_call_to_token_trace ~callee ~return_tok;
+  }
 
 (*****************************************************************************)
 (* Instatiation *)
@@ -379,41 +391,12 @@ let instantiate_taint_var inst_var taint =
       (* 'Control' is pretty much like a taint variable so we handle all together. *)
       Some (inst_var.inst_ctrl (), Bot)
 
-(* The token of the parameter of the callee by which the taint [taint]
-   enters it, if it does. The index of a [BArg] counts the parameters as
-   Signature.of_IL_params does, without the receiver of a method. *)
-let parameter_of_taint (inst_var : inst_var) (taint : T.taint) : Tok.t option =
-  let rec nth (index : int) (params : IL.param list) : IL.param option =
-    match params with
-    | [] -> None
-    | IL.ParamReceiver _ :: rest -> nth index rest
-    | param :: rest ->
-        if Int.equal index 0 then Some param else nth (index - 1) rest
-  in
-  match taint.orig with
-  | Var { base = BArg { index; _ }; _ } ->
-      nth index inst_var.f_params_il
-      |> Fun.flip Option.bind IL_helpers.pname_of_param
-      |> Fun.flip Option.bind (fun (pname : IL.name) ->
-             let tok = snd pname.ident in
-             if Tok.is_fake tok then None else Some tok)
-  | Var { base = BGlob _ | BThis; _ }
-  | Src _
-  | Shape_var _
-  | Control ->
-      None
-
 let instantiate_taint inst_var inst_trace taint =
   let inst_taint_var taint = instantiate_taint_var inst_var taint in
   match taint.T.orig with
   | Src src -> (
       let taint =
-        (* the path of an effect is newest first, that of a call trace in
-           execution order *)
-        match
-          inst_trace.add_call_to_trace_for_src
-            (Taint_trace.rev taint.tokens)
-            src.call_trace
+        match inst_trace.add_call_to_trace_for_src taint.tokens src.call_trace
         with
         | Some call_trace ->
             { T.orig = Src { src with call_trace }; tokens = Taint_trace.Nil }
@@ -431,13 +414,12 @@ let instantiate_taint inst_var inst_trace taint =
       match inst_taint_var taint with
       | None -> Taints.empty
       | Some (call_taints, _Bot_shape) ->
-          let parameter = parameter_of_taint inst_var taint in
           call_taints
           |> Taints.map_taint (fun (taint' : T.taint) ->
                  {
                    taint' with
                    tokens =
-                     inst_trace.fix_token_trace_for_var ~parameter
+                     inst_trace.fix_token_trace_for_var
                        ~var_tokens:taint.tokens taint'.tokens;
                  }))
 
@@ -1830,13 +1812,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   in
   let inst_taint_var taint = instantiate_taint_var inst_var taint in
   let subst_in_precondition = subst_in_precondition inst_var in
-  let inst_trace =
-    {
-      add_call_to_trace_for_src = add_call_to_trace_if_callee_has_eorig ~callee;
-      fix_token_trace_for_var =
-        add_call_to_token_trace ~callee ~return_tok:None;
-    }
-  in
+  let inst_trace = inst_trace_of_call ~callee ~return_tok:None in
   let inst_taints taints =
     instantiate_taints inst_var inst_trace taints
   in
@@ -1862,16 +1838,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               (Taints.cardinal data_taints));
         (* the taint leaves the callee by this return, which its path
            records; a function without a return statement has a fake one *)
-        let inst_trace =
-          {
-            inst_trace with
-            fix_token_trace_for_var =
-              add_call_to_token_trace ~callee
-                ~return_tok:
-                  (if Tok.is_fake return_tok then None else Some return_tok);
-          }
+        let left_by =
+          if Tok.is_fake return_tok then None else Some return_tok
         in
-        let inst_taints taints =
+        let inst_trace = inst_trace_of_call ~callee ~return_tok:left_by in
+        let inst_taints (taints : Taints.t) : Taints.t =
           instantiate_taints inst_var inst_trace taints
         in
         let data_taints = inst_taints data_taints in
@@ -2018,10 +1989,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                  f_params_il = taint_sig.params_il;
                  f_resolve_arg = resolve_arg;
                  inst_guard; }
-               { add_call_to_trace_for_src =
-                   add_call_to_trace_if_callee_has_eorig ~callee;
-                 fix_token_trace_for_var =
-                   add_lval_update_to_token_trace ~callee; }
+               inst_trace
         in
         if
           (match dst_sig_lval.base with T.BThis -> true | _ -> false)

@@ -677,57 +677,48 @@ type trace_node = {
 }
 
 (* The steps of a run of intermediate variables: each variable is a step,
-   without consecutive locations on the same line, and each call that the
-   taint goes through is a step with the path inside the function, and its
-   return, under it. *)
+   of the kind of its role in the function it is in, without consecutive
+   locations on the same line, and each call that the taint goes through is
+   a step with the path inside the function under it. *)
 let rec intermediate_nodes (vars : OutJ.match_intermediate_var list) :
     trace_node list =
-  (* the variables in reverse, with the calls they carry *)
-  let items =
-    vars
-    |> List.fold_left
-         (fun (acc :
-                (OutJ.location * OutJ.match_through_call option) list)
-              (var : OutJ.match_intermediate_var) ->
-           match (acc, var.through_call) with
-           | (previous, None) :: _, None when same_line previous var.location
-             ->
-               acc
-           | _ -> (var.location, var.through_call) :: acc)
-         []
+  let plain (var : OutJ.match_intermediate_var) : bool =
+    Option.is_none var.role && Option.is_none var.through_call
   in
   (* the steps in reverse *)
-  items
+  vars
   |> List.fold_left
-       (fun (acc : trace_node list)
-            ((loc : OutJ.location), (call : OutJ.match_through_call option)) ->
-         match call with
-         | None ->
-             { kind = Intermediate; location = loc; children = [] } :: acc
-         | Some (call : OutJ.match_through_call) ->
-             let parameter =
-               call.parameter
-               |> Option.to_list
-               |> List_.map (fun (param : OutJ.match_intermediate_var) ->
-                      {
-                        kind = Parameter;
-                        location = param.location;
-                        children = [];
-                      })
+       (fun ((acc : trace_node list),
+             (previous : OutJ.match_intermediate_var option))
+            (var : OutJ.match_intermediate_var) ->
+         match previous with
+         | Some previous
+           when plain previous && plain var
+                && same_line previous.location var.location ->
+             (acc, Some var)
+         | _ ->
+             let node =
+               match (var.role, var.through_call) with
+               | _, Some (call : OutJ.match_through_call) ->
+                   {
+                     kind = Intermediate_call;
+                     location = var.location;
+                     children = intermediate_nodes call.inside;
+                   }
+               | Some `Parameter, None ->
+                   { kind = Parameter; location = var.location; children = [] }
+               | Some `Return, None ->
+                   { kind = Return; location = var.location; children = [] }
+               | None, None ->
+                   {
+                     kind = Intermediate;
+                     location = var.location;
+                     children = [];
+                   }
              in
-             let return =
-               call.return_location
-               |> Option.to_list
-               |> List_.map (fun (return_loc : OutJ.location) ->
-                      { kind = Return; location = return_loc; children = [] })
-             in
-             {
-               kind = Intermediate_call;
-               location = loc;
-               children = parameter @ intermediate_nodes call.inside @ return;
-             }
-             :: acc)
-       []
+             (node :: acc, Some var))
+       ([], None)
+  |> fst |> List.rev
 
 (* [reverse] holds for a source trace and not for a sink trace. *)
 let rec nodes_of_call_trace ~(reverse : bool) (trace : OutJ.match_call_trace)
@@ -1247,7 +1238,10 @@ let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
    one closing its level, and a vertical line joining the first branch to
    the match above. The first line of a node starts with the [label] of its
    kind, padded to the widest label of all kinds; the nodes under a call are
-   one level deeper, under the label of the call.
+   one level deeper, under the label of the call. A node prints its file
+   when it is not the file of the node printed before it, or for the first
+   node the file of the finding, so that a line without a file is in the
+   last file printed above it.
 
    [line_prefix] starts every line, and [glyph] renders the box-drawing
    characters, so that a skin sets their style and any text before them. *)
@@ -1265,11 +1259,14 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
          0
   in
   (* [indent] holds the stems of the levels above, before the branches of
-     [nodes] *)
-  let rec pp_nodes (indent : string) (nodes : trace_node list) : unit =
+     [nodes], and [current] the file of the node printed last; returns the
+     file of the last node that [nodes] print *)
+  let rec pp_nodes (current : Fpath.t option) (indent : string)
+      (nodes : trace_node list) : Fpath.t option =
     let last = List.length nodes - 1 in
     nodes
-    |> List.iteri (fun (i : int) (node : trace_node) ->
+    |> List.fold_left
+         (fun ((i : int), (current : Fpath.t option)) (node : trace_node) ->
            let is_last = Int.equal i last in
            let branch = glyph (if is_last then "└─ " else "├─ ")
            and stem = indent ^ glyph (if is_last then "   " else "│  ") in
@@ -1285,14 +1282,21 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
              if List_.null node.children then String.make (width + 1) ' '
              else glyph "│" ^ String.make width ' '
            in
-           pp_trace_location ?finding_path ~dedent ~first_prefix ~prefix
-             ~gutter ~gutter_blank ~highlight ~unhighlighted ppf node.location;
-           pp_nodes stem node.children)
+           pp_trace_location ?finding_path:current ~dedent ~first_prefix
+             ~prefix ~gutter ~gutter_blank ~highlight ~unhighlighted ppf
+             node.location;
+           ( i + 1,
+             pp_nodes
+               (Option.map (fun (_ : Fpath.t) -> node.location.path) current)
+               stem node.children ))
+         (0, current)
+    |> snd
   in
   let nodes = tree_of_dataflow_trace trace in
   (* the vertical line that joins the first step to the match *)
   if not (List_.null nodes) then Fmt.pf ppf "%s%s@." line_prefix (glyph "│");
-  pp_nodes "" nodes
+  let (_ : Fpath.t option) = pp_nodes finding_path "" nodes in
+  ()
 
 (* The taint trace of a match as a flat sequence of steps, as the legacy
    report prints it. [indent] starts every line and [gutter] precedes the

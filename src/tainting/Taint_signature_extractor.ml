@@ -116,7 +116,7 @@ let mk_method_property_assumptions (properties : G.expr list)
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env lang il_lval taint_set taint_arg env =
   let param_shape = Shape.Arg (taint_arg, [ [] ]) in
-  Taint_lval_env.add_lval_shape lang il_lval taint_set param_shape env
+  Taint_lval_env.add_param_lval_shape lang il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
  * module-dependency cycle; this file already depends on
@@ -164,11 +164,15 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                      pms_with_specs
                  else Taint.Taint_set.empty
                in
-               let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
-               (* Give the parameter an Arg shape so it can be used in HOF *)
+               (* Give the parameter an Arg shape so it can be used in HOF.
+                  The taint of the argument enters by the parameter, while
+                  the taint of a source that matches it starts there. *)
                let new_env =
-                 add_param_to_env taint_inst.TRI.lang il_lval taint_set
+                 add_param_to_env taint_inst.TRI.lang il_lval
+                   (Taint.Taint_set.singleton generic_taint)
                    taint_arg env
+                 |> Taint_lval_env.add_lval taint_inst.TRI.lang il_lval
+                      source_taints
                in
                (* For destructuring [ParamPattern], additionally seed each
                 * leaf's lval with its offset path off the implicit binder.
@@ -233,12 +237,12 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                                   pms_with_specs
                               else Taint.Taint_set.empty
                             in
-                            let leaf_taints =
-                              Taint.Taint_set.add_taint leaf_taint
-                                source_taints
-                            in
-                            Taint_lval_env.add_lval_shape taint_inst.TRI.lang
-                              leaf_lval leaf_taints leaf_shape env)
+                            Taint_lval_env.add_param_lval_shape taint_inst.TRI.lang
+                              leaf_lval
+                              (Taint.Taint_set.singleton leaf_taint)
+                              leaf_shape env
+                            |> Taint_lval_env.add_lval taint_inst.TRI.lang
+                                 leaf_lval source_taints)
                           new_env
                  | _ -> new_env
                in
@@ -254,8 +258,8 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                in
                let taint_set = Taint.Taint_set.singleton generic_taint in
                let new_env =
-                 Taint_lval_env.add_lval taint_inst.TRI.lang il_lval taint_set
-                   env
+                 Taint_lval_env.add_param_lval_shape taint_inst.TRI.lang il_lval
+                   taint_set Shape.Bot env
                in
                (* Don't increment i — receiver is not a call-site argument *)
                (i, new_env)

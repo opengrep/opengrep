@@ -209,7 +209,11 @@ let check_tainted_lvals_limit tainted new_var =
         None)
   else Some tainted
 
-let add_shape lang var offset new_taints new_shape lval_env =
+(* [step] records [var] in the path of each taint that reaches it *)
+let add_shape_with_step
+    ~(step : Tok.t -> Taint_trace.tainted_tokens -> Taint_trace.tainted_tokens)
+    (lang : Lang.t) (var : IL.name) (offset : T.offset list)
+    (new_taints : Taints.t) (new_shape : shape) (lval_env : t) : t =
   match check_tainted_lvals_limit lval_env.tainted var with
   | None -> lval_env
   | Some tainted ->
@@ -219,7 +223,7 @@ let add_shape lang var offset new_taints new_shape lval_env =
         else
           new_taints
           |> Taints.map_taint (fun (t : T.taint) ->
-                 { t with tokens = Taint_trace.Variable (var_tok, t.tokens) })
+                 { t with tokens = step var_tok t.tokens })
       in
       {
         lval_env with
@@ -231,14 +235,40 @@ let add_shape lang var offset new_taints new_shape lval_env =
             tainted;
       }
 
-let add_lval_shape lang lval new_taints new_shape lval_env =
+let variable_step (tok : Tok.t) (path : Taint_trace.tainted_tokens) :
+    Taint_trace.tainted_tokens =
+  Taint_trace.Variable (tok, path)
+
+let parameter_step (tok : Tok.t) (path : Taint_trace.tainted_tokens) :
+    Taint_trace.tainted_tokens =
+  Taint_trace.Parameter (tok, path)
+
+let add_shape (lang : Lang.t) (var : IL.name) (offset : T.offset list)
+    (new_taints : Taints.t) (new_shape : shape) (lval_env : t) : t =
+  add_shape_with_step ~step:variable_step lang var offset new_taints new_shape
+    lval_env
+
+let add_lval_shape_with_step
+    ~(step : Tok.t -> Taint_trace.tainted_tokens -> Taint_trace.tainted_tokens)
+    (lang : Lang.t) (lval : IL.lval) (new_taints : Taints.t) (new_shape : shape)
+    (lval_env : t) : t =
   match normalize_lval lang lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)
       lval_env
   | Some (var, offset) ->
-      add_shape lang var offset new_taints new_shape lval_env
+      add_shape_with_step ~step lang var offset new_taints new_shape lval_env
+
+let add_lval_shape (lang : Lang.t) (lval : IL.lval) (new_taints : Taints.t)
+    (new_shape : shape) (lval_env : t) : t =
+  add_lval_shape_with_step ~step:variable_step lang lval new_taints new_shape
+    lval_env
+
+let add_param_lval_shape (lang : Lang.t) (lval : IL.lval)
+    (new_taints : Taints.t) (new_shape : shape) (lval_env : t) : t =
+  add_lval_shape_with_step ~step:parameter_step lang lval new_taints new_shape
+    lval_env
 
 let add lang var offset new_taints lval_env =
   add_shape lang var offset new_taints Bot lval_env

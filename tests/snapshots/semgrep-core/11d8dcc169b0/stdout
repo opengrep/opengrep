@@ -1,0 +1,20 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 25 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 s.py
+s.py
+
+  error  source-parameter
+  tainted data reaches a sink
+
+     8: sink(y)
+        │
+        ├─ source in call   7: y = handler(a)
+        │  ├─ source           2: def handler(request):
+        │  ├─ through          2: def handler(request):
+        │  ├─ through          3: x = request
+        │  └─ return           4: return x
+        ├─ through          7: y = handler(a)
+        └─ sink             8: sink(y)
+

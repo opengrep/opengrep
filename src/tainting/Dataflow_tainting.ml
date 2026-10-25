@@ -4081,7 +4081,7 @@ and (fixpoint :
                                   (* Give the parameter an Arg shape so it can be used in HOF *)
                                   let param_shape = S.Arg (taint_arg, [ [] ]) in
                                   let env =
-                                    Lval_env.add_lval_shape taint_inst.lang
+                                    Lval_env.add_param_lval_shape taint_inst.lang
                                       il_lval taint_set param_shape env
                                   in
                                   (* Destructuring ParamPattern: also seed
@@ -4124,7 +4124,7 @@ and (fixpoint :
                                                  Taint.Taint_set.singleton
                                                    leaf_taint
                                                in
-                                               Lval_env.add_lval_shape
+                                               Lval_env.add_param_lval_shape
                                                  taint_inst.lang leaf_lval
                                                  leaf_taints leaf_shape env)
                                              env
