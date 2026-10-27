@@ -831,6 +831,13 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   (fst info.name.IL.ident) info.class_name_str
             | None -> false
           in
+          (* A constructor stores its instance variable taint in
+             [Dataflow_tainting.constructor_instance_vars], which the other
+             methods of its class read. The table is read and written only
+             under a class name, which signature extraction does not pass to
+             [Dataflow_tainting.fixpoint] and [extract_and_check] does. So
+             the rounds above leave it untouched, and in this pass the
+             constructors run first. *)
           let constructors, others =
             List.partition is_constructor_node analysis_order
           in
