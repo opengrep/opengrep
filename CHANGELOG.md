@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.33.0](https://github.com/opengrep/opengrep/releases/tag/v1.33.0) - 27-10-2026
+
+### Language support
+
+* ASP.NET: C# and VB rules scan generic handlers (`.ashx`) and web services (`.asmx`) whose directive selects their language by @maciejpirog in #896 (from #888)
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.32.0...v1.33.0
+
+
 ## [1.32.0](https://github.com/opengrep/opengrep/releases/tag/v1.32.0) - 22-10-2026
 
 ### Language support
