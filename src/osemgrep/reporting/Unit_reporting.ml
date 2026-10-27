@@ -535,6 +535,48 @@ let skin_emit_tests =
 (* Entry point *)
 (*****************************************************************************)
 
+(*****************************************************************************)
+(* Exit code of a run with errors *)
+(*****************************************************************************)
+
+let core_error (error_type : Out.error_type) (severity : Out.error_severity) :
+    Out.core_error =
+  { error_type; severity; message = "m"; details = None; location = None;
+    rule_id = None }
+
+let rule_parse_error = core_error Out.RuleParseError `Error
+let partial_parsing = core_error (Out.PartialParsing []) `Warning
+
+let exit_code_int ~strict errors =
+  Exit_code.to_int (Cli_json_output.exit_code_of_errors ~strict errors)
+
+(* Regression test: the exit code used to be the one of the very last error,
+ * so a warning collected after a real error (a PartialParsing of some
+ * target) hid it and the run exited 0. *)
+let exit_code_of_errors_tests =
+  Testo.categorize "exit_code_of_errors"
+    [
+      t "a real error alone fails the run" (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:false [ rule_parse_error ]));
+      t "a warning after a real error does not hide it" (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:false
+               [ rule_parse_error; partial_parsing; partial_parsing ]));
+      t "a warning before a real error does not hide it" (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:false [ partial_parsing; rule_parse_error ]));
+      t "warnings alone leave the run successful" (fun () ->
+          Alcotest.(check int) "exit code" 0
+            (exit_code_int ~strict:false [ partial_parsing ]));
+      t "--strict makes a lone warning fail the run" (fun () ->
+          (* PartialParsing maps to invalid_code *)
+          Alcotest.(check int) "exit code" 3
+            (exit_code_int ~strict:true [ partial_parsing ]));
+      t "no error, no failure" (fun () ->
+          Alcotest.(check int) "exit code" 0 (exit_code_int ~strict:false []));
+    ]
+
 let tests caps =
   Testo.categorize_suites "Osemgrep reporting"
     [
@@ -542,4 +584,5 @@ let tests caps =
       findings_layout_tests;
       skin_simple_tests;
       skin_emit_tests;
+      exit_code_of_errors_tests;
     ]

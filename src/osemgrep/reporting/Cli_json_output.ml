@@ -191,12 +191,21 @@ let exit_code_of_errors ~(strict : bool) (errors : Out.core_error list) :
     Exit_code.t =
   match List.rev errors with
   | [] -> Exit_code.ok ~__LOC__
-  (* TODO? why do we look at the last error? What about the other errors? *)
-  | x :: _ -> (
-      (* alt: raise a Semgrep_error that would be caught by CLI_Common
-       * wrapper instead of returning an exit code directly? *)
-      match () with
-      | _ when is_real_error_severity x.severity ->
+  | last :: _ as rev_errors -> (
+      (* The run exits with the code of the last error of severity Error,
+       * wherever it sits in the list. Looking only at the very last error
+       * made the exit code depend on the order of the errors: a warning
+       * collected after a real error (e.g. a PartialParsing warning of a
+       * target scanned after a rule that failed to parse) hid it and the
+       * run exited 0. This is the same selection as 'last_real_error',
+       * which the validate subcommand already uses. *)
+      let real_error =
+        List.find_opt
+          (fun (x : Out.core_error) -> is_real_error_severity x.severity)
+          rev_errors
+      in
+      match real_error with
+      | Some x ->
           let exit_code = exit_code_of_error_type x.error_type in
           Logs.info (fun m ->
               m
@@ -205,16 +214,18 @@ let exit_code_of_errors ~(strict : bool) (errors : Out.core_error list) :
                 (Semgrep_output_v1_j.string_of_error_type x.error_type)
                 (Exit_code.to_int exit_code));
           exit_code
-      | _ when strict ->
-          let exit_code = exit_code_of_error_type x.error_type in
+      | None when strict ->
+          (* no real error: --strict makes even a warning fail the run, and
+           * the last one decides as before *)
+          let exit_code = exit_code_of_error_type last.error_type in
           Logs.info (fun m ->
               m
                 "Exiting opengrep scan due to error in strict mode: %s -> exit \
                  code %i"
-                (Semgrep_output_v1_j.string_of_error_type x.error_type)
+                (Semgrep_output_v1_j.string_of_error_type last.error_type)
                 (Exit_code.to_int exit_code));
           exit_code
-      | _ -> Exit_code.ok ~__LOC__)
+      | None -> Exit_code.ok ~__LOC__)
 
 (* A parse error quotes the bytes it choked on, so an error entry takes
  * strings from its target just as a match does, and every one of them is
