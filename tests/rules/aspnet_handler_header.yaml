@@ -1,0 +1,6 @@
+rules:
+  - id: aspnet-handler-header
+    pattern: $CONTEXT.Response.Write(...)
+    languages: [csharp]
+    message: response written by an ASP.NET generic handler after its directives
+    severity: INFO
