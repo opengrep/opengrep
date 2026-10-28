@@ -3032,6 +3032,9 @@ and simpleExpr ?(is_block_expr = false) in_ : expr =
            | QUOTE quote ->
                let x = quoted quote in_ in
                Quoted x
+           | T_XML_OPEN _
+           | T_XML_TEXT _ ->
+               Xml (xmlNodes in_)
            | Knew ii ->
                canApply := false;
                skipToken in_;
@@ -3143,6 +3146,84 @@ and colonArgumentOpt (in_ : env) : arguments option =
     in
     Some (ArgBlock (fb (Tok.unsafe_fake_tok "") (BEBlock [ E lambda ]))))
   else None
+
+(* ------------------------------------------------------------------------- *)
+(* XML literals *)
+(* ------------------------------------------------------------------------- *)
+
+(* adjacent nodes form one expression, also across lines (MarkupParsers,
+   xLiteral: nodes separated by whitespace) *)
+and xmlNodes (in_ : env) : xml_body list =
+  let first =
+    match in_.token with
+    | T_XML_TEXT text ->
+        nextToken in_;
+        XmlText text
+    | _ -> XmlXml (xmlElement in_)
+  in
+  match (in_.token, in_next_token in_.rest) with
+  | (T_XML_OPEN _ | T_XML_TEXT _), _ -> first :: xmlNodes in_
+  | (NEWLINE _ | NEWLINES _), Some (T_XML_OPEN _ | T_XML_TEXT _) ->
+      nextToken in_;
+      first :: xmlNodes in_
+  | _ -> [ first ]
+
+and xmlEmbeddedExpr (in_ : env) : expr bracket =
+  let ((lb, _, rb) as block) = blockExpr in_ in
+  (lb, normalize_brace_in_interpolation (BlockExpr block), rb)
+
+and xmlElement (in_ : env) : xml =
+  match in_.token with
+  | T_XML_OPEN (name, iopen) -> (
+      let ilt, iname = Tok.split_tok_at_bytepos 1 iopen in
+      nextToken in_;
+      let rec attributes (acc : xml_attribute list) : xml_attribute list =
+        match in_.token with
+        | T_XML_ATTR (attr, iattr) ->
+            nextToken in_;
+            let ieq = TH.info_of_tok in_.token in
+            accept (EQUALS ab) in_;
+            let value =
+              match in_.token with
+              | T_XML_ATTR_VALUE (value, ivalue) ->
+                  nextToken in_;
+                  XmlAttrString (value, ivalue)
+              | LBRACE _ ->
+                  let _, e, _ = xmlEmbeddedExpr in_ in
+                  XmlAttrExpr e
+              | _ -> error "XML attribute value expected" in_
+            in
+            attributes (((attr, iattr), ieq, value) :: acc)
+        | _ -> List.rev acc
+      in
+      let xml_attrs = attributes [] in
+      match in_.token with
+      | T_XML_SELF_CLOSE iclose ->
+          nextToken in_;
+          let xml_kind = XmlSingleton (ilt, (name, iname), iclose) in
+          { xml_kind; xml_attrs; xml_body = [] }
+      | T_XML_TAG_END igt ->
+          nextToken in_;
+          let rec content (acc : xml_body list) : xml_body list * tok =
+            match in_.token with
+            | T_XML_TEXT text ->
+                nextToken in_;
+                content (XmlText text :: acc)
+            | LBRACE _ -> content (XmlExpr (xmlEmbeddedExpr in_) :: acc)
+            | T_XML_OPEN _ -> content (XmlXml (xmlElement in_) :: acc)
+            | T_XML_CLOSE (close_name, iclose) ->
+                (* as in scalac, the closing tag repeats the element's tag *)
+                if not (String.equal name close_name) then
+                  error "XML closing tag does not match the opening tag" in_;
+                nextToken in_;
+                (List.rev acc, iclose)
+            | _ -> error "XML content expected" in_
+          in
+          let xml_body, iclose = content [] in
+          let xml_kind = XmlClassic (ilt, (name, iname), igt, iclose) in
+          { xml_kind; xml_attrs; xml_body }
+      | _ -> error "`>` or `/>` expected" in_)
+  | _ -> error "XML element expected" in_
 
 (* and literal in_ = ...
  *  is now at the top because it's also used by SimplePattern

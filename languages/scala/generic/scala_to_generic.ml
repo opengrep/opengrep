@@ -483,6 +483,33 @@ and v_pattern = function
 
 and todo_expr msg any = G.OtherExpr ((msg, fake msg), any) |> G.e
 
+and v_xml ({ xml_kind; xml_attrs; xml_body } : xml) : G.xml =
+  let xml_kind =
+    match xml_kind with
+    | XmlClassic (ilt, id, igt, iclose) ->
+        G.XmlClassic (ilt, H.name_of_id id, igt, iclose)
+    | XmlSingleton (ilt, id, iclose) ->
+        G.XmlSingleton (ilt, H.name_of_id id, iclose)
+  in
+  let xml_attrs =
+    xml_attrs
+    |> List_.map (fun ((id, ieq, value) : xml_attribute) ->
+           let value =
+             match value with
+             | XmlAttrString s -> G.L (G.String (fb s)) |> G.e
+             | XmlAttrExpr e -> v_expr e
+           in
+           G.XmlAttr (id, ieq, value))
+  in
+  let xml_body = List_.map v_xml_body xml_body in
+  { G.xml_kind; xml_attrs; xml_body }
+
+and v_xml_body (body : xml_body) : G.xml_body =
+  match body with
+  | XmlText s -> G.XmlText s
+  | XmlExpr (lb, e, rb) -> G.XmlExpr (lb, Some (v_expr e), rb)
+  | XmlXml xml -> G.XmlXml (v_xml xml)
+
 and v_expr e : G.expr =
   match e with
   | Ellipsis v1 -> G.Ellipsis v1 |> G.e
@@ -603,6 +630,19 @@ and v_expr e : G.expr =
       | _ ->
           let cl = G.AnonClass v2 |> G.e in
           G.Call (cl, fb []) |> G.e)
+  | Xml nodes -> (
+      match List_.map v_xml_body nodes with
+      | [ G.XmlXml xml ] -> G.Xml xml |> G.e
+      | nodes ->
+          (* adjacent nodes form a sequence of nodes *)
+          let fake_tok = Tok.unsafe_fake_tok "" in
+          G.Xml
+            {
+              G.xml_kind = G.XmlFragment (fake_tok, fake_tok);
+              xml_attrs = [];
+              xml_body = nodes;
+            }
+          |> G.e)
   | Quoted quote -> (
       match quote with
       | QuotedBlock (quote_tok, (_, v1, _)) ->
