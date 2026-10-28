@@ -334,6 +334,17 @@ end = struct
   }
   [@@deriving show, eq, ord, hash, sexp]
 
+  (* The identity, an integer, is compared before the file: sids are
+     compared on every lookup of a name, and almost all of them are of one
+     file, whose path would be compared in full each time. *)
+  let compare (a : t) (b : t) : int =
+    match compare_identity a.identity b.identity with
+    | 0 -> String.compare a.file b.file
+    | other -> other
+
+  let equal (a : t) (b : t) : bool =
+    equal_identity a.identity b.identity && String.equal a.file b.file
+
   (* Caller supplies the real [file] (single-file lowered program); a placeless
      [Error] token still gets the real file with zeroed position. *)
   let site_of_tok ?name tok =
