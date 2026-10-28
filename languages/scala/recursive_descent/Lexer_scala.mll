@@ -456,6 +456,8 @@ rule token state = parse
    *)
   (* an arrow *)
   | "\xe2\x87\x92"    { ARROW (tokinfo lexbuf) }
+  (* the arrow of a generator, deprecated in Scala 2.13 *)
+  | "\xe2\x86\x90"    { LARROW (tokinfo lexbuf) }
   (* a dot, found in sbt source *)
   | "\xe2\x88\x99"    { OP (tok lexbuf, tokinfo lexbuf) }
   (* a lambda, found in sbt source *)
