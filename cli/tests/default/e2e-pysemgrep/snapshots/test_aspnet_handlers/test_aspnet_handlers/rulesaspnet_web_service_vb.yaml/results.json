@@ -1,0 +1,52 @@
+{
+  "errors": [],
+  "interfile_languages_used": [],
+  "paths": {
+    "scanned": [
+      "targets/aspnet/aspnet_web_service_vb.asmx"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.aspnet-web-service-vb",
+      "end": {
+        "col": 28,
+        "line": 10,
+        "offset": 260
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "is_ignored": false,
+        "lines": "        Return \"Hi \" & name",
+        "message": "string built by an ASP.NET web service in VB",
+        "metadata": {},
+        "metavars": {
+          "$NAME": {
+            "abstract_content": "name",
+            "end": {
+              "col": 28,
+              "line": 10,
+              "offset": 260
+            },
+            "start": {
+              "col": 24,
+              "line": 10,
+              "offset": 256
+            }
+          }
+        },
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aspnet/aspnet_web_service_vb.asmx",
+      "start": {
+        "col": 16,
+        "line": 10,
+        "offset": 248
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}
