@@ -378,6 +378,8 @@ and attribute =
   | KeywordAttr of keyword_attribute wrap
   (* a.k.a decorators *)
   | NamedAttr of tok (* @ *) * a_dotted_ident * a_arguments option
+  (* '@(e)', a decorator that is any parenthesised expression *)
+  | ExprAttr of tok (* @ *) * expr
 
 and keyword_attribute =
   (* field properties *)
@@ -400,6 +402,11 @@ and keyword_attribute =
   (* only inside classes *)
   | Get
   | Set
+  (* 'accessor' field (auto-accessor) *)
+  | Accessor
+  (* Flow component and hook declarations *)
+  | Component
+  | Hook
 
 (*****************************************************************************)
 (* Definitions *)
@@ -436,7 +443,13 @@ and variable_definition = {
   v_type : type_ option;
 }
 
-and var_kind = Var | Let | Const
+and var_kind =
+  | Var
+  | Let
+  | Const
+  (* 'using' and 'await using' declarations (explicit resource management) *)
+  | Using
+  | AwaitUsing
 and var = entity * variable_definition
 
 and function_definition = {
@@ -456,6 +469,9 @@ and parameter =
    * value the way [parameter_classic] does for plain identifiers, so
    * the parsers do not have to fake-wrap them in [Cast] / [Assign]. *)
   | ParamPattern of param_pattern_extras
+  (* Flow: a function type parameter that carries only its type,
+   * `(string) => void`; the token is the `...` of a rest parameter *)
+  | ParamTypeOnly of tok option * type_
   (* sgrep-ext: *)
   | ParamEllipsis of tok
 
@@ -510,6 +526,8 @@ and property =
    *)
   | FieldPatDefault of a_pattern * tok * expr
   | FieldTodo of a_todo_category * stmt
+  (* `static { ... }` in a class body *)
+  | ClassStaticBlock of tok * stmt
   (* sgrep-ext: used for {fld1: 1, ... } which is distinct from spreading *)
   | FieldEllipsis of tok
 
@@ -539,22 +557,41 @@ and module_directive =
    * See Module_path_js to resolve paths.
    *)
   | Import of
-      tok * import_role * import_binding * import_specifier list * a_filename
+      tok
+      * import_role
+      * import_binding
+      * import_specifier list
+      * a_filename
+      * import_attributes option
   | Export of tok * a_ident
   (* export * from 'foo'
      export * as bar from 'foo' *)
-  | ReExportNamespace of tok * tok * a_ident option * tok * a_filename
+  | ReExportNamespace of
+      tok
+      * import_binding
+      * tok
+      * a_ident option
+      * tok
+      * a_filename
+      * import_attributes option
   (* hard to unsugar in Import because we do not have the list of names *)
   | ModuleAlias of
-      tok * import_binding * a_ident
+      tok
+      * import_binding
+      * a_ident
       * a_filename (* import * as 'name' from 'file' *)
+      * import_attributes option
   | ImportAlias of tok * a_ident * a_ident list
   (* those should not exist (except for sgrep where they are useful),
    * unless file is a CSS file.
    *)
-  | ImportFile of tok * a_filename
+  | ImportFile of tok * a_filename * import_attributes option
 
 and import_specifier = a_ident * a_ident option
+
+(* 'with { type: "json" }', or the older 'assert { ... }'; the string is the
+ * keyword *)
+and import_attributes = string wrap * a_obj
 
 and import_role = Import_binds | Import_reexports
 and import_binding = Binds_value | Binds_type
@@ -694,45 +731,6 @@ let build_var kwd (id_or_pat, ty_opt, initopt) =
 let build_vars kwd vars = vars |> List_.map (build_var kwd)
 let vars_to_defs xs = xs |> List_.map (fun (ent, v) -> (ent, VarDef v))
 let vars_to_stmts xs = xs |> vars_to_defs |> List_.map (fun x -> DefStmt x)
-
-(*
-   Left-handside patterns and function parameters happen to use the same
-   syntax. This for converting one to the other.
-*)
-let parameter_to_pattern tok (param : parameter) : a_pattern =
-  match param with
-  | ParamClassic { p_name; p_default; p_type; p_dots; p_attrs } ->
-      let pat =
-        match p_dots with
-        | None -> Id p_name
-        | Some tok -> IdSpecial (Spread, tok)
-      in
-      let pat =
-        match p_type with
-        | None -> pat
-        | Some type_ -> Cast (pat, Tok.fake_tok tok ":", type_)
-      in
-      let pat =
-        match p_default with
-        | None -> pat
-        | Some expr -> Assign (pat, Tok.fake_tok tok "=", expr)
-      in
-      (* TODO? *)
-      ignore p_attrs;
-      pat
-  | ParamPattern { pp_pattern; pp_type; pp_default } ->
-      let pat =
-        match pp_type with
-        | None -> pp_pattern
-        | Some type_ -> Cast (pp_pattern, Tok.fake_tok tok ":", type_)
-      in
-      let pat =
-        match pp_default with
-        | None -> pat
-        | Some expr -> Assign (pat, Tok.fake_tok tok "=", expr)
-      in
-      pat
-  | ParamEllipsis tok -> Ellipsis tok
 
 let mk_const_var id e =
   ( basic_entity id,

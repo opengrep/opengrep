@@ -1,0 +1,4 @@
+for (using $X of $XS) {
+  ...
+  read($X);
+}

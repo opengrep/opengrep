@@ -530,7 +530,7 @@ import_decl:
  | T_IMPORT import_clause from_clause sc
     { let f = $2 in let (_t, path) = $3 in f $1 path }
  | T_IMPORT module_specifier sc
-    { [ImportFile ($1, $2)] }
+    { [ImportFile ($1, $2, None)] }
 
 import_clause:
  | import_default                     { $1 }
@@ -541,11 +541,11 @@ import_clause:
 import_default: binding_id
   { (fun t path ->
        [Import (t, Import_binds, Binds_value,
-                [((default_entity, snd $1), Some $1)], path)]) }
+                [((default_entity, snd $1), Some $1)], path, None)]) }
 
 import_names:
  | "*" T_AS binding_id
-     { (fun t path -> [ModuleAlias (t, Binds_value, $3, path)]) }
+     { (fun t path -> [ModuleAlias (t, Binds_value, $3, path, None)]) }
  | named_imports
      { (fun t path ->
           let imports = $1 |> List_.filter_map (fun x ->
@@ -553,7 +553,7 @@ import_names:
             | Some (n1, n2opt) -> Some (n1, n2opt)
             | None -> None)
           in
-          [Import (t, Import_binds, Binds_value, imports, path)]
+          [Import (t, Import_binds, Binds_value, imports, path, None)]
        )
      }
  (* typing-ext: *)
@@ -610,7 +610,8 @@ export_decl:
 
 export_names:
  | "*"           from_clause sc
-    { (fun t -> [M (ReExportNamespace (t, $1, None, fst $2, snd $2))]) }
+    { (fun t ->
+        [M (ReExportNamespace (t, Binds_value, $1, None, fst $2, snd $2, None))]) }
  | export_clause from_clause sc
     { (fun _t -> []) (*TODO ReExportNames ($1, $2, $3)*) }
  | export_clause sc

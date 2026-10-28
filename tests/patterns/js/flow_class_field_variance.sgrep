@@ -1,0 +1,3 @@
+class $C {
+  static $F: number = 0;
+}

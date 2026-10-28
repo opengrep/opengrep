@@ -1,0 +1,3 @@
+class $C {
+  static accessor $F = 0;
+}
