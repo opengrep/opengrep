@@ -924,9 +924,46 @@ let taint_partial_parse_tests () =
         (check_partial_parse ~taint_intrafile:true);
     ]
 
+(* An XML element is a call of the function with its tag in JSX, where it
+   is a component, but not in Scala, whose XML literals are data. *)
+let xml_element_call_graph_tests () =
+  (* whether the graph has nodes for `render` and `caller`, and whether it
+     has an edge from `render` to `caller` (an edge goes from the callee to
+     the caller) *)
+  let render_and_caller (lang : Lang.t) (file : Fpath.t) : bool * bool =
+    let ast = Parse_target.parse_and_resolve_name_fail_if_partial lang file in
+    let graph = Graph_from_AST.build_call_graph ~lang ast in
+    let is_function (s : string) (node : Call_graph.node) : bool =
+      String.equal (Tok.content_of_tok (Function_id.tok node)) s
+    in
+    let has_node (s : string) : bool =
+      Call_graph.G.fold_vertex
+        (fun (node : Call_graph.node) (acc : bool) -> acc || is_function s node)
+        graph false
+    in
+    let has_edge =
+      Call_graph.G.fold_edges
+        (fun (src : Call_graph.node) (dst : Call_graph.node) (acc : bool) ->
+          acc || (is_function "render" src && is_function "caller" dst))
+        graph false
+    in
+    (has_node "render" && has_node "caller", has_edge)
+  in
+  let dir = tests_path / "call_graph" in
+  Testo.categorize "call graph"
+    [
+      t "a Scala XML element is not a call" (fun () ->
+          Alcotest.(check (pair bool bool)) "nodes, no edge" (true, false)
+            (render_and_caller Lang.Scala (dir / "xml_element.scala")));
+      t "a JSX element is a call" (fun () ->
+          Alcotest.(check (pair bool bool)) "nodes and an edge" (true, true)
+            (render_and_caller Lang.Js (dir / "xml_element.jsx")));
+    ]
+
 let tests () =
   List_.flatten
     [
+      xml_element_call_graph_tests ();
       (* full testing for many languages *)
       lang_regression_tests ~polyglot_pattern_path;
       lang_autofix_tests ~polyglot_pattern_path;

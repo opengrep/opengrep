@@ -381,7 +381,8 @@ let extract_calls ~(lang : Lang.t)
           let calls = List.fold_left unresolved_arg_call calls args_list in
           (calls, callbacks)
         | G.Xml { G.xml_kind = (G.XmlClassic (_, name, _, _)
-                              | G.XmlSingleton (_, name, _)); _ } ->
+                              | G.XmlSingleton (_, name, _)); _ }
+          when Lang_config.xml_elements_are_calls lang ->
           let synth =
             G.{ e = G.N name; e_id = -1; e_range = None;
                 is_implicit_return = false; facts = [] }
