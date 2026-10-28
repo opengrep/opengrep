@@ -1,0 +1,1 @@
+$X match { case $P => foo(1); bar(2) }

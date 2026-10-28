@@ -118,6 +118,10 @@ type env = {
   (* the indentation width of the first token of each line, keyed by its
      byte position; see line_indents *)
   line_indents : int IntMap.t;
+  (* the column of the first token of the statement being parsed; a line
+     after `=` must be indented further to continue the statement in an
+     indentation region (see expr) *)
+  mutable stat_width : int;
   (* the whitespace that starts each line, keyed by line; see
      comparableIndent *)
   indent_prefixes : string IntMap.t;
@@ -260,6 +264,7 @@ let mk_env toks =
         is_indented = None;
         region_widths = region_widths indents toks;
         line_indents = indents;
+        stat_width = 0;
         indent_prefixes = indent_prefixes toks;
       }
 
@@ -268,6 +273,13 @@ let mk_env toks =
  * https://stackoverflow.com/questions/47688111/copy-construction-in-ocaml
  *)
 let copy_env env = { env with token = env.token }
+
+(* run f, which parses a statement, with stat_width set to the column of
+   the current token, the first token of the statement *)
+let inStatement (in_ : env) (f : unit -> 'a) : 'a =
+  let saved = in_.stat_width in
+  in_.stat_width <- indent_of in_.line_indents (TH.info_of_tok in_.token);
+  Fun.protect ~finally:(fun () -> in_.stat_width <- saved) f
 
 (* Trick to use = (called =~= below) to compare tokens *)
 let ab = Tok.abstract_tok
@@ -524,7 +536,12 @@ let getIndentStatus ?(is_opportunistic = false) in_ =
     | Some tok -> TH.isIndentationToken tok
   in
 
-  let info = TH.info_of_tok tok in
+  (* a DEDENT has no location: the token after it has *)
+  let info =
+    match (tok, in_.rest) with
+    | DEDENT _, next :: _ -> TH.info_of_tok next
+    | _ -> TH.info_of_tok tok
+  in
   let line = Tok.line_of_tok info in
   let col = indent_of in_.line_indents info in
 
@@ -549,16 +566,27 @@ let getIndentStatus ?(is_opportunistic = false) in_ =
        dedents for a region if it's been interrupted by braces or parens.
     *)
     match in_.sepRegions with
-    | DEDENT (prev_line, prev_width) :: _ ->
-        (* we are left w.r.t. the current indentation region *)
-        col < prev_width
-        || (startsNewLine in_ && not (comparableIndent in_ line prev_line))
+    | DEDENT (prev_line, prev_width) :: outer ->
+        (* as in Scanners.scala, the token starts a line *)
+        startsNewLine in_
+        (* and we are left w.r.t. the current indentation region *)
+        && (col < prev_width || not (comparableIndent in_ line prev_line))
+        (* but an `else`, `catch` or `finally` after a `}`, to the right of
+           the enclosing region, continues the construct inside the region,
+           as in Scala 2 code with an `else` one column left of its `if` *)
+        && not
+             (match (tok, getPreviousToken in_) with
+             | (Kelse _ | Kcatch _ | Kfinally _), Some (RBRACE _) ->
+                 col > regionWidth in_ outer
+             | _ -> false)
     | _ -> false
   in
 
   match tok with
-  (* Don't emit before an EOF. *)
-  | EOF _ -> None
+  (* Don't emit before an EOF, or at a DEDENT, which ends a region. *)
+  | EOF _
+  | DEDENT _ ->
+      None
   | __else__ ->
       if is_indented then Some (Indent (line, col))
       else if is_dedented then Some (Dedent (line, col))
@@ -600,11 +628,18 @@ let adjustSepRegions lastToken in_ =
     | (RPAREN _ | RBRACKET _ | RBRACE _), [] ->
         (* stricter: original code just does nothing *)
         error "unmatched closing token" in_
-    | ((RPAREN _ | RBRACKET _ | RBRACE _) as x), y :: ys ->
-        if x =~= y then ys
-        else
-          (* stricter: original code just does nothing *)
-          error "unmatched closing token" in_
+    | ((RPAREN _ | RBRACKET _ | RBRACE _) as x), regions ->
+        (* the closing token also closes the indentation regions opened
+           inside its group (see closesIndentRegionInGroup) *)
+        let rec close (regions : T.token list) : T.token list =
+          match regions with
+          | DEDENT _ :: ys -> close ys
+          | y :: ys when x =~= y -> ys
+          | _ ->
+              (* stricter: original code just does nothing *)
+              error "unmatched closing token" in_
+        in
+        close regions
     | _, xs -> xs
   in
   in_.sepRegions <- newRegions;
@@ -749,6 +784,22 @@ let fetchToken in_ =
 (* nextToken *)
 (* ------------------------------------------------------------------------- *)
 
+(* Does an operand follow the token, as the body after `else`, `yield`, `try`
+   or `do`, or the value after `=`? Such an operand may start a line to the
+   left of the region, as in Scala 2; the region does not end before it. *)
+let operandFollows (tok : T.token) : bool =
+  match tok with
+  | Kelse _
+  | Kyield _
+  | Ktry _
+  | Kcatch _
+  | Kfinally _
+  | Kdo _
+  | Kthrow _
+  | EQUALS _ ->
+      true
+  | _ -> false
+
 (** Consume and discard the next token. *)
 let nextToken in_ =
   let lastToken = in_.token in
@@ -795,7 +846,9 @@ let nextToken in_ =
              region, we might not necessarily have to.
          *)
          in_.is_indented <- Some (line, width)
-     | Some (Dedent (line, width)) when not (isLeadingInfixOperator in_) ->
+     | Some (Dedent (line, width))
+       when (not (isLeadingInfixOperator in_)) && not (operandFollows lastToken)
+       ->
          (* Push a DEDENT token onto our token stream.
              This is so we can consume it in `statSeq`
 
@@ -1002,13 +1055,83 @@ let enterIndentRegion in_ =
    an indentation region that is enclosed in parentheses or brackets. Such a
    token ends the region without being consumed. *)
 let closesIndentRegionInGroup (in_ : env) : bool =
+  let rec enclosedInParens (regions : T.token list) =
+    match regions with
+    | DEDENT _ :: rest -> enclosedInParens rest
+    | (RPAREN _ | RBRACKET _) :: _ -> true
+    | _ -> false
+  in
   match (in_.token, in_.sepRegions) with
   | (RPAREN _ | RBRACKET _ | RBRACE _), DEDENT _ :: _ -> true
-  | COMMA _, DEDENT _ :: (RPAREN _ | RBRACKET _) :: _ -> true
+  | COMMA _, DEDENT _ :: rest -> enclosedInParens rest
+  | _ -> false
+
+(* A `;` before the end of an indentation region separates the statements of
+   the enclosing sequence, so the region ends before it. *)
+let isSemicolonBeforeDedent (in_ : env) : bool =
+  match (in_.token, in_.sepRegions) with
+  | SEMI _, DEDENT _ :: _ :: _ ->
+      lookingAhead
+        (fun (in_ : env) ->
+          match in_.token with
+          | DEDENT _ -> true
+          | _ -> false)
+        in_
   | _ -> false
 
 let isStatSeqEnd (in_ : env) : bool =
   TH.isStatSeqEnd in_.token || closesIndentRegionInGroup in_
+  || isSemicolonBeforeDedent in_
+
+(* A block cannot hold a statement with an access modifier or `override`
+   (BlockStat admits local modifiers only), so such a statement on a new line
+   ends the indented block it follows; the statement belongs to the enclosing
+   template. Scala 2 code puts members at any indentation. *)
+let startsTemplateStatAfterIndentedBlock (in_ : env) : bool =
+  (* annotations before the modifier, as in `@volatile private var` *)
+  let rec after_annotations (toks : T.token list) : T.token list =
+    match skip_trivia ~newlines:true toks with
+    | AT _ :: rest -> (
+        let rec after_path (toks : T.token list) : T.token list =
+          match toks with
+          | (ID_LOWER _ | ID_UPPER _ | ID_BACKQUOTED _) :: DOT _ :: rest ->
+              after_path rest
+          | (ID_LOWER _ | ID_UPPER _ | ID_BACKQUOTED _) :: rest -> rest
+          | _ -> toks
+        in
+        match after_path rest with
+        | LPAREN _ :: _ as toks -> after_annotations (after_group toks)
+        | toks -> after_annotations toks)
+    | toks -> toks
+  in
+  match in_.sepRegions with
+  | DEDENT _ :: _ :: _ -> (
+      startsNewLine in_
+      &&
+      match after_annotations (in_.token :: in_.rest) with
+      | (Kprivate _ | Kprotected _ | Koverride _) :: _ -> true
+      | _ -> false)
+  | _ -> false
+
+(* Scala 3 reference, "Optional Braces": `then`, `else`, `do`, `catch`,
+   `finally`, `yield` and a case clause close the indented block they follow
+   without being consumed. *)
+let closesIndentedBlock (in_ : env) : bool =
+  match (in_.token, in_.sepRegions) with
+  | ( ( Kelse _ | Kdo _ | Kcatch _ | Kfinally _ | Kyield _
+      | ID_LOWER ("then", _) ),
+      DEDENT _ :: _ :: _ ) ->
+      true
+  | Kcase _, DEDENT _ :: _ :: _ ->
+      lookingAhead
+        (fun (in_ : env) ->
+          match in_.token with
+          | Kclass _
+          | Kobject _ ->
+              false
+          | _ -> true)
+        in_
+  | _ -> false
 
 (* Adjust sepREgions to end the current indent region, if we're
    at the end.
@@ -1023,8 +1146,14 @@ let closeIndentRegion in_ =
   | DEDENT _, DEDENT _ :: rest ->
       in_.sepRegions <- rest;
       skipToken in_
-  | _, DEDENT _ :: rest when closesIndentRegionInGroup in_ ->
+  | _, DEDENT _ :: rest
+    when closesIndentRegionInGroup in_ || closesIndentedBlock in_
+         || isSemicolonBeforeDedent in_ ->
       in_.sepRegions <- rest
+  | _, DEDENT _ :: rest when startsTemplateStatAfterIndentedBlock in_ ->
+      (* the separator before the statement was consumed in the block *)
+      in_.sepRegions <- rest;
+      insertNL in_
   | _ -> error "expected closing dedent (probably not emitted correctly)" in_
 
 (* If this next token is indented, it's quite likely we're inside of an implicit
@@ -1194,9 +1323,12 @@ let inBrackets f in_ =
 let inIndented f in_ =
   in_
   |> with_logging "inIndented" (fun () ->
+         (* without an indented line there is no region to close, and the
+            token that ends f may close an enclosing region *)
+         let entered = Option.is_some (passedIndent in_) in
          enterIndentRegion in_;
          let res = fb (Tok.unsafe_fake_tok "") (f in_) in
-         closeIndentRegion in_;
+         if entered then closeIndentRegion in_;
          res)
 
 (* less: do actual error recovery? *)
@@ -1326,6 +1458,26 @@ let selector in_ : ident =
   (* ast: Select(t, id) *)
   id
 
+(* An operand that must follow, the right operand of an infix operator at the
+   end of a line or the body after the condition of `if (c)`, `while (c)` or
+   `for (...)`, may start a line to the left of the region, as in Scala 2;
+   the region does not end before it. *)
+let skipDedentBeforeOperand (in_ : env) : unit =
+  match (in_.token, in_.rest) with
+  | DEDENT _, tok :: rest when TH.isExprIntro tok ->
+      in_.token <- tok;
+      in_.rest <- rest
+  | _ -> ()
+
+(* `super` needs a selection, which a less indented line can start, as in
+   Scala 2 code with `super` and then `.f` on the next line *)
+let skipDedentBeforeDot (in_ : env) : unit =
+  match (in_.token, in_.rest) with
+  | DEDENT _, (DOT _ as dot) :: rest ->
+      in_.token <- dot;
+      in_.rest <- rest
+  | _ -> ()
+
 let rec selectors ~typeOK in_ : dotted_ident =
   match in_.token with
   | Ktype ii when typeOK ->
@@ -1394,6 +1546,7 @@ let path ~thisOK ~typeOK in_ : path =
              nextToken in_;
              let mixins = mixinQualifierOpt in_ in
              (* ast: t := Super(This(tpnme.EMPTY), x *)
+             skipDedentBeforeDot in_;
              accept (DOT ab) in_;
              let x = selector in_ in
              let t = Super (None, ii, mixins, x) in
@@ -1420,6 +1573,7 @@ let path ~thisOK ~typeOK in_ : path =
                    nextToken in_;
                    let mixins = mixinQualifierOpt in_ in
                    (* ast: Super(This(name.toTypeName), x) *)
+                   skipDedentBeforeDot in_;
                    accept (DOT ab) in_;
                    let x = selector in_ in
                    let t = Super (Some name, ii, mixins, x) in
@@ -1460,7 +1614,7 @@ let tmplDef_ = ref (fun _ -> failwith "forward ref not set")
 let blockStatSeq_ = ref (fun _ -> failwith "forward ref not set")
 
 let indentedExprOrBlockStatSeqUntil_ =
-  ref (fun _ ~until:_ -> failwith "forward ref not set")
+  ref (fun _ ~location:_ ~until:_ -> failwith "forward ref not set")
 
 let packageOrPackageObject_ = ref (fun _ _ -> failwith "forward ref not set")
 let typeCaseClauses_ = ref (fun _ -> failwith "forward ref not set")
@@ -2314,8 +2468,31 @@ let pattern in_ : pattern = noSeq pattern in_
    already determined we're not.
 *)
 let rec expr ?(location = Local) (in_ : env) : expr =
-  let is_block_expr = isIndentedBlockExprStart in_ in
-  expr0 ~is_block_expr location in_
+  (* An indented line that starts with an expression opens an indentation
+     region too: it holds that expression alone or a block that starts with
+     it (Scala 3 reference, "Optional Braces"). A statement of a block, such
+     as the body of a case, is already in the block's statement sequence.
+     The line is indented further than the statement too: a case body
+     inside braces has no region of its own, but Scala 3 opens one. *)
+  let in_block =
+    match location with
+    | InBlock -> true
+    | Local
+    | InTemplate ->
+        false
+  in
+  if
+    (not in_block) && isIndentedRegionStart in_
+    && TH.isExprIntro in_.token
+    && indent_of in_.line_indents (TH.info_of_tok in_.token) > in_.stat_width
+  then
+    (* the region is an operand, which a selection on the line after it can
+       continue *)
+    let e = !indentedExprOrBlockStatSeqUntil_ ~location ~until:None in_ in
+    simpleExprRest ~canApply:false e in_
+  else
+    let is_block_expr = isIndentedBlockExprStart in_ in
+    expr0 ~is_block_expr location in_
 
 and expr0 ?(is_block_expr = false) (location : location) (in_ : env) : expr =
   in_
@@ -2449,6 +2626,7 @@ and postfixExpr ?(is_block_expr = false) in_ : expr =
                     (* AST: pushOpInfo(reduceExprStack(base, top)) *)
                     let id, _targsTODO = pushOpInfo top in_ in
                     newLineOptWhenFollowing TH.isExprIntro in_;
+                    skipDedentBeforeOperand in_;
                     if TH.isExprIntro in_.token then
                       let res = prefixExpr in_ in
                       match res with
@@ -3011,8 +3189,12 @@ and parseIf in_ : stmt =
         newLinesOpt in_;
         fb (Tok.unsafe_fake_tok "") e
   in
+  skipDedentBeforeOperand in_;
   opportunisticIndent in_;
-  let thenp = !indentedExprOrBlockStatSeqUntil_ ~until:(Some (Kelse ab)) in_ in
+  let thenp =
+    !indentedExprOrBlockStatSeqUntil_ ~location:InBlock
+      ~until:(Some (Kelse ab)) in_
+  in
   let elsep =
     match in_.token with
     | Kelse ii ->
@@ -3050,6 +3232,7 @@ and parseWhile in_ : stmt =
         accept (Kdo ab) in_;
         fb (Tok.unsafe_fake_tok "") e
   in
+  skipDedentBeforeOperand in_;
   opportunisticIndent in_;
   let body = expr in_ in
   (* ast: makeWhile(cond, body) *)
@@ -3134,6 +3317,7 @@ and parseFor in_ : stmt =
       in_
   in
   newLinesOpt in_;
+  skipDedentBeforeOperand in_;
   opportunisticIndent in_;
   let body =
     match in_.token with
@@ -4451,7 +4635,7 @@ let statSeq ?(errorMsg = "illegal start of definition") ?(rev = false) stat in_
     =
   let stats = ref [] in
   while not (isStatSeqEnd in_) do
-    (match stat in_ with
+    (match inStatement in_ (fun () -> stat in_) with
     | Some x -> stats += x
     | None -> if TH.isStatSep in_.token then () else error errorMsg in_);
     acceptStatSepOpt in_
@@ -4481,7 +4665,10 @@ let isCaseDefEnd in_ =
   | Kcase _ when nextTokNotClassOrObject in_ -> true
   | _ -> false
 
-let blockStatSeqInner in_ : top_stat option =
+(* `location` is that of an expression statement: InBlock in a block, the
+   location of the enclosing expression for the first statement of an
+   indentation region that may hold that expression alone *)
+let blockStatSeqInner (location : location) in_ : top_stat option =
   let acceptStatSepOptOrEndCase in_ =
     if not (TH.isCaseDefEnd in_.token) then acceptStatSepOpt in_
   in
@@ -4503,7 +4690,7 @@ let blockStatSeqInner in_ : top_stat option =
         | Kimplicit ii ->
             skipToken in_;
             if TH.isIdentBool in_.token then
-              E (implicitClosure (Implicit, ii) InBlock in_)
+              E (implicitClosure (Implicit, ii) location in_)
               (* ast: Flags.IMPLICIT*)
             else D (localDef [ (Implicit, ii) ] in_)
         | _ -> D (localDef [] in_)
@@ -4511,7 +4698,7 @@ let blockStatSeqInner in_ : top_stat option =
       acceptStatSepOptOrEndCase in_;
       Some res
   | t when TH.isExprIntro t ->
-      let x = statement InBlock in_ in
+      let x = statement location in_ in
       acceptStatSepOptOrEndCase in_;
       Some (E x)
   | t when TH.isStatSep t ->
@@ -4522,8 +4709,12 @@ let blockStatSeqInner in_ : top_stat option =
 
 let blockStatSeq in_ : block_stat list =
   let stats = ref [] in
-  while (not (isStatSeqEnd in_)) && not (isCaseDefEnd in_) do
-    match blockStatSeqInner in_ with
+  while
+    (not (isStatSeqEnd in_))
+    && (not (isCaseDefEnd in_))
+    && not (startsTemplateStatAfterIndentedBlock in_)
+  do
+    match inStatement in_ (fun () -> blockStatSeqInner InBlock in_) with
     | None -> ()
     | Some x -> stats += x
   done;
@@ -4552,7 +4743,7 @@ let blockStatSeq in_ : block_stat list =
      if (true) then
        1 else 4
 *)
-let indentedExprOrBlockStatSeqUntil ?until in_ =
+let indentedExprOrBlockStatSeqUntil ~(location : location) ?until in_ =
   let hit_until tok =
     match until with
     | Some tok' -> tok' =~= tok
@@ -4565,7 +4756,7 @@ let indentedExprOrBlockStatSeqUntil ?until in_ =
       (* This may be an indented block, in which case there's more stuff after
          the expr.
       *)
-      match blockStatSeqInner in_ with
+      match inStatement in_ (fun () -> blockStatSeqInner location in_) with
       | None ->
           (* I'm not convinced this is possible, but this should happen if it
              was like, a blockStatSeq separator. This should indicate we're
@@ -4585,8 +4776,14 @@ let indentedExprOrBlockStatSeqUntil ?until in_ =
               | DEDENT _ :: rest -> in_.sepRegions <- rest
               | _ -> ());
               (x, false)
-          | DEDENT _ -> (x, true)
-          | _ when closesIndentRegionInGroup in_ -> (x, true)
+          | DEDENT _
+          | EOF _ ->
+              (x, true)
+          | _
+            when closesIndentRegionInGroup in_
+                 || closesIndentedBlock in_ || isSemicolonBeforeDedent in_
+                 || startsTemplateStatAfterIndentedBlock in_ ->
+              (x, true)
           | _ ->
               (BlockExpr (BEBlock (E x :: blockStatSeq in_) |> surround), true))
       | Some other ->
@@ -4718,6 +4915,15 @@ let isAscribedSelfType (in_ : env) : bool =
 
 let templateStatSeq ~isPre in_ : self_type option * block =
   ignore isPre;
+  let selfTypeAfter (id : ident_or_this) (topt : type_ option) :
+      self_type option =
+    let ii = TH.info_of_tok in_.token in
+    accept (ARROW ab) in_;
+    (* as in Parsers.scala (SELFARROW), no indentation region starts after
+       the arrow of a self type *)
+    in_.is_indented <- None;
+    Some (id, topt, ii)
+  in
   let self, firstOpt =
     if isAscribedSelfType in_ then (
       let id =
@@ -4729,9 +4935,7 @@ let templateStatSeq ~isPre in_ : self_type option * block =
       in
       accept (COLON ab) in_;
       let ty = startInfixType in_ in
-      let ii = TH.info_of_tok in_.token in
-      accept (ARROW ab) in_;
-      (Some (id, Some ty, ii), None))
+      (selfTypeAfter id (Some ty), None))
     else
     (* a soft modifier like "inline" or "open" might be an expr intro, but
        also actually be a modifier.
@@ -4751,18 +4955,16 @@ let templateStatSeq ~isPre in_ : self_type option * block =
       *)
       && not (isTemplateStatIntroSoftKeyword in_)
     then (
-      let first = expr ~location:InTemplate in_ in
+      let first =
+        inStatement in_ (fun () -> expr ~location:InTemplate in_)
+      in
       match in_.token with
-      | ARROW ii ->
+      | ARROW _ -> (
           (* ast: case Typed(...) self := makeSelfDef(), convertToParam *)
-          nextToken in_;
-          let self_type =
-            match param_of_e_opt first with
-            | Some (id, topt) -> (id, topt, ii)
-            (* stricter? *)
-            | _ -> error "wrong self type syntax" in_
-          in
-          (Some self_type, None)
+          match param_of_e_opt first with
+          | Some (id, topt) -> (selfTypeAfter id topt, None)
+          (* stricter? *)
+          | _ -> error "wrong self type syntax" in_)
       | _ ->
           acceptStatSepOpt in_;
           (noSelfType, Some (E first)))
@@ -5342,7 +5544,8 @@ let _ =
   tmplDef_ := tmplDef;
   blockStatSeq_ := blockStatSeq;
   (indentedExprOrBlockStatSeqUntil_ :=
-     fun env ~until -> indentedExprOrBlockStatSeqUntil ?until env);
+     fun env ~location ~until ->
+       indentedExprOrBlockStatSeqUntil ~location ?until env);
   packageOrPackageObject_ := packageOrPackageObject;
 
   exprTypeArgs_ := exprTypeArgs;
