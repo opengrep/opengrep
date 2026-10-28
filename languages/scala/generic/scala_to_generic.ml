@@ -1017,29 +1017,49 @@ and v_given_definition { gsig; gkind } =
 and v_end_marker { end_tok; end_kind } : G.stmt =
   G.OtherStmt (OS_Todo, [ G.Tk end_tok; G.Tk end_kind ]) |> G.s
 
+(* An extension method is a method whose first parameters are the receiver
+   and the using parameters of its extension, after the type parameters of the
+   extension (Scala 3 reference, "Translation of Extension Methods"). The
+   receiver is the object on which the method is called, as the receiver of
+   a Kotlin extension function is. *)
 and v_extension { ext_tok = _; ext_tparams; ext_using; ext_param; ext_methods }
     : G.stmt list =
-  let tparams =
-    match v_type_parameters ext_tparams with
-    | None -> G.Anys []
-    | Some (_, xs, _) -> G.Anys (xs |> List_.map (fun tp -> G.Tp tp))
+  (* each method gets its own conversion of the clauses it shares, so that
+     their bindings are distinct *)
+  let v_method ((ent, def) : G.definition) : G.definition =
+    match def with
+    | G.FuncDef fdef ->
+        let receiver =
+          match v_binding None ext_param with
+          | G.Param param -> G.ParamReceiver param
+          | param -> param
+        in
+        let using = v_list v_bindings ext_using |> List_.flatten in
+        let ext_tparams = v_type_parameters ext_tparams in
+        let tparams = concat_type_params ext_tparams ent.G.tparams in
+        let lb, params, rb = fdef.G.fparams in
+        let fparams = (lb, (receiver :: using) @ params, rb) in
+        ({ ent with G.tparams }, G.FuncDef { fdef with G.fparams })
+    | _ -> (ent, def)
   in
-  let using =
-    G.Anys
-      (v_list v_bindings ext_using |> List_.map (fun params -> G.Params params))
-  in
-  let params = G.Pa (v_binding None ext_param) in
-  let methods = G.Anys (List.concat_map v_ext_method ext_methods) in
-  (* Extensions are definitions and methods that extend an existing class. It's not
-     super important for semantic analysis right now.
-  *)
-  [ G.OtherStmt (OS_Extension, [ tparams; using; params; methods ]) |> G.s ]
-
-and v_ext_method ext_method : G.any list =
-  match ext_method with
-  | ExtDef def -> v_definition def |> List_.map (fun def -> G.Def def)
-  | ExtExport import -> v_import import |> List_.map (fun dir -> G.Dir dir)
-  | ExtEnd end_marker -> [ G.S (v_end_marker end_marker) ]
+  ext_methods
+  |> List.concat_map (fun (ext_method : ext_method) ->
+         match ext_method with
+         | ExtDef def ->
+             v_definition def
+             |> List_.map (fun (def : G.definition) ->
+                    (* the range of a method is its own, without the
+                       receiver, type parameters and using clauses that it
+                       shares with the other methods of the extension *)
+                    let range = H.range_of_any_opt (G.Def def) in
+                    let stmt = G.DefStmt (v_method def) |> G.s in
+                    stmt.G.s_range <- range;
+                    stmt)
+         | ExtExport import ->
+             v_import import
+             |> List_.map (fun (dir : G.directive) ->
+                    G.DirectiveStmt dir |> G.s)
+         | ExtEnd end_marker -> [ v_end_marker end_marker ])
 
 and v_constr_app (ty, args) = (v_type_ ty, v_list v_arguments args)
 

@@ -1,0 +1,2 @@
+extension ($R: String)
+  def $F($N: Int): String = danger($R)
