@@ -3509,8 +3509,9 @@ and typeCaseClause icase in_ : ((tok, type_) Either.t, type_) case_clause =
   let l_ty =
     inSepRegion (ARROW icase)
       (fun () ->
-        match in_.token with
-        | USCORE ii ->
+        match (in_.token, in_next_token in_.rest) with
+        (* `case _ =>`, but `case _ *: t =>` is an infix type *)
+        | USCORE ii, Some (ARROW _) ->
             skipToken in_;
             Left ii
         | _ -> Right (startInfixType in_))
