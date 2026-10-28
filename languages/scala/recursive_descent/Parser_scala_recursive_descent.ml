@@ -2959,10 +2959,19 @@ and postfixExprRest (top : expr) (in_ : env) : expr =
                  let next = Infix (top, id, next) in
                  postfixExprRest next in_
            else
-             in_
-             |> with_logging "postfixExpr:loop: noExprIntro, stop" (fun () ->
-                    (* AST: finishPostfixOp(base, popOpInfo()) *)
-                    Postfix (top, id)))
+             (* a colon argument is the right operand, as in `"a" should "b"
+                in:` followed by an indented block (Parsers.scala, infixOps) *)
+             match
+               if isColonArgumentStart in_ then colonArgumentOpt in_ else None
+             with
+             | Some block ->
+                 postfixExprRest (Infix (top, id, BlockExpr block)) in_
+             | None ->
+                 in_
+                 |> with_logging "postfixExpr:loop: noExprIntro, stop"
+                      (fun () ->
+                        (* AST: finishPostfixOp(base, popOpInfo()) *)
+                        Postfix (top, id)))
 
 (** {{{
  *  PrefixExpr   ::= [`-` | `+` | `~` | `!`] SimpleExpr
@@ -3174,8 +3183,9 @@ and simpleExprRest ~canApply t in_ : expr =
              t
          | COLON _ when canApply && isColonArgumentStart in_ -> (
              match colonArgumentOpt in_ with
-             | Some args ->
-                 simpleExprRest ~canApply:true (Apply (t, [ args ])) in_
+             | Some block ->
+                 let app = Apply (t, [ ArgBlock block ]) in
+                 simpleExprRest ~canApply:true app in_
              | None -> t)
          | _ ->
              in_
@@ -3184,10 +3194,10 @@ and simpleExprRest ~canApply t in_ : expr =
 (* Scala 3 fewer braces: a `:` followed by an indented block, or by a lambda
    whose body is an indented block, passes that block or lambda as the last
    argument (Parsers.scala, colonAtEOLOpt and detectColonLambda). *)
-and colonArgumentOpt (in_ : env) : arguments option =
+and colonArgumentOpt (in_ : env) : block_expr option =
   if isColonAtEndOfLine in_ then (
     skipToken in_;
-    Some (ArgBlock (blockExpr in_)))
+    Some (blockExpr in_))
   else if followingIsColonLambda in_ then (
     skipToken in_;
     let params = simpleExpr in_ in
@@ -3206,7 +3216,7 @@ and colonArgumentOpt (in_ : env) : arguments option =
           fbody = Some body;
         }
     in
-    Some (ArgBlock (fb (Tok.unsafe_fake_tok "") (BEBlock [ E lambda ]))))
+    Some (fb (Tok.unsafe_fake_tok "") (BEBlock [ E lambda ])))
   else None
 
 (* ------------------------------------------------------------------------- *)
