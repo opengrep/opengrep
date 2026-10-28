@@ -115,6 +115,9 @@ type env = {
   (* indentation width of the region opened by a `{`, `(` or `[`, keyed by
      the byte position of the opening token; see region_widths *)
   region_widths : int IntMap.t;
+  (* the whitespace that starts each line, keyed by line; see
+     comparableIndent *)
+  indent_prefixes : string IntMap.t;
 }
 
 (* Scala 3 reference, "Indentation and Braces": a region in braces has the
@@ -163,6 +166,25 @@ let region_widths (toks : T.token list) : int IntMap.t =
   in
   widths
 
+(* the whitespace before the first token of each line that starts with
+   whitespace, keyed by line *)
+let indent_prefixes (toks : T.token list) : string IntMap.t =
+  let _, prefixes =
+    toks
+    |> List.fold_left
+         (fun ((after_newline : bool), (prefixes : string IntMap.t))
+              (tok : T.token) ->
+           match tok with
+           | Nl _ -> (true, prefixes)
+           | Space info when after_newline ->
+               ( false,
+                 IntMap.add (Tok.line_of_tok info) (Tok.content_of_tok info)
+                   prefixes )
+           | _ -> (false, prefixes))
+         (true, IntMap.empty)
+  in
+  prefixes
+
 let mk_env toks =
   match toks with
   | [] ->
@@ -182,6 +204,7 @@ let mk_env toks =
         sepRegions = [ T.DEDENT (0, 0) ];
         is_indented = None;
         region_widths = region_widths toks;
+        indent_prefixes = indent_prefixes toks;
       }
 
 (* We sometimes need to lookahead tokens, and call fetchToken and revert;
@@ -419,6 +442,20 @@ let getPreviousToken in_ =
   in
   loop in_.passed
 
+(* Scanners.scala, IndentWidth: the indentation of one line is deeper than
+   that of another only when it starts with it. When neither starts with the
+   other, as with tabs on one line and spaces on the other, scalac reports an
+   error; here the later line ends the region of the first, which is the
+   Scala 2 reading. *)
+let comparableIndent (in_ : env) (line1 : int) (line2 : int) : bool =
+  let prefix (line : int) : string =
+    match IntMap.find_opt line in_.indent_prefixes with
+    | Some s -> s
+    | None -> ""
+  in
+  let p1 = prefix line1 and p2 = prefix line2 in
+  String.starts_with ~prefix:p1 p2 || String.starts_with ~prefix:p2 p1
+
 (* Should we emit an INDENT or DEDENT before the current token? *)
 let getIndentStatus ?(is_opportunistic = false) in_ =
   let tok = in_.token in
@@ -439,11 +476,12 @@ let getIndentStatus ?(is_opportunistic = false) in_ =
        because we want to still be able to start indentation regions inside of
        other ones.
     *)
-    let _prev_indent_line, prev_indent_width =
+    let prev_indent_line, prev_indent_width =
       getLastIndentationRegion in_.sepRegions
     in
     col
     > prev_indent_width (* we are indented w.r.t. the old indentation region *)
+    && comparableIndent in_ line prev_indent_line
     && (is_opportunistic || prev_is_indent_token)
        (* and the previous token can start an indent *)
     && (* and this token starts a new line *)
@@ -454,8 +492,10 @@ let getIndentStatus ?(is_opportunistic = false) in_ =
        dedents for a region if it's been interrupted by braces or parens.
     *)
     match in_.sepRegions with
-    | DEDENT (_, prev_width) :: _ ->
-        col < prev_width (* we are left w.r.t. the current indentation region *)
+    | DEDENT (prev_line, prev_width) :: _ ->
+        (* we are left w.r.t. the current indentation region *)
+        col < prev_width
+        || (startsNewLine in_ && not (comparableIndent in_ line prev_line))
     | _ -> false
   in
 
