@@ -19,16 +19,13 @@ val exit_code_of_error_type : Out.error_type -> Exit_code.t
  * a warning or an info does not. Used by the scan subcommand. *)
 val is_real_error_severity : Out.error_severity -> bool
 
-(* The error whose code a failed run exits with: the last one of severity
- * Error, or None when every error is a warning or below. Used by the scan
- * and validate subcommands. *)
+(* The last error of severity Error, or None when there is none. Used by the
+ * validate subcommand to select its exit code. *)
 val last_real_error : Core_error.t list -> Core_error.t option
 
 (* The exit code of a run that collected these errors: the code of the last
- * one of severity Error, wherever it sits in the list (a warning collected
- * after it does not hide it). Without such an error, Ok, except with ~strict
- * where the last error decides whatever its severity. Ok when there is no
- * error. Used by the scan and test subcommands. *)
+ * one of severity Error, else, with ~strict, the code of the last warning,
+ * else Ok. Used by the scan and test subcommands. *)
 val exit_code_of_errors : strict:bool -> Out.core_error list -> Exit_code.t
 
 (* used by the test subcommand for the errors of a rule file *)

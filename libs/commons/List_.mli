@@ -68,6 +68,10 @@ val hd_opt : 'a list -> 'a option
 val last_opt : 'a list -> 'a option
 (** Returns the last element of the list or none if the list is empty. *)
 
+val find_last_opt : ('a -> bool) -> 'a list -> 'a option
+(** Returns the last element of the list that satisfies the predicate, or
+    none if no element does. *)
+
 val init_and_last_opt : 'a list -> ('a list * 'a) option
 
 val map2 : ('a -> 'b -> 'c) -> 'a list -> 'b list -> 'c list

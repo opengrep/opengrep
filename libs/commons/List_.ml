@@ -259,6 +259,9 @@ let rec last_opt xs =
   | [ x ] -> Some x
   | _ :: tl -> last_opt tl
 
+let find_last_opt pred xs =
+  List.fold_left (fun found x -> if pred x then Some x else found) None xs
+
 let rec init_and_last_non_empty xs =
   match xs with
   | [ x ] -> [], x
