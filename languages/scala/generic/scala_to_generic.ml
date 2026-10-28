@@ -681,6 +681,16 @@ and v_expr_for_stmt (e : expr) : G.stmt =
       let e = v_expr e in
       G.ExprStmt (e, G.sc) |> G.s
 
+(* the body of a control structure other than `for`: a body in braces is a
+   block, as an indented body of several lines, so that `if (c) { e }`
+   matches `if (c) e` as in other languages. A `for` body stays an
+   expression, so that a pattern `for (...) { ... }` matches a loop with
+   `yield` too. *)
+and v_body_stmt (e : expr) : G.stmt =
+  match e with
+  | BlockExpr (lb, BEBlock stats, rb) -> G.Block (lb, v_block stats, rb) |> G.s
+  | _ -> v_expr_for_stmt e
+
 and v_stmt = function
   | Block v1 ->
       let v1 = v_bracket v_block v1 in
@@ -688,11 +698,11 @@ and v_stmt = function
   | If (v1, v2, v3, v4) ->
       let v1 = v_tok v1
       and v2 = v_bracket v_expr v2
-      and v3 = v_expr_for_stmt v3
+      and v3 = v_body_stmt v3
       and v4 =
         v_option
           (fun (v1, v2) ->
-            let _v1 = v_tok v1 and v2 = v_expr_for_stmt v2 in
+            let _v1 = v_tok v1 and v2 = v_body_stmt v2 in
             v2)
           v4
       in
@@ -700,11 +710,11 @@ and v_stmt = function
   | While (v1, v2, v3) ->
       let v1 = v_tok v1
       and v2 = v_bracket v_expr v2
-      and v3 = v_expr_for_stmt v3 in
+      and v3 = v_body_stmt v3 in
       G.While (v1, G.Cond (Tok.unbracket v2), v3) |> G.s
   | DoWhile (v1, v2, v3, v4) ->
       let v1 = v_tok v1
-      and v2 = v_expr_for_stmt v2
+      and v2 = v_body_stmt v2
       and _v3 = v_tok v3
       and v4 = v_bracket v_expr v4 in
       G.DoWhile (v1, v2, Tok.unbracket v4) |> G.s
@@ -721,7 +731,7 @@ and v_stmt = function
       G.Return (v1, v2, G.sc) |> G.s
   | Try (v1, v2, v3, v4) ->
       let v1 = v_tok v1
-      and v2 = v_expr_for_stmt v2
+      and v2 = v_body_stmt v2
       and v3 = v_option v_catch_clause v3
       and v4 = v_option v_finally_clause v4 in
       let catches =
@@ -791,7 +801,7 @@ and v_catch_clause (v1, v2) : G.catch list =
       [ (v1, G.CatchPattern pat, G.exprstmt e) ]
 
 and v_finally_clause (v1, v2) =
-  let v1 = v_tok v1 and v2 = v_expr_for_stmt v2 in
+  let v1 = v_tok v1 and v2 = v_body_stmt v2 in
   (v1, v2)
 
 and v_block v = v_list v_block_stat v |> List_.flatten
