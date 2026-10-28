@@ -5310,7 +5310,8 @@ let isCaseDefEnd in_ =
    indentation region that may hold that expression alone *)
 let blockStatSeqInner (location : location) in_ : top_stat option =
   let acceptStatSepOptOrEndCase in_ =
-    if not (TH.isCaseDefEnd in_.token) then acceptStatSepOpt in_
+    if not (TH.isCaseDefEnd in_.token || closesIndentedBlock in_) then
+      acceptStatSepOpt in_
   in
   match in_.token with
   | ID_LOWER ("end", _) when isEndMarker in_ ->
@@ -5355,7 +5356,9 @@ let blockStatSeq in_ : block_stat list =
   while
     (not (isStatSeqEnd in_))
     && (not (isCaseDefEnd in_))
-    && not (startsTemplateStatAfterIndentedBlock in_)
+    && (not (startsTemplateStatAfterIndentedBlock in_))
+    (* as `catch` at the column of the cases of `try x match` *)
+    && not (closesIndentedBlock in_)
   do
     match inStatement in_ (fun () -> blockStatSeqInner InBlock in_) with
     | None -> ()
