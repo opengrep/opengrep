@@ -4487,6 +4487,47 @@ let localDef implicitMod in_ : definition =
  *  }}}
 *)
 
+(* Scanners.scala, isEndMarker: `end` is a soft keyword that starts an end
+   marker only at the start of a line, followed on the same line by an
+   identifier or one of `if`, `while`, `for`, `match`, `try`, `new`, `throw`,
+   `given`, `val` or `this`, and then by the end of the line. *)
+let isEndMarker (in_ : env) : bool =
+  let next_tokens = skip_trivia ~newlines:false in
+  let is_tag (tok : T.token) : bool =
+    TH.isIdentBool tok
+    ||
+    match tok with
+    | Kif _
+    | Kwhile _
+    | Kfor _
+    | Kmatch _
+    | Ktry _
+    | Knew _
+    | Kthrow _
+    | Kval _
+    | Kthis _
+    | ID_LOWER ("given", _)
+    (* not end marker tags in the grammar, which scalac reports as errors;
+       an end marker here is still an end marker *)
+    | Kdef _
+    | Kclass _
+    | Kobject _
+    | Ktrait _ ->
+        true
+    | _ -> false
+  in
+  match in_.token with
+  | ID_LOWER ("end", _) when startsNewLine in_ -> (
+      match next_tokens in_.rest with
+      | tag :: rest when is_tag tag -> (
+          match next_tokens rest with
+          | []
+          | (Nl _ | EOF _) :: _ ->
+              true
+          | _ -> false)
+      | _ -> false)
+  | _ -> false
+
 let endMarker in_ : end_marker =
   let end_tok = TH.info_of_tok in_.token in
   accept (ID_LOWER ("end", ab)) in_;
@@ -4578,6 +4619,7 @@ let isExtensionStart (in_ : env) : bool =
 let isTemplateStatIntroSoftKeyword (in_ : env) : bool =
   match in_.token with
   | ID_LOWER ("extension", _) -> isExtensionStart in_
+  | ID_LOWER ("end", _) -> isEndMarker in_
   | tok -> TH.isTemplateStatIntroSoftKeyword tok
 
 let extension in_ =
@@ -4678,7 +4720,7 @@ let blockStatSeqInner (location : location) in_ : top_stat option =
     if not (TH.isCaseDefEnd in_.token) then acceptStatSepOpt in_
   in
   match in_.token with
-  | ID_LOWER ("end", _) ->
+  | ID_LOWER ("end", _) when isEndMarker in_ ->
       let x = endMarker in_ in
       Some (End x)
   | ID_LOWER ("extension", _) when isExtensionStart in_ ->
@@ -4828,7 +4870,7 @@ let templateStat in_ : template_stat option =
     when lookingAhead (fun in_ -> TH.isPathStart in_.token) in_ ->
       let x = exportClause in_ in
       Some (Ex x)
-  | ID_LOWER ("end", _) ->
+  | ID_LOWER ("end", _) when isEndMarker in_ ->
       let x = endMarker in_ in
       Some (End x)
   | ID_LOWER ("extension", _) when isExtensionStart in_ ->
@@ -4873,7 +4915,7 @@ let topStat in_ : top_stat option =
     when lookingAhead (fun in_ -> TH.isPathStart in_.token) in_ ->
       let x = exportClause in_ in
       Some (Ex x)
-  | ID_LOWER ("end", _) ->
+  | ID_LOWER ("end", _) when isEndMarker in_ ->
       let x = endMarker in_ in
       Some (End x)
   | ID_LOWER ("extension", _) when isExtensionStart in_ ->
