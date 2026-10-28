@@ -1,0 +1,10 @@
+rules:
+- id: python_loop_after_exhausted_budget_reaches_its_exit
+  languages: [python]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)
