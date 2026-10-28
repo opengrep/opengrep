@@ -4815,6 +4815,26 @@ let funDefRest fkind _attrs name in_ :
          let vparamss =
            paramClauses ~ofCaseClass:false name contextBoundBuf in_
          in
+         (* Scala 3.6: type parameter clauses between the parameter clauses,
+            `def f[A](x: A)[B](y: B)`; the generic AST has one type parameter
+            clause, so they join the first one *)
+         let rec interleaved (tparams : type_parameters option)
+             (vparamss : bindings list) :
+             type_parameters option * bindings list =
+           match in_.token with
+           | LBRACKET _ ->
+               let tps = typeParamClauseOpt name (Some contextBoundBuf) in_ in
+               let more =
+                 paramClauses ~ofCaseClass:false name contextBoundBuf in_
+               in
+               interleaved (concat_type_params tparams tps) (vparamss @ more)
+           | _ -> (tparams, vparamss)
+         in
+         let tparams, vparamss =
+           match vparamss with
+           | [] -> (tparams, vparamss)
+           | _ :: _ -> interleaved tparams vparamss
+         in
          newLineOptWhenFollowedBy (LBRACE ab) in_;
          let restype = (* AST: fromWithinReturnType *) typedOpt in_ in
 
