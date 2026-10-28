@@ -3520,20 +3520,28 @@ and m_function_body a b =
 
 and m_parameters a b = m_bracket m_parameter_list a b
 
-(* in C# some function params are not real params, so we can skip them during matching *)
-and can_skip_special_cases lang =
-  if lang =*= Lang.Csharp then
-    let is_extern = function
-      | G.KeywordAttr (G.Extern, _) -> true
-      | _ -> false
-    in
-      fun p ->
+(* in C# some function params are not real params, so we can skip them during
+   matching; the receiver of a C# or Scala extension method is written apart
+   from the parameter list *)
+and can_skip_special_cases (lang : Lang.t) : G.parameter -> bool =
+  match lang with
+  | Lang.Csharp -> (
+      let is_extern (attr : G.attribute) : bool =
+        match attr with
+        | G.KeywordAttr (G.Extern, _) -> true
+        | _ -> false
+      in
+      fun (p : G.parameter) ->
         match p with
         | G.Param p when List.exists is_extern p.pattrs -> true
         | G.ParamReceiver _ -> true
-        | _ -> false
-  else
-    fun _ -> false
+        | _ -> false)
+  | Lang.Scala -> (
+      fun (p : G.parameter) ->
+        match p with
+        | G.ParamReceiver _ -> true
+        | _ -> false)
+  | _ -> fun _ -> false
 
 and m_parameter_list a b =
   with_lang (fun lang ->
