@@ -135,40 +135,89 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
+  module WTO = Graph.WeakTopological
+
+  (* Bourdoncle's recursive iteration strategy over the weak topological
+     order: a vertex is computed once, after its predecessors outside the
+     cycles it is in; a component computes its head, then its body, until the
+     head is stable or has used its rounds. *)
   let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
-      workset =
-    (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
-    let max_nodei = Array.length mapping - 1 in
-    let num_vertices = flow.graph#nb_nodes in
+      (start : nodei) workset =
     let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
-    let max_iterations = min 100000 (num_vertices * max_visits_per_node) in
-    let visit_counts = Array.make (max_nodei + 1) 0 in
-    let rec loop i work =
-      if NodeiSet.is_empty work then (mapping, `Ok)
-      else
-        (* Check iteration limit first (deterministic) *)
-        if i >= max_iterations then (mapping, `Timeout)
-        else
-          (* Use min_elt instead of choose for deterministic processing order *)
-          let ni = NodeiSet.min_elt work in
-          let work' = NodeiSet.remove ni work in
-          visit_counts.(ni) <- visit_counts.(ni) + 1;
-          (* Limit all nodes to max visits to prevent infinite loops *)
-          if visit_counts.(ni) > max_visits_per_node then
-            (* Skip this node and continue *)
-            loop (i + 1) work'
-          else
-            let old = mapping.(ni) in
-            let new_ = trans mapping ni in
-            let work'' =
-              if eq_inout eq_env old new_ then work'
-              else (
-                mapping.(ni) <- new_;
-                NodeiSet.union work' (succs flow ni))
-            in
-            loop (i + 1) work''
+    (* Whether every component stopped because its head was stable, not
+       because it had used its rounds: the result is then a fixpoint. *)
+    let converged = ref true in
+    (* A node is computed on its first visit and again only when a
+       predecessor has changed since: [dirty] holds the nodes to compute. *)
+    let dirty = Array.make (Array.length mapping) false in
+    NodeiSet.iter (fun (ni : nodei) -> dirty.(ni) <- true) workset;
+    (* Computes [ni] again if it is dirty; whether its value changed. *)
+    let update (ni : nodei) : bool =
+      if not dirty.(ni) then false
+      else (
+        dirty.(ni) <- false;
+        let old = mapping.(ni) in
+        let new_ = trans mapping ni in
+        if eq_inout eq_env old new_ then false
+        else (
+          mapping.(ni) <- new_;
+          (* [update] reads only the nodes of [workset]. *)
+          NodeiSet.iter (fun (succ : nodei) -> dirty.(succ) <- true) (succs flow ni);
+          true))
     in
-    loop 0 workset
+    (* The rounds of a component, counted over the whole fixpoint: a loop
+       nested in another gets [taint_MAX_VISITS_PER_NODE] rounds in all, not
+       that many in every round of the enclosing loop. *)
+    let rounds_done = Array.make (Array.length mapping) 0 in
+    let rec run (element : nodei WTO.element) : unit =
+      match element with
+      | WTO.Vertex ni -> ignore (update ni : bool)
+      | WTO.Component (head, body) ->
+          ignore (update head : bool);
+          let rec rounds () =
+            WTO.fold_left (fun () (element : nodei WTO.element) -> run element) () body;
+            (* The head is computed after the last round too, so that the
+               nodes after the component see what the body last produced. *)
+            if update head then
+              if rounds_done.(head) < max_visits_per_node then (
+                rounds_done.(head) <- rounds_done.(head) + 1;
+                rounds ())
+              else converged := false
+          in
+          rounds ()
+    in
+    (* The weak topological order (Bourdoncle, "Efficient chaotic iteration
+       strategies with widenings", 1993) of the nodes of [workset] reachable
+       from [start]; the nodes it does not reach follow, in index order. *)
+    let module Workset_graph = struct
+      type t = unit
+
+      module V = struct
+        type t = nodei
+
+        let compare = Int.compare
+        let equal = Int.equal
+        let hash = Hashtbl.hash
+      end
+
+      let iter_vertex (f : nodei -> unit) () : unit = NodeiSet.iter f workset
+
+      let iter_succ (f : nodei -> unit) () (ni : nodei) : unit =
+        NodeiSet.iter (fun (succ : nodei) -> if NodeiSet.mem succ workset then f succ) (succs flow ni)
+    end in
+    let module Order = WTO.Make (Workset_graph) in
+    let rec vertices (acc : NodeiSet.t) (element : nodei WTO.element) : NodeiSet.t =
+      match element with
+      | WTO.Vertex ni -> NodeiSet.add ni acc
+      | WTO.Component (head, body) -> WTO.fold_left vertices (NodeiSet.add head acc) body
+    in
+    (if NodeiSet.mem start workset then (
+       let order = Order.recursive_scc () start in
+       WTO.fold_left (fun () (element : nodei WTO.element) -> run element) () order;
+       NodeiSet.diff workset (WTO.fold_left vertices NodeiSet.empty order)
+       |> NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)))
+     else NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)) workset);
+    if !converged then (mapping, `Ok) else (mapping, `Timeout)
 
   let forward_succs (f : F.flow) n =
     (f.graph#successors n)#fold
@@ -194,7 +243,8 @@ module Make (F : Flow) = struct
       (* This prevents dead code from getting analyzed. *)
       flow.reachable
     in
-    fixpoint_worker ~timeout eq_env init trans flow succs work
+    let start = if forward then flow.entry else flow.exit in
+    fixpoint_worker ~timeout eq_env init trans flow succs start work
 
   (*****************************************************************************)
   (* Helpers *)
