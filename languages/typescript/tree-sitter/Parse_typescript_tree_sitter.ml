@@ -1384,7 +1384,7 @@ and member_expression (env : env) ((v1, v2, v3) : CST.member_expression) : expr
         x
   in
   let id = identifier env id_tok (* identifier *) in
-  ObjAccess (expr, dot, PN id)
+  apply_postfix expr (fun e -> ObjAccess (e, dot, PN id))
 
 and object_property (env : env) (x : CST.anon_choice_pair_20c9acd) : property =
   match x with
@@ -1425,7 +1425,7 @@ and subscript_expression (env : env)
   let v4 = expressions env v4 in
   let v5 = token env v5 (* "]" *) in
   (* TODO: distinguish optional chaining "?." from a simple access "." *)
-  ArrAccess (expr, (v3, v4, v5))
+  apply_postfix expr (fun e -> ArrAccess (e, (v3, v4, v5)))
 
 and initializer_ (env : env) ((v1, v2) : CST.initializer_) =
   let _v1 = token env v1 (* "=" *) in
@@ -1605,7 +1605,7 @@ and call_expression (env : env) (x : CST.call_expression) =
             | None -> []
           in
           let args = arguments env v3 in
-          Apply (v1, args)
+          apply_postfix v1 (fun f -> Apply (f, args))
       | `Choice_prim_exp_temp_str (v1, v2) ->
           let v1 =
             match v1 with
@@ -1613,7 +1613,8 @@ and call_expression (env : env) (x : CST.call_expression) =
             | `New_exp x -> new_expression env x
           in
           let t1, xs, t2 = template_string env v2 in
-          Apply (IdSpecial (Encaps true, t1), (t1, v1 :: xs, t2))
+          apply_postfix v1 (fun f ->
+              Apply (IdSpecial (Encaps true, t1), (t1, f :: xs, t2)))
       | `Prim_exp_QMARKDOT_opt_type_args_args (v1, v2, v3, v4) ->
           let v1 = primary_expression env v1 in
           let _v2 = token env v2 (* "?." *) in
@@ -1625,12 +1626,46 @@ and call_expression (env : env) (x : CST.call_expression) =
           in
           let v4 = arguments env v4 in
           (* TODO: distinguish "?." from a simple application *)
-          Apply (v1, v4))
+          apply_postfix v1 (fun f -> Apply (f, v4)))
   | `Exp_type_args_temp_str (v1, v2, v3) ->
       let v1 = expression env v1 in
       let _v2 = type_arguments env v2 |> Tok.unbracket in
       let t1, xs, t2 = template_string env v3 in
-      Apply (IdSpecial (Encaps true, t1), (t1, v1 :: xs, t2))
+      apply_postfix v1 (fun f ->
+          Apply (IdSpecial (Encaps true, t1), (t1, f :: xs, t2)))
+
+(* The grammar can read `await f<T>(x)`, `!f<T>(x)` and `a + f<T>(x)` as a
+ * call of `await f`, `!f` or `a + f`, and a member access, subscript or call
+ * that follows as applied to that call. Calls, member accesses and subscripts
+ * bind tighter than these operators, whose operand they take only in
+ * parentheses (kept as [ParenExpr]), so the postfix applies to the operand
+ * that the operator takes last. *)
+and apply_postfix (head : expr) (postfix : expr -> expr) : expr =
+  let into_last (op : expr) ((l, args, r) : expr list bracket) : expr =
+    match List.rev args with
+    | last :: rest ->
+        Apply (op, (l, List.rev (apply_postfix last postfix :: rest), r))
+    | [] -> postfix head
+  in
+  match head with
+  | Apply (IdSpecial (ArithOp G.NotNullPostfix, _), _) -> postfix head
+  | Apply
+      ( (IdSpecial
+           ( ( Await
+             | Yield
+             | YieldStar
+             | Typeof
+             | Void
+             | Delete
+             | Seq
+             | In
+             | Instanceof
+             | ArithOp _
+             | IncrDecr (_, G.Prefix) ),
+             _ ) as op),
+        args ) ->
+      into_last op args
+  | _ -> postfix head
 
 and anon_choice_prop_name_6cc9e4b (env : env)
     (x : CST.anon_choice_prop_name_6cc9e4b) =
@@ -1661,7 +1696,7 @@ and non_null_expression (env : env) ((v1, v2) : CST.non_null_expression) =
   let v1 = expression env v1 in
   let v2 = token env v2 (* "!" *) in
   let special = (ArithOp G.NotNullPostfix, v2) in
-  Apply (IdSpecial special, fb [ v1 ])
+  apply_postfix v1 (fun e -> Apply (IdSpecial special, fb [ e ]))
 
 and expression_statement (env : env) ((v1, v2) : CST.expression_statement) =
   let v1 = expressions env v1 in
