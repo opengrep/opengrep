@@ -2489,6 +2489,8 @@ and pattern2 in_ : pattern =
       match x with
       (* ast: Bind(name, body), if WILDCARD then ... *)
       | PatVarid varid -> PatBind (varid, ii, y)
+      (* an upper-case name binds too: `Red @ _` *)
+      | PatName (Id id, []) -> PatBind (id, ii, y)
       (* stricter? *)
       | _ -> error "bound patterns work only with a varid" in_)
   | _ -> x

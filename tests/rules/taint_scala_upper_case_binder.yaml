@@ -1,0 +1,12 @@
+rules:
+- id: taint-scala-upper-case-binder
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink through an upper-case binder
+  severity: WARNING
+  languages: [scala]
