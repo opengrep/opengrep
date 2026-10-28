@@ -437,6 +437,9 @@ and v_pattern = function
       let v1 = v_varid_or_wildcard v1 and _v2 = v_tok v2 and v3 = v_type_ v3 in
       let p1 = G.PatId (v1, G.empty_id_info ()) in
       G.PatTyped (p1, v3)
+  | PatTyped (v1, v2, v3) ->
+      let v1 = v_pattern v1 and _v2 = v_tok v2 and v3 = v_type_ v3 in
+      G.PatTyped (v1, v3)
   | PatBind (v1, v2, v3) ->
       let v1 = v_varid v1 and _v2 = v_tok v2 and v3 = v_pattern v3 in
       G.PatAs (v3, (v1, G.empty_id_info ()))

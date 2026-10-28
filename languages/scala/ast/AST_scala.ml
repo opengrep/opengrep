@@ -224,6 +224,8 @@ and pattern =
   | PatVarid of varid_or_wildcard
   (* ast_orig: just Typed *)
   | PatTypedVarid of varid_or_wildcard * tok (* : *) * type_
+  (* scala3: a literal or another pattern with a type, as `case 1: Int` *)
+  | PatTyped of pattern * tok (* : *) * type_
   | PatBind of varid * tok (* @ *) * pattern
   (* less: the last pattern one can be '[varid @] _ *'
    * ast_orig: AppliedType for the type_ list bracket

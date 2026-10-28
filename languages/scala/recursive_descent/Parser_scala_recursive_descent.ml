@@ -2461,6 +2461,11 @@ let rec pattern in_ : pattern =
  *  }}}
 *)
 and pattern1 in_ : pattern =
+  let backquoted =
+    match in_.token with
+    | ID_BACKQUOTED _ -> true
+    | _ -> false
+  in
   let p = pattern2 in_ in
   (* crazy? depending whether Ident(name) && if nme.isVariableName(name)? *)
   match in_.token with
@@ -2471,8 +2476,10 @@ and pattern1 in_ : pattern =
       (* ast: Typed(p, x) *)
       match p with
       | PatVarid varid -> PatTypedVarid (varid, ii, t)
-      (* stricter? *)
-      | _ -> error "typed patterns work only with a varid" in_)
+      (* a backquoted identifier binds a variable too (BoundVarid) *)
+      | PatName (Id id, []) when backquoted -> PatTypedVarid (id, ii, t)
+      (* Scala 3: a literal or another pattern with a type *)
+      | _ -> PatTyped (p, ii, t))
   (* CHECK: "Pattern variables must start with a lower-case letter." *)
   | _ -> p
 
