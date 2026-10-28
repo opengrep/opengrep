@@ -588,6 +588,9 @@ let getIndentStatus ?(is_opportunistic = false) in_ =
     in
     col
     > prev_indent_width (* we are indented w.r.t. the old indentation region *)
+    (* and a `{` w.r.t. the region in braces we are in, as for `{` on the
+       line after `if (c)`, at the column of the `if` *)
+    && ((not (tok =~= LBRACE ab)) || col > regionWidth in_ in_.sepRegions)
     && comparableIndent in_ line prev_indent_line
     && (is_opportunistic || prev_is_indent_token)
        (* and the previous token can start an indent *)
