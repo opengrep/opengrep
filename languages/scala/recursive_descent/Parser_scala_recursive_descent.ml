@@ -115,10 +115,63 @@ type env = {
   (* indentation width of the region opened by a `{`, `(` or `[`, keyed by
      the byte position of the opening token; see region_widths *)
   region_widths : int IntMap.t;
+  (* the indentation width of the first token of each line, keyed by its
+     byte position; see line_indents *)
+  line_indents : int IntMap.t;
   (* the whitespace that starts each line, keyed by line; see
      comparableIndent *)
   indent_prefixes : string IntMap.t;
 }
+
+(* The indentation width of each line, as in Scanners.scala: the width of the
+   whitespace that starts the line, also when a comment comes before its
+   first token, as in `/* c */ def f`. Keyed by the byte position of that
+   token. *)
+let line_indents (toks : T.token list) : int IntMap.t =
+  (* [at_start]: no token and no comment yet on the line, whose width so far
+     is [width]; [after_newline]: no token yet on the line *)
+  let _, _, _, indents =
+    toks
+    |> List.fold_left
+         (fun ( (at_start : bool),
+                (after_newline : bool),
+                (width : int),
+                (indents : int IntMap.t) ) (tok : T.token) ->
+           match tok with
+           | Nl _ -> (true, true, 0, indents)
+           | Space info when at_start ->
+               (false, true, String.length (Tok.content_of_tok info), indents)
+           (* a comment over several lines: the line of the token starts in
+              the comment, with the whitespace of its last line *)
+           | Comment info when String.contains (Tok.content_of_tok info) '\n'
+             ->
+               let s = Tok.content_of_tok info in
+               let last = String.rindex s '\n' + 1 in
+               let rec spaces (i : int) : int =
+                 if
+                   i < String.length s
+                   && (Char.equal s.[i] ' ' || Char.equal s.[i] '\t')
+                 then spaces (i + 1)
+                 else i
+               in
+               (false, true, spaces last - last, indents)
+           | Space _
+           | Comment _ ->
+               (false, after_newline, width, indents)
+           | _ when after_newline ->
+               let pos = Tok.bytepos_of_tok (TH.info_of_tok tok) in
+               (false, false, 0, IntMap.add pos width indents)
+           | _ -> (false, false, 0, indents))
+         (true, true, 0, IntMap.empty)
+  in
+  indents
+
+(* the indentation width of a token: that of its line when it is the first
+   token of the line, its column otherwise *)
+let indent_of (indents : int IntMap.t) (info : Tok.t) : int =
+  match IntMap.find_opt (Tok.bytepos_of_tok info) indents with
+  | Some width -> width
+  | None -> Tok.col_of_tok info
 
 (* Scala 3 reference, "Indentation and Braces": a region in braces has the
    indentation width of the first token that starts a new line after the
@@ -126,7 +179,8 @@ type env = {
    follows the opening token when that token starts a new line, and the
    width of the enclosing region otherwise (no entry in the map).
 *)
-let region_widths (toks : T.token list) : int IntMap.t =
+let region_widths (indents : int IntMap.t) (toks : T.token list) :
+    int IntMap.t =
   (* braces opened on the current line wait for the next line; a `(` or `[`
      waits for the next token only. Each list holds byte positions. *)
   let _braces, _groups, _after_newline, widths =
@@ -146,7 +200,7 @@ let region_widths (toks : T.token list) : int IntMap.t =
                let braces, groups, widths =
                  if after_newline then
                    let add (widths : int IntMap.t) (pos : int) : int IntMap.t =
-                     IntMap.add pos (Tok.col_of_tok info) widths
+                     IntMap.add pos (indent_of indents info) widths
                    in
                    let widths = List.fold_left add widths braces in
                    ([], [], List.fold_left add widths groups)
@@ -191,6 +245,7 @@ let mk_env toks =
       (* we should at least get an EOF token from the lexer *)
       raise Impossible
   | x :: xs ->
+      let indents = line_indents toks in
       {
         token = x;
         (* this assumes we will call first nextToken on it *)
@@ -203,7 +258,8 @@ let mk_env toks =
         *)
         sepRegions = [ T.DEDENT (0, 0) ];
         is_indented = None;
-        region_widths = region_widths toks;
+        region_widths = region_widths indents toks;
+        line_indents = indents;
         indent_prefixes = indent_prefixes toks;
       }
 
@@ -425,7 +481,8 @@ let isIndentedLine (in_ : env) : bool =
       false
   | tok ->
       startsNewLine in_
-      && Tok.col_of_tok (TH.info_of_tok tok) > currentRegionWidth in_
+      && indent_of in_.line_indents (TH.info_of_tok tok)
+         > currentRegionWidth in_
 
 let getPreviousToken in_ =
   let rec loop passed =
@@ -469,7 +526,7 @@ let getIndentStatus ?(is_opportunistic = false) in_ =
 
   let info = TH.info_of_tok tok in
   let line = Tok.line_of_tok info in
-  let col = Tok.col_of_tok info in
+  let col = indent_of in_.line_indents info in
 
   let is_indented =
     (* Here, we need to look at the last indentation region that ever existed,
@@ -629,7 +686,7 @@ let isLeadingInfixOperator (in_ : env) : bool =
     | tok :: _ -> Some (tok, crossed_newline)
     | [] -> None
   in
-  let col = Tok.col_of_tok (TH.info_of_tok in_.token) in
+  let col = indent_of in_.line_indents (TH.info_of_tok in_.token) in
   TH.isOperator in_.token
   && (match in_.rest with
      | (Space _ | Nl _) :: _ -> true
@@ -638,7 +695,8 @@ let isLeadingInfixOperator (in_ : env) : bool =
   && (match next_token in_.rest false with
      | Some (tok, false) -> starts_operand tok
      | Some (tok, true) ->
-         starts_operand tok && col <= Tok.col_of_tok (TH.info_of_tok tok)
+         starts_operand tok
+         && col <= indent_of in_.line_indents (TH.info_of_tok tok)
      | None -> false)
   &&
   match in_.sepRegions with
