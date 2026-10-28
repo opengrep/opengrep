@@ -179,8 +179,8 @@ let is_real_error_severity (severity : Out.error_severity) : bool =
  * error.
  * python: select_real_errors in error.py *)
 let last_real_error (errors : Core_error.t list) : Core_error.t option =
-  errors |> List.rev
-  |> List.find_opt (fun (err : Core_error.t) ->
+  errors
+  |> List_.find_last_opt (fun (err : Core_error.t) ->
          is_real_error_severity
            (Core_error.severity_of_error err.Core_error.typ))
 
@@ -189,32 +189,35 @@ let last_real_error (errors : Core_error.t list) : Core_error.t option =
  *)
 let exit_code_of_errors ~(strict : bool) (errors : Out.core_error list) :
     Exit_code.t =
-  match List.rev errors with
-  | [] -> Exit_code.ok ~__LOC__
-  (* TODO? why do we look at the last error? What about the other errors? *)
-  | x :: _ -> (
+  (* The severities whose errors set the exit code, most severe first: Error
+   * and Warning with --strict, only Error without it. The exit code is that
+   * of the last error of the first of these severities present. *)
+  let exit_code_severities : Out.error_severity list =
+    [ `Error; `Warning ]
+    |> List.filter (fun (severity : Out.error_severity) ->
+           strict || is_real_error_severity severity)
+  in
+  let exit_code_error : Out.core_error option =
+    exit_code_severities
+    |> List.find_map (fun (severity : Out.error_severity) ->
+           errors
+           |> List_.find_last_opt (fun (err : Out.core_error) ->
+                  Out.equal_error_severity err.severity severity))
+  in
+  match exit_code_error with
+  | None -> Exit_code.ok ~__LOC__
+  | Some err ->
       (* alt: raise a Semgrep_error that would be caught by CLI_Common
        * wrapper instead of returning an exit code directly? *)
-      match () with
-      | _ when is_real_error_severity x.severity ->
-          let exit_code = exit_code_of_error_type x.error_type in
-          Logs.info (fun m ->
-              m
-                "Exiting opengrep scan due to error of severity level=Error: %s \
-                 -> exit code %i"
-                (Semgrep_output_v1_j.string_of_error_type x.error_type)
-                (Exit_code.to_int exit_code));
-          exit_code
-      | _ when strict ->
-          let exit_code = exit_code_of_error_type x.error_type in
-          Logs.info (fun m ->
-              m
-                "Exiting opengrep scan due to error in strict mode: %s -> exit \
-                 code %i"
-                (Semgrep_output_v1_j.string_of_error_type x.error_type)
-                (Exit_code.to_int exit_code));
-          exit_code
-      | _ -> Exit_code.ok ~__LOC__)
+      let exit_code = exit_code_of_error_type err.error_type in
+      Logs.info (fun m ->
+          m "Exiting opengrep scan due to %s: %s -> exit code %i"
+            (if is_real_error_severity err.severity then
+               "error of severity level=Error"
+             else "error in strict mode")
+            (Semgrep_output_v1_j.string_of_error_type err.error_type)
+            (Exit_code.to_int exit_code));
+      exit_code
 
 (* A parse error quotes the bytes it choked on, so an error entry takes
  * strings from its target just as a match does, and every one of them is

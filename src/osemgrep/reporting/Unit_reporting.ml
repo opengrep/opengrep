@@ -532,6 +532,65 @@ let skin_emit_tests =
              (test_chunks_render_with_all_logs_on name)))
 
 (*****************************************************************************)
+(* Exit code of a run with errors *)
+(*****************************************************************************)
+
+let core_error (error_type : Out.error_type) : Out.core_error =
+  { error_type; severity = Core_error.severity_of_error error_type;
+    message = "m"; details = None; location = None; rule_id = None }
+
+let rule_parse_error = core_error Out.RuleParseError
+let invalid_yaml = core_error Out.InvalidYaml
+let partial_parsing = core_error (Out.PartialParsing [])
+let timeout = core_error Out.Timeout
+let incompatible_rule = core_error Out.IncompatibleRule0
+
+let exit_code_int ~(strict : bool) (errors : Out.core_error list) : int =
+  Exit_code.to_int (Cli_json_output.exit_code_of_errors ~strict errors)
+
+let exit_code_of_errors_tests =
+  Testo.categorize "exit_code_of_errors"
+    [
+      t "a real error alone fails the run" (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:false [ rule_parse_error ]));
+      t "a real error before a warning gives the exit code" (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:false [ rule_parse_error; partial_parsing ]));
+      t "a real error after a warning gives the exit code" (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:false [ partial_parsing; rule_parse_error ]));
+      t "the last of several real errors gives the exit code" (fun () ->
+          (* InvalidYaml maps to unparseable_yaml *)
+          Alcotest.(check int) "exit code" 5
+            (exit_code_int ~strict:false [ rule_parse_error; invalid_yaml ]));
+      t "warnings alone leave the run successful" (fun () ->
+          Alcotest.(check int) "exit code" 0
+            (exit_code_int ~strict:false [ partial_parsing ]));
+      t "--strict makes a lone warning fail the run" (fun () ->
+          (* PartialParsing maps to invalid_code *)
+          Alcotest.(check int) "exit code" 3
+            (exit_code_int ~strict:true [ partial_parsing ]));
+      t "with --strict a real error before a warning gives the exit code"
+        (fun () ->
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:true [ rule_parse_error; partial_parsing ]));
+      t "with --strict the last of several warnings gives the exit code"
+        (fun () ->
+          (* Timeout maps to fatal *)
+          Alcotest.(check int) "exit code" 2
+            (exit_code_int ~strict:true [ partial_parsing; timeout ]));
+      t "with --strict a warning before an info gives the exit code" (fun () ->
+          Alcotest.(check int) "exit code" 3
+            (exit_code_int ~strict:true [ partial_parsing; incompatible_rule ]));
+      t "with --strict a warning after an info gives the exit code" (fun () ->
+          Alcotest.(check int) "exit code" 3
+            (exit_code_int ~strict:true [ incompatible_rule; partial_parsing ]));
+      t "no error leaves the run successful" (fun () ->
+          Alcotest.(check int) "exit code" 0 (exit_code_int ~strict:false []));
+    ]
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -542,4 +601,5 @@ let tests caps =
       findings_layout_tests;
       skin_simple_tests;
       skin_emit_tests;
+      exit_code_of_errors_tests;
     ]

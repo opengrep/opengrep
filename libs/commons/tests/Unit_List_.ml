@@ -74,6 +74,16 @@ let test_deduplicate_gen () =
     (List_.deduplicate_gen fst
        [ (1, "a"); (2, "b"); (2, "c"); (1, "d"); (3, "e"); (0, "f") ])
 
+let test_find_last_opt () =
+  let is_even (x : int) : bool = Int.equal (x mod 2) 0 in
+  Alcotest.(check (option int))
+    __LOC__ (Some 4)
+    (List_.find_last_opt is_even [ 1; 2; 3; 4; 5 ]);
+  Alcotest.(check (option int))
+    __LOC__ None
+    (List_.find_last_opt is_even [ 1; 3; 5 ]);
+  Alcotest.(check (option int)) __LOC__ None (List_.find_last_opt is_even [])
+
 let tests =
   Testo.categorize "List_"
     [
@@ -91,4 +101,5 @@ let tests =
       t "uniq_by" test_uniq_by;
       t "deduplicate" test_deduplicate;
       t "deduplicate_gen" test_deduplicate_gen;
+      t "find_last_opt" test_find_last_opt;
     ]
