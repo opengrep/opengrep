@@ -76,6 +76,74 @@ let create () = {
   last_token = None;
 }
 
+(* the keyword that s is, or the identifier ID_LOWER s *)
+let keyword_or_ident (s : string) (t : Tok.t) : token =
+  match s with
+  | "null" -> Knull t
+
+  | "true" -> BooleanLiteral (true, t)
+  | "false" -> BooleanLiteral (false, t)
+
+  | "if"       -> Kif t
+  | "else"     -> Kelse t
+
+  | "for"      -> Kfor t
+  | "forSome"      -> KforSome t
+  | "while"      -> Kwhile t
+  | "do"      -> Kdo t
+
+  | "match"      -> Kmatch t
+  | "case"      -> Kcase t
+
+  | "try"      -> Ktry t
+  | "catch"      -> Kcatch t
+  | "finally"      -> Kfinally t
+  | "throw"      -> Kthrow t
+
+  | "return"   -> Kreturn t
+
+  | "class"      -> Kclass t
+  | "trait"      -> Ktrait t
+  | "object"     -> Kobject t
+  | "new"      -> Knew t
+  | "super" -> Ksuper t
+  | "this" -> Kthis t
+  | "with" -> Kwith t
+  | "extends" -> Kextends t
+
+  | "def"    -> Kdef t
+  | "type"    -> Ktype t
+  | "var"    -> Kvar t
+  | "val"    -> Kval t
+
+  | "package"     -> Kpackage t
+  | "import"   -> Kimport t
+
+  (* Scala 3: There are more keywords, but they are "soft" keywords,
+     meaning that we cannot lex them here as keywords!
+
+     Soft keywords behave like keywords only in certain contextual
+     situations, and otherwise behave as normal identifiers.
+
+     We just case on them as `ID_LOWER` in `Parser_scala_recursive_descent`,
+     such as `accept (ID_LOWER ("export", ab)) in_`.
+   *)
+
+  | "abstract"       -> Kabstract t
+  | "final"       -> Kfinal t
+  | "private"       -> Kprivate t
+  | "protected"       -> Kprotected t
+
+  | "sealed"       -> Ksealed t
+  | "override"       -> Koverride t
+  | "implicit"    -> Kimplicit t
+  | "lazy"    -> Klazy t
+  | "yield"    -> Kyield t
+
+  (* missing? "macro"? *)
+
+  | _          -> ID_LOWER (s, t)
+
 (* Scanners.scala, fetchLT: a `<` starts an XML literal after a space, a
    newline, `(`, `{` or a token that ends with `>` *)
 let xml_start_allowed (state : state) : bool =
@@ -452,74 +520,7 @@ rule token state = parse
   (* ----------------------------------------------------------------------- *)
 
   (* keywords *)
-  | id_lower as s
-      { let t = tokinfo lexbuf in
-        match s with
-        | "null" -> Knull t
-
-        | "true" -> BooleanLiteral (true, t)
-        | "false" -> BooleanLiteral (false, t)
-
-        | "if"       -> Kif t
-        | "else"     -> Kelse t
-
-        | "for"      -> Kfor t
-        | "forSome"      -> KforSome t
-        | "while"      -> Kwhile t
-        | "do"      -> Kdo t
-
-        | "match"      -> Kmatch t
-        | "case"      -> Kcase t
-
-        | "try"      -> Ktry t
-        | "catch"      -> Kcatch t
-        | "finally"      -> Kfinally t
-        | "throw"      -> Kthrow t
-
-        | "return"   -> Kreturn t
-
-        | "class"      -> Kclass t
-        | "trait"      -> Ktrait t
-        | "object"     -> Kobject t
-        | "new"      -> Knew t
-        | "super" -> Ksuper t
-        | "this" -> Kthis t
-        | "with" -> Kwith t
-        | "extends" -> Kextends t
-
-        | "def"    -> Kdef t
-        | "type"    -> Ktype t
-        | "var"    -> Kvar t
-        | "val"    -> Kval t
-
-        | "package"     -> Kpackage t
-        | "import"   -> Kimport t
-
-        (* Scala 3: There are more keywords, but they are "soft" keywords,
-           meaning that we cannot lex them here as keywords!
-
-           Soft keywords behave like keywords only in certain contextual
-           situations, and otherwise behave as normal identifiers.
-
-           We just case on them as `ID_LOWER` in `Parser_scala_recursive_descent`,
-           such as `accept (ID_LOWER ("export", ab)) in_`.
-         *)
-
-        | "abstract"       -> Kabstract t
-        | "final"       -> Kfinal t
-        | "private"       -> Kprivate t
-        | "protected"       -> Kprotected t
-
-        | "sealed"       -> Ksealed t
-        | "override"       -> Koverride t
-        | "implicit"    -> Kimplicit t
-        | "lazy"    -> Klazy t
-        | "yield"    -> Kyield t
-
-        (* missing? "macro"? *)
-
-        | _          -> ID_LOWER (s, t)
-    }
+  | id_lower as s { keyword_or_ident s (tokinfo lexbuf) }
 
   (* semgrep-ext: but this is also a valid Scala identifier *)
   | '$' ['A'-'Z']['A'-'Z''0'-'9''_']* as s
@@ -563,13 +564,19 @@ rule token state = parse
       let s = Buffer.contents buf in
       StringLiteral(s, info |> Tok.rewrap_str ("\"\"\"" ^ s ^ "\"\"\""))
     }
-  (* interpolated strings *)
-  | alphaid as s '"'
-   { push_mode state ST_IN_INTERPOLATED_DOUBLE;
-     T_INTERPOLATED_START(s, tokinfo lexbuf) }
-  | alphaid as s "\"\"\""
-   { push_mode state ST_IN_INTERPOLATED_TRIPLE;
-     T_INTERPOLATED_START(s, tokinfo lexbuf) }
+  (* interpolated strings; a keyword, as in `else"x"`, or the `then` of
+     Scala 3 before a string is not an interpolator (Scanners.scala,
+     fetchToken) *)
+  | alphaid as s ('"' | "\"\"\"" as quotes)
+   { match keyword_or_ident s (tokinfo lexbuf) with
+     | ID_LOWER _ when not (String.equal s "then") ->
+         if String.equal quotes "\"" then
+           push_mode state ST_IN_INTERPOLATED_DOUBLE
+         else push_mode state ST_IN_INTERPOLATED_TRIPLE;
+         T_INTERPOLATED_START(s, tokinfo lexbuf)
+     | _ ->
+         Parsing_helpers.yyback (String.length quotes) lexbuf;
+         keyword_or_ident s (tokinfo lexbuf) }
 
   (* ----------------------------------------------------------------------- *)
   (* eof *)
