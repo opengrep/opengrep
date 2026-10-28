@@ -310,6 +310,24 @@ let rec skip_trivia ~(newlines : bool) (toks : T.token list) : T.token list =
   | Nl _ :: rest when newlines -> skip_trivia ~newlines rest
   | _ -> toks
 
+(* Does a token for which ~target holds come before the end of the line,
+   outside nested groups? A token for which ~stop holds, or a closing
+   bracket of a group that the tokens did not open, ends the search. *)
+let foundOnLine ~(target : T.token -> bool) ~(stop : T.token -> bool)
+    (toks : T.token list) : bool =
+  let rec loop (toks : T.token list) (depth : int) : bool =
+    match toks with
+    | [] -> false
+    | tok :: _ when Int.equal depth 0 && target tok -> true
+    | (Nl _ | EOF _) :: _ when Int.equal depth 0 -> false
+    | tok :: _ when Int.equal depth 0 && stop tok -> false
+    | (LPAREN _ | LBRACKET _ | LBRACE _) :: rest -> loop rest (depth + 1)
+    | (RPAREN _ | RBRACKET _ | RBRACE _) :: rest ->
+        (not (Int.equal depth 0)) && loop rest (depth - 1)
+    | _ :: rest -> loop rest depth
+  in
+  loop toks 0
+
 (* ------------------------------------------------------------------------- *)
 (* indentation helpers *)
 (* ------------------------------------------------------------------------- *)
@@ -4470,6 +4488,20 @@ let topStatSeq ?rev in_ : top_stat list =
 (* "Template" *)
 (* ------------------------------------------------------------------------- *)
 
+(* Parsers.scala, selfType: `id: T =>` or `this: T =>` at the start of a
+   template body is a self type, which `=>` ends on the same line; it is
+   read before statements, so that it is not taken for a colon argument *)
+let isAscribedSelfType (in_ : env) : bool =
+  (TH.isIdentBool in_.token || in_.token =~= Kthis ab)
+  &&
+  match in_next_token in_.rest with
+  | Some (COLON _) ->
+      foundOnLine
+        ~target:(fun (tok : T.token) -> tok =~= ARROW ab)
+        ~stop:(fun (tok : T.token) -> tok =~= EQUALS ab)
+        in_.rest
+  | _ -> false
+
 (** {{{
  *  TemplateStatSeq  ::= [id [`:` Type] `=>`] TemplateStats
  *  }}}
@@ -4479,6 +4511,20 @@ let topStatSeq ?rev in_ : top_stat list =
 let templateStatSeq ~isPre in_ : self_type option * block =
   ignore isPre;
   let self, firstOpt =
+    if isAscribedSelfType in_ then (
+      let id =
+        match in_.token with
+        | Kthis ii ->
+            nextToken in_;
+            (AST.this, ii)
+        | _ -> ident in_
+      in
+      accept (COLON ab) in_;
+      let ty = startInfixType in_ in
+      let ii = TH.info_of_tok in_.token in
+      accept (ARROW ab) in_;
+      (Some (id, Some ty, ii), None))
+    else
     (* a soft modifier like "inline" or "open" might be an expr intro, but
        also actually be a modifier.
        so let's check whether it's explicitly a modifier as well.
