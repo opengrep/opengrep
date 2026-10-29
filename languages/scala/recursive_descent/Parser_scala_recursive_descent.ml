@@ -321,7 +321,12 @@ let with_logging funcname f in_ =
 (*****************************************************************************)
 let error x in_ =
   let tok = in_.token in
-  let info = TH.info_of_tok tok in
+  (* a DEDENT has no location; the error is at the token after it *)
+  let info =
+    match (tok, in_.rest) with
+    | DEDENT _, next :: _ -> TH.info_of_tok next
+    | _ -> TH.info_of_tok tok
+  in
   if !Flag.debug_parser then
     Log.err (fun m -> m "tok =%s, x = %s" (T.show tok) x);
   raise (Parsing_error.Syntax_error info)
