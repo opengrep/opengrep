@@ -1,0 +1,12 @@
+import { type } from "m";
+import { type as } from "m";
+import { type as as } from "m";
+import { type as as as } from "m";
+import { type as x } from "m";
+import { type as as x } from "m";
+export { type } from "m";
+export { type as } from "m";
+export { type as as } from "m";
+export { type as as as } from "m";
+export { type as x } from "m";
+export { type as as x } from "m";

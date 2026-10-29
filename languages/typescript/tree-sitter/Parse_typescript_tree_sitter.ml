@@ -478,28 +478,61 @@ let specifier_binding (env : env) (v1 : CST.anon_choice_type_2b11f6b option) :
       let _tok = type_or_typeof env x in
       Binds_type
 
-let import_specifier (env : env) ((v1, v2) : CST.import_specifier) :
+let import_specifier (env : env) (x : CST.import_specifier) :
     import_binding * (a_ident * a_ident option) =
-  let binding = specifier_binding env v1 in
-  match v2 with
-  | `Import_id x -> (binding, (import_identifier env x, None))
-  | `Choice_module_export_name_as_import_id (v1, _as_tok, v3) ->
-      let name =
-        match v1 with
-        | `Module_export_name x -> module_export_name env x
-        | `Type tok -> identifier env tok (* "type" *)
+  match x with
+  | `Opt_choice_type_choice_import_id (v1, v2) -> (
+      let binding = specifier_binding env v1 in
+      match v2 with
+      | `Import_id x -> (binding, (import_identifier env x, None))
+      | `Choice_module_export_name_as_import_id (v1, _as_tok, v3) ->
+          let name =
+            match v1 with
+            | `Module_export_name x -> module_export_name env x
+            | `Type tok -> identifier env tok (* "type" *)
+          in
+          (binding, (name, Some (import_identifier env v3))))
+  | `Choice_type_as_opt_as_choice_import_id (v1, v2, v3) ->
+      (* `type as`, `type as as x` *)
+      let binding = specifier_binding env (Some v1) in
+      let name = identifier env v2 (* "as" *) in
+      let alias =
+        match v3 with
+        | None -> None
+        | Some (_as_tok, `Import_id x) -> Some (import_identifier env x)
+        | Some (_as_tok, `As tok) -> Some (identifier env tok (* "as" *))
       in
-      (binding, (name, Some (import_identifier env v3)))
+      (binding, (name, alias))
+  | `Type_as_as (v1, _as_tok, v3) ->
+      (* `type as as`: the export `type` under the name `as` *)
+      ( Binds_value,
+        (identifier env v1 (* "type" *), Some (identifier env v3 (* "as" *))) )
 
-let export_specifier (env : env) ((v1, v2, v3) : CST.export_specifier) :
+let export_specifier (env : env) (x : CST.export_specifier) :
     import_binding * (a_ident * a_ident option) =
-  let binding = specifier_binding env v1 in
-  let opt_as_id =
-    match v3 with
+  let alias (x : (_ * CST.anon_choice_module_export_name_004ab2c) option) :
+      a_ident option =
+    match x with
     | None -> None
-    | Some (_as_tok, x) -> Some (module_export_name env x)
+    | Some (_as_tok, `Module_export_name x) -> Some (module_export_name env x)
+    | Some (_as_tok, `As tok) -> Some (identifier env tok (* "as" *))
   in
-  (binding, (module_export_name env v2, opt_as_id))
+  match x with
+  | `Opt_choice_type_module_export_name_opt_as_module_export_name (v1, v2, v3)
+    ->
+      let binding = specifier_binding env v1 in
+      let opt_as_id =
+        match v3 with
+        | None -> None
+        | Some (_as_tok, x) -> Some (module_export_name env x)
+      in
+      (binding, (module_export_name env v2, opt_as_id))
+  | `Type_opt_as_choice_module_export_name (v1, v2) ->
+      (* `type`, `type as x`: the binding `type` *)
+      (Binds_value, (identifier env v1 (* "type" *), alias v2))
+  | `Choice_type_as_opt_as_choice_module_export_name (v1, v2, v3) ->
+      (* `type as`, `type as as x`: the binding `as` as a type *)
+      (specifier_binding env (Some v1), (identifier env v2 (* "as" *), alias v3))
 
 let concat_nested_identifier (idents : a_ident list) : a_ident =
   let str = idents |> List_.map fst |> String.concat "." in
