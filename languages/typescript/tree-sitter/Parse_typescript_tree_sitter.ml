@@ -2403,9 +2403,18 @@ and map_anon_choice_import_c99ceb4 (env : env)
 
 and map_type_query_call_expression (env : env)
     ((v1, v2) : CST.type_query_call_expression) : expr =
-  let e = map_anon_choice_import_c99ceb4 env v1 in
-  let args = arguments env v2 in
-  Apply (e, args)
+  match v1 with
+  | `Import tok -> import_type_module env (token env tok (* import *)) v2
+  | (`Id _ | `Type_query_member_exp _ | `Type_query_subs_exp _) as x ->
+      let e = map_anon_choice_type_id_43e1312 env x in
+      let args = arguments env v2 in
+      Apply (e, args)
+
+(* `import("m")` in a type refers to the module "m" and loads nothing, so it is
+ * not a call: a pattern for a dynamic import does not match it. *)
+and import_type_module (env : env) (timport : tok) (args : CST.arguments) :
+    expr =
+  ExprTodo (("Import", timport), Tok.unbracket (arguments env args))
 
 and import_type (env : env)
     (x :
@@ -2435,13 +2444,16 @@ and map_type_query_member_expression_in_type_annotation (env : env)
 and map_type_query_call_expression_in_type_annotation (env : env)
     ((v1, v2) : CST.type_query_call_expression_in_type_annotation) : tok * expr
     =
-  let timport, e =
-    match v1 with
-    | (`Import _ | `Type_query_member_exp_in_type_anno _) as x ->
-        map_type_query_operand_in_type_annotation env x
-  in
-  let args = arguments env v2 in
-  (timport, Apply (e, args))
+  match v1 with
+  | `Import tok ->
+      let timport = token env tok (* import *) in
+      (timport, import_type_module env timport v2)
+  | `Type_query_member_exp_in_type_anno x ->
+      let timport, e =
+        map_type_query_member_expression_in_type_annotation env x
+      in
+      let args = arguments env v2 in
+      (timport, Apply (e, args))
 
 and map_type_query_operand_in_type_annotation (env : env)
     (x :
