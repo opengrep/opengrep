@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.33.1](https://github.com/opengrep/opengrep/releases/tag/v1.33.1) - 29-10-2026
+
+### Bug fixes
+
+* ASP.NET: C# and VB rules scan generic handlers (`.ashx`) and web services (`.asmx`) on the python cli by @dimitris-m in #898
+* File extension matching ignores case on Windows on the python cli by @dimitris-m in #898
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.33.0...v1.33.1
+
+
 ## [1.33.0](https://github.com/opengrep/opengrep/releases/tag/v1.33.0) - 27-10-2026
 
 ### Language support
