@@ -4878,6 +4878,29 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
         Some (block, fparams @ [ Param { pname = block; pdefault = None } ])
   else None
 
+(* Crystal: a parameter [@x] assigns its argument to the field [@x] of
+ * [self] when the method is entered. *)
+and instance_var_param_assigns env (fparams : G.parameters) : stmts =
+  Tok.unbracket fparams
+  |> List.concat_map (fun (param : G.parameter) ->
+         match param with
+         | G.Param { pname = Some i; pinfo; pattrs; _ }
+           when List.exists
+                  (function
+                    | G.OtherAttribute (("InstanceVar", _), []) -> true
+                    | _ -> false)
+                  pattrs ->
+             let tok = snd i in
+             let field =
+               G.DotAccess
+                 (G.IdSpecial (G.Self, tok) |> G.e, tok, G.FN (G.Id (i, G.empty_id_info ())))
+               |> G.e
+             in
+             let ss, lv = lval env field in
+             let arg = mk_e (Fetch (lval_of_base (Var (var_of_id_info i pinfo)))) NoOrig in
+             ss @ [ mk_s (Instr (mk_i (Assign (lv, arg)) NoOrig)) ]
+         | _ -> [])
+
 and function_definition env fdef : function_definition =
   let fparams = parameters env fdef.G.fparams in
   let fparams, env =
@@ -4911,7 +4934,9 @@ and function_definition env fdef : function_definition =
    * falsely match enclosing-sink ranges via
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
-  let fbody = rec_point_label_stmts @ fbody in
+  let fbody =
+    rec_point_label_stmts @ instance_var_param_assigns env fdef.G.fparams @ fbody
+  in
   { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
 
 (****************************************************************************)

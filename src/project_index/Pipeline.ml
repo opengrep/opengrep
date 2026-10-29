@@ -776,7 +776,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       [] fi.fi_ast
     in
     let toplevel_calls =
-      FA.extract_toplevel_calls
+      FA.extract_toplevel_calls ~lang
         ~identify_callee:
           (Callee_resolution.identify_callee_interfile ~lang
                    ~type_state:file_type_state)

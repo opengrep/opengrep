@@ -1,0 +1,13 @@
+rules:
+  - id: python_receiver_local_optional
+    message: a generic class of the file is not a union type
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

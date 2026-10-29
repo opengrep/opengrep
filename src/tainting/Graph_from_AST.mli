@@ -58,6 +58,7 @@ val extract_decorator_calls :
   (fn_id * Tok.t) list
 
 val extract_toplevel_calls :
+  lang:Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
   func_lookup : Func_lookup.t ->
   AST_generic.program ->

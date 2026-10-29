@@ -318,21 +318,31 @@ let get_arity params info lang =
   Receiver.arity lang ~is_method:(Receiver.is_method info.fdef)
     ~is_static:info.is_static params
 
-(* Drop implicit-receiver IL params; G and IL param lists share length/order. *)
+(* Drop implicit-receiver IL params. The IL params start with one per G param,
+   in the same order; any further ones are synthetic (the block a Ruby or
+   Crystal method yields to without declaring it) and are kept. *)
 let filter_implicit_receiver_params (lang : Lang.t) (info : fun_info)
     (g_params : G.parameter list) (il_params : IL.param list)
     : IL.param list =
   match info.class_name_str with
   | None -> il_params
   | Some _ ->
-    List.combine g_params il_params
-    |> List.filteri
-         (fun i ((gp, ip) : G.parameter * IL.param) ->
-            match ip with
-            (* Keep IL.ParamReceiver — extractor maps it to BThis without consuming an arg index. *)
-            | IL.ParamReceiver _ -> true
-            | _ -> not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
-    |> List.map snd
+    let rec keep (i : int) (il_params : IL.param list)
+        (g_params : G.parameter list) : IL.param list =
+      match (il_params, g_params) with
+      | [], _ -> []
+      | _, [] -> il_params
+      | (ip : IL.param) :: il_rest, (gp : G.parameter) :: g_rest -> (
+          let kept = keep (i + 1) il_rest g_rest in
+          match ip with
+          (* IL.ParamReceiver is kept: the extractor maps it to BThis without
+             consuming an arg index. *)
+          | IL.ParamReceiver _ -> ip :: kept
+          | _ when is_implicit_receiver lang ~is_first:(Int.equal i 0) info gp ->
+              kept
+          | _ -> ip :: kept)
+    in
+    keep 0 il_params g_params
 
 (* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
 let build_info_map
@@ -501,6 +511,17 @@ let extract_and_check
   let updated_db, _fresh_sigs =
     extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
       ~taint_inst ~ast info
+  in
+  (* The function keeps its converged entry: the re-extraction is not added
+     next to it, which would leave two signatures of one arity. *)
+  let updated_db =
+    let fid = Function_id.of_il_name info.name in
+    match Shape_and_sig.FunctionMap.find_opt fid db.Shape_and_sig.signatures with
+    | Some (converged : Shape_and_sig.SignatureSet.t) ->
+        { Shape_and_sig.signatures =
+            Shape_and_sig.FunctionMap.add fid converged
+              updated_db.Shape_and_sig.signatures }
+    | None -> updated_db
   in
   (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
@@ -803,6 +824,23 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               ~sccs ~analyze initial_signature_db
           in
           (* Single match-emission pass over the converged DB. *)
+          let is_constructor_node (node : Function_id.t) : bool =
+            match Shape_and_sig.FunctionMap.find_opt node info_map with
+            | Some info ->
+                Object_initialization.is_constructor lang
+                  (fst info.name.IL.ident) info.class_name_str
+            | None -> false
+          in
+          (* A constructor stores its instance variable taint in
+             [Dataflow_tainting.constructor_instance_vars], which the other
+             methods of its class read. The table is read and written only
+             under a class name, which signature extraction does not pass to
+             [Dataflow_tainting.fixpoint] and [extract_and_check] does. So
+             the rounds above leave it untouched, and in this pass the
+             constructors run first. *)
+          let constructors, others =
+            List.partition is_constructor_node analysis_order
+          in
           let topo_matches =
             List.fold_left
               (fun (ms : Core_match.t list) (node : Function_id.t) ->
@@ -830,7 +868,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                           (Fpath.to_string file)
                           (IL.show_name info.name));
                   List.rev_append findings ms)
-              [] analysis_order
+              [] (constructors @ others)
           in
           (Some signature_db_after_order, Some relevant_graph, topo_matches))
         else (

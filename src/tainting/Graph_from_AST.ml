@@ -20,22 +20,23 @@ let fn_id_to_node = fn_id_to_node
 let uses_new_keyword = uses_new_keyword
 let resolved_name_of_fn_id = resolved_name_of_fn_id
 
-(* A name's key carries the class its [id_instance_type] holds, else its
-   [id_type]: a receiver rebound to another class is another callee, with
-   the same text. *)
-let canonical_callee_key (e : G.expr) : string option =
+(* A name's key carries the classes its [id_instance_type] holds, else its
+   [id_type], read as the resolver reads them: a receiver rebound to another
+   class is another callee, with the same text. *)
+let canonical_callee_key ~(lang : Lang.t) (e : G.expr) : string option =
   let rec key e =
     match e.G.e with
     | G.N (G.Id ((s, _), info)) -> (
-        match
-          Option.bind (Ty_bare_name.instance_or_declared_type info)
-            Ty_bare_name.class_name_of_ty
-        with
-        | Some cls -> (
-            match Ty_bare_name.bare_name_of_name cls with
-            | Some bare_name -> Some (s ^ ":" ^ bare_name)
-            | None -> Some s)
-        | None -> Some s)
+        let class_names =
+          match Ty_bare_name.instance_or_declared_type info with
+          | Some (ty : G.type_) ->
+              List.filter_map Ty_bare_name.bare_name_of_name
+                (Ty_bare_name.class_names_of_ty lang ty)
+          | None -> []
+        in
+        match class_names with
+        | [] -> Some s
+        | _ :: _ -> Some (s ^ ":" ^ String.concat "|" class_names))
     | G.DotAccess (sub, _, G.FN (G.Id ((s, _), _))) ->
       (match key sub with
        | Some k -> Some (k ^ "." ^ s)
@@ -170,11 +171,11 @@ let write_back_callee_definition (callee : G.expr) (fn_id : fn_id) : unit =
   | None -> ()
 
 (* Non-memoisable callee shapes bypass the cache; sole AST write-back chokepoint. *)
-let memo_lookup_or_compute (memo_tbl : callee_memo)
+let memo_lookup_or_compute ~(lang : Lang.t) (memo_tbl : callee_memo)
     ~(call_arity : int) (callee : G.expr)
     (compute : unit -> fn_id option) : fn_id option =
   let result =
-    match canonical_callee_key callee with
+    match canonical_callee_key ~lang callee with
     | None -> compute ()
     | Some k ->
       let key = (k, call_arity) in
@@ -279,7 +280,7 @@ let extract_calls ~(lang : Lang.t)
   in
   let memo_tbl : callee_memo = Hashtbl.create 64 in
   let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
-    memo_lookup_or_compute memo_tbl ~call_arity callee (fun () ->
+    memo_lookup_or_compute ~lang memo_tbl ~call_arity callee (fun () ->
         identify_callee ~func_lookup ~caller_parent_path ~call_arity callee)
   in
   (* Lang-gated: off where nested lambdas need the enclosing scope. *)
@@ -433,7 +434,7 @@ let extract_decorator_calls
   ) [] attrs
   |> dedup_fn_ids
 
-let extract_toplevel_calls
+let extract_toplevel_calls ~(lang : Lang.t)
     ~(identify_callee : Callee_resolution.call_site_resolver)
     ~(func_lookup : Func_lookup.t)
     (ast : G.program)
@@ -443,7 +444,7 @@ let extract_toplevel_calls
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let memo_tbl : callee_memo = Hashtbl.create 64 in
   let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
-    memo_lookup_or_compute memo_tbl ~call_arity callee (fun () ->
+    memo_lookup_or_compute ~lang memo_tbl ~call_arity callee (fun () ->
         identify_callee ~func_lookup ~caller_parent_path:[] ~call_arity callee)
   in
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
@@ -492,6 +493,9 @@ let extract_toplevel_hof_callbacks
 let build_call_graph ~(lang : Lang.t) (ast : G.program)
     : Call_graph.G.t =
   let graph = Call_graph.G.create () in
+  let skip_nested =
+    (Lang_config.get lang).Lang_config.skip_nested_in_extract_calls
+  in
 
   let top_level_node : node =
     Function_id.of_il_name (top_level_name_of_ast ast)
@@ -533,6 +537,27 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
             | (None, [None]) | (None, []) -> true
             | _ -> false
           in
+          let has_lambda_identity =
+            match fst fdef.G.fkind with
+            | G.LambdaKind
+            | G.Arrow ->
+                true
+            | _ -> Option.is_none opt_ent
+          in
+          let enclosing_node =
+            match fn_id_to_node parent_path with
+            | Some (node : node)
+              when skip_nested && has_lambda_identity
+                   && Call_graph.G.mem_vertex graph node ->
+                Some node
+            | Some _
+            | None ->
+                None
+          in
+          let extra_callers =
+            Option.to_list enclosing_node
+            @ if is_toplevel_lambda then [ top_level_node ] else []
+          in
 
           let { calls = callee_calls; callbacks = callback_calls; _ } =
             extract_calls ~lang
@@ -558,8 +583,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
               match fn_id_to_node callee_fn_id, fn_id_to_node fn_id with
               | Some callee_node, Some caller_node ->
                   Call_graph.add_edge graph ~src:callee_node ~dst:caller_node ~call_tok;
-                  if is_toplevel_lambda then
-                    Call_graph.add_edge graph ~src:callee_node ~dst:top_level_node ~call_tok
+                  List.iter
+                    (fun (dst : node) ->
+                      Call_graph.add_edge graph ~src:callee_node ~dst ~call_tok)
+                    extra_callers
               | _ -> ())
             callee_calls;
 
@@ -575,8 +602,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
                     | None -> callback_node
                   in
                   Call_graph.add_edge graph ~src:src_to_caller ~dst:caller_node ~call_tok;
-                  if is_toplevel_lambda then
-                    Call_graph.add_edge graph ~src:src_to_caller ~dst:top_level_node ~call_tok
+                  List.iter
+                    (fun (dst : node) ->
+                      Call_graph.add_edge graph ~src:src_to_caller ~dst ~call_tok)
+                    extra_callers
               | _ -> ())
             callback_calls
       | None -> ())
@@ -584,7 +613,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
   let toplevel_calls =
-    extract_toplevel_calls
+    extract_toplevel_calls ~lang
       ~identify_callee:
         (Callee_resolution.identify_callee ~lang ~all_funcs:funcs
            ~type_state:Type_state.empty)

@@ -1,0 +1,13 @@
+rules:
+  - id: crystal_ivar_call_in_block
+    message: taint through an instance variable read by a method called from a block
+    languages:
+      - crystal
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
