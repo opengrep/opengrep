@@ -1,0 +1,6 @@
+rules:
+  - id: aspnet-web-service-vb
+    pattern: '"Hi " & $NAME'
+    languages: [vb]
+    message: string built by an ASP.NET web service in VB
+    severity: INFO

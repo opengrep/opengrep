@@ -1,4 +1,5 @@
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from typing import Iterable
 from typing import Iterator
 from typing import List
 from typing import Mapping
+from typing import NamedTuple
 from typing import Optional
 from typing import Sequence
 from typing import Set
@@ -43,7 +45,7 @@ from wcmatch import glob as wcglob
 from boltons.iterutils import partition
 
 from semgrep.constants import TOO_MUCH_DATA
-from semgrep.constants import Colors, UNSUPPORTED_EXT_IGNORE_LANGS
+from semgrep.constants import Colors, IS_WINDOWS, UNSUPPORTED_EXT_IGNORE_LANGS
 from semgrep.error import FilesNotFoundError
 from semgrep.formatter.text import BASE_WIDTH as width
 from semgrep.ignores import FileIgnore
@@ -103,6 +105,168 @@ def is_minified(path: Path) -> bool:
         whitespace / len(sample) < MIN_WHITESPACE_FREQUENCY
         or lines / len(sample) < MIN_LINE_FREQUENCY
     )
+
+
+def has_suffix(path: Path, suffixes: Collection[str]) -> bool:
+    """
+    Whether PATH ends with one of SUFFIXES, as OCaml's Filename.check_suffix
+    decides: ignoring the case of ASCII letters on Windows.
+    """
+    if IS_WINDOWS:
+        return os.fsencode(path).lower().endswith(
+            tuple(os.fsencode(suffix).lower() for suffix in suffixes)
+        )
+    return str(path).endswith(tuple(suffixes))
+
+
+# coupling: src/targeting/Aspnet_directive.ml, Aspnet_directive_lexer.mll and
+# Guess_lang.ml is_aspnet_handler_in
+ASPNET_HANDLER_EXTENSIONS = (".ashx", ".asmx")
+ASPNET_HANDLER_SAMPLE_BYTES = 4096
+ASPNET_WHITESPACE = rb" \t\r\n\x0b\x0c"
+ASPNET_DIRECTIVE_TOKEN = re.compile(
+    rb"(?P<byte_order_mark>\xef\xbb\xbf)"
+    rb"|(?P<whitespace>[" + ASPNET_WHITESPACE + rb"]+)"
+    rb"|(?P<directive_start><%[" + ASPNET_WHITESPACE + rb"]*@)"
+    rb"|(?P<directive_end>%>)"
+    rb"|(?P<attribute_name>[a-zA-Z0-9_][a-zA-Z0-9_:]*)"
+    rb"|(?P<equal>=)"
+    rb"|(?P<other>.)",
+    re.DOTALL,
+)
+ASPNET_DIRECTIVE_VALUE = re.compile(
+    rb"[" + ASPNET_WHITESPACE + rb"]*"
+    rb"(?:\"(?P<double_quoted>[^\"]*)\""
+    rb"|'(?P<single_quoted>[^']*)'"
+    rb"|(?P<unquoted>[^" + ASPNET_WHITESPACE + rb"\"'%>]*))"
+)
+ASPNET_LANGUAGES: Mapping[bytes, Language] = {
+    b"c#": Language("csharp"),
+    b"cs": Language("csharp"),
+    b"csharp": Language("csharp"),
+    b"vb": Language("vb"),
+    b"vbs": Language("vb"),
+    b"visualbasic": Language("vb"),
+    b"vbscript": Language("vb"),
+}
+
+AspnetTokenKind = Literal[
+    "byte_order_mark",
+    "whitespace",
+    "directive_start",
+    "directive_end",
+    "attribute_name",
+    "equal",
+    "other",
+    "eof",
+]
+AspnetAttribute = Tuple[bytes, Optional[bytes]]
+
+
+# A token of the directive lexer: its kind, its text and the offset after it.
+class AspnetToken(NamedTuple):
+    kind: AspnetTokenKind
+    text: bytes
+    end: int
+
+
+# The attributes of a directive as (name, value) pairs, and the offset after
+# its '%>'.
+class AspnetDirective(NamedTuple):
+    attributes: List[AspnetAttribute]
+    end: int
+
+
+def aspnet_token(text: bytes, start: int) -> AspnetToken:
+    match = ASPNET_DIRECTIVE_TOKEN.match(text, start)
+    if match is None:
+        return AspnetToken("eof", b"", start)
+    return AspnetToken(
+        cast(AspnetTokenKind, match.lastgroup), match.group(), match.end()
+    )
+
+
+def aspnet_next_token(text: bytes, start: int) -> AspnetToken:
+    token = aspnet_token(text, start)
+    return aspnet_token(text, token.end) if token.kind == "whitespace" else token
+
+
+def aspnet_directive(text: bytes, start: int) -> Optional[AspnetDirective]:
+    """
+    The directive whose '<%@' ends at START; None when it is malformed.
+    """
+    attributes: List[AspnetAttribute] = []
+    token = aspnet_next_token(text, start)
+    while token.kind == "attribute_name":
+        following = aspnet_next_token(text, token.end)
+        if following.kind == "equal":
+            # The pattern matches the empty string, so it matches at every offset.
+            value = cast(
+                re.Match[bytes], ASPNET_DIRECTIVE_VALUE.match(text, following.end)
+            )
+            attributes.append(
+                (token.text, next(g for g in value.groups() if g is not None))
+            )
+            token = aspnet_next_token(text, value.end())
+        else:
+            attributes.append((token.text, None))
+            token = following
+    if token.kind == "directive_end":
+        return AspnetDirective(attributes, token.end)
+    return None
+
+
+def aspnet_handler_language(text: bytes) -> Optional[Language]:
+    """
+    The language that the directives at the start of TEXT select: the one of
+    the first Language attribute that has a value, VB without one. None when
+    TEXT does not start with well-formed directives or they select a language
+    opengrep does not parse.
+    """
+    token = aspnet_token(text, 0)
+    if token.kind in ("byte_order_mark", "whitespace"):
+        token = aspnet_next_token(text, token.end)
+    if token.kind != "directive_start":
+        return None
+    attributes: List[AspnetAttribute] = []
+    while token.kind == "directive_start":
+        directive = aspnet_directive(text, token.end)
+        if directive is None:
+            return None
+        attributes.extend(directive.attributes)
+        token = aspnet_next_token(text, directive.end)
+    language = next(
+        (
+            value
+            for name, value in attributes
+            if name.lower() == b"language" and value is not None
+        ),
+        None,
+    )
+    if language is None:
+        return Language("vb")
+    return ASPNET_LANGUAGES.get(language.lower())
+
+
+def is_aspnet_handler_in(language: Language, path: Path) -> bool:
+    """
+    Whether PATH is an ASP.NET generic handler or web service whose directives
+    select LANGUAGE.
+    """
+    if not (
+        has_suffix(path, ASPNET_HANDLER_EXTENSIONS)
+        and language in ASPNET_LANGUAGES.values()
+        and path.is_file()
+    ):
+        return False
+    # Language filtering runs before filter_by_permission, so the file may be
+    # unreadable.
+    try:
+        with path.open("rb") as f:
+            sample = f.read(ASPNET_HANDLER_SAMPLE_BYTES)
+    except OSError:
+        return False
+    return aspnet_handler_language(sample) == language
 
 
 def write_pipes_to_disk(targets: Sequence[str], temp_dir: Path) -> Sequence[str]:
@@ -779,13 +943,15 @@ class TargetManager:
         Finds all files in a collection of paths that either:
         - end with one of a set of extension
         - is a script that executes with one of a set of programs
+        - is an ASP.NET handler or web service whose directives select the language
         """
         if isinstance(language, Language):
             kept = frozenset(
                 path
                 for path in candidates
-                if any(str(path).endswith(ext) for ext in language.definition.exts)
+                if has_suffix(path, language.definition.exts)
                 or self.executes_with_shebang(path, language.definition.shebangs)
+                or is_aspnet_handler_in(language, path)
             )
         else:
             kept = frozenset(candidates)

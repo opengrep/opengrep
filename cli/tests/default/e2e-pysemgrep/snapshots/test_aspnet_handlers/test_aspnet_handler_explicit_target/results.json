@@ -1,0 +1,52 @@
+{
+  "errors": [],
+  "interfile_languages_used": [],
+  "paths": {
+    "scanned": [
+      "targets/aspnet/aspnet_handler_csharp.ashx"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.aspnet-handler-csharp",
+      "end": {
+        "col": 65,
+        "line": 7,
+        "offset": 258
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "is_ignored": false,
+        "lines": "        context.Response.Write(context.Request.QueryString[\"q\"]);",
+        "message": "response written by an ASP.NET generic handler in C#",
+        "metadata": {},
+        "metavars": {
+          "$CONTEXT": {
+            "abstract_content": "context",
+            "end": {
+              "col": 16,
+              "line": 7,
+              "offset": 209
+            },
+            "start": {
+              "col": 9,
+              "line": 7,
+              "offset": 202
+            }
+          }
+        },
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aspnet/aspnet_handler_csharp.ashx",
+      "start": {
+        "col": 9,
+        "line": 7,
+        "offset": 202
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}
