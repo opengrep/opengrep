@@ -1314,6 +1314,15 @@ and generic_type = [
   | `Choice_id_flow_empty_type_args of (
         anon_choice_type_id_dfe422a * flow_empty_type_arguments
     )
+  | `Choice_type_query_member_exp_in_type_anno_type_args of (
+        [
+            `Type_query_member_exp_in_type_anno of
+              type_query_member_expression_in_type_annotation
+          | `Type_query_call_exp_in_type_anno of
+              type_query_call_expression_in_type_annotation
+        ]
+      * type_arguments
+    )
 ]
 
 and implements_clause = (

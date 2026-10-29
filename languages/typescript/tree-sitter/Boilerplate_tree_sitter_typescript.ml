@@ -2629,6 +2629,22 @@ and map_generic_type (env : env) (x : CST.generic_type) =
           let v1 = map_anon_choice_type_id_dfe422a env v1 in
           let v2 = map_flow_empty_type_arguments env v2 in
           R.Tuple [ v1; v2 ] )
+  | `Choice_type_query_member_exp_in_type_anno_type_args (v1, v2) ->
+      R.Case
+        ( "Choice_type_query_member_exp_in_type_anno_type_args",
+          let v1 =
+            match v1 with
+            | `Type_query_member_exp_in_type_anno x ->
+                R.Case
+                  ( "Type_query_member_exp_in_type_anno",
+                    map_type_query_member_expression_in_type_annotation env x )
+            | `Type_query_call_exp_in_type_anno x ->
+                R.Case
+                  ( "Type_query_call_exp_in_type_anno",
+                    map_type_query_call_expression_in_type_annotation env x )
+          in
+          let v2 = map_type_arguments env v2 in
+          R.Tuple [ v1; v2 ] )
 
 and map_implements_clause (env : env) ((v1, v2, v3) : CST.implements_clause) =
   let v1 = (* "implements" *) token env v1 in

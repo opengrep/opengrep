@@ -1057,16 +1057,15 @@ and function_expression (env : env)
   ({ f_attrs = v1; f_params = v4; f_body = v5; f_rettype = tret; f_kind }, v3)
 
 (* `Map<>`, Flow's empty type arguments, has the name only, like `Map<T>`. *)
-and generic_type (env : env) (x : CST.generic_type) : a_dotted_ident =
-  let v1 =
-    match x with
-    | `Choice_id_type_args (v1, _)
-    | `Choice_id_flow_empty_type_args (v1, _) ->
-        v1
-  in
-  match v1 with
-  | `Id tok -> [ identifier env tok ] (* identifier *)
-  | `Nested_type_id x -> nested_identifier env x
+and generic_type (env : env) (x : CST.generic_type) : type_ =
+  match x with
+  | `Choice_id_type_args (v1, _)
+  | `Choice_id_flow_empty_type_args (v1, _) -> (
+      match v1 with
+      | `Id tok -> TyName [ identifier env tok ] (* identifier *)
+      | `Nested_type_id x -> TyName (nested_identifier env x))
+  | `Choice_type_query_member_exp_in_type_anno_type_args (v1, _) ->
+      import_type env v1
 
 and implements_clause (env : env) ((v1, v2, v3) : CST.implements_clause) :
     type_ list =
@@ -2191,7 +2190,7 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
       | `Nested_type_id x ->
           let xs = nested_type_identifier env x in
           TyName xs
-      | `Gene_type x -> TyName (generic_type env x)
+      | `Gene_type x -> generic_type env x
       | `Obj_type x ->
           let t1, xs, t2 = object_type env x in
           let xs =
@@ -2290,16 +2289,9 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
       in
       let body = primary_type env (`Choice_paren_type (`Obj_type v3)) in
       TypeTodo (("InterfaceType", v1), parents @ [ Type body ])
-  | `Type_query_member_exp_in_type_anno x ->
-      let timport, e =
-        map_type_query_member_expression_in_type_annotation env x
-      in
-      TypeTodo (("ImportType", timport), [ Expr e ])
-  | `Type_query_call_exp_in_type_anno x ->
-      let timport, e =
-        map_type_query_call_expression_in_type_annotation env x
-      in
-      TypeTodo (("ImportType", timport), [ Expr e ])
+  | ( `Type_query_member_exp_in_type_anno _
+    | `Type_query_call_exp_in_type_anno _ ) as x ->
+      import_type env x
 
 (* the type of a component, `component(...props: P) renders R` *)
 and flow_component_type (env : env) (component_tok : tok)
@@ -2414,6 +2406,21 @@ and map_type_query_call_expression (env : env)
   let e = map_anon_choice_import_c99ceb4 env v1 in
   let args = arguments env v2 in
   Apply (e, args)
+
+and import_type (env : env)
+    (x :
+      [ `Type_query_member_exp_in_type_anno of
+        CST.type_query_member_expression_in_type_annotation
+      | `Type_query_call_exp_in_type_anno of
+        CST.type_query_call_expression_in_type_annotation ]) : type_ =
+  let timport, e =
+    match x with
+    | `Type_query_member_exp_in_type_anno x ->
+        map_type_query_member_expression_in_type_annotation env x
+    | `Type_query_call_exp_in_type_anno x ->
+        map_type_query_call_expression_in_type_annotation env x
+  in
+  TypeTodo (("ImportType", timport), [ Expr e ])
 
 (* A type imported from a module, `import("m").T`; the result carries the
  * `import` token. *)
@@ -4144,7 +4151,7 @@ and map_anon_choice_type_id_a85f573 (env : env)
   match x with
   | `Id tok -> TyName [ (* identifier *) str env tok ]
   | `Nested_type_id x -> TyName (nested_type_identifier env x)
-  | `Gene_type x -> TyName (generic_type env x)
+  | `Gene_type x -> generic_type env x
 
 let toplevel env x = statement env x
 
