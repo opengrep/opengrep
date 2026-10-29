@@ -32,7 +32,9 @@ open Ast_js
 (* The source text, from which JSX text is cut as written, and the byte
  * offset at which each of its lines starts. *)
 type source = { text : string; line_starts : int array Lazy.t }
-type env = source H.env
+type annotations = [ `Flow | `Typescript ]
+type context = { source : source; annotations : annotations }
+type env = context H.env
 
 let source_of_string (text : string) : source =
   let rec line_starts (i : int) (acc : int list) : int list =
@@ -853,7 +855,7 @@ and jsx_children (env : env) (xs : CST.jsx_child list) : xml_body list =
       xml_body list =
     match (texts, List.rev texts) with
     | (last, _) :: _, (first, _) :: _ ->
-        XmlText (str env (jsx_text_token env.extra first last)) :: acc
+        XmlText (str env (jsx_text_token env.extra.source first last)) :: acc
     | _ -> acc
   in
   let texts, acc =
@@ -2200,7 +2202,8 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
               in
               let params =
                 match v3 with
-                | `Formal_params x -> formal_parameters env x
+                | `Formal_params x ->
+                    formal_parameters env x |> function_type_parameters env
                 | `Flow_func_type_params x -> flow_function_type_parameters env x
               in
               let _arrow = token env v4 (* "=>" *) in
@@ -3424,7 +3427,7 @@ and type_ (env : env) (x : CST.type_) : type_ =
         | Some x -> type_parameters env x
         | None -> []
       in
-      let params = formal_parameters env v2 in
+      let params = formal_parameters env v2 |> function_type_parameters env in
       let _arrow = token env v3 (* "=>" *) in
       let type_ =
         match v4 with
@@ -3435,11 +3438,26 @@ and type_ (env : env) (x : CST.type_) : type_ =
             type_
       in
       mk_functype (params, Some type_)
-  | `Func_type (`Prim_type_EQGT_type (v1, v2, v3)) ->
-      (* Flow's `T => U` *)
-      let param = ParamTypeOnly (None, primary_type env v1) in
+  | `Func_type (`Prim_type_EQGT_type (v1, v2, v3)) -> (
+      (* Flow's `T => U`; with `T` a parenthesised name, TypeScript reads a
+       * parameter called that name *)
       let arrow = token env v2 (* "=>" *) in
-      mk_functype ((arrow, [ param ], arrow), Some (type_ env v3))
+      let ret = Some (type_ env v3) in
+      let type_only () : type_ =
+        mk_functype
+          ((arrow, [ ParamTypeOnly (None, primary_type env v1) ], arrow), ret)
+      in
+      match (env.extra.annotations, v1) with
+      | `Typescript, `Choice_paren_type (`Paren_type (lp, x, rp)) -> (
+          match function_type_parameter_name env x with
+          | Some id ->
+              mk_functype
+                ( (token env lp, [ ParamClassic (mk_param id) ], token env rp),
+                  ret )
+          | None -> type_only ())
+      | `Typescript, _
+      | `Flow, _ ->
+          type_only ())
   | `Func_type
       (`Opt_type_params_flow_func_type_params_EQGT_type (v1, v2, v3, v4)) ->
       let _tparams =
@@ -3958,6 +3976,43 @@ and definitions (env : env) (x : CST.declaration) : definition list =
       in
       [ (basic_entity v2, FuncDef f) ]
 
+(* A function-type parameter without a type annotation is a type in Flow,
+ * `(Foo) => void` takes a `Foo`, and a name in TypeScript, `(string) => void`
+ * takes a parameter called `string`. *)
+and function_type_parameters (env : env)
+    ((open_, params, close) : parameter list bracket) : parameter list bracket
+    =
+  let param (x : parameter) : parameter =
+    match (env.extra.annotations, x) with
+    | ( `Flow,
+        ParamClassic
+          { p_name; p_type = None; p_default = None; p_dots; p_attrs = [] } ) ->
+        ParamTypeOnly (p_dots, TyName [ p_name ])
+    | ( `Flow,
+        ParamPattern
+          {
+            pp_pattern = Apply (IdSpecial (Spread, dots), (_, [ Id name ], _));
+            pp_type = None;
+            pp_default = None;
+          } ) ->
+        ParamTypeOnly (Some dots, TyName [ name ])
+    | `Flow, _
+    | `Typescript, _ ->
+        x
+  in
+  (open_, List_.map param params, close)
+
+(* The name that TypeScript reads in a function-type parameter that the grammar
+ * parsed as a type. `void` is a reserved word, so no parameter carries it. *)
+and function_type_parameter_name (env : env) (x : CST.type_) : a_ident option =
+  match x with
+  | `Prim_type (`Choice_paren_type (`Pred_type (`Void _ | `Unique_symb _))) ->
+      None
+  | `Prim_type (`Choice_paren_type (`Pred_type x)) ->
+      Some (predefined_type env x)
+  | `Prim_type (`Choice_paren_type (`Id tok)) -> Some (identifier env tok)
+  | _ -> None
+
 (* Flow function type parameters are types, or carry names as in
  * TypeScript. *)
 and flow_function_type_parameters (env : env)
@@ -3965,7 +4020,12 @@ and flow_function_type_parameters (env : env)
     parameter list bracket =
   let param (x : CST.anon_choice_type_1c27c93) : parameter =
     match x with
-    | `Type x -> ParamTypeOnly (None, type_ env x)
+    | `Type x -> (
+        match (env.extra.annotations, function_type_parameter_name env x) with
+        | `Typescript, Some id -> ParamClassic (mk_param id)
+        | `Typescript, None
+        | `Flow, _ ->
+            ParamTypeOnly (None, type_ env x))
     | `Rest_type (v1, v2) ->
         let dots = token env v1 (* "..." *) in
         ParamTypeOnly (Some dots, type_ env v2)
@@ -3977,7 +4037,7 @@ and flow_function_type_parameters (env : env)
   let rest = List_.map (fun (_comma, x) -> param x) v3 in
   let _trailing_comma = v4 in
   let v5 = token env v5 (* ")" *) in
-  (v1, first :: rest, v5)
+  (v1, first :: rest, v5) |> function_type_parameters env
 
 and flow_component_parameters (env : env)
     ((v1, v2, v3) : CST.flow_component_parameters) : property list bracket =
@@ -4086,7 +4146,7 @@ type cst_result =
     CST_tree_sitter_typescript.extra )
   Tree_sitter_run.Parsing_result.t
 
-let parse ?dialect file =
+let parse ~(annotations : annotations) ?dialect file =
   let debug = false in
   let contents = UFile.read_file file in
   H.wrap_parser
@@ -4106,7 +4166,7 @@ let parse ?dialect file =
         {
           H.file;
           conv = H.line_col_to_pos file;
-          extra = source_of_string contents;
+          extra = { source = source_of_string contents; annotations };
         }
       in
 
@@ -4118,7 +4178,7 @@ let parse ?dialect file =
       | Program p -> p
       | _ -> failwith "not a program")
 
-let parse_pattern str =
+let parse_pattern ~(annotations : annotations) str =
   H.wrap_parser
     (* TODO Should we use Tree_sitter_tsx so that we permit TSX constructs in
      * patterns? Or try both, since TSX is not strictly a superset? *)
@@ -4129,7 +4189,7 @@ let parse_pattern str =
         {
           H.file;
           conv = H.line_col_to_pos_pattern str;
-          extra = source_of_string str;
+          extra = { source = source_of_string str; annotations };
         }
       in
       match program env cst with

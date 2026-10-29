@@ -1,0 +1,6 @@
+rules:
+  - id: flow-function-type-unnamed-parameter
+    message: a function type that takes a Foo
+    languages: [javascript]
+    severity: INFO
+    pattern: type $T = (Foo) => void

@@ -103,13 +103,15 @@ let parse_pattern options lang str =
   | Lang.Ts
   | Lang.Js
   | Lang.Vue ->
+      let annotations = if Lang.equal lang Lang.Ts then `Typescript else `Flow in
       let js_ast =
         str
         |> run_pattern
              (* coupling: semgrep/js/languages/typescript/Parser.ml *)
              [
                PfffPat Parse_js.any_of_string;
-               TreeSitterPat Parse_typescript_tree_sitter.parse_pattern;
+               TreeSitterPat
+                 (Parse_typescript_tree_sitter.parse_pattern ~annotations);
              ]
       in
       Js_to_generic.any js_ast

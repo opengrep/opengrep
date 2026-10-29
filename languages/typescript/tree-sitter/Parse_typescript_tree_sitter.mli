@@ -10,15 +10,23 @@
 
 type dialect = [ `Typescript | `TSX ]
 
+(* The language of the type annotations: Flow in JavaScript, TypeScript in
+   TypeScript. The two read a function-type parameter without an annotation
+   differently. *)
+type annotations = [ `Flow | `Typescript ]
+
 (*
    Parse a file as pure typescript or as TSX. If unspecified, the
    dialect is guessed from the file extension. Pure typescript is the fallback
    if the extension is unknown.
 *)
 val parse :
+  annotations:annotations ->
   ?dialect:dialect ->
   Fpath.t ->
   (Ast_js.a_program, unit) Tree_sitter_run.Parsing_result.t
 
 val parse_pattern :
-  string -> (Ast_js.any, unit) Tree_sitter_run.Parsing_result.t
+  annotations:annotations ->
+  string ->
+  (Ast_js.any, unit) Tree_sitter_run.Parsing_result.t
