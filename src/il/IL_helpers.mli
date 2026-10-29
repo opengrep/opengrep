@@ -134,3 +134,7 @@ val wrap_and : IL.exp list -> IL.exp
 
 val wrap_or : IL.exp list -> IL.exp
 (** Smart n-ary [Or]; dual to [wrap_and]. *)
+
+val is_context_arg : 'a IL.argument -> bool
+(** An argument that fills a context parameter ([IL.context_arg]), as `x` in
+    Scala's `f(using x)`. *)

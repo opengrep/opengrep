@@ -4,6 +4,14 @@ val str_of_ident : AST_generic.ident -> string
 
 exception NotAnExpr
 
+(* A parameter that a call fills implicitly, outside its positional
+ * arguments: a Scala `using` parameter ([AST_generic.using_tag]). *)
+val is_context_param : AST_generic.parameter -> bool
+
+(* An argument that fills a context parameter, as `x` in Scala's
+ * `f(using x)` ([AST_generic.using_tag]). *)
+val is_context_arg : AST_generic.argument -> bool
+
 (* A [PatList] / [PatConstructor] holds "map pairs" when every element is
  * one of these: a [PatKeyVal], possibly wrapped by Elixir's map-pair tag. *)
 val is_map_pair_pattern : AST_generic.pattern -> bool

@@ -307,7 +307,7 @@ and v_type_kind = function
       and v3 = v_type_ v3 in
       (* the parameters of a context function type are context parameters,
          as those of a `using` clause *)
-      let pattrs = [ G.OtherAttribute (("using", v2), []) ] in
+      let pattrs = [ G.OtherAttribute ((G.using_tag, v2), []) ] in
       let ts =
         v1 |> Tok.unbracket
         |> List_.map (fun (t : G.type_) -> G.Param (G.param_of_type ~pattrs t))
@@ -679,7 +679,7 @@ and v_lhs v = v_expr v
 
 and v_arguments = function
   | Args v1 -> (
-      let lb, v1, rb = v_bracket (v_list (v_argument ~is_using:false)) v1 in
+      let lb, v1, rb = v_bracket (v_list v_argument) v1 in
       match List.rev v1 with
       | G.Arg
           { e = Call ({ e = N (Id (("*", tok), _)); _ }, (lb', [ e ], rb')); _ }
@@ -690,9 +690,15 @@ and v_arguments = function
           in
           (lb, List.rev rest @ [ G.Arg splatted_last_arg ], rb)
       | _ -> (lb, v1, rb))
-  | ArgUsing v1 ->
-      let v1 = v_bracket (v_list (v_argument ~is_using:true)) v1 in
-      v1
+  | ArgUsing (lb, args, rb) ->
+      (* an argument of a using clause, which fills a context parameter
+         (AST_generic_helpers.is_context_arg); the tag token is fake, so
+         that the range of the argument, and the text a metavariable binds,
+         is that of the expression *)
+      let using_arg (e : expr) : G.argument =
+        G.OtherArg ((G.using_tag, G.fake G.using_tag), [ G.E (v_expr e) ])
+      in
+      (lb, List_.map using_arg args, rb)
   | ArgBlock v1 -> (
       let lb, kind, rb = v_block_expr v1 in
       match kind with
@@ -700,11 +706,7 @@ and v_arguments = function
       | Either.Right cases ->
           (lb, [ G.Arg (G.Lambda (cases_to_lambda lb cases) |> G.e) ], rb))
 
-and v_argument ?(is_using = false) v =
-  let v = v_expr v in
-  if is_using then (* TODO: For now, just pass as a regular argument. *)
-    G.Arg v
-  else G.Arg v
+and v_argument (v : argument) : G.argument = G.Arg (v_expr v)
 
 and v_case_clauses v : G.case_and_body list = v_list v_case_clause v
 and v_type_case_clauses v : G.case_and_body list = v_list v_type_case_clause v
@@ -1125,7 +1127,9 @@ and v_end_marker { end_tok; end_kind } : G.stmt =
    and the using parameters of its extension, after the type parameters of the
    extension (Scala 3 reference, "Translation of Extension Methods"). The
    receiver is the object on which the method is called, as the receiver of
-   a Kotlin extension function is. *)
+   a Kotlin extension function is. A positional argument of a call fills
+   neither of them: the receiver is the object, and the using parameters are
+   context parameters (AST_generic_helpers.is_context_param). *)
 and v_extension { ext_tok = _; ext_tparams; ext_using; ext_param; ext_methods }
     : G.stmt list =
   (* each method gets its own conversion of the clauses it shares, so that
@@ -1293,7 +1297,7 @@ and v_binding using_opt v : G.parameter =
   let pattrs =
     match using_opt with
     | None -> []
-    | Some tok -> [ G.OtherAttribute (("using", tok), []) ]
+    | Some tok -> [ G.OtherAttribute ((G.using_tag, tok), []) ]
   in
   match v with
   | ParamEllipsis t -> G.ParamEllipsis t

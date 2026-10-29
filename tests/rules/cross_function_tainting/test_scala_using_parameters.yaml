@@ -1,0 +1,11 @@
+rules:
+  - id: scala_using_parameters
+    message: A call argument reaches a sink through a parameter
+    languages:
+      - scala
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

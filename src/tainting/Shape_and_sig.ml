@@ -962,6 +962,7 @@ and Signature : sig
     | POpt of string
     | PRest of string
     | PKwd of string
+    | PContext of string
     | Other
   [@@deriving eq, ord, show]
 
@@ -1010,6 +1011,7 @@ end = struct
     | POpt of string (* a parameter that has a default *)
     | PRest of string
     | PKwd of string (* takes a named argument only: Ruby 'sep:' *)
+    | PContext of string (* takes a context argument only (IL.ParamContext) *)
     | Other [@@deriving eq, ord, show]
   type params = param list
 
@@ -1018,6 +1020,7 @@ end = struct
     | POpt s -> s ^ "=_"
     | PRest s -> "*" ^ s (* Python syntax for "rest" params *)
     | PKwd s -> s ^ ":"
+    | PContext s -> "using " ^ s
     | Other -> "_?"
 
   let equal_params params1 params2 = List.equal equal_param params1 params2
@@ -1038,6 +1041,7 @@ end = struct
          (* function signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
          | IL.ParamKwd { pname = { ident = s, _; _ }; _ } -> PKwd s
+         | IL.ParamContext { pname = { ident = s, _; _ }; _ } -> PContext s
          | IL.ParamPattern ({ pname = { ident = s, _; _ }; _ }, pat) -> (
              match pat with
              | AST_generic.PatId (name, _) -> P (fst name)

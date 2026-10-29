@@ -1,0 +1,12 @@
+rules:
+  - id: test-using-parameter-renamed
+    languages: [scala]
+    message: A call through a trait reaches the implementations, whose using parameters differ in name
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

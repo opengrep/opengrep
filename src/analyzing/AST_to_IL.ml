@@ -3004,6 +3004,9 @@ and argument env arg : stmts * exp argument =
   | G.ArgType { t = TyExpr e; _ } ->
       let ss, arg = expr env e in
       (ss, Unnamed arg)
+  | G.OtherArg ((tag, tok), [ G.E e ]) when String.equal tag G.using_tag ->
+      let ss, arg = expr env e in
+      (ss, Named ((context_arg, tok), arg))
   | __else__ ->
       let any = G.Ar arg in
       ([], Unnamed (fixme_exp ToDo any (Related any)))
@@ -3960,6 +3963,20 @@ and parameters env params : param list =
   params |> Tok.unbracket
   |> List_.mapi (fun idx gparam ->
        match gparam with
+       (* a context parameter takes no positional argument, only a context
+        * argument (IL.context_arg), also without a name, as in Scala's
+        * `(using Ctx)` *)
+       | G.Param { pname; pinfo; pdefault; _ } when H.is_context_param gparam ->
+           let pname =
+             match pname with
+             | Some i -> var_of_id_info i pinfo
+             | None ->
+                 (* a name no source parameter has, one per position *)
+                 fresh_var env
+                   ~str:(Printf.sprintf "!context_param!%d" idx)
+                   (G.fake G.using_tag)
+           in
+           ParamContext { pname; pdefault }
        | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ }
          when List.exists
                 (function

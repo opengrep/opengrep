@@ -1834,6 +1834,31 @@ and m_list__m_argument (xsa : G.argument list) (xsb : G.argument list) =
             >||> aux xs
       in
       aux candidates
+  (* dots in a using clause, as Scala's `f(using ...)` or `f(using $...A)`,
+   * match 0 or more arguments that fill a context parameter *)
+  | G.OtherArg ((tag, _), [ G.E { e = dots; _ } ]) :: xsa, xsb
+    when String.equal tag G.using_tag
+         &&
+         match dots with
+         | G.Ellipsis _ -> true
+         | G.N (G.Id ((s, _), _)) -> Mvar.is_metavar_ellipsis s
+         | _ -> false ->
+      let candidates =
+        inits_and_rest_of_list_empty_ok xsb
+        |> List.filter (fun ((inits, _) : G.argument list * G.argument list) ->
+               List.for_all H.is_context_arg inits)
+      in
+      let rec aux xs =
+        match xs with
+        | [] -> fail ()
+        | (inits, rest) :: xs ->
+            (match dots with
+            | G.N (G.Id (id, _)) -> envf id (MV.Args inits)
+            | _ -> return ())
+            >>= (fun () -> m_list__m_argument xsa rest)
+            >||> aux xs
+      in
+      aux candidates
   | G.Arg { e = G.Ellipsis i; _ } :: xsa, xb :: xsb ->
       (* can match nothing *)
       m_list__m_argument xsa (xb :: xsb)
@@ -1937,6 +1962,11 @@ and m_argument a b =
       m_ident a1 b1 >>= fun () -> m_expr a2 b2
   | G.OtherArg (a1, a2), B.OtherArg (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
+  (* an argument in a pattern also matches an argument that fills a context
+   * parameter, as `x` in Scala's `f(using x)` *)
+  | G.Arg a1, B.OtherArg ((tag, _), [ B.E b1 ])
+    when String.equal tag G.using_tag ->
+      m_expr a1 b1
   | G.Arg _, _
   | G.ArgKwd _, _
   | G.ArgKwdOptional _, _
