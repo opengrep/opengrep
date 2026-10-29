@@ -20,22 +20,23 @@ let fn_id_to_node = fn_id_to_node
 let uses_new_keyword = uses_new_keyword
 let resolved_name_of_fn_id = resolved_name_of_fn_id
 
-(* A name's key carries the class its [id_instance_type] holds, else its
-   [id_type]: a receiver rebound to another class is another callee, with
-   the same text. *)
-let canonical_callee_key (e : G.expr) : string option =
+(* A name's key carries the classes its [id_instance_type] holds, else its
+   [id_type], read as the resolver reads them: a receiver rebound to another
+   class is another callee, with the same text. *)
+let canonical_callee_key ~(lang : Lang.t) (e : G.expr) : string option =
   let rec key e =
     match e.G.e with
     | G.N (G.Id ((s, _), info)) -> (
-        match
-          Option.bind (Ty_bare_name.instance_or_declared_type info)
-            Ty_bare_name.class_name_of_ty
-        with
-        | Some cls -> (
-            match Ty_bare_name.bare_name_of_name cls with
-            | Some bare_name -> Some (s ^ ":" ^ bare_name)
-            | None -> Some s)
-        | None -> Some s)
+        let class_names =
+          match Ty_bare_name.instance_or_declared_type info with
+          | Some (ty : G.type_) ->
+              List.filter_map Ty_bare_name.bare_name_of_name
+                (Ty_bare_name.class_names_of_ty lang ty)
+          | None -> []
+        in
+        match class_names with
+        | [] -> Some s
+        | _ :: _ -> Some (s ^ ":" ^ String.concat "|" class_names))
     | G.DotAccess (sub, _, G.FN (G.Id ((s, _), _))) ->
       (match key sub with
        | Some k -> Some (k ^ "." ^ s)
@@ -170,11 +171,11 @@ let write_back_callee_definition (callee : G.expr) (fn_id : fn_id) : unit =
   | None -> ()
 
 (* Non-memoisable callee shapes bypass the cache; sole AST write-back chokepoint. *)
-let memo_lookup_or_compute (memo_tbl : callee_memo)
+let memo_lookup_or_compute ~(lang : Lang.t) (memo_tbl : callee_memo)
     ~(call_arity : int) (callee : G.expr)
     (compute : unit -> fn_id option) : fn_id option =
   let result =
-    match canonical_callee_key callee with
+    match canonical_callee_key ~lang callee with
     | None -> compute ()
     | Some k ->
       let key = (k, call_arity) in
@@ -279,7 +280,7 @@ let extract_calls ~(lang : Lang.t)
   in
   let memo_tbl : callee_memo = Hashtbl.create 64 in
   let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
-    memo_lookup_or_compute memo_tbl ~call_arity callee (fun () ->
+    memo_lookup_or_compute ~lang memo_tbl ~call_arity callee (fun () ->
         identify_callee ~func_lookup ~caller_parent_path ~call_arity callee)
   in
   (* Lang-gated: off where nested lambdas need the enclosing scope. *)
@@ -433,7 +434,7 @@ let extract_decorator_calls
   ) [] attrs
   |> dedup_fn_ids
 
-let extract_toplevel_calls
+let extract_toplevel_calls ~(lang : Lang.t)
     ~(identify_callee : Callee_resolution.call_site_resolver)
     ~(func_lookup : Func_lookup.t)
     (ast : G.program)
@@ -443,7 +444,7 @@ let extract_toplevel_calls
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let memo_tbl : callee_memo = Hashtbl.create 64 in
   let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
-    memo_lookup_or_compute memo_tbl ~call_arity callee (fun () ->
+    memo_lookup_or_compute ~lang memo_tbl ~call_arity callee (fun () ->
         identify_callee ~func_lookup ~caller_parent_path:[] ~call_arity callee)
   in
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
@@ -612,7 +613,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
   let toplevel_calls =
-    extract_toplevel_calls
+    extract_toplevel_calls ~lang
       ~identify_callee:
         (Callee_resolution.identify_callee ~lang ~all_funcs:funcs
            ~type_state:Type_state.empty)

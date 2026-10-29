@@ -1,0 +1,13 @@
+rules:
+  - id: python_receiver_union_nested
+    message: taint from a method resolved through the union type of a receiver that shares its text with a receiver of a nested function
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
