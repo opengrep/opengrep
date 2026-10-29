@@ -210,6 +210,29 @@ def test_skip_symlink(tmp_path, monkeypatch):
 
 
 @pytest.mark.quick
+@pytest.mark.parametrize(
+    "is_windows,expected",
+    [(True, {"a.py", "B.PY"}), (False, {"a.py"})],
+    ids=["windows", "not_windows"],
+)
+def test_extension_case(tmp_path, monkeypatch, is_windows, expected):
+    foo = tmp_path / "foo"
+    foo.mkdir()
+    (foo / "a.py").touch()
+    (foo / "B.PY").touch()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("semgrep.target_manager.IS_WINDOWS", is_windows)
+
+    assert_path_sets_equal(
+        TargetManager([str(foo)])
+        .get_files_for_language(Language("python"), SAST_PRODUCT)
+        .kept,
+        {foo / name for name in expected},
+    )
+
+
+@pytest.mark.quick
 def test_ignore_git_dir(tmp_path, monkeypatch):
     """
     Ignores all files in .git directory when scanning generic

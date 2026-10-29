@@ -45,7 +45,7 @@ from wcmatch import glob as wcglob
 from boltons.iterutils import partition
 
 from semgrep.constants import TOO_MUCH_DATA
-from semgrep.constants import Colors, UNSUPPORTED_EXT_IGNORE_LANGS
+from semgrep.constants import Colors, IS_WINDOWS, UNSUPPORTED_EXT_IGNORE_LANGS
 from semgrep.error import FilesNotFoundError
 from semgrep.formatter.text import BASE_WIDTH as width
 from semgrep.ignores import FileIgnore
@@ -105,6 +105,18 @@ def is_minified(path: Path) -> bool:
         whitespace / len(sample) < MIN_WHITESPACE_FREQUENCY
         or lines / len(sample) < MIN_LINE_FREQUENCY
     )
+
+
+def has_suffix(path: Path, suffixes: Collection[str]) -> bool:
+    """
+    Whether PATH ends with one of SUFFIXES, as OCaml's Filename.check_suffix
+    decides: ignoring the case of ASCII letters on Windows.
+    """
+    if IS_WINDOWS:
+        return os.fsencode(path).lower().endswith(
+            tuple(os.fsencode(suffix).lower() for suffix in suffixes)
+        )
+    return str(path).endswith(tuple(suffixes))
 
 
 # coupling: src/targeting/Aspnet_directive.ml, Aspnet_directive_lexer.mll and
@@ -242,7 +254,7 @@ def is_aspnet_handler_in(language: Language, path: Path) -> bool:
     select LANGUAGE.
     """
     if not (
-        str(path).endswith(ASPNET_HANDLER_EXTENSIONS)
+        has_suffix(path, ASPNET_HANDLER_EXTENSIONS)
         and language in ASPNET_LANGUAGES.values()
         and path.is_file()
     ):
@@ -937,7 +949,7 @@ class TargetManager:
             kept = frozenset(
                 path
                 for path in candidates
-                if any(str(path).endswith(ext) for ext in language.definition.exts)
+                if has_suffix(path, language.definition.exts)
                 or self.executes_with_shebang(path, language.definition.shebangs)
                 or is_aspnet_handler_in(language, path)
             )
