@@ -131,7 +131,7 @@ let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
     if depth > max_depth then acc
     else
     let entries =
-      Nonfatal.catch ~default:[] (fun () ->
+      Nonfatal.catch_info ~default:[] (fun () ->
         Sys.readdir dir |> Array.to_list)
     in
     let build_path = Filename.concat dir "tsconfig.build.json" in
