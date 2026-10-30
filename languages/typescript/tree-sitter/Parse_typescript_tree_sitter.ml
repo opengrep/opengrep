@@ -1901,12 +1901,16 @@ and map_template_type (env : env) ((v1, v2, v3) : CST.template_type) :
 
 and decorator (env : env) ((v1, v2) : CST.decorator) : attribute =
   let v1 = token env v1 (* "@" *) in
-  let named_attr ((ids, args_opt) : a_ident list * a_arguments option) : attribute =
-    NamedAttr (v1, ids, args_opt)
-  in
   match v2 with
-  | (`Id _ | `Deco_member_exp _ | `Deco_call_exp _) as x ->
-      named_attr (decorator_expression env x)
+  | `Id x ->
+      let id = identifier env x in
+      NamedAttr (v1, [ id ], None)
+  | `Deco_member_exp x ->
+      let ids = decorator_member_expression env x in
+      NamedAttr (v1, ids, None)
+  | `Deco_call_exp x ->
+      let ids, args = decorator_call_expression env x in
+      NamedAttr (v1, ids, Some args)
   | `Deco_paren_exp (v2, v3, v4) ->
       let lp = token env v2 (* "(" *) in
       let e =
@@ -1929,23 +1933,6 @@ and decorator_operand (env : env) (x : CST.anon_choice_type_id_b8f8ced) : expr =
         ( decorator_operand env v1,
           (Dot, token env v2 (* "." *)),
           PN (identifier env v3 (* identifier *)) )
-
-and decorator_expression (env : env)
-    (x :
-      [ `Id of CST.identifier
-      | `Deco_member_exp of CST.decorator_member_expression
-      | `Deco_call_exp of CST.decorator_call_expression ]) :
-    a_ident list * a_arguments option =
-  match x with
-  | `Id x ->
-      let id = identifier env x in
-      ([ id ], None)
-  | `Deco_member_exp x ->
-      let ids = decorator_member_expression env x in
-      (ids, None)
-  | `Deco_call_exp x ->
-      let ids, args = decorator_call_expression env x in
-      (ids, Some args)
 
 and internal_module (env : env) ((v1, v2) : CST.internal_module) =
   let _v1 = token env v1 (* "namespace" *) in
