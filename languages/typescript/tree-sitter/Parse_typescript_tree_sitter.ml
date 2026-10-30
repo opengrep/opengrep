@@ -445,6 +445,7 @@ let reserved_identifier (env : env) (x : CST.reserved_identifier) =
   | `Set tok
   | `Async tok
   | `Static tok
+  | `Let tok
   | `Acce tok
   | `Abst tok
   | `Using tok
@@ -3235,7 +3236,7 @@ and lexical_declaration (env : env) ((v1, v2, v3, v4) : CST.lexical_declaration)
     : var list =
   let kind =
     match v1 with
-    | `Let tok -> (Let, token env tok (* "let" *))
+    | `Let_opt_let_bind (tok, _) -> (Let, token env tok (* "let" *))
     | `Const tok -> (Const, token env tok (* "const" *))
   in
   let vars = map_sep_list env v2 v3 variable_declarator in
