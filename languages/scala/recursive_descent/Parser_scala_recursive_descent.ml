@@ -1835,7 +1835,8 @@ let interpolatedString_ =
 
 let exprTypeArgs_ = ref (fun _ -> failwith "forward ref not set")
 let annotTypeRest_ = ref (fun _ -> failwith "forward ref not set")
-let template_ = ref (fun ~commaOK:_ _ -> failwith "forward ref not set")
+let template_ =
+  ref (fun ~inDefinition:_ _ -> failwith "forward ref not set")
 let defOrDcl_ = ref (fun _ _ -> failwith "forward ref not set")
 let tmplDef_ = ref (fun _ -> failwith "forward ref not set")
 let blockStatSeq_ = ref (fun _ -> failwith "forward ref not set")
@@ -3116,7 +3117,7 @@ and simpleExpr ?(is_block_expr = false) in_ : expr =
            | Knew ii ->
                canApply := false;
                skipToken in_;
-               let cparents, cbody = !template_ ~commaOK:false in_ in
+               let cparents, cbody = !template_ ~inDefinition:false in_ in
                (* ast: gen.mkNew(parents, self, stats) *)
                let def =
                  { ckind = (Singleton, ii); cparams = []; cparents; cbody }
@@ -5664,10 +5665,32 @@ let templateBody ~isPre in_ : template_body =
       let res = inIndented (templateStatSeq ~isPre) in_ in
       res
 
-let templateBodyOpt ~parenMeansSyntaxError in_ : template_body option =
+let templateBodyOpt ~parenMeansSyntaxError ~(emptyColonBody : bool) in_ :
+    template_body option =
   newLineOptWhenFollowedBy (LBRACE ab) in_;
   match in_.token with
   | COLON _ when isIndentAfterColon in_ -> Some (templateBody ~isPre:false in_)
+  (* in a definition, a colon at the end of a line before no indented line,
+     as `object A:` followed by a comment and `end A`, starts an empty body;
+     after `new`, only before `end new` *)
+  | COLON _
+    when (emptyColonBody
+         ||
+         match skip_trivia ~newlines:true in_.rest with
+         | ID_LOWER ("end", _) :: rest -> (
+             match skip_trivia ~newlines:false rest with
+             | Knew _ :: _ -> true
+             | _ -> false)
+         | _ -> false)
+         &&
+         match skip_trivia ~newlines:false in_.rest with
+         | (Nl _ | EOF _) :: _ -> true
+         | _ -> false ->
+      nextToken in_;
+      (* the body ends the statement, which the colon does not *)
+      if afterLineEnd in_ && TH.inFirstOfStat in_.token then
+        insertNL ~newlines:(pastBlankLine in_) in_;
+      Some (fb (Tok.unsafe_fake_tok "") (None, []))
   | LBRACE _ -> Some (templateBody ~isPre:false in_)
   | LPAREN _ ->
       if parenMeansSyntaxError then
@@ -5733,32 +5756,41 @@ let templateParents ~(commaOK : bool) in_ : template_parents =
  *  }}}
 *)
 
-let afterTemplate ~(commaOK : bool) in_ body =
+let afterTemplate ~(inDefinition : bool) in_ body =
   match in_.token with
   | Kwith _ (* crazy? && self eq noSelfType *) ->
       (* CHECK: "use traint parameters instead" when scala3 *)
       let _earlyDefs = body (* CHECK: map ensureEarlyDef AST: filter *) in
       nextToken in_;
-      let parents = templateParents ~commaOK in_ in
-      let body1opt = templateBodyOpt ~parenMeansSyntaxError:false in_ in
+      let parents = templateParents ~commaOK:inDefinition in_ in
+      let body1opt =
+        templateBodyOpt ~parenMeansSyntaxError:false
+          ~emptyColonBody:inDefinition in_
+      in
       (* AST: earlyDefs @ *)
       (parents, body1opt)
   | _ -> (AST.empty_cparents, Some body)
 
-let template ~(commaOK : bool) in_ : template_parents * template_body option =
+(* [inDefinition] for the template of a definition, whose parents a comma can
+   separate and whose body can be empty after a colon, unlike after `new` *)
+let template ~(inDefinition : bool) in_ :
+    template_parents * template_body option =
   in_
   |> with_logging "template" (fun () ->
          newLineOptWhenFollowedBy (LBRACE ab) in_;
          match in_.token with
          | COLON _ when isIndentAfterColon in_ ->
              let body = templateBody ~isPre:true in_ in
-             afterTemplate ~commaOK in_ body
+             afterTemplate ~inDefinition in_ body
          | LBRACE _ ->
              let body = templateBody ~isPre:true in_ in
-             afterTemplate ~commaOK in_ body
+             afterTemplate ~inDefinition in_ body
          | _ ->
-             let parents = templateParents ~commaOK in_ in
-             let bodyopt = templateBodyOpt ~parenMeansSyntaxError:false in_ in
+             let parents = templateParents ~commaOK:inDefinition in_ in
+             let bodyopt =
+               templateBodyOpt ~parenMeansSyntaxError:false
+                 ~emptyColonBody:inDefinition in_
+             in
              (parents, bodyopt))
 
 (* AST: name, mods, constrMods, vparams *)
@@ -5775,14 +5807,14 @@ let templateOpt ckind vparams in_ : template_definition =
     | Kextends _
     | SUBTYPE _ (* CHECK: deprecated in 2.12.5 *) ->
         nextToken in_;
-        template ~commaOK:true in_
+        template ~inDefinition:true in_
     | _ ->
         let cderives = derivesClauseOpt in_ in
         newLineOptWhenFollowedBy (LBRACE ab) in_;
         let bodyopt =
           (* AST: mods.isTrait || name.isTermName *)
           let parenMeansSyntaxError = true in
-          templateBodyOpt ~parenMeansSyntaxError in_
+          templateBodyOpt ~parenMeansSyntaxError ~emptyColonBody:true in_
         in
         ({ AST.empty_cparents with cderives }, bodyopt)
   in
