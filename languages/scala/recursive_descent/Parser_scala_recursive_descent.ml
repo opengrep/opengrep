@@ -4972,6 +4972,14 @@ let typeDefOrDcl attrs in_ : definition =
     | EQUALS ii ->
         nextToken in_;
         let t = typ in_ in
+        (* a refinement can follow a colon at the end of the line, with the
+           declarations indented, as `Fields[A]:` and `type AsTuple = T` *)
+        let t =
+          if isIndentAfterColon in_ then (
+            skipToken in_;
+            TyRefined (Some t, inIndented refineStatSeq in_))
+          else t
+        in
         (* AST: TypeDef(mods, name, tparams, t) *)
         TDef (ii, t)
     | SEMI _
