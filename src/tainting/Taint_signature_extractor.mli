@@ -48,12 +48,14 @@ val extract_signature_with_file_context :
   class_name:string option ->
   ?method_properties:AST_generic.expr list ->
   ?call_graph:Call_graph.G.t option ->
+  captures_variables:bool ->
   Taint_rule_inst.t ->
   IL.fun_cfg ->
   AST_generic.program ->
   signature_database * Shape_and_sig.Signature.t
 (** Extract signature automatically including global variables from file context
-    and database *)
+    and database. With [captures_variables], the function is a lambda and the
+    variables it mentions, other than its parameters, are placeholders. *)
 
 (*****************************************************************************)
 (* Utility functions *)

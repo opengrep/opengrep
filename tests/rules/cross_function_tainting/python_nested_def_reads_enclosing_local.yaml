@@ -1,0 +1,13 @@
+rules:
+  - id: python_nested_def_reads_enclosing_local
+    message: taint into a nested function through a local it reads
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

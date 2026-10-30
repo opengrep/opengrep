@@ -1,0 +1,10 @@
+rules:
+- id: js_width_bound_counts_own_fields
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

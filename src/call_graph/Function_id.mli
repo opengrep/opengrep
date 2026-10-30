@@ -27,6 +27,9 @@ val key : t -> string * string * int * int
 
 val to_file_line_col : t -> string * int * int
 
+val is_top_level : t -> bool
+(** Whether the function is the synthetic node of the top level of a file. *)
+
 val file_of : t -> Fpath.t option
 (** [None] for synthetic nodes with fake tokens. *)
 

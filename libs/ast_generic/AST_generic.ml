@@ -305,6 +305,9 @@ module SId : sig
   (* An IL temporary, counted per lowering. *)
   val temp : file:string -> int -> t
 
+  (* Whether the sid is an IL temporary's. *)
+  val is_temp : t -> bool
+
   (* Injective within a file. *)
   val to_int : t -> int
 
@@ -366,6 +369,13 @@ end = struct
 
   let no_site = { name = ""; line = 0; col = 0 }
   let temp ~file idx = { file; identity = Temp idx; site = no_site }
+
+  let is_temp t =
+    match t.identity with
+    | Temp _ -> true
+    | Binding _
+    | Site _ ->
+        false
 
   let to_int t =
     match t.identity with

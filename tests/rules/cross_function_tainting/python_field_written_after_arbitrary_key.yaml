@@ -1,0 +1,11 @@
+rules:
+  - id: python_field_written_after_arbitrary_key
+    message: taint through a write of an arbitrary key
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

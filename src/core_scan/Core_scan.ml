@@ -687,6 +687,8 @@ let interfile_xconfig (config : Core_scan_config.t)
     matching_conf = config.matching_conf;
     matching_explanations = false;
     filter_irrelevant_rules = NoPrefiltering;
+    report_each_source =
+      Core_match.equal_interfile_dedup_by config.interfile_dedup_by Source_sink;
   }
 
 (*****************************************************************************)
@@ -740,6 +742,8 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
           matching_conf = config.matching_conf;
           matching_explanations = config.matching_explanations;
           filter_irrelevant_rules = prefilter_cache_opt;
+          report_each_source =
+            Core_match.equal_interfile_dedup_by config.interfile_dedup_by Source_sink;
         }
       in
       let rules, dependency_match_table = sca_rules_filtering target rules in

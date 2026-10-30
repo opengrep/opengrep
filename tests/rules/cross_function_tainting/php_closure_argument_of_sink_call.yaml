@@ -1,0 +1,16 @@
+rules:
+  - id: test-closure-argument-of-sink
+    message: The input reaches a column name
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: $R->input(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: where($X)
+          - pattern: $X
+      - patterns:
+          - pattern-inside: query($X)
+          - pattern: $X

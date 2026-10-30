@@ -17,6 +17,9 @@ module FpathMap = Map.Make (Fpath)
 module FpathSet = Set.Make (Fpath)
 module FidSet = Set.Make (Function_id)
 
+(* Steps between two progress lines in the interfile timing log. *)
+let progress_interval = 500
+
 (* A target path and, for a relative path, its root. Findings report this
    path and fingerprint it. *)
 type path_with_root = { path : Fpath.t; root : Fpath.t option }
@@ -407,6 +410,10 @@ let init_file
         project_root = path_root;
         rule_id = fst rule.R.id;
         options = xconf'.Match_env.config;
+        source_grouping =
+          Taint_rule_inst.source_grouping
+            ~report_each_source:xconf'.Match_env.report_each_source
+            xconf'.Match_env.config;
         track_control = false;
         preds = empty_preds;
         handle_effects = (fun _fn_name effects -> effects);
@@ -487,6 +494,7 @@ type rule_subgraph = {
   rsg_specs : rule_specs;
   rsg_xconf : Match_env.xconfig;
   rsg_relevant_graph : Call_graph.G.t;
+  rsg_sccs : Function_id.t list list;  (* of [rsg_relevant_graph], callees first *)
   rsg_topo_order : Function_id.t list;
   rsg_files : Fpath.t list;
   rsg_fid_set : FidSet.t;
@@ -522,7 +530,8 @@ let prune_impl_interface_cycles (graph : Call_graph.G.t) : int =
   List.iter (Call_graph.G.remove_edge_e graph) to_remove;
   List.length to_remove
 
-(* None when sources/sinks or the resulting subgraph are empty. *)
+(* None when sources/sinks or the resulting subgraph are empty, or when a scan
+   of every file matches no source or no sink. *)
 let compute_rule_subgraph
     ~(xconf : Match_env.xconfig)
     ~(lc : lang_context)
@@ -563,6 +572,29 @@ let compute_rule_subgraph
       |> List.exists (fun f ->
              not (FpathSet.mem (Fpath.normalize f) specs.rs_target_files))
     in
+    (* Decided on the matches that extraction recorded for every file, not on
+       the functions they resolve to. *)
+    let matched_in_some_file
+        (side : Match_taint_spec.spec_matches -> bool) : bool =
+      Hashtbl.to_seq_values specs.rs_spec_matches |> Seq.exists side
+    in
+    let no_flow =
+      (not scan_is_partial)
+      && List_.null specs.rs_errors
+      && not
+           (matched_in_some_file (fun (matches : Match_taint_spec.spec_matches) ->
+                not (List_.null matches.sources))
+           && matched_in_some_file
+                (fun (matches : Match_taint_spec.spec_matches) ->
+                  not (List_.null matches.sinks)))
+    in
+    if no_flow then begin
+      Log.info (fun m ->
+          m "interfile dispatch: rule %s matches no source or no sink in any \
+             file of the project, skipping"
+            (Rule_ID.to_string (fst rule.R.id)));
+      None
+    end else
     let relevant_graph, depth_cut =
       match sources, sinks with
       | [], seeds
@@ -581,12 +613,8 @@ let compute_rule_subgraph
           (Call_graph.G.nb_vertex relevant_graph)
           (Call_graph.G.nb_edges relevant_graph));
     let _n_pruned = prune_impl_interface_cycles relevant_graph in
-    let topo_order =
-      Call_graph.Topo.fold
-        (fun (fn : Function_id.t) (acc : Function_id.t list) -> fn :: acc)
-        relevant_graph []
-      |> List.rev
-    in
+    let sccs = Sig_fixpoint.sccs_callees_first relevant_graph in
+    let topo_order = List.concat sccs in
     let subgraph_files = Interfile_graph.files_of_graph relevant_graph in
     let graph_fid_set = fid_set_of_graph relevant_graph in
     (* Include target files with source/sink matches but no subgraph
@@ -610,7 +638,8 @@ let compute_rule_subgraph
               (List.length extra));
       subgraph_files @ extra
     in
-    (* Source/sink functions not in the graph; appended (no edges). *)
+    (* Source/sink functions not in the graph; appended (no edges).
+       [init_rule_state] keeps those of them that can reach a sink. *)
     let orphan_fids =
       List.filter
         (fun fid -> not (FidSet.mem fid graph_fid_set))
@@ -631,11 +660,105 @@ let compute_rule_subgraph
         rsg_specs = specs;
         rsg_xconf = xconf';
         rsg_relevant_graph = relevant_graph;
+        rsg_sccs = sccs;
         rsg_topo_order = topo_order;
         rsg_files = files;
         rsg_fid_set = fid_set;
         rsg_depth_cut = (if depth_cut then interfile_depth else None);
       }
+
+(* The class of a method, with the file that defines it: a method starts from
+   the final environments of the constructors of its class in its file
+   ([Dataflow_tainting.constructor_instance_vars]). *)
+let class_of_fid (info_map : Match_tainting_mode.fun_info FunctionMap.t)
+    (fid : Function_id.t) : (string * string) option =
+  let file, _, _ = Function_id.to_file_line_col fid in
+  match FunctionMap.find_opt fid info_map with
+  | Some { Match_tainting_mode.class_name_str = Some cls; _ } -> Some (file, cls)
+  | Some { Match_tainting_mode.class_name_str = None; _ }
+  | None ->
+      None
+
+module File_class_set = Set.Make (struct
+  type t = string * string
+
+  let compare ((file1, cls1) : t) ((file2, cls2) : t) : int =
+    match String.compare file1 file2 with
+    | 0 -> String.compare cls1 cls2
+    | other -> other
+end)
+
+(* [rsg.rsg_topo_order] without the sources that have no edge in the relevant
+   graph and can reach no sink. A source without an edge reaches a sink only
+   when it is a sink too, when it defines a function that is a sink or in the
+   relevant graph (the function reads the variables of its definer, where its
+   signature is applied), or when it is a constructor of a class one of whose
+   methods in the same file is relevant: the methods start from the instance
+   variables the constructor leaves. The top level of a file counts as the
+   definer of every function of the file. *)
+let connected_topo_order ~(lang : Lang.t)
+    ~(info_map : Match_tainting_mode.fun_info FunctionMap.t)
+    (rsg : rule_subgraph) : Function_id.t list =
+  let graph = rsg.rsg_relevant_graph in
+  let sinks = FidSet.of_list rsg.rsg_specs.rs_sinks in
+  let is_orphan_source (fid : Function_id.t) : bool =
+    (not (Call_graph.G.mem_vertex graph fid)) && not (FidSet.mem fid sinks)
+  in
+  (* The functions of the relevant graph and the sinks. *)
+  let kept : Function_id.t list =
+    Call_graph.G.fold_vertex
+      (fun (fid : Function_id.t) (acc : FidSet.t) -> FidSet.add fid acc)
+      graph sinks
+    |> FidSet.elements
+  in
+  let relevant_classes : File_class_set.t =
+    kept |> List.filter_map (class_of_fid info_map) |> File_class_set.of_list
+  in
+  let is_constructor_of_relevant_class (fid : Function_id.t) : bool =
+    match FunctionMap.find_opt fid info_map with
+    | Some ({ Match_tainting_mode.class_name_str = Some cls; _ } as info) ->
+        let file, _, _ = Function_id.to_file_line_col fid in
+        Object_initialization.is_constructor lang
+          (fst info.Match_tainting_mode.name.IL.ident) (Some cls)
+        && File_class_set.mem (file, cls) relevant_classes
+    | Some { Match_tainting_mode.class_name_str = None; _ }
+    | None ->
+        false
+  in
+  (* By file, the positions of the kept functions that read a variable of a
+     function defining them. *)
+  let kept_nested_by_file : (int * int) list Common.SMap.t Lazy.t =
+    lazy
+      (kept
+      |> List.filter (fun (fid : Function_id.t) ->
+             match FunctionMap.find_opt fid info_map with
+             | Some info -> Match_tainting_mode.reads_enclosing_variable ~lang info
+             | None -> false)
+      |> List.fold_left
+           (fun (acc : (int * int) list Common.SMap.t) (fid : Function_id.t) ->
+             let file, line, col = Function_id.to_file_line_col fid in
+             Common.SMap.update file
+               (fun (positions : (int * int) list option) ->
+                 Some ((line, col) :: Option.value positions ~default:[]))
+               acc)
+           Common.SMap.empty)
+  in
+  let defines_kept_function (fid : Function_id.t) : bool =
+    let file, _, _ = Function_id.to_file_line_col fid in
+    match Common.SMap.find_opt file (Lazy.force kept_nested_by_file) with
+    | None -> false
+    | Some positions -> (
+        Function_id.is_top_level fid
+        ||
+        match FunctionMap.find_opt fid info_map with
+        | Some info -> List.exists (Match_tainting_mode.contains_position info) positions
+        | None -> false)
+  in
+  rsg.rsg_topo_order
+  |> List.filter (fun (fid : Function_id.t) ->
+         (not (is_orphan_source fid))
+         || is_constructor_of_relevant_class fid
+         || defines_kept_function fid)
 
 (* Precondition: all [rsg] files are in [ast_table]. *)
 let init_rule_state
@@ -677,12 +800,15 @@ let init_rule_state
         fi_errors = [] }
       rsg.rsg_files
   in
-  let sccs = Sig_fixpoint.sccs_callees_first rsg.rsg_relevant_graph in
+  let sccs = rsg.rsg_sccs in
+  let topo_order =
+    connected_topo_order ~lang ~info_map:init_acc.fi_info_map rsg
+  in
   ({
     rule;
     lang;
     relevant_graph = rsg.rsg_relevant_graph;
-    topo_order = rsg.rsg_topo_order;
+    topo_order;
     info_map = init_acc.fi_info_map;
     file_envs = init_acc.fi_file_envs;
     builtin_signature_db =
@@ -884,7 +1010,7 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       Sig_fixpoint.store ~lang:rs.lang
         ~widen:fn_taint_inst.Taint_rule_inst.recursive
         ~max_shape_depth:(Taint_shape.max_poly_offset rs.lang)
-        fid fresh db'
+        ~previous:db fid fresh db'
   in
   (* Phase 1: SCC signature fixpoint, no finding emission. *)
   let analyze (fid : Function_id.t)
@@ -919,20 +1045,32 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
           if List_.null (dispatch_impls rs fid) then db
           else dispatch_merge_fbdecl rs fid (fid_arity_of rs info) db)
   in
-  (* Edge-less SOURCE seeds are outside the SCC list, so nothing else
-     computes their signature — yet the epilogue and the
-     [id_callee_definition]-stamp
-     channel both reach one without any graph edge.  Restricted to sources:
-     an edge-less sink anchors a finding where it already is and needs no
-     signature, and analyzing every orphan means a CFG build plus dataflow
-     per seed per rule (minutes on a large corpus). *)
   let rule_id_str = Rule_ID.to_string (fst rs.rule.R.id) in
+  (* A progress line in the timing log every [progress_interval] steps. *)
+  let log_progress ~(phase : string) ~(count : int) ~(total : int)
+      (fid : Function_id.t) : unit =
+    if Int.equal (count mod progress_interval) 0 then
+      Log_interfile_timing.Log.info (fun m ->
+          m "[interfile timing] rule %s: %s progress: %d of %d, at %s"
+            rule_id_str phase count total (Function_id.show_debug fid))
+  in
   let converged_db =
+    let functions = Call_graph.G.nb_vertex rs.relevant_graph in
     timed (Printf.sprintf "rule %s: signature fixpoint (%d functions)"
-             rule_id_str (List.length rs.topo_order))
+             rule_id_str functions)
     @@ fun () ->
+    (* A function of a cycle is analysed once per round, so the count of
+       analyses can exceed the count of functions. *)
+    let analyses = ref 0 in
+    let analyze_reporting (fid : Function_id.t)
+        (db : Shape_and_sig.signature_database) :
+        Shape_and_sig.signature_database =
+      incr analyses;
+      log_progress ~phase:"signature fixpoint" ~count:!analyses ~total:functions fid;
+      analyze fid db
+    in
     Sig_fixpoint.run ~rule_id:(fst rs.rule.R.id) ~graph:rs.relevant_graph
-      ~sccs:rs.sccs ~analyze initial_db
+      ~sccs:rs.sccs ~analyze:analyze_reporting initial_db
   in
   (* Phase 2: single match-emission pass over the converged DB.  Every
      function's callees already have their final signatures, so order is
@@ -982,7 +1120,14 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
   in
   let matches =
     timed (Printf.sprintf "rule %s: evaluation (finding emission)" rule_id_str)
-    @@ fun () -> List.fold_left emit [] rs.topo_order
+    @@ fun () ->
+    let functions = List.length rs.topo_order in
+    List.fold_left
+      (fun ((count, acc) : int * PM.t list) (fid : Function_id.t) ->
+        log_progress ~phase:"evaluation" ~count:(count + 1) ~total:functions fid;
+        (count + 1, emit acc fid))
+      (0, []) rs.topo_order
+    |> snd
   in
   (converged_db, matches)
 

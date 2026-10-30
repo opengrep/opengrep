@@ -20,8 +20,13 @@ type t = {
 let normalize_file (file : Fpath.t) : string =
   Fpath.to_string (Fpath.normalize file)
 
+(* The identifier of the synthetic node of the top level of a file. *)
+let top_level_ident = "<top_level>"
+
+let is_top_level (v : t) : bool = String.equal (fst v.ident) top_level_ident
+
 let fake_tok_keeps_location (id : string) : bool =
-  String.starts_with ~prefix:"_tmp_lambda" id || String.equal id "<top_level>"
+  String.starts_with ~prefix:"_tmp_lambda" id || String.equal id top_level_ident
 
 let compute_key ((id, tok) : IL.ident) : string * string * int * int =
   (* Lambdas/[<top_level>] bake the file into the key so vertices don't collide on name; other fake tokens keep the empty key. *)

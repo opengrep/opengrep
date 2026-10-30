@@ -1,0 +1,10 @@
+rules:
+- id: js_call_through_dynamic_index_is_unknown_call
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

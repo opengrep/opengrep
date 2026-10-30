@@ -91,19 +91,25 @@ let compare_metavar_env env1 env2 =
      as equal. Otherwise, there will be many duplicates. *)
   Metavariable.compare_bindings env1 env2
 
+(* The byte offsets of the matches are compared first: the rule and the file,
+   compared as strings, are almost always the same for two taints of one
+   analysis. *)
 let compare_matches pm1 pm2 =
   if phys_equal pm1 pm2 then 0
   else
-  match
-    String.compare
-      (Rule_ID.to_string pm1.PM.rule_id.id)
-      (Rule_ID.to_string pm2.PM.rule_id.id)
-  with
-  | 0 ->
-      let compare_range_loc = Core_match.compare_range_loc pm1.range_loc pm2.range_loc in
-      if compare_range_loc <> 0 then compare_range_loc
-      else compare_metavar_env pm1.env pm2.env
-  | other -> other
+    let (start1, end1), (start2, end2) = (pm1.PM.range_loc, pm2.PM.range_loc) in
+    match Int.compare start1.Tok.pos.bytepos start2.Tok.pos.bytepos with
+    | 0 -> (
+        match Int.compare end1.Tok.pos.bytepos end2.Tok.pos.bytepos with
+        | 0 -> (
+            match Rule_ID.compare pm1.PM.rule_id.id pm2.PM.rule_id.id with
+            | 0 -> (
+                match Core_match.compare_range_loc pm1.range_loc pm2.range_loc with
+                | 0 -> compare_metavar_env pm1.env pm2.env
+                | other -> other)
+            | other -> other)
+        | other -> other)
+    | other -> other
 
 let rec pm_of_trace = function
   | PM (pm, x) -> (pm, x)
@@ -133,7 +139,8 @@ let rec show_call_trace show_thing = function
 (*****************************************************************************)
 
 type arg = { name : string; index : int } [@@deriving eq, ord]
-type base = BGlob of IL.name | BThis | BArg of arg [@@deriving ord]
+type base = BGlob of IL.name | BThis | BArg of arg | BCapture of IL.name
+[@@deriving ord]
 
 (* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple
  * scrutinee starting at index [n]. Reading element [k] of a slice
@@ -146,6 +153,7 @@ type offset =
   | Ostr of string
   | Oslice of int
   | Oany
+  | Ofld_any
 [@@deriving eq, ord]
 
 type lval = { base : base; offset : offset list }
@@ -156,6 +164,28 @@ let compare_lval { base = base1; offset = offset1 }
   | 0 -> List.compare compare_offset offset1 offset2
   | other -> other
 
+let equal_lval (lval1 : lval) (lval2 : lval) : bool =
+  Int.equal (compare_lval lval1 lval2) 0
+
+module Base_map = Map.Make (struct
+  type t = base
+
+  let compare = compare_base
+end)
+
+(* The paths of an input below it. *)
+module Path_set = Set.Make (struct
+  type t = offset list
+
+  let compare = List.compare compare_offset
+end)
+
+module Lval_map = Map.Make (struct
+  type t = lval
+
+  let compare = compare_lval
+end)
+
 let show_arg { name = s; index = i } = Printf.sprintf "arg(%s#%d)" s i
 
 let show_base base =
@@ -163,6 +193,19 @@ let show_base base =
   | BGlob name -> fst name.ident
   | BThis -> "this"
   | BArg arg -> show_arg arg
+  | BCapture name -> "capture(" ^ fst name.ident ^ ")"
+
+type formal = Param of arg | Captured of IL.name [@@deriving ord]
+
+let equal_formal (formal1 : formal) (formal2 : formal) : bool =
+  Int.equal (compare_formal formal1 formal2) 0
+
+let base_of_formal (formal : formal) : base =
+  match formal with
+  | Param arg -> BArg arg
+  | Captured var -> BCapture var
+
+let show_formal (formal : formal) : string = show_base (base_of_formal formal)
 
 let show_offset offset =
   match offset with
@@ -171,6 +214,7 @@ let show_offset offset =
   | Ostr s -> Printf.sprintf "[%s]" s
   | Oslice n -> Printf.sprintf "[%d..]" n
   | Oany -> "[*]"
+  | Ofld_any -> ".*"
 
 let show_offset_list offset =
   offset |> List_.map show_offset |> String.concat ""
@@ -215,6 +259,7 @@ match o.o with
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
 | IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
 | IL.Index _ -> Oany
+| IL.DotDynamic _ -> Ofld_any
 | IL.Slice n -> Oslice n
 
 let offset_of_rev_IL_offset lang ~rev_offset =
@@ -252,7 +297,9 @@ let rev_IL_offset_of_offset offset =
                  oorig = NoOrig;
                }
          | Oslice n -> Some IL.{ o = Slice n; oorig = NoOrig }
-         | Oany -> None)
+         | Oany
+         | Ofld_any ->
+             None)
   in
   os
   |> List.fold_left
@@ -282,9 +329,20 @@ type source = {
          are polymorphic in label.
       *)
   precondition : (taint list * R.precondition) option;
+  group : Metavariable.bindings option;
+      (* [Taint.mli]. *)
 }
 
-and orig = Src of source | Var of lval | Shape_var of lval | Control
+and source_grouping = By_message | By_bindings | Each_source
+
+and orig =
+  | Src of source
+  | Var of lval
+  | Shape_var of lval
+  | Call_result of call_result
+  | Control
+
+and call_result = { callee : lval; args : taint list IL.argument list }
 (* THINK(iago): We could group 'Var', 'Shape_var' and 'Control' into a single
  * 'Var' with a "kind" parameter. But we need to be careful about perf when
  * adding an extra level of indirection here (due to memory allocations). *)
@@ -297,24 +355,6 @@ let compare_precondition (_ts1, f1) (_ts2, f2) =
      See 'pick_taint' below for details. *)
   R.compare_precondition f1 f2
 
-(* [String.compare (a1 ^ b1) (a2 ^ b2)], without building the strings. *)
-let compare_concat (a1 : string) (b1 : string) (a2 : string) (b2 : string) : int
-    =
-  let n1 = String.length a1 + String.length b1
-  and n2 = String.length a2 + String.length b2 in
-  let char_at (a : string) (b : string) (i : int) : char =
-    let la = String.length a in
-    if i < la then String.unsafe_get a i else String.unsafe_get b (i - la)
-  in
-  let rec loop (i : int) : int =
-    if i >= n1 || i >= n2 then Int.compare n1 n2
-    else
-      match Char.compare (char_at a1 b1 i) (char_at a2 b2 i) with
-      | 0 -> loop (i + 1)
-      | c -> c
-  in
-  loop 0
-
 let compare_source
     { origin = pm1, ts1; label = label1; precondition = precondition1; _ }
     { origin = pm2, ts2; label = label2; precondition = precondition2; _ } =
@@ -324,7 +364,11 @@ let compare_source
    *)
   match compare_matches pm1 pm2 with
   | 0 -> (
-      match compare_concat label1 ts1.R.label label2 ts2.R.label with
+      match
+        match String.compare label1 label2 with
+        | 0 -> String.compare ts1.R.label ts2.R.label
+        | other -> other
+      with
       | 0 -> (
           (* It's important that we include preconditions as a distinguishing factor
              between two taints.
@@ -345,22 +389,28 @@ let compare_source
       | other -> other)
   | other -> other
 
-let compare_orig orig1 orig2 =
+let rec compare_orig orig1 orig2 =
   match (orig1, orig2) with
   | Src p, Src q -> compare_source p q
   | Var lv1, Var lv2 -> compare_lval lv1 lv2
   | Shape_var lv1, Shape_var lv2 -> compare_lval lv1 lv2
+  | Call_result c1, Call_result c2 -> (
+      match compare_lval c1.callee c2.callee with
+      | 0 -> List.compare (IL.compare_argument_by_name (List.compare compare_taint)) c1.args c2.args
+      | other -> other)
   | Control, Control -> 0
   (* constructor "smaller than" ... *)
-  | Src _, (Var _ | Shape_var _ | Control) -> -1
-  | Var _, (Shape_var _ | Control) -> -1
-  | Shape_var _, Control -> -1
+  | Src _, (Var _ | Shape_var _ | Call_result _ | Control) -> -1
+  | Var _, (Shape_var _ | Call_result _ | Control) -> -1
+  | Shape_var _, (Call_result _ | Control) -> -1
+  | Call_result _, Control -> -1
   (* constructor "greater than" ... *)
   | Var _, Src _ -> 1
   | Shape_var _, (Var _ | Src _) -> 1
-  | Control, (Shape_var _ | Var _ | Src _) -> 1
+  | Call_result _, (Shape_var _ | Var _ | Src _) -> 1
+  | Control, (Call_result _ | Shape_var _ | Var _ | Src _) -> 1
 
-let compare_taint taint1 taint2 =
+and compare_taint taint1 taint2 =
   (* THINK: Right now we disregard the trace because we just want to keep one
    * potential path. *)
   if phys_equal taint1 taint2 then 0 else compare_orig taint1.orig taint2.orig
@@ -416,6 +466,15 @@ and show_taint taint =
   | Src src -> show_source src
   | Var lval -> "'" ^ show_lval lval
   | Shape_var lval -> "'<" ^ show_lval lval ^ ">"
+  | Call_result { callee; args } ->
+      Printf.sprintf "'%s(%s)" (show_lval callee)
+        (args
+        |> List_.map (fun (arg : taint list IL.argument) ->
+               let show (taints : taint list) = List_.map show_taint taints |> String.concat " + " in
+               match arg with
+               | IL.Unnamed taints -> show taints
+               | IL.Named ((name, _), taints) -> name ^ "=" ^ show taints)
+        |> String.concat ", ")
   | Control -> "'<control>"
 
 (*****************************************************************************)
@@ -428,6 +487,20 @@ let lift_taint (t : taint) : guarded_taint = { taint = t; guard = EG.top }
 
 let with_guard (g : EG.t) (gt : guarded_taint) : guarded_taint =
   { gt with guard = EG.compose_and gt.guard g }
+
+(* A label, a guard and the bindings of the metavariables that a rule's
+   message refers to: sources of one class give the same findings. *)
+module Source_class_map = Map.Make (struct
+  type t = string * EG.t * Metavariable.bindings
+
+  let compare ((label1, guard1, env1) : t) ((label2, guard2, env2) : t) : int =
+    match String.compare label1 label2 with
+    | 0 -> (
+        match EG.compare guard1 guard2 with
+        | 0 -> compare_metavar_env env1 env2
+        | other -> other)
+    | other -> other
+end)
 
 module Taint_set = struct
   (* NOTE "Taint sets"
@@ -541,8 +614,261 @@ module Taint_set = struct
   (* Hedge union: non-overlapping subtrees are linked without visiting
    * their elements; colliding keys merge like [add] (set1 is the
    * incoming side, matching the previous [fold add set1 set2]). *)
-  and union set1 set2 =
+  and union set1 set2 = union_unbounded set1 set2 |> bound
+
+  and union_unbounded set1 set2 =
     Taints.union (fun _taint b1 b2 -> Some (merge_bundles b1 b2)) set1 set2
+
+  (* Each bound looks at the whole set only, so the bounds give one set
+     whether they are applied after every union or once after several. *)
+  and bound (set : t) : t =
+    set |> bound_sources |> bound_placeholders |> bound_call_results
+
+  (* A set keeps the taint variables ([Var], [Shape_var]) of at most
+     [Limits_semgrep.taint_MAX_PLACEHOLDERS_PER_INPUT] paths of each input,
+     the two variables of a path counting once; past it, those of the input become
+     the variables of the input itself, [Var] for the taint of its value and
+     [Shape_var] for every taint below it, which hold them all at a coarser
+     path ([Sig_inst.instantiate_taint_var]). A set that has [Shape_var] of
+     the input itself keeps no other variable of the input at a non-empty
+     path. *)
+  and bound_placeholders (set : t) : t =
+    (* The taint variables that count towards the bound of their input: all
+       but [Var] of the input itself, with whether it is [Shape_var] of the
+       input itself. *)
+    let counted (key : taint) : (base * offset list) option =
+      match key.orig with
+      | Var { offset = []; _ }
+      | Src _
+      | Call_result _
+      | Control ->
+          None
+      | Var { base; offset }
+      | Shape_var { base; offset } ->
+          Some (base, offset)
+    in
+    (* Taint variables come after the sources and before the other taints
+       in the order of the set ([compare_orig]). *)
+    match
+      Taints.find_first_opt
+        (fun (key : taint) ->
+          match key.orig with
+          | Src _ -> false
+          | Var _
+          | Shape_var _
+          | Call_result _
+          | Control ->
+              true)
+        set
+    with
+    | None -> set
+    | Some (first, _) ->
+        (* By input, the paths of its counted variables and their guards;
+           the empty path is that of [Shape_var] of the input itself. *)
+        let counts : (Path_set.t * EG.t) Base_map.t =
+          Taints.to_seq_from first set
+          |> Seq.take_while (fun ((key, _) : taint * guarded_taint) ->
+                 match key.orig with
+                 | Var _
+                 | Shape_var _ ->
+                     true
+                 | Src _
+                 | Call_result _
+                 | Control ->
+                     false)
+          |> Seq.fold_left
+               (fun (counts : (Path_set.t * EG.t) Base_map.t)
+                    ((key, b) : taint * guarded_taint) ->
+                 match counted key with
+                 | None -> counts
+                 | Some (base, path) ->
+                     Base_map.update base
+                       (function
+                         | None -> Some (Path_set.singleton path, b.guard)
+                         | Some (paths, guard) ->
+                             Some (Path_set.add path paths, EG.compose_or guard b.guard))
+                       counts)
+               Base_map.empty
+        in
+        (* The variable of the whole value of an input holds every other
+           variable of the input, so a set that has it keeps no other. *)
+        let collapsed =
+          Base_map.filter
+            (fun (_ : base) ((paths, _) : Path_set.t * EG.t) ->
+              let n = Path_set.cardinal paths in
+              n > Limits_semgrep.taint_MAX_PLACEHOLDERS_PER_INPUT
+              || (Path_set.mem [] paths && n > 1))
+            counts
+        in
+        if Base_map.is_empty collapsed then set
+        else
+          Base_map.fold
+            (fun (base : base) ((_, guard) : Path_set.t * EG.t) (acc : t) ->
+              acc
+              |> add { taint = { orig = Var { base; offset = [] }; tokens = [] }; guard }
+              |> add { taint = { orig = Shape_var { base; offset = [] }; tokens = [] }; guard })
+            collapsed
+            (Taints.filter
+               (fun (key : taint) (_ : guarded_taint) ->
+                 match counted key with
+                 | Some (base, _) -> not (Base_map.mem base collapsed)
+                 | None -> true)
+               set)
+
+  (* A set keeps at most [Limits_semgrep.taint_MAX_SOURCES_PER_LABEL] sources
+     without a precondition of each label, guard and group, the least in the
+     order of the set: a sink needs one source of a label under a guard, and
+     sources of different groups give different findings, so the others only
+     add alternative traces. A source that gives a finding of its own (no
+     group) is kept. *)
+  and bound_sources (set : t) : t =
+    (* A set of at most [Limits_semgrep.taint_MAX_SOURCES_PER_LABEL] sources is within the bound
+       whatever their labels; the walk stops at the first source past it. *)
+    let rec more_sources_than (n : int) (seq : (taint * guarded_taint) Seq.t) : bool =
+      match seq () with
+      | Seq.Nil -> false
+      | Seq.Cons ((_, (b : guarded_taint)), rest) -> (
+          match b.taint.orig with
+          | Src _ -> n <= 0 || more_sources_than (n - 1) rest
+          | Var _
+          | Shape_var _
+          | Call_result _
+          | Control ->
+              false)
+    in
+    if not (more_sources_than Limits_semgrep.taint_MAX_SOURCES_PER_LABEL (Taints.to_seq set)) then set
+    else
+      (* By label, guard and group, the number of sources without a
+         precondition kept. *)
+      Taints.to_seq set
+      |> Seq.take_while (fun ((key, _) : taint * guarded_taint) ->
+             match key.orig with
+             | Src _ -> true
+             | Var _
+             | Shape_var _
+             | Call_result _
+             | Control ->
+                 false)
+      |> Seq.fold_left
+           (fun ((counts, kept) : int Source_class_map.t * t)
+                ((key, (b : guarded_taint)) : taint * guarded_taint) ->
+             match key.orig with
+             (* Which of the sources with a precondition holds is known only
+                where the precondition is solved, so they are kept. *)
+             | Src { precondition = Some _; _ }
+             | Src { group = None; _ } ->
+                 (counts, kept)
+             | Src ({ precondition = None; group = Some group; _ } as src) ->
+                 let source_class = (src.label, b.guard, group) in
+                 let n = Source_class_map.find_opt source_class counts |> Option.value ~default:0 in
+                 if n >= Limits_semgrep.taint_MAX_SOURCES_PER_LABEL then
+                   (counts, Taints.remove key kept)
+                 else (Source_class_map.add source_class (n + 1) counts, kept)
+             | Var _
+             | Shape_var _
+             | Call_result _
+             | Control ->
+                 (counts, kept))
+           (Source_class_map.empty, set)
+      |> snd
+
+  (* A set keeps one [Call_result] of each callee: the result of a call grows
+     with its arguments, so one result whose arguments are those of the others,
+     united position by position, holds them all. *)
+  and bound_call_results (set : t) : t =
+    (* The results come after the taint variables in the order of the set
+       ([compare_orig]). *)
+    match
+      Taints.find_first_opt
+        (fun (key : taint) ->
+          match key.orig with
+          | Src _
+          | Var _
+          | Shape_var _ ->
+              false
+          | Call_result _
+          | Control ->
+              true)
+        set
+    with
+    | None -> set
+    | Some (first, _) ->
+        (* Positional arguments of one position unite, and named arguments
+           of one name, as a call matches them to the parameters
+           ([Sig_inst.find_pos_in_actual_args]); an argument of one side only
+           is kept. *)
+        let union_args (args1 : taint list IL.argument list)
+            (args2 : taint list IL.argument list) : taint list IL.argument list =
+          let unite (a : taint list) (b : taint list) : taint list =
+            List.sort_uniq compare_taint (a @ b)
+          in
+          let split (args : taint list IL.argument list) :
+              taint list list * (IL.ident * taint list) list =
+            List.partition_map
+              (function
+                | IL.Unnamed taints -> Either.Left taints
+                | IL.Named (id, taints) -> Either.Right (id, taints))
+              args
+          in
+          let positional1, named1 = split args1 in
+          let positional2, named2 = split args2 in
+          let rec unite_positional (p1 : taint list list) (p2 : taint list list) :
+              taint list list =
+            match (p1, p2) with
+            | [], rest
+            | rest, [] ->
+                rest
+            | a :: rest1, b :: rest2 -> unite a b :: unite_positional rest1 rest2
+          in
+          let named =
+            List.fold_left
+              (fun (acc : (IL.ident * taint list) list) ((id, taints) : IL.ident * taint list) ->
+                match List.partition (fun ((id', _) : IL.ident * taint list) ->
+                          String.equal (fst id') (fst id)) acc with
+                | [ (id', taints') ], rest -> (id', unite taints' taints) :: rest
+                | _ -> (id, taints) :: acc)
+              named1 named2
+            |> List.sort (fun ((id1, _) : IL.ident * taint list) ((id2, _) : IL.ident * taint list) ->
+                   String.compare (fst id1) (fst id2))
+          in
+          List_.map (fun (taints : taint list) -> IL.Unnamed taints)
+            (unite_positional positional1 positional2)
+          @ List_.map (fun ((id, taints) : IL.ident * taint list) -> IL.Named (id, taints)) named
+        in
+        (* By callee, its results, their arguments united position by
+           position, and their guards. *)
+        let by_callee : (taint list * taint list IL.argument list * EG.t) Lval_map.t =
+          Taints.to_seq_from first set
+          |> Seq.fold_left
+               (fun (acc : (taint list * taint list IL.argument list * EG.t) Lval_map.t)
+                    ((key, b) : taint * guarded_taint) ->
+                 match key.orig with
+                 | Call_result { callee; args } ->
+                     Lval_map.update callee
+                       (function
+                         | None -> Some ([ key ], args, b.guard)
+                         | Some (keys, args', guard) ->
+                             Some (key :: keys, union_args args' args, EG.compose_or guard b.guard))
+                       acc
+                 | Src _
+                 | Var _
+                 | Shape_var _
+                 | Control ->
+                     acc)
+               Lval_map.empty
+        in
+        Lval_map.fold
+          (fun (callee : lval) ((keys, args, guard) : taint list * taint list IL.argument list * EG.t)
+               (acc : t) ->
+            match keys with
+            | []
+            | [ _ ] ->
+                acc
+            | _ :: _ :: _ ->
+                add
+                  { taint = { orig = Call_result { callee; args }; tokens = [] }; guard }
+                  (List.fold_left (fun (acc : t) (key : taint) -> Taints.remove key acc) acc keys))
+          by_callee set
 
   and of_list bundles =
     List.fold_left (fun set b -> add b set) Taints.empty bundles
@@ -555,6 +881,7 @@ module Taint_set = struct
     match (taint1.orig, taint2.orig) with
     | Var _, Var _
     | Shape_var _, Shape_var _
+    | Call_result _, Call_result _
     | Control, Control ->
         (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
         if List.compare_lengths taint1.tokens taint2.tokens < 0 then taint1
@@ -609,7 +936,7 @@ module Taint_set = struct
           List.compare_lengths taint1.tokens taint2.tokens < 0
         then taint1
         else taint2
-    | (Src _ | Var _ | Shape_var _ | Control), _ ->
+    | (Src _ | Var _ | Shape_var _ | Call_result _ | Control), _ ->
         Log.err (fun m ->
             m "Taint_set.pick_taint: Ooops, the impossible happened!");
         taint2
@@ -656,8 +983,10 @@ module Taint_set = struct
 
   (* Union the per-element results: identity-equal taints from different
      [f] outputs fuse guards ([compose_or]) and keep the best taint
-     ([pick_best_taint]), as in [add]/[union]. *)
-  let bind set f = Taints.fold (fun _ b acc -> union (f b) acc) set empty
+     ([pick_best_taint]), as in [add]/[union]. The bounds are applied once,
+     to the whole result. *)
+  let bind set f =
+    Taints.fold (fun _ b acc -> union_unbounded (f b) acc) set empty |> bound
   let iter f set = Taints.iter (fun _ b -> f b) set
   let fold f set acc = Taints.fold (fun _ b acc -> f b acc) set acc
   let filter f set = Taints.filter (fun _ b -> f b) set
@@ -700,7 +1029,72 @@ module Taint_set = struct
     set |> map (fun (b : guarded_taint) -> { b with taint = f b.taint })
 end
 
+(* A call of [callee] in an argument of a call of [callee] is replaced by its
+   own arguments: the return of a signature is distributive over the union of
+   the argument taints, so [callee(a + callee(b))] returns the taints of
+   [callee(a + b)]. Nesting is then bounded by the number of callees. *)
+let call_result (callee : lval) (args : taint list IL.argument list) : orig =
+  (* An argument holds one taint per origin, as a taint set does. *)
+  let canonical (taints : taint list) : taint list =
+    taints |> Taint_set.of_taint_list |> Taint_set.to_taint_list
+  in
+  let rec without_calls_of (taints : taint list) : taint list =
+    taints
+    |> List.concat_map (fun (taint : taint) ->
+           match taint.orig with
+           | Call_result call when equal_lval call.callee callee ->
+               List.concat_map
+                 (fun (arg : taint list IL.argument) -> without_calls_of (IL.value_of_argument arg))
+                 call.args
+           | Call_result call ->
+               [
+                 {
+                   taint with
+                   orig =
+                     Call_result
+                       {
+                         call with
+                         args =
+                           List.map
+                             (IL.map_argument (fun (arg : taint list) ->
+                                  canonical (without_calls_of arg)))
+                             call.args;
+                       };
+                 };
+               ]
+           | Src _
+           | Var _
+           | Shape_var _
+           | Control ->
+               [ taint ])
+  in
+  Call_result
+    {
+      callee;
+      args =
+        args
+        |> List.map
+             (IL.map_argument (fun (arg : taint list) -> canonical (without_calls_of arg)));
+    }
+
 type taints = Taint_set.t
+
+let single_var (taints : taints) : lval option =
+  match
+    taints |> Taint_set.to_taint_list
+    |> List_.filter_map (fun (taint : taint) ->
+           match taint.orig with
+           | Var lval -> Some lval
+           | Src _
+           | Shape_var _
+           | Call_result _
+           | Control ->
+               None)
+  with
+  | [ lval ] -> Some lval
+  | []
+  | _ :: _ :: _ ->
+      None
 
 let show_taints ?(truncate_guards = true) taints =
   taints |> Taint_set.elements
@@ -801,6 +1195,7 @@ and labels_in_taints taints =
          match b.taint.orig with
          | Var _
          | Shape_var _
+         | Call_result _
          | Control ->
              has_poly_taint := true
          | Src { label; precondition = None; _ } ->
@@ -855,6 +1250,7 @@ let filter_relevant_taints requires taints =
          | Src src -> LabelSet.mem src.label labels
          | Var _
          | Shape_var _
+         | Call_result _
          | Control ->
              true)
 
@@ -863,6 +1259,7 @@ let rec map_preconditions f taint =
   match taint.orig with
   | Var _
   | Shape_var _
+  | Call_result _
   | Control ->
       Some taint
   | Src { precondition = None; _ } -> Some taint
@@ -892,7 +1289,18 @@ let rec map_preconditions f taint =
 (* New taints *)
 (*****************************************************************************)
 
-let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
+let src_of_pm ~(grouping : source_grouping) ~incoming (pm, (source : Rule.taint_source)) =
+  let group =
+    match grouping with
+    | By_message ->
+        Some
+          (List.filter
+             (fun ((mvar, _) : string * Metavariable.mvalue) ->
+               String_.contains ~term:mvar pm.Core_match.rule_id.message)
+             pm.env)
+    | By_bindings -> Some pm.env
+    | Each_source -> None
+  in
   let pc = R.get_source_precondition source in
   let relevant_incoming = filter_relevant_taints pc incoming in
   (* We don't expect to be able to solve preconditions here, but we need to try
@@ -913,6 +1321,7 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
              origin = (pm, source);
              label = source.label;
              precondition = None;
+             group;
            })
   | None ->
       let taints_list = Taint_set.to_taint_list relevant_incoming in
@@ -928,14 +1337,15 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
              origin = (pm, source);
              label = source.label;
              precondition;
+             group;
            })
 
-let taint_of_pm ~incoming pm =
-  match src_of_pm ~incoming pm with
+let taint_of_pm ~grouping ~incoming pm =
+  match src_of_pm ~grouping ~incoming pm with
   | Some orig -> Some { orig; tokens = [] }
   | None -> None
 
-let taints_of_pms ~incoming pms =
+let taints_of_pms ~grouping ~incoming pms =
   let max_ITERS =
     (* Just in case, we set a limit. *)
     3
@@ -950,7 +1360,7 @@ let taints_of_pms ~incoming pms =
     else
       let incoming = taints |> Taint_set.union incoming in
       let new_taint_list, pms_left =
-        pms_i |> Common2.fpartition (taint_of_pm ~incoming)
+        pms_i |> Common2.fpartition (taint_of_pm ~grouping ~incoming)
       in
       match new_taint_list with
       | [] -> taints

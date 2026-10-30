@@ -507,6 +507,9 @@ let taint_config_of_spec_matches
                 project_root = None;
                 rule_id = fst rule.R.id;
                 options;
+                source_grouping =
+                  Taint_rule_inst.source_grouping
+                    ~report_each_source:xconf.report_each_source options;
                 track_control =
                 spec.sources |> snd
                 |> List.exists (fun (src : R.taint_source) -> src.source_control);

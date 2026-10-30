@@ -46,6 +46,9 @@ val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
 (* THINK: Perhaps keep propagators outside of this environment? *)
 val propagate_to : Lang.t -> Dataflow_var_env.var -> Taint.taints -> env -> env
 
+val has_taints_to_propagate : env -> bool
+(** Whether a propagator holds taint for its destinations. *)
+
 val find_var : env -> IL.name -> cell option
 (** Find the 'cell' of a variable. *)
 
@@ -84,6 +87,14 @@ val find_poly :
         Some ({'t.u}, Bot)
   *)
 
+val find_recorded_poly :
+  lang:Lang.t ->
+  env -> IL.name -> Taint.offset list -> (Taint.taints * shape) option
+(** [find_poly] that follows the recorded cells by their exact offsets: the
+    taints and shape of the cell recorded at the offset, where [find_poly]
+    joins every cell an index [Oany] or a slice [Oslice] covers. Past the
+    recorded cells it is [find_poly] from the last one. *)
+
 val find_lval_poly : Lang.t -> env -> IL.lval -> (Taint.taints * shape) option
 (** Same as 'find_poly' for l-values. *)
 
@@ -107,6 +118,13 @@ val clean : Lang.t -> env -> IL.lval -> env
     x.a_1. ... . a_N. So, cleaning an element of an array such as x[1] would
     clean the entire array! This seems drastic but it should help reducing FPs.
  *)
+
+val filter_map_cells : (cell -> cell option) -> env -> env
+(** Every cell of the environment replaced by the function's result on it;
+    a variable for which the function returns [None] is removed. *)
+
+val remove_vars : IL.NameSet.t -> env -> env
+(** The environment without the variables, which no later node reads. *)
 
 val filter_tainted : (IL.name -> bool) -> env -> env
 val add_control_taints : env -> Taint.taints -> env
@@ -164,3 +182,24 @@ val equal_by_lval : Lang.t -> env -> env -> IL.lval -> bool
 
 val to_string : env -> string
 val seq_of_tainted : env -> (IL.name * cell) Seq.t
+
+val with_closure : Shape_and_sig.Shape.closure -> t -> t
+(** [with_closure ~lang closure env] is [env] where each variable that
+    [closure] captures holds its value in the closure: the environment in which
+    a call of the closure reads its captured variables. *)
+
+val closures : t -> Shape_and_sig.Shape.closure Shape_and_sig.ClosureMap.t
+(** The closures that the [Closed] lambda references in [env] refer to, by
+    lambda. *)
+
+val find_closure : t -> Shape_and_sig.Closure_key.t -> Shape_and_sig.Shape.closure list
+(** The closures of a lambda in the table of [env] that a reference to the
+    key refers to ([Shape_and_sig.find_closures]). *)
+
+val add_closures :
+  lang:Lang.t -> Shape_and_sig.Shape.closure Shape_and_sig.ClosureMap.t -> t -> t
+(** [add_closures ~lang closures env] is [env] with [closures] joined into its
+    table, by lambda. *)
+
+val set_closures : Shape_and_sig.Shape.closure Shape_and_sig.ClosureMap.t -> t -> t
+(** [env] with [closures] as its table. *)

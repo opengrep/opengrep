@@ -1,0 +1,10 @@
+rules:
+- id: js_wide_object_keeps_clean_fields
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

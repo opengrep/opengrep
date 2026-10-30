@@ -1,0 +1,16 @@
+rules:
+  - id: test-parameterless-methods
+    message: A parameter of the enclosing function reaches the sink
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function (..., $INPUT, ...) {
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - pattern: sink(...)

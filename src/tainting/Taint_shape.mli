@@ -43,10 +43,22 @@ val record_or_dict_like_obj :
     a record/dict expression. *)
 
 val unify_cell : lang:Lang.t -> cell -> cell -> cell
-(** Unify two 'cell's into one. *)
+(** Unify two 'cell's into one. Two different functions join into [Funs]. *)
+
+val funs_of_list : lang:Lang.t -> shape list -> shape
+(** The functions of a list as one shape, those that are one function joined:
+    [Bot] for none, the function for one, and [Funs] ordered otherwise. *)
+
+val map_funs : (shape -> shape) -> shape list -> shape
+(** [Funs] with the function applied to each member, which keeps the
+    member's identity as a function. *)
 
 val unify_shape : lang:Lang.t -> shape -> shape -> shape
 (** Unify two 'shapes's into one. *)
+
+val without_parameters : cell -> cell option
+(** [cell] without the inputs that stand for the parameters of the function
+    analysed. [None] when nothing else is left. *)
 
 val gather_all_taints_in_cell : cell -> Taint.taints
 (** Gather and union all taints reachable through a cell. *)
@@ -140,13 +152,34 @@ val update_offset_and_unify :
 val clean_cell : Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
 
+val bound_closure : max_depth:int -> closure -> closure
+(** Bound the captured values of a closure, each to [max_depth] levels of
+ * ['Obj'] nesting as [truncate_shape] does. *)
+
+val bound_closures :
+  max_depth:int -> closure Shape_and_sig.ClosureMap.t -> closure Shape_and_sig.ClosureMap.t
+(** [bound_closure] on every closure of a table. *)
+
+val unify_closure : lang:Lang.t -> closure -> closure -> closure
+(** The closure of a lambda whose captured variables hold the join of the
+ * values of the two closures. *)
+
+val unify_closures :
+  lang:Lang.t ->
+  closure Shape_and_sig.ClosureMap.t ->
+  closure Shape_and_sig.ClosureMap.t ->
+  closure Shape_and_sig.ClosureMap.t
+(** [unify_closure] on the closures of the same lambda in two tables. *)
+
 val truncate_shape : max_depth:int -> shape -> shape
 (** Widen a shape to at most [max_depth] levels of ['Obj'] nesting. Subtrees
  * below the cutoff collapse into the cutoff cell's taints (so their taints
  * remain reachable, with less offset precision); ['Clean] markers below the
- * cutoff are dropped; ['Fun'] shapes are left untouched. Bounds the
- * ascending shape chain of self-recursive tree-builders, which have no
- * fixpoint in the shape domain. *)
+ * cutoff are dropped; ['Fun'] shapes are left untouched. An object with
+ * more than [Limits_semgrep.taint_MAX_OBJ_FIELDS] fields folds into its own
+ * taint the fields through which no call can dispatch, except those known
+ * clean. Bounds the ascending shape chain of self-recursive tree-builders,
+ * which have no fixpoint in the shape domain. *)
 
 val truncate_effect :
   max_depth:int -> Shape_and_sig.Effect.t -> Shape_and_sig.Effect.t
@@ -173,8 +206,41 @@ val join_returns : lang:Lang.t -> Shape_and_sig.Effects.t -> Shape_and_sig.Effec
     joins the values a call returns with [unify_cell]; the other effects are
     unchanged. *)
 
-val widen_signature_taints : Shape_and_sig.Signature.t -> Shape_and_sig.Signature.t
-(** Every taint variable of a parameter at a non-empty path, in every taint
-    set and shape of the signature, replaced by the [Var] and the [Shape_var]
-    of the parameter, and the object shape of a returned value folded into
-    its taints: the widening of a recursive function's signature. *)
+val widen_signature_taints :
+  lang:Lang.t -> Shape_and_sig.Signature.t -> Shape_and_sig.Signature.t
+(** Every taint variable of a parameter at a path longer than a signature
+    keeps ([max_poly_offset]), in every taint set and shape of the
+    signature, replaced by the [Var] and the [Shape_var] of its prefix of that
+    length, and the object shape of a returned value folded into its taints:
+    the widening of a recursive function's signature. *)
+
+val map_effect_shapes :
+  widen:(shape -> shape) -> Shape_and_sig.Effect.t -> Shape_and_sig.Effect.t
+(** The effect with [widen] applied to every shape it stores: the shape of a
+    [ToReturn] and the argument shapes of a [ToSinkInCall]. *)
+
+val signatures_and_closures :
+  lang:Lang.t ->
+  find_closure:(Shape_and_sig.Closure_key.t -> closure list) ->
+  shape ->
+  (Shape_and_sig.Signature.t * closure) list
+(** The signature of each function a value may hold and the values its
+    captured variables hold: none for a [Fun] or an [Open] reference, the
+    join of the closures that [find_closure] gives for the creation sites of
+    a [Closed] one. *)
+
+val bound_closure_table :
+  lang:Lang.t ->
+  closure Shape_and_sig.ClosureMap.t ->
+  closure Shape_and_sig.ClosureMap.t
+(** The table where the closures of a lambda with more than
+    [Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA] creation sites are joined
+    into the closure of [Shape_and_sig.Creation_site.any]. *)
+
+val reachable_closures :
+  Shape_and_sig.Effects.t ->
+  closure Shape_and_sig.ClosureMap.t ->
+  closure Shape_and_sig.ClosureMap.t
+(** [reachable_closures effects closures] is [closures] restricted to the
+    closures that the [Closed] references in [effects] refer to, and to those
+    that the values of these refer to. *)
