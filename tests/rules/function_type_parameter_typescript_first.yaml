@@ -1,0 +1,7 @@
+rules:
+  - id: function-type-parameter-typescript-first
+    message: a callback with a parameter called err
+    languages: [typescript, javascript]
+    severity: INFO
+    pattern: |
+      function $F(cb: (err) => void) {}

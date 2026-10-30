@@ -3,4 +3,5 @@ rules:
     message: a function type that takes a Foo
     languages: [javascript]
     severity: INFO
-    pattern: type $T = (Foo) => void
+    pattern: |
+      type $T = ($X: Foo) => void

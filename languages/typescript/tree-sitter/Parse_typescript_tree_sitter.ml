@@ -3501,25 +3501,25 @@ and type_ (env : env) (x : CST.type_) : type_ =
       in
       mk_functype (params, Some type_)
   | `Func_type (`Prim_type_EQGT_type (v1, v2, v3)) -> (
-      (* Flow's `T => U`; with `T` a parenthesised name, TypeScript reads a
-       * parameter called that name *)
+      (* Flow's `T => U`; `T` a parenthesised name is a parameter *)
       let arrow = token env v2 (* "=>" *) in
       let ret = Some (type_ env v3) in
-      let type_only () : type_ =
-        mk_functype
-          ((arrow, [ ParamTypeOnly (None, primary_type env v1) ], arrow), ret)
+      let name =
+        match v1 with
+        | `Choice_paren_type (`Paren_type (lp, x, rp)) ->
+            function_type_parameter_name env x
+            |> Option.map (fun id -> (lp, id, rp))
+        | _ -> None
       in
-      match (env.extra.annotations, v1) with
-      | `Typescript, `Choice_paren_type (`Paren_type (lp, x, rp)) -> (
-          match function_type_parameter_name env x with
-          | Some id ->
-              mk_functype
-                ( (token env lp, [ ParamClassic (mk_param id) ], token env rp),
-                  ret )
-          | None -> type_only ())
-      | `Typescript, _
-      | `Flow, _ ->
-          type_only ())
+      match name with
+      | Some (lp, id, rp) ->
+          let params =
+            (token env lp, [ ParamClassic (mk_param id) ], token env rp)
+          in
+          mk_functype (function_type_parameters env params, ret)
+      | None ->
+          mk_functype
+            ((arrow, [ ParamTypeOnly (None, primary_type env v1) ], arrow), ret))
   | `Func_type
       (`Opt_type_params_flow_func_type_params_EQGT_type (v1, v2, v3, v4)) ->
       let _tparams =
@@ -4021,7 +4021,9 @@ and definitions (env : env) (x : CST.declaration) : definition list =
 
 (* A function-type parameter without a type annotation is a type in Flow,
  * `(Foo) => void` takes a `Foo`, and a name in TypeScript, `(string) => void`
- * takes a parameter called `string`. *)
+ * takes a parameter called `string`. A rule for both languages has one pattern,
+ * which carries the TypeScript reading, so the Flow reading keeps the name and
+ * adds the type. *)
 and function_type_parameters (env : env)
     ((open_, params, close) : parameter list bracket) : parameter list bracket
     =
@@ -4029,16 +4031,9 @@ and function_type_parameters (env : env)
     match (env.extra.annotations, x) with
     | ( `Flow,
         ParamClassic
-          { p_name; p_type = None; p_default = None; p_dots; p_attrs = [] } ) ->
-        ParamTypeOnly (p_dots, TyName [ p_name ])
-    | ( `Flow,
-        ParamPattern
-          {
-            pp_pattern = Apply (IdSpecial (Spread, dots), (_, [ Id name ], _));
-            pp_type = None;
-            pp_default = None;
-          } ) ->
-        ParamTypeOnly (Some dots, TyName [ name ])
+          ({ p_name; p_type = None; p_default = None; p_attrs = []; _ } as p) )
+      ->
+        ParamClassic { p with p_type = Some (TyName [ p_name ]) }
     | `Flow, _
     | `Typescript, _ ->
         x
@@ -4064,14 +4059,20 @@ and flow_function_type_parameters (env : env)
   let param (x : CST.anon_choice_type_1c27c93) : parameter =
     match x with
     | `Type x -> (
-        match (env.extra.annotations, function_type_parameter_name env x) with
-        | `Typescript, Some id -> ParamClassic (mk_param id)
-        | `Typescript, None
-        | `Flow, _ ->
-            ParamTypeOnly (None, type_ env x))
-    | `Rest_type (v1, v2) ->
+        match function_type_parameter_name env x with
+        | Some id -> ParamClassic (mk_param id)
+        | None -> ParamTypeOnly (None, type_ env x))
+    | `Rest_type (v1, v2) -> (
         let dots = token env v1 (* "..." *) in
-        ParamTypeOnly (Some dots, type_ env v2)
+        match function_type_parameter_name env v2 with
+        | Some id ->
+            ParamPattern
+              {
+                pp_pattern = Apply (IdSpecial (Spread, dots), fb [ idexp id ]);
+                pp_type = None;
+                pp_default = None;
+              }
+        | None -> ParamTypeOnly (Some dots, type_ env v2))
     | `Requ_param x -> formal_parameter env (`Requ_param x)
     | `Opt_param x -> formal_parameter env (`Opt_param x)
   in
@@ -4250,7 +4251,7 @@ let parse ~(annotations : annotations) ?dialect file =
       | Program p -> p
       | _ -> failwith "not a program")
 
-let parse_pattern ~(annotations : annotations) str =
+let parse_pattern str =
   H.wrap_parser
     (* TODO Should we use Tree_sitter_tsx so that we permit TSX constructs in
      * patterns? Or try both, since TSX is not strictly a superset? *)
@@ -4261,7 +4262,7 @@ let parse_pattern ~(annotations : annotations) str =
         {
           H.file;
           conv = H.line_col_to_pos_pattern str;
-          extra = { source = source_of_string str; annotations };
+          extra = { source = source_of_string str; annotations = `Typescript };
         }
       in
       match program env cst with

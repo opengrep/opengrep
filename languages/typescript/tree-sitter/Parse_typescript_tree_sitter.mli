@@ -27,6 +27,4 @@ val parse :
   (Ast_js.a_program, unit) Tree_sitter_run.Parsing_result.t
 
 val parse_pattern :
-  annotations:annotations ->
-  string ->
-  (Ast_js.any, unit) Tree_sitter_run.Parsing_result.t
+  string -> (Ast_js.any, unit) Tree_sitter_run.Parsing_result.t
