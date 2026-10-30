@@ -6001,7 +6001,8 @@ let classDef ?(isTrait = false) ?isCase attrs in_ : definition =
            if not isTrait then constructorAnnotations in_ else []
          in
 
-         let constrMods = if isTrait then None else accessModifierOpt in_ in
+         (* also of a trait *)
+         let constrMods = accessModifierOpt in_ in
          (* Scala 3: traits take parameters too *)
          let vparamss =
            paramClauses ~ofCaseClass:(Option.is_some isCase) name
