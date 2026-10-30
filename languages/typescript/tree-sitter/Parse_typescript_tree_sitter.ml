@@ -278,6 +278,18 @@ let import_identifier (env : env) (x : CST.import_identifier) : a_ident =
   | `Type tok ->
       identifier env tok
 
+let keyword_type_identifier (env : env) (x : CST.keyword_type_identifier) :
+    a_ident =
+  match x with
+  | `Comp tok
+  | `Unique tok
+  | `Acce tok
+  | `Using tok
+  | `Opaque tok
+  | `Hook tok
+  | `Out tok ->
+      identifier env tok
+
 let jsx_identifier_ (env : env) (x : CST.jsx_identifier_) =
   match x with
   | `Jsx_id tok ->
@@ -452,7 +464,11 @@ let reserved_identifier (env : env) (x : CST.reserved_identifier) =
   | `Opaque tok
   | `Comp tok
   | `Hook tok
-  | `Unique tok ->
+  | `Unique tok
+  | `Unkn tok
+  | `Never tok
+  | `Keyof tok
+  | `Infer tok ->
       identifier env tok
 
 let anon_choice_COMMA_5194cb4 (env : env) (x : CST.anon_choice_COMMA_5194cb4) =
@@ -580,8 +596,8 @@ let rec type_keyword_nested_identifier (env : env)
     ((v1, v2, v3) : CST.type_keyword_nested_identifier) : a_ident list =
   let v1 =
     match v1 with
-    | `Choice_comp (`Comp tok | `Unique tok | `Obj tok) ->
-        [ identifier env tok ]
+    | `Kw_type_id x -> [ keyword_type_identifier env x ]
+    | `Obj tok -> [ identifier env tok ]
     | `Type_kw_nested_id x -> type_keyword_nested_identifier env x
   in
   let _v2 = token env v2 (* "." *) in
@@ -593,8 +609,8 @@ let nested_type_identifier (env : env)
   let v1 =
     match v1 with
     | (`Id _ | `Nested_id _) as x -> id_or_nested_id env x
-    | `Choice_comp (`Comp tok | `Unique tok | `Obj tok) ->
-        [ identifier env tok ]
+    | `Kw_type_id x -> [ keyword_type_identifier env x ]
+    | `Obj tok -> [ identifier env tok ]
     | `Type_kw_nested_id x -> type_keyword_nested_identifier env x
   in
   let _v2 = token env v2 (* "." *) in
@@ -687,38 +703,44 @@ let namespace_import_clause (env : env) (x : CST.namespace_import) =
     (from_path : a_filename)
   -> [ ModuleAlias (import_tok, binding, id, from_path, attributes) ]
 
+(* A default import, then optionally a namespace or named imports *)
+let default_import_clause (env : env) (v1 : a_ident)
+    (v2 : (Tree_sitter_run.Token.t * CST.anon_choice_name_import_5ec76ec) option) =
+  let v2 =
+    match v2 with
+    | Some (v1, v2) ->
+        let _v1 = token env v1 (* "," *) in
+        let v2 =
+          match v2 with
+          | `Name_import x -> namespace_import_clause env x
+          | `Named_imports x -> named_imports env x
+        in
+        v2
+    | None ->
+        fun ~binding:_ ~attributes:_ (_import_tok : tok)
+            (_from_path : a_filename) -> []
+  in
+  fun ~(binding : import_binding) ~(attributes : import_attributes option)
+      (t : tok) (path : a_filename) ->
+    let default =
+      Import
+        ( t,
+          Import_binds,
+          binding,
+          [ ((default_entity, snd v1), Some v1) ],
+          path,
+          attributes )
+    in
+    default :: v2 ~binding ~attributes t path
+
 let import_clause (env : env) (x : CST.import_clause) =
   match x with
-  | `Name_import x -> namespace_import_clause env x
-  | `Named_imports x -> named_imports env x
-  | `Import_id_opt_COMMA_choice_name_import (v1, v2) ->
-      let v1 = import_identifier env v1 in
-      let v2 =
-        match v2 with
-        | Some (v1, v2) ->
-            let _v1 = token env v1 (* "," *) in
-            let v2 =
-              match v2 with
-              | `Name_import x -> namespace_import_clause env x
-              | `Named_imports x -> named_imports env x
-            in
-            v2
-        | None ->
-            fun ~binding:_ ~attributes:_ (_import_tok : tok)
-                (_from_path : a_filename) -> []
-      in
-      fun ~(binding : import_binding) ~(attributes : import_attributes option)
-          (t : tok) (path : a_filename) ->
-        let default =
-          Import
-            ( t,
-              Import_binds,
-              binding,
-              [ ((default_entity, snd v1), Some v1) ],
-              path,
-              attributes )
-        in
-        default :: v2 ~binding ~attributes t path
+  | `Choice_name_import (`Name_import x) -> namespace_import_clause env x
+  | `Choice_name_import (`Named_imports x) -> named_imports env x
+  | `Choice_name_import (`Import_id_opt_COMMA_choice_name_import (v1, v2)) ->
+      default_import_clause env (import_identifier env v1) v2
+  | `From_opt_COMMA_choice_name_import (v1, v2) ->
+      default_import_clause env (identifier env v1 (* "from" *)) v2
 
 (* `export d`: each definition of `d`, exported under its own name *)
 let exported_definitions (export_tok : tok) (defs : definition list) :
@@ -1076,8 +1098,7 @@ and generic_type (env : env) (x : CST.generic_type) : type_ =
       match v1 with
       | `Id tok -> TyName [ identifier env tok ] (* identifier *)
       | `Nested_type_id x -> TyName (nested_type_identifier env x))
-  | `Choice_comp_type_args ((`Comp tok | `Unique tok), _) ->
-      TyName [ identifier env tok ]
+  | `Kw_type_id_type_args (x, _) -> TyName [ keyword_type_identifier env x ]
   | `Choice_type_query_member_exp_in_type_anno_type_args (v1, _) ->
       import_type env v1
 
@@ -1320,66 +1341,69 @@ and add_decorators xs property =
 and class_body (env : env) ((v1, v2, v3) : CST.class_body) :
     property list bracket =
   let v1 = token env v1 (* "{" *) in
-  let v2 =
-    v2
-    |> List_.filter_map (function
-       | `Semg_ellips tok -> Some (FieldEllipsis (token env tok))
-       | `Rep_deco_choice_meth_defi_opt_choice_auto_semi (v1, v2) ->
-           let decorators = List_.map (decorator env) v1 in
-           let member =
-             match v2 with
-             | `Meth_defi_opt_choice_auto_semi (v1, v2) ->
-                 let v1 = method_definition env v1 in
-                 let _v2 =
-                   match v2 with
-                   | Some x -> Some (semicolon env x)
-                   | None -> None
-                 in
-                 v1
-             | `Meth_sign_choice_func_sign_auto_semi (v1, v2) ->
-                 let v1 = method_signature env v1 in
-                 let _v2 =
-                   match v2 with
-                   | `Func_sign_auto_semi tok ->
-                       (* function_signature_automatic_semicolon *) token env tok
-                   | `COMMA tok -> (* "," *) token env tok
-                 in
-                 Field v1
-             | `Choice_abst_meth_sign_choice_choice_auto_semi (v1, v2) ->
-                 let v1 =
-                   match v1 with
-                   | `Abst_meth_sign x ->
-                       let v = abstract_method_signature env x in
-                       Field v
-                   | `Index_sign x ->
-                       let ty = index_signature env x in
-                       let _, lb, _, _, _ = x in
-                       Field
-                         {
-                           fld_name = PN ("[]", token env lb);
-                           fld_attrs = [];
-                           fld_type = Some ty;
-                           fld_body = None;
-                         }
-                   | `Meth_sign x -> Field (method_signature env x)
-                   | `Public_field_defi x -> public_field_definition env x
-                 in
-                 let _v2 =
-                   match v2 with
-                   | `Choice_auto_semi x -> semicolon env x
-                   | `COMMA tok -> token env tok
-                 in
-                 v1
-           in
-           Some (add_decorators decorators member)
-       | `Class_static_blk (v1, v2, v3) ->
-           let v1 = token env v1 (* "static" *) in
-           let _v2 = automatic_semicolon_opt env v2 in
-           Some (ClassStaticBlock (v1, statement_block env v3))
-       | `SEMI tok ->
-           let _t = token env tok (* ";" *) in
-           None)
+  (* A decorator applies to the member that follows; one before `...` in a
+   * pattern, or at the end of the body, applies to none. *)
+  let rec aux acc_decorators xs =
+    match xs with
+    | [] -> []
+    | x :: xs -> (
+        let member (m : property) : property list =
+          add_decorators (List.rev acc_decorators) m :: aux [] xs
+        in
+        match x with
+        | `Semg_ellips tok -> FieldEllipsis (token env tok) :: aux [] xs
+        | `Deco x -> aux (decorator env x :: acc_decorators) xs
+        | `Meth_defi_opt_choice_auto_semi (v1, v2) ->
+            let v1 = method_definition env v1 in
+            let _v2 =
+              match v2 with
+              | Some x -> Some (semicolon env x)
+              | None -> None
+            in
+            member v1
+        | `Meth_sign_choice_func_sign_auto_semi (v1, v2) ->
+            let v1 = method_signature env v1 in
+            let _v2 =
+              match v2 with
+              | `Func_sign_auto_semi tok ->
+                  (* function_signature_automatic_semicolon *) token env tok
+              | `COMMA tok -> (* "," *) token env tok
+            in
+            member (Field v1)
+        | `Choice_abst_meth_sign_choice_choice_auto_semi (v1, v2) ->
+            let v1 =
+              match v1 with
+              | `Abst_meth_sign x ->
+                  let v = abstract_method_signature env x in
+                  Field v
+              | `Index_sign x ->
+                  let ty = index_signature env x in
+                  let _, lb, _, _, _ = x in
+                  Field
+                    {
+                      fld_name = PN ("[]", token env lb);
+                      fld_attrs = [];
+                      fld_type = Some ty;
+                      fld_body = None;
+                    }
+              | `Meth_sign x -> Field (method_signature env x)
+              | `Public_field_defi x -> public_field_definition env x
+            in
+            let _v2 =
+              match v2 with
+              | `Choice_auto_semi x -> semicolon env x
+              | `COMMA tok -> token env tok
+            in
+            member v1
+        | `Class_static_blk (v1, v2, v3) ->
+            let v1 = token env v1 (* "static" *) in
+            let _v2 = automatic_semicolon_opt env v2 in
+            ClassStaticBlock (v1, statement_block env v3) :: aux [] xs
+        | `SEMI tok ->
+            let _t = token env tok (* ";" *) in
+            aux acc_decorators xs)
   in
+  let v2 = aux [] v2 in
   let v3 = token env v3 (* "}" *) in
   (v1, v2, v3)
 
@@ -2272,8 +2296,7 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
           let _v6 = token env v6 (* ":" *) in
           let v7 = type_ env v7 in
           TypeTodo (("ConditionalType", v4), [ Type v1; Type v3; Type v5; Type v7 ]))
-  | `Comp tok -> TyName [ identifier env tok (* "component" *) ]
-  | `Unique tok -> TyName [ identifier env tok (* "unique" *) ]
+  | `Kw_type_id x -> TyName [ keyword_type_identifier env x ]
   | `Flow_comp_type (v1, v2, v3) ->
       let v1 = token env v1 (* "component" *) in
       flow_component_type env v1 v2 v3
@@ -3026,8 +3049,8 @@ and export_statement (env : env) (x : CST.export_statement) : stmt list =
           let id = identifier env v4 (* identifier *) in
           let _v5 = semicolon env v5 in
           [ M (Export (export_tok, id)) ])
-  | `Export_type_choice_STAR_from_clause_choice_auto_semi (v1, v2, v3, v4, v5)
-    ->
+  | `Export_type_choice_STAR_from_clause_opt_import_attr_choice_auto_semi
+      (v1, v2, v3, v4, v5, v6) ->
       (* export type * [as foo] from 'foo'; *)
       let export_tok = token env v1 (* "export" *) in
       let _type = token env v2 (* "type" *) in
@@ -3039,12 +3062,22 @@ and export_statement (env : env) (x : CST.export_statement) : stmt list =
             (star, Some alias)
       in
       let from, path = from_clause env v4 in
-      let _v5 = semicolon env v5 in
+      let attributes = Option.map (import_attribute env) v5 in
+      let _v6 = semicolon env v6 in
       [
         M
           (ReExportNamespace
-             (export_tok, Binds_type, star, alias, from, path, None));
+             (export_tok, Binds_type, star, alias, from, path, attributes));
       ]
+  | `Export_type_export_clause_from_clause_import_attr_choice_auto_semi
+      (v1, v2, v3, v4, v5, v6) ->
+      let _export = token env v1 (* "export" *) in
+      let _type = token env v2 (* "type" *) in
+      let names = export_clause env v3 in
+      let from = from_clause env v4 in
+      let attributes = import_attribute env v5 in
+      let _v6 = semicolon env v6 in
+      reexport_specifiers ~binding:Binds_type (Some attributes) from names
   | `Export_choice_STAR_from_clause_import_attr_choice_auto_semi (v1, v2, v3, v4)
     ->
       let export_tok = token env v1 (* "export" *) in
@@ -3671,6 +3704,7 @@ and tuple_type_member (env : env) (x : CST.tuple_type_member) :
       let _v1_TODO =
         match v1 with
         | `Id tok -> Left (identifier env tok) (* identifier *)
+        | `Kw_type_id x -> Left (keyword_type_identifier env x)
         | `Rest_pat x ->
             let _dots, id_or_pat = rest_pattern env x in
             id_or_pat
@@ -3679,7 +3713,11 @@ and tuple_type_member (env : env) (x : CST.tuple_type_member) :
       TyTupMember v2
   | `Opt_tuple_param (v1, v2, v3) ->
       (* optional_tuple_parameter *)
-      let _v1_TODO = identifier env v1 in
+      let _v1_TODO =
+        match v1 with
+        | `Id tok -> identifier env tok (* identifier *)
+        | `Kw_type_id x -> keyword_type_identifier env x
+      in
       let _v2_TODO = token env v2 (* "?" *) in
       let v3 = type_annotation env v3 |> snd in
       TyTupMember v3
@@ -4168,21 +4206,23 @@ and flow_component_parameter (env : env)
 and map_extends_type_clause (env : env) ((v1, v2, v3) : CST.extends_type_clause)
     : parent list =
   let _textends = (* "extends" *) token env v1 in
-  let v2 = map_anon_choice_type_id_a85f573 env v2 in
+  let v2 = map_anon_choice_type_id_c3d0d15 env v2 in
   let v3 =
     List_.map
       (fun (v1, v2) ->
         let _v1 = (* "," *) token env v1 in
-        let v2 = map_anon_choice_type_id_a85f573 env v2 in
+        let v2 = map_anon_choice_type_id_c3d0d15 env v2 in
         Right v2)
       v3
   in
   Right v2 :: v3
 
-and map_anon_choice_type_id_a85f573 (env : env)
-    (x : CST.anon_choice_type_id_a85f573) : type_ =
+and map_anon_choice_type_id_c3d0d15 (env : env)
+    (x : CST.anon_choice_type_id_c3d0d15) : type_ =
   match x with
   | `Id tok -> TyName [ (* identifier *) str env tok ]
+  | `Kw_type_id x -> TyName [ keyword_type_identifier env x ]
+  | `Obj tok -> TyName [ identifier env tok (* "object" *) ]
   | `Nested_type_id x -> TyName (nested_type_identifier env x)
   | `Gene_type x -> generic_type env x
 
