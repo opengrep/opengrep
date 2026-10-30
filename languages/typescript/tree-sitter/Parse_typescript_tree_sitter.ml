@@ -3540,21 +3540,18 @@ and type_ (env : env) (x : CST.type_) : type_ =
       in
       mk_functype (params, Some type_)
   | `Func_type (`Prim_type_EQGT_type (v1, v2, v3)) -> (
-      (* Flow's `T => U`; `T` a parenthesised name is a parameter *)
+      (* Flow's `T => U`; `T` a name, in parentheses or not, is a parameter *)
       let arrow = token env v2 (* "=>" *) in
       let ret = Some (type_ env v3) in
-      let name =
+      let lp, rp, ty =
         match v1 with
         | `Choice_paren_type (`Paren_type (lp, x, rp)) ->
-            function_type_parameter_name env x
-            |> Option.map (fun id -> (lp, id, rp))
-        | _ -> None
+            (token env lp, token env rp, x)
+        | x -> (arrow, arrow, `Prim_type x)
       in
-      match name with
-      | Some (lp, id, rp) ->
-          let params =
-            (token env lp, [ ParamClassic (mk_param id) ], token env rp)
-          in
+      match function_type_parameter_name env ty with
+      | Some id ->
+          let params = (lp, [ ParamClassic (mk_param id) ], rp) in
           mk_functype (function_type_parameters env params, ret)
       | None ->
           mk_functype
