@@ -3203,12 +3203,20 @@ and anon_choice_export_stmt_42be789 (env : env)
   | `Meth_sign x ->
       let x = method_signature env x in
       Left (Field x)
-  | `Flow_obj_type_spread (v1, v2) ->
-      (* `...` (an inexact object type) and `...T` (the fields of T) add no
-       * field of their own *)
-      let _dots = token env v1 (* "..." *) in
-      let _ty = Option.map (type_ env) v2 in
-      Right []
+  | `Flow_obj_type_spread (v1, v2) -> (
+      (* `...` is an inexact object type, and `...T` the fields of T *)
+      let dots = token env v1 (* "..." *) in
+      match v2 with
+      | Some x ->
+          Left
+            (Field
+               {
+                 fld_name = PN ("...", dots);
+                 fld_attrs = [];
+                 fld_type = Some (type_ env x);
+                 fld_body = None;
+               })
+      | None -> Right [])
 
 and public_field_definition (env : env)
     ((v1, v3, v4, v5, v6, v7) : CST.public_field_definition) : property =
