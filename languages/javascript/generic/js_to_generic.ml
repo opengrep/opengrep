@@ -196,18 +196,18 @@ and xml { xml_kind = xml_tag; xml_attrs; xml_body } =
   let attrs = list xml_attribute xml_attrs in
   let body =
     xml_body
-    |> List.filter (fun (x : xml_body) -> not (is_jsx_line_break_text x))
+    |> List.filter (fun (x : xml_body) -> not (is_jsx_layout_text x))
     |> list xhp
   in
   { G.xml_kind = tag; xml_attrs = attrs; xml_body = body }
 
-(* JSX removes a text child that is only whitespace and contains a line
- * break: it is the layout between child elements. *)
-and is_jsx_line_break_text (x : xml_body) : bool =
+(* A text child that is only whitespace is layout. JSX removes it when it
+ * contains a line break; removing the others too lets a pattern and a target
+ * that differ in layout match, since the matcher compares the number of
+ * children. *)
+and is_jsx_layout_text (x : xml_body) : bool =
   match x with
-  | XmlText (s, _) ->
-      String.equal (String.trim s) ""
-      && (String.contains s '\n' || String.contains s '\r')
+  | XmlText (s, _) -> String.equal (String.trim s) ""
   | XmlExpr _
   | XmlXml _ ->
       false
