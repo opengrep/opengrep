@@ -4618,13 +4618,15 @@ let usingParamClauseInner ~caseParam owner implicitmod in_ =
         | _ -> false
       in
       let is_type =
-        TH.isTypeIntroToken in_.token
-        && (not (TH.isAnnotation in_.token))
-        && (not starts_inline_param)
-        && lookingAhead (fun in_ -> not (in_.token =~= COLON ab)) in_
+        in_.token =~= ARROW ab
+        || TH.isTypeIntroToken in_.token
+           && (not (TH.isAnnotation in_.token))
+           && (not starts_inline_param)
+           && lookingAhead (fun in_ -> not (in_.token =~= COLON ab)) in_
       in
       if is_type then
-        let tys = types in_ in
+        (* the types can be by-name, as in `(using => Int)` *)
+        let tys = functionTypes in_ in
         (List_.map (fun ty -> ParamType ty) tys, Some ii)
       else
         (* TODO: not right to reuse? *)
