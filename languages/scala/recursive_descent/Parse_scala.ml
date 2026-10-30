@@ -38,6 +38,8 @@ let tokens input_source =
   let token lexbuf =
     let tok =
       match Lexer_scala.current_mode state with
+      | Lexer_scala.ST_IN_CODE when Option.is_none state.last_token ->
+          Lexer_scala.shebang state lexbuf
       | Lexer_scala.ST_IN_CODE -> Lexer_scala.token state lexbuf
       | Lexer_scala.ST_IN_INTERPOLATED_DOUBLE ->
           Lexer_scala.in_interpolated_double state lexbuf

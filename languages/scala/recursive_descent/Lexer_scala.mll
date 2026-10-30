@@ -724,3 +724,19 @@ and comment nesting buf = parse
   | [^ '*' '/']+ { Buffer.add_string buf (tok lexbuf); comment nesting buf lexbuf }
   | eof      { error "end of file in comment" lexbuf }
   | _        { Buffer.add_string buf (tok lexbuf); comment nesting buf lexbuf }
+
+(*****************************************************************************)
+(* Rule shebang *)
+(*****************************************************************************)
+
+(* the first line of a script, as `#!/usr/bin/env -S scala-cli shebang`, is a
+   comment, as in Scanners.scala, and so is a Scala 2 script header, a shell
+   script up to a line `!#`; elsewhere `#!` is an operator *)
+and shebang state = parse
+  | "#!" [^ '\r' '\n']* { Comment (tokinfo lexbuf) }
+  | "#!" [^ '\r' '\n']* "sh" [' ' '\t']*
+    (newline ([^ '!' '\r' '\n'] [^ '\r' '\n']*
+             | '!' ([^ '#' '\r' '\n'] [^ '\r' '\n']*)?)?)*
+    newline "!#" [' ' '\t']*
+      { Comment (tokinfo lexbuf) }
+  | ""                  { token state lexbuf }
