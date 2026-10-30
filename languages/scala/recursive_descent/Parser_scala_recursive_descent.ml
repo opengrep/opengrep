@@ -485,19 +485,20 @@ let rec getLastIndentationRegion sepRegions =
   | _ :: rest -> getLastIndentationRegion rest
   | [] -> raise Common.Impossible
 
-let startsNewLine in_ =
-  let rec loop = function
-    | Nl _ :: _
-    | NEWLINE _ :: _
-    | NEWLINES _ :: _ ->
-        true
-    | Space _ :: rest
-    | Comment _ :: rest
-    | DEDENT _ :: rest ->
-        loop rest
-    | _ -> false
-  in
-  loop in_.passed
+(* do the passed tokens end with a newline, before trivia? *)
+let rec passedLineEnd (passed : T.token list) : bool =
+  match passed with
+  | Nl _ :: _
+  | NEWLINE _ :: _
+  | NEWLINES _ :: _ ->
+      true
+  | Space _ :: rest
+  | Comment _ :: rest
+  | DEDENT _ :: rest ->
+      passedLineEnd rest
+  | _ -> false
+
+let startsNewLine in_ = passedLineEnd in_.passed
 
 (* The indentation width of the innermost region of sepRegions, where
    regions in braces, parentheses and brackets count as well (see
@@ -836,6 +837,43 @@ let operandFollows (tok : T.token) : bool =
       true
   | _ -> false
 
+(* the keywords that can follow `end` in an end marker *)
+let isKeywordEndMarkerTag (tok : T.token) : bool =
+  match tok with
+  | Kif _
+  | Kwhile _
+  | Kfor _
+  | Kmatch _
+  | Ktry _
+  | Knew _
+  | Kthrow _
+  | Kval _
+  | Kthis _
+  (* not end marker tags in the grammar, which scalac reports as errors;
+     an end marker here is still an end marker *)
+  | Kdef _
+  | Kclass _
+  | Kobject _
+  | Ktrait _ ->
+      true
+  | _ -> false
+
+(* Is the token the tag of an end marker, as `if` in `end if`, which ends the
+   statement? *)
+let isEndMarkerTag (in_ : env) (tok : T.token) : bool =
+  isKeywordEndMarkerTag tok
+  &&
+  match skip_trivia ~newlines:true in_.passed with
+  | tag :: rest when tag =~= tok -> (
+      match skip_trivia ~newlines:false rest with
+      (* `end` starts its line, unlike in `f.end match` *)
+      | ID_LOWER ("end", _) :: before -> (
+          match before with
+          | [] -> true
+          | _ -> passedLineEnd before)
+      | _ -> false)
+  | _ -> false
+
 (** Consume and discard the next token. *)
 let nextToken in_ =
   let lastToken = in_.token in
@@ -851,7 +889,9 @@ let nextToken in_ =
    *)
   (* newline: *)
   (if
-     afterLineEnd in_ && TH.inLastOfStat lastToken && TH.inFirstOfStat in_.token
+     afterLineEnd in_
+     && (TH.inLastOfStat lastToken || isEndMarkerTag in_ lastToken)
+     && TH.inFirstOfStat in_.token
      && (match in_.sepRegions with
         | []
         | RBRACE _ :: _
@@ -881,8 +921,10 @@ let nextToken in_ =
          *)
          in_.is_indented <- Some (line, width)
      | Some (Dedent (line, width))
-       when (not (isLeadingInfixOperator in_)) && not (operandFollows lastToken)
-       ->
+       when (not (isLeadingInfixOperator in_))
+            && not
+                 (operandFollows lastToken
+                 && not (isEndMarkerTag in_ lastToken)) ->
          (* Push a DEDENT token onto our token stream.
              This is so we can consume it in `statSeq`
 
@@ -5111,26 +5153,11 @@ let localDef implicitMod in_ : definition =
 let isEndMarker (in_ : env) : bool =
   let next_tokens = skip_trivia ~newlines:false in
   let is_tag (tok : T.token) : bool =
-    TH.isIdentBool tok
+    TH.isIdentBool tok || isKeywordEndMarkerTag tok
     ||
+    (* not an identifier for TH.isIdentBool *)
     match tok with
-    | Kif _
-    | Kwhile _
-    | Kfor _
-    | Kmatch _
-    | Ktry _
-    | Knew _
-    | Kthrow _
-    | Kval _
-    | Kthis _
-    | ID_LOWER ("given", _)
-    (* not end marker tags in the grammar, which scalac reports as errors;
-       an end marker here is still an end marker *)
-    | Kdef _
-    | Kclass _
-    | Kobject _
-    | Ktrait _ ->
-        true
+    | ID_LOWER ("given", _) -> true
     | _ -> false
   in
   match in_.token with
