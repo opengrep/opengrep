@@ -1,0 +1,1 @@
+def ∈:($A: Int): Boolean = $E

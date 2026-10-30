@@ -352,6 +352,15 @@ let utf8_ident_part =
 | '\240' (utf8_tail_byte # ['\159']) utf8_tail_byte utf8_tail_byte
 | ['\241'-'\244'] utf8_tail_byte utf8_tail_byte utf8_tail_byte
 
+(* A non-ASCII math symbol or other symbol, an operator character in Scala:
+   U+00D7, U+00F7, and U+2190 to U+2BFF (arrows, mathematical operators,
+   technical symbols, shapes, dingbats and the supplemental arrows and
+   operators). *)
+let utf8_op_char =
+  '\195' ['\151' '\183']
+| '\226' '\134' ['\144'-'\191']
+| '\226' ['\135'-'\175'] utf8_tail_byte
+
 let id_after_dollar =
   (['A'-'Z''a'-'z''_'] | utf8_ident_part)
   (['A'-'Z''a'-'z''_'] | digit | utf8_ident_part)* ('_' op)?
@@ -536,6 +545,9 @@ rule token state = parse
   (* this was all agglomerated as an IDENTIFIER in original code *)
   | id_upper as s       { ID_UPPER (s, tokinfo lexbuf) }
   | op as s             { OP (s, tokinfo lexbuf) }
+  (* an operator that starts with a symbol, as `∈:`; a symbol alone, the
+     same length as the rules above, stays an identifier *)
+  | utf8_op_char (utf8_op_char | opchar)* as s { OP (s, tokinfo lexbuf) }
 
   (* ----------------------------------------------------------------------- *)
   (* Constant *)
