@@ -256,6 +256,12 @@ and expr (x : expr) =
       let v1 = expr v1 in
       let v3 = type_ v3 in
       G.Cast (v3, v2, v1) |> G.e
+  | Instantiation (v1, (l, v2, _r)) ->
+      let v1 = expr v1 in
+      let v2 = list type_ v2 in
+      G.OtherExpr
+        (("Instantiation", l), G.E v1 :: List_.map (fun t -> G.T t) v2)
+      |> G.e
   | ExprTodo (v1, v2) ->
       let v2 = list expr v2 in
       G.OtherExpr (v1, v2 |> List_.map (fun e -> G.E e)) |> G.e

@@ -2029,8 +2029,8 @@ and expression (env : env) (x : CST.expression) : expr =
       let ty = type_ env v3 in
       TypeAssert (e, tsat, ty)
   | `Inst_exp (v1, v2) ->
-      let _v2 = type_arguments env v2 |> Tok.unbracket in
-      expression env v1
+      let e = expression env v1 in
+      Instantiation (e, type_arguments env v2)
   | `Inte_module x -> (
       (* namespace (deprecated in favor of ES modules) *)
       (* TODO represent namespaces properly in the AST instead of the nonsense
