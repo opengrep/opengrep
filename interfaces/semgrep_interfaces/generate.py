@@ -595,7 +595,7 @@ not ambiguous is welcome here.
         id_="ts",
         name="TypeScript",
         keys=["ts", "typescript"],
-        exts=[".ts", ".tsx"],
+        exts=[".ts", ".tsx", ".mts", ".cts"],
         excluded_exts=[".d.ts"],
         example_ext=".tsx",
         maturity=Maturity.GA,

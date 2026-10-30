@@ -1,0 +1,16 @@
+rules:
+  - id: esm-and-cjs-extensions
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      A '.mts' or '.cts' file is a TypeScript target, so it must be in the
+      interfile graph: taint flows across an import of './utils.mjs', which
+      refers to utils.mts on disk, and an import of './lib.cjs', which
+      refers to lib.cts on disk.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

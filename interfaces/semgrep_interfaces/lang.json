@@ -814,7 +814,9 @@
     "maturity": "ga",
     "exts": [
       ".ts",
-      ".tsx"
+      ".tsx",
+      ".mts",
+      ".cts"
     ],
     "example_ext": ".tsx",
     "excluded_exts": [
