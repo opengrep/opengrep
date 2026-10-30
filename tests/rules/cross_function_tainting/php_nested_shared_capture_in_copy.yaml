@@ -1,0 +1,10 @@
+rules:
+- id: php_nested_shared_capture_in_copy
+  languages: [php]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

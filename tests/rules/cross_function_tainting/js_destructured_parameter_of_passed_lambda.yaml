@@ -1,0 +1,18 @@
+rules:
+  - id: test-destructured-lambda-parameter
+    message: A parameter of a lambda reaches the command
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function ... (..., $PARAM, ...) {
+                ...
+              }
+          - focus-metavariable: $PARAM
+    pattern-sinks:
+      - patterns:
+          - pattern: execSync($CMD)
+          - focus-metavariable: $CMD

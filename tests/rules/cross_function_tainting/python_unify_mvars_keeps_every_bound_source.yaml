@@ -1,0 +1,12 @@
+rules:
+- id: python_unify_mvars_keeps_every_bound_source
+  languages: [python]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  options:
+    taint_unify_mvars: true
+  pattern-sources:
+    - pattern: source($X)
+  pattern-sinks:
+    - pattern: sink($X, ...)

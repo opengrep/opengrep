@@ -1,0 +1,15 @@
+rules:
+- id: python_propagator_into_lambda_parameter
+  languages: [python]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-propagators:
+    - pattern: |
+        each($X, lambda $Y: ...)
+      from: $X
+      to: $Y
+  pattern-sinks:
+    - pattern: sink(...)

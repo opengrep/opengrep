@@ -483,7 +483,9 @@ let atom_has_frozen_fetch (params : IL.param list) (atom : IL.exp) : bool =
       lv.IL.rev_offset
       |> List.exists (fun (o : IL.offset) ->
              match o.IL.o with
-             | IL.Index e -> go e
+             | IL.Index e
+             | IL.DotDynamic e ->
+                 go e
              | IL.Dot _
              | IL.Slice _ ->
                  false)

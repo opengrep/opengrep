@@ -106,20 +106,6 @@ end
 (* OCamlgraph: Use built-in algorithms *)
 module SCC = Graph.Components.Make (G_ordered)
 
-(* A topological order of the graph: [SCC.scc_list] numbers the components
-   so that an edge from [u] to [v] never puts [v]'s component after [u]'s,
-   so its reverse lists every vertex after the vertices it has an edge from.
-   [Graph.Topological.Make_stable] checks a path between every pair of
-   vertices on a cycle, quadratic in time and memory. *)
-module Topo = struct
-  let fold (f : G.V.t -> 'acc -> 'acc) (g : G.t) (acc : 'acc) : 'acc =
-    List.rev (SCC.scc_list g)
-    |> List.fold_left
-         (fun (acc : 'acc) (component : G.V.t list) ->
-           List.fold_left (fun (acc : 'acc) (v : G.V.t) -> f v acc) acc component)
-         acc
-end
-
 (** Helpers **)
 
 let pos_of_tok (tok : Tok.t) : Pos.t =

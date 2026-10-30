@@ -48,10 +48,43 @@ type fun_info = {
   cfg : IL.fun_cfg;
   fdef : G.function_definition;
   is_static : bool;  (* [@staticmethod] and the like: no implicit receiver *)
+  is_getter : bool;  (* [Lang_config.getter_decorators] *)
   is_lambda_assignment : bool;
+  captures_variables : bool;
+      (* a lambda, or a function defined in the body of another: it reads the
+         variables of the enclosing function where it is used *)
   file_ast : G.program option;  (* [Some] cross-file, [None] current file *)
   taint_inst : Taint_rule_inst.t option;  (* [Some] cross-file preds, else current-file *)
 }
+
+(* Whether the definition of [info]'s function contains the position
+   [(line, col)]. *)
+let contains_position (info : fun_info) : int * int -> bool =
+  match AST_generic_helpers.range_of_any_opt (G.Dk (G.FuncDef info.fdef)) with
+  | None -> fun ((_ : int), (_ : int)) -> false
+  | Some ((first : Tok.location), (last : Tok.location)) ->
+      fun ((line, col) : int * int) ->
+        let after_first = line > first.pos.line || (Int.equal line first.pos.line && col >= first.pos.column) in
+        let before_last = line < last.pos.line || (Int.equal line last.pos.line && col <= last.pos.column) in
+        after_first && before_last
+
+(* Whether [info]'s function reads a local or a parameter bound outside its
+   own definition: a variable of a function, possibly anonymous, that
+   defines it. A field of an enclosing class ([EnclosedVar]) is not a
+   variable of a function. *)
+let reads_enclosing_variable ~(lang : Lang.t) (info : fun_info) : bool =
+  info.captures_variables
+  ||
+  let in_definition = contains_position info in
+  Dataflow_tainting.captured_vars ~lang info.cfg
+  |> IL.NameSet.exists (fun (var : IL.name) ->
+         match !(var.id_info.G.id_resolved) with
+         | Some ((G.LocalVar | G.Parameter), _) ->
+             let (_ : string), (_ : string), line, col = G.SId.to_loc var.sid in
+             not (in_definition (line, col))
+         | Some _
+         | None ->
+             false)
 
 (*****************************************************************************)
 (* Prelude *)
@@ -127,6 +160,7 @@ let sources_of_taints ?preferred_label taints =
             * finding, since the precondition is satisfied. *)
            | Var _
            | Shape_var _
+           | Call_result _
            | Control ->
                None)
   in
@@ -335,6 +369,25 @@ let filter_implicit_receiver_params (lang : Lang.t) (info : fun_info)
     |> List.map snd
 
 (* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
+
+(* The qualified name that a decorator refers to: what it imports, or, for a
+   name bound nowhere in the file, a builtin, the name itself. *)
+let qualified_name_of_decorator (name : G.name) : string list option =
+  match name with
+  | G.Id ((id, _), id_info) -> (
+      match !(id_info.G.id_resolved) with
+      | Some (G.ImportedEntity canonical, _) -> Some canonical
+      | None -> Some [ id ]
+      | Some _ -> None)
+  | G.IdQualified { name_last = ((last, _), _); name_middle; name_info; _ } -> (
+      match (!(name_info.G.id_resolved), name_middle) with
+      | Some (G.ImportedEntity canonical, _), _ -> Some canonical
+      | None, Some (G.QDots qualifier) ->
+          Some (List.map (fun (((id, _), _) : G.ident * G.type_arguments option) -> id) qualifier @ [ last ])
+      | Some _, _
+      | None, (None | Some (G.QExpr _)) ->
+          None)
+
 let build_info_map
     ~(lang : Lang.t)
     ?(fid_filter : (Function_id.t -> bool) option)
@@ -346,14 +399,22 @@ let build_info_map
     else Shape_and_sig.FunctionMap.add fid info info_map
   in
   let build_fun_info (name : IL.name) ~(class_name_str : string option)
-      ~(method_properties : G.expr list) ~(is_static : bool)
-      ~(is_lambda_assignment : bool)
+      ~(method_properties : G.expr list) ~(is_static : bool) ~(is_getter : bool)
+      ~(is_lambda_assignment : bool) ~(captures_variables : bool)
       (fdef : G.function_definition) : fun_info =
     let fdef_il = AST_to_IL.function_definition lang fdef in
     let cfg = CFG_build.cfg_of_fdef fdef_il in
-    { name; class_name_str; method_properties; is_static;
-      cfg; fdef; is_lambda_assignment;
+    { name; class_name_str; method_properties; is_static; is_getter;
+      cfg; fdef; is_lambda_assignment; captures_variables;
       file_ast = None; taint_inst = None }
+  in
+  (* The path holds the class slot, then one entry per enclosing function. *)
+  let defined_in_function (parent_path : IL.name option list) : bool =
+    match parent_path with
+    | []
+    | [ _ ] ->
+        false
+    | _ :: _ :: _ -> true
   in
   let info_map =
     Visit_function_defs.fold_with_parent_path ~lang
@@ -374,8 +435,8 @@ let build_info_map
                in
                let info =
                  build_fun_info name ~class_name_str
-                   ~method_properties:[] ~is_static:false
-                   ~is_lambda_assignment:true fdef
+                   ~method_properties:[] ~is_static:false ~is_getter:false
+                   ~is_lambda_assignment:true ~captures_variables:true fdef
                in
                add_info fid info info_map)
         | Function
@@ -427,9 +488,26 @@ let build_info_map
                            attrs
                      | None -> false
                    in
+                   let is_getter =
+                     match opt_ent with
+                     | Some { G.attrs; _ } ->
+                         List.exists
+                           (function
+                             | G.NamedAttr (_, decorator, _) -> (
+                                 match qualified_name_of_decorator decorator with
+                                 | Some qualified ->
+                                     List.exists
+                                       (List.equal String.equal qualified)
+                                       (Lang_config.get lang).getter_decorators
+                                 | None -> false)
+                             | _ -> false)
+                           attrs
+                     | None -> false
+                   in
                    let info =
                      build_fun_info name ~class_name_str ~method_properties
-                       ~is_static ~is_lambda_assignment:false fdef
+                       ~is_static ~is_getter ~is_lambda_assignment:false
+                       ~captures_variables:(defined_in_function parent_path) fdef
                    in
                    add_info fid info info_map)))
       Shape_and_sig.FunctionMap.empty
@@ -469,7 +547,16 @@ let extract_signatures
       ~arity:arity_t ~db ?builtin_signature_db taint_inst ~name:info.name
       ~class_name:info.class_name_str
       ~method_properties:info.method_properties ~call_graph:call_graph
-      sig_cfg ast
+      ~captures_variables:info.captures_variables sig_cfg ast
+  in
+  let db' =
+    match (info.is_getter, info.class_name_str) with
+    | true, Some class_name ->
+        Shape_and_sig.add_getter db' ~class_name ~attribute:(fst info.name.ident)
+          (Function_id.of_il_name info.name)
+    | true, None
+    | false, (Some _ | None) ->
+        db'
   in
   let fresh = [ to_ext (sig_, arity_t) ] in
   (* Kotlin trailing-lambda syntax f(a){b}: also extract at arity-1. *)
@@ -482,7 +569,8 @@ let extract_signatures
             ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst
             ~name:info.name ~class_name:info.class_name_str
             ~method_properties:info.method_properties
-            ~call_graph:call_graph sig_cfg ast
+            ~call_graph:call_graph
+            ~captures_variables:info.captures_variables sig_cfg ast
         in
         (db'', fresh @ [ to_ext (sig_', arity_t') ])
     | _ -> (db', fresh)
@@ -568,7 +656,7 @@ let build_class_init_cfgs (lang : Lang.t) (ast : G.program)
       in
       let stmts = AST_to_IL.stmt lang fields in
       let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
-      acc := (opt_name, IL.{ params = []; cfg; lambdas }) :: !acc)
+      acc := (opt_name, IL.top_level_fun_cfg cfg lambdas) :: !acc)
     ast;
   !acc
 
@@ -609,7 +697,7 @@ let build_top_level_cfg (lang : Lang.t) (ast : G.program)
     : IL.name * IL.fun_cfg =
   let xs = AST_to_IL.stmt lang (G.stmt1 ast) in
   let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-  (Graph_from_AST.top_level_name_of_ast ast, IL.{ params = []; cfg; lambdas })
+  (Graph_from_AST.top_level_name_of_ast ast, IL.top_level_fun_cfg cfg lambdas)
 
 let check_top_level_prebuilt
     (taint_inst : Taint_rule_inst.t)
@@ -765,13 +853,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               ~sources:source_functions ~sinks:sink_functions
           in
 
-          let analysis_order =
-            Call_graph.Topo.fold
-              (fun fn acc -> fn :: acc)
-              relevant_graph []
-            |> List.rev
-          in
           let sccs = Sig_fixpoint.sccs_callees_first relevant_graph in
+          let analysis_order = List.concat sccs in
           (* A member of a recursive component composes its offsets under
              the flat bound, as the interfile path does. *)
           let recursive_fids =
@@ -793,13 +876,14 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             match Shape_and_sig.FunctionMap.find_opt node info_map with
             | None -> db
             | Some info ->
+              let taint_inst = taint_inst_of node in
               let db', fresh =
                 extract_signatures ?builtin_signature_db
-                  ~call_graph:relevant_graph ~lang ~db
-                  ~taint_inst:(taint_inst_of node) ~ast info
+                  ~call_graph:relevant_graph ~lang ~db ~taint_inst ~ast info
               in
               Sig_fixpoint.store ~lang
-                ~widen:(taint_inst_of node).Taint_rule_inst.recursive node fresh db'
+                ~widen:taint_inst.Taint_rule_inst.recursive
+                ~previous:db node fresh db'
           in
           let signature_db_after_order =
             Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
@@ -927,10 +1011,10 @@ let check_rules ~match_hook
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
   (* Check for language support warnings when taint_intrafile is enabled *)
-  ((* Clear the per-domain guard-cond intern table: rules run on a domain in
-    * sequence, so a previous rule's canonical conds must not leak into this
-    * one. *)
-   Effect_guard.reset_intern ();
+  (* Clear the per-domain guard-cond intern table: rules run on a domain in
+   * sequence, so a previous rule's canonical conds must not leak into this
+   * one. *)
+  (Effect_guard.reset_intern ();
    match rules with
    | rule :: _ -> (
        (* Check if any rule has taint_intrafile enabled *)

@@ -1,0 +1,10 @@
+rules:
+- id: js_closure_of_a_recursive_call_writes_its_own_variable
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

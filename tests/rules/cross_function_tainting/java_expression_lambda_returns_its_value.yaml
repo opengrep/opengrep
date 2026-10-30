@@ -1,0 +1,11 @@
+rules:
+  - id: test-expression-lambda-returns
+    message: The value a lambda returns reaches the sink
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

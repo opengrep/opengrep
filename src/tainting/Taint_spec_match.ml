@@ -130,6 +130,8 @@ module Best_matches = struct
            * recursive call to `add` here. *)
           add x' (S.remove x best_matches)
 
+  let union (a : t) (b : t) : t = S.fold add a b
+
   let is_best_match best_matches m' =
     match S.find_opt (Any m') best_matches with
     | None -> true

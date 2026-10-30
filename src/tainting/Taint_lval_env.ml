@@ -75,6 +75,9 @@ type t = {
           branch where the guard was established. Such guards are dropped
           when stamping effects (see [live_guards]). Merged by UNION at a
           Join — a variable reassigned on any incoming path counts. *)
+  closures : closure Shape_and_sig.ClosureMap.t;
+      (** The closures that the [Closed] lambda references in [tainted] refer
+          to, by lambda. Joined by lambda at a Join. *)
 }
 
 type env = t
@@ -88,6 +91,7 @@ let empty =
     active_guards = Effect_guard.Set.empty;
     dead = false;
     reassigned_vars = IL.NameSet.empty;
+    closures = Shape_and_sig.ClosureMap.empty;
   }
 
 let empty_inout = { Dataflow_core.in_env = empty; out_env = empty }
@@ -102,10 +106,13 @@ let union ~lang le1 le2 =
   | true, false -> le2
   | false, true -> le1
   | false, false ->
+      let closures = Shape.unify_closures ~lang le1.closures le2.closures in
       let tainted =
-        NameMap.union
-          (fun _ x y -> Some (Shape.unify_cell ~lang x y))
-          le1.tainted le2.tainted
+        if phys_equal le1.tainted le2.tainted then le1.tainted
+        else
+          NameMap.union
+            (fun _ x y -> Some (Shape.unify_cell ~lang x y))
+            le1.tainted le2.tainted
       in
       {
         tainted;
@@ -128,6 +135,7 @@ let union ~lang le1 le2 =
           (* UNION: a variable reassigned on either incoming path may carry
            * a value that invalidates a guard reaching this point. *)
           IL.NameSet.union le1.reassigned_vars le2.reassigned_vars;
+        closures;
       }
 
 let union_list ~lang ?(default = empty) les =
@@ -162,7 +170,7 @@ let normalize_lval lang lval =
         | Some (offset, { o = IL.Dot var; _ }) -> Some (var, offset)
         (* we do not handle any other case *)
         | None
-        | Some (_, { o = IL.Index _ | IL.Slice _; _ }) ->
+        | Some (_, { o = IL.Index _ | IL.DotDynamic _ | IL.Slice _; _ }) ->
             None)
     | Mem _ -> None
   in
@@ -213,6 +221,35 @@ let add_shape lang var offset new_taints new_shape lval_env =
   match check_tainted_lvals_limit lval_env.tainted var with
   | None -> lval_env
   | Some tainted ->
+      (* A value written into a variable that already holds an object may
+         refer to that object, directly or through other variables (a node
+         and its parent), and would then be unfolded one level deeper in
+         every round of a loop. Such a write is bounded at the depth of a
+         path that a signature keeps ([Limits_semgrep.taint_MAX_POLY_OFFSET]);
+         what lies below the bound joins the taints of the cell that holds it
+         ([Shape.truncate_shape]). The first write into a variable keeps
+         every level. *)
+      let holds_object =
+        match NameMap.find_opt var lval_env.tainted with
+        | Some (Cell (_, Obj _)) -> true
+        | Some (Cell (_, (Bot | Arg _ | Fun _ | Fun_ref _ | Funs _)))
+        | None ->
+            false
+      in
+      let new_taints, new_shape =
+        let depth_left = Limits_semgrep.taint_MAX_POLY_OFFSET - List.length offset in
+        if not holds_object then (new_taints, new_shape)
+        else if depth_left >= 1 then (new_taints, Shape.truncate_shape ~max_depth:depth_left new_shape)
+        else
+          match new_shape with
+          | Obj _ -> (Taints.union new_taints (Shape.gather_all_taints_in_shape new_shape), Bot)
+          | Bot
+          | Arg _
+          | Fun _
+          | Fun_ref _
+          | Funs _ ->
+              (new_taints, new_shape)
+      in
       let new_taints =
         let var_tok = snd var.ident in
         if Tok.is_fake var_tok then new_taints
@@ -277,6 +314,9 @@ let propagate_to lang prop_var taints env =
 
 let find_var { tainted; _ } var = NameMap.find_opt var tainted
 
+let has_taints_to_propagate { taints_to_propagate; _ } =
+  not (VarMap.is_empty taints_to_propagate)
+
 let find_lval lang { tainted; _ } lval =
   let* var, offsets = normalize_lval lang lval in
   let* var_ref = NameMap.find_opt var tainted in
@@ -289,6 +329,19 @@ let find_lval lang { tainted; _ } lval =
 let find_poly ~lang { tainted; _ } var offsets =
   let* var_ref = NameMap.find_opt var tainted in
   Shape.find_in_cell_poly ~lang offsets var_ref
+
+let find_recorded_poly ~lang { tainted; _ } var offsets =
+  let rec walk (Cell (_, shape) as cell : cell) (offsets : T.offset list) =
+    match (offsets, shape) with
+    | [], _ -> Shape.find_in_cell_poly ~lang [] cell
+    | offset :: rest, Obj obj -> (
+        match Shape_and_sig.Fields.find_opt offset obj with
+        | Some inner -> walk inner rest
+        | None -> Shape.find_in_cell_poly ~lang offsets cell)
+    | _ :: _, (Bot | Arg _ | Fun _ | Fun_ref _ | Funs _) -> Shape.find_in_cell_poly ~lang offsets cell
+  in
+  let* cell = NameMap.find_opt var tainted in
+  walk cell offsets
 
 let find_lval_poly lang lval_env lval =
   let* var, offsets = normalize_lval lang lval in
@@ -338,6 +391,14 @@ let clean lang lval_env lval =
             lval_env.tainted;
       }
 
+let filter_map_cells (f : cell -> cell option) ({ tainted; _ } as lval_env) =
+  { lval_env with tainted = NameMap.filter_map (fun (_ : IL.name) (cell : cell) -> f cell) tainted }
+
+let remove_vars (vars : IL.NameSet.t) (lval_env : t) : t =
+  let tainted = IL.NameSet.fold NameMap.remove vars lval_env.tainted in
+  if phys_equal tainted lval_env.tainted then lval_env
+  else { lval_env with tainted }
+
 let filter_tainted pred ({ tainted; _ } as lval_env) =
   let tainted = tainted |> NameMap.filter (fun var _cell -> pred var) in
   { lval_env with tainted }
@@ -386,6 +447,7 @@ let equal
       active_guards = guards1;
       dead = dead1;
       reassigned_vars = reassigned1;
+      closures = closures1;
     }
     {
       tainted = tainted2;
@@ -395,6 +457,7 @@ let equal
       active_guards = guards2;
       dead = dead2;
       reassigned_vars = reassigned2;
+      closures = closures2;
     } =
   Bool.equal dead1 dead2
   (* Guard-aware equality: this function is the fixpoint's [eq_env], and a
@@ -408,6 +471,8 @@ let equal
   && Taints.equal_with_guards control1 control2
   && Effect_guard.Set.equal guards1 guards2
   && IL.NameSet.equal reassigned1 reassigned2
+  && Shape_and_sig.ClosureMap.equal Shape_and_sig.Shape.equal_closure_with_guards
+       closures1 closures2
 
 let equal_by_lval lang { tainted = tainted1; _ } { tainted = tainted2; _ } lval
     =
@@ -442,3 +507,32 @@ let to_string
       pending_propagation_dests "[PENDING PROPAGATION DESTS]"
 
 let seq_of_tainted env = NameMap.to_seq env.tainted
+
+(* [env] where each variable that [closure] captures holds its value in the
+   closure: the environment in which a call of the closure reads its captured
+   variables. *)
+let with_closure (closure : Shape_and_sig.Shape.closure) (env : t) : t =
+  if IL.NameMap.is_empty closure then env
+  else
+    {
+      env with
+      tainted =
+        IL.NameMap.fold
+          (fun (var : IL.name) (captured : Shape_and_sig.Shape.captured)
+               (tainted : cell NameMap.t) -> NameMap.add var captured.value tainted)
+          closure env.tainted;
+    }
+
+let closures (env : t) : closure Shape_and_sig.ClosureMap.t = env.closures
+
+let find_closure (env : t) (key : Shape_and_sig.Closure_key.t) : closure list =
+  Shape_and_sig.find_closures env.closures key
+
+(* [env] with the closures of [closures] joined into its own, by lambda. *)
+let add_closures ~(lang : Lang.t) (closures : closure Shape_and_sig.ClosureMap.t)
+    (env : t) : t =
+  if Shape_and_sig.ClosureMap.is_empty closures then env
+  else { env with closures = Shape.unify_closures ~lang env.closures closures }
+
+let set_closures (closures : closure Shape_and_sig.ClosureMap.t) (env : t) : t =
+  { env with closures }

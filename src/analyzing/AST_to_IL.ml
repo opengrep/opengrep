@@ -161,6 +161,15 @@ let fixme_stmt kind gany : stmts =
 (* Helpers *)
 (*****************************************************************************)
 
+(* The token of the name of the variable that holds a lambda: the token of
+   its kind, or else [fallback], a token of the lambda in the source, when a
+   front end gives the kind a fake token. The name identifies the lambda,
+   e.g. as the key of its signature. *)
+let lambda_name_tok (fdef : G.function_definition) ~(fallback : Tok.t Lazy.t) :
+    Tok.t =
+  let kind_tok = snd fdef.fkind in
+  if Tok.is_origintok kind_tok then kind_tok else Lazy.force fallback
+
 let fresh_var ?(str = "_tmp") env tok : name =
   let tok =
     (* We don't want "fake" auxiliary variables to have non-fake tokens, otherwise
@@ -520,11 +529,14 @@ let rec lval env eorig : stmts * lval =
         | G.FDynamic e2orig -> (
             let ss, attr = expr env e2orig in
             (* A member whose name is a string literal, e.g. PHP's
-               [$o->{'x'}], is the field of that name. *)
+               [$o->{'x'}], is the field of that name; one whose name is
+               another literal, e.g. Rust's tuple element [t.0], is the
+               element at that key. *)
             match attr.e with
             | Literal (G.String (_, id, _)) ->
                 (ss, Dot (var_of_id_info id (G.empty_id_info ())))
-            | _ -> (ss, Index attr))
+            | Literal _ -> (ss, Index attr)
+            | _ -> (ss, DotDynamic attr))
       in
       let offset' = { o = offset'; oorig = SameAs eorig } in
       let ss_lv, lv1 = nested_lval env tok e1orig in
@@ -2518,7 +2530,15 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
       comprehension env er clauses
   | G.Lambda fdef ->
-      let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+      let first_tok =
+        lazy
+          (match H.range_of_any_opt (G.E g_expr) with
+          | Some (first, _) -> Tok.tok_of_loc first
+          | None -> snd fdef.fkind)
+      in
+      let lval =
+        fresh_lval env ~str:"_tmp_lambda" (lambda_name_tok fdef ~fallback:first_tok)
+      in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -3010,7 +3030,10 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+                  let lval =
+                    fresh_lval env ~str:"_tmp_lambda"
+                      (lambda_name_tok fdef ~fallback:(lazy (snd id)))
+                  in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
@@ -3935,22 +3958,11 @@ and for_var_or_expr_list env xs : stmts =
 (* Parameters *)
 (*****************************************************************************)
 and parameters env params : param list =
-  let by_reference (pattrs : G.attribute list) : bool =
-    List.exists
-      (function
-        | G.KeywordAttr (G.ByReference, _) -> true
-        | _ -> false)
-      pattrs
-  in
   params |> Tok.unbracket
   |> List_.mapi (fun idx gparam ->
        match gparam with
        | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ }
-         when List.exists
-                (function
-                  | G.KeywordAttr (G.KeywordOnly, _) -> true
-                  | _ -> false)
-                pattrs ->
+         when H.has_keyword_attr G.KeywordOnly pattrs ->
            ParamKwd
              { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
        | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ } ->
@@ -3960,11 +3972,11 @@ and parameters env params : param list =
               CList of actual arguments (the call site wraps them). Keep it
               as a plain positional Param so the signature layer binds the
               CList directly instead of re-wrapping it. *)
-           Param { pname; pdefault; by_reference = by_reference pattrs }
+           Param { pname; pdefault; by_reference = H.has_keyword_attr G.ByReference pattrs }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; pattrs; _ }) ->
            ParamRest
              { pname = var_of_id_info i pinfo; pdefault;
-               by_reference = by_reference pattrs }
+               by_reference = H.has_keyword_attr G.ByReference pattrs }
        | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; _ }) ->
            (* The synthetic [!!_implicit_param!] binder from
             * [implicit_param_classic] becomes the IL name_param. Rename
@@ -4930,9 +4942,34 @@ and function_definition env fdef : function_definition =
    * seeded source taints, and avoids introducing origs that would
    * falsely match enclosing-sink ranges via
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
-  let fbody = function_body env fdef.G.fbody in
+  let fbody =
+    match (fdef.G.fkind, fdef.G.fbody) with
+    (* An arrow whose body is an expression returns its value (Java, JLS
+       15.27.3); the value of a void-compatible one is discarded, which
+       returning it does not change. *)
+    | (G.Arrow, tok), G.FBStmt { s = G.ExprStmt (e, sc); _ } ->
+        stmt env (G.Return (Tok.fake_tok tok "return", Some e, sc) |> G.s)
+    | _ -> function_body env fdef.G.fbody
+  in
   let fbody = rec_point_label_stmts @ fbody in
-  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
+  (* The [use] declarations at the head of the body of a closure. *)
+  let fcaptured_by_reference =
+    (match fdef.G.fbody with
+    | G.FBStmt { s = G.Block (_, stmts, _); _ } -> stmts
+    | G.FBStmt _
+    | G.FBExpr _
+    | G.FBDecl _
+    | G.FBNothing ->
+        [])
+    |> List_.filter_map (fun (stmt : G.stmt) ->
+           match stmt.G.s with
+           | G.DefStmt
+               ({ name = G.EN (G.Id (id, id_info)); attrs; _ }, G.UseOuterDecl _)
+             when H.has_keyword_attr G.ByReference attrs ->
+               Some (var_of_id_info id id_info)
+           | _ -> None)
+  in
+  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody; fcaptured_by_reference }
 
 (****************************************************************************)
 (* Entry points *)

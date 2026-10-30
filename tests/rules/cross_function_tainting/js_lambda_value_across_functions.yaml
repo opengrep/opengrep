@@ -1,0 +1,10 @@
+rules:
+  - id: js_lambda_value_across_functions
+    mode: taint
+    languages: [javascript]
+    message: A tainted value reaches the sink through a lambda value
+    severity: ERROR
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

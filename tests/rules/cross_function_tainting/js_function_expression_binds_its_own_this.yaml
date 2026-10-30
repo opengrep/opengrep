@@ -1,0 +1,10 @@
+rules:
+- id: js_function_expression_binds_its_own_this
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

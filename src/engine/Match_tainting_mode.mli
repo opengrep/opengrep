@@ -5,7 +5,11 @@ type fun_info = {
   cfg : IL.fun_cfg;
   fdef : AST_generic.function_definition;
   is_static : bool;
+  is_getter : bool;  (** [Lang_config.getter_decorators] *)
   is_lambda_assignment : bool;
+  captures_variables : bool;
+      (** A lambda, or a function defined in the body of another: it reads the
+          variables of the enclosing function where it is used. *)
   file_ast : AST_generic.program option;
   taint_inst : Taint_rule_inst.t option;
 }
@@ -141,3 +145,12 @@ val check_rules :
   * same language. Running on multiple rules at once enables inter-rule
   * optimizations.
   *)
+
+val contains_position : fun_info -> int * int -> bool
+(** Whether the definition of the function contains the position
+    [(line, col)]. *)
+
+val reads_enclosing_variable : lang:Lang.t -> fun_info -> bool
+(** Whether the function reads a local or a parameter bound outside its own
+    definition: a variable of a function, possibly anonymous, that defines
+    it. *)

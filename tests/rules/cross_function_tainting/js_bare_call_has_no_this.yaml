@@ -1,0 +1,10 @@
+rules:
+- id: js_bare_call_has_no_this
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

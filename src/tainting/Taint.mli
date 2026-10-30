@@ -41,8 +41,21 @@ type base =
   | BGlob of IL.name  (** A global variable or a static class field. *)
   | BThis  (** The 'this' or 'self' object. *)
   | BArg of arg  (** A formal parameter in a function/method definition. *)
+  | BCapture of IL.name
+      (** A variable captured by a lambda: the value of that variable where
+          the lambda's signature is used. *)
 
 val show_base : base -> string
+
+(** An input of a function whose value a use of its signature supplies: a
+    formal parameter, given by the actual argument, or a variable captured
+    by a lambda, given by the value of the variable at the use. *)
+type formal = Param of arg | Captured of IL.name
+
+val compare_formal : formal -> formal -> int
+val equal_formal : formal -> formal -> bool
+val show_formal : formal -> string
+val base_of_formal : formal -> base
 
 (** Offset of an 'lval'. *)
 type offset =
@@ -56,6 +69,10 @@ type offset =
           [Oint k :: Oslice n :: rest] to [Oint (n+k) :: rest] and
           [Oslice b :: Oslice a :: rest] to [Oslice (a+b) :: rest]. *)
   | Oany  (** An arbitrary non-constant index, `[*]` *)
+  | Ofld_any
+      (** A field whose name is computed, `.*`, like PHP `$o->$k`. It is
+          read and written like [Oany]; a write through it is a write to a
+          property of an object, not to an element of an array. *)
 
 val compare_offset : offset -> offset -> int
 val equal_offset : offset -> offset -> bool
@@ -138,7 +155,19 @@ type source = {
        *
        *    (['arg(x#0)'], PLabel A)
        *)
+  group : Metavariable.bindings option;
+      (** The bindings that tell the findings of the source apart from those
+          of other sources ([source_grouping]); [None] when every source
+          gives a finding of its own. *)
 }
+
+(** What tells the findings of two sources apart. *)
+and source_grouping =
+  | By_message  (** The metavariables that the rule's message refers to. *)
+  | By_bindings
+      (** Every metavariable: a sink unifies with the source's bindings
+          ([taint_unify_mvars]). *)
+  | Each_source  (** Every source gives its own finding. *)
 
 (** The origin of taint, where does taint comes from? *)
 and orig =
@@ -172,7 +201,13 @@ and orig =
   | Shape_var of lval
       (** A taint shape-variable stands for the taints reachable through the
         * shape of the 'lval', see 'Taint_sig.gather_all_taints_in_shape'. *)
+  | Call_result of call_result
+      (** The result of a call of the function that an input holds, made
+          with the given argument taints; a use of the signature replaces it
+          by the result of the call of the input's value. *)
   | Control  (** Polymorphic taint variable, but for the "control-flow". *)
+
+and call_result = { callee : lval; args : taint list IL.argument list }
 
 and taint = { orig : orig; tokens : tainted_tokens }
 (** At a given program location, taint is given by its origin (i.e. 'orig') and
@@ -191,6 +226,7 @@ val map_preconditions : (taint list -> taint list) -> taint -> taint option
 val show_lval : lval -> string
 val show_taint : taint -> string
 val compare_lval : lval -> lval -> int
+val equal_lval : lval -> lval -> bool
 val compare_taint : taint -> taint -> int
 
 (*****************************************************************************)
@@ -232,6 +268,16 @@ module Taint_set : sig
   val singleton : taint -> t
   val add : guarded_taint -> t -> t
   val union : t -> t -> t
+
+  val union_unbounded : t -> t -> t
+  (** [union] without the bounds on a set's sources, taint variables and call
+      results; for a set built by several unions, which then applies [bound]
+      once. *)
+
+  val bound : t -> t
+  (** The bounds that [union] applies. *)
+
+
   val diff : t -> t -> t
   val map : (guarded_taint -> guarded_taint) -> t -> t
   val bind : t -> (guarded_taint -> t) -> t
@@ -269,7 +315,16 @@ module Taint_set : sig
       token-trace updates) keeps the cheap in-place path. *)
 end
 
+val call_result : lval -> taint list IL.argument list -> orig
+(** [call_result callee args] is the [Call_result] of a call of [callee] with
+    [args], where a call of [callee] inside an argument is replaced by its own
+    arguments: the return of a signature is distributive over the union of
+    the argument taints. *)
+
 type taints = Taint_set.t
+
+val single_var : taints -> lval option
+(** The input whose placeholder ([Var]) is the only one in [taints]. *)
 
 val solve_precondition :
   ignore_poly_taint:bool -> taints:taints -> Rule.precondition -> bool option
@@ -277,7 +332,10 @@ val solve_precondition :
 val taints_satisfy_requires : taint list -> Rule.precondition -> bool
 
 val taints_of_pms :
-  incoming:taints -> (Core_match.t * Rule.taint_source) list -> taints
+  grouping:source_grouping ->
+  incoming:taints ->
+  (Core_match.t * Rule.taint_source) list ->
+  taints
 
 val show_taints : ?truncate_guards:bool -> taints -> string
 

@@ -52,6 +52,15 @@ type t = {
   class_accessor_methods : string list;
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
+  (* An array or scalar argument is copied into the parameter, and an object
+     is passed by its handle (PHP): an update of a parameter that is not by
+     reference reaches the caller only through an object, that is, through a
+     property access on its path. *)
+  arrays_passed_by_value : bool;
+  (* A closure copies the value of a variable it captures when it is created,
+     unless the capture is declared by reference (PHP [use (&$x)]); otherwise
+     it shares the variable. *)
+  closures_capture_by_value : bool;
   (* A bare call [f()] in a method may call a method of the enclosing class
      through the implicit receiver (Java, C#, Ruby), or a function of the
      enclosing module (Elixir). Where a method is only
@@ -59,11 +68,14 @@ type t = {
      JavaScript), a bare name is looked up in the enclosing scopes, which
      exclude the class body. *)
   bare_call_reaches_methods : bool;
-  (* An array or scalar argument is copied into the parameter, and an object
-     is passed by its handle (PHP): an update of a parameter that is not by
-     reference reaches the caller only through an object, that is, through a
-     property access on its path. *)
-  arrays_passed_by_value : bool;
+  (* A function expression or a method binds its own [this]; only an arrow
+     function takes the [this] of the function that defines it (JavaScript).
+     Otherwise every lambda takes it. *)
+  function_expressions_bind_this : bool;
+  (* The decorators that make a method a getter, by their qualified names:
+     reading the attribute calls it with the object as receiver (Python
+     [@property]). *)
+  getter_decorators : string list list;
 }
 
 let empty = {
@@ -78,8 +90,11 @@ let empty = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let python = {
@@ -104,8 +119,11 @@ let python = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [ [ "property" ]; [ "functools"; "cached_property" ] ];
 }
 
 let ruby = {
@@ -138,8 +156,11 @@ let ruby = {
   class_accessor_methods = ["class"];
   (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
   skip_nested_in_extract_calls = true;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let crystal = ruby
@@ -172,8 +193,11 @@ let javascript = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = true;
+  getter_decorators = [];
 }
 
 let typescript = {
@@ -204,8 +228,11 @@ let java = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let kotlin = {
@@ -239,8 +266,11 @@ let kotlin = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let scala = {
@@ -267,8 +297,11 @@ let scala = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let csharp = {
@@ -296,8 +329,11 @@ let csharp = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let go = {
@@ -317,8 +353,11 @@ let go = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let rust = {
@@ -345,8 +384,11 @@ let rust = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let swift = {
@@ -373,8 +415,11 @@ let swift = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let php = {
@@ -392,8 +437,11 @@ let php = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = true;
+  closures_capture_by_value = true;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let cpp = {
@@ -411,8 +459,11 @@ let cpp = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let c = {
@@ -432,8 +483,11 @@ let ocaml_lang = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let lua = {
@@ -448,8 +502,11 @@ let lua = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let dart = {
@@ -487,8 +544,11 @@ let dart = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let elixir = {
@@ -511,8 +571,11 @@ let elixir = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let julia = {
@@ -529,8 +592,11 @@ let julia = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let clojure = {
@@ -559,8 +625,11 @@ let clojure = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = false;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = false;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let apex = {
@@ -575,8 +644,11 @@ let apex = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 let vb = {
@@ -591,8 +663,11 @@ let vb = {
   dynamic_send_methods = [];
   class_accessor_methods = [];
   skip_nested_in_extract_calls = false;
-  bare_call_reaches_methods = true;
   arrays_passed_by_value = false;
+  closures_capture_by_value = false;
+  bare_call_reaches_methods = true;
+  function_expressions_bind_this = false;
+  getter_decorators = [];
 }
 
 (* A function of a contract, its own or inherited, is called by a bare

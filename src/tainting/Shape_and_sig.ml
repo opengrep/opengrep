@@ -45,6 +45,9 @@ module Fields = Map.Make (struct
     | Oany, (Ofld _ | Ostr _ | Oint _ | Oslice _) -> 1
     | Oslice _, (Ofld _ | Ostr _ | Oint _) -> 1
     | Oint _, (Ofld _ | Ostr _) -> 1
+    | Ofld_any, Ofld_any -> 0
+    | (Ofld _ | Ostr _ | Oint _ | Oslice _ | Oany), Ofld_any -> -1
+    | Ofld_any, (Ofld _ | Ostr _ | Oint _ | Oslice _ | Oany) -> 1
 end)
 
 (** A shape approximates an object or data structure, and tracks the taint
@@ -81,6 +84,78 @@ end)
  *
  * TODO: Add 'Ptr' shapes and track aliasing.
  *)
+module FunctionMap = Map.Make (Function_id)
+(* A method of a class, by the class and the attribute it defines. *)
+module Member_map = Map.Make (struct
+  type t = string * string
+
+  let compare ((class1, member1) : t) ((class2, member2) : t) : int =
+    let by_class = String.compare class1 class2 in
+    if by_class <> 0 then by_class else String.compare member1 member2
+end)
+
+(* Where a closure was created, seen from the function whose table holds it:
+   the calls through which it was returned, by their byte positions, the
+   call of that function first; [[]] where the lambda is defined. A site
+   keeps [Limits_semgrep.taint_MAX_CALLBACK_DEPTH] calls: a recursion that
+   returns closures would otherwise give sites without bound. *)
+module Creation_site = struct
+  type t = int option list
+
+  let compare (site1 : t) (site2 : t) : int =
+    List.compare (Option.compare Int.compare) site1 site2
+
+  let equal (site1 : t) (site2 : t) : bool = Int.equal (compare site1 site2) 0
+  let at_definition : t = []
+
+  (* Every creation site of a lambda, longer than any site [through_call]
+     gives. *)
+  let any : t = List.init (Limits_semgrep.taint_MAX_CALLBACK_DEPTH + 1) (fun (_ : int) -> None)
+  let is_any (site : t) : bool = equal site any
+
+  (* The site of a closure of a callee, seen from the caller through [call]:
+     the innermost [Limits_semgrep.taint_MAX_CALLBACK_DEPTH] calls, those
+     nearest the creation, are kept. *)
+  let through_call (call : int option) (site : t) : t =
+    if List.compare_length_with site Limits_semgrep.taint_MAX_CALLBACK_DEPTH >= 0 then site
+    else call :: site
+
+  (* [sites] of one lambda, or [any] past
+     [Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA] of them. *)
+  let bound (sites : t list) : t list =
+    if
+      List.exists is_any sites
+      || List.compare_length_with sites Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA > 0
+    then [ any ]
+    else sites
+end
+
+(* A closure in a table: its lambda and where it was created. *)
+module Closure_key = struct
+  type t = Function_id.t * Creation_site.t
+
+  let compare ((id1, site1) : t) ((id2, site2) : t) : int =
+    match Function_id.compare id1 id2 with
+    | 0 -> Creation_site.compare site1 site2
+    | other -> other
+end
+
+module ClosureMap = Map.Make (Closure_key)
+
+(* The entries of [table] that a reference to the closure [key] refers to:
+   every entry of the lambda for [Creation_site.any], or else the entry of
+   the site, or the entry of [Creation_site.any] that has replaced it. *)
+let find_closures (table : 'a ClosureMap.t) ((id, site) : Closure_key.t) : 'a list =
+  if Creation_site.is_any site then
+    ClosureMap.to_seq_from (id, Creation_site.at_definition) table
+    |> Seq.take_while (fun (((id', _), _) : Closure_key.t * 'a) -> Function_id.equal id id')
+    |> Seq.map snd
+    |> List.of_seq
+  else
+    match ClosureMap.find_opt (id, site) table with
+    | Some entry -> [ entry ]
+    | None -> Option.to_list (ClosureMap.find_opt (id, Creation_site.any) table)
+
 module rec Shape : sig
   type shape =
     | Bot  (** _|_, don't know or don't care *)
@@ -90,7 +165,7 @@ module rec Shape : sig
             Tuples or lists are also represented by 'Obj' shapes! We just treat
             constant indexes as if they were fields, and use 'Oany' to capture
             the non-constant indexes. *)
-    | Arg of Taint.arg * Taint.offset list list
+    | Arg of Taint.formal * Taint.offset list list
         (** Represents the yet-unknown shape of a function/method parameter,
             optionally extended with one or more offset paths into the
             parameter. Each inner [Taint.offset list] is a single path; the
@@ -102,6 +177,17 @@ module rec Shape : sig
             resolved against the caller's actual argument. *)
     | Fun of Signature.t
         (** Function shapes. These enable Semgrep to handle HOFs. *)
+    | Fun_ref of Function_id.t * Signature.t Lazy.t * closure_kind
+        (** A closure: a lambda, by the identity of its signature in the
+            signature database. The signature is the database's, never
+            rewritten, so a walk of a shape does not enter it; it is
+            extracted when it is first read. A call of the closure
+            instantiates the signature with its captured variables holding
+            the values that [closure_kind] gives them. *)
+    | Funs of shape list
+        (** One of several functions: two or more [Fun] and [Fun_ref] that
+            are not the same function, ordered by [compare_shape] without
+            duplicates. A call of it is a call of each. *)
 
   and cell =
     | Cell of Xtaint.t * shape
@@ -151,7 +237,8 @@ module rec Shape : sig
       * If an 'Obj' shape tracks an 'Oany' offset (an arbitrary index,
       * see 'Taint.offset'), then the taint and shape given to 'Oany' would
       * also be the taint and shape given to any field that is not being
-      * explicitly tracked. If there is no 'Oany' in the 'Obj' shape, then a
+      * explicitly tracked ('Ofld_any', an arbitrary field, likewise). If there
+      * is no 'Oany' in the 'Obj' shape, then a
       * field that is not explicitly tracked would just have an arbitrary or
       * "don't care" shape, and the taint that it inherits from its "parent"
       * 'cell's.
@@ -167,7 +254,36 @@ module rec Shape : sig
       * `{ [*] -> Cell({"taint"}, _|_) }}` where `[*]` denotes 'Oany', the taint
       * and shape  of any concrete index would be given by the taint and shape
       * of '[*]'.
+      *
+      * INVARIANT(obj): a write through an arbitrary index or field updates
+      * the entry of 'Oany' or 'Ofld_any' only, so a read of a tracked field
+      * reads that entry too. The exception is a read that meets a part of
+      * the field known clean ('`Clean'): such a part was written after the
+      * last write through an arbitrary index or field, which updates every
+      * tracked field where a read could meet a part known clean, and a join
+      * with an object that has such an entry drops the clean marks of the
+      * other side's fields.
       *)
+
+  and closure_kind =
+    | Open
+        (** The lambda in the function that defines it: a captured variable
+            takes its value where the signature is used. *)
+    | Closed of Creation_site.t list
+        (** The captured variables hold the values of the closures of the
+            lambda in the table of the analysis or signature that holds the
+            shape, one per creation site of the list, joined. *)
+
+  and closure = captured IL.NameMap.t
+  (** The captured variables of a closure, by variable. *)
+
+  and captured = {
+    value : cell;  (** The value of the variable. *)
+    location : Taint.lval option;
+        (** The input of the function that defines the closure that the
+            variable holds, when it holds one: a write to the variable in a
+            call of the closure is a write to it. *)
+  }
 
   val equal_cell : cell -> cell -> bool
 
@@ -179,6 +295,22 @@ module rec Shape : sig
 
   val equal_shape : shape -> shape -> bool
   val compare_shape : shape -> shape -> int
+
+  val compare_shape_structure : shape -> shape -> int
+  (** Like [compare_shape] but blind to the taints of the cells of an object:
+      two shapes with the same fields, parameters and functions compare as 0. *)
+
+  val union_same_structure : shape -> shape -> shape
+  (** [union_same_structure s1 s2], where [compare_shape_structure s1 s2 = 0],
+      unites the taints of corresponding cells. *)
+
+  val equal_closure : closure -> closure -> bool
+
+  val equal_closure_with_guards : closure -> closure -> bool
+  (** Like [equal_closure] but over [equal_cell_with_guards]. *)
+
+  val compare_closure : closure -> closure -> int
+  val show_closure : closure -> string
   val show_cell : cell -> string
   val show_shape : shape -> string
   val show_obj : obj -> string
@@ -186,10 +318,20 @@ end = struct
   type shape =
     | Bot
     | Obj of obj
-    | Arg of T.arg * T.offset list list
+    | Arg of T.formal * T.offset list list
     | Fun of Signature.t
+    | Fun_ref of Function_id.t * Signature.t Lazy.t * closure_kind
+    | Funs of shape list
+  and closure_kind = Open | Closed of Creation_site.t list
   and cell = Cell of Xtaint.t * shape
   and obj = cell Fields.t
+  and closure = captured IL.NameMap.t
+  and captured = {
+    value : cell;
+    location :
+      (T.lval[@equal T.equal_lval])
+      option;
+  }
   [@@deriving eq]
 
   (*************************************)
@@ -201,72 +343,63 @@ end = struct
    * for pathological patterns like obj[key] = [obj[key], item] that create
    * unbounded recursive structures. If both shapes exceed MAX_SHAPE_DEPTH,
    * we consider them equal (widening approximation). *)
-  let rec equal_cell_depth depth cell1 cell2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+  let rec equal_cell_depth ~(equal_xtaint : Xtaint.t -> Xtaint.t -> bool)
+      ~(equal_sig : Signature.t -> Signature.t -> bool) depth cell1 cell2 =
+    if phys_equal cell1 cell2 || depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
     else
       let (Cell (taints1, shape1)) = cell1 in
       let (Cell (taints2, shape2)) = cell2 in
-      Xtaint.equal taints1 taints2 && equal_shape_depth depth shape1 shape2
+      equal_xtaint taints1 taints2
+      && equal_shape_depth ~equal_xtaint ~equal_sig depth shape1 shape2
 
-  and equal_shape_depth depth shape1 shape2 =
+  and equal_shape_depth ~equal_xtaint ~equal_sig depth shape1 shape2 =
     if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
     else
       match (shape1, shape2) with
       | Bot, Bot -> true
-      | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
+      | Obj obj1, Obj obj2 ->
+          Fields.equal (equal_cell_depth ~equal_xtaint ~equal_sig (depth + 1)) obj1 obj2
       | Arg (arg1, offsets1), Arg (arg2, offsets2) ->
-          T.equal_arg arg1 arg2
+          T.equal_formal arg1 arg2
           && Int.equal
                (List.compare (List.compare T.compare_offset)
                   offsets1 offsets2)
                0
-      | Fun sig1, Fun sig2 -> Signature.equal_with_guards sig1 sig2
+      | Fun sig1, Fun sig2 -> equal_sig sig1 sig2
+      | Fun_ref (id1, _, kind1), Fun_ref (id2, _, kind2) ->
+          (* A reference refers to a function: its signature is that
+             function's, so the copy it carries does not distinguish it. *)
+          Function_id.equal id1 id2 && equal_closure_kind kind1 kind2
+      | Funs funs1, Funs funs2 ->
+          List.equal (equal_shape_depth ~equal_xtaint ~equal_sig depth) funs1 funs2
       | Bot, _
       | Obj _, _
       | Arg _, _
-      | Fun _, _ ->
+      | Fun _, _
+      | Fun_ref _, _
+      | Funs _, _ ->
           false
-
-  and equal_obj_depth depth obj1 obj2 =
-    Fields.equal (equal_cell_depth depth) obj1 obj2
 
   (* Public API uses depth 0 *)
-  let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
+  let equal_cell cell1 cell2 =
+    equal_cell_depth ~equal_xtaint:Xtaint.equal ~equal_sig:Signature.equal 0 cell1 cell2
 
-  (* Guard-aware twin of the chain above; structure identical, but cell
-   * taints compare via [Xtaint.equal_with_guards]. *)
-  let rec equal_cell_with_guards_depth depth cell1 cell2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
-    else
-      let (Cell (taints1, shape1)) = cell1 in
-      let (Cell (taints2, shape2)) = cell2 in
-      Xtaint.equal_with_guards taints1 taints2
-      && equal_shape_with_guards_depth depth shape1 shape2
-
-  and equal_shape_with_guards_depth depth shape1 shape2 =
-    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
-    else
-      match (shape1, shape2) with
-      | Bot, Bot -> true
-      | Obj obj1, Obj obj2 -> equal_obj_with_guards_depth (depth + 1) obj1 obj2
-      | Arg (arg1, offsets1), Arg (arg2, offsets2) ->
-          T.equal_arg arg1 arg2
-          && Int.equal
-               (List.compare (List.compare T.compare_offset)
-                  offsets1 offsets2)
-               0
-      | Fun sig1, Fun sig2 -> Signature.equal_with_guards sig1 sig2
-      | Bot, _
-      | Obj _, _
-      | Arg _, _
-      | Fun _, _ ->
-          false
-
-  and equal_obj_with_guards_depth depth obj1 obj2 =
-    Fields.equal (equal_cell_with_guards_depth depth) obj1 obj2
-
+  (* Guard-aware twin of [equal_cell]: cell taints compare via
+   * [Xtaint.equal_with_guards] and [Fun] shapes via
+   * [Signature.equal_with_guards]. *)
   let equal_cell_with_guards cell1 cell2 =
-    equal_cell_with_guards_depth 0 cell1 cell2
+    equal_cell_depth ~equal_xtaint:Xtaint.equal_with_guards
+      ~equal_sig:Signature.equal_with_guards 0 cell1 cell2
+
+  let equal_closure_with ~(equal_cell : cell -> cell -> bool) (closure1 : closure)
+      (closure2 : closure) : bool =
+    IL.NameMap.equal
+      (fun (c1 : captured) (c2 : captured) ->
+        equal_cell c1.value c2.value && Option.equal T.equal_lval c1.location c2.location)
+      closure1 closure2
+
+  let equal_closure = equal_closure_with ~equal_cell
+  let equal_closure_with_guards = equal_closure_with ~equal_cell:equal_cell_with_guards
 
   (*************************************)
   (* Comparison *)
@@ -284,20 +417,70 @@ end = struct
     | Bot, Bot -> 0
     | Obj obj1, Obj obj2 -> compare_obj obj1 obj2
     | Arg (arg1, offsets1), Arg (arg2, offsets2) -> (
-        match T.compare_arg arg1 arg2 with
+        match T.compare_formal arg1 arg2 with
         | 0 -> List.compare (List.compare T.compare_offset) offsets1 offsets2
         | other -> other)
     | Fun sig1, Fun sig2 -> Signature.compare sig1 sig2
-    | Bot, (Obj _ | Arg _ | Fun _)
-    | Obj _, (Arg _ | Fun _)
-    | Arg _, Fun _ ->
+    | Fun_ref (id1, _, kind1), Fun_ref (id2, _, kind2) -> (
+        match Function_id.compare id1 id2 with
+        | 0 -> compare_closure_kind kind1 kind2
+        | other -> other)
+    | Funs funs1, Funs funs2 -> List.compare compare_shape funs1 funs2
+    | Bot, (Obj _ | Arg _ | Fun _ | Fun_ref _ | Funs _)
+    | Obj _, (Arg _ | Fun _ | Fun_ref _ | Funs _)
+    | Arg _, (Fun _ | Fun_ref _ | Funs _)
+    | Fun _, (Fun_ref _ | Funs _)
+    | Fun_ref _, Funs _ ->
         -1
     | Obj _, Bot
     | Arg _, (Bot | Obj _)
-    | Fun _, (Bot | Obj _ | Arg _) ->
+    | Fun _, (Bot | Obj _ | Arg _)
+    | Fun_ref _, (Bot | Obj _ | Arg _ | Fun _)
+    | Funs _, (Bot | Obj _ | Arg _ | Fun _ | Fun_ref _) ->
         1
 
   and compare_obj obj1 obj2 = Fields.compare compare_cell obj1 obj2
+
+  and compare_closure_kind (kind1 : closure_kind) (kind2 : closure_kind) : int =
+    match (kind1, kind2) with
+    | Open, Open -> 0
+    | Closed sites1, Closed sites2 ->
+        List.compare Creation_site.compare sites1 sites2
+    | Open, Closed _ -> -1
+    | Closed _, Open -> 1
+
+  and compare_closure (closure1 : closure) (closure2 : closure) : int =
+    IL.NameMap.compare
+      (fun (c1 : captured) (c2 : captured) ->
+        match compare_cell c1.value c2.value with
+        | 0 -> Option.compare T.compare_lval c1.location c2.location
+        | other -> other)
+      closure1 closure2
+
+  let rec compare_cell_structure (Cell (_, shape1) : cell)
+      (Cell (_, shape2) : cell) : int =
+    compare_shape_structure shape1 shape2
+
+  and compare_shape_structure (shape1 : shape) (shape2 : shape) : int =
+    match (shape1, shape2) with
+    | Obj obj1, Obj obj2 -> Fields.compare compare_cell_structure obj1 obj2
+    | (Bot | Obj _ | Arg _ | Fun _ | Fun_ref _ | Funs _), _ -> compare_shape shape1 shape2
+
+  (* Both cells have the same structure, so neither is [`Clean] unless both
+     shapes are [Bot], and the union keeps INVARIANT(cell).2. *)
+  let rec union_cell_same_structure (Cell (xtaint1, shape1) : cell)
+      (Cell (xtaint2, shape2) : cell) : cell =
+    Cell (Xtaint.union xtaint1 xtaint2, union_same_structure shape1 shape2)
+
+  and union_same_structure (shape1 : shape) (shape2 : shape) : shape =
+    match (shape1, shape2) with
+    | Obj obj1, Obj obj2 ->
+        Obj
+          (Fields.union
+             (fun (_ : T.offset) (cell1 : cell) (cell2 : cell) ->
+               Some (union_cell_same_structure cell1 cell2))
+             obj1 obj2)
+    | (Bot | Obj _ | Arg _ | Fun _ | Fun_ref _ | Funs _), _ -> shape1
 
   (*************************************)
   (* Pretty-printing *)
@@ -313,13 +496,13 @@ end = struct
     | Arg (arg, []) ->
         (* No offsets recorded — should not arise from normal
            construction. *)
-        "'{" ^ T.show_arg arg ^ "}"
+        "'{" ^ T.show_formal arg ^ "}"
     | Arg (arg, [ [] ]) ->
         (* Single empty offset — bare-parameter shape. *)
-        "'{" ^ T.show_arg arg ^ "}"
+        "'{" ^ T.show_formal arg ^ "}"
     | Arg (arg, [ off ]) ->
         (* Single non-empty offset. *)
-        "'{" ^ T.show_arg arg
+        "'{" ^ T.show_formal arg
         ^ (off |> List.map T.show_offset |> String.concat "")
         ^ "}"
     | Arg (arg, offsets) ->
@@ -331,8 +514,23 @@ end = struct
         let offsets_str =
           offsets |> List.map show_offset_path |> String.concat " | "
         in
-        "'{" ^ T.show_arg arg ^ offsets_str ^ "}"
+        "'{" ^ T.show_formal arg ^ offsets_str ^ "}"
     | Fun fsig -> Signature.show fsig
+    | Fun_ref (id, _, kind) -> (
+        "ref:" ^ Function_id.show id
+        ^
+        match kind with
+        | Open -> ""
+        | Closed _ -> "[closed]")
+    | Funs funs -> "funs{" ^ String.concat " | " (List.map show_shape funs) ^ "}"
+
+  and show_closure (closure : closure) : string =
+    "["
+    ^ (IL.NameMap.bindings closure
+      |> List.map (fun ((var : IL.name), (captured : captured)) ->
+             IL.str_of_name var ^ ":" ^ show_cell captured.value)
+      |> String.concat ", ")
+    ^ "]"
 
   and show_obj obj =
     obj |> Fields.to_seq
@@ -441,7 +639,7 @@ and Effect : sig
         callee : IL.exp;
             (** The function expression being called, it is used for recording a
                 taint trace. *)
-        arg : Taint.arg;
+        arg : Taint.formal;
             (** The formal parameter corresponding to the function shape, this
                 is what we instantiate at a specific call site. *)
         arg_offset : Taint.offset list;
@@ -464,11 +662,16 @@ and Effect : sig
       so an [Effects] set holds one element per guard-less effect identity
       and fuses guards on insertion (see [fuse_guards]). *)
 
+  val union_sink_items : taint_to_sink_item list -> taint_to_sink_item list
+  (** One item per taint, the guards of the items of one taint fused. *)
+
   val compare_target : t -> t -> int
   (** The order of effects by target: the sink, precondition and bindings of
       a [ToSink]; the l-value of a [ToLval]; the callee, parameter, offset and
-      argument shapes of a [ToSinkInCall]. On a [ToReturn] it is [compare]. [compare] refines it, so effects with the same
-      target are adjacent in an [Effects] set. *)
+      structure of the argument shapes of a [ToSinkInCall]
+      ([Shape.compare_shape_structure]). On a [ToReturn] it is [compare].
+      [compare] refines it, so effects with the same target are adjacent in
+      an [Effects] set. *)
 
   val join_same_target : t -> t -> t
   (** [join_same_target e1 e2], where [compare_target e1 e2 = 0] and
@@ -557,7 +760,7 @@ end = struct
     | ToLval of taints_to_lval
     | ToSinkInCall of {
         callee : IL.exp;
-        arg : Taint.arg;
+        arg : Taint.formal;
         arg_offset : Taint.offset list;
         args_taints : args_taints;
         guards : Effect_guard.t;
@@ -576,6 +779,19 @@ end = struct
   let compare_taint_to_sink_item { taint = taint1; sink_trace = _; guard = _ }
       { taint = taint2; sink_trace = _; guard = _ } =
     T.compare_taint taint1 taint2
+
+  (* One item per taint, in order; the sort is stable, so of two items of
+   * one taint the first is kept, with the two guards fused. *)
+  let union_sink_items (items : taint_to_sink_item list) : taint_to_sink_item list =
+    List.stable_sort compare_taint_to_sink_item items
+    |> List.fold_left
+         (fun (acc : taint_to_sink_item list) (item : taint_to_sink_item) ->
+           match acc with
+           | prev :: rest when Int.equal (compare_taint_to_sink_item prev item) 0 ->
+               { prev with guard = Effect_guard.compose_or prev.guard item.guard } :: rest
+           | _ -> item :: acc)
+         []
+    |> List.rev
 
   (* A sink effect without its taints: the sink, the precondition and the
    * metavariable bindings. *)
@@ -637,16 +853,24 @@ end = struct
     | other -> other
 
   (* The argument without its taints: its name and shape. *)
-  let compare_arg_target (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
+  let compare_arg_shape ~(compare_shape : Shape.shape -> Shape.shape -> int)
+      (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
     match (arg1, arg2) with
-    | Unnamed (_, shape1), Unnamed (_, shape2) ->
-        Shape.compare_shape shape1 shape2
-    | Named (name1, (_, shape1)), Named (name2, (_, shape2)) -> (
-        match AST_generic.compare_ident name1 name2 with
-        | 0 -> Shape.compare_shape shape1 shape2
+    | Unnamed (_, shape1), Unnamed (_, shape2) -> compare_shape shape1 shape2
+    | Named ((name1, _), (_, shape1)), Named ((name2, _), (_, shape2)) -> (
+        (* Arguments of one name from different calls are one argument. *)
+        match String.compare name1 name2 with
+        | 0 -> compare_shape shape1 shape2
         | other -> other)
     | Unnamed _, Named _ -> -1
     | Named _, Unnamed _ -> 1
+
+  (* The taints in the cells of an argument shape grow from one round of a
+     recursive component to the next; a target that included them would
+     never be met again, and the effects of the earlier rounds would stay
+     beside the joined one. *)
+  let compare_arg_target =
+    compare_arg_shape ~compare_shape:Shape.compare_shape_structure
 
   let compare_arg_taints (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
     match (arg1, arg2) with
@@ -659,7 +883,7 @@ end = struct
   let compare_sink_in_call_target (fexp1 : IL.exp) fvar1 foff1 args_taints1
       (fexp2 : IL.exp) fvar2 foff2 args_taints2 =
     (* Comparing "fvar"s is cheap so better to do it first. *)
-    match T.compare_arg fvar1 fvar2 with
+    match T.compare_formal fvar1 fvar2 with
     | 0 -> (
         match List.compare T.compare_offset foff1 foff2 with
         | 0 -> (
@@ -694,7 +918,14 @@ end = struct
           compare_sink_in_call_target fexp1 fvar1 foff1 args_taints1 fexp2
             fvar2 foff2 args_taints2
         with
-        | 0 -> List.compare compare_arg_taints args_taints1 args_taints2
+        | 0 -> (
+            match
+              List.compare
+                (compare_arg_shape ~compare_shape:Shape.compare_shape)
+                args_taints1 args_taints2
+            with
+            | 0 -> List.compare compare_arg_taints args_taints1 args_taints2
+            | other -> other)
         | other -> other)
     | ToSink _, (ToReturn _ | ToLval _ | ToSinkInCall _) -> -1
     | ToReturn _, (ToLval _ | ToSinkInCall _) -> -1
@@ -786,7 +1017,7 @@ end = struct
         Printf.sprintf "%s%s ----> %s" (T.show_taints ~truncate_guards taints)
           (Effect_guard.show_in_brackets ~truncate_guards guards) (T.show_lval lval)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
-        Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
+        Printf.sprintf "'call<%s>%s%s" (T.show_formal arg)
           (show_args_taints ~truncate_guards args_taints)
           (Effect_guard.show_in_brackets ~truncate_guards guards)
 
@@ -848,16 +1079,17 @@ end = struct
         let fuse_arg (a1 : (Taints.t * Shape.shape) IL.argument)
             (a2 : (Taints.t * Shape.shape) IL.argument) :
             (Taints.t * Shape.shape) IL.argument =
-          (* Shapes compare guard-blind, so [a1]'s shape is kept; guard
-           * refinement inside [Fun] shapes is a known gap of the
-           * guard-blind [Signature] equality. *)
+          (* The shapes have the same structure and their cells' taints are
+           * united; guard refinement inside [Fun] shapes is a known gap of
+           * the guard-blind [Signature] equality. *)
           match (a1, a2) with
-          | IL.Unnamed (t1, s1), IL.Unnamed (t2, _) ->
-              IL.Unnamed (Taints.union t1 t2, s1)
-          | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, _)) ->
-              IL.Named (id1, (Taints.union t1 t2, s1))
+          | IL.Unnamed (t1, s1), IL.Unnamed (t2, s2) ->
+              IL.Unnamed (Taints.union t1 t2, Shape.union_same_structure s1 s2)
+          | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, s2)) ->
+              IL.Named
+                (id1, (Taints.union t1 t2, Shape.union_same_structure s1 s2))
           | (IL.Unnamed _ | IL.Named _), _ ->
-              a1 (* unreachable: identity-equal args have equal shape *)
+              a1 (* unreachable: target-equal args have the same structure *)
         in
         ToSinkInCall
           { c1 with
@@ -873,24 +1105,7 @@ end = struct
     | ToSink tts1, ToSink tts2 ->
         let items1, pre = tts1.taints_with_precondition in
         let items2, _ = tts2.taints_with_precondition in
-        let items =
-          List.fold_left
-            (fun (acc : taint_to_sink_item list) (i2 : taint_to_sink_item) ->
-              if
-                List.exists
-                  (fun i1 -> Int.equal (compare_taint_to_sink_item i1 i2) 0)
-                  acc
-              then
-                List_.map
-                  (fun (i1 : taint_to_sink_item) ->
-                    if Int.equal (compare_taint_to_sink_item i1 i2) 0 then
-                      { i1 with guard = Effect_guard.compose_or i1.guard i2.guard }
-                    else i1)
-                  acc
-              else i2 :: acc)
-            items1 items2
-          |> List.sort compare_taint_to_sink_item
-        in
+        let items = union_sink_items (items1 @ items2) in
         ToSink
           { tts1 with
             taints_with_precondition = (items, pre);
@@ -1095,6 +1310,10 @@ and Signature : sig
             consumers that read it. Consider deriving [params] lazily
             from [params_il] and dropping the field. *)
     effects : Effects.t;
+    closures : Shape.closure ClosureMap.t;
+        (** The closures that the [Closed] lambda references in [effects]
+            refer to, by lambda: their captured variables, as values of the
+            inputs of the function. *)
   }
   (** * The 'params' act like an universal quantifier, we need them to later *
       instantiate the accompanying signature. *)
@@ -1166,28 +1385,43 @@ end = struct
     params : params;
     params_il : IL.param list;
     effects : Effects.t;
+    closures : Shape.closure ClosureMap.t;
   }
 
   (* [params_il] is instantiation metadata; identity is determined by
-     [params] and [effects] alone. *)
-  let equal { params = params1; params_il = _; effects = effects1 }
-      { params = params2; params_il = _; effects = effects2 } =
+     [params], [effects] and [closures] alone. *)
+  let equal { params = params1; params_il = _; effects = effects1; closures = closures1 }
+      { params = params2; params_il = _; effects = effects2; closures = closures2 } =
     equal_params params1 params2 && Effects.equal effects1 effects2
+    && ClosureMap.equal Shape.equal_closure closures1 closures2
 
-  let equal_with_guards { params = params1; params_il = _; effects = effects1 }
-      { params = params2; params_il = _; effects = effects2 } =
+  let equal_with_guards
+      { params = params1; params_il = _; effects = effects1; closures = closures1 }
+      { params = params2; params_il = _; effects = effects2; closures = closures2 } =
     equal_params params1 params2
     && Effects.equal_with_guards effects1 effects2
+    && ClosureMap.equal Shape.equal_closure_with_guards closures1 closures2
 
-  let compare { params = params1; params_il = _; effects = effects1 }
-      { params = params2; params_il = _; effects = effects2 } =
+  let compare { params = params1; params_il = _; effects = effects1; closures = closures1 }
+      { params = params2; params_il = _; effects = effects2; closures = closures2 } =
     match compare_params params1 params2 with
-    | 0 -> Effects.compare effects1 effects2
+    | 0 -> (
+        match Effects.compare effects1 effects2 with
+        | 0 -> ClosureMap.compare Shape.compare_closure closures1 closures2
+        | other -> other)
     | other -> other
 
-  let show ?(truncate_guards = true) { params; params_il = _; effects } =
-    spf "%s => {%s}" (show_params params)
+  let show ?(truncate_guards = true) { params; params_il = _; effects; closures } =
+    spf "%s => {%s}%s" (show_params params)
       (Effects.show ~truncate_guards effects)
+      (if ClosureMap.is_empty closures then ""
+       else
+         " closures {"
+         ^ (ClosureMap.bindings closures
+           |> List.map (fun (((id, _) : Closure_key.t), (closure : Shape.closure)) ->
+                  Function_id.show id ^ Shape.show_closure closure)
+           |> String.concat "; ")
+         ^ "}")
 end
 
 (*****************************************************************************)
@@ -1197,8 +1431,6 @@ end
 (* Function key for the signature database - uses just the function name (last element of fn_id).
    This matches the graph vertex type in Call_graph.ml. *)
 type func_key = Function_id.t
-
-module FunctionMap = Map.Make (Function_id)
 
 (** Arity tag for disambiguating multi-arity function signatures.
     [Arity_exact n] matches call sites with exactly [n] arguments.
@@ -1240,6 +1472,12 @@ end
 
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
+  lambda_signatures : Signature.t Lazy.t FunctionMap.t;
+      (** The signatures of the lambdas of the function under analysis,
+          extracted when first read. A lambda has one signature. *)
+  getters : Function_id.t Member_map.t;
+      (** The methods that a read of the attribute of an instance of the
+          class calls ([Lang_config.getter_decorators]). *)
 }
 
 (** Separate database for builtin function signatures.
@@ -1318,14 +1556,39 @@ let show_name (name_opt : IL.name option) =
   | None -> ""
 
 let empty_signature_database () : signature_database =
-  { signatures = FunctionMap.empty }
+  {
+    signatures = FunctionMap.empty;
+    lambda_signatures = FunctionMap.empty;
+    getters = Member_map.empty;
+  }
+
+let add_getter (db : signature_database) ~(class_name : string) ~(attribute : string)
+    (getter : Function_id.t) : signature_database =
+  { db with getters = Member_map.add (class_name, attribute) getter db.getters }
+
+let find_getter (db : signature_database) ~(class_name : string) ~(attribute : string) :
+    Function_id.t option =
+  Member_map.find_opt (class_name, attribute) db.getters
 
 let lookup_signature (db : signature_database) (name : Function_id.t)
     (arity : int) : Signature.t option =
   match FunctionMap.find_opt name db.signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
       find_by_arity sigs arity
-  | _ -> None
+  | _ ->
+      (* [find_by_arity] gives the single signature of a name at any arity. *)
+      FunctionMap.find_opt name db.lambda_signatures |> Option.map Lazy.force
+
+let has_signature (db : signature_database) (name : Function_id.t) : bool =
+  FunctionMap.mem name db.signatures || FunctionMap.mem name db.lambda_signatures
+
+let lambda_signature (db : signature_database) (name : Function_id.t) :
+    Signature.t Lazy.t option =
+  FunctionMap.find_opt name db.lambda_signatures
+
+let add_lambda_signature (db : signature_database) (name : Function_id.t)
+    (signature : Signature.t Lazy.t) : signature_database =
+  { db with lambda_signatures = FunctionMap.add name signature db.lambda_signatures }
 
 let lookup_all_signatures (db : signature_database) (name : Function_id.t)
     : extended_sig list =
@@ -1352,7 +1615,7 @@ let add_signature (db : signature_database) (name : Function_id.t)
         | None -> Some (SignatureSet.singleton signature))
       db.signatures
   in
-  { signatures }
+  { db with signatures }
 
 (* Unlike add_signature, discards any prior entries for [name]. *)
 let replace_signature (db : signature_database) (name : Function_id.t)
@@ -1360,7 +1623,7 @@ let replace_signature (db : signature_database) (name : Function_id.t)
   let signatures =
     FunctionMap.add name (SignatureSet.singleton signature) db.signatures
   in
-  { signatures }
+  { db with signatures }
 
 let show_func_key (key : func_key) : string =
   Function_id.show_debug key

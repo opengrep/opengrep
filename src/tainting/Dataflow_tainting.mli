@@ -20,6 +20,16 @@ val pattern_leaves_with_offsets :
     without emitting IL Assigns. Pattern shapes without a clean
     structural projection path contribute no leaves. *)
 
+val with_capture_placeholders :
+  lang:Lang.t ->
+  IL.NameSet.t ->
+  Taint_lval_env.t ->
+  Taint_lval_env.t
+(** [with_capture_placeholders ~lang captured env] is [env] where every
+    variable of [captured], those that a lambda captures ([captured_vars]),
+    holds the placeholder [BCapture v], which a use of its signature replaces
+    by the value of [v] there. *)
+
 val fixpoint :
   Taint_rule_inst.t ->
   ?in_env:Taint_lval_env.t ->
@@ -43,3 +53,7 @@ val fixpoint :
 val drop_taints_if_bool_or_number :
   Rule_options.t -> Taint.Taint_set.t -> 'a Type.t -> Taint.Taint_set.t
 val reset_constructor: unit -> unit
+
+val captured_vars : lang:Lang.t -> IL.fun_cfg -> IL.NameSet.t
+(** The variables that a function or lambda reads and that a function
+    enclosing it binds. *)

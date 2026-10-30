@@ -53,6 +53,9 @@ type xconfig = {
    *)
   matching_explanations : bool;
   filter_irrelevant_rules : prefilter_config;
+  report_each_source : bool;
+      (* Every taint source gives its own finding
+         ([Core_match.Source_sink] deduplication). *)
 }
 
 type env = {
@@ -143,4 +146,5 @@ let default_xconfig =
      * true when running as part of the regular code path (not testing code)
      *)
     filter_irrelevant_rules = NoPrefiltering;
+    report_each_source = false;
   }

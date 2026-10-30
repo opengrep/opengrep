@@ -47,6 +47,9 @@ type any = Any : 'a t -> any
 module Best_matches : sig
   type t
 
+  val union : t -> t -> t
+  (** The best matches among the candidates of both sets. *)
+
   val _debug : t -> string
 end
 

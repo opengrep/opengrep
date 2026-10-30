@@ -1,0 +1,11 @@
+rules:
+  - id: js_lambda_local_is_not_captured
+    message: taint through a variable that the lambda declares
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

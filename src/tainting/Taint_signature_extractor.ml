@@ -115,7 +115,7 @@ let mk_method_property_assumptions (properties : G.expr list)
 
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env lang il_lval taint_set taint_arg env =
-  let param_shape = Shape.Arg (taint_arg, [ [] ]) in
+  let param_shape = Shape.Arg (Taint.Param taint_arg, [ [] ]) in
   Taint_lval_env.add_lval_shape lang il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
@@ -159,8 +159,8 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                      |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
                             (tm.Taint_spec_match.spec_pm, tm.spec))
                    in
-                   Taint.taints_of_pms ~incoming:Taint.Taint_set.empty
-                     pms_with_specs
+                   Taint.taints_of_pms ~grouping:taint_inst.source_grouping
+                     ~incoming:Taint.Taint_set.empty pms_with_specs
                  else Taint.Taint_set.empty
                in
                let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
@@ -201,7 +201,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                              *   so the only way a source match at the
                              *   declaration can taint the leaf is by
                              *   consulting the rule predicate here. *)
-                            let leaf_shape = Shape.Arg (taint_arg, [ offset ]) in
+                            let leaf_shape = Shape.Arg (Taint.Param taint_arg, [ offset ]) in
                             let leaf_taint_lval : Taint.lval =
                               { base = BArg taint_arg; offset }
                             in
@@ -228,6 +228,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                                            tm.spec ))
                                 in
                                 Taint.taints_of_pms
+                                  ~grouping:taint_inst.source_grouping
                                   ~incoming:Taint.Taint_set.empty
                                   pms_with_specs
                               else Taint.Taint_set.empty
@@ -386,6 +387,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                         match taint.Taint.orig with
                         | Taint.Src _ -> true (* Real source taint *)
                         | Taint.Var _ -> true (* Parameter taint - keep it! *)
+                        | Taint.Call_result _ -> true
                         | Taint.Shape_var _ -> false
                         | Taint.Control -> true (* Real control taint *))
                in
@@ -398,6 +400,8 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     {
       Signature.params;
       params_il = func_cfg.params;
+      closures =
+        Taint_lval_env.closures mapping.(func_cfg.cfg.exit).Dataflow_core.out_env;
       effects = Taint_shape.join_returns ~lang:taint_inst.lang effects_with_preconditions;
     }
   in
@@ -478,6 +482,7 @@ let extract_signature_with_file_context
     ~(class_name : string option)
     ?(method_properties : AST_generic.expr list = [])
     ?(call_graph : Call_graph.G.t option = None)
+    ~(captures_variables : bool)
     (taint_inst : Taint_rule_inst.t)
     func_cfg
     (ast : G.program) : signature_database * Signature.t =
@@ -498,6 +503,13 @@ let extract_signature_with_file_context
           method_property_env
   in
 
+  let combined_global_env =
+    if captures_variables then
+      Dataflow_tainting.with_capture_placeholders ~lang:taint_inst.lang
+        (Dataflow_tainting.captured_vars ~lang:taint_inst.lang func_cfg)
+        combined_global_env
+    else combined_global_env
+  in
   let { signature; _ } =
     extract_signature taint_inst ~in_env:combined_global_env ~name ~class_name
       ~signature_db:db ?builtin_signature_db ~call_graph func_cfg

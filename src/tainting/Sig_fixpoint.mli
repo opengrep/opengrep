@@ -21,18 +21,21 @@ val store :
   lang:Lang.t ->
   widen:bool ->
   ?max_shape_depth:int ->
+  previous:db ->
   Function_id.t ->
   Shape_and_sig.extended_sig list ->
   db ->
   db
-(** Replaces the function's signatures with these, each joined with the
-    stored signature of its arity: the rounds of a cycle do not accumulate
-    several signatures of one arity (which makes [find_by_arity] give up),
-    and a round never removes an effect of the previous one, so the stored
-    signatures of a cycle grow until they are stable. With [widen], for a
-    member of a cycle, the signatures' taint variables are widened
-    ([Taint_shape.widen_signature_taints]). A stored shape is cut at [max_shape_depth],
-    the taints below the cut folded into the cut cell: a self-recursive
+(** Replaces the function's signatures in [db] with these, each joined with
+    the signature of its arity stored in [previous], the database before the
+    extraction (which has already added the fresh signatures to [db]): the
+    rounds of a cycle do not accumulate several signatures of one arity
+    (which makes [find_by_arity] give up), and a round never removes an
+    effect of the previous one, so the stored signatures of a cycle grow
+    until they are stable. With [widen], for a member of a cycle, the
+    signatures' taint variables are widened
+    ([Taint_shape.widen_signature_taints]). A stored shape is cut at
+    [max_shape_depth], the taints below the cut folded into the cut cell: a self-recursive
     builder nests its return shape one level deeper per round, with no
     fixpoint in the shape domain, and a builder of [k] fields stores a
     [k]-way tree of the cut depth. The depth to pass is the longest offset
