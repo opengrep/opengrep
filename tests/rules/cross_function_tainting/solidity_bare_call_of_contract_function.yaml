@@ -1,0 +1,10 @@
+rules:
+- id: solidity_bare_call_of_contract_function
+  languages: [solidity]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

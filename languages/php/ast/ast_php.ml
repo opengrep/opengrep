@@ -364,7 +364,7 @@ and func_def = {
   (* only for methods; always empty for functions *)
   m_modifiers : modifier list;
   (* only for AnonLambda (could also abuse parameter), not for ShortLambda *)
-  l_uses : (bool (* is_ref *) * var) list;
+  l_uses : (tok option (* & *) * var) list;
   f_attrs : attribute list;
   f_body : stmt;
 }

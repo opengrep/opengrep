@@ -1,0 +1,11 @@
+rules:
+  - id: test-bare-call-in-method
+    message: Taint reaches a sink through a call
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
