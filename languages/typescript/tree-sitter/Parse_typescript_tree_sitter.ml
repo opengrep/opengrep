@@ -3134,7 +3134,7 @@ and anon_choice_export_stmt_42be789 (env : env)
       in
       Left (Field fld)
   | `Call_sign_ x ->
-      let _tparams, x = call_signature env x in
+      let x = bodiless_signature env x in
       let ty = mk_functype x in
       (* an (anonymous) call signature '(args): T'; name it after the call
        * operator, like C++ names 'operator()' *)
@@ -3388,7 +3388,7 @@ and abstract_method_signature (env : env)
     | None -> []
   in
   let attrs = v1 @ v2 @ v2bis @ v3 @ v5 |> List_.map attr in
-  let _tparams, x = call_signature env v6 in
+  let x = bodiless_signature env v6 in
   let t = mk_functype x in
   { fld_name = v4; fld_attrs = attrs; fld_type = Some t; fld_body = None }
 
@@ -3426,6 +3426,12 @@ and map_asserts (env : env) (tok : tok) ((v1, v2) : CST.asserts) : type_ =
     | `This tok -> Expr (this env tok)
   in
   TypeTodo (("Asserts", tok), [ any ])
+
+(* A signature without a body reads its parameters as a function type does. *)
+and bodiless_signature (env : env) (x : CST.call_signature) :
+    parameter list bracket * type_ option =
+  let _tparams, (params, tret) = call_signature env x in
+  (function_type_parameters env params, tret)
 
 and call_signature (env : env) ((v1, v2, v3) : CST.call_signature) :
     a_type_parameter list * (parameter list bracket * type_ option) =
@@ -3714,7 +3720,7 @@ and method_signature (env : env)
   let v6 = property_name env v6 in
   let v7 = kwd_attr_opt_to_list env Optional v7 in
   let attrs = v1 @ v2 @ v2bis @ v3 @ v4 @ v5 @ v7 |> List_.map attr in
-  let _tparams, x = call_signature env v8 in
+  let x = bodiless_signature env v8 in
   let t = mk_functype x in
   { fld_name = v6; fld_attrs = attrs; fld_type = Some t; fld_body = None }
 
@@ -3766,7 +3772,7 @@ and definitions (env : env) (x : CST.declaration) : definition list =
           in
           let v2 = token env v2 (* "function" *) in
           let v3 = identifier env v3 (* identifier *) in
-          let _tparams, x = call_signature env v4 in
+          let x = bodiless_signature env v4 in
           let ty = mk_functype x in
           let _v5 =
             match v5 with
@@ -4109,7 +4115,7 @@ and flow_hook_signature (env : env)
     ((v1, v2, v3, v4) : CST.flow_hook_signature) : definition list =
   let v1 = token env v1 (* "hook" *) in
   let v2 = identifier env v2 (* identifier *) in
-  let _tparams, x = call_signature env v3 in
+  let x = bodiless_signature env v3 in
   let _sc = semicolon env v4 in
   [
     ( basic_entity v2,

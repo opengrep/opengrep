@@ -1,0 +1,6 @@
+rules:
+  - id: flow-signature-unnamed-parameter
+    languages: [javascript]
+    message: signature that takes a string
+    severity: INFO
+    pattern: declare function $F(string): void;
