@@ -1,0 +1,10 @@
+rules:
+  - id: taint-scala-end-marker-value
+    languages: [scala]
+    message: The value of a body ending with an end marker is its last expression
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

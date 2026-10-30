@@ -5480,8 +5480,20 @@ let indentedExprOrBlockStatSeqUntil ~(location : location) ?until in_ =
                  || closesIndentedBlock in_ || isSemicolonBeforeDedent in_
                  || startsTemplateStatAfterIndentedBlock in_ ->
               (x, true)
-          | _ ->
-              (BlockExpr (BEBlock (E x :: blockStatSeq in_) |> surround), true))
+          | _ -> (
+              match blockStatSeq in_ with
+              (* the end marker of the expression, as `end match` after a
+                 match, leaves the expression alone *)
+              | _ :: _ as stats
+                when List.for_all
+                       (fun (stat : block_stat) ->
+                         match stat with
+                         | End _ -> true
+                         | _ -> false)
+                       stats ->
+                  (x, true)
+              | stats -> (BlockExpr (BEBlock (E x :: stats) |> surround), true)
+              ))
       | Some other ->
           (BlockExpr (BEBlock (other :: blockStatSeq in_) |> surround), true))
     else

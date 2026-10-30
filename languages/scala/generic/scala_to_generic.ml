@@ -938,9 +938,9 @@ and v_block_stat x : G.item list =
   | E v1 ->
       let v1 = v_expr_for_stmt v1 in
       [ v1 ]
-  | End v1 ->
-      let v1 = v_end_marker v1 in
-      [ v1 ]
+  (* an end marker is no statement, as in scalac, so that it is not the
+     value of the block it ends *)
+  | End _ -> []
   | Ext v1 -> v_extension v1
   | Package v1 ->
       let ipak, ids = v_package v1 in
@@ -1120,9 +1120,6 @@ and v_given_definition { gtok; gattrs; gsig; gkind } : G.definition list =
   in
   [ ({ G.name; attrs; tparams }, kind) ]
 
-and v_end_marker { end_tok; end_kind } : G.stmt =
-  G.OtherStmt (OS_Todo, [ G.Tk end_tok; G.Tk end_kind ]) |> G.s
-
 (* An extension method is a method whose first parameters are the receiver
    and the using parameters of its extension, after the type parameters of the
    extension (Scala 3 reference, "Translation of Extension Methods"). The
@@ -1167,7 +1164,7 @@ and v_extension { ext_tok = _; ext_tparams; ext_using; ext_param; ext_methods }
              v_import import
              |> List_.map (fun (dir : G.directive) ->
                     G.DirectiveStmt dir |> G.s)
-         | ExtEnd end_marker -> [ v_end_marker end_marker ])
+         | ExtEnd _ -> [])
 
 and v_constr_app (ty, args) = (v_type_ ty, v_list v_arguments args)
 
