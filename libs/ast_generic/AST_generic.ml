@@ -1757,6 +1757,9 @@ and keyword_attribute =
   (* for parameters: a Ruby keyword parameter 'sep:' takes a named
    * argument only, never a positional one *)
   | KeywordOnly
+  (* for parameters: a PHP parameter '&$x' is bound to the caller's
+   * variable, not to a copy of its value *)
+  | ByReference
 
 (* By name application in Scala, via => T, in parameter *)
 

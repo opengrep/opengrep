@@ -768,7 +768,7 @@ and lambda_def env (l_use, ld) =
       | Some (_, (_lp, xs, _rp)) ->
           comma_list xs
           |> List_.map (function LexicalVar (is_ref, name) ->
-                 (is_ref <> None, dname name)));
+                 (is_ref, dname name)));
   }
 
 and short_lambda_def env def =

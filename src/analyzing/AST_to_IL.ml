@@ -517,9 +517,14 @@ let rec lval env eorig : stmts * lval =
         | G.FN name ->
             let ss, attr = expr env (G.N name |> G.e) in
             (ss, Index attr)
-        | G.FDynamic e2orig ->
+        | G.FDynamic e2orig -> (
             let ss, attr = expr env e2orig in
-            (ss, Index attr)
+            (* A member whose name is a string literal, e.g. PHP's
+               [$o->{'x'}], is the field of that name. *)
+            match attr.e with
+            | Literal (G.String (_, id, _)) ->
+                (ss, Dot (var_of_id_info id (G.empty_id_info ())))
+            | _ -> (ss, Index attr))
       in
       let offset' = { o = offset'; oorig = SameAs eorig } in
       let ss_lv, lv1 = nested_lval env tok e1orig in
@@ -3965,7 +3970,7 @@ and parameters env params : param list =
            ParamPattern ({ pname; pdefault }, pat)
        | G.ParamReceiver { pname = Some i; pinfo; pdefault; _ } ->
            ParamReceiver { pname = var_of_id_info i pinfo; pdefault }
-       (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
+       (* Ruby block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
        | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
          ->
            Param { pname = var_of_id_info i pinfo; pdefault }

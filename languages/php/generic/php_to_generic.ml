@@ -58,8 +58,9 @@ let var v = wrap string v
 
 (* a variable bound to an enclosing scope's by a directive such as
  * [global $x;] or a closure's [use ($x)] *)
-let use_outer_decl (tok : Tok.t) (id : G.ident) : G.stmt =
-  let ent = G.basic_entity ~case_insensitive:false id in
+let use_outer_decl ~(attrs : G.attribute list) (tok : Tok.t) (id : G.ident) :
+    G.stmt =
+  let ent = G.basic_entity ~case_insensitive:false ~attrs id in
   G.DefStmt (ent, G.UseOuterDecl tok) |> G.s
 let qualified_ident v = list ident v
 
@@ -237,8 +238,8 @@ let rec stmt_aux = function
              (* [global $x;] — the tree-sitter converter emits UseOuterDecl
               * for this too; naming plants the outer binding in the
               * function scope so later [$x = ...] rebinds the global. *)
-             | Id { n_root = None; n_parts = [ id ] } -> use_outer_decl t id
-             | Var v -> use_outer_decl t (var v)
+             | Id { n_root = None; n_parts = [ id ] } -> use_outer_decl ~attrs:[] t id
+             | Var v -> use_outer_decl ~attrs:[] t (var v)
              | _ ->
                  let e = expr e in
                  G.OtherStmt (G.OS_GlobalComplex, [ G.E e ]) |> G.s)
@@ -503,8 +504,15 @@ and expr e : G.expr =
            * as a [use] directive for naming to bind them there. *)
           let uses =
             l_uses
-            |> List_.map (fun ((_is_ref : bool), (v : var)) ->
-                   use_outer_decl (Tok.fake_tok t "use") (var v))
+            |> List_.map (fun ((ref_tok : Tok.t option), (v : var)) ->
+                   (* [use (&$x)] shares the variable; [use ($x)] copies its
+                      value when the closure is created. *)
+                   let attrs =
+                     ref_tok
+                     |> Option.map (fun (tok : Tok.t) -> G.KeywordAttr (G.ByReference, tok))
+                     |> Option.to_list
+                   in
+                   use_outer_decl ~attrs (Tok.fake_tok t "use") (var v))
           in
           let body =
             match (uses, stmt body) with
@@ -653,8 +661,8 @@ and func_def
   (* todo: transform in UseOuterDecl before first body stmt *)
   let _lusesTODO =
     list
-      (fun (v1, v2) ->
-        let _v1 = bool v1 and _v2 = var v2 in
+      (fun ((_ : Tok.t option), v2) ->
+        let _v2 = var v2 in
         ())
       l_uses
   in
@@ -704,19 +712,23 @@ and parameter_classic
   (* constructor property promotion: keep the modifiers so patterns can
    * distinguish e.g. 'private readonly' from 'public' *)
   let p_modifiers = list modifier_to_attr p_modifiers in
+  let by_reference =
+    p_ref
+    |> Option.map (fun (tok : Tok.t) -> G.KeywordAttr (G.ByReference, tok))
+    |> Option.to_list
+  in
   let pclassic =
     {
       G.pname = Some p_name;
       ptype = p_type;
       pdefault = p_default;
-      pattrs = p_modifiers @ p_attrs;
+      pattrs = by_reference @ p_modifiers @ p_attrs;
       pinfo = G.empty_id_info ();
     }
   in
-  match (p_variadic, p_ref) with
-  | None, None -> G.Param pclassic
-  | _, Some tok -> G.OtherParam (("Ref", tok), [ G.Pa (G.Param pclassic) ])
-  | Some tok, None -> G.ParamRest (tok, pclassic)
+  match p_variadic with
+  | None -> G.Param pclassic
+  | Some tok -> G.ParamRest (tok, pclassic)
 
 (* PHP 8.4 asymmetric visibility: public(set), protected(set) and
    private(set) are converted to OtherAttribute like Swift does *)

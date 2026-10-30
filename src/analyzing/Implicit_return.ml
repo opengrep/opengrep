@@ -90,6 +90,17 @@ let lang_supports_implicit_return (lang : Lang.t) =
       true
   | _else_ -> false
 
+(* A [LambdaKind] of JavaScript is a function expression, which returns only
+   what a [return] gives, as a function does. A Vue component's script is
+   JavaScript. *)
+let lambda_kind_returns_explicitly (lang : Lang.t) =
+  match lang with
+  | Js
+  | Ts
+  | Vue ->
+      true
+  | _else_ -> false
+
 let mark_implicit_return_nodes (cfg : IL.cfg) =
   (* Traverse backward from exit and mark the expression in the
    * first instruction node along each path.
@@ -110,7 +121,7 @@ let mark_implicit_return lang ast =
          match fkind with
          | __any__ when lang_supports_implicit_return lang ->
              mark_implicit_return_fdef lang ~tok fdef
-         | LambdaKind ->
+         | LambdaKind when not (lambda_kind_returns_explicitly lang) ->
              (* Lambdas expressions tend to always support implicit returns,
               * even in languages that require explicit returns like Java.
               * An [Arrow] is not marked: a block body returns only what it

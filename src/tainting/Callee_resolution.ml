@@ -587,13 +587,12 @@ let rec identify_callee ~(lang : Lang.t)
               | Some class_name ->
                   let class_name_str = fst class_name.IL.ident in
                   (* [methods_by_class] first: catches MRO-inherited methods. *)
-                  let method_matches =
-                    Type_state.find_methods type_state ~fallback:all_funcs
-                      ~class_name:class_name_str ~method_name:callee_name_str
-                  in
-                  let method_match = match method_matches with
-                    | [] -> None
-                    | x :: _ -> Some x
+                  let method_match =
+                    if (Lang_config.get lang).bare_call_reaches_methods then
+                      Type_state.find_methods type_state ~fallback:all_funcs
+                        ~class_name:class_name_str ~method_name:callee_name_str
+                      |> List_.hd_opt
+                    else None
                   in
                   (* Build [all_names] inside the lambda: O(N) only when debug is on. *)
                   Log.debug (fun m ->
