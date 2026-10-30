@@ -111,6 +111,10 @@ type ident = G.ident [@@deriving show, eq, ord]
 type name = { ident : ident; sid : G.sid; id_info : G.id_info }
 [@@deriving show,eq]
 
+(* The identifier of the variable that holds a lambda, and of the lambda as a
+   function. *)
+let lambda_var_ident = "_tmp_lambda"
+
 (* [SId.to_string], not the derived [show]: this string keys the constant
    propagation environment on every variable access, and the derived
    printer goes through [Format]. *)

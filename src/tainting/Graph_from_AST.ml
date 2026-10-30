@@ -871,7 +871,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       (* Prefer a named encloser over a lambda: a lambda isn't a call-graph vertex, so a source/sink on it would prune the enclosing function. *)
       let is_lambda_fn_id (fn_id : fn_id) =
         match List_.last_opt fn_id with
-        | Some (Some name) -> String.equal (fst name.IL.ident) "_tmp_lambda"
+        | Some (Some name) -> String.equal (fst name.IL.ident) IL.lambda_var_ident
         | _ -> false
       in
       let pick_smallest lst =

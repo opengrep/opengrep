@@ -216,9 +216,9 @@ let entity_to_il_name (ent : G.entity) : IL.name option =
    not a distinct callable. The fake token wraps the source position so the
    resulting [Function_id] is position-distinct via [Function_id.key]. *)
 let synth_lambda_il_name_of_tok (tok : Tok.t) : IL.name =
-  let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
+  let fake_tok = Tok.fake_tok tok IL.lambda_var_ident in
   IL.{
-    ident = ("_tmp_lambda", fake_tok);
+    ident = (IL.lambda_var_ident, fake_tok);
     sid = G.SId.unsafe_default;
     id_info = G.empty_id_info ();
   }

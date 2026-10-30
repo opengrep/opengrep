@@ -191,6 +191,12 @@ let fresh_lval ?str env tok : lval =
   let var = fresh_var ?str env tok in
   { base = Var var; rev_offset = [] }
 
+(* The variable that holds the lambda [fdef], at the token of its kind, or at
+   [fallback] when that token is fake ([lambda_name_tok]). *)
+let fresh_lambda_lval env (fdef : G.function_definition) ~(fallback : Tok.t Lazy.t) :
+    lval =
+  fresh_lval env ~str:IL.lambda_var_ident (lambda_name_tok fdef ~fallback)
+
 let var_of_id_info id id_info : name =
   let sid =
     match !(id_info.G.id_resolved) with
@@ -2536,9 +2542,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           | Some (first, _) -> Tok.tok_of_loc first
           | None -> snd fdef.fkind)
       in
-      let lval =
-        fresh_lval env ~str:"_tmp_lambda" (lambda_name_tok fdef ~fallback:first_tok)
-      in
+      let lval = fresh_lambda_lval env fdef ~fallback:first_tok in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -3030,10 +3034,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval =
-                    fresh_lval env ~str:"_tmp_lambda"
-                      (lambda_name_tok fdef ~fallback:(lazy (snd id)))
-                  in
+                  let lval = fresh_lambda_lval env fdef ~fallback:(Lazy.from_val (snd id)) in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
@@ -4944,15 +4945,19 @@ and function_definition env fdef : function_definition =
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody =
     match (fdef.G.fkind, fdef.G.fbody) with
-    (* An arrow whose body is an expression returns its value (Java, JLS
-       15.27.3); the value of a void-compatible one is discarded, which
-       returning it does not change. *)
+    (* An arrow whose body is an expression returns the value of the
+       expression, in every language whose front end produces one (Java, C#,
+       JavaScript, TypeScript, PHP [fn], Scala); where the arrow returns
+       nothing, as a void-compatible Java lambda, the value is discarded,
+       which returning it does not change. *)
     | (G.Arrow, tok), G.FBStmt { s = G.ExprStmt (e, sc); _ } ->
         stmt env (G.Return (Tok.fake_tok tok "return", Some e, sc) |> G.s)
     | _ -> function_body env fdef.G.fbody
   in
   let fbody = rec_point_label_stmts @ fbody in
-  (* The [use] declarations at the head of the body of a closure. *)
+  (* The variables that the closure captures by reference: the declarations
+     of outer variables ([UseOuterDecl]) with the [ByReference] attribute at
+     the head of its body, as PHP's [use (&$x)] gives. *)
   let fcaptured_by_reference =
     (match fdef.G.fbody with
     | G.FBStmt { s = G.Block (_, stmts, _); _ } -> stmts
