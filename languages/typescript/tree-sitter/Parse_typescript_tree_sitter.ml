@@ -2206,6 +2206,11 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
           let v2 = type_ env v2 in
           let _v3 = token env v3 (* ")" *) in
           v2
+      | `Pred_type (`Unique_symb (v1, v2)) ->
+          (* `unique` qualifies the type `symbol` *)
+          let tunique = token env v1 (* "unique" *) in
+          let symbol = identifier env v2 (* "symbol" *) in
+          TypeTodo (("Unique", tunique), [ Type (TyName [ symbol ]) ])
       | `Pred_type x ->
           let id = predefined_type env x in
           (* less: could also be a G.TyBuiltin *)
