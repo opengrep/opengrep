@@ -3098,7 +3098,8 @@ and update_expression (env : env) (x : CST.update_expression) =
   | `Exp_choice_PLUSPLUS (v1, v2) ->
       let v1 = expression env v1 in
       let op, t = anon_choice_PLUSPLUS_e498e28 env v2 in
-      Apply (IdSpecial (IncrDecr (op, G.Postfix), t), fb [ v1 ])
+      apply_postfix v1 (fun e ->
+          Apply (IdSpecial (IncrDecr (op, G.Postfix), t), fb [ e ]))
   | `Choice_PLUSPLUS_exp (v1, v2) ->
       let op, t = anon_choice_PLUSPLUS_e498e28 env v1 in
       let v2 = expression env v2 in
