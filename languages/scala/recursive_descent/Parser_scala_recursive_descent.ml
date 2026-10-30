@@ -2523,8 +2523,35 @@ and pattern1 in_ : pattern =
   in
   let p = pattern2 in_ in
   (* crazy? depending whether Ident(name) && if nme.isVariableName(name)? *)
-  match in_.token with
-  | COLON ii -> (
+  let varargs_name : varid option =
+    match p with
+    | PatVarid varid -> Some varid
+    | PatName (Id ((s, _) as id), [])
+      when Domain.DLS.get Flag_parsing.sgrep_mode
+           && AST_generic.is_metavar_name s ->
+        Some id
+    | _ -> None
+  in
+  match (in_.token, varargs_name) with
+  (* `xs: _*`, the rest of the sequence, as `xs*`, also with a metavariable *)
+  | COLON _, Some varid
+    when match skip_trivia ~newlines:false in_.rest with
+         | USCORE _ :: rest -> (
+             match skip_trivia ~newlines:false rest with
+             | STAR _ :: after -> (
+                 match skip_trivia ~newlines:true after with
+                 | (RPAREN _ | COMMA _) :: _ -> true
+                 | _ -> false)
+             | _ -> false)
+         | _ -> false ->
+      skipToken in_;
+      skipToken in_;
+      let istar = TH.info_of_tok in_.token in
+      skipToken in_;
+      (match varid with
+      | "_", iuscore -> PatUnderscoreStar (iuscore, istar)
+      | _ -> PatVarargs (varid, istar))
+  | COLON ii, _ -> (
       (* AST: p.removeAttachment[BackquotedIdentifierAttachment.type] *)
       skipToken in_;
       let t = compoundType in_ in
@@ -2536,7 +2563,7 @@ and pattern1 in_ : pattern =
       (* Scala 3: a literal or another pattern with a type *)
       | _ -> PatTyped (p, ii, t))
   (* CHECK: "Pattern variables must start with a lower-case letter." *)
-  | _ -> p
+  | _, _ -> p
 
 (** {{{
  *  Pattern2    ::=  id  `@` Pattern3
