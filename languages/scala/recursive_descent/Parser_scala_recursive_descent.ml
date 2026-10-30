@@ -5438,8 +5438,12 @@ let blockStatSeqInner (location : location) in_ : top_stat option =
         match in_.token with
         | Kimplicit ii ->
             skipToken in_;
-            if TH.isIdentBool in_.token then
-              E (implicitClosure (Implicit, ii) location in_)
+            (* a soft modifier, as `inline` in `implicit inline def`, starts
+               a definition *)
+            if
+              TH.isIdentBool in_.token
+              && not (TH.isSoftModifier in_.token && is_modifier in_)
+            then E (implicitClosure (Implicit, ii) location in_)
               (* ast: Flags.IMPLICIT*)
             else D (localDef [ (Implicit, ii) ] in_)
         | _ -> D (localDef [] in_)
