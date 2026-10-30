@@ -425,41 +425,34 @@ let anon_choice_get_8fb02de (env : env) (x : CST.anon_choice_get_8fb02de) =
 
 let reserved_identifier (env : env) (x : CST.reserved_identifier) =
   match x with
+  | `Decl tok
+  | `Name tok
+  | `Type tok
+  | `Public tok
+  | `Priv tok
+  | `Prot tok
+  | `Over tok
+  | `Read tok
+  | `Module tok
+  | `Any tok
+  | `Num tok
+  | `Bool tok
+  | `Str tok
+  | `Symb tok
+  | `Export tok
+  | `Obj tok
+  | `Get tok
+  | `Set tok
+  | `Async tok
+  | `Static tok
   | `Acce tok
   | `Abst tok
   | `Using tok
   | `Opaque tok
   | `Comp tok
-  | `Hook tok ->
+  | `Hook tok
+  | `Unique tok ->
       identifier env tok
-  | `Choice_decl x -> (
-      match x with
-      | `Decl tok
-      | `Name tok
-      | `Type tok
-      | `Public tok
-      | `Priv tok
-      | `Prot tok
-      | `Read tok
-      | `Module tok
-      | `Any tok
-      | `Num tok
-      | `Bool tok
-      | `Str tok
-      | `Symb tok
-      | `Export tok
-      | `Obj tok
-      | `New tok
-      | `Over tok ->
-          identifier env tok
-      | `Choice_get x -> (
-          match x with
-          | `Get tok -> identifier env tok (* "get" *)
-          | `Set tok -> identifier env tok (* "set" *)
-          | `Async tok -> identifier env tok (* "async" *)
-          | `Static tok -> identifier env tok (* "static" *)
-          | `Export tok -> identifier env tok (* export *)
-          | `Let tok -> identifier env tok (* "let" *)))
 
 let anon_choice_COMMA_5194cb4 (env : env) (x : CST.anon_choice_COMMA_5194cb4) =
   match x with
@@ -582,9 +575,27 @@ let literal_type (env : env) (x : CST.literal_type) : expr =
   | `Null tok -> IdSpecial (Null, token env tok)
   | `Unde tok -> IdSpecial (Undefined, token env tok)
 
+let rec type_keyword_nested_identifier (env : env)
+    ((v1, v2, v3) : CST.type_keyword_nested_identifier) : a_ident list =
+  let v1 =
+    match v1 with
+    | `Choice_comp (`Comp tok | `Unique tok | `Obj tok) ->
+        [ identifier env tok ]
+    | `Type_kw_nested_id x -> type_keyword_nested_identifier env x
+  in
+  let _v2 = token env v2 (* "." *) in
+  let v3 = identifier env v3 (* identifier *) in
+  v1 @ [ v3 ]
+
 let nested_type_identifier (env : env)
     ((v1, v2, v3) : CST.nested_type_identifier) : a_ident list =
-  let v1 = id_or_nested_id env v1 in
+  let v1 =
+    match v1 with
+    | (`Id _ | `Nested_id _) as x -> id_or_nested_id env x
+    | `Choice_comp (`Comp tok | `Unique tok | `Obj tok) ->
+        [ identifier env tok ]
+    | `Type_kw_nested_id x -> type_keyword_nested_identifier env x
+  in
   let _v2 = token env v2 (* "." *) in
   let v3 = str env v3 (* identifier *) in
   v1 @ [ v3 ]
@@ -592,10 +603,10 @@ let nested_type_identifier (env : env)
 let id_or_reserved_id (env : env)
     (x :
       [ `Id of Tree_sitter_run.Token.t
-      | `Choice_choice_decl of CST.reserved_identifier ]) : a_ident =
+      | `Choice_decl of CST.reserved_identifier ]) : a_ident =
   match x with
   | `Id tok -> identifier env tok (* identifier *)
-  | `Choice_choice_decl x -> reserved_identifier env x
+  | `Choice_decl x -> reserved_identifier env x
 
 
 let by_binding ~(binding : import_binding)
@@ -984,7 +995,7 @@ and object_property_pattern (env : env) (x : CST.anon_choice_pair_pat_3ff9cbe) :
   | `Obj_assign_pat (v1, v2, v3) ->
       let pat =
         match v1 with
-        | `Choice_choice_choice_decl x -> id_or_reserved_id env x |> idexp
+        | `Choice_choice_decl x -> id_or_reserved_id env x |> idexp
         | `Dest_pat x -> destructuring_pattern env x
       in
       let tok = token env v2 (* "=" *) in
@@ -1063,7 +1074,9 @@ and generic_type (env : env) (x : CST.generic_type) : type_ =
   | `Choice_id_flow_empty_type_args (v1, _) -> (
       match v1 with
       | `Id tok -> TyName [ identifier env tok ] (* identifier *)
-      | `Nested_type_id x -> TyName (nested_identifier env x))
+      | `Nested_type_id x -> TyName (nested_type_identifier env x))
+  | `Choice_comp_type_args ((`Comp tok | `Unique tok), _) ->
+      TyName [ identifier env tok ]
   | `Choice_type_query_member_exp_in_type_anno_type_args (v1, _) ->
       import_type env v1
 
@@ -1484,7 +1497,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
           | `Member_exp x -> member_expression env x
           | `Paren_exp x -> parenthesized_expression env x
           | `Choice_unde x -> identifier_ env x
-          | `Choice_choice_decl x ->
+          | `Choice_decl x ->
               reserved_identifier env x |> idexp_or_special
           | `This tok -> this env tok (* "this" *)
           | `Super tok -> super env tok (* "super" *)
@@ -1525,7 +1538,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
               in
               let v2, tret =
                 match v2 with
-                | `Choice_choice_choice_decl x ->
+                | `Choice_choice_decl x ->
                     let id = id_or_reserved_id env x in
                     (fb [ ParamClassic (mk_param id) ], None)
                 | `Call_sign x ->
@@ -2061,7 +2074,7 @@ and expression (env : env) (x : CST.expression) : expr =
             match x with
             | `Member_exp x -> member_expression env x
             | `Subs_exp x -> subscript_expression env x
-            | `Choice_choice_decl x ->
+            | `Choice_decl x ->
                 let id = reserved_identifier env x in
                 idexp id
             | `Id tok ->
@@ -2272,6 +2285,7 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
           let v7 = type_ env v7 in
           TypeTodo (("ConditionalType", v4), [ Type v1; Type v3; Type v5; Type v7 ]))
   | `Comp tok -> TyName [ identifier env tok (* "component" *) ]
+  | `Unique tok -> TyName [ identifier env tok (* "unique" *) ]
   | `Flow_comp_type (v1, v2, v3) ->
       let v1 = token env v1 (* "component" *) in
       flow_component_type env v1 v2 v3
@@ -3318,6 +3332,7 @@ and property_name (env : env) (x : CST.property_name) =
   | `Flow_symb_name tok ->
       (* `@@iterator`, Flow's name of a well-known symbol *)
       PN (str env tok)
+  | `New tok -> PN (str env tok)
   | `Choice_choice_id x -> (
       match x with
       | `Choice_id x ->
@@ -3608,7 +3623,7 @@ and lhs_expression (env : env) (x : CST.lhs_expression) : expr =
       | `Member_exp x -> member_expression env x
       | `Subs_exp x -> subscript_expression env x
       | `Choice_unde x -> identifier_ env x
-      | `Choice_choice_decl x -> reserved_identifier env x |> idexp
+      | `Choice_decl x -> reserved_identifier env x |> idexp
       | `Dest_pat x -> destructuring_pattern env x)
   | `Non_null_exp x -> non_null_expression env x
 
@@ -3725,7 +3740,9 @@ and declaration (env : env) (x : CST.declaration) : stmt list =
           let default_tok = token env v1 (* "default" *) in
           default_exported_definitions export_tok default_tok defs
       | `Decl _
-      | `Defa_choice_decl (_, `Type_choice_auto_semi _) ->
+      | `Defa_choice_decl (_, `Type_choice_auto_semi _)
+      | `Flow_comp_sign _
+      | `Flow_hook_sign _ ->
           exported_definitions export_tok defs)
   | _ -> definitions env x |> List_.map (fun def -> DefStmt def)
 
@@ -3877,35 +3894,14 @@ and definitions (env : env) (x : CST.declaration) : definition list =
                       v_type = Some ty;
                     } );
               ]
-          | `Flow_comp_sign (v1, v2, v3, v4, v5, v6) ->
-              let v1 = token env v1 (* "component" *) in
-              let v2 = identifier env v2 (* identifier *) in
-              let _tparams =
-                match v3 with
-                | Some x -> type_parameters env x
-                | None -> []
-              in
-              let ty = flow_component_type env v1 v4 v5 in
-              let _sc = semicolon env v6 in
-              [
-                ( basic_entity v2,
-                  VarDef
-                    { v_kind = (Const, v1); v_init = None; v_type = Some ty } );
-              ]
-          | `Flow_hook_sign (v1, v2, v3, v4) ->
-              let v1 = token env v1 (* "hook" *) in
-              let v2 = identifier env v2 (* identifier *) in
-              let _tparams, x = call_signature env v3 in
-              let _sc = semicolon env v4 in
-              [
-                ( basic_entity v2,
-                  VarDef
-                    {
-                      v_kind = (Const, v1);
-                      v_init = None;
-                      v_type = Some (mk_functype x);
-                    } );
-              ])
+          | `Export_choice_decl (v1, `Flow_comp_sign x) ->
+              let _export = token env v1 (* "export" *) in
+              flow_component_signature env x
+          | `Export_choice_decl (v1, `Flow_hook_sign x) ->
+              let _export = token env v1 (* "export" *) in
+              flow_hook_signature env x
+          | `Flow_comp_sign x -> flow_component_signature env x
+          | `Flow_hook_sign x -> flow_hook_signature env x)
       | `Ambi_decl (`Decl_choice_decl (v1, v2)) ->
           let _v1 = token env v1 (* "declare" *) in
           let v2 =
@@ -4091,6 +4087,35 @@ and flow_function_type_parameters (env : env)
   let v5 = token env v5 (* ")" *) in
   (v1, first :: rest, v5) |> function_type_parameters env
 
+and flow_component_signature (env : env)
+    ((v1, v2, v3, v4, v5, v6) : CST.flow_component_signature) :
+    definition list =
+  let v1 = token env v1 (* "component" *) in
+  let v2 = identifier env v2 (* identifier *) in
+  let _tparams =
+    match v3 with
+    | Some x -> type_parameters env x
+    | None -> []
+  in
+  let ty = flow_component_type env v1 v4 v5 in
+  let _sc = semicolon env v6 in
+  [
+    ( basic_entity v2,
+      VarDef { v_kind = (Const, v1); v_init = None; v_type = Some ty } );
+  ]
+
+and flow_hook_signature (env : env)
+    ((v1, v2, v3, v4) : CST.flow_hook_signature) : definition list =
+  let v1 = token env v1 (* "hook" *) in
+  let v2 = identifier env v2 (* identifier *) in
+  let _tparams, x = call_signature env v3 in
+  let _sc = semicolon env v4 in
+  [
+    ( basic_entity v2,
+      VarDef
+        { v_kind = (Const, v1); v_init = None; v_type = Some (mk_functype x) } );
+  ]
+
 and flow_component_parameters (env : env)
     ((v1, v2, v3) : CST.flow_component_parameters) : property list bracket =
   let v1 = token env v1 (* "(" *) in
@@ -4110,7 +4135,7 @@ and flow_component_parameter (env : env)
       let name =
         match v1 with
         | `Id tok -> identifier env tok
-        | `Choice_choice_decl x -> reserved_identifier env x
+        | `Choice_decl x -> reserved_identifier env x
         | `Str x -> string_ env x
       in
       let local =
@@ -4124,8 +4149,8 @@ and flow_component_parameter (env : env)
         | None -> []
       in
       let ty = Option.map (fun x -> type_annotation env x |> snd) v4 in
-      (* A pattern has no slot for a default value; the binding is kept, as
-       * for `{a: b = 1}` in object patterns. *)
+      (* A generic pattern has no slot for a default value; the binding is
+       * kept, as for `{a: b = 1}` in object patterns. *)
       let _default = Option.map (initializer_ env) v5 in
       let body =
         match local with
