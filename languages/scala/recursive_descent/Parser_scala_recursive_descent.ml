@@ -1141,6 +1141,18 @@ let followingIsColonLambda (in_ : env) : bool =
       | _ -> false)
     in_
 
+(* `f: [T] =>` at the end of a line, followed by an indented body: a
+   polymorphic function literal as a colon argument *)
+let followingIsColonPolyLambda (in_ : env) : bool =
+  lookingAhead
+    (fun (in_ : env) ->
+      in_.token =~= LBRACKET ab
+      && (skipMatching in_;
+          in_.token =~= ARROW ab)
+      && (nextToken in_;
+          isIndentedRegionStart in_))
+    in_
+
 (* Is the `do` at the current token a Scala 2 `do { ... } while (c)`, with
    `while` right after the block on the same line? *)
 let isDoWhile (in_ : env) : bool =
@@ -3099,15 +3111,7 @@ and simpleExpr ?(is_block_expr = false) in_ : expr =
            (* Scala 3 polymorphic function literal: `[A] => expr` *)
            | LBRACKET _ when isGroupBeforeArrow in_ ->
                canApply := false;
-               let owner = ("", TH.info_of_tok in_.token) in
-               let tparams =
-                 match !typeParamClauseOpt_ owner in_ with
-                 | Some tparams -> tparams
-                 | None -> error "type parameters expected" in_
-               in
-               let iarrow = TH.info_of_tok in_.token in
-               accept (ARROW ab) in_;
-               PolyLambda (tparams, iarrow, expr in_)
+               polyFunctionLiteral expr in_
            | QUOTE quote ->
                let x = quoted quote in_ in
                Quoted x
@@ -3225,7 +3229,24 @@ and colonArgumentOpt (in_ : env) : block_expr option =
         }
     in
     Some (fb (Tok.unsafe_fake_tok "") (BEBlock [ E lambda ])))
+  else if followingIsColonPolyLambda in_ then (
+    skipToken in_;
+    let body (in_ : env) : expr = BlockExpr (blockExpr in_) in
+    let lambda = polyFunctionLiteral body in_ in
+    Some (fb (Tok.unsafe_fake_tok "") (BEBlock [ E lambda ])))
   else None
+
+(* `[A] => body`, at the `[` *)
+and polyFunctionLiteral (body : env -> expr) (in_ : env) : expr =
+  let owner = ("", TH.info_of_tok in_.token) in
+  let tparams =
+    match !typeParamClauseOpt_ owner in_ with
+    | Some tparams -> tparams
+    | None -> error "type parameters expected" in_
+  in
+  let iarrow = TH.info_of_tok in_.token in
+  accept (ARROW ab) in_;
+  PolyLambda (tparams, iarrow, body in_)
 
 (* ------------------------------------------------------------------------- *)
 (* XML literals *)
