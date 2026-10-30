@@ -2042,7 +2042,8 @@ and expression (env : env) (x : CST.expression) : expr =
       TypeAssert (e, tsat, ty)
   | `Inst_exp (v1, v2) ->
       let e = expression env v1 in
-      Instantiation (e, type_arguments env v2)
+      let targs = type_arguments env v2 in
+      apply_postfix e (fun e -> Instantiation (e, targs))
   | `Inte_module x -> (
       (* namespace (deprecated in favor of ES modules) *)
       (* TODO represent namespaces properly in the AST instead of the nonsense
