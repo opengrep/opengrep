@@ -6,4 +6,4 @@ const a = <div>
 const b = <div> {x} </div>;
 // MATCH:
 const c = <div>{x}</div>;
-const d = <div>{y}</div>;
+const d = <div> {y} </div>;

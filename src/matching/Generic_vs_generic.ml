@@ -79,6 +79,17 @@ let m_string_xhp_text sa sb =
   if sa = sb || (sa =~ "^[\n ]+$" && sb =~ "^[\n ]+$") then return ()
   else fail ()
 
+(* Whitespace at either end of a body is layout; between children it can be
+ * content. *)
+let trim_xml_layout (xs : G.xml_body list) : G.xml_body list =
+  let rec drop_layout (xs : G.xml_body list) : G.xml_body list =
+    match xs with
+    | G.XmlText (s, _) :: rest when String.equal (String.trim s) "" ->
+        drop_layout rest
+    | _ -> xs
+  in
+  xs |> drop_layout |> List.rev |> drop_layout |> List.rev
+
 let has_ellipsis_and_filter_ellipsis_gen f xs =
   let has_ellipsis = ref false in
   let ys =
@@ -1748,6 +1759,7 @@ and m_xml_bodies a b =
   | [ XmlText (s, tok) ], _ when Mvar.is_metavar_ellipsis s ->
       envf (s, tok) (MV.Xmls b)
   | _else_ ->
+      let a = trim_xml_layout a and b = trim_xml_layout b in
       (* alt: use with_lang and enabled it by default for Lang.Xml *)
       if_config
         (fun x -> x.xml_children_ordered)
