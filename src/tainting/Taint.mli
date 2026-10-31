@@ -12,10 +12,10 @@ module LabelSet : Set.S with type elt = string
 
 type tainted_token = AST_generic.tok [@@deriving show]
 
-type tainted_tokens = tainted_token list [@@deriving show]
-(** A list of tokens showing where the taint passed through,
-  * at present these represent only code variables. For example,
-  * when passing through a statement like `x = tainted`, the token
+type tainted_tokens = Taint_trace.tainted_tokens [@@deriving show]
+(** The path of a taint, where it passed through: the variables, and the
+  * calls that the taint goes through (see Taint_trace.tainted_tokens). For
+  * example, when passing through a statement like `x = tainted`, the token
   * corresponding to `x` will be added to this list. *)
 
 (** A call trace to a source or sink match.

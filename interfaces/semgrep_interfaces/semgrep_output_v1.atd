@@ -500,6 +500,30 @@ type match_intermediate_var
   (* Unlike abstract_content, this is the actual text read from the
    * corresponding source file *)
   content: string;
+  (* EXPERIMENTAL: the part of the variable in the function it is in: the
+   * parameter by which the taint enters the function, or the return by
+   * which it leaves it. The JSON and SARIF outputs leave the field out, and
+   * the return with it. *)
+  ?role: match_intermediate_var_role option;
+  (* EXPERIMENTAL: the variable is the name of a function called, and the
+   * taint goes through the call, in by an argument and out by the return.
+   * The text report draws the path inside the function under the call. The
+   * JSON and SARIF outputs leave the field out and carry the variables
+   * inside the function after this one instead. *)
+  ?through_call: match_through_call option;
+}
+
+type match_intermediate_var_role
+  <ocaml attr="deriving show, ord"> = [
+  | Parameter <json name="parameter">
+  | Return <json name="return">
+]
+
+type match_through_call
+  <ocaml attr="deriving show, ord">
+  <python decorator="dataclass(frozen=True)"> = {
+  (* the path inside the function called, in execution order *)
+  inside: match_intermediate_var list;
 }
 
 (*****************************************************************************)

@@ -385,9 +385,18 @@ let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
                });
     }
   in
-  let sanitize_intermediate_var (v : Out.match_intermediate_var) :
+  let rec sanitize_intermediate_var (v : Out.match_intermediate_var) :
       Out.match_intermediate_var =
-    { v with content = sanitize v.content }
+    {
+      v with
+      content = sanitize v.content;
+      through_call =
+        v.through_call
+        |> Option.map (fun (call : Out.match_through_call) ->
+               {
+                 Out.inside = List_.map sanitize_intermediate_var call.inside;
+               });
+    }
   in
   let rec sanitize_call_trace (trace : Out.match_call_trace) :
       Out.match_call_trace =
@@ -615,6 +624,21 @@ let index_match_based_ids
   |> List.concat_map snd
   |> List.sort (fun (a, _) (b, _) -> a - b)
   |> List_.map snd
+
+let flat_cli_match (m : Out.cli_match) : Out.cli_match =
+  {
+    m with
+    extra =
+      {
+        m.extra with
+        dataflow_trace =
+          Option.map Semgrep_output_utils.flat_dataflow_trace
+            m.extra.dataflow_trace;
+      };
+  }
+
+let flat_cli_output (output : Out.cli_output) : Out.cli_output =
+  { output with results = List_.map flat_cli_match output.results }
 
 (*****************************************************************************)
 (* Entry point *)

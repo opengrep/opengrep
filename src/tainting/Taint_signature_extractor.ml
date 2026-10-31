@@ -108,7 +108,7 @@ let mk_method_property_assumptions (properties : G.expr list)
                in
                Taint.{ base = BThis; offset = taint_offsets }
          in
-         let generic_taint = Taint.{ orig = Var taint_lval; tokens = [] } in
+         let generic_taint = Taint.{ orig = Var taint_lval; tokens = Taint_trace.Nil } in
          let taint_set = Taint.Taint_set.singleton generic_taint in
          Taint_lval_env.add_lval lang il_lval taint_set taint_env)
        Taint_lval_env.empty
@@ -145,7 +145,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                  (* Use BArg instead of BGlob for function parameters *)
                in
                let generic_taint =
-                 Taint.{ orig = Var taint_lval; tokens = [] }
+                 Taint.{ orig = Var taint_lval; tokens = Taint_trace.Nil }
                in
                (* Check if this parameter matches a source pattern *)
                let source_taints =
@@ -208,7 +208,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                             in
                             let leaf_taint =
                               Taint.
-                                { orig = Var leaf_taint_lval; tokens = [] }
+                                { orig = Var leaf_taint_lval; tokens = Taint_trace.Nil }
                             in
                             let source_taints =
                               let _, tok = leaf_name.ident in
@@ -250,7 +250,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                  { base = BThis; offset = [] }
                in
                let generic_taint =
-                 Taint.{ orig = Var taint_lval; tokens = [] }
+                 Taint.{ orig = Var taint_lval; tokens = Taint_trace.Nil }
                in
                let taint_set = Taint.Taint_set.singleton generic_taint in
                let new_env =
@@ -424,7 +424,7 @@ let mk_global_assumptions_with_sids (lang : Lang.t)
          in
          let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
          let taint_lval : Taint.lval = { base = BGlob var_id; offset = [] } in
-         let generic_taint = Taint.{ orig = Var taint_lval; tokens = [] } in
+         let generic_taint = Taint.{ orig = Var taint_lval; tokens = Taint_trace.Nil } in
          let taint_set = Taint.Taint_set.singleton generic_taint in
          Taint_lval_env.add_lval lang il_lval taint_set env)
        Taint_lval_env.empty

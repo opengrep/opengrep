@@ -10,8 +10,8 @@ t.py
 
      5: sink(y)
         │
-        ├─ source    3: x = source()
-        ├─ through   3: x = source()
-        │            4: y = x
-        └─ sink      5: sink(y)
+        ├─ source           3: x = source()
+        ├─ through          3: x = source()
+        ├─ through          4: y = x
+        └─ sink             5: sink(y)
 

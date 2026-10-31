@@ -15,6 +15,9 @@ val match_to_match :
 
 val leaf_of_call_trace : Out.match_call_trace -> Out.loc_and_content
 
+(* the output with its traces flat, as the JSON of the engine carries it *)
+val flat_core_output : Out.core_output -> Out.core_output
+
 (* now used also in osemgrep *)
 val error_to_error : Core_error.t -> Out.core_error
 val dedup_and_sort :

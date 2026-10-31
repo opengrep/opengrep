@@ -108,6 +108,40 @@ let tokens_to_single_loc (toks : Tok.t list) : location option =
   Some { path = first_loc.path; start = first_loc.start; end_ = last_loc.end_ }
 
 (*****************************************************************************)
+(* Dataflow traces *)
+(*****************************************************************************)
+
+(* The variables with each call inline, as the JSON and SARIF outputs carry
+   them: the name of the function called, then the variables inside it,
+   without the return. *)
+let rec flat_intermediate_vars (vars : match_intermediate_var list) :
+    match_intermediate_var list =
+  vars
+  |> List.concat_map (fun (var : match_intermediate_var) ->
+         match (var.role, var.through_call) with
+         | Some `Return, _ -> []
+         | _, None -> [ { var with role = None } ]
+         | _, Some (call : match_through_call) ->
+             { var with role = None; through_call = None }
+             :: flat_intermediate_vars call.inside)
+
+let rec flat_call_trace (trace : match_call_trace) : match_call_trace
+    =
+  match trace with
+  | CliLoc _ -> trace
+  | CliCall (call, vars, inner) ->
+      CliCall (call, flat_intermediate_vars vars, flat_call_trace inner)
+
+let flat_dataflow_trace (trace : match_dataflow_trace) :
+    match_dataflow_trace =
+  {
+    taint_source = Option.map flat_call_trace trace.taint_source;
+    intermediate_vars =
+      Option.map flat_intermediate_vars trace.intermediate_vars;
+    taint_sink = Option.map flat_call_trace trace.taint_sink;
+  }
+
+(*****************************************************************************)
 (* Compare (=~ deriving ord) *)
 (*****************************************************************************)
 

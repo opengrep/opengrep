@@ -92,6 +92,7 @@ let rec print_taint_call_trace (caps : < Cap.stdout >) ~spaces = function
 
 let print_taint_trace (caps : < Cap.stdout >)
     (taint_trace : Out.match_dataflow_trace) =
+  let taint_trace = Semgrep_output_utils.flat_dataflow_trace taint_trace in
   let print = CapConsole.print caps#stdout in
   print "  * Taint may come from this source:";
   taint_trace.taint_source

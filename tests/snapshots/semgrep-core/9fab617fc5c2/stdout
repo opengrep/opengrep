@@ -1,0 +1,30 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 21 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 t.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    t.py
+   ❯❯❱ through-call
+          tainted data reaches a sink
+
+            8┆ sink(b)
+
+             Taint comes from:
+               6┆     a = source()
+
+             Taint flows through these intermediate variables:
+               6┆     a = source()
+               7┆     b = pass_taint(a)
+               1┆ def pass_taint(x):
+               2┆     y = x
+               7┆     b = pass_taint(a)
+
+             This is how taint reaches the sink:
+               8┆     sink(b)
+

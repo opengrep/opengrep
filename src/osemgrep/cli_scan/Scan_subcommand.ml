@@ -295,7 +295,8 @@ let incremental_json_printer (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
   List.iter
     (fun cli_match ->
       CapConsole.print caps#stdout
-        (Semgrep_output_v1_j.string_of_cli_match cli_match))
+        (Semgrep_output_v1_j.string_of_cli_match
+           (Cli_json_output.flat_cli_match cli_match)))
     cli_matches
 
 let choose_output_format_and_match_hook (caps : < Cap.stdout >)
