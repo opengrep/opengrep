@@ -287,7 +287,8 @@ let keyword_type_identifier (env : env) (x : CST.keyword_type_identifier) :
   | `Using tok
   | `Opaque tok
   | `Hook tok
-  | `Out tok ->
+  | `Out tok
+  | `Inte tok ->
       identifier env tok
 
 let jsx_identifier_ (env : env) (x : CST.jsx_identifier_) =
@@ -468,7 +469,9 @@ let reserved_identifier (env : env) (x : CST.reserved_identifier) =
   | `Unkn tok
   | `Never tok
   | `Keyof tok
-  | `Infer tok ->
+  | `Infer tok
+  | `Out tok
+  | `Inte tok ->
       identifier env tok
 
 let anon_choice_COMMA_5194cb4 (env : env) (x : CST.anon_choice_COMMA_5194cb4) =
@@ -1282,6 +1285,26 @@ and generator_function_declaration (env : env)
 
 and variable_declarator (env : env) (x : CST.variable_declarator) =
   match x with
+  | `Choice_as_opt_type_anno_opt_init (v1, v2, v3) ->
+      let id =
+        match v1 with
+        | `As tok
+        | `Satiss tok ->
+            identifier env tok
+      in
+      let type_ = Option.map (fun x -> type_annotation env x |> snd) v2 in
+      (Left id, type_, initializer_opt env v3)
+  | `Choice_choice_id_opt_type_anno_opt_init x -> plain_variable_declarator env x
+
+and plain_variable_declarator (env : env)
+    (x :
+      [ `Choice_id_opt_type_anno_opt_init of
+        CST.anon_choice_type_id_940079a
+        * CST.type_annotation option
+        * CST.initializer_ option
+      | `Id_BANG_type_anno of
+        CST.identifier * Tree_sitter_run.Token.t * CST.type_annotation ]) =
+  match x with
   | `Choice_id_opt_type_anno_opt_init (v1, v2, v3) ->
       let id_or_pat = id_or_destructuring_pattern env v1 in
       let type_ =
@@ -2000,7 +2023,11 @@ and for_header (env : env) ((v1, v2, v3, v4, v5) : CST.for_header) : for_header
           | `Const tok -> (Const, token env tok)
           (* "const" *)
         in
-        let id_or_pat = id_or_destructuring_pattern env v2 in
+        let id_or_pat =
+          match v2 with
+          | `Of tok -> Left (identifier env tok (* "of" *))
+          | (`Id _ | `Dest_pat _) as x -> id_or_destructuring_pattern env x
+        in
         let pat = id_or_pat |> sub_pattern in
         let var = Ast_js.var_pattern_to_var var_kind pat (snd var_kind) None in
         Left var

@@ -18,3 +18,9 @@ for (let
 {
   let
 }
+let as = 1;
+let satisfies = 2;
+const as2 = x as T;
+for (let of of xs) {}
+for (let of in xs) {}
+x = let as T;

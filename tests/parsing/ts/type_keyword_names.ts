@@ -24,3 +24,14 @@ let q: (...never: T[]) => void;
 let r: (...keyof: T[]) => void;
 let s = <out>y;
 let t = <out.foo>y;
+if (i < out.length) {}
+x = i < out.length ? foo(i) : bar(i);
+let u: (out: string) => boolean;
+let v: (out?: T) => void;
+let w: (...out: T[]) => void;
+if (a < interface) {}
+let y: (interface: string) => void;
+let z: [interface: string];
+let aa: interface;
+f<interface>(y);
+x = <interface>y;

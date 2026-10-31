@@ -115,6 +115,7 @@ type keyword_type_identifier = [
   | `Opaque of Token.t (* "opaque" *)
   | `Hook of Token.t (* "hook" *)
   | `Out of Token.t (* "out" *)
+  | `Inte of Token.t (* "interface" *)
 ]
 
 type meta_property = [
@@ -163,6 +164,8 @@ type reserved_identifier = [
   | `Never of Token.t (* "never" *)
   | `Keyof of Token.t (* "keyof" *)
   | `Infer of Token.t (* "infer" *)
+  | `Out of Token.t (* "out" *)
+  | `Inte of Token.t (* "interface" *)
 ]
 
 type number = Token.t
@@ -1240,7 +1243,11 @@ and for_header = (
         )
       | `Choice_let_choice_id_opt_auto_semi of (
             [ `Let of Token.t (* "let" *) | `Const of Token.t (* "const" *) ]
-          * anon_choice_type_id_940079a
+          * [
+                `Id of identifier (*tok*)
+              | `Dest_pat of destructuring_pattern
+              | `Of of Token.t (* "of" *)
+            ]
           * automatic_semicolon (*tok*) option
         )
       | `Choice_using_id_opt_auto_semi of (
@@ -2094,13 +2101,20 @@ and variable_declaration = (
 )
 
 and variable_declarator = [
-    `Choice_id_opt_type_anno_opt_init of (
-        anon_choice_type_id_940079a
+    `Choice_choice_id_opt_type_anno_opt_init of [
+        `Choice_id_opt_type_anno_opt_init of (
+            anon_choice_type_id_940079a
+          * type_annotation option
+          * initializer_ option
+        )
+      | `Id_BANG_type_anno of (
+            identifier (*tok*) * Token.t (* "!" *) * type_annotation
+        )
+    ]
+  | `Choice_as_opt_type_anno_opt_init of (
+        [ `As of Token.t (* "as" *) | `Satiss of Token.t (* "satisfies" *) ]
       * type_annotation option
       * initializer_ option
-    )
-  | `Id_BANG_type_anno of (
-        identifier (*tok*) * Token.t (* "!" *) * type_annotation
     )
 ]
 
