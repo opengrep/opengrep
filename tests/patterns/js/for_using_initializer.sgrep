@@ -1,0 +1,3 @@
+for (using $C = open(), $I = 0; $COND; $INC) {
+  ...
+}

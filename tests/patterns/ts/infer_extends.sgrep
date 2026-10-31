@@ -1,0 +1,1 @@
+type $T<X> = X extends [infer H extends string, ...unknown[]] ? H : never;

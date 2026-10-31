@@ -1,0 +1,3 @@
+class $C {
+  @Indexed() [$K: string]: number;
+}

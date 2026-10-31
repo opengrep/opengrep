@@ -1,0 +1,6 @@
+rules:
+  - id: flow-function-type-unnamed-rest-parameter
+    message: a function type whose rest parameter is a Foo
+    languages: [javascript]
+    severity: INFO
+    pattern: type $T = ($A, ...Foo) => void

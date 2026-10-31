@@ -173,6 +173,12 @@ let (mk_visitor : visitor_in -> visitor_out) =
           v_expr v1;
           v_tok v2;
           v_type_ v3
+      | Instantiation (v1, v2) ->
+          v_expr v1;
+          v_bracket (v_list v_type_) v2
+      | TypeImport (v1, v2) ->
+          v_tok v1;
+          v_bracket (v_list v_argument) v2
       | ExprTodo (v1, v2) ->
           v_todo_category v1;
           v_list v_expr v2
@@ -381,6 +387,8 @@ let (mk_visitor : visitor_in -> visitor_out) =
     | Var -> ()
     | Let -> ()
     | Const -> ()
+    | Using -> ()
+    | AwaitUsing -> ()
   and v_function_definition
       {
         f_attrs = v_f_props;
@@ -404,6 +412,9 @@ let (mk_visitor : visitor_in -> visitor_out) =
         v_pattern pp_pattern;
         Option.iter v_type_ pp_type;
         Option.iter v_expr pp_default
+    | ParamTypeOnly (v1, v2) ->
+        Option.iter v_tok v1;
+        v_type_ v2
     | ParamEllipsis v1 ->
         let v1 = v_tok v1 in
         ()
@@ -434,6 +445,9 @@ let (mk_visitor : visitor_in -> visitor_out) =
         v_tok v1;
         v_dotted_ident v2;
         v_option (v_bracket (v_list v_argument)) v3
+    | ExprAttr (v1, v2) ->
+        v_tok v1;
+        v_expr v2
   and v_fun_prop x = v_keyword_attribute x
   and v_keyword_attribute _ = ()
   and v_class_kind _ = ()
@@ -464,6 +478,9 @@ let (mk_visitor : visitor_in -> visitor_out) =
       | FieldTodo (v1, v2) ->
           v_todo_category v1;
           v_stmt v2
+      | ClassStaticBlock (t, v1) ->
+          v_tok t;
+          v_stmt v1
       | Field v1 -> v_field_classic v1
       | FieldColon v1 -> v_field_classic v1
       | FieldSpread (t, v1) ->
@@ -491,15 +508,16 @@ let (mk_visitor : visitor_in -> visitor_out) =
     vin.ktop (k, all_functions) x
   and v_module_directive x =
     match x with
-    | ReExportNamespace (v1, v2, opt_as, v4, v5) ->
+    | ReExportNamespace (v1, _binding, v2, opt_as, v4, v5, v6) ->
         v_tok v1;
         v_tok v2;
         (match opt_as with
         | Some name -> v_name name
         | None -> ());
         v_tok v4;
-        v_filename v5
-    | Import (t, _role, _binding, v1, v2) ->
+        v_filename v5;
+        v_option v_import_attributes v6
+    | Import (t, _role, _binding, v1, v2, v3) ->
         let t = v_tok t in
         let v1 =
           v_list
@@ -509,23 +527,26 @@ let (mk_visitor : visitor_in -> visitor_out) =
             v1
         in
         let v2 = v_filename v2 in
-        ()
-    | ImportFile (t, v1) ->
+        v_option v_import_attributes v3
+    | ImportFile (t, v1, v2) ->
         let t = v_tok t in
         let v1 = v_name v1 in
-        ()
+        v_option v_import_attributes v2
     | ImportAlias (t, v1, v2) ->
         v_tok t;
         v_name v1;
         v_list v_name v2
-    | ModuleAlias (t, _binding, v1, v2) ->
+    | ModuleAlias (t, _binding, v1, v2, v3) ->
         let t = v_tok t in
         let v1 = v_name v1 and v2 = v_filename v2 in
-        ()
+        v_option v_import_attributes v3
     | Export (t, v1) ->
         let t = v_tok t in
         let v1 = v_name v1 in
         ()
+  and v_import_attributes ((kwd, obj) : import_attributes) =
+    v_wrap v_string kwd;
+    v_obj_ obj
   and v_any = function
     | Property v1 -> v_property v1
     | Expr v1 ->

@@ -1,0 +1,3 @@
+function $F($XS) {
+  return $XS[0];
+}

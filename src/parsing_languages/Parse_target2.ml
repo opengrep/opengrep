@@ -100,7 +100,8 @@ let just_parse_with_lang lang file : Parsing_result2.t =
        *)
       run file
         [
-          TreeSitter (Parse_typescript_tree_sitter.parse ~dialect:`TSX);
+          TreeSitter
+            (Parse_typescript_tree_sitter.parse ~annotations:`Flow ~dialect:`TSX);
           Pfff (throw_tokens Parse_js.parse);
         ]
         Js_to_generic.program
@@ -167,7 +168,11 @@ let just_parse_with_lang lang file : Parsing_result2.t =
         Terraform_to_generic.program
   | Lang.Ts ->
       run file
-        [ TreeSitter (Parse_typescript_tree_sitter.parse ?dialect:None) ]
+        [
+          TreeSitter
+            (Parse_typescript_tree_sitter.parse ~annotations:`Typescript
+               ?dialect:None);
+        ]
         Js_to_generic.program
   | Lang.Vue -> failwith "Vue support has been removed in 1.93.0"
   (* there is no pfff parsers for C#/Kotlin/... so let's just use

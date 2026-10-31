@@ -1,0 +1,1 @@
+declare const $S: unique symbol;

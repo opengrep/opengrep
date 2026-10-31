@@ -194,8 +194,23 @@ and xml_attribute = function
 and xml { xml_kind = xml_tag; xml_attrs; xml_body } =
   let tag = xml_kind xml_tag in
   let attrs = list xml_attribute xml_attrs in
-  let body = list xhp xml_body in
+  let body =
+    xml_body
+    |> List.filter (fun (x : xml_body) -> not (is_jsx_line_break_text x))
+    |> list xhp
+  in
   { G.xml_kind = tag; xml_attrs = attrs; xml_body = body }
+
+(* JSX removes a text child that is only whitespace and contains a line
+ * break: it is the layout between child elements. *)
+and is_jsx_line_break_text (x : xml_body) : bool =
+  match x with
+  | XmlText (s, _) ->
+      String.equal (String.trim s) ""
+      && (String.contains s '\n' || String.contains s '\r')
+  | XmlExpr _
+  | XmlXml _ ->
+      false
 
 and xml_kind = function
   | XmlClassic (v0, v1, v2, v3) ->
@@ -241,6 +256,18 @@ and expr (x : expr) =
       let v1 = expr v1 in
       let v3 = type_ v3 in
       G.Cast (v3, v2, v1) |> G.e
+  | Instantiation (v1, (l, v2, r)) ->
+      let v1 = expr v1 in
+      let v2 = list type_ v2 in
+      G.OtherExpr
+        ( ("Instantiation", l),
+          (G.E v1 :: List_.map (fun t -> G.T t) v2) @ [ G.Tk r ] )
+      |> G.e
+  | TypeImport (t, (l, v1, r)) ->
+      let v1 = list expr v1 in
+      G.OtherExpr
+        (("Import", t), (G.Tk l :: List_.map (fun e -> G.E e) v1) @ [ G.Tk r ])
+      |> G.e
   | ExprTodo (v1, v2) ->
       let v2 = list expr v2 in
       G.OtherExpr (v1, v2 |> List_.map (fun e -> G.E e)) |> G.e
@@ -582,6 +609,8 @@ and var_kind (x, tok) =
   | Var -> G.attr G.Var tok
   | Let -> G.attr G.Let tok
   | Const -> G.attr G.Const tok
+  | Using -> G.OtherAttribute (("Using", tok), [])
+  | AwaitUsing -> G.OtherAttribute (("AwaitUsing", tok), [])
 
 and function_definition x =
   let a, _attrs = fun_ x in
@@ -614,6 +643,19 @@ and parameter_binding = function
       let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
       let pdefault = Option.map expr pp_default in
       G.ParamPattern (pat, G.implicit_param_classic ?pdefault tk)
+  | ParamTypeOnly (dots, ty) -> (
+      let pclassic =
+        {
+          G.pname = None;
+          pdefault = None;
+          ptype = Some (type_ ty);
+          pattrs = [];
+          pinfo = G.empty_id_info ();
+        }
+      in
+      match dots with
+      | None -> G.Param pclassic
+      | Some tok -> G.ParamRest (tok, pclassic))
   | ParamEllipsis x -> G.ParamEllipsis x
 
 and pattern x =
@@ -644,7 +686,7 @@ and parameter x =
 and argument x = expr x
 
 and attribute = function
-  | KeywordAttr x -> G.KeywordAttr (keyword_attribute x)
+  | KeywordAttr x -> keyword_attribute x
   | NamedAttr (t, ids, opt) ->
       let t1, args, t2 =
         match opt with
@@ -654,25 +696,28 @@ and attribute = function
       let args = list argument args |> List_.map G.arg in
       let name = H.name_of_ids ids in
       G.NamedAttr (t, name, (t1, args, t2))
+  | ExprAttr (t, e) -> G.OtherAttribute (("Decorator", t), [ G.E (expr e) ])
 
-and keyword_attribute (x, tok) =
-  ( (match x with
-    (* methods *)
-    | Get -> G.Getter
-    | Set -> G.Setter
-    | Generator -> G.Generator
-    | Async -> G.Async
-    (* fields *)
-    | Static -> G.Static
-    | Public -> G.Public
-    | Private -> G.Private
-    | Protected -> G.Protected
-    | Readonly -> G.Const
-    | Optional -> G.Optional
-    | Abstract -> G.Abstract
-    | Override -> G.Override
-    | NotNull -> G.NotNull),
-    tok )
+and keyword_attribute ((x, tok) : keyword_attribute wrap) : G.attribute =
+  match x with
+  (* methods *)
+  | Get -> G.KeywordAttr (G.Getter, tok)
+  | Set -> G.KeywordAttr (G.Setter, tok)
+  | Generator -> G.KeywordAttr (G.Generator, tok)
+  | Async -> G.KeywordAttr (G.Async, tok)
+  (* fields *)
+  | Static -> G.KeywordAttr (G.Static, tok)
+  | Public -> G.KeywordAttr (G.Public, tok)
+  | Private -> G.KeywordAttr (G.Private, tok)
+  | Protected -> G.KeywordAttr (G.Protected, tok)
+  | Readonly -> G.KeywordAttr (G.Const, tok)
+  | Optional -> G.KeywordAttr (G.Optional, tok)
+  | Abstract -> G.KeywordAttr (G.Abstract, tok)
+  | Override -> G.KeywordAttr (G.Override, tok)
+  | NotNull -> G.KeywordAttr (G.NotNull, tok)
+  | Accessor -> G.OtherAttribute (("Accessor", tok), [])
+  | Component -> G.OtherAttribute (("Component", tok), [])
+  | Hook -> G.OtherAttribute (("Hook", tok), [])
 
 and obj_ v = bracket (list property) v
 
@@ -763,6 +808,8 @@ and property x =
       let v2 = stmt v2 in
       (* hmm, should use OtherStmtWithStmt ? *)
       G.F (G.OtherStmt (G.OS_Todo, [ G.TodoK v1; G.S v2 ]) |> G.s)
+  | ClassStaticBlock (t, v1) ->
+      G.F (G.OtherStmtWithStmt (G.OSWS_Block ("Static", t), [], stmt v1) |> G.s)
 
 and alias v1 =
   let v1 = name v1 in
@@ -778,11 +825,17 @@ and import_attrs (tok : tok) (role : import_role) (binding : import_binding) :
   | Binds_value -> []
   | Binds_type -> [ G.KeywordAttr (G.TypeOnly, tok) ]
 
+and import_attributes (x : import_attributes option) : G.attribute list =
+  match x with
+  | None -> []
+  | Some ((kwd, tok), obj) ->
+      [ G.OtherAttribute ((kwd, tok), [ G.E (G.Record (obj_ obj) |> G.e) ]) ]
+
 and module_directive x =
   match x with
-  | ReExportNamespace (v1, v2, opt_alias, _v3, v4) ->
+  | ReExportNamespace (v1, binding, v2, opt_alias, _v3, v4, v5) ->
       let v4 = filename v4 in
-      let d_attrs = [ G.KeywordAttr (G.Reexport, v1) ] in
+      let d_attrs = import_attrs v1 Import_reexports binding @ import_attributes v5 in
       {
         (match opt_alias with
         | None -> G.ImportAll (v1, G.FileName v4, v2) |> G.d
@@ -790,7 +843,7 @@ and module_directive x =
         with
         G.d_attrs;
       }
-  | Import (t, role, binding, v1, v2) ->
+  | Import (t, role, binding, v1, v2, v3) ->
       let v1 =
         List_.map
           (fun (v1, v2) ->
@@ -801,13 +854,13 @@ and module_directive x =
       let v2 = filename v2 in
       {
         (G.ImportFrom (t, G.FileName v2, v1) |> G.d) with
-        G.d_attrs = import_attrs t role binding;
+        G.d_attrs = import_attrs t role binding @ import_attributes v3;
       }
-  | ModuleAlias (t, binding, v1, v2) ->
+  | ModuleAlias (t, binding, v1, v2, v3) ->
       let v1 = alias v1 and v2 = filename v2 in
       {
         (G.ImportAs (t, G.FileName v2, Some v1) |> G.d) with
-        G.d_attrs = import_attrs t Import_binds binding;
+        G.d_attrs = import_attrs t Import_binds binding @ import_attributes v3;
       }
   | ImportAlias (t, v1, v2) ->
       let v1 = alias v1 and v2 = List_.map name v2 in
@@ -815,10 +868,13 @@ and module_directive x =
   (* sgrep: we used to convert this in an OI_ImportEffect, but
    * we now want import "foo" to be used to match any form of import
    *)
-  | ImportFile (t, v1) ->
+  | ImportFile (t, v1, v2) ->
       let v1 = name v1 in
       (* old: G.OtherDirective (G.OI_ImportEffect, [G.I v1]) *)
-      G.ImportAs (t, G.FileName v1, None) |> G.d
+      {
+        (G.ImportAs (t, G.FileName v1, None) |> G.d) with
+        G.d_attrs = import_attributes v2;
+      }
   | Export (t, v1) ->
       let v1 = name v1 in
       G.OtherDirective (("Export", t), [ G.I v1 ]) |> G.d

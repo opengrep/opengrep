@@ -1,0 +1,7 @@
+rules:
+  - id: flow-object-type-spread
+    message: an object type with the fields of A
+    languages: [javascript]
+    severity: INFO
+    pattern: |
+      type $T = { ...A, b: string }

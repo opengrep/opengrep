@@ -9,7 +9,7 @@ type 'ast pattern_parser =
 
 (* usage:
     run file [
-        TreeSitter (Parse_typescript_tree_sitter.parse);
+        TreeSitter (Parse_typescript_tree_sitter.parse ~annotations:`Flow);
         Pfff (throw_tokens Parse_js.parse);
      ] Js_to_generic.program
 *)

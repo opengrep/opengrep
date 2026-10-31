@@ -1,0 +1,1 @@
+export { $X } from "./data.json" with { type: "json" };
