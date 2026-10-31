@@ -930,6 +930,93 @@ let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
                    messages))
             [ "gen/a.ts"; "gen/b.ts" ]))
 
+(* The search for tsconfig.json skips, without a warning, a broken symbolic
+   link and a directory it cannot read; --verbose reports them. *)
+let scan_ts_project (caps : Scan_subcommand.caps) ~(files : F.t list)
+    (args : string list) : string list * string =
+  let rules = {|rules:
+  - id: t
+    languages: [typescript]
+    severity: WARNING
+    message: t
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        ([
+           F.File ("rules.yml", rules);
+           F.File ("main.ts", "import { run } from \"./sinks\";\nrun(source());\n");
+           F.File ("sinks.ts", "export function run(x) { sink(x); }\n");
+         ]
+        @ files)
+        (fun _cwd ->
+          let ((), stdout_output), stderr_output =
+            Testo.with_capture stderr (fun () ->
+                Testo.with_capture stdout (fun () ->
+                    without_settings (fun () ->
+                        Scan_subcommand.main caps
+                          (Array.of_list
+                             ([
+                                "opengrep-scan"; "--experimental"; "--config";
+                                "rules.yml"; "--json"; "--taint-interfile";
+                              ]
+                             @ args))
+                        |> ignore)))
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          ( out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path),
+            stderr_output )))
+
+let broken_symlink : F.t list = [ F.Symlink ("tool", "missing/tool.exe") ]
+
+let unreadable_dir : F.t list = [ F.Unreadable_dir ("locked", []) ]
+
+let test_interfile_broken_symlink_no_warning (caps : Scan_subcommand.caps) ()
+    =
+  let files, stderr_output =
+    scan_ts_project caps ~files:broken_symlink []
+  in
+  Alcotest.(check (list string)) "the finding's file" [ "sinks.ts" ] files;
+  Alcotest.(check bool) "no warning" false
+    (String_.contains stderr_output ~term:"item skipped");
+  Alcotest.(check bool) "no message about the link" false
+    (String_.contains stderr_output ~term:"broken symbolic link")
+
+let test_interfile_broken_symlink_verbose (caps : Scan_subcommand.caps) () =
+  let files, stderr_output =
+    scan_ts_project caps ~files:broken_symlink [ "--verbose" ]
+  in
+  Alcotest.(check (list string)) "the finding's file" [ "sinks.ts" ] files;
+  Alcotest.(check bool) "the link is reported" true
+    (String_.contains stderr_output
+       ~term:"tool: broken symbolic link, not searched for tsconfig.json")
+
+let test_interfile_unreadable_dir_no_warning (caps : Scan_subcommand.caps) ()
+    =
+  let files, stderr_output =
+    scan_ts_project caps ~files:unreadable_dir []
+  in
+  Alcotest.(check (list string)) "the finding's file" [ "sinks.ts" ] files;
+  Alcotest.(check bool) "no warning" false
+    (String_.contains stderr_output ~term:"item skipped")
+
+let test_interfile_unreadable_dir_verbose (caps : Scan_subcommand.caps) () =
+  let files, stderr_output =
+    scan_ts_project caps ~files:unreadable_dir [ "--verbose" ]
+  in
+  Alcotest.(check (list string)) "the finding's file" [ "sinks.ts" ] files;
+  Alcotest.(check bool) "the directory is reported" true
+    (String.split_on_char '\n' stderr_output
+    |> List.exists (fun (line : string) ->
+           String_.contains line ~term:"item skipped"
+           && String_.contains line ~term:"locked"))
+
 (* The scanning root given as an absolute path, and a commit that adds a
    second sink beside a pre-existing cross-file flow. The baseline replay
    rediscovers its targets inside the baseline worktree, so the root must
@@ -2972,6 +3059,16 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_empty_file_is_covered caps);
       t "interfile uncovered targets aggregated"
         (test_interfile_uncovered_targets_aggregated caps);
+      t "interfile broken symbolic link: no warning"
+        (test_interfile_broken_symlink_no_warning caps);
+      t "interfile broken symbolic link: reported with --verbose"
+        (test_interfile_broken_symlink_verbose caps);
+      t "interfile unreadable directory: no warning"
+        ?skipped:Test_scan_helpers.unless_root
+        (test_interfile_unreadable_dir_no_warning caps);
+      t "interfile unreadable directory: reported with --verbose"
+        ?skipped:Test_scan_helpers.unless_root
+        (test_interfile_unreadable_dir_verbose caps);
       t "interfile diff scan with an absolute root"
         (test_interfile_diff_scan_absolute_root caps);
       t "interfile depth cut warning" (test_interfile_depth_cut_warning caps);
