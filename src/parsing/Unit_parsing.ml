@@ -347,7 +347,6 @@ let langs_with_error_tolerance =
     (Lang.Ruby, Strict);
     (Lang.Js, Strict);
     (Lang.Ts, Strict);
-    (Lang.Ts, Partial_parsing);
     (Lang.Python, Strict);
     (Lang.C, Strict);
     (Lang.Cpp, Strict);
