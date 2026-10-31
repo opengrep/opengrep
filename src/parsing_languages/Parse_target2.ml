@@ -144,7 +144,9 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       run file
         [
           Pfff (throw_tokens (Parse_python.parse ~parsing_mode));
-          TreeSitter Parse_python_tree_sitter.parse;
+          TreeSitter
+            (Parse_python_tree_sitter.parse
+               ~python2:(Parse_python.python2_strings parsing_mode));
         ]
         Python_to_generic.program
   (* Tree-sitter only *)

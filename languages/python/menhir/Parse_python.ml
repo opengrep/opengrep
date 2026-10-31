@@ -45,8 +45,16 @@ let error_msg_tok tok = Parsing_helpers.error_message_info (TH.info_of_tok tok)
 (* Lexing only *)
 (*****************************************************************************)
 
-let tokens parsing_mode input_source =
-  let state = Lexer.create () in
+let python2_strings (parsing_mode : parsing_mode) : bool =
+  match parsing_mode with
+  | Python2 -> true
+  | Python3
+  | Python ->
+      false
+
+let tokens ~(python2_strings : bool) (parsing_mode : parsing_mode)
+    (input_source : Parsing_helpers.input_source) =
+  let state = Lexer.create ~python2_strings () in
   let python2 = parsing_mode =*= Python2 in
   let token lexbuf =
     try
@@ -95,11 +103,14 @@ let tokens parsing_mode input_source =
 (* Main entry point *)
 (*****************************************************************************)
 
-let rec parse ?(parsing_mode = Python) (filename : Fpath.t) =
+let rec parse_with ~(python2_strings : bool) (parsing_mode : parsing_mode)
+    (filename : Fpath.t) =
   let stat = Parsing_stat.default_stat !!filename in
 
   (* this can throw Parse_info.Lexical_error *)
-  let toks = tokens parsing_mode (Parsing_helpers.file !!filename) in
+  let toks =
+    tokens ~python2_strings parsing_mode (Parsing_helpers.file !!filename)
+  in
   let toks = Parsing_hacks_python.fix_tokens toks in
 
   let tr, lexer, lexbuf_fake =
@@ -145,7 +156,7 @@ let rec parse ?(parsing_mode = Python) (filename : Fpath.t) =
         (* note that we cant use tokens as the tokens are actually different
          * in Python2 mode, but we could optimize things a bit and just
          * transform those tokens here *)
-        parse ~parsing_mode:Python2 filename
+        parse_with ~python2_strings Python2 filename
       else
         let cur = tr.Parsing_helpers.current in
         if not (Domain.DLS.get Flag.error_recovery) then
@@ -162,6 +173,11 @@ let rec parse ?(parsing_mode = Python) (filename : Fpath.t) =
                    (0, checkpoint2) filelines)));
         stat.PS.error_line_count <- stat.PS.total_line_count;
         { Parsing_result.ast = []; tokens = toks; stat }
+
+let parse ?(parsing_mode = Python) (filename : Fpath.t) =
+  parse_with
+    ~python2_strings:(python2_strings parsing_mode)
+    parsing_mode filename
 [@@profiling]
 
 let parse_program ?parsing_mode file =
@@ -178,7 +194,7 @@ let program_of_string (caps : < Cap.tmp >) (s : string) : AST_python.program =
 let type_of_string ?(parsing_mode = Python) s =
   let lexbuf = Lexing.from_string s in
   let is_python2 = parsing_mode =*= Python2 in
-  let state = Lexer.create () in
+  let state = Lexer.create ~python2_strings:(python2_strings parsing_mode) () in
   let rec lexer lexbuf =
     let res = Lexer_python.token is_python2 state lexbuf in
     if TH.is_comment res then lexer lexbuf else res
@@ -189,7 +205,11 @@ let type_of_string ?(parsing_mode = Python) s =
 (* for sgrep/spatch *)
 let any_of_string ?(parsing_mode = Python) s =
   Common.save_excursion Flag_parsing.sgrep_mode true (fun () ->
-      let toks = tokens parsing_mode (Parsing_helpers.Str s) in
+      let toks =
+        tokens
+          ~python2_strings:(python2_strings parsing_mode)
+          parsing_mode (Parsing_helpers.Str s)
+      in
       let toks = Parsing_hacks_python.fix_tokens toks in
       let _tr, lexer, lexbuf_fake =
         Parsing_helpers.mk_lexer_for_yacc toks TH.is_comment

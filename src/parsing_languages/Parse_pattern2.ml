@@ -52,17 +52,16 @@ let parse_pattern options lang str =
   | Lang.Python
   | Lang.Python2
   | Lang.Python3 ->
+      let parsing_mode = Parse_target2.lang_to_python_parsing_mode lang in
       let any =
         str
         |> run_pattern
              (* coupling: semgrep/js/languages/python/Parser.ml *)
              [
-               PfffPat
-                 (let parsing_mode =
-                    Parse_target2.lang_to_python_parsing_mode lang
-                  in
-                  Parse_python.any_of_string ~parsing_mode);
-               TreeSitterPat Parse_python_tree_sitter.parse_pattern;
+               PfffPat (Parse_python.any_of_string ~parsing_mode);
+               TreeSitterPat
+                 (Parse_python_tree_sitter.parse_pattern
+                    ~python2:(Parse_python.python2_strings parsing_mode));
              ]
       in
 
