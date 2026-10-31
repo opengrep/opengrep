@@ -1,0 +1,11 @@
+rules:
+- id: redos-malformed-utf8-in-raw-sequence
+  message: found
+  severity: WARNING
+  languages:
+  - javascript
+  patterns:
+    - pattern: /$X/
+    - metavariable-analysis:
+        analyzer: redos
+        metavariable: $X

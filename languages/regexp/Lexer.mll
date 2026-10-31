@@ -12,7 +12,21 @@ let loc lexbuf : loc =
   let tok = Tok.tok_of_lexbuf lexbuf in
   (tok, tok)
 
-let int = int_of_string
+(* No input is longer than max_int and no pattern has more than max_int groups,
+   so a repetition count or a group number beyond the range of int matches as
+   max_int or min_int does. A callout number has no effect on matching. *)
+let int (decimal : string) : int =
+  match int_of_string_opt decimal with
+  | Some n -> n
+  | None when String.starts_with ~prefix:"-" decimal -> min_int
+  | None -> max_int
+
+(* int_of_string_opt reads an octal or hexadecimal literal above max_int as a
+   negative int. *)
+let code_point (lexbuf : Lexing.lexbuf) (literal : string) : char_class =
+  match int_of_string_opt literal with
+  | Some n when n >= 0 && n <= 0x10FFFF -> Singleton n
+  | Some _ | None -> Other ("\\" ^ Lexing.lexeme lexbuf)
 
 (*
    Decode a well-formed UTF-8 string into a Unicode code point.
@@ -211,7 +225,7 @@ rule token conf = parse
 
   | "(?C)" { NODE (Special (loc lexbuf, Callout 0)) }
   | "(?C" (digit+ as n) ")" {
-      NODE (Special (loc lexbuf, Callout (int_of_string n)))
+      NODE (Special (loc lexbuf, Callout (int n)))
     }
 
 (***************************************************************************)
@@ -220,7 +234,7 @@ rule token conf = parse
   | '\\' ('-'? ['1'-'9']['0'-'9']* as n)
   | "\\g" ('-'? ['0'-'9']+ as n)
   | "\\g{" ('-'? ['0'-'9']+ as n) "}" {
-      NODE (Special (loc lexbuf, Numeric_back_reference (int_of_string n)))
+      NODE (Special (loc lexbuf, Numeric_back_reference (int n)))
     }
 
   | "\\k{" (group_name as name) "}" (* pcre, .NET *)
@@ -245,14 +259,14 @@ rule token conf = parse
 (***************************************************************************)
   | "(?R)" { NODE (Special (loc lexbuf, Recurse_pattern 0)) }
   | "(?R" (digit+ as n) ")" {
-      NODE (Special (loc lexbuf, Recurse_pattern (int_of_string n)))
+      NODE (Special (loc lexbuf, Recurse_pattern (int n)))
     }
 
   | "(?" (digit+ as n) ")" (* perl, pcre *)
   | "\\g<" (digit+ as n) ">" (* oniguruma, pcre *)
   | "\\g'" (digit+ as n) "'" (* oniguruma, pcre *) {
       NODE (
-        Special (loc lexbuf, Call_subpattern_by_abs_number (int_of_string n))
+        Special (loc lexbuf, Call_subpattern_by_abs_number (int n))
       )
     }
 
@@ -260,7 +274,7 @@ rule token conf = parse
   | "\\g<+" (digit+ as n) ">" (* oniguruma, pcre *)
   | "\\g'+" (digit+ as n) "'" (* oniguruma, pcre *) {
       NODE (
-        Special (loc lexbuf, Call_subpattern_by_rel_number (int_of_string n))
+        Special (loc lexbuf, Call_subpattern_by_rel_number (int n))
       )
     }
 
@@ -268,7 +282,7 @@ rule token conf = parse
   | "\\g<-" (digit+ as n) ">" (* oniguruma, pcre *)
   | "\\g'-" (digit+ as n) "'" (* oniguruma, pcre *) {
       NODE (
-        Special (loc lexbuf, Call_subpattern_by_rel_number (- int_of_string n))
+        Special (loc lexbuf, Call_subpattern_by_rel_number (- int n))
       )
     }
 
@@ -349,6 +363,10 @@ and literal_chars = parse
       let code = decode c in
       (loc, code) :: literal_chars lexbuf
     }
+  | _ as c {
+      (* malformed UTF-8 *)
+      (loc lexbuf, Char.code c) :: literal_chars lexbuf
+    }
   | eof { (* missing \E: should be an error? *) [] }
 
 and backslash_escape conf start = parse
@@ -361,13 +379,14 @@ and backslash_escape conf start = parse
   | 'r' { (range start (loc lexbuf), Singleton 0x0D) }
   | 't' { (range start (loc lexbuf), Singleton 0x09) }
 
-  | (['0'-'9']+ as n)
-  | "o{" (['0'-'9']+ as n) "}" {
-      (range start (loc lexbuf), Singleton (int_of_string ("0o" ^ n)))
+  | (['0'-'7'] ['0'-'7']? ['0'-'7']? as n)
+  | "o{" (['0'-'7']+ as n) "}" {
+      (range start (loc lexbuf), code_point lexbuf ("0o" ^ n))
     }
+  | ['8' '9'] as c { (range start (loc lexbuf), Singleton (Char.code c)) }
 
-  | "x" (xdigit+ as n) {
-      (range start (loc lexbuf), Singleton (int_of_string ("0x" ^ n)))
+  | "x" (xdigit xdigit? as n) {
+      (range start (loc lexbuf), code_point lexbuf ("0x" ^ n))
     }
 
   | "x{" (xdigit+ as n) "}" {
@@ -381,14 +400,14 @@ and backslash_escape conf start = parse
          be possible to tweak the lexbuf to achieve this as well,
          see https://sympa.inria.fr/sympa/arc/caml-list/2006-07/msg00133.html
       *)
-      (loc, Singleton (int_of_string ("0x" ^ n)))
+      (loc, code_point lexbuf ("0x" ^ n))
     }
 
-  | "u" (xdigit+ as n) {
+  | "u" (xdigit xdigit xdigit xdigit as n) {
       let loc = range start (loc lexbuf) in
       (* TODO: only conf.pcre_javascript_compat should allow this syntax.
          See remark above about the need to roll back. *)
-      (loc, Singleton (int_of_string ("0x" ^ n)))
+      (loc, code_point lexbuf ("0x" ^ n))
     }
 
   | 'p' (['A'-'Z' 'a'-'z' '_'] as c) {
@@ -537,13 +556,13 @@ and open_group conf start = parse
 (***************************************************************************)
 
   | "(" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Abs_ref_cond (int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Abs_ref_cond (int n))
     }
   | "(+" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (int n))
     }
   | "(-" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (- int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (- int n))
     }
   | "(R)" {
       (* TODO: this is actually a named reference condition if a group
@@ -551,7 +570,7 @@ and open_group conf start = parse
       OPEN_COND (range start (loc lexbuf), Num_group_recursion_cond 0)
     }
   | "(R" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Num_group_recursion_cond (int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Num_group_recursion_cond (int n))
     }
   | "(R&" (group_name as name) ")" {
       OPEN_COND (range start (loc lexbuf), Named_group_recursion_cond name)
