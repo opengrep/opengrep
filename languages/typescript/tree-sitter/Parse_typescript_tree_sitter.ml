@@ -756,26 +756,31 @@ let exported_definitions (export_tok : tok) (defs : definition list) :
 let default_exported_definitions (export_tok : tok) (default_tok : tok)
     (defs : definition list) : stmt list =
   defs
-  |> List.concat_map (fun (((ent, _) as def) : definition) ->
-         let default_decl, default_name =
-           let expr = idexp ent.name in
-           Ast_js.mk_default_entity_def default_tok expr
-         in
+  |> List.concat_map (fun (((ent, defkind) as def) : definition) ->
+         match defkind with
+         (* an interface has no value that a default could hold *)
+         | ClassDef { c_kind = G.Interface, _; _ } ->
+             [ DefStmt def; M (Export (export_tok, ent.name)) ]
+         | _ ->
+             let default_decl, default_name =
+               let expr = idexp ent.name in
+               Ast_js.mk_default_entity_def default_tok expr
+             in
 
-         (*
-             We translate into 3 statements:
+             (*
+                 We translate into 3 statements:
 
-               export default const foo = bar
+                   export default const foo = bar
 
-             -->
+                 -->
 
-               const foo = bar
-               const default = foo
-               export default
-          *)
-         [
-           DefStmt def; DefStmt default_decl; M (Export (export_tok, default_name));
-         ])
+                   const foo = bar
+                   const default = foo
+                   export default
+              *)
+             [
+               DefStmt def; DefStmt default_decl; M (Export (export_tok, default_name));
+             ])
 
 let rec decorator_member_expression (env : env)
     ((v1, v2, v3) : CST.decorator_member_expression) : a_ident list =
