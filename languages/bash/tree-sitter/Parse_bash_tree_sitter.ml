@@ -546,6 +546,11 @@ and else_clause (env : env) ((v1, v2) : CST.else_clause) : else_ =
   let loc = (else_, snd (AST_bash_loc.blist_loc body)) in
   (loc, else_, body)
 
+and expansion_literal (env : env) (x : CST.anon_choice_lit_22a4acd) : expression =
+  match x with
+  | `Choice_conc x -> literal env x
+  | `BAR tok -> Word (str env tok)
+
 and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
     complex_expansion bracket =
   let open_ = token env v1 (* "${" *) in
@@ -563,17 +568,17 @@ and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
     match v3 with
     | Some x -> (
         match x with
-        | `Var_name_EQ_opt_choice_conc (v1, v2, v3) ->
+        | `Var_name_EQ_opt_choice_choice_conc (v1, v2, v3) ->
             (* TODO *)
             let var_name = Simple_variable_name (str env v1) in
             let _v2 = token env v2 (* "=" *) in
             let _v3 =
               match v3 with
-              | Some x -> Some (literal env x)
+              | Some x -> Some (expansion_literal env x)
               | None -> None
             in
             Some var_name
-        | `Choice_subs_opt_tok_prec_p1_slash_opt_regex_rep_choice_choice_conc
+        | `Choice_subs_opt_tok_prec_p1_slash_opt_regex_rep_choice_choice_choice_conc
             (v1, v2, v3) ->
             let opt_variable =
               match v1 with
@@ -597,7 +602,7 @@ and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
               List_.map
                 (fun x ->
                   match x with
-                  | `Choice_conc x -> literal env x
+                  | `Choice_choice_conc x -> expansion_literal env x
                   | `COLON tok -> todo env tok (* ":" *)
                   | `COLONQMARK tok -> todo env tok (* ":?" *)
                   | `EQ tok -> todo env tok (* "=" *)

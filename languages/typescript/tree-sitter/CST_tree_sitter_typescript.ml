@@ -1221,6 +1221,7 @@ and primary_type = [
           | `Type_query_call_exp of type_query_call_expression
           | `Id of identifier (*tok*)
         ]
+      * type_arguments option
     )
   | `Index_type_query of (Token.t (* "keyof" *) * primary_type)
   | `This of Token.t (* "this" *)
@@ -1236,6 +1237,14 @@ and primary_type = [
   | `Temp_lit_type of template_literal_type
   | `Inte_type of (type_ option * Token.t (* "&" *) * type_)
   | `Union_type of (type_ option * Token.t (* "|" *) * type_)
+  | `Import_type of (
+        import (*tok*)
+      * Token.t (* "(" *)
+      * string_
+      * Token.t (* ")" *)
+      * (Token.t (* "." *) * identifier (*tok*)) list (* zero or more *)
+      * type_arguments option
+    )
 ]
 
 and property_name = [
@@ -1789,6 +1798,15 @@ type if_statement (* inlined *) = (
   * else_clause option
 )
 
+type import_type (* inlined *) = (
+    import (*tok*)
+  * Token.t (* "(" *)
+  * string_
+  * Token.t (* ")" *)
+  * (Token.t (* "." *) * identifier (*tok*)) list (* zero or more *)
+  * type_arguments option
+)
+
 type index_type_query (* inlined *) = (Token.t (* "keyof" *) * primary_type)
 
 type interface_declaration (* inlined *) = (
@@ -1963,6 +1981,7 @@ type type_query (* inlined *) = (
       | `Type_query_call_exp of type_query_call_expression
       | `Id of identifier (*tok*)
     ]
+  * type_arguments option
 )
 
 type unary_expression (* inlined *) = (

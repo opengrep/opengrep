@@ -1,0 +1,7 @@
+rules:
+  - id: typescript-runtime-import-only
+    languages: [typescript]
+    message: Match executable imports, not type-only import queries.
+    severity: WARNING
+    pattern: import($X)
+    fix: require($X)

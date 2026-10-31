@@ -1885,6 +1885,23 @@ and primary_type (env : env) (x : CST.primary_type) : type_ =
       let v2 = primary_type env v2 in
       TyQuestion (v1, v2)
   | `Type_query x -> type_query env x
+  | `Import_type (keyword, _open, source, _close, qualifiers, arguments) ->
+      let keyword = token env keyword in
+      let source = Expr (L (String (string_ env source))) in
+      let names = List_.map (fun (_dot, name) -> str env name) qualifiers in
+      let qualifier =
+        match names with
+        | [] -> []
+        | _ -> [ Type (TyName names) ]
+      in
+      let arguments =
+        match arguments with
+        | None -> []
+        | Some args ->
+            type_arguments env args |> Tok.unbracket
+            |> List_.map (fun t -> Type t)
+      in
+      TypeTodo (("ImportType", keyword), source :: (qualifier @ arguments))
   | `Index_type_query (v1, v2) ->
       let keyof = token env v1 (* "keyof" *) in
       let type_ = primary_type env v2 in
@@ -1954,7 +1971,7 @@ and index_signature (env : env) ((v1, v2, v3, v4, v5) : CST.index_signature) =
   in
   TypeTodo (("Indexsig", v2), [ Type v3; Type v5 ])
 
-and type_query (env : env) ((v1, v2) : CST.type_query) : type_ =
+and type_query (env : env) ((v1, v2, v3) : CST.type_query) : type_ =
   let ttypeof = (* "typeof" *) token env v1 in
   let e =
     match v2 with
@@ -1965,7 +1982,37 @@ and type_query (env : env) ((v1, v2) : CST.type_query) : type_ =
         let id = (* identifier *) str env tok in
         idexp_or_special id
   in
-  TypeTodo (("Typeof", ttypeof), [ Expr e ])
+  let arguments =
+    match v3 with
+    | None -> []
+    | Some args ->
+        type_arguments env args |> Tok.unbracket |> List_.map (fun t -> Type t)
+  in
+  (* An import in a type query is not a dynamic import. Keep it and its
+   * qualifiers in the type tree so expression visitors cannot match a runtime
+   * import call (and potentially autofix a type-only reference). *)
+  let rec import_type = function
+    | Apply (Id ("import", keyword), (_, args, _)) ->
+        Some
+          (TypeTodo (("ImportType", keyword), List_.map (fun e -> Expr e) args))
+    | ObjAccess (base, (_, dot), PN field) ->
+        Option.map
+          (fun ty ->
+            TypeTodo
+              (("QualifiedType", dot), [ Type ty; Type (TyName [ field ]) ]))
+          (import_type base)
+    | ArrAccess (base, (left, index, _)) ->
+        Option.map
+          (fun ty -> TypeTodo (("LookupType", left), [ Type ty; Expr index ]))
+          (import_type base)
+    | _ -> None
+  in
+  let subject =
+    match import_type e with
+    | Some ty -> Type ty
+    | None -> Expr e
+  in
+  TypeTodo (("Typeof", ttypeof), subject :: arguments)
 
 and map_anon_choice_type_id_e96bf13 (env : env)
     (x : CST.anon_choice_type_id_e96bf13) : expr =
