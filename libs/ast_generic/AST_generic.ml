@@ -2517,6 +2517,12 @@ let implicit_param_id_indexed i tk =
   (Printf.sprintf "!!_implicit_param!_%d" i, tk)
 let is_implicit_param s = String.starts_with ~prefix:"!!_implicit_param!" s
 
+(* The tag of a context parameter, as a Scala `using` parameter, which a call
+ * fills implicitly ([OtherAttribute ((using_tag, _), [])] in its [pattrs]),
+ * and of an argument that fills one explicitly, as `f(using x)`
+ * ([OtherArg ((using_tag, _), [E x])]). *)
+let using_tag = "using"
+
 (* Synthetic [parameter_classic] for a destructuring [ParamPattern].
  * Pass [~index:i] when constructing a parameter list with multiple
  * destructures so each gets a distinct [!!_implicit_param!_i] binder;

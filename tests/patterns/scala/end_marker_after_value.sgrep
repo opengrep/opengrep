@@ -1,0 +1,1 @@
+def $F(...) = $X match { case 1 => ... }

@@ -134,6 +134,7 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
            (* a param. The difference is only at the call site when instantiating the args. *)
            | IL.ParamRest { pname; _ }
            | IL.ParamKwd { pname; _ }
+           | IL.ParamContext { pname; _ }
            | IL.ParamPattern ({ pname; _ }, _) ->
                let il_lval : IL.lval = { base = Var pname; rev_offset = [] } in
                let taint_arg : Taint.arg =

@@ -462,6 +462,7 @@ let pp_param p =
   | Param { pname; _ } -> pp_name pname
   | ParamRest { pname; _ } -> "..." ^ pp_name pname
   | ParamKwd { pname; _ } -> pp_name pname ^ ":"
+  | ParamContext { pname; _ } -> "using " ^ pp_name pname
   | ParamReceiver { pname; _ } -> "self:" ^ pp_name pname
   | ParamPattern ({ pname; _ }, _) -> "<pattern>" ^ pp_name pname
   | ParamFixme -> "<fixme>"

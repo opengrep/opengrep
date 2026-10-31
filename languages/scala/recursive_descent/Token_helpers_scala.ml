@@ -57,6 +57,13 @@ let visitor_info_of_tok f = function
      | InterpStart(ii) -> InterpStart(f ii)
   *)
   | T_INTERPOLATED_START (s, ii) -> T_INTERPOLATED_START (s, f ii)
+  | T_XML_OPEN (s, ii) -> T_XML_OPEN (s, f ii)
+  | T_XML_ATTR (s, ii) -> T_XML_ATTR (s, f ii)
+  | T_XML_ATTR_VALUE (s, ii) -> T_XML_ATTR_VALUE (s, f ii)
+  | T_XML_TAG_END ii -> T_XML_TAG_END (f ii)
+  | T_XML_SELF_CLOSE ii -> T_XML_SELF_CLOSE (f ii)
+  | T_XML_TEXT (s, ii) -> T_XML_TEXT (s, f ii)
+  | T_XML_CLOSE (s, ii) -> T_XML_CLOSE (s, f ii)
   | T_INTERPOLATED_STRING (s, ii) -> T_INTERPOLATED_STRING (s, f ii)
   | ID_DOLLAR (s, ii) -> ID_DOLLAR (s, f ii)
   | ID_LOWER (s, ii) -> ID_LOWER (s, f ii)
@@ -103,6 +110,7 @@ let visitor_info_of_tok f = function
   | LARROW ii -> LARROW (f ii)
   | SUBTYPE ii -> SUBTYPE (f ii)
   | ARROW ii -> ARROW (f ii)
+  | CTXARROW ii -> CTXARROW (f ii)
   | EQUALS ii -> EQUALS (f ii)
   | BANG ii -> BANG (f ii)
   | AT ii -> AT (f ii)
@@ -190,6 +198,7 @@ let inFirstOfStat x =
   | COLON _
   | EQUALS _
   | ARROW _
+  | CTXARROW _
   | LARROW _
   | SUBTYPE _
   | VIEWBOUND _
@@ -231,7 +240,9 @@ let inLastOfStat x =
   | Kreturn _
   | USCORE _
   | Ktype _
-  (* less: | XMLSTART  *)
+  | T_XML_CLOSE _
+  | T_XML_SELF_CLOSE _
+  | T_XML_TEXT _
   | RPAREN _
   | RBRACKET _
   | RBRACE _
@@ -445,7 +456,8 @@ let isExprIntro x =
   | LPAREN _
   | LBRACE _
   | QUOTE _
-  (* | XMLSTART  *)
+  | T_XML_OPEN _
+  | T_XML_TEXT _
   (* semgrep-ext: *)
   | Ellipsis _
   | LDots _ ->
@@ -486,6 +498,7 @@ let isIndentationToken = function
   | COLON _
   | EQUALS _
   | ARROW _
+  | CTXARROW _
   | LARROW _
   | Kif _
   | Kwith _
@@ -513,6 +526,13 @@ let isIndentationToken = function
 *)
 let isSoftModifierFollower x = isModifier x || isDefIntro x
 
+(* https://docs.scala-lang.org/scala3/reference/soft-modifier.html *)
+let isSoftModifier (tok : token) : bool =
+  match tok with
+  | ID_LOWER (("inline" | "opaque" | "open" | "transparent" | "infix"), _) ->
+      true
+  | _ -> false
+
 let isCaseDefEnd = function
   | RBRACE _
   | Kcase _
@@ -536,6 +556,28 @@ let isUnaryOp = function
   | TILDE _
   | BANG _ ->
       true
+  | _ -> false
+
+(* an identifier made of operator characters *)
+let isSymbolicOperator (tok : token) : bool =
+  match tok with
+  | OP _
+  | STAR _
+  | PLUS _
+  | MINUS _
+  | BANG _
+  | TILDE _
+  | PIPE _ ->
+      true
+  | _ -> false
+
+(* an operator identifier or a backquoted identifier, as in Scanners.scala,
+   isOperator *)
+let isOperator (tok : token) : bool =
+  isSymbolicOperator tok
+  ||
+  match tok with
+  | ID_BACKQUOTED _ -> true
   | _ -> false
 
 (* TODO? correct? *)

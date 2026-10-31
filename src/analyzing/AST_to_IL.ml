@@ -588,6 +588,11 @@ and pattern env pat : stmts * lval * stmts =
   | G.PatType _ ->
       let lval = fresh_lval env (Tok.unsafe_fake_tok "_pattype") in
       ([], lval, [])
+  (* A Scala `given T` pattern binds an anonymous given instance, which no
+   * code refers to by name. *)
+  | G.OtherPat (("given", tok), [ G.T _ ]) ->
+      let lval = fresh_lval env tok in
+      ([], lval, [])
   | G.OtherPat (("NotPattern", tok), [ G.P _ ]) ->
       let lval = fresh_lval env tok in
       ([], lval, [])
@@ -686,6 +691,17 @@ and pattern env pat : stmts * lval * stmts =
             | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
               when Lang.is_js env.lang ->
                 (List.rev acc, Some (rest_pat, i), [])
+            (* Scala sequence wildcard: [rest*] and [rest @ _*] as the
+             * last argument pattern -> trailing
+             * PatAs(OtherPat("PatUnderscoreStar", ...), rest); rest covers
+             * [i..]. A bare sequence wildcard binds nothing. *)
+            | [
+             G.PatAs
+               (G.OtherPat (("PatUnderscoreStar", _), _), (id, id_info));
+            ] ->
+                (List.rev acc, Some (G.PatId (id, id_info), i), [])
+            | [ G.OtherPat (("PatUnderscoreStar", _), _) ] ->
+                (List.rev acc, None, [])
             (* Rust rest marker: [a, .., z] / (a, .., z) / P(m, ..). It
              * skips any number of elements and binds nothing itself.
              * Slots before it are exact. Slots after it are end-relative,
@@ -1196,6 +1212,10 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
         (match pat with
         | G.OtherPat (_, [ G.E e ]) -> e
         | _ -> AST_generic_helpers.pattern_to_expr pat)
+  (* A tuple of `name = pattern` elements, as a Scala named-tuple pattern:
+   * each pattern against the element of its name, as for a map pattern. *)
+  | G.PatTuple (l, pats, r) when H.is_map_pair_list pats ->
+      pattern_match_cond env scrutinee (G.PatList (l, pats, r))
   | G.PatTuple (_, pats, t2) ->
       pm_lower_sequence env scrutinee ~allow_rest:false pats t2
   (* A map pattern (map pairs, see [H.is_map_pair_pattern]): each value
@@ -1233,6 +1253,13 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
                  Some (field, Some (record_field_offset t2 dot_ident), p))
       |> pm_lower_entries env scrutinee
   | G.PatType { t = G.TyN name; _ } ->
+      ([], pm_lower_type scrutinee name)
+  (* A Scala `given T` pattern tests the type of the value, as `_: T` does;
+   * for `C[A]` the test is on `C`, as type arguments are erased. *)
+  | G.OtherPat (("given", _), [ G.T { t = G.TyN name; _ } ])
+  | G.OtherPat
+      (("given", _), [ G.T { t = G.TyApply ({ t = G.TyN name; _ }, _); _ } ])
+    ->
       ([], pm_lower_type scrutinee name)
   (* C# relational patterns (`< 5`, `>= 0`, …) and Kotlin `when` range tests
    * (`in r`, `!in r`). The frontend records only the
@@ -2977,6 +3004,9 @@ and argument env arg : stmts * exp argument =
   | G.ArgType { t = TyExpr e; _ } ->
       let ss, arg = expr env e in
       (ss, Unnamed arg)
+  | G.OtherArg ((tag, tok), [ G.E e ]) when String.equal tag G.using_tag ->
+      let ss, arg = expr env e in
+      (ss, Named ((context_arg, tok), arg))
   | __else__ ->
       let any = G.Ar arg in
       ([], Unnamed (fixme_exp ToDo any (Related any)))
@@ -3933,6 +3963,20 @@ and parameters env params : param list =
   params |> Tok.unbracket
   |> List_.mapi (fun idx gparam ->
        match gparam with
+       (* a context parameter takes no positional argument, only a context
+        * argument (IL.context_arg), also without a name, as in Scala's
+        * `(using Ctx)` *)
+       | G.Param { pname; pinfo; pdefault; _ } when H.is_context_param gparam ->
+           let pname =
+             match pname with
+             | Some i -> var_of_id_info i pinfo
+             | None ->
+                 (* a name no source parameter has, one per position *)
+                 fresh_var env
+                   ~str:(Printf.sprintf "!context_param!%d" idx)
+                   (G.fake G.using_tag)
+           in
+           ParamContext { pname; pdefault }
        | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ }
          when List.exists
                 (function

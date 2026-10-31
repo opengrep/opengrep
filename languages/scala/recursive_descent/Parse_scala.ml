@@ -38,12 +38,18 @@ let tokens input_source =
   let token lexbuf =
     let tok =
       match Lexer_scala.current_mode state with
+      | Lexer_scala.ST_IN_CODE when Option.is_none state.last_token ->
+          Lexer_scala.shebang state lexbuf
       | Lexer_scala.ST_IN_CODE -> Lexer_scala.token state lexbuf
       | Lexer_scala.ST_IN_INTERPOLATED_DOUBLE ->
           Lexer_scala.in_interpolated_double state lexbuf
       | Lexer_scala.ST_IN_INTERPOLATED_TRIPLE ->
           Lexer_scala.in_interpolated_triple state lexbuf
+      | Lexer_scala.ST_IN_XML_TAG -> Lexer_scala.in_xml_tag state lexbuf
+      | Lexer_scala.ST_IN_XML_CONTENT ->
+          Lexer_scala.in_xml_content state lexbuf
     in
+    state.last_token <- Some tok;
     tok
   in
   (* set to false to parse correctly arrows *)

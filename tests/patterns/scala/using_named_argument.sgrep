@@ -1,0 +1,2 @@
+@JsonSerialize(using = classOf[$S])
+class $C

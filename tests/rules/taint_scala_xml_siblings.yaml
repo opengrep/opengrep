@@ -1,0 +1,12 @@
+rules:
+- id: taint-scala-xml-siblings
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        render(...)
+  message: Tainted value reaches render through an XML literal
+  severity: WARNING
+  languages: [scala]

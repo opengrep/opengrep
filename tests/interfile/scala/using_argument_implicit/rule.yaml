@@ -1,0 +1,12 @@
+rules:
+  - id: test-using-argument-implicit
+    languages: [scala]
+    message: An explicit using argument fills a Scala 2 implicit parameter
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

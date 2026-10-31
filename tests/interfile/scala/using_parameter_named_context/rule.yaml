@@ -1,0 +1,12 @@
+rules:
+  - id: test-using-parameter-named-context
+    languages: [scala]
+    message: A parameter called context is not the using parameter without a name
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

@@ -416,21 +416,42 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
    * arg available. NOTE that it is the Python semantics, and can potentially lead 
    * to problems with languages like OCaml, where there is a clear distinction
    * between named and non-named arguments. *)
+  (* Context arguments, as Scala's `f(using x)`, fill the context parameters
+   * in order (IL.context_arg). Those that no context parameter takes, as
+   * for a Scala 2 `implicit` parameter, which is an ordinary parameter, are
+   * positional arguments after the others. *)
+  let context_args, args =
+    args
+    |> List.partition_map (fun (arg : 'a IL.argument) ->
+           match arg with
+           | IL.Named (_, v) when IL_helpers.is_context_arg arg -> Left v
+           | IL.Named _
+           | IL.Unnamed _ ->
+               Right arg)
+  in
   let pos_args, named_args =
     args |>
     List.partition_map (function
       | IL.Unnamed v -> Left v
       | IL.Named ((name, _token), v) -> Right (name, v))
   in
-  let formal_args_with_vals =
+  let rest_context_args, formal_args_with_vals =
     fparams |>
-    List.map (function
-       | (Signature.P name as p)
-       | (Signature.POpt name as p)
-       | (Signature.PRest name as p)
-       | (Signature.PKwd name as p) -> Some (p, List.assoc_opt name named_args)
-       | Signature.Other -> None)
+    List.fold_left_map
+      (fun (context_args : 'a list) (param : Signature.param) ->
+        match (param, context_args) with
+        | Signature.PContext _, v :: rest -> (rest, Some (param, Some v))
+        | Signature.PContext _, [] -> ([], Some (param, None))
+        | ( ( Signature.P name
+            | Signature.POpt name
+            | Signature.PRest name
+            | Signature.PKwd name ),
+            _ ) ->
+            (context_args, Some (param, List.assoc_opt name named_args))
+        | Signature.Other, _ -> (context_args, None))
+      context_args
   in
+  let pos_args = pos_args @ rest_context_args in
   (* Each formal arg with its value, [None] when it gets none: a formal arg
    * keeps its position either way, see 'Taint.arg'. *)
   let rec merge ~after_rest formal_args_with_vals pos_args =
@@ -444,7 +465,7 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
           []
      (* The value for the formal arg is found among named actual args *)
      | Some ((Signature.P name | Signature.POpt name | Signature.PRest name
-             | Signature.PKwd name),
+             | Signature.PKwd name | Signature.PContext name),
              Some v) :: avs, _ ->
         (Some name, Some v) :: merge ~after_rest avs pos_args
      (* A keyword argument takes no positional arg: 'sep' in Ruby's
@@ -452,7 +473,8 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
       * a rest argument, 'sep' in Crystal's 'def f(a, *xs, sep = nil)' and in
       * Python's 'def f(a, *xs, sep=None)'. It was not found among named actual
       * args, so it keeps its default. *)
-     | Some (Signature.PKwd name, None) :: name_vals, _ ->
+     | Some ((Signature.PKwd name | Signature.PContext name), None)
+       :: name_vals, _ ->
         (Some name, None) :: merge ~after_rest name_vals pos_args
      | Some (Signature.POpt name, None) :: name_vals, _ when after_rest ->
         (Some name, None) :: merge ~after_rest name_vals pos_args
@@ -949,8 +971,11 @@ let rec substitute_in_sig ~lang (inst_var : inst_var) (inst_trace : inst_trace)
     match List.nth_opt sig_.params arg.index with
     | None -> false
     | Some
-        (Signature.P n | Signature.POpt n | Signature.PRest n | Signature.PKwd n)
-      ->
+        ( Signature.P n
+        | Signature.POpt n
+        | Signature.PRest n
+        | Signature.PKwd n
+        | Signature.PContext n ) ->
         String.equal n arg.name
     | Some Signature.Other -> String.equal arg.name ""
   in
@@ -2589,6 +2614,7 @@ let build_barg_remap (canonical_params : Signature.params)
          | Signature.P _
          | Signature.POpt _
          | Signature.PRest _
+         | Signature.PContext _
          | Signature.Other ->
              None)
     |> List.sort String.compare
@@ -2620,6 +2646,10 @@ let build_barg_remap (canonical_params : Signature.params)
         (fun (i : int) (param : Signature.param) ->
           match param with
           | Signature.PKwd name -> IL.Named ((name, G.fake name), i)
+          (* a context param is matched by its position among the context
+             params *)
+          | Signature.PContext _ ->
+              IL.Named ((IL.context_arg, G.fake IL.context_arg), i)
           | Signature.P _
           | Signature.POpt _
           | Signature.PRest _
@@ -2638,7 +2668,8 @@ let build_barg_remap (canonical_params : Signature.params)
              | Signature.P name
              | Signature.POpt name
              | Signature.PRest name
-             | Signature.PKwd name ->
+             | Signature.PKwd name
+             | Signature.PContext name ->
                  name
              | Signature.Other -> "")
            canonical_params)

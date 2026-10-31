@@ -1,0 +1,1 @@
+$X match { case Some($Y) => sink($Y) }

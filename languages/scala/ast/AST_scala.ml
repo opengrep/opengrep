@@ -179,11 +179,15 @@ and type_ =
   | TyInfix of type_ * ident * type_
   | TyFunction1 of type_ * tok (* '=>' *) * type_
   | TyFunction2 of type_ list bracket * tok (* '=>' *) * type_
+  (* https://docs.scala-lang.org/scala3/reference/contextual/context-functions.html *)
+  | TyContextFunction of type_ list bracket * tok (* '?=>' *) * type_
   (* https://docs.scala-lang.org/scala3/reference/new-types/polymorphic-function-types.html *)
-  | TyPoly of binding list * tok (* '=>' *) * type_
+  | TyPoly of type_parameters * tok (* '=>' *) * type_
   (* https://docs.scala-lang.org/scala3/reference/new-types/dependent-function-types.html *)
   | TyDependent of (ident * type_) list * tok (* '=>' *) * type_
   | TyTuple of type_ list bracket
+  (* scala3.7: (name: T, ...) *)
+  | TyNamedTuple of (ident * type_) list bracket
   | TyRepeated of type_ * tok (* '*' *)
   | TyByName of tok (* => *) * type_
   | TyAnnotated of type_ * annotation list (* at least one *)
@@ -215,9 +219,13 @@ and pattern =
   | PatLiteral of literal
   | PatName of stable_id
   | PatTuple of pattern list bracket
+  (* scala3.7: name = pattern, in a tuple or the arguments of an extractor *)
+  | PatNamed of ident * tok (* = *) * pattern
   | PatVarid of varid_or_wildcard
   (* ast_orig: just Typed *)
   | PatTypedVarid of varid_or_wildcard * tok (* : *) * type_
+  (* scala3: a literal or another pattern with a type, as `case 1: Int` *)
+  | PatTyped of pattern * tok (* : *) * type_
   | PatBind of varid * tok (* @ *) * pattern
   (* less: the last pattern one can be '[varid @] _ *'
    * ast_orig: AppliedType for the type_ list bracket
@@ -228,8 +236,12 @@ and pattern =
   | PatInfix of pattern * ident * pattern
   (* less: only last element of a pattern list? *)
   | PatUnderscoreStar of tok (* '_' *) * tok (* '*' *)
+  (* scala3: xs*, which replaces xs @ _* *)
+  | PatVarargs of varid * tok (* '*' *)
   | PatDisj of pattern * tok (* | *) * pattern
   | PatQuoted of quoted
+  (* scala3: an anonymous given of the type *)
+  | PatGiven of tok (* 'given' *) * type_
   (* semgrep-ext: *)
   | PatEllipsis of tok
 
@@ -239,6 +251,8 @@ and pattern =
 and expr =
   | L of literal
   | Tuple of expr list bracket
+  (* scala3.7: (name = e, ...) *)
+  | NamedTuple of named_tuple_element list bracket
   (* this path can be just 'this' *)
   | Name of path
   | ExprUnderscore of tok (* '_' *)
@@ -262,8 +276,12 @@ and expr =
   | Assign of lhs * tok (* = *) * expr
   | Match of expr * tok (* 'match' *) * case_clauses bracket
   | Lambda of function_definition
+  (* scala3: [A] => (x: A) => e *)
+  | PolyLambda of type_parameters * tok (* '=>' *) * expr
   | New of tok * template_definition
   | Quoted of quoted
+  (* XML literals, one or more adjacent elements *)
+  | Xml of xml_body list
   | BlockExpr of block_expr
   | S of stmt
   (* semgrep-ext: *)
@@ -284,6 +302,31 @@ and arguments =
 (* less: no keyword argument in Scala? *)
 
 and argument = expr
+
+(* an element of a named tuple, or `...` in a pattern *)
+and named_tuple_element =
+  | NamedElement of ident * tok (* = *) * expr
+  | NamedEllipsis of tok
+
+and xml = {
+  xml_kind : xml_kind;
+  xml_attrs : xml_attribute list;
+  xml_body : xml_body list;
+}
+
+and xml_kind =
+  | XmlClassic of tok (* < *) * ident * tok (* > *) * tok (* </name> *)
+  | XmlSingleton of tok (* < *) * ident * tok (* /> *)
+
+and xml_attribute = ident * tok (* = *) * xml_attr_value
+and xml_attr_value = XmlAttrString of string wrap | XmlAttrExpr of expr
+
+(* the nodes of a literal are elements, and comments, character data sections
+   and processing instructions, which are text *)
+and xml_body =
+  | XmlText of string wrap
+  | XmlExpr of expr bracket
+  | XmlXml of xml
 and case_clauses = (pattern, block) case_clause list
 and type_case_clauses = (((* _ *) tok, type_) Either_.t, type_) case_clause list
 
@@ -395,6 +438,8 @@ and modifier_kind =
   | Inline
   | Open
   | Opaque
+  | Transparent
+  | InfixModifier
   (* pad: not in original spec *)
   | CaseClassOrObject
   (* less: rewrite as Packaging and object def like in original code? *)
@@ -421,7 +466,7 @@ and type_parameter = {
   tpparams : type_parameters option;
   tpbounds : type_bounds;
   tpviewbounds : (* <% *) type_ list;
-  tpcolons : (* : *) type_ list;
+  tpcolons : (* : *) (type_ * ident option (* as id *)) list;
 }
 
 and variance =
@@ -490,7 +535,10 @@ and extension = {
   ext_methods : ext_method list;
 }
 
-and ext_method = ExtDef of definition | ExtExport of import
+and ext_method =
+  | ExtDef of definition
+  | ExtExport of import
+  | ExtEnd of end_marker
 
 (* ------------------------------------------------------------------------- *)
 (* Enums *)
@@ -573,7 +621,9 @@ and template_definition = {
 (* scala3: intersection types so more symetric *)
 and template_parents = {
   cextends : (type_ * arguments list) option;
-  cwith : type_ list;
+  cwith : (type_ * arguments list) list;
+  (* scala3: https://docs.scala-lang.org/scala3/reference/contextual/derivation.html *)
+  cderives : (tok (* 'derives' *) * type_ list) option;
 }
 
 and template_body = (self_type option * block) bracket
@@ -605,14 +655,23 @@ and given_kind =
   (* combination of both alias instance and abstract instance *)
   | GivenType of type_ * expr option
 
-and given_definition = { gsig : given_sig option; gkind : given_kind }
+and given_definition = {
+  gtok : tok; (* 'given' *)
+  gattrs : attribute list;
+  gsig : given_sig option;
+  gkind : given_kind;
+}
 
 (* ------------------------------------------------------------------------- *)
 (* Typedef *)
 (* ------------------------------------------------------------------------- *)
 and type_definition = { ttok : tok; (* 'type' *) tbody : type_definition_kind }
 
-and type_definition_kind = TDef of tok (* = *) * type_ | TDcl of type_bounds
+and type_definition_kind =
+  | TDef of tok (* = *) * type_
+  | TDcl of type_bounds
+  (* scala3: opaque types and match types, e.g. `type T <: U = V` *)
+  | TDefBounded of type_bounds * tok (* = *) * type_
 [@@deriving show { with_path = false }]
 
 (*****************************************************************************)
@@ -632,7 +691,7 @@ type any = Pr of program | Ex of expr | Ss of block | Tk of tok
 (* Helpers *)
 (*****************************************************************************)
 
-let empty_cparents = { cextends = None; cwith = [] }
+let empty_cparents = { cextends = None; cwith = []; cderives = None }
 let attrs_of_mods xs = List_.map (fun x -> M x) xs
 let attrs_of_annots xs = List_.map (fun x -> A x) xs
 let mods_with_annots mods annots = attrs_of_annots annots @ attrs_of_mods mods
@@ -643,3 +702,12 @@ let is_variable_name s =
 
 let basic_param id =
   { p_name = id; p_type = None; p_attrs = []; p_default = None }
+
+(* the type parameters of two clauses as one clause, the first ones first *)
+let concat_type_params (xs : 'a list bracket option)
+    (ys : 'a list bracket option) : 'a list bracket option =
+  match (xs, ys) with
+  | Some (lb, xs, rb), Some (_, ys, _) -> Some (lb, xs @ ys, rb)
+  | None, tparams
+  | tparams, None ->
+      tparams

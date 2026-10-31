@@ -1,0 +1,1 @@
+object $O extends Ord[Int] { ... }

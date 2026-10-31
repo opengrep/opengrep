@@ -1,0 +1,1 @@
+def $F($X: IterableOnce[Int]): Int = sink($X)

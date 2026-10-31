@@ -198,12 +198,20 @@ type param =
   | ParamReceiver of name_param  (** Go/Java method receiver (maps to BThis) *)
   | ParamRest of name_param
   | ParamKwd of name_param  (** takes a named argument only: Ruby 'sep:' *)
+  | ParamContext of name_param
+      (** takes a context argument only ([context_arg]): a Scala `using`
+          parameter, which a call fills implicitly or with `f(using x)` *)
   | ParamPattern of name_param * G.pattern
   | ParamFixme
 [@@deriving show { with_path = false }, ord]
 
 type 'a argument = Unnamed of 'a | Named of ident * 'a
 [@@deriving ord, eq, show { with_path = false }]
+
+(* The name of an argument that fills a context parameter ([ParamContext]),
+ * as `x` in Scala's `f(using x)`: such arguments fill the context parameters
+ * in order. *)
+let context_arg = "!context_arg!"
 
 (*****************************************************************************)
 (* Parent iterator *)
@@ -237,6 +245,7 @@ class virtual ['self] iter_parent =
       | ParamReceiver { pname; pdefault = _ }
       | ParamRest { pname; pdefault = _ }
       | ParamKwd { pname; pdefault = _ }
+      | ParamContext { pname; pdefault = _ }
       | ParamPattern ({ pname; pdefault = _ }, _) ->
           self#visit_name env pname
       | ParamFixme -> ()

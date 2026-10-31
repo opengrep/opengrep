@@ -613,6 +613,13 @@ let union_type_constructors (lang : Lang.t) : string list list =
       [ [ "typing"; "Optional" ]; [ "typing"; "Union" ] ]
   | _ -> []
 
+(* A Scala XML literal is data: an element is not a call of the function
+   with its tag. *)
+let xml_elements_are_calls (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Scala -> false
+  | _ -> true
+
 let hof_method_names (lang : Lang.t) : string list =
   (get lang).hof_configs |> List.concat_map (function
     | MethodHOF { methods; _ }

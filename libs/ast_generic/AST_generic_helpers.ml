@@ -200,6 +200,23 @@ let expr_to_stmt e =
   | StmtExpr stmt -> stmt
   | _ -> ExprStmt (e, sc) |> G.s
 
+let is_context_arg (a : argument) : bool =
+  match a with
+  (* the expression, which a Swift `using:` label, say, does not have *)
+  | OtherArg ((tag, _), [ E _ ]) -> String.equal tag using_tag
+  | _ -> false
+
+let is_context_param (p : parameter) : bool =
+  match p with
+  | Param { pattrs; _ } ->
+      List.exists
+        (fun (attr : attribute) ->
+          match attr with
+          | OtherAttribute ((tag, _), []) -> String.equal tag using_tag
+          | _ -> false)
+        pattrs
+  | _ -> false
+
 (* A [PatList] / [PatConstructor] holds "map pairs" when every element is a
  * [PatKeyVal] in the canonical [(lookup_key, binding_pattern)] order,
  * possibly wrapped by exactly one [OtherPat("MapPairKeyword" |

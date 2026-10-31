@@ -1,0 +1,12 @@
+rules:
+- id: taint-scala-typed-patterns
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink through a typed pattern
+  severity: WARNING
+  languages: [scala]

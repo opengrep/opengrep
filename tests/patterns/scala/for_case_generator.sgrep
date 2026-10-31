@@ -1,0 +1,1 @@
+for (Some($X) <- $XS) sink($X)

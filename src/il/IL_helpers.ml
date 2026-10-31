@@ -264,7 +264,9 @@ let pname_of_param (p : IL.param) : IL.name option =
   | IL.Param { pname; _ } -> Some pname
   | IL.ParamReceiver { pname; _ } -> Some pname
   | IL.ParamRest { pname; _ } -> Some pname
-  | IL.ParamKwd { pname; _ } -> Some pname
+  | IL.ParamKwd { pname; _ }
+  | IL.ParamContext { pname; _ } ->
+      Some pname
   | IL.ParamPattern ({ pname; _ }, _) -> Some pname
   | IL.ParamFixme -> None
 
@@ -688,3 +690,8 @@ let wrap_or (es : IL.exp list) : IL.exp =
       | _ when has_complement_pair es ->
           lit_bool ~eorig:(List.hd es).eorig true
       | _ -> binary_fold_op G.Or es)
+
+let is_context_arg (arg : 'a IL.argument) : bool =
+  match arg with
+  | IL.Named ((name, _), _) -> String.equal name IL.context_arg
+  | IL.Unnamed _ -> false

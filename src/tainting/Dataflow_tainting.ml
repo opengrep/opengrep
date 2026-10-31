@@ -3399,6 +3399,7 @@ let mk_lambda_in_env env lcfg =
            | IL.Param _
            | IL.ParamRest _
            | IL.ParamKwd _
+           | IL.ParamContext _
            | IL.ParamFixme ->
                (i + 1, lval_env)
            (* Receivers aren't call-site args: no env update, no arg slot. *)
@@ -4067,6 +4068,7 @@ and (fixpoint :
                               | IL.Param { pname; _ }
                               | IL.ParamRest { pname; _ }
                               | IL.ParamKwd { pname; _ }
+                              | IL.ParamContext { pname; _ }
                               | IL.ParamPattern ({ pname; _ }, _) ->
                                   let var = pname in
                                   let il_lval : IL.lval =
