@@ -176,6 +176,9 @@ let (mk_visitor : visitor_in -> visitor_out) =
       | Instantiation (v1, v2) ->
           v_expr v1;
           v_bracket (v_list v_type_) v2
+      | TypeImport (v1, v2) ->
+          v_tok v1;
+          v_bracket (v_list v_argument) v2
       | ExprTodo (v1, v2) ->
           v_todo_category v1;
           v_list v_expr v2

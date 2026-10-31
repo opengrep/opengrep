@@ -1,0 +1,2 @@
+// MATCH:
+var y: typeof import("m");

@@ -225,6 +225,8 @@ and expr =
   | TypeAssert of expr * tok (* 'as' or '<' *) * type_ (* X as T or <T> X *)
   (* f<T> without a call *)
   | Instantiation of expr * type_ list bracket
+  (* import("m") in a type: a reference to the module, not a call *)
+  | TypeImport of tok * a_arguments
   (* this is used mostly for unsupported typescript features *)
   | ExprTodo of a_todo_category * expr list
   | ParenExpr of tok * expr * tok

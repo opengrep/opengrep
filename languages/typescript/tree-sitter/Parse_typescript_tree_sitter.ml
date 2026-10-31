@@ -2472,7 +2472,7 @@ and map_type_query_call_expression (env : env)
  * not a call: a pattern for a dynamic import does not match it. *)
 and import_type_module (env : env) (timport : tok) (args : CST.arguments) :
     expr =
-  ExprTodo (("Import", timport), Tok.unbracket (arguments env args))
+  TypeImport (timport, arguments env args)
 
 and import_type (env : env)
     (x :
@@ -2487,7 +2487,7 @@ and import_type (env : env)
     | `Type_query_call_exp_in_type_anno x ->
         map_type_query_call_expression_in_type_annotation env x
   in
-  TypeTodo (("ImportType", timport), [ Expr e ])
+  TypeTodo (("ImportType", Tok.fake_tok timport "ImportType"), [ Expr e ])
 
 (* A type imported from a module, `import("m").T`; the result carries the
  * `import` token. *)

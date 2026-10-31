@@ -256,11 +256,17 @@ and expr (x : expr) =
       let v1 = expr v1 in
       let v3 = type_ v3 in
       G.Cast (v3, v2, v1) |> G.e
-  | Instantiation (v1, (l, v2, _r)) ->
+  | Instantiation (v1, (l, v2, r)) ->
       let v1 = expr v1 in
       let v2 = list type_ v2 in
       G.OtherExpr
-        (("Instantiation", l), G.E v1 :: List_.map (fun t -> G.T t) v2)
+        ( ("Instantiation", l),
+          (G.E v1 :: List_.map (fun t -> G.T t) v2) @ [ G.Tk r ] )
+      |> G.e
+  | TypeImport (t, (l, v1, r)) ->
+      let v1 = list expr v1 in
+      G.OtherExpr
+        (("Import", t), (G.Tk l :: List_.map (fun e -> G.E e) v1) @ [ G.Tk r ])
       |> G.e
   | ExprTodo (v1, v2) ->
       let v2 = list expr v2 in
