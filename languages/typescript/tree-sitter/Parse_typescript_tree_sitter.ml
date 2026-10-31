@@ -1294,7 +1294,8 @@ and variable_declarator (env : env) (x : CST.variable_declarator) =
       let id =
         match v1 with
         | `As tok
-        | `Satiss tok ->
+        | `Satiss tok
+        | `Of tok ->
             identifier env tok
       in
       let type_ = Option.map (fun x -> type_annotation env x |> snd) v2 in
@@ -2004,6 +2005,12 @@ and anon_opt_opt_choice_exp_rep_COMMA_opt_choice_exp_208ebb4 (env : env)
       v1 @ v2
   | None -> []
 
+and for_header_binding (env : env) (x : CST.anon_choice_type_id_7fd89ec) :
+    (a_ident, a_pattern) Either.t =
+  match x with
+  | `Choice_as (`As tok | `Satiss tok | `Of tok) -> Left (identifier env tok)
+  | (`Id _ | `Dest_pat _) as x -> id_or_destructuring_pattern env x
+
 and for_header (env : env) ((v1, v2, v3, v4, v5) : CST.for_header) : for_header
     =
   let _open = token env v1 (* "(" *) in
@@ -2014,7 +2021,7 @@ and for_header (env : env) ((v1, v2, v3, v4, v5) : CST.for_header) : for_header
         Right expr
     | `Var_choice_id_opt_init (v1, v2, v3) ->
         let var_kind = (Var, token env v1) in
-        let id_or_pat = id_or_destructuring_pattern env v2 in
+        let id_or_pat = for_header_binding env v2 in
         let pat = id_or_pat |> sub_pattern in
         let rhs = initializer_opt env v3 in
         let var = Ast_js.var_pattern_to_var var_kind pat (snd var_kind) rhs in
@@ -2027,11 +2034,7 @@ and for_header (env : env) ((v1, v2, v3, v4, v5) : CST.for_header) : for_header
           | `Const tok -> (Const, token env tok)
           (* "const" *)
         in
-        let id_or_pat =
-          match v2 with
-          | `Of tok -> Left (identifier env tok (* "of" *))
-          | (`Id _ | `Dest_pat _) as x -> id_or_destructuring_pattern env x
-        in
+        let id_or_pat = for_header_binding env v2 in
         let pat = id_or_pat |> sub_pattern in
         let var = Ast_js.var_pattern_to_var var_kind pat (snd var_kind) None in
         Left var
@@ -2678,7 +2681,7 @@ and switch_body (env : env) ((v1, v2, v3) : CST.switch_body) =
   v2
 
 and mapped_type_clause (env : env) ((v1, v2, v3, v4) : CST.mapped_type_clause) =
-  let id = str env v1 (* identifier *) in
+  let id = id_or_reserved_id env v1 in
   let tin = token env v2 (* "in" *) in
   let ty = type_ env v3 in
   let asopt =
@@ -3473,7 +3476,7 @@ and map_type_predicate (env : env) ((v1, v2, v3) : CST.type_predicate) =
     | `Pred_type v1 ->
         let id = predefined_type env v1 in
         idexp_or_special id
-    | `Comp tok -> identifier env tok (* "component" *) |> idexp_or_special
+    | `Kw_type_id x -> keyword_type_identifier env x |> idexp_or_special
   in
   let tis = token env v2 (* "is" *) in
   let ty = type_ env v3 in
@@ -3489,6 +3492,7 @@ and map_asserts (env : env) (tok : tok) ((v1, v2) : CST.asserts) : type_ =
     | `Id tok ->
         let id = identifier env tok (* identifier *) in
         Expr (idexp_or_special id)
+    | `Kw_type_id x -> Expr (idexp (keyword_type_identifier env x))
     | `This tok -> Expr (this env tok)
   in
   TypeTodo (("Asserts", tok), [ any ])
@@ -3551,7 +3555,7 @@ and type_predicate (env : env) ((v1, v2, v3) : CST.type_predicate) : type_ =
     | `Id tok -> (* identifier *) identifier env tok |> idexp
     | `This tok -> (* "this" *) this env tok
     | `Pred_type v1 -> predefined_type env v1 |> idexp
-    | `Comp tok -> identifier env tok (* "component" *) |> idexp
+    | `Kw_type_id x -> keyword_type_identifier env x |> idexp
   in
   let _is = token env v2 (* "is" *) in
   let type_ = type_ env v3 in
@@ -3799,7 +3803,12 @@ and declaration (env : env) (x : CST.declaration) : stmt list =
   match x with
   | `Choice_choice_func_decl (`Import_alias (v1, v2, v3, v4, v5)) ->
       let import_tok = token env v1 in
-      let alias = identifier env v2 in
+      let alias =
+        match v2 with
+        | `Id tok
+        | `From tok ->
+            identifier env tok
+      in
       let _eq = token env v3 in
       let target = id_or_nested_id env v4 in
       let _semi = semicolon env v5 in
@@ -3914,7 +3923,12 @@ and definitions (env : env) (x : CST.declaration) : definition list =
           (* TODO *)
       | `Inte_decl (v1, v2, v3, v4, v5) ->
           let v1 = token env v1 (* "interface" *) in
-          let v2 = identifier env v2 (* identifier *) in
+          let v2 =
+            match v2 with
+            | `Id tok
+            | `Choice_as (`As tok | `Satiss tok) ->
+                identifier env tok
+          in
           let _v3 =
             match v3 with
             | Some x -> type_parameters env x

@@ -35,3 +35,7 @@ let z: [interface: string];
 let aa: interface;
 f<interface>(y);
 x = <interface>y;
+function ab(hook): hook is string {}
+function ac(out): out is string {}
+function ad(unique): asserts unique {}
+type M = { [hook in T]: U };
