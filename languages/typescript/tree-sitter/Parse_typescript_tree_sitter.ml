@@ -1757,7 +1757,6 @@ and apply_postfix (head : expr) (postfix : expr -> expr) : expr =
              | Typeof
              | Void
              | Delete
-             | Seq
              | In
              | Instanceof
              | ArithOp _
@@ -4158,11 +4157,10 @@ and flow_function_type_parameters (env : env)
     | `Opt_param x -> formal_parameter env (`Opt_param x)
   in
   let v1 = token env v1 (* "(" *) in
-  let first = param v2 in
-  let rest = List_.map (fun (_comma, x) -> param x) v3 in
+  let params = map_sep_list env v2 v3 (fun _env x -> param x) in
   let _trailing_comma = v4 in
   let v5 = token env v5 (* ")" *) in
-  (v1, first :: rest, v5) |> function_type_parameters env
+  (v1, params, v5) |> function_type_parameters env
 
 and flow_component_signature (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.flow_component_signature) :
