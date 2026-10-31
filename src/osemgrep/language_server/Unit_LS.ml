@@ -61,6 +61,7 @@ let mock_run_results (files : string list) : Core_runner.result =
         metadata = None;
         fix = None;
         is_ignored = false;
+        justification = None;
         engine_kind = `OSS;
         dataflow_trace = None;
         sca_match = None;
