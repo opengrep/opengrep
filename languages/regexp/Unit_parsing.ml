@@ -97,6 +97,17 @@ let tests =
           t "tolerate unfinished raw sequence" (test_syntax {|\Qabc|});
           t "tolerate malformed UTF-8 in raw sequence"
             (test_code_points "\\Q\xe9\\E" [ 0xe9 ]);
+          t "whitespace in a character class is a member"
+            (test_code_points "[a\tb c]" [ 97; 9; 98; 32; 99 ]);
+          t "# in a character class is a member"
+            (test_code_points {|[a#b]|} [ 97; 35; 98 ]);
+          t "- before the end of a character class is literal"
+            (test_code_points {|[a-]|} [ 97; 45 ]);
+          t "escaped - in a character class is literal"
+            (test_code_points {|[\-a]|} [ 45; 97 ]);
+          t "] after a character ends the character class"
+            (test_code_points {|[x]-a|} [ 120; 45; 97 ]);
+          t "comment group" (test_code_points {|a(?#xy)b|} [ 97; 98 ]);
           t "octal escape in a character class"
             (test_code_points {|[\101]|} [ 65 ]);
           t "8 and 9 after a backslash in a character class are literal"

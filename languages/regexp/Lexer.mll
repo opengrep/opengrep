@@ -95,10 +95,16 @@ let utf8_head_byte3 = ['\240'-'\247']
 (* 10xxxxxx *)
 let utf8_tail_byte = ['\128'-'\191']
 
-let utf8 = ascii
-         | utf8_head_byte1 utf8_tail_byte
-         | utf8_head_byte2 utf8_tail_byte utf8_tail_byte
-         | utf8_head_byte3 utf8_tail_byte utf8_tail_byte utf8_tail_byte
+let utf8_multibyte =
+    utf8_head_byte1 utf8_tail_byte
+  | utf8_head_byte2 utf8_tail_byte utf8_tail_byte
+  | utf8_head_byte3 utf8_tail_byte utf8_tail_byte utf8_tail_byte
+
+let utf8 = ascii | utf8_multibyte
+
+(* A character of a class other than '\\', which starts an escape, and ']',
+   which ends the class. *)
+let range_end = (ascii # ['\\' ']']) | utf8_multibyte
 
 let unicode_character_property = ['A'-'Z'] alnum*
 
@@ -159,7 +165,7 @@ rule token conf = parse
       else
         NODE (Char (loc lexbuf, Singleton (Char.code c)))
     }
-  | "(?#" [^')'] ')' { token conf lexbuf }
+  | "(?#" [^')']* ')' { token conf lexbuf }
   | "(?" {
       let start = loc lexbuf in
       open_group conf start lexbuf
@@ -663,18 +669,18 @@ and char_class conf = parse
       if conf.ignore_hash_comments then
         comment_in_char_class conf lexbuf
       else
-        Singleton (Char.code '#')
+        union (Singleton (Char.code '#')) (char_class conf lexbuf)
     }
   | ascii_whitespace as c {
       if conf.ignore_whitespace_in_char_classes then
         char_class conf lexbuf
       else
-        Singleton (Char.code c)
+        union (Singleton (Char.code c)) (char_class conf lexbuf)
     }
   | ']' {
       Empty
     }
-  | (utf8 as a) '-' (utf8 as b) {
+  | (range_end as a) '-' (range_end as b) {
       let range = Range (decode a, decode b) in
       union range (char_class conf lexbuf)
     }
