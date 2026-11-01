@@ -95,7 +95,7 @@ class ['self] extract_strings_and_mvars_visitor =
         | { d = ImportAll (_, FileName (str, _), _); _ }
           when str <> "..."
                && (not (Mvar.is_metavar_name str))
-               && (* deprecated *) not (Pattern.is_regexp_string str) ->
+               && (* deprecated *) not (Regexp_string.is_regexp_string str) ->
             (* Semgrep can match "foo" against "foo/bar", so we just
              * overapproximate taking the sub-strings, see
              * Generic_vs_generic.m_module_name_prefix. *)

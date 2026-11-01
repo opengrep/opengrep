@@ -37,17 +37,11 @@ open Common
  * more are supported *)
 type t = AST_generic.any [@@deriving show, eq]
 
-(* TODO: deprecate this *)
-let regexp_regexp_string = "^=~/\\(.*\\)/\\([mi]?\\)$"
-
-(* TODO: deprecate this *)
-let is_regexp_string s = s =~ regexp_regexp_string
-
 let is_special_string_literal str =
   str = "..." || Mvar.is_metavar_name str
   || Mvar.is_metavar_ellipsis str
   (* TODO: deprecate this *)
-  || is_regexp_string str
+  || Regexp_string.is_regexp_string str
 
 let is_js lang =
   match lang with
@@ -64,7 +58,7 @@ let is_special_identifier ?lang str =
   (* emma: a hack because my regexp skills are not great *)
   || (String.length str > 4 && Str.first_chars str 4 = "$...")
   (* in JS field names can be regexps *)
-  || (is_js lang && is_regexp_string str)
+  || (is_js lang && Regexp_string.is_regexp_string str)
   (* ugly hack that we then need to handle also here *)
   || str = AST_generic.special_multivardef_pattern
   (* ugly: because ast_js_build introduce some extra "!default" ids *)

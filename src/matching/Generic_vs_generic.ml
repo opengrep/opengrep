@@ -213,7 +213,7 @@ let m_ident ?(case_insensitive = false) a b =
    * which gives the opportunity to use regexp string for fields
    * (e.g., {"=~/.*field/": $X}).
    *)
-  | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
+  | (stra, _), (strb, _) when Regexp_string.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
   (* general case *)
@@ -727,7 +727,7 @@ and m_ident_and_id_info (a1, a2) (b1, b2) =
    * which gives the opportunity to use regexp string for fields
    * (e.g., {"=~/.*field/": $X}).
    *)
-  | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
+  | (stra, _), (strb, _) when Regexp_string.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
   (* Prefix metavar: pattern "set_$P" matches source "set_X", but
@@ -3770,8 +3770,8 @@ and m_list__m_field ?(mvar_ellipsis = []) ~less_is_ok (xsa : G.field list)
         }
       :: xsa,
       xsb )
-    when (not (Mvar.is_metavar_name s1)) && not (Pattern.is_regexp_string s1)
-    -> (
+    when (not (Mvar.is_metavar_name s1))
+         && not (Regexp_string.is_regexp_string s1) -> (
       try
         let before, there, after =
           xsb
