@@ -378,9 +378,12 @@ and literal_chars = parse
 and backslash_escape conf start = parse
   | '\\' { (range start (loc lexbuf), Singleton (Char.code '\\')) }
   | 'a' { (range start (loc lexbuf), Singleton 0x7) }
-  | 'c' (ascii as c) { (range start (loc lexbuf), Singleton (Char.code c)) }
+  | 'c' (ascii as c) {
+      let code = Char.code (Char.uppercase_ascii c) lxor 0x40 in
+      (range start (loc lexbuf), Singleton code)
+    }
   | 'e' { (range start (loc lexbuf), Singleton 0x1B) }
-  | 'f' { (range start (loc lexbuf), Singleton 0x1C) }
+  | 'f' { (range start (loc lexbuf), Singleton 0x0C) }
   | 'n' { (range start (loc lexbuf), Singleton 0x0A) }
   | 'r' { (range start (loc lexbuf), Singleton 0x0D) }
   | 't' { (range start (loc lexbuf), Singleton 0x09) }

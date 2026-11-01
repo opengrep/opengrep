@@ -108,6 +108,11 @@ let tests =
           t "] after a character ends the character class"
             (test_code_points {|[x]-a|} [ 120; 45; 97 ]);
           t "comment group" (test_code_points {|a(?#xy)b|} [ 97; 98 ]);
+          t "form feed escape" (test_code_points {|[\f]|} [ 0x0C ]);
+          t "control escape of a lower case letter"
+            (test_code_points {|\ca|} [ 0x01 ]);
+          t "control escape of a character that is not a letter"
+            (test_code_points {|[\c{\c;]|} [ 0x3B; 0x7B ]);
           t "octal escape in a character class"
             (test_code_points {|[\101]|} [ 65 ]);
           t "8 and 9 after a backslash in a character class are literal"
