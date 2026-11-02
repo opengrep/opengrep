@@ -4998,11 +4998,10 @@ and function_definition env fdef : function_definition =
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody =
     match (fdef.G.fkind, fdef.G.fbody) with
-    (* An arrow whose body is an expression returns the value of the
-       expression, in every language whose front end produces one (Java, C#,
-       JavaScript, TypeScript, PHP [fn], Scala); where the arrow returns
-       nothing, as a void-compatible Java lambda, the value is discarded,
-       which returning it does not change. *)
+    (* An arrow whose body is an expression statement returns the value of
+       the expression; where the arrow returns nothing, as a void-compatible
+       Java lambda, the value is discarded, which returning it does not
+       change. *)
     | (G.Arrow, tok), G.FBStmt { s = G.ExprStmt (e, sc); _ } ->
         stmt env (G.Return (Tok.fake_tok tok "return", Some e, sc) |> G.s)
     | _ -> function_body env fdef.G.fbody

@@ -1223,11 +1223,7 @@ let rec instantiate_captured_value ~(taints : Taints.t -> Taints.t)
         in
         let variables = Taints.filter (fun (b : T.guarded_taint) -> not (is_source b)) ts in
         if Taints.is_empty variables then xtaint
-        else
-          `Tainted
-            (Taints.union
-               (Taints.filter is_source ts)
-               (taints variables))
+        else Xtaint.of_taints (Taints.union (Taints.filter is_source ts) (taints variables))
   in
   let inner' =
     match inner with
@@ -2764,19 +2760,19 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     (Display_IL.string_of_exp method_only_exp));
                               Some (sig_, IL.NameMap.empty)
                           | None ->
-                              Log.err (fun m ->
+                              Log.debug (fun m ->
                                   m "%s: Could not find the shape of function argument '%s', and no signature found"
                                     (Display_IL.string_of_exp callee)
                                     (Display_IL.string_of_exp exp_to_lookup));
                               None)
                       | _ ->
-                          Log.err (fun m ->
+                          Log.debug (fun m ->
                               m "%s: Could not find the shape of function argument '%s', and no signature found"
                                 (Display_IL.string_of_exp callee)
                                 (Display_IL.string_of_exp exp_to_lookup));
                           None))
               | _, _ ->
-                  Log.err (fun m ->
+                  Log.debug (fun m ->
                       m "%s: Could not find the shape of function argument '%s'"
                         (Display_IL.string_of_exp callee)
                         (T.show_formal fun_arg));
