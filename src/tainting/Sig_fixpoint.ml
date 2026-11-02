@@ -72,11 +72,14 @@ let order_component (graph : Call_graph.G.t) (members : Function_id.t list) :
     if Fid_set.mem v seen then (seen, order)
     else
       let seen, order =
-        Call_graph.G.fold_succ
-          (fun (caller : Function_id.t) (acc : Fid_set.t * Function_id.t list) ->
-            if Fid_set.mem caller in_component then visit caller acc else acc)
-          graph v
-          (Fid_set.add v seen, order)
+        (* In [Call_graph.G_ordered]'s order, which does not depend on the
+           paths of the files. *)
+        Call_graph.G.succ graph v
+        |> Call_graph.G_ordered.sorted
+        |> List.fold_left
+             (fun (acc : Fid_set.t * Function_id.t list) (caller : Function_id.t) ->
+               if Fid_set.mem caller in_component then visit caller acc else acc)
+             (Fid_set.add v seen, order)
       in
       (seen, v :: order)
   in
