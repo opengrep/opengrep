@@ -33,6 +33,8 @@ let rec qualified_class_name_of_ty (ty : G.type_) : G.name option =
     Some (G.Id ((str, tok), G.empty_id_info ()))
   | G.TyPointer (_, inner) | G.TyRef (_, inner) ->
     qualified_class_name_of_ty inner
+  (* An instance of a generic class, [C<T>], is of the class [C]. *)
+  | G.TyApply (generic, _) -> qualified_class_name_of_ty generic
   | _ -> None
 
 (* An imported identifier refers to the canonical name of its import; an
