@@ -1,0 +1,14 @@
+rules:
+  - id: metavariable-pattern-not-regex
+    languages: [php]
+    severity: WARNING
+    message: >
+      A pattern-not-regex inside a metavariable-pattern must exclude the match,
+      even when the positive and negated regex hit different offsets of $C.
+    patterns:
+      - pattern: sink($C)
+      - metavariable-pattern:
+          metavariable: $C
+          patterns:
+            - pattern-regex: getKey
+            - pattern-not-regex: request
