@@ -99,8 +99,13 @@ val instantiate_function_signature :
     obtain. When [outer_params] is omitted, rebinding does not apply
     and unknown guards are dropped. *)
 
+val param_of_index : IL.param list -> int -> IL.name_param option
+(** The parameter numbered [index] as [Taint.arg] numbers parameters: a
+    receiver takes no index. *)
+
 val redirect_captured_writes :
-  Shape_and_sig.Shape.closure -> call_effects -> call_effects
+  params:IL.param list -> Shape_and_sig.Shape.closure -> call_effects -> call_effects
 (** A write that a call of a closure makes to a variable it captures is a
-    write to the variable that the captured variable refers to, when the
-    closure records one. *)
+    write to what the captured variable refers to, when the closure records
+    it: a variable, a parameter among [params] of the function that makes the
+    call, or its [this]. *)

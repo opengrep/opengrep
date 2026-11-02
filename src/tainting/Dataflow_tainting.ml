@@ -2492,7 +2492,8 @@ and call_signatures env fun_exp args
                  (Lval_env.with_closure closure env.lval_env)
                  fun_sig ~callee:fun_exp ~args:(Some args) args_taints
                  ~lookup_sig:(lookup_signature env) ()
-               |> Option.map (Sig_inst.redirect_captured_writes closure))
+               |> Option.map
+                    (Sig_inst.redirect_captured_writes ~params:env.func.il_params closure))
       in
       let* call_effects =
         match instantiated with
@@ -2785,7 +2786,9 @@ let call_with_intrafile lval_opt e env args instr =
              ~lookup_sig:(lookup_signature env) ()
          with
         | Some call_effects ->
-            let call_effects = Sig_inst.redirect_captured_writes closure call_effects in
+            let call_effects =
+              Sig_inst.redirect_captured_writes ~params:env.func.il_params closure call_effects
+            in
             (* ToSinkInCall effects should have been recursively instantiated by Sig_inst,
              * so we just need to process the resulting effects *)
             (* Process the call effects to get taints and shape *)
@@ -3431,29 +3434,10 @@ let check_tainted_return env tok e : Taints.t * S.shape * Lval_env.t =
   (taints, shape, var_env')
 
 (* Whether the parameter numbered [index] as [Taint.arg] numbers parameters
-   (a receiver takes no index) is bound to the caller's variable. *)
+   is bound to the caller's variable. *)
 let param_by_reference (params : IL.param list) (index : int) : bool =
-  match
-    List.nth_opt
-      (List.filter
-         (function
-           | IL.ParamReceiver _ -> false
-           | IL.Param _ | IL.ParamRest _ | IL.ParamKwd _ | IL.ParamContext _
-           | IL.ParamPattern _ | IL.ParamFixme ->
-               true)
-         params)
-      index
-  with
-  | Some
-      ( IL.Param name_param
-      | IL.ParamRest name_param
-      | IL.ParamKwd name_param
-      | IL.ParamContext name_param
-      | IL.ParamPattern (name_param, _) ) ->
-      name_param.IL.by_reference
-  | Some (IL.ParamReceiver _ | IL.ParamFixme)
-  | None ->
-      false
+  Sig_inst.param_of_index params index
+  |> Option.fold ~none:false ~some:(fun (name_param : IL.name_param) -> name_param.IL.by_reference)
 
 (* Whether an update of parameter [arg] at [offset] is visible to the caller:
    in a language that copies arrays into a by-value parameter, only through

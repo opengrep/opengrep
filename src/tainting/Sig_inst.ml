@@ -2048,31 +2048,70 @@ let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
       Some (List.map Option.get mapped)
   | _ -> None
 
-(* A write of a closure to a variable that it captures is a write to the
-   caller's variable that the variable refers to ([captured.location]); a
-   local or a parameter of the activation that created the closure, which
-   refers to none, is not the caller's, even when it has the same name, as in
-   a recursion. *)
-let redirect_captured_writes (closure : closure) (effects : call_effects) :
-    call_effects =
+(* The parameter numbered [index] as [Taint.arg] numbers parameters: a
+   receiver takes no index. *)
+let param_of_index (params : IL.param list) (index : int) : IL.name_param option =
+  match
+    List.nth_opt
+      (List.filter
+         (function
+           | IL.ParamReceiver _ -> false
+           | IL.Param _ | IL.ParamRest _ | IL.ParamKwd _ | IL.ParamContext _
+           | IL.ParamPattern _ | IL.ParamFixme ->
+               true)
+         params)
+      index
+  with
+  | Some
+      ( IL.Param name_param
+      | IL.ParamRest name_param
+      | IL.ParamKwd name_param
+      | IL.ParamContext name_param
+      | IL.ParamPattern (name_param, _) ) ->
+      Some name_param
+  | Some (IL.ParamReceiver _ | IL.ParamFixme)
+  | None ->
+      None
+
+(* A write of a closure to a variable that it captures is a write to what the
+   variable refers to ([captured.location]): a variable of the caller, a
+   parameter of the caller among [params], the caller's [this], or a variable
+   that the caller captures. A local or a parameter of the activation that
+   created the closure, which refers to none, is not the caller's, even when it
+   has the same name, as in a recursion. *)
+let redirect_captured_writes ~(params : IL.param list) (closure : closure)
+    (effects : call_effects) : call_effects =
   if IL.NameMap.is_empty closure then effects
   else
     List.filter_map
       (fun (eff : call_effect) ->
         match eff with
-        | ToLval ({ var; offset; _ } as write) -> (
+        | ToLval ({ var; offset; taints; guards } as write) -> (
             match IL.NameMap.find_opt var closure with
-            | Some { location = Some { T.base = T.BGlob target; offset = target_offset }; _ } ->
+            | Some
+                {
+                  location =
+                    Some
+                      { T.base = T.BGlob target | T.BCapture target; offset = target_offset };
+                  _;
+                } ->
                 Some (ToLval { write with var = target; offset = target_offset @ offset })
+            | Some { location = Some { T.base = T.BThis; offset = target_offset }; _ } ->
+                Some (ToLvalThis { taints; offset = target_offset @ offset; guards })
+            | Some { location = Some { T.base = T.BArg arg; offset = target_offset }; _ } -> (
+                match param_of_index params arg.index with
+                | Some { pname; _ } when String.equal (fst pname.ident) arg.name ->
+                    Some (ToLval { write with var = pname; offset = target_offset @ offset })
+                | Some _
+                | None ->
+                    Some eff)
             | Some { location = None; _ } -> (
                 match !(var.id_info.G.id_resolved) with
                 | Some ((G.LocalVar | G.Parameter | G.EnclosedVar), _) -> None
                 | Some _
                 | None ->
                     Some eff)
-            | Some { location = Some _; _ }
-            | None ->
-                Some eff)
+            | None -> Some eff)
         | ToSink _
         | ToReturn _
         | ToLvalThis _
@@ -2820,7 +2859,10 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                    ~instantiating:(taint_sig :: instantiating) ()
                with
               | Some call_effects ->
-                  let call_effects = redirect_captured_writes closure call_effects in
+                  let call_effects =
+                    redirect_captured_writes ~params:(Option.value outer_params ~default:[])
+                      closure call_effects
+                  in
                   Log.debug (fun m ->
                       m
                         "TOSINKINCALL: Recursive instantiation returned %d \
