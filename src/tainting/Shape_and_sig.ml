@@ -367,7 +367,13 @@ end = struct
     | Obj of obj
     | Arg of T.formal * T.offset list list
     | Fun of Signature.t
-    | Fun_ref of Function_id.t * Signature.t Lazy.t * closure_kind
+    (* A reference is equal to another of the same function, whose signature
+       it carries: the signature is not compared, so that a comparison does
+       not extract it. *)
+    | Fun_ref of
+        Function_id.t
+        * (Signature.t Lazy.t[@equal fun (_ : Signature.t Lazy.t) (_ : Signature.t Lazy.t) -> true])
+        * closure_kind
     | Funs of shape list
   and closure_kind = Open | Closed of Creation_site.t list
   and cell = Cell of Xtaint.t * shape
@@ -428,13 +434,13 @@ end = struct
           false
 
   (* Public API uses depth 0 *)
-  let equal_cell cell1 cell2 =
+  let equal_cell (cell1 : cell) (cell2 : cell) : bool =
     equal_cell_depth ~equal_xtaint:Xtaint.equal ~equal_sig:Signature.equal 0 cell1 cell2
 
   (* Guard-aware twin of [equal_cell]: cell taints compare via
    * [Xtaint.equal_with_guards] and [Fun] shapes via
    * [Signature.equal_with_guards]. *)
-  let equal_cell_with_guards cell1 cell2 =
+  let equal_cell_with_guards (cell1 : cell) (cell2 : cell) : bool =
     equal_cell_depth ~equal_xtaint:Xtaint.equal_with_guards
       ~equal_sig:Signature.equal_with_guards 0 cell1 cell2
 
@@ -842,7 +848,9 @@ end = struct
 
   (* A sink effect without its taints: the sink, the precondition and the
    * metavariable bindings. *)
-  let compare_sink_target sink1 pre1 env1 sink2 pre2 env2 =
+  let compare_sink_target (sink1 : sink) (pre1 : R.precondition)
+      (env1 : Metavariable.bindings) (sink2 : sink) (pre2 : R.precondition)
+      (env2 : Metavariable.bindings) : int =
     match compare_sink sink1 sink2 with
     | 0 -> (
         match R.compare_precondition pre1 pre2 with
@@ -981,7 +989,7 @@ end = struct
     | ToLval _, (ToSink _ | ToReturn _) -> 1
     | ToSinkInCall _, (ToSink _ | ToReturn _ | ToLval _) -> 1
 
-  let compare_target r1 r2 =
+  let compare_target (r1 : t) (r2 : t) : int =
     match (r1, r2) with
     | ToSink tts1, ToSink tts2 ->
         compare_sink_target tts1.sink (snd tts1.taints_with_precondition)
@@ -1147,7 +1155,7 @@ end = struct
   (* Precondition: [compare_target e1 e2 = 0] and [joins_by_target e1]. The
    * union of the taints of two effects of one target; a taint in both keeps
    * the item of [e1] with the two guards fused. *)
-  let join_same_target e1 e2 =
+  let join_same_target (e1 : t) (e2 : t) : t =
     match (e1, e2) with
     | ToSink tts1, ToSink tts2 ->
         let items1, pre = tts1.taints_with_precondition in
@@ -1213,7 +1221,7 @@ end = struct
   include Set.Make (struct
     type t = Effect.t
 
-    let compare effect1 effect2 =
+    let compare (effect1 : Effect.t) (effect2 : Effect.t) : int =
       if phys_equal effect1 effect2 then 0 else Effect.compare effect1 effect2
   end)
 
@@ -1234,7 +1242,7 @@ end = struct
 
   (* An effect of the same target and effect-level guard as [eff], for an
    * effect that joins by target. Such effects are adjacent in the set. *)
-  let find_same_target eff set =
+  let find_same_target (eff : Effect.t) (set : t) : Effect.t option =
     if not (Effect.joins_by_target eff) then None
     else
       match find_first_opt (fun e -> Effect.compare_target e eff >= 0) set with
@@ -1247,7 +1255,7 @@ end = struct
 
   (* An effect that joins by target is united with the effect of the same
    * target and guard: the set holds one such effect per target and guard. *)
-  let rec add eff set =
+  let rec add (eff : Effect.t) (set : t) : t =
     match find_opt eff set with
     | Some existing ->
         let fused = Effect.fuse_guards existing eff in
@@ -1526,7 +1534,9 @@ type signature_database = {
   lambda_signatures : Signature.t option Lazy.t FunctionMap.t;
       (** The signatures of the lambdas of the function under analysis,
           extracted when first read: [None] when the extraction failed. A
-          lambda has one signature. *)
+          lambda has one signature. A database belongs to the domain that
+          analyses its rule, so one domain forces these; an exception that
+          ends the analysis is raised again by a later read. *)
   getters : Function_id.t Member_map.t;
       (** The methods that a read of the attribute of an instance of the
           class calls ([Lang_config.getter_decorators]). *)

@@ -3948,12 +3948,11 @@ let with_this_placeholders ~(lang : Lang.t) (fields : IL.NameSet.t)
     fields
     (Lval_env.remove_vars fields env)
 
-(* What a lambda that leaves the function can carry of the value of a
-   captured variable [var] at [offset] in [env]: the inputs of the function
-   it holds (the placeholders of a parameter, a captured variable, a global
-   or [this], and the shape of an input or a lambda). A source the value
-   holds is not carried: the signature of a function holds its inputs, not
-   the values they have where it is defined. *)
+(* What a lambda that leaves the function carries of the value of a
+   captured variable [var] at [offset] in [env]: its taints, the placeholders
+   of the function's inputs and the sources it holds, as a value the function
+   returns carries them, and its shape. Control taints stay with the
+   function. *)
 let input_of_capture ~(lang : Lang.t) (env : Lval_env.t) (var : IL.name)
     (offset : T.offset list) : (Taints.t * S.shape) option =
   Lval_env.find_recorded_poly ~lang env var offset
@@ -3964,33 +3963,19 @@ let input_of_capture ~(lang : Lang.t) (env : Lval_env.t) (var : IL.name)
                match b.taint.orig with
                | T.Var _
                | T.Shape_var _
-               | T.Call_result _ ->
+               | T.Call_result _
+               | T.Src _ ->
                    true
-               | T.Src _
-               | T.Control ->
-                   false)
+               | T.Control -> false)
              taints
          in
-         let rec input_shape (shape : S.shape) : S.shape =
-           match shape with
-           | S.Arg _
-           | S.Fun_ref _ ->
-               shape
-           | S.Funs funs -> Shape.funs_of_list ~lang (List_.map input_shape funs)
-           | S.Bot
-           | S.Obj _
-           | S.Fun _ ->
-               S.Bot
-         in
-         let shape = input_shape shape in
          (inputs, shape))
 
 (* [shape] where every reference to a lambda of this function ([own], with
    the variables each one captures) is [Closed]: [closed] receives the closure
    of the lambda, the values its captured variables have in [env], the
    environment at the exit, where a reference that leaves the function is no
-   longer called. A closure holds the inputs of the function only (see
-   [input_of_capture]). *)
+   longer called ([input_of_capture]). *)
 let rec close_lambdas_in_shape ~(lang : Lang.t)
     ~(own : IL.NameSet.t Shape_and_sig.FunctionMap.t)
     ~(closed : S.closure Shape_and_sig.ClosureMap.t ref)
@@ -5237,13 +5222,16 @@ and (fixpoint :
                in
                (* An instance is built by one of the constructors of its
                   class, so a method starts from the union of their final
-                  environments. *)
+                  environments. This analysis comes first: a reference to a
+                  lambda keeps the signature of the side it comes from first
+                  ([Taint_shape.join_same_function]), so it is the signature
+                  of this round. *)
                let table = Domain.DLS.get constructor_instance_vars in
                let class_env =
                  match Hashtbl.find_opt table storage_key with
                  | None -> final_env
                  | Some stored ->
-                     Lval_env.union ~lang:taint_inst.lang stored final_env
+                     Lval_env.union ~lang:taint_inst.lang final_env stored
                in
                Hashtbl.replace table storage_key class_env
            | None -> ())
