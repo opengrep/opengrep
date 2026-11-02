@@ -38,6 +38,8 @@ let test_code_points (pat : string) (expected : int list) () =
     match char_class with
     | Empty -> []
     | Singleton code_point -> [ code_point ]
+    | Range (first, last) when first <= last ->
+        List.init (last - first + 1) (fun (i : int) -> first + i)
     | Union (a, b) -> of_char_class a @ of_char_class b
     | _ -> Alcotest.failf "%s is not a set of single code points" pat
   in
@@ -108,6 +110,20 @@ let tests =
           t "] after a character ends the character class"
             (test_code_points {|[x]-a|} [ 120; 45; 97 ]);
           t "comment group" (test_code_points {|a(?#xy)b|} [ 97; 98 ]);
+          t "range of characters" (test_code_points {|[ -!]|} [ 32; 33 ]);
+          t "escape as the first end of a range"
+            (test_code_points {|[\x41-C]|} [ 65; 66; 67 ]);
+          t "escape as the last end of a range"
+            (test_code_points {|[a-\x63]|} [ 97; 98; 99 ]);
+          t "escapes as both ends of a range"
+            (test_code_points {|[\x41-\x43]|} [ 65; 66; 67 ]);
+          t "the last end of a range starts no range"
+            (test_code_points {|[a-c-e]|} [ 97; 98; 99; 45; 101 ]);
+          t "- before a class escape is literal"
+            (test_code_points {|[a-\d]|}
+               [ 97; 45; 48; 49; 50; 51; 52; 53; 54; 55; 56; 57 ]);
+          t "- after an escape before the end of a class is literal"
+            (test_code_points {|[\x41-]|} [ 65; 45 ]);
           t "form feed escape" (test_code_points {|[\f]|} [ 0x0C ]);
           t "control escape of a lower case letter"
             (test_code_points {|\ca|} [ 0x01 ]);

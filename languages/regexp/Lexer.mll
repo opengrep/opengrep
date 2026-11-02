@@ -103,8 +103,8 @@ let utf8_multibyte =
 let utf8 = ascii | utf8_multibyte
 
 (* A character of a class other than '\\', which starts an escape, and ']',
-   which ends the class. *)
-let range_end = (ascii # ['\\' ']']) | utf8_multibyte
+   which ends the class, or a byte that is not UTF-8. *)
+let range_end = (ascii # ['\\' ']']) | utf8_multibyte | ['\128'-'\255']
 
 let unicode_character_property = ['A'-'Z'] alnum*
 
@@ -672,20 +672,16 @@ and char_class conf = parse
       if conf.ignore_hash_comments then
         comment_in_char_class conf lexbuf
       else
-        union (Singleton (Char.code '#')) (char_class conf lexbuf)
+        class_member conf (Char.code '#') lexbuf
     }
   | ascii_whitespace as c {
       if conf.ignore_whitespace_in_char_classes then
         char_class conf lexbuf
       else
-        union (Singleton (Char.code c)) (char_class conf lexbuf)
+        class_member conf (Char.code c) lexbuf
     }
   | ']' {
       Empty
-    }
-  | (range_end as a) '-' (range_end as b) {
-      let range = Range (decode a, decode b) in
-      union range (char_class conf lexbuf)
     }
   | "[:" {
       match posix_char_class conf (loc lexbuf) lexbuf with
@@ -696,18 +692,38 @@ and char_class conf = parse
     }
   | '\\' {
       let _loc, x = backslash_escape conf (loc lexbuf) lexbuf in
-      union x (char_class conf lexbuf)
+      match x with
+      | Singleton code -> class_member conf code lexbuf
+      | _ -> union x (char_class conf lexbuf)
     }
   | utf8 as s {
-      union (Singleton (decode s)) (char_class conf lexbuf)
+      class_member conf (decode s) lexbuf
     }
   | _ as c {
       (* malformed UTF-8 *)
-      union (Singleton (Char.code c)) (char_class conf lexbuf)
+      class_member conf (Char.code c) lexbuf
     }
   | eof {
       (* truncated input, should be an error *)
       Empty
+    }
+
+(* The character [first] of a class, written literally or as an escape, starts
+   a range when '-' and a character other than ']' follow it. *)
+and class_member conf first = parse
+  | '-' (range_end as last) {
+      union (Range (first, decode last)) (char_class conf lexbuf)
+    }
+  | "-\\" {
+      let _loc, x = backslash_escape conf (loc lexbuf) lexbuf in
+      match x with
+      | Singleton last -> union (Range (first, last)) (char_class conf lexbuf)
+      | _ ->
+          union (Singleton first)
+            (union (Singleton (Char.code '-')) (union x (char_class conf lexbuf)))
+    }
+  | "" {
+      union (Singleton first) (char_class conf lexbuf)
     }
 
 and comment_in_token conf = parse
