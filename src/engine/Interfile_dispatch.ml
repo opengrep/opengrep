@@ -1010,7 +1010,7 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       Sig_fixpoint.store ~lang:rs.lang
         ~widen:fn_taint_inst.Taint_rule_inst.recursive
         ~max_shape_depth:(Taint_shape.max_poly_offset rs.lang)
-        ~previous:db fid fresh db'
+        fid fresh db'
   in
   (* Phase 1: SCC signature fixpoint, no finding emission. *)
   let analyze (fid : Function_id.t)
@@ -1069,7 +1069,7 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       log_progress ~phase:"signature fixpoint" ~count:!analyses ~total:functions fid;
       analyze fid db
     in
-    Sig_fixpoint.run ~rule_id:(fst rs.rule.R.id) ~graph:rs.relevant_graph
+    Sig_fixpoint.run ~lang:rs.lang ~rule_id:(fst rs.rule.R.id) ~graph:rs.relevant_graph
       ~sccs:rs.sccs ~analyze:analyze_reporting initial_db
   in
   (* Phase 2: single match-emission pass over the converged DB.  Every

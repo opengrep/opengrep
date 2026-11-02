@@ -901,10 +901,10 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               in
               Sig_fixpoint.store ~lang
                 ~widen:taint_inst.Taint_rule_inst.recursive
-                ~previous:db node fresh db'
+                node fresh db'
           in
           let signature_db_after_order =
-            Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
+            Sig_fixpoint.run ~lang ~rule_id:(fst rule.R.id) ~graph:relevant_graph
               ~sccs ~analyze initial_signature_db
           in
           (* Single match-emission pass over the converged DB. *)
