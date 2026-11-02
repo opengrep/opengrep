@@ -1049,36 +1049,25 @@ and evaluate_formula_kind env opt_context (kind : Rule.formula_kind) =
                 let ranges_neg, expl = evaluate_formula env opt_context x in
                 let ranges =
                   (* A negated term is applied by difference_ranges, which keeps each
-                     positive match only if no negated match overlaps it, and which
-                     respects metavariable unification. That works for a pattern-not
-                     matching an AST node, whose span overlaps the match it should
-                     cancel. But a negated regexp can match a different part of the
-                     metavariable's text than the positive pattern did, so nothing
-                     overlaps and the negation is silently lost. So inside a
-                     metavariable-pattern, run difference_ranges on each candidate
-                     widened to the whole bound fragment: the regexp's offset no longer
-                     matters, while a named capture that must unify with an outer
-                     binding is still honoured. *)
+                     positive match only if no negated match overlaps it. That works
+                     for a pattern-not matching an AST node, whose span overlaps the
+                     match it should cancel. But a negated regexp can match a different
+                     part of the metavariable's text than the positive pattern did, so
+                     nothing overlaps, nothing is dropped, and the negation is silently
+                     lost. So for a negated regexp inside a metavariable-pattern, treat
+                     it as all-or-nothing: if it matches anywhere in that text, drop the
+                     whole match. Resist making this position- or unification-aware: a
+                     metavariable-pattern does not unify a nested regexp's named captures
+                     with outer bindings, so there is nothing to gain, and widening
+                     ranges to subtract them trips over the per-language content prefix
+                     (e.g. PHP's "<?php "), reintroducing offset bugs. *)
                   let negated_regexp =
                     match x.R.f with
                     | R.P xpat -> Xpattern.is_regexp xpat
                     | _ -> false
                   in
                   if env.xconf.nested_formula && negated_regexp then
-                    List_.filter_map
-                      (fun range ->
-                        let range_for_diff =
-                          match opt_context with
-                          | None -> range
-                          | Some context -> { range with RM.r = context.RM.r }
-                        in
-                        match
-                          RM.difference_ranges env.xconf.config [ range_for_diff ]
-                            ranges_neg
-                        with
-                        | [] -> None
-                        | _ -> Some range)
-                      ranges
+                    (match ranges_neg with [] -> ranges | _ :: _ -> [])
                   else RM.difference_ranges env.xconf.config ranges ranges_neg
                 in
                 let expl =
