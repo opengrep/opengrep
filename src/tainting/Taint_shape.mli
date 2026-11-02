@@ -235,7 +235,7 @@ val bound_closure_table :
   closure Shape_and_sig.ClosureMap.t
 (** The table where the closures of a lambda with more than
     [Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA] creation sites are joined
-    into the closure of [Shape_and_sig.Creation_site.any]. *)
+    into the closure of their [Shape_and_sig.Creation_site.covering] site. *)
 
 val reachable_closures :
   Shape_and_sig.Effects.t ->

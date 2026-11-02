@@ -3178,7 +3178,11 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                        its closure at this creation site holds them. *)
                     let site =
                       let tok = snd lambda_name.ident in
-                      [ (if Tok.is_fake tok then None else Some (Tok.bytepos_of_tok tok)) ]
+                      {
+                        Shape_and_sig.Creation_site.calls =
+                          [ (if Tok.is_fake tok then None else Some (Tok.bytepos_of_tok tok)) ];
+                        every = false;
+                      }
                     in
                     let closure : S.closure =
                       IL.NameSet.fold

@@ -1733,33 +1733,39 @@ let rec signatures_and_closures ~(lang : Lang.t)
 
 let bound_closure_table ~(lang : Lang.t) (table : closure ClosureMap.t) :
     closure ClosureMap.t =
-  let sites : int Shape_and_sig.FunctionMap.t =
+  let sites : Shape_and_sig.Creation_site.t list Shape_and_sig.FunctionMap.t =
     ClosureMap.fold
-      (fun ((id, _) : Shape_and_sig.Closure_key.t) (_ : closure)
-           (acc : int Shape_and_sig.FunctionMap.t) ->
+      (fun ((id, site) : Shape_and_sig.Closure_key.t) (_ : closure)
+           (acc : Shape_and_sig.Creation_site.t list Shape_and_sig.FunctionMap.t) ->
         Shape_and_sig.FunctionMap.update id
-          (fun (n : int option) -> Some (1 + Option.value n ~default:0))
+          (fun (sites : Shape_and_sig.Creation_site.t list option) ->
+            Some (site :: Option.value sites ~default:[]))
           acc)
       table Shape_and_sig.FunctionMap.empty
   in
-  let too_many (id : Function_id.t) : bool =
-    Shape_and_sig.FunctionMap.find_opt id sites
-    |> Option.fold ~none:false ~some:(fun (n : int) ->
-           n > Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA)
+  (* The site that replaces the sites of a lambda past
+     [Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA] of them. *)
+  let covering : Shape_and_sig.Creation_site.t Shape_and_sig.FunctionMap.t =
+    Shape_and_sig.FunctionMap.filter_map
+      (fun (_ : Function_id.t) (sites : Shape_and_sig.Creation_site.t list) ->
+        if List.compare_length_with sites Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA > 0 then
+          Some (Shape_and_sig.Creation_site.covering sites)
+        else None)
+      sites
   in
-  if not (Shape_and_sig.FunctionMap.exists (fun (id : Function_id.t) (_ : int) -> too_many id) sites)
-  then table
+  if Shape_and_sig.FunctionMap.is_empty covering then table
   else
     ClosureMap.fold
       (fun ((id, site) : Shape_and_sig.Closure_key.t) (closure : closure)
            (acc : closure ClosureMap.t) ->
-        if too_many id then
-          ClosureMap.update (id, Shape_and_sig.Creation_site.any)
-            (function
-              | None -> Some closure
-              | Some other -> Some (unify_closure ~lang other closure))
-            acc
-        else ClosureMap.add (id, site) closure acc)
+        match Shape_and_sig.FunctionMap.find_opt id covering with
+        | Some covering_site ->
+            ClosureMap.update (id, covering_site)
+              (function
+                | None -> Some closure
+                | Some other -> Some (unify_closure ~lang other closure))
+              acc
+        | None -> ClosureMap.add (id, site) closure acc)
       table ClosureMap.empty
 
 (* The table entries that the [Closed] references in [shape] refer to, added
@@ -1813,19 +1819,31 @@ let reachable_closures (effects : Effects.t) (closures : closure ClosureMap.t) :
         closure ClosureMap.t =
       match todo with
       | [] -> kept
-      | key :: rest -> (
-          if ClosureMap.mem key kept then reach rest kept
-          else
-            match ClosureMap.find_opt key closures with
-            | None -> reach rest kept
-            | Some closure ->
-                let next =
-                  IL.NameMap.fold
-                    (fun _ ({ value = Cell (_, inner); _ } : captured)
-                         (acc : Shape_and_sig.Closure_key.t list) ->
-                      closed_lambdas_in_shape acc inner)
-                    closure rest
-                in
-                reach next (ClosureMap.add key closure kept))
+      | key :: rest ->
+          (* The entries a reference reaches, as a lookup finds them
+             ([Shape_and_sig.find_closure_entries]): a reference to the
+             joined closures of a lambda reaches all of them. *)
+          let found =
+            Shape_and_sig.find_closure_entries closures key
+            |> List.filter (fun ((found_key, _) : Shape_and_sig.Closure_key.t * closure) ->
+                   not (ClosureMap.mem found_key kept))
+          in
+          let next =
+            List.fold_left
+              (fun (acc : Shape_and_sig.Closure_key.t list)
+                   ((_, closure) : Shape_and_sig.Closure_key.t * closure) ->
+                IL.NameMap.fold
+                  (fun _ ({ value = Cell (_, inner); _ } : captured)
+                       (acc : Shape_and_sig.Closure_key.t list) ->
+                    closed_lambdas_in_shape acc inner)
+                  closure acc)
+              rest found
+          in
+          reach next
+            (List.fold_left
+               (fun (kept : closure ClosureMap.t)
+                    ((found_key, closure) : Shape_and_sig.Closure_key.t * closure) ->
+                 ClosureMap.add found_key closure kept)
+               kept found)
     in
     reach roots ClosureMap.empty

@@ -100,33 +100,61 @@ end)
    keeps [Limits_semgrep.taint_MAX_CALLBACK_DEPTH] calls: a recursion that
    returns closures would otherwise give sites without bound. *)
 module Creation_site = struct
-  type t = int option list
+  (* The calls through which the closure reached the table, outermost first.
+     With [every], the site stands for every creation site under [calls]. *)
+  type t = { calls : int option list; every : bool }
 
   let compare (site1 : t) (site2 : t) : int =
-    List.compare (Option.compare Int.compare) site1 site2
+    match List.compare (Option.compare Int.compare) site1.calls site2.calls with
+    | 0 -> Bool.compare site1.every site2.every
+    | other -> other
 
   let equal (site1 : t) (site2 : t) : bool = Int.equal (compare site1 site2) 0
-  let at_definition : t = []
+  let at_definition : t = { calls = []; every = false }
 
-  (* Every creation site of a lambda, longer than any site [through_call]
-     gives. *)
-  let any : t = List.init (Limits_semgrep.taint_MAX_CALLBACK_DEPTH + 1) (fun (_ : int) -> None)
-  let is_any (site : t) : bool = equal site any
+  let is_every (site : t) : bool = site.every
+
+  (* Whether [site] was created under [under]: the calls of [under] start the
+     calls of [site]. *)
+  let rec calls_start_with (under : int option list) (calls : int option list) : bool =
+    match (under, calls) with
+    | [], _ -> true
+    | _, [] -> false
+    | call1 :: under, call2 :: calls ->
+        Option.equal Int.equal call1 call2 && calls_start_with under calls
 
   (* The site of a closure of a callee, seen from the caller through [call]:
      the innermost [Limits_semgrep.taint_MAX_CALLBACK_DEPTH] calls, those
      nearest the creation, are kept. *)
   let through_call (call : int option) (site : t) : t =
-    if List.compare_length_with site Limits_semgrep.taint_MAX_CALLBACK_DEPTH >= 0 then site
-    else call :: site
+    if List.compare_length_with site.calls Limits_semgrep.taint_MAX_CALLBACK_DEPTH >= 0 then site
+    else { site with calls = call :: site.calls }
 
-  (* [sites] of one lambda, or [any] past
+  let rec common_calls (calls1 : int option list) (calls2 : int option list) : int option list =
+    match (calls1, calls2) with
+    | call1 :: rest1, call2 :: rest2 when Option.equal Int.equal call1 call2 ->
+        call1 :: common_calls rest1 rest2
+    | _ -> []
+
+  (* The site with [every] that stands for all of [sites]: every site under
+     the calls they share. *)
+  let covering (sites : t list) : t =
+    match sites with
+    | [] -> { calls = []; every = true }
+    | first :: rest ->
+        {
+          calls =
+            List.fold_left
+              (fun (calls : int option list) (site : t) -> common_calls calls site.calls)
+              first.calls rest;
+          every = true;
+        }
+
+  (* [sites] of one lambda, or their [covering] site past
      [Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA] of them. *)
   let bound (sites : t list) : t list =
-    if
-      List.exists is_any sites
-      || List.compare_length_with sites Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA > 0
-    then [ any ]
+    if List.compare_length_with sites Limits_semgrep.taint_MAX_CLOSURES_PER_LAMBDA > 0 then
+      [ covering sites ]
     else sites
 end
 
@@ -142,19 +170,38 @@ end
 
 module ClosureMap = Map.Make (Closure_key)
 
-(* The entries of [table] that a reference to the closure [key] refers to:
-   every entry of the lambda for [Creation_site.any], or else the entry of
-   the site, or the entry of [Creation_site.any] that has replaced it. *)
-let find_closures (table : 'a ClosureMap.t) ((id, site) : Closure_key.t) : 'a list =
-  if Creation_site.is_any site then
+(* The entries of [table], with their keys, that a reference to the closure
+   [key] refers to. A site with [every] refers to every entry of the lambda
+   created under its calls; another site refers to its own entry or, once that
+   has been replaced, to the entries with [every] whose calls start its calls.
+   Under one lambda, the keys whose calls start with given calls are adjacent
+   in the order of [Closure_key.compare]. *)
+let find_closure_entries (table : 'a ClosureMap.t) ((id, site) : Closure_key.t) :
+    (Closure_key.t * 'a) list =
+  let of_lambda : (Closure_key.t * 'a) Seq.t =
     ClosureMap.to_seq_from (id, Creation_site.at_definition) table
     |> Seq.take_while (fun (((id', _), _) : Closure_key.t * 'a) -> Function_id.equal id id')
-    |> Seq.map snd
+  in
+  if Creation_site.is_every site then
+    ClosureMap.to_seq_from (id, { site with every = false }) table
+    |> Seq.take_while (fun (((id', site'), _) : Closure_key.t * 'a) ->
+           Function_id.equal id id'
+           && Creation_site.calls_start_with site.calls site'.calls)
     |> List.of_seq
   else
     match ClosureMap.find_opt (id, site) table with
-    | Some entry -> [ entry ]
-    | None -> Option.to_list (ClosureMap.find_opt (id, Creation_site.any) table)
+    | Some entry -> [ ((id, site), entry) ]
+    | None ->
+        of_lambda
+        |> Seq.filter (fun (((_, site'), _) : Closure_key.t * 'a) ->
+               Creation_site.is_every site'
+               && Creation_site.calls_start_with site'.calls site.calls)
+        |> List.of_seq
+
+(* The entries of [table] that a reference to the closure [key] refers to
+   ([find_closure_entries]). *)
+let find_closures (table : 'a ClosureMap.t) (key : Closure_key.t) : 'a list =
+  List_.map snd (find_closure_entries table key)
 
 module rec Shape : sig
   type shape =
