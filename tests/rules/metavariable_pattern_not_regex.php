@@ -1,9 +1,12 @@
 <?php
 
-// $C matches /getKey/ but also /request/, so pattern-not-regex must exclude it:
-// no match. (Regression: before the fix the negation was silently ignored
-// because difference_ranges found no positional overlap, so this line matched.)
+// Ensure a pattern-not-regex inside a metavariable-pattern excludes the match
+// even when the negated regex and the positive regex match at different offsets
+// of $C. Here $C matches getKey (positive) and also contains request (negated),
+// so this call must NOT be reported.
+// ok: metavariable-pattern-not-regex
 sink($req->request->get('x') . $e->getKey('id'));
 
-//ruleid: metavariable-pattern-not-regex
+// $C matches getKey and contains no request, so the negation does not apply.
+// ruleid: metavariable-pattern-not-regex
 sink($e->getKey('id'));
