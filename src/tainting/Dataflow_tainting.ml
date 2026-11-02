@@ -1042,8 +1042,12 @@ let lookup_signature_with_object_context env fun_exp arity =
              extracted in that function, where its captured variables and
              [this] are those of the function; a signature of the lambda
              analysed on its own does not have them. *)
-          match Shape_and_sig.lambda_signature db (Function_id.of_il_name name) with
-          | Some signature -> Some (Lazy.force signature)
+          match
+            Option.bind
+              (Shape_and_sig.lambda_signature db (Function_id.of_il_name name))
+              Lazy.force
+          with
+          | Some _ as signature -> signature
           | None -> lookup_bare_function_name env db name arity)
       | Fetch
           {
@@ -3168,7 +3172,21 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                 let fn_id = Function_id.of_il_name lambda_name in
                 let signature =
                   match Shape_and_sig.lambda_signature db fn_id with
-                  | Some _ as lazy_signature -> lazy_signature
+                  | Some lazy_signature ->
+                      (* A lambda whose extraction failed has no effects
+                         through its shape; where it is used, its body is
+                         analysed in place ([use_lambda_signature]). *)
+                      Some
+                        (lazy
+                          (Lazy.force lazy_signature
+                          |> Option.value
+                               ~default:
+                                 {
+                                   Signature.params = Signature.of_IL_params fdef.fparams;
+                                   params_il = fdef.fparams;
+                                   closures = Shape_and_sig.ClosureMap.empty;
+                                   effects = Effects.empty;
+                                 }))
                   | None ->
                       Shape_and_sig.lookup_signature db fn_id arity
                       |> Option.map Lazy.from_val
@@ -4475,6 +4493,13 @@ and use_lambda_signature env (lambda_name : IL.name) (lambda_cfg : IL.fun_cfg) :
     Lval_env.t option =
   match env.signature_db with
   | None -> None
+  | Some db
+    when Shape_and_sig.lambda_signature db (Function_id.of_il_name lambda_name)
+         |> Option.fold ~none:false
+              ~some:(fun (signature : Signature.t option Lazy.t) ->
+                Option.is_none (Lazy.force signature)) ->
+      (* The extraction of its signature failed: its body is analysed here. *)
+      None
   | Some _ ->
       let fun_exp : IL.exp =
         { e = Fetch { base = Var lambda_name; rev_offset = [] }; eorig = NoOrig }
@@ -5147,19 +5172,16 @@ and (fixpoint :
                        effects = lambda_effects;
                      }
                    in
-                   if recursive then Shape.widen_signature_taints ~lang:taint_inst.lang signature
-                   else signature
+                   Some
+                     (if recursive then Shape.widen_signature_taints ~lang:taint_inst.lang signature
+                      else signature)
                  with
                  | e when recoverable e ->
                      Log.warn (fun m ->
                          m "Failed to extract signature for lambda %s: %s"
                            (IL.str_of_name lambda_name)
                            (Printexc.to_string e));
-                     {
-                       Signature.params = Signature.of_IL_params lambda_cfg.params;
-                       params_il = lambda_cfg.params; closures = Shape_and_sig.ClosureMap.empty;
-                       effects = Effects.empty;
-                     }))
+                     None))
             db all_lambdas_list
           |> Option.some
       | None -> signature_db

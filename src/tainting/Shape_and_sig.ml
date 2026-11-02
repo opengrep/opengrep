@@ -1523,9 +1523,10 @@ end
 
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
-  lambda_signatures : Signature.t Lazy.t FunctionMap.t;
+  lambda_signatures : Signature.t option Lazy.t FunctionMap.t;
       (** The signatures of the lambdas of the function under analysis,
-          extracted when first read. A lambda has one signature. *)
+          extracted when first read: [None] when the extraction failed. A
+          lambda has one signature. *)
   getters : Function_id.t Member_map.t;
       (** The methods that a read of the attribute of an instance of the
           class calls ([Lang_config.getter_decorators]). *)
@@ -1628,17 +1629,17 @@ let lookup_signature (db : signature_database) (name : Function_id.t)
       find_by_arity sigs arity
   | _ ->
       (* [find_by_arity] gives the single signature of a name at any arity. *)
-      FunctionMap.find_opt name db.lambda_signatures |> Option.map Lazy.force
+      Option.bind (FunctionMap.find_opt name db.lambda_signatures) Lazy.force
 
 let has_signature (db : signature_database) (name : Function_id.t) : bool =
   FunctionMap.mem name db.signatures || FunctionMap.mem name db.lambda_signatures
 
 let lambda_signature (db : signature_database) (name : Function_id.t) :
-    Signature.t Lazy.t option =
+    Signature.t option Lazy.t option =
   FunctionMap.find_opt name db.lambda_signatures
 
 let add_lambda_signature (db : signature_database) (name : Function_id.t)
-    (signature : Signature.t Lazy.t) : signature_database =
+    (signature : Signature.t option Lazy.t) : signature_database =
   { db with lambda_signatures = FunctionMap.add name signature db.lambda_signatures }
 
 let lookup_all_signatures (db : signature_database) (name : Function_id.t)
