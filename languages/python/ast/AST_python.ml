@@ -133,7 +133,7 @@ type expr =
   (* python3: f-strings
    * reference: https://www.python.org/dev/peps/pep-0498/ *)
   | InterpolatedString of tok * interpolated list * tok
-  | ConcatenatedString of interpolated list (* always Str *)
+  | ConcatenatedString of interpolated list
   | BoolOp of boolop wrap (* op *) * expr list (* values *)
   | BinOp of expr (* left *) * operator wrap (* op *) * expr (* right *)
   | UnaryOp of unaryop wrap (* op *) * expr (* operand *)
