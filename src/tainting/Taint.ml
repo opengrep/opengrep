@@ -619,8 +619,6 @@ module Taint_set = struct
   and union_unbounded set1 set2 =
     Taints.union (fun _taint b1 b2 -> Some (merge_bundles b1 b2)) set1 set2
 
-  (* Each bound looks at the whole set only, so the bounds give one set
-     whether they are applied after every union or once after several. *)
   and bound (set : t) : t =
     set |> bound_sources |> bound_placeholders |> bound_call_results
 
