@@ -1048,7 +1048,23 @@ and evaluate_formula_kind env opt_context (kind : Rule.formula_kind) =
               ~f:(fun env ranges (tok, x) ->
                 let ranges_neg, expl = evaluate_formula env opt_context x in
                 let ranges =
-                  RM.difference_ranges env.xconf.config ranges ranges_neg
+                  (* A negated term is applied by difference_ranges, which keeps each
+                     positive match only if no negated match overlaps it. That works
+                     for a pattern-not matching an AST node, whose span overlaps the
+                     match it should cancel. But a negated regexp can match a different
+                     part of the metavariable's text than the positive pattern did, so
+                     nothing overlaps, nothing is dropped, and the negation is silently
+                     lost. So for a negated regexp inside a metavariable-pattern, treat
+                     it as all-or-nothing: if it matches anywhere in that text, drop the
+                     whole match. *)
+                  let negated_regexp =
+                    match x.R.f with
+                    | R.P xpat -> Xpattern.is_regexp xpat
+                    | _ -> false
+                  in
+                  if env.xconf.nested_formula && negated_regexp then
+                    (match ranges_neg with [] -> ranges | _ :: _ -> [])
+                  else RM.difference_ranges env.xconf.config ranges ranges_neg
                 in
                 let expl =
                   if_explanations env ranges [ expl ] (OutJ.Negation, tok)
