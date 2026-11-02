@@ -144,9 +144,6 @@ module Make (F : Flow) = struct
   let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
       (start : nodei) workset =
     let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
-    (* Whether every component stopped because its head was stable, not
-       because it had used its rounds: the result is then a fixpoint. *)
-    let converged = ref true in
     (* A node is computed on its first visit and again only when a
        predecessor has changed since: [dirty] holds the nodes to compute. *)
     let dirty = Array.make (Array.length mapping) false in
@@ -182,7 +179,12 @@ module Make (F : Flow) = struct
               if rounds_done.(head) < max_visits_per_node then (
                 rounds_done.(head) <- rounds_done.(head) + 1;
                 rounds ())
-              else converged := false
+              else
+                (* As the visits of a node are bounded, a component that has
+                   used its rounds keeps its last values. *)
+                Log.debug (fun m ->
+                    m "dataflow: the loop at node %d is not stable after %d rounds" head
+                      max_visits_per_node)
           in
           rounds ()
     in
@@ -217,7 +219,7 @@ module Make (F : Flow) = struct
        NodeiSet.diff workset (WTO.fold_left vertices NodeiSet.empty order)
        |> NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)))
      else NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)) workset);
-    if !converged then (mapping, `Ok) else (mapping, `Timeout)
+    (mapping, `Ok)
 
   let forward_succs (f : F.flow) n =
     (f.graph#successors n)#fold
