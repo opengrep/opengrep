@@ -237,6 +237,9 @@ type t = {
   companions : companion_index;
   project_classes : project_classes;
   method_sets : Lang_config.method_sets;
+  (* The modules that are the first element of a path
+     ([Visit_function_defs.module_scopes]). *)
+  module_scopes : Function_id.t list;
 }
 
 let overload_groups (t : t) : bool = t.overload_groups
@@ -408,6 +411,7 @@ let empty = {
   companions = Class_qn_map.empty;
   project_classes = Class_qn_map.empty;
   method_sets = Lang_config.Shared_by_class_and_instance;
+  module_scopes = [];
 }
 
 let create
@@ -426,8 +430,10 @@ let create
     ~(methods_by_class : methods_by_class)
     ~(singleton_names : singleton_names)
     ~(method_sets : Lang_config.method_sets)
-    ~(scope_table : scope_table) () =
-  { funcs_by_name;
+    ~(scope_table : scope_table)
+    ~(module_scopes : IL.name list) () =
+  { module_scopes = List_.map Function_id.of_il_name module_scopes;
+    funcs_by_name;
     project_funcs_by_name;
     funcs_by_module_qn;
     alias_to_module_qn;
@@ -448,6 +454,11 @@ let create
     companions;
     project_classes;
     method_sets }
+
+(* Whether the scope [scope] of a path is a module rather than a class. *)
+let is_module_scope (t : t) (scope : IL.name) : bool =
+  List.exists (fun (module_id : Function_id.t) -> Function_id.equal_name module_id scope)
+    t.module_scopes
 
 let with_local_imports t local_imports : t =
   { t with local_imports }

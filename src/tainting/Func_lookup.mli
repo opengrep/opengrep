@@ -121,6 +121,7 @@ val create :
   singleton_names : singleton_names ->
   method_sets : Lang_config.method_sets ->
   scope_table : scope_table ->
+  module_scopes:IL.name list ->
   unit -> t
 
 (* Whether the index widened overload groups to their union, so that a
@@ -157,6 +158,10 @@ val find_along_order :
   Names.Class_qn.t list ->
   (Names.Class_qn.t -> string list) ->
   Func_info.t list
+
+val is_module_scope : t -> IL.name -> bool
+(** Whether the first element of a path is a module rather than a class
+    ([Visit_function_defs.module_scopes]). *)
 
 val with_local_imports :
   t -> name_set option -> t

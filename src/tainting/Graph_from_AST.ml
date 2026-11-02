@@ -527,6 +527,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ~singleton_names:Func_lookup.Class_qn_map.empty
       ~method_sets:(Lang_config.get lang).Lang_config.method_sets
       ~scope_table:Func_lookup.empty_scope_table
+      ~module_scopes:(Visit_function_defs.module_scopes ast)
       ()
   in
   (* Visit all calls in the AST, tracking the current function context *)

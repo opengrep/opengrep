@@ -611,9 +611,14 @@ let rec identify_callee ~(lang : Lang.t)
               match current_class with
               | Some class_name ->
                   let class_name_str = fst class_name.IL.ident in
-                  (* [methods_by_class] first: catches MRO-inherited methods. *)
+                  (* [methods_by_class] first: catches MRO-inherited methods.
+                     The body of a module is a lexical scope, which a bare
+                     call reaches in every language. *)
                   let method_match =
-                    if (Lang_config.get lang).bare_call_reaches_methods then
+                    if
+                      (Lang_config.get lang).bare_call_reaches_methods
+                      || Func_lookup.is_module_scope func_lookup class_name
+                    then
                       Type_state.find_methods type_state ~fallback:all_funcs
                         ~class_name:class_name_str ~method_name:callee_name_str
                       |> List_.hd_opt

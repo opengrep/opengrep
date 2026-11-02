@@ -598,6 +598,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       staged "same-file funcs table" @@ fun () ->
       build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str
     in
+    let module_scopes = Visit_function_defs.module_scopes fi.fi_ast in
     let func_lookup =
       staged "func_lookup create" @@ fun () ->
       Func_lookup.create
@@ -630,6 +631,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           (match file_scope with
            | Some (scope : file_scope) -> scope.own_modules
            | None -> [])
+        ~module_scopes
         ()
     in
     staged "stamp var types" (fun () ->
@@ -812,6 +814,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
             (match file_scope with
              | Some (scope : file_scope) -> scope.own_modules
              | None -> [])
+          ~module_scopes
           ()
       in
       FA.extract_toplevel_hof_callbacks ~lang

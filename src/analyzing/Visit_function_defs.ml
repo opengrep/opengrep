@@ -418,6 +418,27 @@ let fold_with_parent_path ~(lang : Lang.t)
     ast;
   !acc_ref
 
+(* The modules whose bodies [visitor_with_parent_path] takes as the scope of
+   the first element of a path, as it does for a class. *)
+let module_scopes (ast : G.program) : IL.name list =
+  let v =
+    object (_self : 'self)
+      inherit [_] G.iter_no_id_info as super
+
+      method! visit_definition (modules : IL.name list ref) ((ent, def_kind) as def) =
+        (match (def_kind, ent.G.name) with
+        | G.ModuleDef { G.mbody = G.ModuleStruct _; _ }, G.EN name ->
+            Option.iter
+              (fun (module_name : IL.name) -> modules := module_name :: !modules)
+              (g_name_to_il_name name)
+        | _ -> ());
+        super#visit_definition modules def
+    end
+  in
+  let modules = ref [] in
+  v#visit_program modules ast;
+  !modules
+
 (* Visitor for Call expressions at top-level only (skips function bodies).
    Handles both function calls f(...) and method calls obj.m(...) *)
 class ['self] toplevel_call_visitor =
