@@ -161,15 +161,6 @@ let fixme_stmt kind gany : stmts =
 (* Helpers *)
 (*****************************************************************************)
 
-(* The token of the name of the variable that holds a lambda: the token of
-   its kind, or else [fallback], a token of the lambda in the source, when a
-   front end gives the kind a fake token. The name identifies the lambda,
-   e.g. as the key of its signature. *)
-let lambda_name_tok (fdef : G.function_definition) ~(fallback : Tok.t Lazy.t) :
-    Tok.t =
-  let kind_tok = snd fdef.fkind in
-  if Tok.is_origintok kind_tok then kind_tok else Lazy.force fallback
-
 let fresh_var ?(str = "_tmp") env tok : name =
   let tok =
     (* We don't want "fake" auxiliary variables to have non-fake tokens, otherwise
@@ -191,11 +182,12 @@ let fresh_lval ?str env tok : lval =
   let var = fresh_var ?str env tok in
   { base = Var var; rev_offset = [] }
 
-(* The variable that holds the lambda [fdef], at the token of its kind, or at
-   [fallback] when that token is fake ([lambda_name_tok]). *)
-let fresh_lambda_lval env (fdef : G.function_definition) ~(fallback : Tok.t Lazy.t) :
-    lval =
-  fresh_lval env ~str:IL.lambda_var_ident (lambda_name_tok fdef ~fallback)
+(* The variable that holds the lambda [fdef], at the token that identifies it
+   ([AST_generic_helpers.lambda_tok]). The name identifies the lambda, e.g. as
+   the key of its signature, and the call graph names it from the same token
+   ([Visit_function_defs.synth_lambda_il_name]). *)
+let fresh_lambda_lval env (fdef : G.function_definition) : lval =
+  fresh_lval env ~str:IL.lambda_var_ident (H.lambda_tok fdef)
 
 let var_of_id_info id id_info : name =
   let sid =
@@ -2563,13 +2555,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
       comprehension env er clauses
   | G.Lambda fdef ->
-      let first_tok =
-        lazy
-          (match H.range_of_any_opt (G.E g_expr) with
-          | Some (first, _) -> Tok.tok_of_loc first
-          | None -> snd fdef.fkind)
-      in
-      let lval = fresh_lambda_lval env fdef ~fallback:first_tok in
+      let lval = fresh_lambda_lval env fdef in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -3064,7 +3050,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lambda_lval env fdef ~fallback:(Lazy.from_val (snd id)) in
+                  let lval = fresh_lambda_lval env fdef in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition

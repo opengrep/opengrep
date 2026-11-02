@@ -224,7 +224,7 @@ let synth_lambda_il_name_of_tok (tok : Tok.t) : IL.name =
   }
 
 let synth_lambda_il_name (fdef : G.function_definition) : IL.name =
-  synth_lambda_il_name_of_tok (snd fdef.fkind)
+  synth_lambda_il_name_of_tok (AST_generic_helpers.lambda_tok fdef)
 
 (* Use the synthetic lambda IL.name when [fdef] is a lambda; otherwise use the
    entity's name. Keeps the parent_path consistent with what

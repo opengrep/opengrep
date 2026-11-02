@@ -821,6 +821,16 @@ let range_of_any_opt any =
   | _ -> extract_ranges any
 [@@profiling]
 
+(* The token that identifies a lambda: the token of its kind, or the first
+   token of the lambda when a front end gives the kind a fake token. *)
+let lambda_tok (fdef : G.function_definition) : Tok.t =
+  let kind_tok = snd fdef.fkind in
+  if Tok.is_origintok kind_tok then kind_tok
+  else
+    match range_of_any_opt (G.E (G.e (G.Lambda fdef))) with
+    | Some (first, _) -> Tok.tok_of_loc first
+    | None -> kind_tok
+
 (*****************************************************************************)
 (* Nearest Any node of a position *)
 (*****************************************************************************)
