@@ -12,7 +12,21 @@ let loc lexbuf : loc =
   let tok = Tok.tok_of_lexbuf lexbuf in
   (tok, tok)
 
-let int = int_of_string
+(* No input is longer than max_int and no pattern has more than max_int groups,
+   so a repetition count or a group number beyond the range of int matches as
+   max_int or min_int does. A callout number has no effect on matching. *)
+let int (decimal : string) : int =
+  match int_of_string_opt decimal with
+  | Some n -> n
+  | None when String.starts_with ~prefix:"-" decimal -> min_int
+  | None -> max_int
+
+(* int_of_string_opt reads an octal or hexadecimal literal above max_int as a
+   negative int. *)
+let code_point (lexbuf : Lexing.lexbuf) (literal : string) : char_class =
+  match int_of_string_opt literal with
+  | Some n when n >= 0 && n <= 0x10FFFF -> Singleton n
+  | Some _ | None -> Other ("\\" ^ Lexing.lexeme lexbuf)
 
 (*
    Decode a well-formed UTF-8 string into a Unicode code point.
@@ -81,10 +95,16 @@ let utf8_head_byte3 = ['\240'-'\247']
 (* 10xxxxxx *)
 let utf8_tail_byte = ['\128'-'\191']
 
-let utf8 = ascii
-         | utf8_head_byte1 utf8_tail_byte
-         | utf8_head_byte2 utf8_tail_byte utf8_tail_byte
-         | utf8_head_byte3 utf8_tail_byte utf8_tail_byte utf8_tail_byte
+let utf8_multibyte =
+    utf8_head_byte1 utf8_tail_byte
+  | utf8_head_byte2 utf8_tail_byte utf8_tail_byte
+  | utf8_head_byte3 utf8_tail_byte utf8_tail_byte utf8_tail_byte
+
+let utf8 = ascii | utf8_multibyte
+
+(* A character of a class other than '\\', which starts an escape, and ']',
+   which ends the class, or a byte that is not UTF-8. *)
+let range_end = (ascii # ['\\' ']']) | utf8_multibyte | ['\128'-'\255']
 
 let unicode_character_property = ['A'-'Z'] alnum*
 
@@ -145,7 +165,7 @@ rule token conf = parse
       else
         NODE (Char (loc lexbuf, Singleton (Char.code c)))
     }
-  | "(?#" [^')'] ')' { token conf lexbuf }
+  | "(?#" [^')']* ')' { token conf lexbuf }
   | "(?" {
       let start = loc lexbuf in
       open_group conf start lexbuf
@@ -211,7 +231,7 @@ rule token conf = parse
 
   | "(?C)" { NODE (Special (loc lexbuf, Callout 0)) }
   | "(?C" (digit+ as n) ")" {
-      NODE (Special (loc lexbuf, Callout (int_of_string n)))
+      NODE (Special (loc lexbuf, Callout (int n)))
     }
 
 (***************************************************************************)
@@ -220,7 +240,7 @@ rule token conf = parse
   | '\\' ('-'? ['1'-'9']['0'-'9']* as n)
   | "\\g" ('-'? ['0'-'9']+ as n)
   | "\\g{" ('-'? ['0'-'9']+ as n) "}" {
-      NODE (Special (loc lexbuf, Numeric_back_reference (int_of_string n)))
+      NODE (Special (loc lexbuf, Numeric_back_reference (int n)))
     }
 
   | "\\k{" (group_name as name) "}" (* pcre, .NET *)
@@ -245,14 +265,14 @@ rule token conf = parse
 (***************************************************************************)
   | "(?R)" { NODE (Special (loc lexbuf, Recurse_pattern 0)) }
   | "(?R" (digit+ as n) ")" {
-      NODE (Special (loc lexbuf, Recurse_pattern (int_of_string n)))
+      NODE (Special (loc lexbuf, Recurse_pattern (int n)))
     }
 
   | "(?" (digit+ as n) ")" (* perl, pcre *)
   | "\\g<" (digit+ as n) ">" (* oniguruma, pcre *)
   | "\\g'" (digit+ as n) "'" (* oniguruma, pcre *) {
       NODE (
-        Special (loc lexbuf, Call_subpattern_by_abs_number (int_of_string n))
+        Special (loc lexbuf, Call_subpattern_by_abs_number (int n))
       )
     }
 
@@ -260,7 +280,7 @@ rule token conf = parse
   | "\\g<+" (digit+ as n) ">" (* oniguruma, pcre *)
   | "\\g'+" (digit+ as n) "'" (* oniguruma, pcre *) {
       NODE (
-        Special (loc lexbuf, Call_subpattern_by_rel_number (int_of_string n))
+        Special (loc lexbuf, Call_subpattern_by_rel_number (int n))
       )
     }
 
@@ -268,7 +288,7 @@ rule token conf = parse
   | "\\g<-" (digit+ as n) ">" (* oniguruma, pcre *)
   | "\\g'-" (digit+ as n) "'" (* oniguruma, pcre *) {
       NODE (
-        Special (loc lexbuf, Call_subpattern_by_rel_number (- int_of_string n))
+        Special (loc lexbuf, Call_subpattern_by_rel_number (- int n))
       )
     }
 
@@ -349,25 +369,33 @@ and literal_chars = parse
       let code = decode c in
       (loc, code) :: literal_chars lexbuf
     }
+  | _ as c {
+      (* malformed UTF-8 *)
+      (loc lexbuf, Char.code c) :: literal_chars lexbuf
+    }
   | eof { (* missing \E: should be an error? *) [] }
 
 and backslash_escape conf start = parse
   | '\\' { (range start (loc lexbuf), Singleton (Char.code '\\')) }
   | 'a' { (range start (loc lexbuf), Singleton 0x7) }
-  | 'c' (ascii as c) { (range start (loc lexbuf), Singleton (Char.code c)) }
+  | 'c' (ascii as c) {
+      let code = Char.code (Char.uppercase_ascii c) lxor 0x40 in
+      (range start (loc lexbuf), Singleton code)
+    }
   | 'e' { (range start (loc lexbuf), Singleton 0x1B) }
-  | 'f' { (range start (loc lexbuf), Singleton 0x1C) }
+  | 'f' { (range start (loc lexbuf), Singleton 0x0C) }
   | 'n' { (range start (loc lexbuf), Singleton 0x0A) }
   | 'r' { (range start (loc lexbuf), Singleton 0x0D) }
   | 't' { (range start (loc lexbuf), Singleton 0x09) }
 
-  | (['0'-'9']+ as n)
-  | "o{" (['0'-'9']+ as n) "}" {
-      (range start (loc lexbuf), Singleton (int_of_string ("0o" ^ n)))
+  | (['0'-'7'] ['0'-'7']? ['0'-'7']? as n)
+  | "o{" (['0'-'7']+ as n) "}" {
+      (range start (loc lexbuf), code_point lexbuf ("0o" ^ n))
     }
+  | ['8' '9'] as c { (range start (loc lexbuf), Singleton (Char.code c)) }
 
-  | "x" (xdigit+ as n) {
-      (range start (loc lexbuf), Singleton (int_of_string ("0x" ^ n)))
+  | "x" (xdigit xdigit? as n) {
+      (range start (loc lexbuf), code_point lexbuf ("0x" ^ n))
     }
 
   | "x{" (xdigit+ as n) "}" {
@@ -381,14 +409,14 @@ and backslash_escape conf start = parse
          be possible to tweak the lexbuf to achieve this as well,
          see https://sympa.inria.fr/sympa/arc/caml-list/2006-07/msg00133.html
       *)
-      (loc, Singleton (int_of_string ("0x" ^ n)))
+      (loc, code_point lexbuf ("0x" ^ n))
     }
 
-  | "u" (xdigit+ as n) {
+  | "u" (xdigit xdigit xdigit xdigit as n) {
       let loc = range start (loc lexbuf) in
       (* TODO: only conf.pcre_javascript_compat should allow this syntax.
          See remark above about the need to roll back. *)
-      (loc, Singleton (int_of_string ("0x" ^ n)))
+      (loc, code_point lexbuf ("0x" ^ n))
     }
 
   | 'p' (['A'-'Z' 'a'-'z' '_'] as c) {
@@ -537,13 +565,13 @@ and open_group conf start = parse
 (***************************************************************************)
 
   | "(" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Abs_ref_cond (int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Abs_ref_cond (int n))
     }
   | "(+" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (int n))
     }
   | "(-" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (- int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Rel_ref_cond (- int n))
     }
   | "(R)" {
       (* TODO: this is actually a named reference condition if a group
@@ -551,7 +579,7 @@ and open_group conf start = parse
       OPEN_COND (range start (loc lexbuf), Num_group_recursion_cond 0)
     }
   | "(R" (digit+ as n) ")" {
-      OPEN_COND (range start (loc lexbuf), Num_group_recursion_cond (int_of_string n))
+      OPEN_COND (range start (loc lexbuf), Num_group_recursion_cond (int n))
     }
   | "(R&" (group_name as name) ")" {
       OPEN_COND (range start (loc lexbuf), Named_group_recursion_cond name)
@@ -644,20 +672,16 @@ and char_class conf = parse
       if conf.ignore_hash_comments then
         comment_in_char_class conf lexbuf
       else
-        Singleton (Char.code '#')
+        class_member conf (Char.code '#') lexbuf
     }
   | ascii_whitespace as c {
       if conf.ignore_whitespace_in_char_classes then
         char_class conf lexbuf
       else
-        Singleton (Char.code c)
+        class_member conf (Char.code c) lexbuf
     }
   | ']' {
       Empty
-    }
-  | (utf8 as a) '-' (utf8 as b) {
-      let range = Range (decode a, decode b) in
-      union range (char_class conf lexbuf)
     }
   | "[:" {
       match posix_char_class conf (loc lexbuf) lexbuf with
@@ -668,18 +692,38 @@ and char_class conf = parse
     }
   | '\\' {
       let _loc, x = backslash_escape conf (loc lexbuf) lexbuf in
-      union x (char_class conf lexbuf)
+      match x with
+      | Singleton code -> class_member conf code lexbuf
+      | _ -> union x (char_class conf lexbuf)
     }
   | utf8 as s {
-      union (Singleton (decode s)) (char_class conf lexbuf)
+      class_member conf (decode s) lexbuf
     }
   | _ as c {
       (* malformed UTF-8 *)
-      union (Singleton (Char.code c)) (char_class conf lexbuf)
+      class_member conf (Char.code c) lexbuf
     }
   | eof {
       (* truncated input, should be an error *)
       Empty
+    }
+
+(* The character [first] of a class, written literally or as an escape, starts
+   a range when '-' and a character other than ']' follow it. *)
+and class_member conf first = parse
+  | '-' (range_end as last) {
+      union (Range (first, decode last)) (char_class conf lexbuf)
+    }
+  | "-\\" {
+      let _loc, x = backslash_escape conf (loc lexbuf) lexbuf in
+      match x with
+      | Singleton last -> union (Range (first, last)) (char_class conf lexbuf)
+      | _ ->
+          union (Singleton first)
+            (union (Singleton (Char.code '-')) (union x (char_class conf lexbuf)))
+    }
+  | "" {
+      union (Singleton first) (char_class conf lexbuf)
     }
 
 and comment_in_token conf = parse

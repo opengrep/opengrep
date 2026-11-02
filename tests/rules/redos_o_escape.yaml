@@ -1,0 +1,11 @@
+rules:
+- id: redos-o-escape
+  message: found
+  severity: WARNING
+  languages:
+  - javascript
+  patterns:
+    - pattern: /$X/
+    - metavariable-analysis:
+        analyzer: redos
+        metavariable: $X

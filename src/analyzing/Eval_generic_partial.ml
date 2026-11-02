@@ -51,7 +51,6 @@ let default_env lang =
 (* Helpers *)
 (*****************************************************************************)
 let ( let* ) o f = Option.bind o f
-let fb = Tok.unsafe_fake_bracket
 
 let is_lang env l2 =
   match env.lang with
@@ -192,19 +191,10 @@ let rec eval (env : env) (x : G.expr) : G.svalue option =
       let* v3 = eval env e3 in
       Some (Eval_il_partial.union v2 v3)
   | Call
-      ( { e = IdSpecial (EncodedString str_kind, _); _ },
-        (_, [ Arg { e = L (String (_, (str, str_tok), _) as str_lit); _ } ], _)
-      ) -> (
-      match str_kind with
-      | "r" ->
-          let str = String.escaped str in
-          (* TODO? reuse l/r from the Call instead of using fb below? or
-           * from the String above?
-           *)
-          Some (Lit (String (fb (str, str_tok))))
-      | _else ->
-          (* THINK: is this good enough for "b" and "u"? *)
-          Some (Lit str_lit))
+      ( { e = IdSpecial (EncodedString _, _); _ },
+        (_, [ Arg { e = L (String _ as str_lit); _ } ], _) ) ->
+      (* THINK: is this good enough for "b" and "u"? *)
+      Some (Lit str_lit)
   | Call ({ e = IdSpecial (InterpolatedElement, _); _ }, (_, [ Arg e ], _)) ->
       eval env e
   | Call ({ e = IdSpecial special; _ }, args) -> eval_special env special args

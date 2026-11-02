@@ -31,7 +31,10 @@ open AST_python
 (* Helpers *)
 (*****************************************************************************)
 
-type env = unit H.env
+(* [pattern] holds when the input is a pattern, [python2] when its string
+   literals follow Python 2. *)
+type context = { pattern : bool; python2 : bool }
+type env = context H.env
 
 let token = H.token
 let str = H.str
@@ -818,14 +821,9 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : expr =
   | `Choice_print x ->
       let id = map_keyword_identifier env x in
       name_of_id id
-  | `Str x ->
-      let t1, s, t2 = map_string_ env x in
-      InterpolatedString (t1, s, t2)
+  | `Str x -> map_string_ env x
   | `Conc_str (v1, v2) ->
-      let _, v1, _ = map_string_ env v1 in
-      let v2 = List_.map (map_string_ env) v2 in
-      ConcatenatedString
-        (v1 @ (List_.map (fun (_, x, _) -> x) v2 |> List_.flatten))
+      ConcatenatedString (map_string_ env v1 :: List_.map (map_string_ env) v2)
   | `Int tok ->
       let s, tk = (* integer *) str env tok in
       Num (Int (Parsed_int.parse (s, tk)))
@@ -944,9 +942,10 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : expr =
       let t = (* "..." *) token env tok in
       Ellipsis t
 
-and map_string_ (env : env) ((v1, v2, v3) : CST.string_) :
-    interpolated list bracket =
-  let str_start = (* string_start *) token env v1 in
+(* The value of a literal that is not an f-string is its source text decoded as
+   a whole: the grammar does not mark every escape sequence. *)
+and map_string_ (env : env) ((v1, v2, v3) : CST.string_) : expr =
+  let start, str_start = (* string_start *) str env v1 in
   let xs =
     List_.map
       (fun x ->
@@ -968,7 +967,30 @@ and map_string_ (env : env) ((v1, v2, v3) : CST.string_) :
       v2
   in
   let str_end = (* string_end *) token env v3 in
-  (str_start, xs, str_end)
+  let prefix =
+    String.to_seq start
+    |> Seq.take_while (fun (c : char) ->
+        not (Char.equal c '"' || Char.equal c '\''))
+    |> String.of_seq
+  in
+  if Python_string_literal.is_format_prefix prefix then
+    InterpolatedString (str_start, xs, str_end)
+  else
+    let pieces =
+      xs
+      |> List_.filter_map (function
+        | Str piece -> Some piece
+        | _ -> None)
+    in
+    let value =
+      Python_string_literal.value ~python2:env.extra.python2
+        ~pattern:env.extra.pattern ~prefix
+        (pieces |> List_.map fst |> String.concat "")
+    in
+    let tok = Tok.combine_toks str_start (List_.map snd pieces @ [ str_end ]) in
+    match prefix with
+    | "" -> Str (value, tok)
+    | _ -> EncodedStr ((value, tok), prefix)
 
 and map_subscript (env : env) ((v1, v2, v3, v4, v5, v6) : CST.subscript) =
   let e = map_primary_expression env v1 in
@@ -1381,7 +1403,7 @@ let map_simple_statement (env : env) (x : CST.simple_statement) : stmt list =
       [ NonLocal (tnonlocal, id :: ids) ]
   | `Exec_stmt (v1, v2, v3) ->
       let v1 = (* "exec" *) token env v1 in
-      let t1, v2, t2 = map_string_ env v2 in
+      let v2 = map_string_ env v2 in
       let v3, v4 =
         match v3 with
         | Some (_v1TODO, v2, []) -> (Some (map_type_ env v2), None)
@@ -1391,7 +1413,7 @@ let map_simple_statement (env : env) (x : CST.simple_statement) : stmt list =
         | Some _ -> invalid ()
         | None -> (None, None)
       in
-      [ Exec (v1, InterpolatedString (t1, v2, t2), v3, v4) ]
+      [ Exec (v1, v2, v3, v4) ]
 
 let map_simple_statements (env : env) ((v1, v2, v3, v4) : CST.simple_statements)
     : stmt list =
@@ -1663,14 +1685,20 @@ and map_suite (env : env) (x : CST.suite) : stmt list =
 (* Entry point *)
 (*****************************************************************************)
 
-let parse file =
+let parse ~(python2 : bool) (file : Fpath.t) =
   H.wrap_parser
     (fun () -> Tree_sitter_python.Parse.file !!file)
     (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+      let env =
+        {
+          H.file;
+          conv = H.line_col_to_pos file;
+          extra = { pattern = false; python2 };
+        }
+      in
       map_module_ env cst)
 
-let parse_string ~file ~contents =
+let parse_string ~(python2 : bool) ~(file : string) ~(contents : string) =
   H.wrap_parser
     (fun () -> Tree_sitter_python.Parse.string ~src_file:file contents)
     (fun cst _extras ->
@@ -1678,16 +1706,22 @@ let parse_string ~file ~contents =
         {
           H.file = Fpath.v file;
           conv = (Pos.full_converters_str contents).linecol_to_bytepos_fun;
-          extra = ();
+          extra = { pattern = false; python2 };
         }
       in
       map_module_ env cst)
 
 (* Need return type to be "any"*)
-let parse_pattern str =
+let parse_pattern ~(python2 : bool) (str : string) =
   H.wrap_parser
     (fun () -> Tree_sitter_python.Parse.string str)
     (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
-      let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
+      let env =
+        {
+          H.file;
+          conv = H.line_col_to_pos_pattern str;
+          extra = { pattern = true; python2 };
+        }
+      in
       Program (map_module_ env cst))

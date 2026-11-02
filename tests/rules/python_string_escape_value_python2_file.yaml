@@ -1,0 +1,7 @@
+rules:
+  - id: python-string-escape-value-python2-file
+    pattern: f("\xe9\u00e9")
+    message: found
+    languages:
+      - python
+    severity: WARNING

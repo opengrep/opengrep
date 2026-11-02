@@ -1,0 +1,11 @@
+rules:
+- id: redos-digit-escape-in-class
+  message: found
+  severity: WARNING
+  languages:
+  - javascript
+  patterns:
+    - pattern: /$X/
+    - metavariable-analysis:
+        analyzer: redos
+        metavariable: $X

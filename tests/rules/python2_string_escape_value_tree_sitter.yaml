@@ -1,0 +1,7 @@
+rules:
+  - id: python2-string-escape-value-tree-sitter
+    pattern: f("\xe9")
+    message: found
+    languages:
+      - python2
+    severity: WARNING

@@ -1,0 +1,11 @@
+rules:
+  - id: redos-raw-string
+    patterns:
+      - pattern: re.compile("$PAT")
+      - metavariable-analysis:
+          analyzer: redos
+          metavariable: $PAT
+    message: found
+    languages:
+      - python
+    severity: WARNING

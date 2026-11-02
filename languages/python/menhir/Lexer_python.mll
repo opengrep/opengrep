@@ -47,40 +47,6 @@ let tok = Lexing.lexeme
 let tokinfo = Tok.tok_of_lexbuf
 let error = Parsing_error.lexical_error
 
-let unescaped s =
-  let buf = Buffer.create (String.length s) in
-  let escape = ref false in
-  let unescapechar c =
-    if !escape then begin
-      match c with
-      | '\r' -> ()
-      | '\n' -> escape := false
-      | _ -> begin
-          escape := false;
-          (* TODO http://docs.python.org/reference/lexical_analysis.html#string-literals *)
-          Buffer.add_char
-            buf
-            (match c with
-             | '\\' -> '\\'
-             | '\'' -> '\''
-             | '"' -> '"'
-             | 'a' -> Char.chr 7
-             | 'b' -> '\b'
-             | 'f' -> Char.chr 12
-             | 'n' -> '\n'
-             | 'r' -> '\r'
-             | 't' -> '\t'
-             | 'v' -> Char.chr 11
-             | _ -> (Buffer.add_char buf '\\'; c))
-        end
-    end else if c =$= '\\' then
-      escape := true
-    else
-      Buffer.add_char buf c
-  in
-    String.iter unescapechar s;
-    Buffer.contents buf
-
 (* ---------------------------------------------------------------------- *)
 (* Lexer state *)
 (* ---------------------------------------------------------------------- *)
@@ -105,16 +71,26 @@ type lexer_state = {
   mutable nl_ignore : int;
 
   mode: state_mode list ref;
+  (* String literals follow Python 2 when Python 2 is the requested language,
+     not when a file is relexed as Python 2 for its keywords. *)
+  python2_strings : bool;
 }
 
-let create () =
+let create ~(python2_strings : bool) () =
   let stack = Stack.create () in
   Stack.push 0 stack;
   { curr_offset = 0;
     offset_stack = stack;
     nl_ignore = 0;
     mode = ref [STATE_TOKEN];
+    python2_strings;
   }
+
+let string_literal_value (state : lexer_state) (prefix : string) (s : string) :
+    string =
+  Python_string_literal.value ~python2:state.python2_strings
+    ~pattern:(Domain.DLS.get Flag_parsing.sgrep_mode)
+    ~prefix s
 
 let ignore_nl t =
   t.nl_ignore <- succ t.nl_ignore
@@ -556,7 +532,8 @@ and sq_shortstrlit state pos pre = parse
   | (([^ '\\' '\r' '\n' '\''] | escapeseq)* as s) '\''
      {
        let full_str = Lexing.lexeme lexbuf in
-       STR (unescaped s, pre, Tok.tok_add_s full_str pos) }
+       STR (string_literal_value state pre s, pre,
+            Tok.tok_add_s full_str pos) }
  | eof { error "EOF in string" lexbuf; EOF (tokinfo lexbuf) }
  | _  { error "unrecognized symbol in string" lexbuf; TUnknown(tokinfo lexbuf)}
 
@@ -565,14 +542,16 @@ and sq_longstrlit state pos pre = shortest
 | (([^ '\\'] | escapeseq)* as s) "'''"
     {
       let full_str = Lexing.lexeme lexbuf in
-      STR (unescaped s, pre, Tok.tok_add_s full_str pos)
+      STR (string_literal_value state pre s, pre,
+           Tok.tok_add_s full_str pos)
     }
 
 and dq_shortstrlit state pos pre = parse
   | (([^ '\\' '\r' '\n' '\"'] | escapeseq)* as s) '"'
      {
        let full_str = Lexing.lexeme lexbuf in
-       STR (unescaped s, pre, Tok.tok_add_s full_str pos) }
+       STR (string_literal_value state pre s, pre,
+            Tok.tok_add_s full_str pos) }
  | eof { error "EOF in string" lexbuf; EOF (tokinfo lexbuf) }
  | _  { error "unrecognized symbol in string" lexbuf; TUnknown(tokinfo lexbuf)}
 
@@ -580,7 +559,8 @@ and dq_longstrlit state pos pre = shortest
   | (([^ '\\'] | escapeseq)* as s) "\"\"\""
       {
         let full_str = Lexing.lexeme lexbuf in
-        STR (unescaped s, pre, Tok.tok_add_s full_str pos) }
+        STR (string_literal_value state pre s, pre,
+             Tok.tok_add_s full_str pos) }
 
 (*****************************************************************************)
 (* Rules on interpolated strings *)
@@ -598,7 +578,7 @@ and fstring_single state pre = parse
  | ([^ '\\' '\r' '\n' '\'' '{'] | escapeseq2)*
     { FSTRING_STRING (tok lexbuf, tokinfo lexbuf)}
  (* ugly: for raw-fstring *)
- | "\\{" { if pre =~ ".*[rR]" then Parsing_helpers.yyback 1 lexbuf;
+ | "\\{" { if Python_string_literal.is_raw_prefix pre then Parsing_helpers.yyback 1 lexbuf;
       FSTRING_STRING (tok lexbuf, tokinfo lexbuf)
     }
 
@@ -616,7 +596,7 @@ and fstring_double state pre = parse
  | ([^ '\\' '\r' '\n' '\"' '{'] | escapeseq2)*
     { FSTRING_STRING (tok lexbuf, tokinfo lexbuf)}
  (* ugly: for raw-fstring *)
- | "\\{" { if pre =~ ".*[rR]" then Parsing_helpers.yyback 1 lexbuf;
+ | "\\{" { if Python_string_literal.is_raw_prefix pre then Parsing_helpers.yyback 1 lexbuf;
       FSTRING_STRING (tok lexbuf, tokinfo lexbuf)
     }
 
@@ -636,7 +616,7 @@ and fstring_triple_single state pre = parse
  | ([^ '\\' '{' '\''] | escapeseq2)*
     { FSTRING_STRING (tok lexbuf, tokinfo lexbuf)}
  (* ugly: for raw-fstring *)
- | "\\{" { if pre =~ ".*[rR]" then Parsing_helpers.yyback 1 lexbuf;
+ | "\\{" { if Python_string_literal.is_raw_prefix pre then Parsing_helpers.yyback 1 lexbuf;
       FSTRING_STRING (tok lexbuf, tokinfo lexbuf)
     }
 
@@ -656,7 +636,7 @@ and fstring_triple_double state pre = parse
  | ([^ '\\' '{' '"'] | escapeseq2)*
     { FSTRING_STRING (tok lexbuf, tokinfo lexbuf)}
  (* ugly: for raw-fstring *)
- | "\\{" { if pre =~ ".*[rR]" then Parsing_helpers.yyback 1 lexbuf;
+ | "\\{" { if Python_string_literal.is_raw_prefix pre then Parsing_helpers.yyback 1 lexbuf;
       FSTRING_STRING (tok lexbuf, tokinfo lexbuf)
     }
 

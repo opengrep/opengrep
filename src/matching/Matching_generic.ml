@@ -544,7 +544,7 @@ let return () = return
 let fail () = fail
 
 let regexp_matcher_of_regexp_string s =
-  if s =~ Pattern.regexp_regexp_string then (
+  if s =~ Regexp_string.regexp_regexp_string then (
     let x, flags = Common.matched2 s in
     let flags =
       match flags with
@@ -872,7 +872,7 @@ let m_string_ellipsis_or_metavar_or_default ?(m_string_for_default = m_string) a
       let s, info = adjust_info_remove_enclosing_quotes b in
       envf a (MV.Text (s, info, orig_info))
   (* TODO: deprecate *)
-  | astr when Pattern.is_regexp_string astr ->
+  | astr when Regexp_string.is_regexp_string astr ->
       let f = regexp_matcher_of_regexp_string astr in
       if f (fst b) then return () else fail ()
   | _ -> m_wrap m_string_for_default a b

@@ -33,6 +33,13 @@ val parse_fuzzy:
 (* to help write test code *)
 val program_of_string : < Cap.tmp > -> string -> AST_python.program
 
+(* Whether the string literals of a file parsed in this mode follow Python 2.
+   A file that the Python mode relexes as Python 2 keeps Python 3 strings. *)
+val python2_strings : parsing_mode -> bool
+
 (* internal *)
 val tokens :
-  parsing_mode -> Parsing_helpers.input_source -> Parser_python.token list
+  python2_strings:bool ->
+  parsing_mode ->
+  Parsing_helpers.input_source ->
+  Parser_python.token list

@@ -1,0 +1,7 @@
+rules:
+  - id: python2-string-escape-value
+    pattern: f("\u0041\xe9")
+    message: found
+    languages:
+      - python2
+    severity: WARNING
