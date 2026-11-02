@@ -120,12 +120,21 @@ type t = {
   * For a source to taint a sink, the bindings of both source and sink must be
   * unifiable. See 'Dataflow_tainting.unify_meta_envs'. *)
 
+(* Whether the rule reports its findings at the source rather than at the
+   sink: [taint_focus_on], or its former name [taint_match_on]. *)
+let reports_at_source (options : Rule_options.t) : bool =
+  match (options.taint_focus_on, options.taint_match_on) with
+  | `Source, _
+  | _, `Source ->
+      true
+  | `Sink, `Sink -> false
+
 (* What tells the findings of two sources apart: every source gives its own
-   finding when the scan reports each, every metavariable when a sink
-   unifies with the bindings of its source, or else the metavariables that
-   the rule's message refers to. *)
+   finding when the scan reports each or the rule reports at the source,
+   every metavariable when a sink unifies with the bindings of its source,
+   or else the metavariables that the rule's message refers to. *)
 let source_grouping ~(report_each_source : bool) (options : Rule_options.t) :
     Taint.source_grouping =
-  if report_each_source then Each_source
+  if report_each_source || reports_at_source options then Each_source
   else if options.taint_unify_mvars then By_bindings
   else By_message
