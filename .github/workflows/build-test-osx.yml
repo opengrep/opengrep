@@ -39,10 +39,10 @@ jobs:
         ocaml_version: ["5.5.1"]
     runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
-      - uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
       - name: Compute OPAM cache fingerprint
@@ -51,7 +51,7 @@ jobs:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
         # if: ${{ inputs.use-cache == 'true' || inputs.use-cache == '' }}
         name: Set GHA cache for OPAM in ~/.opam
-        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
           restore-keys: |
@@ -127,7 +127,7 @@ jobs:
 
           # popd
           tar czf artifacts.tgz artifacts
-      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opengrep-build-osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}
           path: artifacts.tgz
@@ -138,7 +138,7 @@ jobs:
           mkdir opengrep
           cp ./bin/opengrep opengrep/
           tar czf opengrep.tgz opengrep
-      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opengrep-osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}
           path: opengrep.tgz
