@@ -1200,10 +1200,11 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
   in
   walk cond
 
-(* A value captured by a closure, instantiated: its taint variables are
-   substituted by [taints] and its function, closure and input shapes by
-   [shape]; the sources it holds are kept as they are, so that a value that
-   holds only sources is not rebuilt at every instantiation. *)
+(* A value captured by a closure, instantiated: its taint variables, and the
+   sources whose precondition refers to them, are substituted by [taints] and
+   its function, closure and input shapes by [shape]; the other sources it
+   holds are kept as they are, so that a value that holds only such sources
+   is not rebuilt at every instantiation. *)
 let rec instantiate_captured_value ~(taints : Taints.t -> Taints.t)
     ~(shape : shape -> shape) (Cell (xtaint, inner) as cell : cell) : cell =
   let xtaint' =
@@ -1214,7 +1215,8 @@ let rec instantiate_captured_value ~(taints : Taints.t -> Taints.t)
     | `Tainted ts ->
         let is_source (b : T.guarded_taint) : bool =
           match b.taint.T.orig with
-          | T.Src _ -> true
+          | T.Src { precondition = None; _ } -> true
+          | T.Src { precondition = Some _; _ }
           | T.Var _
           | T.Shape_var _
           | T.Call_result _

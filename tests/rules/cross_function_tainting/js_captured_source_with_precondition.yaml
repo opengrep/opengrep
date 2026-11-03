@@ -1,0 +1,17 @@
+rules:
+- id: captured-source-with-precondition
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: sourceB()
+      label: B
+    - patterns:
+        - pattern: wrap($X)
+        - focus-metavariable: $X
+      label: A
+      requires: B
+  pattern-sinks:
+    - pattern: sink(...)
+      requires: A
