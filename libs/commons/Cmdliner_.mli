@@ -65,6 +65,11 @@ val string_opt_with_envs :
   string list ->
   string option Cmdliner.Term.t
 
+(* Flags that are accepted on the command line and left out of the help. The
+   term returns the flags given, with their dashes, each once, in the order
+   of their first occurrence on the command line. *)
+val hidden_flags : string list -> string list Cmdliner.Term.t
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *)

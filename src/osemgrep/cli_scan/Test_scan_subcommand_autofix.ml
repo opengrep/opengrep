@@ -84,7 +84,7 @@ let run_autofix (caps : Scan_subcommand.caps) ~(rule : string)
       Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
           let argv : string array =
             Array.of_list
-              ([ "opengrep-scan"; "--experimental"; "--config"; rule_path; "--autofix" ]
+              ([ "opengrep-scan"; "--config"; rule_path; "--autofix" ]
               @ (if dryrun then [ "--dryrun" ] else [])
               @ format_args @ [ target_path ])
           in

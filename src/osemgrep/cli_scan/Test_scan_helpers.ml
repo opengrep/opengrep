@@ -214,7 +214,7 @@ let run_scan (caps : Scan_subcommand.caps) ?(root : Fpath.t = fixtures_root)
           in
           let argv : string array =
             Array.of_list
-              ([ "opengrep-scan"; "--experimental" ]
+              ([ "opengrep-scan" ]
               @ config_args @ format_args @ extra_args)
           in
           let run () =

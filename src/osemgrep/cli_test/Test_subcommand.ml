@@ -42,7 +42,6 @@ module A = Test_annotation
  * Note that the legacy 'semgrep scan --test' is redirected to this file after
  * having built a compatible Test_CLI.conf.
  *
- * TODO: conf.ignore_todo?
  * LATER: factorize code with Unit_engine.ml and Test_engine.ml
  *
  * This is a port of test.py
@@ -970,7 +969,7 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
 (*****************************************************************************)
 let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:conf.force_color ~pp_message:None
-    ~level:conf.common.logging_level;
+    conf.common;
   Logs.debug (fun m -> m "conf = %s" (Test_CLI.show_conf conf));
   let matching_diagnosis = conf.matching_diagnosis in
   let errors = ref [] in

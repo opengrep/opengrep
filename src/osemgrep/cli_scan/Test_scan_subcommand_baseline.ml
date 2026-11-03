@@ -67,7 +67,7 @@ let scan ?(baseline : string option) (caps : caps) : Exit_code.t =
         (caps :> Scan_subcommand.caps)
         (Array.of_list
            ([
-              "opengrep-scan"; "--experimental"; "-e";
+              "opengrep-scan"; "-e";
               Printf.sprintf "$X = %s" sentinel; "-l"; "python";
             ]
            @ baseline_args)))
@@ -88,7 +88,7 @@ let json_matches (caps : caps) (args : string list) :
             Scan_subcommand.main
               (caps :> Scan_subcommand.caps)
               (Array.of_list
-                 ([ "opengrep-scan"; "--experimental"; "--json"; "--quiet" ]
+                 ([ "opengrep-scan"; "--json"; "--quiet" ]
                  @ args))))
   in
   Exit_code.Check.ok exit_code;

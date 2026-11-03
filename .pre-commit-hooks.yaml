@@ -14,7 +14,7 @@
   # was to run 'pip install semgrep==0.xxx.yyy'. Opengrep is a single native
   # binary and is not published on PyPI, so there is nothing to pip-install.
   language: system
-  args: ["--disable-version-check", "--quiet", "--skip-unknown-extensions"]
+  args: ["--quiet", "--skip-unknown-extensions"]
 
 - id: semgrep-ci
   name: semgrep

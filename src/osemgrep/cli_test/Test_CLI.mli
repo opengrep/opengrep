@@ -8,7 +8,6 @@
  *)
 type conf = {
   target : target_kind;
-  ignore_todo : bool;
   json : bool;
   (* --force-color, which wins over $NO_COLOR like it does for a scan *)
   force_color : bool;
@@ -46,8 +45,9 @@ and target_kind =
 *)
 val parse_argv : string array -> conf
 
-(* used also in cli_scan for --tests *)
-val o_test_ignore_todo : bool Cmdliner.Term.t
+(* the flags of 'opengrep test' that opengrep does not support, see
+   CLI_common.o_common; used also in cli_scan for --test *)
+val unsupported_flags : string list
 
 val target_kind_of_roots_and_config :
   Fpath.t list -> Rules_config.config_string list -> target_kind

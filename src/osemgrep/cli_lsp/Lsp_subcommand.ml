@@ -65,7 +65,7 @@ end
    exit code. *)
 let run_conf (caps : < caps ; .. >) (conf : Lsp_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:false ~pp_message:None
-    ~level:conf.common.logging_level;
+    conf.common;
   RPC_server.io_ref := (module Io);
   Logs.debug (fun m -> m "Starting opengrep-lsp");
   Lwt_platform.run (LS.start caps);

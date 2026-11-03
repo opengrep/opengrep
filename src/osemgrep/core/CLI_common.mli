@@ -9,8 +9,11 @@ type conf = {
   (* mix of --debug, --quiet, --verbose *)
   logging_level : Logs.level option;
   profile : bool;
-  (* mix of --experimental, --develop *)
+  (* --develop *)
   maturity : Maturity.t;
+  (* the flags inherited from Semgrep that opengrep accepts but does not
+   * support and warns about, as given on the command line *)
+  unsupported_flags : string list;
 }
 [@@deriving show]
 
@@ -23,11 +26,13 @@ val o_logging : Logs.level option Cmdliner.Term.t
 val o_force_color : default:bool -> bool Cmdliner.Term.t
 
 (* small wrapper around Logs_helper.setup_logging and Logging_helpers.setup;
- * [pp_message] is that of Logs_.setup, from the skin of the report *)
+ * [pp_message] is that of Logs_.setup, from the skin of the report. The
+ * level is that of the conf; once logging is set up, it logs one warning per
+ * flag of the conf's [unsupported_flags]. *)
 val setup_logging :
   force_color:bool ->
   pp_message:(Logs.level -> string Fmt.t) option ->
-  level:Logs.level option ->
+  conf ->
   unit
 
 (* for --profile *)
@@ -36,8 +41,12 @@ val o_profile : bool Cmdliner.Term.t
 (* for --opengrep-ignore-pattern, shared by 'scan', 'ci' and 'test' *)
 val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 
-(* gather all the common flags under one term *)
-val o_common : conf Cmdliner.Term.t
+(* gather all the common flags under one term; [unsupported_flags] are the
+ * long names of the subcommand's own flags inherited from Semgrep that
+ * opengrep does not support, accepted, left out of the help and warned
+ * about by setup_logging. --experimental is accepted and left out of the
+ * help too, without a warning. *)
+val o_common : unsupported_flags:string list -> conf Cmdliner.Term.t
 
 (* the exit codes a subcommand can return, to document in its man page;
    pass them to Cmdliner.Cmd.info ~exits, otherwise cmdliner documents its

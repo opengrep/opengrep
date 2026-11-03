@@ -64,7 +64,7 @@ let run_cli (caps : CLI.caps) ~(dir : string) ~(rule : string)
   in
   Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
       let exit_code =
-        CLI.main caps (Array.of_list ([ "opengrep"; "--experimental" ] @ args))
+        CLI.main caps (Array.of_list ([ "opengrep" ] @ args))
       in
       UCommon.pr (spf "exit code: %d" (Exit_code.to_int exit_code)))
 
@@ -130,7 +130,7 @@ let test_missing_config_file (caps : CLI.caps) () =
       let scan (args : string list) : Exit_code.t =
         CLI.main caps
           (Array.of_list
-             ([ "opengrep"; "--experimental"; "scan"; "--config"; "does_not_exist.yaml" ]
+             ([ "opengrep"; "scan"; "--config"; "does_not_exist.yaml" ]
              @ args @ [ "target.py" ]))
       in
       Exit_code.Check.missing_config (scan []);
@@ -167,7 +167,6 @@ let test_supply_chain_rule_skipped (caps : CLI.caps) () =
           (Array.of_list
              ([
                 "opengrep";
-                "--experimental";
                 "scan";
                 "--config";
                 "rules/supply_chain.yaml";

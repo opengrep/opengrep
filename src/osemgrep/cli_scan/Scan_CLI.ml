@@ -61,7 +61,6 @@ type conf = {
   show : Show_CLI.conf option;
   validate : Validate_CLI.conf option;
   test : Test_CLI.conf option;
-  allow_local_builds : bool;
   ls : bool;
   ls_format : Ls_subcommand.format;
 }
@@ -92,6 +91,7 @@ let default : conf =
         profile = false;
         logging_level = Some Logs.Warning;
         maturity = Maturity.Default;
+        unsupported_flags = [];
       };
     (* trace = false;
        trace_endpoint = None; *)
@@ -107,7 +107,6 @@ let default : conf =
     show = None;
     validate = None;
     test = None;
-    allow_local_builds = false;
     ls = false;
     ls_format = Ls_subcommand.default_format;
   }
@@ -118,23 +117,20 @@ let default : conf =
 (* The o_ below stands for option (as in command-line argument option) *)
 
 (* ------------------------------------------------------------------ *)
-(* Networking related options *)
+(* Unsupported flags *)
 (* ------------------------------------------------------------------ *)
 
-(* alt: was in "Performance and memory options" before *)
-(* Opengrep never contacts a server to compare versions, so this flag has no
- * effect, here or in 'ci' (where it was already inert in ci.py); it is kept
- * so that command lines written for pysemgrep still run. It declares no
- * environment variable either: $SEMGREP_ENABLE_VERSION_CHECK and
- * $OPENGREP_ENABLE_VERSION_CHECK are ignored, whatever they hold.
+(* The flags of 'scan' and 'ci' inherited from Semgrep that opengrep accepts
+ * but does not support, see CLI_common.o_common. They are kept so that
+ * command lines written for pysemgrep still run.
+ * --enable-version-check and --disable-version-check: Opengrep never
+ * contacts a server to compare versions (the flags were already inert in
+ * ci.py). $SEMGREP_ENABLE_VERSION_CHECK and $OPENGREP_ENABLE_VERSION_CHECK
+ * are ignored, whatever they hold.
+ * --allow-local-builds: Opengrep never builds the scanned project.
  *)
-let o_version_check : bool Term.t =
-  H.negatable_flag [ "enable-version-check" ]
-    ~neg_options:[ "disable-version-check" ] ~default:true
-    ~doc:
-      {|Accepted for compatibility; Opengrep does not check whether a newer
- version exists.
-|}
+let unsupported_flags : string list =
+  [ "allow-local-builds"; "enable-version-check"; "disable-version-check" ]
 
 (* ------------------------------------------------------------------ *)
 (* Path options *)
@@ -924,22 +920,6 @@ and then exit (can use --json).
   in
   Arg.value (Arg.flag info)
 
-(* This is just intended to be around temporarily while we roll out and test the feature. Once we
-   are confident that the lockfileless
-   approach will not cause failures for customers, we should remove this flag and replace it with
-   a flag to _disable_ dynamic dependency resolution.
-   TODO: (bk) delete this flag
-*)
-let o_allow_local_builds : bool Term.t =
-  let info =
-    Arg.info [ "allow-local-builds" ]
-      ~doc:
-        {|Experimental: allow building projects contained in the repository. This allows Opengrep to identify dependencies
-          and dependency relationships when lockfiles are not present or are insufficient. However, building code may inherently
-          require the execution of code contained in the scanned project or in its dependencies, which is a security risk.|}
-  in
-  Arg.value (Arg.flag info)
-
 (* ------------------------------------------------------------------ *)
 (* Test and debug options *)
 (* ------------------------------------------------------------------ *)
@@ -1263,8 +1243,8 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
-    ~test_ignore_todo ~strict ~taint_intrafile ~opengrep_ignore_pattern
-    ~timeout ~timeout_threshold ~max_memory_mb ~common : Test_CLI.conf option =
+    ~strict ~taint_intrafile ~opengrep_ignore_pattern ~timeout
+    ~timeout_threshold ~max_memory_mb ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
@@ -1283,7 +1263,6 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
           json;
           force_color;
           optimizations;
-          ignore_todo = test_ignore_todo;
           common;
           matching_diagnosis = false;
           taint_intrafile;
@@ -1306,7 +1285,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      of the corresponding '$ o_xx $' further below!
   *)
   let combine
-      allow_local_builds allow_rule_timeout_control
+      allow_rule_timeout_control
       apply_includes_excludes_to_files inline_metavariables autofix baseline_commit common config
       dataflow_traces dryrun dump_ast
       dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb
@@ -1323,10 +1302,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       effect_guards replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
       skin skip_invalid_configs
-      strict target_roots test test_ignore_todo text text_outputs time_flag timeout
+      strict target_roots test text text_outputs time_flag timeout
       timeout_interfile timeout_threshold
       (*  trace trace_endpoint *) use_git
-      validate version _version_check vim vim_outputs
+      validate version vim vim_outputs
       x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
        We don't want users to start relying on these. *)
@@ -1473,26 +1452,30 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       }
     in
 
+    (* Scan_subcommand.run_conf warns about the unsupported flags before it
+     * hands these confs over, so they do not carry them *)
+    let common_of_dispatched =
+      { common with CLI_common.unsupported_flags = [] }
+    in
     (* ugly: dump should be a separate subcommand.
      * alt: we could move this code in a Dump_subcommand.validate_cli_args()
      *)
     let show : Show_CLI.conf option =
       show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
-        ~lang ~json ~common
+        ~lang ~json ~common:common_of_dispatched
     in
     (* ugly: validate should be a separate subcommand.
      * alt: we could move this code in a Validate_subcommand.cli_args()
      *)
     let validate : Validate_CLI.conf option =
       validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
-        ~output_conf ~force_color ~common
+        ~output_conf ~force_color ~common:common_of_dispatched
     in
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
       test_CLI_conf ~test ~target_roots ~config ~json ~force_color
-        ~optimizations ~test_ignore_todo ~strict ~taint_intrafile
-        ~opengrep_ignore_pattern ~timeout ~timeout_threshold ~max_memory_mb
-        ~common
+        ~optimizations ~strict ~taint_intrafile ~opengrep_ignore_pattern
+        ~timeout ~timeout_threshold ~max_memory_mb ~common:common_of_dispatched
     in
     (* warnings *)
     if include_ <> None && exclude_ <> [] then
@@ -1538,7 +1521,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       test;
       (* trace;
          trace_endpoint; *)
-      allow_local_builds;
       ls;
       ls_format;
     }
@@ -1547,9 +1529,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   Term.(
     (* !the o_xxx must be in alphabetic orders to match the parameters of
      * combine above! *)
-    const combine $ o_allow_local_builds $ o_allow_rule_timeout_control
+    const combine $ o_allow_rule_timeout_control
     $ o_apply_includes_excludes_to_files $ o_inline_metavariables
-    $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
+    $ o_autofix $ o_baseline_commit
+    $ CLI_common.o_common
+        ~unsupported_flags:(unsupported_flags @ Test_CLI.unsupported_flags)
+    $ o_config
     $ o_dataflow_traces $ o_dryrun $ o_dump_ast
     $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb
     $ o_emacs $ o_emacs_outputs
@@ -1573,10 +1558,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages
     $ Skin_CLI.o_skin $ o_skip_invalid_configs $ o_strict
-    $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
+    $ o_target_roots $ o_test $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
-    $ o_version $ o_version_check $ o_vim $ o_vim_outputs
+    $ o_version $ o_vim $ o_vim_outputs
     $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long)
 
 let doc = "run opengrep rules on files"

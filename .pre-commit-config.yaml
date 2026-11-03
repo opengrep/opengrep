@@ -155,8 +155,6 @@ repos:
 
         #coupling: 'make check' and the SEMGREP_ARGS variable.
         args: [
-            # use osemgrep!
-            "--experimental",
             # use jsonnet!
             "--config",
             "semgrep.jsonnet",

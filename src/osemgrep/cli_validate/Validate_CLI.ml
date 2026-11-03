@@ -1,7 +1,6 @@
 module Arg = Cmdliner.Arg
 module Term = Cmdliner.Term
 module Cmd = Cmdliner.Cmd
-module H = Cmdliner_
 
 (*****************************************************************************)
 (* Prelude *)
@@ -81,7 +80,8 @@ let cmdline_term : conf Term.t =
     }
   in
   Term.(
-    const combine $ o_args $ CLI_common.o_common
+    const combine $ o_args
+    $ CLI_common.o_common ~unsupported_flags:[]
     $ CLI_common.o_force_color ~default:Output.default.force_color
     $ Skin_CLI.o_skin)
 

@@ -208,10 +208,10 @@ let normalize_multi_commit =
 let with_skin (skin : string) (f : unit -> 'a) : 'a =
   Semgrep_envvars.with_envvar "OPENGREP_SKIN" skin f
 
-let config_argv = [ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+let config_argv = [ "opengrep-scan"; "--config"; "rules.yml" ]
 
 let pattern_argv =
-  [ "opengrep-scan"; "--experimental"; "-e"; "print(...)"; "--lang"; "py" ]
+  [ "opengrep-scan"; "-e"; "print(...)"; "--lang"; "py" ]
 
 let scan (caps : Scan_subcommand.caps) ?(argv : string list = config_argv)
     ~(files : F.t list) (extra_args : string list) : Exit_code.t =

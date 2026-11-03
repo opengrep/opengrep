@@ -48,7 +48,6 @@ let scan_output (caps : Scan_subcommand.caps) ~(channel : out_channel)
                       (Array.of_list
                          ([
                             "opengrep-scan";
-                            "--experimental";
                             "--config";
                             "rules.yml";
                           ]

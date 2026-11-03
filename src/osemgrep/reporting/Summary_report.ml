@@ -161,9 +161,7 @@ let summary_of_skipped ~respect_gitignore ~is_git_repo
         semgrepignored;
         (match maturity with
         | Develop -> opt_msg "other files ignored" other_ignored
-        | Default
-        | Experimental ->
-            None);
+        | Default -> None);
       ]
   in
   let out_partial =

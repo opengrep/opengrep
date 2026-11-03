@@ -187,7 +187,6 @@ let scan_error_codes (caps : Scan_subcommand.caps) (files : F.t list)
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan";
-                        "--experimental";
                         "--json";
                         "--config";
                         config;
@@ -398,7 +397,7 @@ let tests (caps : < Scan_subcommand.caps >) =
           let (), (out : string) =
             Testo.with_capture stdout (fun () ->
                 run_scan caps ~root ~git:false ~format_args:[] ~targets:[]
-                  ~extra_args:[ "--version"; "--disable-version-check" ] ())
+                  ~extra_args:[ "--version" ] ())
           in
           Alcotest.(check bool)
             "a version number was printed" true

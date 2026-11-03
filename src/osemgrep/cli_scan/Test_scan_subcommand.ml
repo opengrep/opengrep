@@ -300,7 +300,7 @@ let test_basic_output
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   (Array.of_list
-                     ([ "opengrep-scan"; "--experimental"; "--config"; rules_file ]
+                     ([ "opengrep-scan"; "--config"; rules_file ]
                      @ extra_args)))
           in
           Exit_code.Check.ok exit_code))
@@ -318,7 +318,7 @@ let test_basic_output_enclosing_context (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--output-enclosing-context";
                     "--json"
                   |])
@@ -338,7 +338,7 @@ let test_basic_output_max_match (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--max-match-per-file"; "1"
                   |])
           in
@@ -357,7 +357,7 @@ let test_basic_output_max_match_in_rule (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml"
+                    "opengrep-scan"; "--config"; "rules.yml"
                   |])
           in
           Exit_code.Check.ok exit_code))
@@ -375,7 +375,7 @@ let test_basic_output_ignore_pattern (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--opengrep-ignore-pattern"; "(nosec|nosec2)";
                     "--json"
                   |])
@@ -395,7 +395,7 @@ let test_basic_output_nosem_incremental (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--incremental-output"; "--incremental-output-postprocess";
                     "--json"
                   |])
@@ -415,7 +415,7 @@ let test_basic_output_nosem_incremental_disabled (caps : Scan_subcommand.caps) (
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--incremental-output"; "--incremental-output-postprocess";
                     "--disable-nosem"; "--json"
                   |])
@@ -448,7 +448,6 @@ let test_basic_verbose_output (caps : Scan_subcommand.caps) () =
                 Scan_subcommand.main caps
                   [|
                     "opengrep-scan";
-                    "--experimental";
                     "--config";
                     "rules.yml";
                     "--verbose";
@@ -474,7 +473,7 @@ let test_truncated_terraform_block (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                   |])
           in
           Exit_code.Check.ok exit_code))
@@ -497,7 +496,7 @@ let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--taint-interfile"; "--incremental-output";
                   |])
           in
@@ -575,7 +574,7 @@ def go():
                        without_settings (fun () ->
                            Scan_subcommand.main caps
                              (Array.of_list
-                                ([ "opengrep-scan"; "--experimental";
+                                ([ "opengrep-scan";
                                    "--config"; "rules.yml"; "--json" ]
                                 @ flags)))
                        |> ignore)
@@ -647,7 +646,7 @@ function go() {
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json"; "--taint-interfile";
                         "--interfile-timeout"; "10";
                       |])
@@ -714,7 +713,7 @@ function clean() {
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json";
                       |])
                 |> ignore)
@@ -742,7 +741,7 @@ let test_interfile_finding_in_non_target (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json"; "--taint-interfile"; "main.py";
                       |])
                 |> ignore)
@@ -785,7 +784,7 @@ let test_interfile_rule_paths (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json"; "--taint-interfile";
                       |])
                 |> ignore)
@@ -816,7 +815,7 @@ let test_interfile_symlinked_root (caps : Scan_subcommand.caps) () =
                     without_settings (fun () ->
                         Scan_subcommand.main caps
                           [|
-                            "opengrep-scan"; "--experimental"; "--config";
+                            "opengrep-scan"; "--config";
                             "rules.yml"; "--json"; "--taint-interfile";
                             Fpath.to_string link;
                           |])
@@ -856,7 +855,7 @@ let test_interfile_empty_file_is_covered (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json"; "--taint-interfile";
                       |])
                 |> ignore)
@@ -906,7 +905,7 @@ let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json"; "--taint-interfile";
                       |])
                 |> ignore)
@@ -955,7 +954,7 @@ let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--json"; "--taint-interfile";
                         "--baseline-commit"; "HEAD~1"; Fpath.to_string cwd;
                       |])
@@ -1007,7 +1006,7 @@ def handler():
                       Scan_subcommand.main caps
                         (Array.of_list
                            ([
-                              "opengrep-scan"; "--experimental"; "--config";
+                              "opengrep-scan"; "--config";
                               "rules.yml"; "--json"; "--taint-interfile";
                             ]
                            @ args)))
@@ -1060,7 +1059,7 @@ let test_interfile_partial_target (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--taint-interfile"; "sinks.py";
                   |])
           in
@@ -1082,7 +1081,7 @@ let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps)
                 Scan_subcommand.main caps
                   (Array.of_list
                      ([
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--taint-interfile"; "--dataflow-traces";
                       ]
                      @ args)))
@@ -1107,7 +1106,7 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--json"; "--time";
+                        "opengrep-scan"; "--json"; "--time";
                         "--config"; "rules.yml"; "--taint-interfile";
                       |]))
           in
@@ -1155,7 +1154,7 @@ let test_interfile_parse_error (caps : Scan_subcommand.caps)
                 Scan_subcommand.main caps
                   (Array.of_list
                      ([
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--taint-interfile";
                       ]
                      @ args)))
@@ -1184,7 +1183,7 @@ let test_interfile_target_absent_from_graph (caps : Scan_subcommand.caps)
                 Scan_subcommand.main caps
                   (Array.of_list
                      ([
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--taint-interfile";
                       ]
                      @ args
@@ -1211,7 +1210,7 @@ let interfile_scan_stdout (caps : Scan_subcommand.caps)
               without_settings (fun () ->
                   Scan_subcommand.main caps
                     (Array.of_list
-                       ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                       ([ "opengrep-scan"; "--config"; "rules.yml" ]
                        @ args))))))
 
 (* The JSON output of an interfile scan: the finding's path, and a
@@ -1343,7 +1342,7 @@ let test_interfile_limits (caps : Scan_subcommand.caps) () =
                       Scan_subcommand.main caps
                         (Array.of_list
                            ([
-                              "opengrep-scan"; "--experimental"; "--json";
+                              "opengrep-scan"; "--json";
                               "--config"; "rules.yml"; "--taint-interfile";
                             ]
                            @ args))))
@@ -1382,7 +1381,7 @@ let test_intrafile_same_sink_dedup (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--taint-intrafile"; "--dataflow-traces";
                   |])
           in
@@ -1411,7 +1410,7 @@ let test_interfile_diff_scan (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--taint-interfile"; "--baseline-commit"; "HEAD~1";
                   |])
           in
@@ -1441,7 +1440,7 @@ let test_interfile_diff_scan_preexisting (caps : Scan_subcommand.caps) () =
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   [|
-                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "opengrep-scan"; "--config"; "rules.yml";
                     "--taint-interfile"; "--baseline-commit"; "HEAD~1";
                   |])
           in
@@ -1473,7 +1472,7 @@ let test_interfile_scan_from_subdir (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--taint-interfile";
                       |]))
           in
@@ -1510,7 +1509,7 @@ let test_interfile_diff_scan_subdir (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--config";
+                        "opengrep-scan"; "--config";
                         "rules.yml"; "--taint-interfile"; "--baseline-commit";
                         "HEAD~1";
                       |]))
@@ -1721,7 +1720,6 @@ let fingerprints_of_scan (caps : Scan_subcommand.caps)
                           (Array.of_list
                              ([
                                 "opengrep-scan";
-                                "--experimental";
                                 "--json";
                                 "--config";
                                 config;
@@ -2121,7 +2119,7 @@ let test_time_json (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--json"; "--time";
+                        "opengrep-scan"; "--json"; "--time";
                         "--config"; "rules.yml";
                       |]))
           in
@@ -2175,7 +2173,7 @@ let test_time_json_no_findings (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--json"; "--time";
+                        "opengrep-scan"; "--json"; "--time";
                         "--config"; "rules.yml";
                       |]))
           in
@@ -2226,7 +2224,7 @@ let test_invalid_utf8 (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--json";
+                        "opengrep-scan"; "--json";
                         "--config"; "rules.yml"; "badline.py";
                       |]))
           in
@@ -2271,7 +2269,7 @@ let test_invalid_utf8_in_error (caps : Scan_subcommand.caps) () =
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       [|
-                        "opengrep-scan"; "--experimental"; "--json";
+                        "opengrep-scan"; "--json";
                         "--config"; "rules.yml"; "badsyntax.py";
                       |]))
           in
@@ -2339,7 +2337,7 @@ let json_scan_output (caps : Scan_subcommand.caps) ~(rule : string)
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       (Array.of_list
-                         ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "rules.yml" ]
+                         ([ "opengrep-scan"; "--json"; "--config"; "rules.yml" ]
                          @ extra_args @ [ "target.py" ]))))
           in
           (Semgrep_output_v1_j.cli_output_of_string stdout_output, exit_code)))
@@ -2429,7 +2427,7 @@ let json_errors (caps : Scan_subcommand.caps) ~(rule : string option)
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       (Array.of_list
-                         ([ "opengrep-scan"; "--experimental"; "--json" ]
+                         ([ "opengrep-scan"; "--json" ]
                          @ config_args @ extra_args @ [ "target.py" ]))))
           in
           let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
@@ -2503,7 +2501,7 @@ let scan_nosem_invalid_id (caps : Scan_subcommand.caps) ~(capture_stdout : bool)
             without_settings (fun () ->
                 Scan_subcommand.main caps
                   (Array.of_list
-                     ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                     ([ "opengrep-scan"; "--config"; "rules.yml" ]
                      @ format_args @ [ "nosem_invalid_id.js" ])))
           in
           if capture_stdout then Testo.with_capture stdout scan
@@ -2563,7 +2561,6 @@ let scan_for_log_file (caps : Scan_subcommand.caps) (extra_args : string list) :
               (Array.of_list
                  ([
                     "opengrep-scan";
-                    "--experimental";
                     "--json";
                     "--config";
                     "rules.yml";
@@ -2656,7 +2653,7 @@ let scan_process_limits (caps : Scan_subcommand.caps) ~(capture_stdout : bool)
           let scan () : Exit_code.t =
             without_settings (fun () ->
                 Scan_subcommand.main caps
-                  (Array.of_list ([ "opengrep-scan"; "--experimental"; "-j"; "1" ] @ args)))
+                  (Array.of_list ([ "opengrep-scan"; "-j"; "1" ] @ args)))
           in
           if capture_stdout then
             let exit_code, stdout_output = Testo.with_capture stdout scan in
@@ -2794,7 +2791,7 @@ let scan_yaml_target (caps : Scan_subcommand.caps) (args : string list) :
                     without_settings (fun () ->
                         Scan_subcommand.main caps
                           (Array.of_list
-                             ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "yaml_key.yaml" ]
+                             ([ "opengrep-scan"; "--json"; "--config"; "yaml_key.yaml" ]
                              @ args @ [ "target.yaml" ])))))
           in
           (exit_code, stdout_output, stderr_output)))
@@ -2861,7 +2858,7 @@ let scan_roots (caps : Scan_subcommand.caps) ~(format_args : string list)
                 without_settings (fun () ->
                     Scan_subcommand.main caps
                       (Array.of_list
-                         ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                         ([ "opengrep-scan"; "--config"; "rules.yml" ]
                          @ format_args @ roots))))
           in
           (stdout_output, exit_code)))

@@ -162,7 +162,7 @@ let run_ci (caps : Ci_subcommand.caps) ~(rule : string) ~(target : string)
       let late_args = before_scan () in
       let argv =
         Array.of_list
-          ([ "opengrep-ci"; "--experimental" ]
+          ([ "opengrep-ci" ]
           @ config_args @ extra_args @ late_args)
       in
       (* a usage error leaves parse_argv as Error.Exit_code, which
@@ -371,7 +371,7 @@ let test_baseline_env_var (caps : Ci_subcommand.caps) () =
       Semgrep_envvars.with_envvar "SEMGREP_BASELINE_REF" baseline (fun () ->
           without_settings (fun () ->
               Ci_subcommand.main caps
-                [| "opengrep-ci"; "--experimental"; "--config"; "rules.yaml" |])
+                [| "opengrep-ci"; "--config"; "rules.yaml" |])
           |> Exit_code.Check.findings))
 
 (* same as test_baseline_rev but everything happens under --subdir *)
