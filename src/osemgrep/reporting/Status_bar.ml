@@ -78,13 +78,20 @@ let faint_str = "\027[2m"
 (* normal intensity: ends both bold and faint *)
 let normal_str = "\027[22m"
 
+(* the colour of the rule id in Skin_simple *)
+let cyan_str = "\027[36m"
+let default_foreground_str = "\027[39m"
+
 (* Below this total the progress bar would jump from empty to full, so only
  * the counts are shown. *)
 let min_targets_for_bar = 200
 
 let bar_width = 30
-let filled_dot = "●"
-let empty_dot = "·"
+let filled_cell = "#"
+let empty_cell = "."
+
+(* the progress bar's cells and the brackets around them *)
+let bar_cols = bar_width + 2
 
 (* the spinner and the space after it, which [render_frame] puts before the
    text *)
@@ -110,8 +117,8 @@ let cursor_restore_wait = 2.0
    The actual width, not Findings_layout.text_width, which has a floor of
    40. Read on every redraw, so that a resized window takes effect without a
    SIGWINCH handler; [from_env], from $COLUMNS, takes precedence when set.
-   [None] means unknown, which drops the dotted progress bar but not the
-   counts; see [counter]. *)
+   [None] means unknown, which drops the progress bar but not the counts;
+   see [counter]. *)
 let terminal_columns ~(from_env : int option) : int option =
   (* raises when stdin is not a terminal and on an unsupported platform *)
   let from_stdin () : int option =
@@ -157,18 +164,30 @@ let progress_bar ~(width : int) ~(filled : int) ~(total : int) : string =
   let filled_len =
     min (Float.to_int (Float.min ratio 1.0 *. float_of_int width)) width
   in
-  let buf = Buffer.create ((width * 3) + 8) in
-  for _ = 1 to filled_len do
-    Buffer.add_string buf filled_dot
-  done;
+  let styled = styling_on () in
+  let capacity =
+    (width * Int.max (String.length filled_cell) (String.length empty_cell))
+    + 2 (* the brackets *) + String.length cyan_str
+    + String.length default_foreground_str
+    + String.length faint_str + String.length normal_str
+  in
+  let buf = Buffer.create capacity in
+  Buffer.add_char buf '[';
+  if filled_len > 0 then begin
+    if styled then Buffer.add_string buf cyan_str;
+    for _ = 1 to filled_len do
+      Buffer.add_string buf filled_cell
+    done;
+    if styled then Buffer.add_string buf default_foreground_str
+  end;
   if filled_len < width then begin
-    let styled = styling_on () in
     if styled then Buffer.add_string buf faint_str;
     for _ = 1 to width - filled_len do
-      Buffer.add_string buf empty_dot
+      Buffer.add_string buf empty_cell
     done;
     if styled then Buffer.add_string buf normal_str
   end;
+  Buffer.add_char buf ']';
   Buffer.contents buf
 
 let titled (s : string) : string =
@@ -197,7 +216,7 @@ let counter ~(title : string) ~(with_bar : bool) ~(done_ : int) ~(total : int)
   let with_title = spinner_cols + String.length title + 1 in
   if
     with_bar
-    && known_room_for (with_title + bar_width + 1 + String.length numbers)
+    && known_room_for (with_title + bar_cols + 1 + String.length numbers)
   then
     Printf.sprintf "%s %s %s" (titled title)
       (progress_bar ~width:bar_width ~filled:done_ ~total)
