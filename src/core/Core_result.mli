@@ -26,8 +26,9 @@ type t = {
   skipped_targets : Semgrep_output_v1_t.skipped_target list;
   skipped_rules : Rule_error.invalid_rule list;
   (*
-     valid_rules: deduplicated, valid rules
-     rules_with_targets: subset of valid_rules applicable to one or more target
+     valid_rules: the rules that the core scan ran
+     rules_with_targets: the rules applicable to one or more target, set by
+       Core_runner; empty on the --core path
   *)
   valid_rules : Rule.rule list;
   rules_with_targets : Rule.rule list;

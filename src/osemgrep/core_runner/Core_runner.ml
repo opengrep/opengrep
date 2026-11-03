@@ -576,7 +576,6 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
         res with
         errors = rule_errors @ res.errors;
         skipped_rules = invalid_rules @ res.skipped_rules;
-        valid_rules;
         rules_with_targets;
       }
     in
