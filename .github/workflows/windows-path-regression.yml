@@ -25,7 +25,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: opengrep-and-dependent-libs-w64-artifact
       - name: unpack binary + dlls

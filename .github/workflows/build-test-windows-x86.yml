@@ -70,13 +70,13 @@ jobs:
           git config --system core.longpaths true;
           git config --global fetch.parallel 50
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
       - name: Set-up cygwin
         # if: steps.cache.outputs.cache-hit != 'true'
-        uses: cygwin/cygwin-install-action@f2009323764960f80959895c7bc3bb30210afe4d # ratchet:cygwin/cygwin-install-action@v6
+        uses: cygwin/cygwin-install-action@5a1b0cd107181fa6bb6bf3f90d500f4fb3132f18 # v7
         with:
           install-dir: D:/cygwin
           packages: curl,diffutils,m4,make,mingw64-x86_64-gcc-core=13.4.0-1,mingw64-x86_64-gcc-g++=13.4.0-1,patch,perl,rsync,unzip,mingw64-x86_64-pcre2,mingw64-x86_64-zstd,gnupg2,mingw64-x86_64-gmp
@@ -116,7 +116,7 @@ jobs:
 
       - name: Restore Dune cache
         id: cache-dune-win32-64
-        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.DUNE_CACHE_ROOT }}
           key: dune-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ github.run_id }}
@@ -128,7 +128,7 @@ jobs:
 
       - name: Restore _opam
         id: cache-opam-win32-64
-        uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _opam
           key: opam-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
@@ -137,7 +137,7 @@ jobs:
 
       - name: Restore OPAM_ROOT
         id: cache-opamroot-win32-64
-        uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.OPAMROOT }} # C:\Users\runneradmin\AppData\Local\opam
           key: opamroot-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
@@ -305,7 +305,7 @@ jobs:
       - name: Save _opam
         if: steps.cache-opam-win32-64.outputs.cache-hit != 'true'
         id: cache-opam-win32-64-save
-        uses: actions/cache/save@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache/save@v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _opam
           key: ${{ steps.cache-opam-win32-64.outputs.cache-primary-key }}
@@ -313,7 +313,7 @@ jobs:
       - name: Save OPAM_ROOT
         if: steps.cache-opamroot-win32-64.outputs.cache-hit != 'true'
         id: cache-opamroot-win32-64-save
-        uses: actions/cache/save@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache/save@v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.OPAMROOT }} # C:\Users\runneradmin\AppData\Local\opam
           key: ${{ steps.cache-opamroot-win32-64.outputs.cache-primary-key }}
@@ -382,7 +382,7 @@ jobs:
 
           tar czvf artifacts.tgz artifacts
 
-      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opengrep-and-dependent-libs-w64-artifact
           path: artifacts.tgz
@@ -459,7 +459,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opengrep-windows-x86
           path: opengrep.tgz
