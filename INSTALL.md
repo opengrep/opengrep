@@ -1,4 +1,4 @@
-# Install the Opengrep CLI with our install script
+# Install Opengrep with our install script
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash

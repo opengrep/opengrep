@@ -61,7 +61,7 @@ let mock_run_results (files : string list) : Core_runner.result =
         metadata = None;
         fix = None;
         is_ignored = false;
-        engine_kind = `OSS;
+        engine_kind = "Opengrep";
         dataflow_trace = None;
         sca_match = None;
         validation_state = Some `No_validator;
@@ -94,9 +94,7 @@ let mock_run_results (files : string list) : Core_runner.result =
       explanations = None;
       time = None;
       rules_by_engine = None;
-      engine_requested = Some `OSS;
-      (* If the engine requested is OSS, there must be no
-         interfile requested languages *)
+      engine_requested = Some "Opengrep";
       interfile_languages_used = Some [];
     }
   in

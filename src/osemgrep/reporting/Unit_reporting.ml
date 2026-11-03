@@ -591,6 +591,39 @@ let exit_code_of_errors_tests =
     ]
 
 (*****************************************************************************)
+(* JSON output *)
+(*****************************************************************************)
+
+(* the engine_kind of a match is a string, so that opengrep-diff reads the
+   JSON output of any release *)
+let engine_kind_of_match (engine_kind : string) : string option =
+  let (m : Out.cli_match) =
+    Semgrep_output_v1_j.cli_match_of_string
+      (spf
+         {|{"check_id": "eqeq", "path": "a.py",
+            "start": {"line": 1, "col": 1, "offset": 0},
+            "end": {"line": 1, "col": 7, "offset": 6},
+            "extra": {"message": "m", "metadata": {}, "severity": "ERROR",
+                      "fingerprint": "f", "lines": "x == x",
+                      "engine_kind": %S}}|}
+         engine_kind)
+  in
+  m.extra.engine_kind
+
+let json_output_tests =
+  Testo.categorize "JSON output"
+    [
+      t "a match of an earlier release, with engine_kind OSS, is read"
+        (fun () ->
+          Alcotest.(check (option string))
+            "engine_kind" (Some "OSS") (engine_kind_of_match "OSS"));
+      t "a match with engine_kind Opengrep is read" (fun () ->
+          Alcotest.(check (option string))
+            "engine_kind" (Some "Opengrep")
+            (engine_kind_of_match "Opengrep"));
+    ]
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -602,4 +635,5 @@ let tests caps =
       skin_simple_tests;
       skin_emit_tests;
       exit_code_of_errors_tests;
+      json_output_tests;
     ]

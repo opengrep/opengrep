@@ -270,15 +270,8 @@ let render (conf : conf) (profiler : Profiler.t)
                (skin_ctx ~interfile_dedup_by ~is_interfile conf)
                ppf cli_output))
   | Sarif ->
-      let engine_label =
-        match cli_output.engine_requested with
-        | Some `OSS
-        | None -> "OSS"
-        (* FIXME: Remove. *)
-        | Some `PRO -> "PRO"
-      in
       let sarif_json =
-        Sarif_output.sarif_output hrules cli_output ~engine_label
+        Sarif_output.sarif_output hrules cli_output
           ~show_dataflow_traces:conf.show_dataflow_traces ~is_interfile
       in
       Some (Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)

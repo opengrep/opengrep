@@ -49,7 +49,7 @@
             }
           }
         },
-        "engine_kind": "OSS"
+        "engine_kind": "Opengrep"
       }
     },
     {
@@ -101,7 +101,7 @@
             }
           }
         },
-        "engine_kind": "OSS"
+        "engine_kind": "Opengrep"
       }
     },
     {
@@ -140,7 +140,7 @@
             }
           }
         },
-        "engine_kind": "OSS"
+        "engine_kind": "Opengrep"
       }
     },
     {
@@ -179,7 +179,7 @@
             }
           }
         },
-        "engine_kind": "OSS"
+        "engine_kind": "Opengrep"
       }
     }
   ],
@@ -247,6 +247,6 @@
     "okfiles": 158,
     "errorfiles": 2
   },
-  "engine_requested": "OSS",
+  "engine_requested": "Opengrep",
   "rules_by_engine": []
 }

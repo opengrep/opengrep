@@ -132,8 +132,6 @@ let check_rule (rule : Rule.t) (xtarget : Lockfile_xtarget.t)
                    options = rule_id_options_of_rule_options_opt rule.options;
                  };
                path = Target.path_of_origin (Origin.File xtarget.target.path);
-               (* TODO: should be pro if the pro engine is used in the match *)
-               engine_of_match = `OSS;
                range_loc = dep.loc;
                (* TODO? *)
                ast_node = None;

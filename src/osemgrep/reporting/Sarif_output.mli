@@ -2,7 +2,6 @@
 val sarif_output :
   Rule.hrules ->
   Semgrep_output_v1_t.cli_output ->
-  engine_label:string ->
   show_dataflow_traces:bool ->
   is_interfile:(Rule_ID.t -> bool) ->
   Sarif.Sarif_v_2_1_0_t.sarif_json_schema

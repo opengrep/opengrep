@@ -192,10 +192,6 @@ let match_rules_and_recurse
                         enclosure = Option.map (!) enclosure;
                         tokens;
                         taint_trace = None;
-                        (* This will be overrided later on by the Pro engine, if this is
-                           from a Pro run.
-                        *)
-                        engine_of_match = `OSS;
                         validation_state = `No_validator;
                         severity_override = None;
                         metadata_override = None;
@@ -388,7 +384,6 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                             enclosure = Option.map (!) enclosure;
                             tokens;
                             taint_trace = None;
-                            engine_of_match = `OSS;
                             validation_state = `No_validator;
                             severity_override = None;
                             metadata_override = None;
@@ -450,7 +445,6 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                             enclosure = Option.map (!) enclosure;
                             tokens;
                             taint_trace = None;
-                            engine_of_match = `OSS;
                             validation_state = `No_validator;
                             severity_override = None;
                             metadata_override = None;
@@ -496,7 +490,6 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                      enclosure = Option.map (!) enclosure;
                      tokens;
                      taint_trace = None;
-                     engine_of_match = `OSS;
                      validation_state = `No_validator;
                      severity_override = None;
                      metadata_override = None;

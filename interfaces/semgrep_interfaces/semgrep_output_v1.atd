@@ -198,54 +198,8 @@ type error_severity
   | Info <json name="info">
 ]
 
-(* Used for a best-effort report to users about what findings they get with
-   the pro engine that they couldn't with the oss engine.
-
-   Interproc_taint = requires interprocedural taint
-   Interfile_taint = requires interfile taint
-   Other_pro_feature = requires some non-taint pro feature *)
-type pro_feature
-    <ocaml attr="deriving show">
-    <python decorator="dataclass(frozen=True)"> =
-{
-  interproc_taint: bool;
-  interfile_taint: bool;
-  proprietary_language: bool;
-}
-
-(* Report the engine used to detect each finding. Additionally, if we are able
-   to infer that the finding could only be detected using the pro engine,
-   report that the pro engine is required and include basic information about
-   which feature is required.
-
-   OSS = ran with OSS
-   PRO = ran with PRO, but we didn't infer that OSS couldn't have found this
-   finding
-   PRO_REQUIRED = ran with PRO and requires a PRO feature (see pro_feature_used)
-
-   Note: OSS and PRO could have clearer names, but for backwards compatibility
-   we're leaving them as is
-*)
-type engine_of_finding
-   <ocaml attr="deriving show">
-   <python decorator="dataclass(frozen=True)"> =
-[
-  | OSS
-  | PRO
-   (* Semgrep 1.64.0 or later *)
-  | PRO_REQUIRED of pro_feature
-]
-
-type engine_kind
-   <ocaml attr="deriving show">
-   <python decorator="dataclass(frozen=True)"> =
-[
-  | OSS
-  | PRO
-]
-
 type rule_id_and_engine_kind <python decorator="dataclass(frozen=True)"> =
-  (rule_id * engine_kind)
+  (rule_id * string)
 
 type product
     <ocaml attr="deriving show, eq">
@@ -317,7 +271,7 @@ type cli_match_extra = {
    * otherslater on. *)
   ?dataflow_trace: match_dataflow_trace option;
 
-  ?engine_kind: engine_of_finding option;
+  ?engine_kind: string option;
 
   (* EXPERIMENTAL: see core_match_extra.extra_extra *)
   ?extra_extra: raw_json option;
@@ -958,7 +912,7 @@ type cli_output_extra = {
      * EXPERIMENTAL: since: 1.11.0
      *)
     ?rules_by_engine: rule_id_and_engine_kind list option;
-    ?engine_requested: engine_kind option;
+    ?engine_requested: string option;
 
     (* Reporting just the requested engine isn't granular enough. We want to
      * know what languages had rules that invoked interfile. This is
@@ -1508,7 +1462,7 @@ type finding = {
   (* Added in semgrep 1.65.0 see comments in cli_match_extra *)
   ?historical_info: historical_info option;
   (* Added in semgrep 1.70.0 *)
-  ?engine_kind: engine_of_finding option;
+  ?engine_kind: string option;
 }
 
 (* The goal is to hash findings independently of their precise location so
@@ -1839,7 +1793,7 @@ type core_match <python decorator="dataclass(frozen=True)"> = {
  *)
 type core_match_extra <python decorator="dataclass(frozen=True)"> = {
   metavars: metavars;
-  engine_kind: engine_of_finding;
+  engine_kind: string;
   is_ignored: bool;
   (* These fields generally come from the rule, but may be set here if they're
    * being overriden for that particular finding. This would currently occur

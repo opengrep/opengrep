@@ -43,7 +43,6 @@ let make_core_result () : Core_result.processed_match =
             pattern_string = "";
             options = None;
           };
-        engine_of_match = `OSS;
         env =
           [
             ( "$VAR",
@@ -89,7 +88,7 @@ let make_core_match ?(check_id = "fake-rule-id") ?annotated_rule_id
         severity = None;
         metavars = [];
         fix = None;
-        engine_kind = `OSS;
+        engine_kind = "Opengrep";
         dataflow_trace = None;
         is_ignored = false;
         sca_match = None;
