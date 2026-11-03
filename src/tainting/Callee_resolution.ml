@@ -621,7 +621,7 @@ let rec identify_callee ~(lang : Lang.t)
                     then
                       Type_state.find_methods type_state ~fallback:all_funcs
                         ~class_name:class_name_str ~method_name:callee_name_str
-                      |> List_.hd_opt
+                      |> pick_by_arity ~lang call_arity
                     else None
                   in
                   (* Build [all_names] inside the lambda: O(N) only when debug is on. *)
@@ -634,7 +634,7 @@ let rec identify_callee ~(lang : Lang.t)
                       m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
                           class_name_str callee_name_str (List.length all_funcs) (Option.is_some method_match) all_names);
                   (match method_match with
-                  | Some f -> Some f.fn_id
+                  | Some _ as r -> r
                   | None when is_locally_imported callee_name_str ->
                       try_imported_callee ~callee_name:callee_name_str
                   | None ->
