@@ -367,7 +367,12 @@ let result ~(is_interfile : Rule_ID.t -> bool) (show_dataflow_traces : bool)
     | None
     | Some false ->
         None
-    | Some true -> Some [ Sarif.create_suppression ~kind:`InSource () ]
+    | Some true ->
+        Some
+          [
+            Sarif.create_suppression ~kind:`InSource
+              ?justification:cli_match.extra.justification ();
+          ]
   in
   let fixes = sarif_fixes cli_match in
   let code_flows =

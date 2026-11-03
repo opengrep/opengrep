@@ -64,7 +64,7 @@ let make_core_result () : Core_result.processed_match =
         facts = [];
       }
   in
-  Core_result.{ pm; is_ignored = false; autofix_edit = None }
+  Core_result.{ pm; is_ignored = false; justification = None; autofix_edit = None }
 
 let make_core_match ?(check_id = "fake-rule-id") ?annotated_rule_id
     ?(src = "unchanged") () : Out.core_match =
@@ -92,6 +92,7 @@ let make_core_match ?(check_id = "fake-rule-id") ?annotated_rule_id
         engine_kind = `OSS;
         dataflow_trace = None;
         is_ignored = false;
+        justification = None;
         sca_match = None;
         validation_state = None;
         historical_info = None;
