@@ -40,7 +40,6 @@ type conf = {
   show : Show_CLI.conf option;
   validate : Validate_CLI.conf option;
   test : Test_CLI.conf option;
-  allow_local_builds : bool;
   (* --x-* options are experimental forever! (= subject to change or removal
      without notice) *)
   (* --x-ls: *)
@@ -73,7 +72,9 @@ val o_include : string list Cmdliner.Term.t
 val o_exclude : string list Cmdliner.Term.t
 
 (* exported because used by Ci_CLI.ml *)
-val o_allow_local_builds : bool Cmdliner.Term.t
+(* the flags of 'scan' and 'ci' that opengrep does not support, see
+   CLI_common.o_common *)
+val unsupported_flags : string list
 val o_allow_rule_timeout_control : bool Cmdliner.Term.t
 val o_apply_includes_excludes_to_files : bool Cmdliner.Term.t
 val o_config : string list Cmdliner.Term.t
@@ -135,7 +136,6 @@ val o_inline_metavariables : bool Cmdliner.Term.t
 (* val o_trace : bool Cmdliner.Term.t
    val o_trace_endpoint : string option Cmdliner.Term.t *)
 val o_use_git : bool Cmdliner.Term.t
-val o_version_check : bool Cmdliner.Term.t
 val o_vim : bool Cmdliner.Term.t
 val o_vim_outputs : string list Cmdliner.Term.t
 

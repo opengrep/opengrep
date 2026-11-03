@@ -491,7 +491,7 @@ perf-matching:
 	cd ./perf/perf-matching && ./run-perf-suite --max-cache
 
 # Dogfood opengrep on itself
-SEMGREP_ARGS=--experimental --config semgrep.jsonnet --error --strict --exclude tests
+SEMGREP_ARGS=--config semgrep.jsonnet --error --strict --exclude tests
 # you can add --verbose for debugging
 
 .PHONY: check

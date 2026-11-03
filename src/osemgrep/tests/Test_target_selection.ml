@@ -27,7 +27,7 @@ let run_osemgrep caps argv =
 *)
 let osemgrep_ls caps =
   let exit_code =
-    run_osemgrep caps [| "opengrep"; "scan"; "--experimental"; "--x-ls"; "." |]
+    run_osemgrep caps [| "opengrep"; "scan"; "--x-ls"; "." |]
   in
   Alcotest.(check int) "exit code" 0 (Exit_code.to_int exit_code)
 

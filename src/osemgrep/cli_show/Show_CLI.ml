@@ -157,7 +157,10 @@ let cmdline_term : conf Term.t =
     { show_kind; json; html; common }
   in
 
-  Term.(const combine $ o_args $ CLI_common.o_common $ o_json $ o_html)
+  Term.(
+    const combine $ o_args
+    $ CLI_common.o_common ~unsupported_flags:[]
+    $ o_json $ o_html)
 
 let doc = "Show various types of information"
 

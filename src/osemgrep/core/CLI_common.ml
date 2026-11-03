@@ -17,8 +17,11 @@ type conf = {
   logging_level : Logs.level option;
   (* osemgrep-only: pad poor's man profiling info for now *)
   profile : bool;
-  (* osemgrep-only: mix of --experimental, --develop *)
+  (* osemgrep-only: --develop *)
   maturity : Maturity.t;
+  (* the flags inherited from Semgrep that opengrep accepts but does not
+   * support and warns about, as given on the command line *)
+  unsupported_flags : string list;
 }
 [@@deriving show]
 
@@ -102,7 +105,8 @@ let create_log_file (file : Fpath.t) : (unit, string) result =
   | Sys_error (msg : string) -> Error msg
 
 let setup_logging ~force_color
-    ~(pp_message : (Logs.level -> string Fmt.t) option) ~level =
+    ~(pp_message : (Logs.level -> string Fmt.t) option) (common : conf) =
+  let level = common.logging_level in
   (* The file of $OPENGREP_LOG_FILE (or $SEMGREP_LOG_FILE) gets a copy of
    * the logs at the same level as stderr, so that it costs nothing unless
    * --verbose or --debug is passed too. pysemgrep wrote its own logs there
@@ -132,6 +136,12 @@ let setup_logging ~force_color
          Logs.warn (fun m ->
              m "cannot write the log file of $%s: %s; continuing without it"
                var msg));
+  (* after Log_semgrep.setup, so that the skin applies and --quiet silences
+   * these warnings like any other *)
+  common.unsupported_flags
+  |> List.iter (fun (flag : string) ->
+         Logs.warn (fun m ->
+             m "%s is not supported by opengrep and has no effect" flag));
   Logs.debug (fun m ->
       m "Logging setup for opengrep: force_color=%B level=%s" force_color
         (Logs.level_to_string level));
@@ -165,11 +175,19 @@ let o_opengrep_ignore_pattern : string option Term.t =
 (* Term for all common CLI flags *)
 (*************************************************************************)
 
-let o_common : conf Term.t =
-  let combine logging profile maturity =
-    { logging_level = logging; profile; maturity }
+(* --experimental selects nothing; it is accepted without a warning *)
+let o_experimental : unit Term.t =
+  Term.(
+    const (fun (_ : string list) -> ())
+    $ Cmdliner_.hidden_flags [ "experimental" ])
+
+let o_common ~(unsupported_flags : string list) : conf Term.t =
+  let combine logging profile maturity (() : unit) (given : string list) =
+    { logging_level = logging; profile; maturity; unsupported_flags = given }
   in
-  Term.(const combine $ o_logging $ o_profile $ Maturity.o_maturity)
+  Term.(
+    const combine $ o_logging $ o_profile $ Maturity.o_maturity $ o_experimental
+    $ Cmdliner_.hidden_flags unsupported_flags)
 
 (*************************************************************************)
 (* Misc *)

@@ -30,12 +30,9 @@ jobs:
           name: opengrep-and-dependent-libs-w64-artifact
       - name: unpack binary + dlls
         run: tar xvfz artifacts.tgz
-      - name: case-insensitive path regression (native osemgrep)
+      - name: case-insensitive path regression
         run: |
           set -eu
-          # The binary always runs the opengrep CLI; we still pass
-          # --experimental to force native osemgrep (Find_targets) -- otherwise
-          # the buggy discovery code never runs.
           CLI="$PWD/artifacts/opengrep.exe"
           base="$(mktemp -d)"
           mkdir -p "$base/MixedRepo/sub"
@@ -52,7 +49,7 @@ jobs:
           # root diverges from git's canonical casing -- the bug's trigger.
           winlower="${winbase}\\mixedrepo"
           echo "root: $winlower"
-          PYTHONIOENCODING=utf-8 "$CLI" scan --experimental --json -f "$winrules" "$winlower" > out.json 2>err.txt || true
+          PYTHONIOENCODING=utf-8 "$CLI" scan --json -f "$winrules" "$winlower" > out.json 2>err.txt || true
           echo "--- stderr (first 400 chars) ---"; head -c 400 err.txt; echo
           echo "--- result paths ---"
           paths="$(grep -o '"path":[[:space:]]*"[^"]*"' out.json || true)"

@@ -78,10 +78,9 @@ relative path.|}
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
      of the corresponding '$ o_xx $' further below! *)
-  let combine allow_local_builds allow_rule_timeout_control
-      apply_includes_excludes_to_files audit_on baseline_commit common config
-      dataflow_traces dynamic_timeout dynamic_timeout_max_multiplier
-      dynamic_timeout_unit_kb emacs
+  let combine allow_rule_timeout_control apply_includes_excludes_to_files
+      audit_on baseline_commit common config dataflow_traces dynamic_timeout
+      dynamic_timeout_max_multiplier dynamic_timeout_unit_kb emacs
       emacs_outputs exclude_ exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       include_ inline_metavariables interfile_dedup_by json json_outputs
@@ -93,9 +92,7 @@ let cmdline_term : conf Term.t =
       scan_unknown_extensions skin subdir suppress_errors taint_interfile
       taint_interfile_depth taint_intrafile disable_intrafile disable_interfile
       text text_outputs time_flag timeout
-      timeout_interfile timeout_threshold use_git
-      _version_check vim
-      vim_outputs =
+      timeout_interfile timeout_threshold use_git vim vim_outputs =
     let output_format : Output_format.t =
       SC.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
         ~gitlab_sast ~gitlab_secrets ~junit_xml
@@ -246,7 +243,6 @@ let cmdline_term : conf Term.t =
         show = None;
         validate = None;
         test = None;
-        allow_local_builds;
         ls = false;
         ls_format = Ls_subcommand.default_format;
       }
@@ -264,9 +260,11 @@ let cmdline_term : conf Term.t =
   Term.(
     (* !the o_xxx must be in alphabetic orders to match the parameters of
      * combine above! *)
-    const combine $ SC.o_allow_local_builds $ SC.o_allow_rule_timeout_control
+    const combine $ SC.o_allow_rule_timeout_control
     $ SC.o_apply_includes_excludes_to_files $ o_audit_on
-    $ SC.o_baseline_commit $ CLI_common.o_common $ SC.o_config
+    $ SC.o_baseline_commit
+    $ CLI_common.o_common ~unsupported_flags:SC.unsupported_flags
+    $ SC.o_config
     $ SC.o_dataflow_traces $ SC.o_dynamic_timeout
     $ SC.o_dynamic_timeout_max_multiplier $ SC.o_dynamic_timeout_unit_kb
     $ SC.o_emacs $ SC.o_emacs_outputs $ SC.o_exclude $ SC.o_exclude_rule_ids
@@ -286,8 +284,7 @@ let cmdline_term : conf Term.t =
     $ SC.o_taint_intrafile $ SC.o_disable_intrafile $ SC.o_disable_interfile
     $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
-    $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_version_check $ SC.o_vim
-    $ SC.o_vim_outputs)
+    $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_vim $ SC.o_vim_outputs)
 
 let doc = "the recommended way to run opengrep in CI"
 

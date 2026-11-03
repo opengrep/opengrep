@@ -216,6 +216,18 @@ let string_opt_with_envs ~envs ~doc options =
   in
   Term.(const combine $ value)
 
+(* Manpage.s_none keeps each flag out of the help. vflag_all holds one value
+   per occurrence, so a flag given twice is deduplicated here. *)
+let hidden_flags (options : string list) : string list Term.t =
+  let flags =
+    List.map2
+      (fun (option : string) (flag : string) ->
+        (flag, Arg.info [ option ] ~docs:Manpage.s_none))
+      options
+      (add_option_dashes options)
+  in
+  Term.(const List_.deduplicate $ Arg.value (Arg.vflag_all [] flags))
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *

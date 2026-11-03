@@ -21,8 +21,6 @@ open Fpath_.Operators
  *)
 type conf = {
   target : target_kind;
-  (* ??? *)
-  ignore_todo : bool;
   (* TODO? do we need those options? people use the JSON output?
    * the playground? and the optimizations?
    *)
@@ -60,13 +58,12 @@ and target_kind =
 (* ------------------------------------------------------------------ *)
 (* Flags *)
 (* ------------------------------------------------------------------ *)
-let o_test_ignore_todo : bool Term.t =
-  H.negatable_flag [ "test-ignore-todo" ] ~neg_options:[ "no-test-ignore-todo" ]
-    ~default:false
-    ~doc:
-      {|If --test-ignore-todo, ignores rules marked as '#todoruleid:' in
-test files.
-|}
+
+(* the lines that a todoruleid: or todook: annotation refers to are always
+ * left out of the check (see Test_annotation.filter_todo), whatever
+ * --test-ignore-todo says *)
+let unsupported_flags : string list =
+  [ "test-ignore-todo"; "no-test-ignore-todo" ]
 
 let o_json : bool Term.t =
   let info = Arg.info [ "json" ] ~doc:{|Output results in JSON format.|} in
@@ -233,8 +230,8 @@ let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
   let combine args common config force_color json matching_diagnosis
-      max_memory_mb opengrep_ignore_pattern strict taint_intrafile
-      test_ignore_todo timeout timeout_threshold =
+      max_memory_mb opengrep_ignore_pattern strict taint_intrafile timeout
+      timeout_threshold =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -243,7 +240,6 @@ let cmdline_term : conf Term.t =
       strict;
       json;
       force_color;
-      ignore_todo = test_ignore_todo;
       common;
       optimizations = true;
       matching_diagnosis;
@@ -255,12 +251,13 @@ let cmdline_term : conf Term.t =
     }
   in
   Term.(
-    const combine $ o_args $ CLI_common.o_common $ o_config
+    const combine $ o_args
+    $ CLI_common.o_common ~unsupported_flags
+    $ o_config
     $ CLI_common.o_force_color ~default:Output.default.force_color
     $ o_json $ o_matching_diagnosis
     $ o_max_memory_mb $ CLI_common.o_opengrep_ignore_pattern $ o_strict
-    $ o_taint_intrafile $ o_test_ignore_todo
-    $ o_timeout $ o_timeout_threshold)
+    $ o_taint_intrafile $ o_timeout $ o_timeout_threshold)
 
 let doc = "testing the rules"
 

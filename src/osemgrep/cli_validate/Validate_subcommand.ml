@@ -307,7 +307,7 @@ let report_errors (_caps : < Cap.stdout >) ~metacheck_errors ~num_errors
 let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
   let module Sk = (val Skins.resolve conf.output_conf.skin : Skin.S) in
   CLI_common.setup_logging ~force_color:conf.force_color
-    ~pp_message:Sk.pp_log_message ~level:conf.common.logging_level;
+    ~pp_message:Sk.pp_log_message conf.common;
   Logs.debug (fun m -> m "conf = %s" (Validate_CLI.show_conf conf));
 
   (* step1: getting the targets (which contain rules) *)

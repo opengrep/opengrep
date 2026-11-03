@@ -42,7 +42,6 @@ let test_scan_config_registry_no_token (caps : CLI.caps) =
               [|
                 "opengrep";
                 "scan";
-                "--experimental";
                 "--debug";
                 "--config";
                 "r/python.lang.correctness.useless-eqeq.useless-eqeq";
@@ -60,7 +59,6 @@ let test_absolute_target_path caps =
         Scan_subcommand.main caps
           [|
             "opengrep-scan";
-            "--experimental";
             "-l";
             "python";
             "-e";
@@ -71,20 +69,22 @@ let test_absolute_target_path caps =
   in
   Testo.create "absolute path as target" func
 
+let eqeq_rule : string =
+  {|rules:
+  - id: eqeq-bad
+    pattern: $X == $X
+    message: bad
+    languages: [python]
+    severity: ERROR
+|}
+
 (* 'opengrep --experimental ci' must reach the ci subcommand, not become a
    scan with 'ci' as scanning root *)
 let test_subcommand_after_global_flag (caps : CLI.caps) () =
   let repo_files =
     Testutil_files.
       [
-        File
-          ( "rules.yaml",
-            "rules:\n\
-             - id: eqeq-bad\n\
-            \  pattern: $X == $X\n\
-            \  message: bad\n\
-            \  languages: [python]\n\
-            \  severity: ERROR\n" );
+        File ("rules.yaml", eqeq_rule);
         File ("foo.py", "def foo(a, b):\n    return a + b == a + b\n");
       ]
   in
@@ -128,7 +128,6 @@ let test_broken_pipe (caps : CLI.caps) () =
             [|
               "opengrep";
               "scan";
-              "--experimental";
               "--json";
               "--config";
               "rules.yaml";
@@ -141,12 +140,7 @@ let test_broken_pipe (caps : CLI.caps) () =
 let documented_exit_codes : string list =
   [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]
 
-(* A subcommand's man page documents the exit codes that subcommand
-   returns: not the codes of another one, and not cmdliner's defaults,
-   which no code path here produces.
-   coupling: the exits_* lists of CLI_common.ml *)
-let test_man_page_exit_codes (caps : CLI.caps) (subcommand : string)
-    (codes : string list) () =
+let man_page (caps : CLI.caps) (subcommand : string) : string =
   let exit_code, out =
     Testo.with_capture stdout (fun () ->
         let exit_code =
@@ -158,6 +152,15 @@ let test_man_page_exit_codes (caps : CLI.caps) (subcommand : string)
         exit_code)
   in
   Exit_code.Check.ok exit_code;
+  out
+
+(* A subcommand's man page documents the exit codes that subcommand
+   returns: not the codes of another one, and not cmdliner's defaults,
+   which no code path here produces.
+   coupling: the exits_* lists of CLI_common.ml *)
+let test_man_page_exit_codes (caps : CLI.caps) (subcommand : string)
+    (codes : string list) () =
+  let out = man_page caps subcommand in
   let documents (code : string) : bool =
     String_.contains ~term:(Printf.sprintf "\n       %s " code) out
   in
@@ -173,6 +176,147 @@ let test_man_page_exit_codes (caps : CLI.caps) (subcommand : string)
            (Printf.sprintf "%s does not document cmdliner's %s" subcommand code)
            false (documents code))
 
+(*****************************************************************************)
+(* Flags inherited from Semgrep that opengrep does not support *)
+(*****************************************************************************)
+
+(* the flags each subcommand accepts without supporting them and warns
+   about; every subcommand also accepts --experimental, without a warning *)
+let unsupported_flags_of_subcommand : (string * string list) list =
+  let scan_and_ci =
+    [ "--allow-local-builds"; "--enable-version-check"; "--disable-version-check" ]
+  in
+  let test = [ "--test-ignore-todo"; "--no-test-ignore-todo" ] in
+  [
+    ("ci", scan_and_ci);
+    ("lsp", []);
+    ("scan", scan_and_ci @ test);
+    ("show", []);
+    ("test", test);
+    ("validate", []);
+  ]
+
+let unsupported_flags_of (subcommand : string) : string list =
+  List.assoc subcommand unsupported_flags_of_subcommand
+
+(* The man page of a subcommand leaves out --experimental and the flags it
+   does not support; --debug, which every subcommand documents, shows that
+   the page lists the options at all. *)
+let test_man_page_leaves_out_unsupported_flags (caps : CLI.caps)
+    (subcommand : string) (flags : string list) () =
+  let out = man_page caps subcommand in
+  Alcotest.(check bool)
+    (Printf.sprintf "%s documents --debug" subcommand)
+    true
+    (String_.contains ~term:"--debug" out);
+  "--experimental" :: flags
+  |> List.iter (fun (flag : string) ->
+         Alcotest.(check bool)
+           (Printf.sprintf "%s leaves out %s" subcommand flag)
+           false
+           (String_.contains ~term:flag out))
+
+let count_lines_containing (term : string) (text : string) : int =
+  String.split_on_char '\n' text
+  |> List.filter (fun (line : string) -> String_.contains ~term line)
+  |> List.length
+
+(* the exit code and the standard error of 'opengrep <args>' run in a git
+   repository holding a rule and a target with a finding, annotated for
+   'opengrep test' *)
+let run_in_repo (caps : CLI.caps) (args : string list) : Exit_code.t * string
+    =
+  let repo_files =
+    Testutil_files.
+      [
+        File ("rules.yaml", eqeq_rule);
+        File ("foo.py", "# ruleid: eqeq-bad\na == a\n");
+      ]
+  in
+  Testutil_git.with_git_repo repo_files (fun (_ : Fpath.t) ->
+      let run () : Exit_code.t =
+        let exit_code, (_ : string) =
+          Testo.with_capture stdout (fun () ->
+              CLI.main caps (Array.of_list ("opengrep" :: args)))
+        in
+        exit_code
+      in
+      Testo.with_capture stderr run)
+
+(* each of [flags] is warned about exactly once by 'opengrep <args>' *)
+let test_warned_once (caps : CLI.caps) ~(flags : string list)
+    (args : string list) () =
+  let (_ : Exit_code.t), err = run_in_repo caps args in
+  flags
+  |> List.iter (fun (flag : string) ->
+         Alcotest.(check int)
+           (Printf.sprintf "one warning for %s" flag)
+           1
+           (count_lines_containing
+              (flag ^ " is not supported by opengrep and has no effect")
+              err))
+
+(* 'opengrep <args>' runs to the end, with an exit code that
+   [check_exit_code] accepts, and warns about no flag *)
+let test_not_warned (caps : CLI.caps)
+    ~(check_exit_code : Exit_code.t -> unit) (args : string list) () =
+  let exit_code, err = run_in_repo caps args in
+  check_exit_code exit_code;
+  Alcotest.(check int) "no warning" 0
+    (count_lines_containing "is not supported by opengrep" err)
+
+let unsupported_flags_tests (caps : CLI.caps) : Testo.t list =
+  let scan_flags = unsupported_flags_of "scan" in
+  let target_args = [ "--config"; "rules.yaml"; "foo.py" ] in
+  [
+    Testo.create "scan warns once about each unsupported flag given twice"
+      (test_warned_once caps ~flags:scan_flags
+         (("scan" :: scan_flags) @ scan_flags @ target_args));
+    (* scan hands the run over to the test, validate and show subcommands,
+       which do not warn again *)
+    Testo.create "scan --test warns once about each unsupported flag"
+      (test_warned_once caps ~flags:scan_flags
+         (("scan" :: "--test" :: scan_flags) @ target_args));
+    (* validate fetches its metachecking rules, which the fixture of
+       Test_rule_errors provides without the network *)
+    Testo.create "scan --validate warns once about each unsupported flag"
+      (Test_rule_errors.with_metarules
+         (test_warned_once caps ~flags:scan_flags
+            (("scan" :: "--validate" :: scan_flags)
+            @ [ "--config"; "rules.yaml" ])));
+    Testo.create "scan --dump-ast warns once about each unsupported flag"
+      (test_warned_once caps ~flags:scan_flags
+         (("scan" :: "--dump-ast" :: scan_flags) @ [ "-l"; "python"; "foo.py" ]));
+    Testo.create "ci warns about each unsupported flag"
+      (test_warned_once caps ~flags:(unsupported_flags_of "ci")
+         (("ci" :: unsupported_flags_of "ci") @ [ "--config"; "rules.yaml" ]));
+    Testo.create "test warns about each unsupported flag"
+      (test_warned_once caps ~flags:(unsupported_flags_of "test")
+         (("test" :: unsupported_flags_of "test") @ target_args));
+    Testo.create "scan --quiet does not warn about an unsupported flag"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
+         (("scan" :: "--quiet" :: scan_flags) @ target_args));
+    Testo.create "scan without an unsupported flag does not warn"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
+         ("scan" :: target_args));
+    Testo.create "scan --experimental does not warn"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
+         ("scan" :: "--experimental" :: target_args));
+    Testo.create "show --experimental does not warn"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
+         [ "show"; "--experimental"; "version" ]);
+    (* CLI.main hands a flag given before the subcommand over to it *)
+    Testo.create "opengrep --experimental ci does not warn"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.findings
+         [ "--experimental"; "ci"; "--config"; "rules.yaml" ]);
+    Testo.create "opengrep --experimental does not warn"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
+         [ "--experimental" ]);
+    Testo.create "opengrep --experimental --help does not warn"
+      (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
+         [ "--experimental"; "--help" ]);
+  ]
+
 let test_named_pipe (caps : Scan_subcommand.caps) =
   let func () =
     (* Search for pattern "hello" in a named pipe containing "hello" *)
@@ -180,7 +324,6 @@ let test_named_pipe (caps : Scan_subcommand.caps) =
         Scan_subcommand.main caps
           [|
             "opengrep-scan";
-            "--experimental";
             "-l";
             "python";
             "-e";
@@ -230,7 +373,6 @@ let test_autofix_on_read_only_file (caps : CLI.caps) () =
               [|
                 "opengrep";
                 "scan";
-                "--experimental";
                 "--json";
                 "--autofix";
                 "--config";
@@ -256,7 +398,6 @@ let test_unwritable_extra_output (caps : CLI.caps) () =
               [|
                 "opengrep";
                 "scan";
-                "--experimental";
                 "--json";
                 (* a regular file is not a directory to write into *)
                 "--sarif-output";
@@ -280,7 +421,6 @@ let test_ci_json_fatal_error (caps : CLI.caps) () =
             CLI.main caps
               [|
                 "opengrep";
-                "--experimental";
                 "ci";
                 "--json";
                 "--config";
@@ -312,7 +452,6 @@ let test_validate_output_to_file (caps : CLI.caps) () =
                 [|
                   "opengrep";
                   "scan";
-                  "--experimental";
                   "--validate";
                   "--json";
                   "--config";
@@ -369,7 +508,7 @@ let test_validate_exit_codes (caps : CLI.caps) () =
           Testo.with_capture stdout (fun () ->
               CLI.main caps
                 (Array.of_list
-                   ([ "opengrep"; "scan"; "--experimental"; "--validate" ]
+                   ([ "opengrep"; "scan"; "--validate" ]
                    @ args
                    @ [ "--config"; config ])))
         in
@@ -439,7 +578,6 @@ let test_baseline_core_time (caps : CLI.caps) () =
               [|
                 "opengrep";
                 "scan";
-                "--experimental";
                 "--json";
                 "--time";
                 "--baseline-commit";
@@ -470,7 +608,6 @@ let test_text_with_json (caps : CLI.caps) () =
               [|
                 "opengrep";
                 "scan";
-                "--experimental";
                 "--text";
                 "--json";
                 "--config";
@@ -520,6 +657,14 @@ let tests (caps : CLI.caps) =
         (test_baseline_core_time caps);
       Testo.create "--text does not win over --json" (test_text_with_json caps);
     ]
+    @ unsupported_flags_tests caps
+    @ (unsupported_flags_of_subcommand
+      |> List_.map (fun ((subcommand : string), (flags : string list)) ->
+             Testo.create
+               (Printf.sprintf "the man page of %s leaves out unsupported flags"
+                  subcommand)
+               (test_man_page_leaves_out_unsupported_flags caps subcommand
+                  flags)))
     @ ([
          ("ci", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
          ("lsp", [ "0"; "2"; "141" ]);
