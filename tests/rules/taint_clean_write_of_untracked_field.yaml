@@ -1,0 +1,10 @@
+rules:
+- id: taint-clean-write-of-untracked-field
+  languages: [javascript]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source(...)
+  pattern-sinks:
+    - pattern: sink(...)

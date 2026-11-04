@@ -1106,11 +1106,14 @@ and clean_obj offset obj =
       Log.err (fun m -> m "clean_obj: Impossible happened: empty offset");
       obj
   | o :: offset -> (
-      let o, obj = internal_UNSAFE_find_offset_in_obj o obj in
-      match o with
-      | Oany -> Fields.map (clean_cell offset) obj
-      | o ->
-          Fields.update o (Option.map (fun cell -> clean_cell offset cell)) obj)
+      let tracked, obj = internal_UNSAFE_find_offset_in_obj o obj in
+      match (o, tracked) with
+      | Oany, _ -> Fields.map (clean_cell offset) obj
+      (* A field past [Limits_semgrep.taint_MAX_OBJ_FIELDS] has no cell, so
+         cleaning it leaves the fields the object tracks as they are. *)
+      | (Ofld _ | Oint _ | Ostr _ | Oslice _), Oany -> obj
+      | (Ofld _ | Oint _ | Ostr _ | Oslice _), (Ofld _ | Oint _ | Ostr _ | Oslice _) ->
+          Fields.update tracked (Option.map (fun cell -> clean_cell offset cell)) obj)
 
 (*********************************************************)
 (* Enumerate tainted offsets *)
