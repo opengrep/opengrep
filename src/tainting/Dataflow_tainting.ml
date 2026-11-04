@@ -1914,7 +1914,7 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
               | _ ->
                   let is_temp_var =
                     match lval.base with
-                    | Var name -> String.starts_with ~prefix:"_tmp" (fst name.ident)
+                    | Var name -> G.SId.is_temp name.sid
                     | _ -> false
                   in
                   if is_temp_var then shape
@@ -3964,17 +3964,8 @@ and (fixpoint :
           class_name;
         }
       in
-      let callee_has_sig_memo : (string * int, bool) Hashtbl.t =
-        Hashtbl.create 16
-      in
       let callee_has_sig (callee : IL.exp) (arity : int) : bool =
-        let key = (Display_IL.string_of_exp callee, arity) in
-        match Hashtbl.find_opt callee_has_sig_memo key with
-        | Some b -> b
-        | None ->
-            let b = Option.is_some (lookup_signature probe_env callee arity) in
-            Hashtbl.replace callee_has_sig_memo key b;
-            b
+        Option.is_some (lookup_signature probe_env callee arity)
       in
       let lambda_var_of_lval (lv : IL.lval) : IL.name option =
         match lv with
