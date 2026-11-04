@@ -53,7 +53,7 @@
           ]
         },
         "severity": "ERROR",
-        "engine_kind": "OSS"
+        "engine_kind": "Opengrep"
       },
       "path": "targets/dependency_aware/yarn.lock",
       "start": {

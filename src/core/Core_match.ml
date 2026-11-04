@@ -49,13 +49,6 @@ type range_loc = Tok.location * Tok.location
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
   rule_id : rule_id; [@equal fun a b -> a.id = b.id]
-  (* Indicates whether this match was produced during a run
-   * of Semgrep PRO. This will be overrided later by the Pro engine, on any
-   * matches which are produced from a Pro run.
-   * TODO? do we want to consider the same match but with different engine
-   * as separate matches? or better make them equal for dedup purpose?
-   *)
-  engine_of_match : Engine_kind.engine_of_finding; [@equal fun _a _b -> true]
   (* metavars for the pattern match *)
   env : Metavariable.bindings;
       [@equal

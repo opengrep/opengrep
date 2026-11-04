@@ -6,7 +6,6 @@ type range_loc = Tok.location * Tok.location
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
   rule_id : rule_id;
-  engine_of_match : Engine_kind.engine_of_finding;
   env : Metavariable.bindings;
   (* location info *)
   path : Target.path;

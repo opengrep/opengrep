@@ -223,7 +223,7 @@
 
 {
   description =
-    "Opengrep OSS is a fast, open-source, static analysis tool for searching code, finding bugs, and enforcing code standards at editor, commit, and CI time.";
+    "Opengrep is a fast, open-source, static analysis tool for searching code, finding bugs, and enforcing code standards at editor, commit, and CI time.";
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # all the follows here are so we don't use diff versions of

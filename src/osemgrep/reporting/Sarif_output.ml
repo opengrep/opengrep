@@ -404,7 +404,7 @@ let error_to_sarif_notification (e : Out.cli_error) =
 (*****************************************************************************)
 
 let sarif_output hrules (cli_output : Out.cli_output)
-    ~engine_label ~show_dataflow_traces
+    ~show_dataflow_traces
     ~(is_interfile : Rule_ID.t -> bool) :
     Sarif.sarif_json_schema =
   let sarif_schema =
@@ -422,7 +422,7 @@ let sarif_output hrules (cli_output : Out.cli_output)
     let tool =
       let driver =
         Sarif.create_tool_component
-          ~name:(spf "Opengrep %s" engine_label)
+          ~name:"Opengrep"
           ~semantic_version:Version.version ?rules ()
       in
       Sarif.create_tool ~driver ()

@@ -29,6 +29,8 @@ module Log = Log_reporting.Log
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
+let engine = "Opengrep"
+
 let rec propagate fn : J.t -> J.t  = function
   | Object xs -> Object (xs |> List_.map (fun (s, t) -> (s, propagate fn t)))
   | Array xs -> Array (xs |> List_.map (propagate fn))
@@ -457,7 +459,7 @@ let unsafe_match_to_match ?(inline = false)
         fix =
           Option.map (fun edit -> edit.Textedit.replacement_text) autofix_edit;
         is_ignored;
-        engine_kind = x.engine_of_match;
+        engine_kind = engine;
         validation_state = Some x.validation_state;
         historical_info;
         extra_extra = None;
@@ -654,10 +656,14 @@ let core_output_of_matches_and_errors ?(inline = false)
     time = res.profiling |> Option.map profiling_to_profiling;
     explanations =
       res.explanations |> Option.map (List_.map explanation_to_explanation);
-    rules_by_engine = Some res.rules_by_engine;
+    rules_by_engine =
+      Some
+        (List_.map
+           (fun (rule : Rule.rule) -> (fst rule.Rule.id, engine))
+           res.valid_rules);
     interfile_languages_used =
       Some (List_.map (fun l -> Xlang.to_string l) res.interfile_languages_used);
-    engine_requested = Some `OSS;
+    engine_requested = Some engine;
     version = Version.version;
   }
 [@@profiling]

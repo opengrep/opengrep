@@ -113,7 +113,6 @@ type t = {
   rules_with_targets : Rule.rule list;
   profiling : Core_profiling.t option;
   explanations : Matching_explanation.t list option;
-  rules_by_engine : (Rule_ID.t * Engine_kind.t) list;
   interfile_languages_used : Xlang.t list;
 }
 [@@deriving show]
@@ -146,7 +145,6 @@ let mk_result_with_just_errors (errors : Core_error.t list) : t =
     skipped_rules = [];
     profiling = None;
     explanations = None;
-    rules_by_engine = [];
     interfile_languages_used = [];
   }
 
@@ -268,7 +266,7 @@ let collate_rule_results (file : Fpath.t)
 
 (* Aggregate a list of target results into one final result *)
 let mk_result (results : Core_profiling.file_profiling match_result list)
-    (rules_with_engine : (Rule.t * Engine_kind.t) list)
+    (rules : Rule.t list)
     (skipped_rules : Rule_error.invalid_rule list) (scanned : Target.t list)
     (interfile_languages_used : Xlang.t list) ~rules_parse_time : t =
   (* concatenating information from the match_result list *)
@@ -297,7 +295,7 @@ let mk_result (results : Core_profiling.file_profiling match_result list)
              result.profiling)
     in
     {
-      rules = List_.map fst rules_with_engine;
+      rules;
       rules_parse_time;
       file_times;
       (* Notably, using the `top_heap_words` does not measure cumulative
@@ -316,10 +314,8 @@ let mk_result (results : Core_profiling.file_profiling match_result list)
     scanned;
     skipped_targets = [];
     skipped_rules;
-    valid_rules = [];
+    valid_rules = rules;
     rules_with_targets = [];
     explanations = (if explanations =*= [] then None else Some explanations);
-    rules_by_engine =
-      rules_with_engine |> List_.map (fun (r, ek) -> (fst r.Rule.id, ek));
     interfile_languages_used;
   }

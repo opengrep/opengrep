@@ -1106,9 +1106,8 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   *)
 
   let (res : Core_result.t) =
-    Core_result.mk_result file_results
-      (List_.map (fun r -> (r, `OSS)) valid_rules)
-      invalid_rules scanned_targets interfile_languages_used ~rules_parse_time
+    Core_result.mk_result file_results valid_rules invalid_rules
+      scanned_targets interfile_languages_used ~rules_parse_time
   in
   let all_processed_matches =
     let interfile_processed =

@@ -38,13 +38,18 @@
 (* coupling: keep the summaries for the login/scan/ci subcommands similar
    to what's printed by print_semgrep_dashdash_help. *)
 let print_help (stdout : Cap.Console.stdout) =
+  (* the banner of the simple and vivid skins, styled always, like the
+     ocolor markup below *)
+  let banner =
+    Fmt_.with_buffer_to_string (fun (ppf : Format.formatter) ->
+        Fmt.set_style_renderer ppf `Ansi_tty;
+        Skin_banner.pp ~margin:"" ppf)
+  in
   (* TODO: add a Out.printf_color? *)
   CapConsole.ocolor_format_printf stdout
     {|
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-Opengrep CLI scans your code for bugs, security and dependency vulnerabilities.
+%s
+Opengrep scans your code for bugs and security vulnerabilities.
 
 For more information about Opengrep, visit @{<cyan;ul>https://opengrep.dev@}
 
@@ -55,6 +60,7 @@ For more information about Opengrep, visit @{<cyan;ul>https://opengrep.dev@}
 @{<ul>Help@}:
   @{<cyan>opengrep COMMAND --help@}      For more information on each command
 |}
+    banner
 (* TODO: Add back when fixed, this was the last line above:
  * For the CLI docs visit @{<cyan;ul>https://opengrep.dev/docs/cli-reference@}
  *)

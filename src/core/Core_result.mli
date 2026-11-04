@@ -26,14 +26,14 @@ type t = {
   skipped_targets : Semgrep_output_v1_t.skipped_target list;
   skipped_rules : Rule_error.invalid_rule list;
   (*
-     valid_rules: deduplicated, valid rules
-     rules_with_targets: subset of valid_rules applicable to one or more target
+     valid_rules: the rules that the core scan ran
+     rules_with_targets: the rules applicable to one or more target, set by
+       Core_runner; empty on the --core path
   *)
   valid_rules : Rule.rule list;
   rules_with_targets : Rule.rule list;
   profiling : Core_profiling.t option;
   explanations : Matching_explanation.t list option;
-  rules_by_engine : (Rule_ID.t * Engine_kind.t) list;
   interfile_languages_used : Xlang.t list;
 }
 [@@deriving show]
@@ -67,7 +67,7 @@ type matches_single_file = Core_profiling.partial_profiling match_result
  *)
 val mk_result :
   Core_profiling.file_profiling match_result list ->
-  (Rule.rule * Engine_kind.t) list ->
+  Rule.rule list ->
   Rule_error.invalid_rule list ->
   Target.t list ->
   Xlang.t list ->
