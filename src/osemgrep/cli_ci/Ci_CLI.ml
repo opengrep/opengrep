@@ -11,8 +11,10 @@ module SC = Scan_CLI
 (* 'opengrep ci' command-line parsing.
  *
  * The flags are the scan_options subset that the ci command of ci.py
- * accepts, plus the ci-only flags, minus flags with no effect here:
- * --oss-only, --supply-chain, --code, --autofix and the --x-* internals.
+ * accepts, plus the ci-only flags. The flags of ci.py that would have no
+ * effect here are accepted with a warning (see unsupported_flags); those
+ * that ask for what opengrep does not do, such as --pro or --supply-chain,
+ * and the --x-* internals are unknown options.
  *)
 
 (*****************************************************************************)
@@ -69,6 +71,15 @@ let o_subdir : string option Term.t =
 relative path.|}
   in
   Arg.value (Arg.opt (Arg.some Arg.string) None info)
+
+(* The flags of ci.py that opengrep accepts but does not support, see
+ * CLI_common.o_common, on top of Scan_CLI.unsupported_flags.
+ * --code: it selected code scanning, the only product opengrep has.
+ * --dry-run: it kept the results from being uploaded; opengrep uploads none.
+ * -a, --autofix and --no-autofix: ci.py never applied fixes.
+ *)
+let unsupported_flags : string list =
+  SC.unsupported_flags @ [ "code"; "dry-run"; "a"; "autofix"; "no-autofix" ]
 
 (*************************************************************************)
 (* Turn argv into conf *)
@@ -264,7 +275,8 @@ let cmdline_term : conf Term.t =
     const combine $ SC.o_allow_rule_timeout_control
     $ SC.o_apply_includes_excludes_to_files $ o_audit_on
     $ SC.o_baseline_commit
-    $ CLI_common.o_common ~unsupported_flags:SC.unsupported_flags
+    $ CLI_common.o_common ~unsupported_flags
+        ~unsupported_options:SC.unsupported_options
     $ SC.o_config
     $ SC.o_dataflow_traces $ SC.o_dynamic_timeout
     $ SC.o_dynamic_timeout_max_multiplier $ SC.o_dynamic_timeout_unit_kb

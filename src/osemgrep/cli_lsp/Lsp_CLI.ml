@@ -20,7 +20,10 @@ type conf = { common : CLI_common.conf } [@@deriving show]
 
 let cmdline_term : conf Term.t =
   let combine common = { common } in
-  Term.(const combine $ CLI_common.o_common ~unsupported_flags:[])
+  Term.(
+    const combine
+    $ CLI_common.o_common ~unsupported_flags:CLI_common.tracing_flags
+        ~unsupported_options:CLI_common.tracing_options)
 
 let doc = "Language server mode!!"
 

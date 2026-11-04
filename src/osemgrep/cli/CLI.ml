@@ -84,7 +84,7 @@ let known_subcommands =
 
 (* Global flags that main below detects on the whole argv and that may
  * legitimately precede the subcommand. *)
-let global_flags = [ "--experimental"; "--debug"; "--profile" ]
+let global_flags = [ "--experimental"; "--legacy"; "--debug"; "--profile" ]
 
 let dispatch_subcommand (caps : caps) (argv : string array) =
   match Array.to_list argv with
