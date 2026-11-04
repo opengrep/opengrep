@@ -39,9 +39,21 @@ module type Flow = sig
   val short_string_of_node : node -> string
 end
 
+(** The order in which the fixpoint computes the nodes. *)
+type iteration =
+  | Weak_topological_order
+      (** Bourdoncle's recursive strategy over the weak topological order: a
+          node is computed after its predecessors outside the cycles it is
+          in, and a cycle's head bounds the rounds of the cycle. *)
+  | Worklist
+      (** The least pending node first, each node visited at most
+          [Limits_semgrep.taint_MAX_VISITS_PER_NODE] times; it builds no
+          order, so a fixpoint over a small graph allocates little. *)
+
 module Make (F : Flow) : sig
   (* main entry point *)
   val fixpoint :
+    iteration:iteration ->
     timeout:float ->
     eq_env:('env -> 'env -> bool) ->
     init:'env mapping ->

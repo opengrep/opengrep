@@ -185,6 +185,10 @@ val range_of_tokens_unsafe : Tok.t list -> Tok_range.t
 val range_of_tokens : Tok.t list -> Tok_range.t option
 val range_of_any_opt : AST_generic.any -> (Tok.location * Tok.location) option
 
+val lambda_tok : AST_generic.function_definition -> Tok.t
+(** The token that identifies a lambda: the token of its kind, or the first
+    token of the lambda when a front end gives the kind a fake token. *)
+
 val nearest_any_of_pos :
   AST_generic.program ->
   int ->

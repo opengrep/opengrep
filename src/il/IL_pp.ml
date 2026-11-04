@@ -164,6 +164,7 @@ and pp_lval { base; rev_offset } =
       match off.o with
       | Dot name -> acc ^ "." ^ pp_name name
       | Index e -> Printf.sprintf "%s[%s]" acc (pp_exp e)
+      | DotDynamic e -> Printf.sprintf "%s.{%s}" acc (pp_exp e)
       | Slice lo -> Printf.sprintf "%s[%d..]" acc lo)
     base_str offsets
 
@@ -249,6 +250,10 @@ let pp_exp_bounded ~(max : int) (e : exp) : string =
             emit "[";
             go e;
             emit "]"
+        | DotDynamic e ->
+            emit ".{";
+            go e;
+            emit "}"
         | Slice lo -> emit (Printf.sprintf "[%d..]" lo))
       (List.rev rev_offset)
   and go_composite ck exps =

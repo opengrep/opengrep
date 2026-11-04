@@ -1,0 +1,10 @@
+rules:
+- id: bare-call-overload-by-argument-type
+  languages: [csharp]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: Source(...)
+  pattern-sinks:
+    - pattern: Sink(...)

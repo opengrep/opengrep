@@ -517,7 +517,9 @@ let construction_resolver ~(lang : Lang.t) ~(type_state : Type_state.t)
   Option.bind (Callee_resolution.expr_of_type_name ty)
     (fun (callee : G.expr) ->
       Callee_resolution.identify_callee_interfile ~lang ~type_state
-        ~func_lookup ~caller_parent_path ~call_arity ~allow_constructor:true
+        ~func_lookup ~caller_parent_path
+        ~call:{ Callee_resolution.arity = call_arity; arg_types = [] }
+        ~allow_constructor:true
         callee)
 
 let invocation_resolver ~(func_lookup : Func_lookup.t)
@@ -598,6 +600,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       staged "same-file funcs table" @@ fun () ->
       build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str
     in
+    let module_scopes = Visit_function_defs.module_scopes fi.fi_ast in
     let func_lookup =
       staged "func_lookup create" @@ fun () ->
       Func_lookup.create
@@ -630,6 +633,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           (match file_scope with
            | Some (scope : file_scope) -> scope.own_modules
            | None -> [])
+        ~module_scopes
         ()
     in
     staged "stamp var types" (fun () ->
@@ -762,7 +766,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
            | Some ent when ent.G.attrs = [] -> edges
            | Some ent ->
              let dec_calls =
-               FA.extract_decorator_calls
+               FA.extract_decorator_calls ~lang
                  ~identify_callee:
                    (Callee_resolution.identify_callee_interfile ~lang
                    ~type_state:file_type_state)
@@ -812,6 +816,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
             (match file_scope with
              | Some (scope : file_scope) -> scope.own_modules
              | None -> [])
+          ~module_scopes
           ()
       in
       FA.extract_toplevel_hof_callbacks ~lang

@@ -37,10 +37,20 @@ type invocation_resolver =
 val resolve_constructor_from_type :
   lang:Lang.t -> all_funcs:func_info list -> AST_generic.type_ -> fn_id option
 
+type call = { arity : int; arg_types : AST_generic.type_ option list }
+(** A call as the resolver sees it: the number of its arguments and the type
+    of each, where the declaration of an argument variable gives one. *)
+
+val call_of_arguments : lang:Lang.t -> AST_generic.argument list -> call
+
+val call_key : call -> int * AST_generic.canonical_name option list
+(** The arity and the argument classes of a call, which decide its
+    resolution: a key for a memo of resolutions. *)
+
 type call_site_resolver =
   ?func_lookup:Func_lookup.t ->
   ?caller_parent_path:IL.name option list ->
-  ?call_arity:int ->
+  ?call:call ->
   ?allow_constructor:bool ->
   AST_generic.expr ->
   fn_id option
@@ -51,7 +61,7 @@ val identify_callee :
   ?func_lookup:Func_lookup.t ->
   ?type_state:Type_state.t ->
   ?caller_parent_path:IL.name option list ->
-  ?call_arity:int ->
+  ?call:call ->
   ?allow_constructor:bool ->
   AST_generic.expr ->
   fn_id option
@@ -67,7 +77,7 @@ val identify_callee_interfile :
   type_state:Type_state.t ->
   ?func_lookup:Func_lookup.t ->
   ?caller_parent_path:IL.name option list ->
-  ?call_arity:int ->
+  ?call:call ->
   ?allow_constructor:bool ->
   AST_generic.expr ->
   fn_id option

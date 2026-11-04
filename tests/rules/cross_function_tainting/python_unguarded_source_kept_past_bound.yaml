@@ -1,0 +1,12 @@
+rules:
+- id: python_unguarded_source_kept_past_bound
+  languages: [python]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  options:
+    guarded_taint_signatures: true
+  pattern-sources:
+    - pattern: source(...)
+  pattern-sinks:
+    - pattern: sink(...)

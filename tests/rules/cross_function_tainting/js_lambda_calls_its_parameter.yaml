@@ -1,0 +1,10 @@
+rules:
+- id: js_lambda_calls_its_parameter
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

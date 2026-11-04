@@ -1,0 +1,11 @@
+rules:
+  - id: php_returned_closure_holds_its_copy
+    message: taint through a closure returned by its maker
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

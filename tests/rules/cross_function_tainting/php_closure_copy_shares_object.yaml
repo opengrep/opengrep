@@ -1,0 +1,10 @@
+rules:
+- id: php_closure_copy_shares_object
+  languages: [php]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

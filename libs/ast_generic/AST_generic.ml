@@ -305,6 +305,9 @@ module SId : sig
   (* An IL temporary, counted per lowering. *)
   val temp : file:string -> int -> t
 
+  (* Whether the sid is an IL temporary's. *)
+  val is_temp : t -> bool
+
   (* Injective within a file. *)
   val to_int : t -> int
 
@@ -334,6 +337,17 @@ end = struct
   }
   [@@deriving show, eq, ord, hash, sexp]
 
+  (* The identity, an integer, is compared before the file: sids are
+     compared on every lookup of a name, and almost all of them are of one
+     file, whose path would be compared in full each time. *)
+  let compare (a : t) (b : t) : int =
+    match compare_identity a.identity b.identity with
+    | 0 -> String.compare a.file b.file
+    | other -> other
+
+  let equal (a : t) (b : t) : bool =
+    equal_identity a.identity b.identity && String.equal a.file b.file
+
   (* Caller supplies the real [file] (single-file lowered program); a placeless
      [Error] token still gets the real file with zeroed position. *)
   let site_of_tok ?name tok =
@@ -355,6 +369,13 @@ end = struct
 
   let no_site = { name = ""; line = 0; col = 0 }
   let temp ~file idx = { file; identity = Temp idx; site = no_site }
+
+  let is_temp t =
+    match t.identity with
+    | Temp _ -> true
+    | Binding _
+    | Site _ ->
+        false
 
   let to_int t =
     match t.identity with
@@ -1746,6 +1767,9 @@ and keyword_attribute =
   (* for parameters: a Ruby keyword parameter 'sep:' takes a named
    * argument only, never a positional one *)
   | KeywordOnly
+  (* for parameters: a PHP parameter '&$x' is bound to the caller's
+   * variable, not to a copy of its value *)
+  | ByReference
 
 (* By name application in Scala, via => T, in parameter *)
 

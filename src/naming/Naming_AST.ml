@@ -763,20 +763,14 @@ let params_of_parameters (env : env) (params : parameters) :
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
-       (* Ruby [&callback] block parameter and PHP [&$var] by-reference
-        * parameter are both produced as
-        * [OtherParam("Ref", [Pa(Param(...))])] by their respective AST
-        * converters. Treat the inner [Param] as a regular parameter so
-        * references to it in the body resolve correctly. Scoped to these
-        * two languages to avoid accidentally shadowing any other future
-        * use of the [("Ref", _)] tag. *)
+       (* The Ruby and Crystal [&callback] block parameter is produced as
+        * [OtherParam("Ref", [Pa(Param(...))])] by their AST converters. Treat
+        * the inner [Param] as a regular parameter so references to it in
+        * the body resolve correctly. *)
        | OtherParam
            ( ("Ref", _),
              [ Pa (Param { pname = Some id; pinfo = id_info; ptype = typ; _ })
-             ] )
-         when (match env.lang with
-               | Lang.Ruby | Lang.Php -> true
-               | _ -> false) ->
+             ] ) ->
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
@@ -1402,6 +1396,13 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                   self#visit_defining_entity venv entity;
                   self#visit_definition_kind venv (snd x)
               | _ :: _ -> super#visit_definition venv x)
+      | (entity, FuncDef _) when not (is_resolvable_name_ctx env lang) ->
+          (* A method in a class whose body is no scope that the method
+             bodies see (Python, Swift): the name binds a member of the
+             class, so it is a defining occurrence. Looking it up would
+             resolve it to a same-named global function. *)
+          self#visit_defining_entity venv entity;
+          self#visit_definition_kind venv (snd x)
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
           let s = String.lowercase_ascii (Tok.content_of_tok tok) in

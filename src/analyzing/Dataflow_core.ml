@@ -117,6 +117,17 @@ let (inout_to_str : ('env -> string) -> 'env inout -> string) =
  *)
 type 'env transfn = 'env mapping -> nodei -> 'env inout
 
+(* The order in which the fixpoint computes the nodes. *)
+type iteration =
+  | Weak_topological_order
+      (* Bourdoncle's recursive strategy over the weak topological order: a
+         node is computed after its predecessors outside the cycles it is in,
+         and a cycle's head bounds the rounds of the cycle. *)
+  | Worklist
+      (* The least pending node first, each node visited at most
+         [Limits_semgrep.taint_MAX_VISITS_PER_NODE] times; it builds no
+         order, so a fixpoint over a small graph allocates little. *)
+
 module Make (F : Flow) = struct
   let mapping_to_str (f : F.flow) env_to_str mapping =
     array_fold_left_idx
@@ -135,8 +146,93 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
-  let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
-      workset =
+  module WTO = Graph.WeakTopological
+
+  (* Bourdoncle's recursive iteration strategy over the weak topological
+     order: a vertex is computed once, after its predecessors outside the
+     cycles it is in; a component computes its head, then its body, until the
+     head is stable or has used its rounds. *)
+  let weak_topological_worker eq_env mapping trans (flow : F.flow) succs
+      (start : nodei) workset =
+    let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
+    (* A node is computed on its first visit and again only when a
+       predecessor has changed since: [dirty] holds the nodes to compute. *)
+    let dirty = Array.make (Array.length mapping) false in
+    NodeiSet.iter (fun (ni : nodei) -> dirty.(ni) <- true) workset;
+    (* Computes [ni] again if it is dirty; whether its value changed. *)
+    let update (ni : nodei) : bool =
+      if not dirty.(ni) then false
+      else (
+        dirty.(ni) <- false;
+        let old = mapping.(ni) in
+        let new_ = trans mapping ni in
+        if eq_inout eq_env old new_ then false
+        else (
+          mapping.(ni) <- new_;
+          (* [update] reads only the nodes of [workset]. *)
+          NodeiSet.iter (fun (succ : nodei) -> dirty.(succ) <- true) (succs flow ni);
+          true))
+    in
+    (* The rounds of a component, counted over the whole fixpoint: a loop
+       nested in another gets [taint_MAX_VISITS_PER_NODE] rounds in all, not
+       that many in every round of the enclosing loop. *)
+    let rounds_done = Array.make (Array.length mapping) 0 in
+    let rec run (element : nodei WTO.element) : unit =
+      match element with
+      | WTO.Vertex ni -> ignore (update ni : bool)
+      | WTO.Component (head, body) ->
+          ignore (update head : bool);
+          let rec rounds () =
+            WTO.fold_left (fun () (element : nodei WTO.element) -> run element) () body;
+            (* The head is computed after the last round too, so that the
+               nodes after the component see what the body last produced. *)
+            if update head then
+              if rounds_done.(head) < max_visits_per_node then (
+                rounds_done.(head) <- rounds_done.(head) + 1;
+                rounds ())
+              else
+                (* As the visits of a node are bounded, a component that has
+                   used its rounds keeps its last values. *)
+                Log.debug (fun m ->
+                    m "dataflow: the loop at node %d is not stable after %d rounds" head
+                      max_visits_per_node)
+          in
+          rounds ()
+    in
+    (* The weak topological order (Bourdoncle, "Efficient chaotic iteration
+       strategies with widenings", 1993) of the nodes of [workset] reachable
+       from [start]; the nodes it does not reach follow, in index order. *)
+    let module Workset_graph = struct
+      type t = unit
+
+      module V = struct
+        type t = nodei
+
+        let compare = Int.compare
+        let equal = Int.equal
+        let hash = Hashtbl.hash
+      end
+
+      let iter_vertex (f : nodei -> unit) () : unit = NodeiSet.iter f workset
+
+      let iter_succ (f : nodei -> unit) () (ni : nodei) : unit =
+        NodeiSet.iter (fun (succ : nodei) -> if NodeiSet.mem succ workset then f succ) (succs flow ni)
+    end in
+    let module Order = WTO.Make (Workset_graph) in
+    let rec vertices (acc : NodeiSet.t) (element : nodei WTO.element) : NodeiSet.t =
+      match element with
+      | WTO.Vertex ni -> NodeiSet.add ni acc
+      | WTO.Component (head, body) -> WTO.fold_left vertices (NodeiSet.add head acc) body
+    in
+    (if NodeiSet.mem start workset then (
+       let order = Order.recursive_scc () start in
+       WTO.fold_left (fun () (element : nodei WTO.element) -> run element) () order;
+       NodeiSet.diff workset (WTO.fold_left vertices NodeiSet.empty order)
+       |> NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)))
+     else NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)) workset);
+    (mapping, `Ok)
+
+  let worklist_worker eq_env mapping trans (flow : F.flow) succs workset =
     (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
     let max_nodei = Array.length mapping - 1 in
     let num_vertices = flow.graph#nb_nodes in
@@ -181,6 +277,7 @@ module Make (F : Flow) = struct
       NodeiSet.empty
 
   let (fixpoint :
+        iteration:iteration ->
         timeout:float ->
         eq_env:('env -> 'env -> bool) ->
         init:'env mapping ->
@@ -188,13 +285,17 @@ module Make (F : Flow) = struct
         flow:F.flow ->
         forward:bool ->
         'env mapping * [ `Ok | `Timeout ]) =
-   fun ~timeout ~eq_env ~init ~trans ~flow ~forward ->
+   fun ~iteration ~timeout:_ ~eq_env ~init ~trans ~flow ~forward ->
     let succs = if forward then forward_succs else backward_succs in
     let work =
       (* This prevents dead code from getting analyzed. *)
       flow.reachable
     in
-    fixpoint_worker ~timeout eq_env init trans flow succs work
+    match iteration with
+    | Weak_topological_order ->
+        let start = if forward then flow.entry else flow.exit in
+        weak_topological_worker eq_env init trans flow succs start work
+    | Worklist -> worklist_worker eq_env init trans flow succs work
 
   (*****************************************************************************)
   (* Helpers *)

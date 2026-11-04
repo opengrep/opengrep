@@ -1,0 +1,13 @@
+rules:
+  - id: java_method_with_lambda_argument_propagates_receiver
+    message: taint from the receiver of a method called with a lambda
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

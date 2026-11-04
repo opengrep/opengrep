@@ -50,10 +50,13 @@ let taint_FIXPOINT_TIMEOUT = 0.2
 (* Maximum call chain depth followed by interfile taint when neither the
  * scan nor the rule sets one; negative is unbounded. *)
 let taint_INTERFILE_DEPTH = 3
-(* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
- * is visted more often than this the assumption is that it is a cycle and so the
- * fixpoint stops *)
+(* The rounds of a loop (a component of the weak topological order) in a
+ * dataflow fixpoint. *)
 let taint_MAX_VISITS_PER_NODE = 4
+
+(* Maximum nesting of callbacks resolved when a signature is instantiated: a
+ * callback invoked by a callback at this depth is not resolved. *)
+let taint_MAX_CALLBACK_DEPTH = 4
 
 (** Bounds the number of variables we can track. *)
 let taint_MAX_TAINTED_VARS = 1000
@@ -72,6 +75,27 @@ let taint_MAX_OBJ_FIELDS = 10
  * able to run inter-file, and they should be discouraged anyways.
  *)
 let taint_MAX_TAINT_SET_SIZE = 25
+
+(* The sources of one label that a taint set keeps: a sink needs one, the
+ * others only add alternative traces. *)
+let taint_MAX_SOURCES_PER_LABEL = 8
+
+(* The paths of one input whose taint variables a taint set keeps before they
+ * are replaced by the variables of the longest path they all extend. It is
+ * [taint_MAX_OBJ_FIELDS]: the reads of a function that reads every field an
+ * object holds stay apart. A larger bound slows the signature fixpoint on
+ * large JavaScript projects (moodle interfile with rules_new). *)
+let taint_MAX_PLACEHOLDERS_PER_INPUT = 10
+
+(* The functions that a call through a value holding several of them
+ * resolves to, each by its signature: one read through an index the
+ * analysis does not know, or one inside the resolution of a callback.
+ * Past it the call is the call of an unknown function. *)
+let taint_MAX_FUNCTIONS_PER_CALL = 10
+
+(* The creation sites of one lambda whose closures are kept apart; past it
+ * they are joined into one closure. *)
+let taint_MAX_CLOSURES_PER_LAMBDA = 8
 
 (** Bounds the length of the offsets we can track per arg/poly-taint.
  *

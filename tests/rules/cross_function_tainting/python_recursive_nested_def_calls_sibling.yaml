@@ -1,0 +1,11 @@
+rules:
+  - id: test-recursive-nested-def
+    message: The value read through nested functions reaches the sink
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: request.args[...]
+    pattern-sinks:
+      - pattern: sink(...)

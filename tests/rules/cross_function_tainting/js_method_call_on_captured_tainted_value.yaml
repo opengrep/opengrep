@@ -1,0 +1,10 @@
+rules:
+- id: js_method_call_on_captured_tainted_value
+  languages: [js]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

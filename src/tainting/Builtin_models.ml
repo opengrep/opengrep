@@ -17,6 +17,17 @@ let make_callback_var () =
 let synthetic_params_il (params : Signature.params) : IL.param list =
   List_.map (fun _ -> IL.ParamFixme) params
 
+(** A builtin signature: [params] and [effects], with synthetic [params_il]
+    and no closures. *)
+let synthetic_signature (params : Signature.params) (effects : Effects.t) :
+    Signature.t =
+  {
+    Signature.params;
+    params_il = synthetic_params_il params;
+    closures = Shape_and_sig.ClosureMap.empty;
+    effects;
+  }
+
 (** Helper to create args_taints list with taint at specified index *)
 let make_args_taints taint_set taint_arg_index =
   List.init (taint_arg_index + 1) (fun idx ->
@@ -51,7 +62,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = { Taint.name = "callback"; index = 0 };
+        arg = Taint.Param { Taint.name = "callback"; index = 0 };
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -61,11 +72,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   (* The signature of the function that will be returned *)
   let params = [ Signature.P "callback" ] in
   let returned_fun_sig =
-    {
-      Signature.params;
-      params_il = synthetic_params_il params;
-      effects = Effects.singleton hof_effect;
-    }
+    synthetic_signature params (Effects.singleton hof_effect)
   in
 
   (* The signature for the method itself (arity 0) returns a Fun shape with the array's taints *)
@@ -80,11 +87,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
       }
   in
   let method_sig =
-    {
-      Signature.params = [];
-      params_il = synthetic_params_il [];
-      effects = Effects.singleton return_effect;
-    }
+    synthetic_signature [] (Effects.singleton return_effect)
   in
 
   (* Add signatures for all methods using simple string keys *)
@@ -131,7 +134,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = callback_arg;
+        arg = T.Param callback_arg;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -152,11 +155,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
   in
 
   let hof_sig =
-    {
-      Signature.params;
-      params_il = synthetic_params_il params;
-      effects = Effects.of_list [ hof_effect; return_effect ];
-    }
+    synthetic_signature params (Effects.of_list [ hof_effect; return_effect ])
   in
 
   (* Add signatures for all functions using simple string keys *)
@@ -204,7 +203,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = callback_arg;
+        arg = T.Param callback_arg;
         arg_offset = [];
         args_taints;
         guards = Effect_guard.top;
@@ -226,11 +225,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
   in
 
   let hof_sig =
-    {
-      Signature.params;
-      params_il = synthetic_params_il params;
-      effects = Effects.of_list [ hof_effect; return_effect ];
-    }
+    synthetic_signature params (Effects.of_list [ hof_effect; return_effect ])
   in
 
   (* Add signatures for all methods using simple string keys *)
@@ -328,7 +323,7 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
             IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
             eorig = NoOrig;
           };
-        arg = impl_arg;
+        arg = T.Param impl_arg;
         arg_offset = [ Oint callback_index ];
         args_taints;
         guards;
@@ -382,11 +377,7 @@ let add_function_hof_signatures_clojure db (grouped : (string * Lang_config.hof_
       in
       let params = [ Signature.P "impl" ] in
       let hof_sig =
-        {
-          Signature.params;
-          params_il = synthetic_params_il params;
-          effects = Effects.of_list effects;
-        }
+        synthetic_signature params (Effects.of_list effects)
       in
       add_builtin_signature acc_db function_name
         { sig_ = hof_sig; arity = Arity_exact 1 })
@@ -457,7 +448,7 @@ let to_lval_this taint_set =
 let add_method_signatures db method_names arity effects =
   let params = List.init arity (fun _ -> Signature.Other) in
   let sig_ =
-    { Signature.params; params_il = synthetic_params_il params; effects }
+    synthetic_signature params effects
   in
   List.fold_left
     (fun acc_db name -> add_builtin_signature acc_db name { sig_; arity = Arity_exact arity })

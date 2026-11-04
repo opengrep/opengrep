@@ -111,6 +111,10 @@ type ident = G.ident [@@deriving show, eq, ord]
 type name = { ident : ident; sid : G.sid; id_info : G.id_info }
 [@@deriving show,eq]
 
+(* The identifier of the variable that holds a lambda, and of the lambda as a
+   function. *)
+let lambda_var_ident = "_tmp_lambda"
+
 (* [SId.to_string], not the derived [show]: this string keys the constant
    propagation environment on every variable access, and the derived
    printer goes through [Format]. *)
@@ -190,7 +194,12 @@ let any_of_orig = function
 (* Parameters and arguments *)
 (*****************************************************************************)
 
-type name_param = { pname : name; pdefault : G.expr option }
+type name_param = {
+  pname : name;
+  pdefault : G.expr option;
+  by_reference : bool;
+      (** The parameter is bound to the caller's variable (PHP '&$x'). *)
+}
 [@@deriving show { with_path = false }, ord]
 
 type param =
@@ -212,6 +221,30 @@ type 'a argument = Unnamed of 'a | Named of ident * 'a
  * as `x` in Scala's `f(using x)`: such arguments fill the context parameters
  * in order. *)
 let context_arg = "!context_arg!"
+
+let value_of_argument (arg : 'a argument) : 'a =
+  match arg with
+  | Unnamed value
+  | Named (_, value) ->
+      value
+
+let map_argument (f : 'a -> 'b) (arg : 'a argument) : 'b argument =
+  match arg with
+  | Unnamed value -> Unnamed (f value)
+  | Named (id, value) -> Named (id, f value)
+
+(* Unnamed arguments come first; named ones compare by their names, not
+   their tokens, first. *)
+let compare_argument_by_name (compare_value : 'a -> 'a -> int) (arg1 : 'a argument)
+    (arg2 : 'a argument) : int =
+  match (arg1, arg2) with
+  | Unnamed v1, Unnamed v2 -> compare_value v1 v2
+  | Named ((name1, _), v1), Named ((name2, _), v2) -> (
+      match String.compare name1 name2 with
+      | 0 -> compare_value v1 v2
+      | other -> other)
+  | Unnamed _, Named _ -> -1
+  | Named _, Unnamed _ -> 1
 
 (*****************************************************************************)
 (* Parent iterator *)
@@ -241,12 +274,12 @@ class virtual ['self] iter_parent =
 
     method visit_param env param =
       match param with
-      | Param { pname; pdefault = _ }
-      | ParamReceiver { pname; pdefault = _ }
-      | ParamRest { pname; pdefault = _ }
-      | ParamKwd { pname; pdefault = _ }
-      | ParamContext { pname; pdefault = _ }
-      | ParamPattern ({ pname; pdefault = _ }, _) ->
+      | Param { pname; _ }
+      | ParamReceiver { pname; _ }
+      | ParamRest { pname; _ }
+      | ParamKwd { pname; _ }
+      | ParamContext { pname; _ }
+      | ParamPattern ({ pname; _ }, _) ->
           self#visit_name env pname
       | ParamFixme -> ()
 
@@ -322,6 +355,9 @@ and offset_kind =
    *)
   | Dot of name
   | Index of exp
+  (* A field whose name is computed at run time, e.g. PHP `$o->$k`: a
+   * property of an object, not an element of an array. *)
+  | DotDynamic of exp
   (* [Slice n] is a "view" of the base value from index [n] to the end —
    * the trailing-rest of a list/tuple. Emitted for body-level rest
    * destructure (Clojure [a & rest], Elixir [h | t], JS [a, ...r]).
@@ -478,6 +514,9 @@ and function_definition = {
   fparams : param list;
   frettype : G.type_ option;
   fbody : stmt list;
+  fcaptured_by_reference : name list;
+      (** The variables of enclosing functions that the function declares it
+          captures by reference (PHP [use (&$x)]). *)
 }
 
 (*****************************************************************************)
@@ -518,8 +557,19 @@ and node_kind =
 type edge = Direct
 type cfg = (node, edge) CFG.t
 
-type fun_cfg = { params : param list; cfg : cfg; lambdas : lambdas_cfgs }
+type fun_cfg = {
+  params : param list;
+  cfg : cfg;
+  lambdas : lambdas_cfgs;
+  captured_by_reference : NameSet.t;
+      (** [function_definition.fcaptured_by_reference]. *)
+  fkind : G.function_kind;  (** [function_definition.fkind]. *)
+}
 and lambdas_cfgs = fun_cfg NameMap.t
+
+(* The code of a file or a class outside its functions, as a function. *)
+let top_level_fun_cfg (cfg : cfg) (lambdas : lambdas_cfgs) : fun_cfg =
+  { params = []; cfg; lambdas; captured_by_reference = NameSet.empty; fkind = G.Function }
 
 (* an int representing the index of a node in the graph *)
 type nodei = Ograph_extended.nodei

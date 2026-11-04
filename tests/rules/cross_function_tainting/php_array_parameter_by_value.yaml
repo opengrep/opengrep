@@ -1,0 +1,11 @@
+rules:
+  - id: test-array-parameter-by-value
+    message: Taint written into a parameter reaches the caller
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

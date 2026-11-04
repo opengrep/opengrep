@@ -483,7 +483,9 @@ let atom_has_frozen_fetch (params : IL.param list) (atom : IL.exp) : bool =
       lv.IL.rev_offset
       |> List.exists (fun (o : IL.offset) ->
              match o.IL.o with
-             | IL.Index e -> go e
+             | IL.Index e
+             | IL.DotDynamic e ->
+                 go e
              | IL.Dot _
              | IL.Slice _ ->
                  false)
@@ -618,7 +620,7 @@ let eval_with (eval_atom : IL.exp -> bool option) (c : cond) : bool option =
 let compare_param_ref (n1, i1) (n2, i2) =
   let c = Int.compare i1 i2 in
   if c <> 0 then c
-  else String.compare (IL.str_of_name n1) (IL.str_of_name n2)
+  else IL.compare_name n1 n2
 
 let top : t = { cond = cond_true; param_refs = [] }
 let is_top (g : t) : bool = cond_is_top g.cond

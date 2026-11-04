@@ -37,7 +37,7 @@ let check_var_def (taint_inst : Taint_rule_inst.t) env id ii expr =
   let effects, end_mapping =
     (* There could be taint effects indeed, e.g. if 'expr' is `sink(taint)`. *)
     Dataflow_tainting.fixpoint taint_inst ~in_env:env
-      IL.{ params = []; cfg; lambdas }
+      (IL.top_level_fun_cfg cfg lambdas)
   in
   let out_env = end_mapping.(cfg.exit).Dataflow_core.out_env in
   let lval : IL.lval = { base = Var name; rev_offset = [] } in
@@ -54,7 +54,7 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
         which are not within the normal control flow of a code.
         We can safely say there's no incoming taints to these sources.
     *)
-    |> T.taints_of_pms ~incoming:T.Taint_set.empty
+    |> T.taints_of_pms ~grouping:taint_inst.source_grouping ~incoming:T.Taint_set.empty
   in
   let expr_taints, expr_effects =
     match opt_expr with

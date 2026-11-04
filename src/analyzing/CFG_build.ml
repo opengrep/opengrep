@@ -451,7 +451,14 @@ and cfg_of_stmts ?tok (xs : stmt list) : IL.cfg * IL.lambdas_cfgs =
 and cfg_of_fdef fdef =
   let cfg, lambdas = cfg_of_stmts ~tok:(snd fdef.fkind) fdef.fbody in
   mark_at_exit_nodes cfg;
-  IL.{ params = fdef.fparams; cfg; lambdas }
+  IL.
+    {
+      params = fdef.fparams;
+      cfg;
+      lambdas;
+      captured_by_reference = NameSet.of_list fdef.fcaptured_by_reference;
+      fkind = fst fdef.fkind;
+    }
 
 let cfg_of_gfdef lang fdef =
   let fdef_il = AST_to_IL.function_definition lang fdef in

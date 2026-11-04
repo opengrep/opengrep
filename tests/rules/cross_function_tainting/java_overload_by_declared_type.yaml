@@ -1,0 +1,10 @@
+rules:
+- id: java-overload-by-declared-type
+  languages: [java]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source(...)
+  pattern-sinks:
+    - pattern: sink(...)

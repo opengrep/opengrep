@@ -18,15 +18,21 @@ val recursive_members :
     functions, or one function that calls itself. *)
 
 val store :
+  lang:Lang.t ->
+  widen:bool ->
   ?max_shape_depth:int ->
   Function_id.t ->
   Shape_and_sig.extended_sig list ->
   db ->
   db
-(** Replaces the function's signatures with these, so that the rounds of a
-    cycle do not accumulate several signatures of one arity (which makes
-    [find_by_arity] give up). A stored shape is cut at [max_shape_depth],
-    the taints below the cut folded into the cut cell: a self-recursive
+(** Replaces the function's signatures in [db] with these (the extraction
+    has already added them to [db]), so the rounds of a cycle do not
+    accumulate several signatures of one arity, which makes [find_by_arity]
+    give up; [run] joins them with the previous round's once the rounds
+    repeat. With [widen], for a member of a cycle, the
+    signatures' taint variables are widened
+    ([Taint_shape.widen_signature_taints]). A stored shape is cut at
+    [max_shape_depth], the taints below the cut folded into the cut cell: a self-recursive
     builder nests its return shape one level deeper per round, with no
     fixpoint in the shape domain, and a builder of [k] fields stores a
     [k]-way tree of the cut depth. The depth to pass is the longest offset
@@ -34,6 +40,7 @@ val store :
     ever read. *)
 
 val run :
+  lang:Lang.t ->
   rule_id:Rule_ID.t ->
   graph:Call_graph.G.t ->
   sccs:Function_id.t list list ->
@@ -41,7 +48,10 @@ val run :
   db ->
   db
 (** [analyze] summarises one function from its callees' signatures in the
-    store and stores its own (with [store]); it emits no finding. A cyclic
+    store and stores its own (with [store]); it emits no finding. Once the
+    rounds of a cycle repeat ([Graph_fixpoint]), a function's signatures are
+    joined with the previous round's, one per arity, with the effects and
+    closures of both. A cyclic
     component that is not stable after [max_rounds] keeps its current
     store, with a warning naming the rule. *)
 

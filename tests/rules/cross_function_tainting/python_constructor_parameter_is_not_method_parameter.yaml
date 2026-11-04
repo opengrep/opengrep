@@ -1,0 +1,10 @@
+rules:
+- id: python_constructor_parameter_is_not_method_parameter
+  languages: [python]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

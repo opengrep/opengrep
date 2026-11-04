@@ -182,6 +182,13 @@ let fresh_lval ?str env tok : lval =
   let var = fresh_var ?str env tok in
   { base = Var var; rev_offset = [] }
 
+(* The variable that holds the lambda [fdef], at the token that identifies it
+   ([AST_generic_helpers.lambda_tok]). The name identifies the lambda, e.g. as
+   the key of its signature, and the call graph names it from the same token
+   ([Visit_function_defs.synth_lambda_il_name]). *)
+let fresh_lambda_lval env (fdef : G.function_definition) : lval =
+  fresh_lval env ~str:IL.lambda_var_ident (H.lambda_tok fdef)
+
 let var_of_id_info id id_info : name =
   let sid =
     match !(id_info.G.id_resolved) with
@@ -517,9 +524,17 @@ let rec lval env eorig : stmts * lval =
         | G.FN name ->
             let ss, attr = expr env (G.N name |> G.e) in
             (ss, Index attr)
-        | G.FDynamic e2orig ->
+        | G.FDynamic e2orig -> (
             let ss, attr = expr env e2orig in
-            (ss, Index attr)
+            (* A member whose name is a string literal, e.g. PHP's
+               [$o->{'x'}], is the field of that name; one whose name is
+               another literal, e.g. Rust's tuple element [t.0], is the
+               element at that key. *)
+            match attr.e with
+            | Literal (G.String (_, id, _)) ->
+                (ss, Dot (var_of_id_info id (G.empty_id_info ())))
+            | Literal _ -> (ss, Index attr)
+            | _ -> (ss, DotDynamic attr))
       in
       let offset' = { o = offset'; oorig = SameAs eorig } in
       let ss_lv, lv1 = nested_lval env tok e1orig in
@@ -2540,7 +2555,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
       comprehension env er clauses
   | G.Lambda fdef ->
-      let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+      let lval = fresh_lambda_lval env fdef in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -3035,7 +3050,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lval env ~str:"_tmp_lambda" (snd fdef.fkind) in
+                  let lval = fresh_lambda_lval env fdef in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
@@ -3976,24 +3991,23 @@ and parameters env params : param list =
                    ~str:(Printf.sprintf "!context_param!%d" idx)
                    (G.fake G.using_tag)
            in
-           ParamContext { pname; pdefault }
+           ParamContext { pname; pdefault; by_reference = false }
        | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ }
-         when List.exists
-                (function
-                  | G.KeywordAttr (G.KeywordOnly, _) -> true
-                  | _ -> false)
-                pattrs ->
-           ParamKwd { pname = var_of_id_info i pinfo; pdefault }
-       | G.Param { pname = Some i; pinfo; pdefault; _ } ->
+         when H.has_keyword_attr G.KeywordOnly pattrs ->
+           ParamKwd
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
+       | G.Param { pname = Some i; pinfo; pdefault; pattrs; _ } ->
            let pname = var_of_id_info i pinfo in
            (* Clojure/Elixir/OCaml encode multi-clause functions with a
               single synthetic !!_implicit_param! that already receives the
               CList of actual arguments (the call site wraps them). Keep it
               as a plain positional Param so the signature layer binds the
               CList directly instead of re-wrapping it. *)
-           Param { pname; pdefault }
-       | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
-           ParamRest { pname = var_of_id_info i pinfo; pdefault }
+           Param { pname; pdefault; by_reference = H.has_keyword_attr G.ByReference pattrs }
+       | G.ParamRest (_, { pname = Some i; pinfo; pdefault; pattrs; _ }) ->
+           ParamRest
+             { pname = var_of_id_info i pinfo; pdefault;
+               by_reference = H.has_keyword_attr G.ByReference pattrs }
        | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; _ }) ->
            (* The synthetic [!!_implicit_param!] binder from
             * [implicit_param_classic] becomes the IL name_param. Rename
@@ -4006,20 +4020,25 @@ and parameters env params : param list =
            let _, tk = i in
            let i = G.implicit_param_id_indexed idx tk in
            let pname = var_of_id_info i pinfo in
-           ParamPattern ({ pname; pdefault }, pat)
+           ParamPattern ({ pname; pdefault; by_reference = false }, pat)
        | G.ParamReceiver { pname = Some i; pinfo; pdefault; _ } ->
-           ParamReceiver { pname = var_of_id_info i pinfo; pdefault }
-       (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
+           ParamReceiver
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
+       (* Ruby block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
        | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
          ->
-           Param { pname = var_of_id_info i pinfo; pdefault }
+           Param
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
        (* Ruby, Crystal: the anonymous block parameter '&' takes the block
         * like a named one does *)
        | G.OtherParam (("Ref", t), []) ->
-           Param { pname = fresh_var env ~str:"block" t; pdefault = None }
+           Param
+             { pname = fresh_var env ~str:"block" t; pdefault = None;
+               by_reference = false }
        | G.ParamHashSplat (_, { pname = Some i; pinfo; pdefault; _ }) ->
            (* **kwargs in Python / **opts in Ruby: treat as rest param *)
-           ParamRest { pname = var_of_id_info i pinfo; pdefault }
+           ParamRest
+             { pname = var_of_id_info i pinfo; pdefault; by_reference = false }
        | G.Param { pname = None; _ }
        | G.ParamReceiver { pname = None; _ }
        | G.ParamRest (_, _)
@@ -4919,7 +4938,7 @@ and block_of_yielding_method env fdef fparams : (name * param list) option =
     | Some block -> Some (block, fparams)
     | None ->
         let block = fresh_var env ~str:"block" (snd fdef.G.fkind) in
-        Some (block, fparams @ [ Param { pname = block; pdefault = None } ])
+        Some (block, fparams @ [ Param { pname = block; pdefault = None; by_reference = false } ])
   else None
 
 (* Crystal: a parameter [@x] assigns its argument to the field [@x] of
@@ -4977,11 +4996,39 @@ and function_definition env fdef : function_definition =
    * seeded source taints, and avoids introducing origs that would
    * falsely match enclosing-sink ranges via
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
-  let fbody = function_body env fdef.G.fbody in
+  let fbody =
+    match (fdef.G.fkind, fdef.G.fbody) with
+    (* An arrow whose body is an expression statement returns the value of
+       the expression; where the arrow returns nothing, as a void-compatible
+       Java lambda, the value is discarded, which returning it does not
+       change. *)
+    | (G.Arrow, tok), G.FBStmt { s = G.ExprStmt (e, sc); _ } ->
+        stmt env (G.Return (Tok.fake_tok tok "return", Some e, sc) |> G.s)
+    | _ -> function_body env fdef.G.fbody
+  in
   let fbody =
     rec_point_label_stmts @ instance_var_param_assigns env fdef.G.fparams @ fbody
   in
-  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
+  (* The variables that the closure captures by reference: the declarations
+     of outer variables ([UseOuterDecl]) with the [ByReference] attribute at
+     the head of its body, as PHP's [use (&$x)] gives. *)
+  let fcaptured_by_reference =
+    (match fdef.G.fbody with
+    | G.FBStmt { s = G.Block (_, stmts, _); _ } -> stmts
+    | G.FBStmt _
+    | G.FBExpr _
+    | G.FBDecl _
+    | G.FBNothing ->
+        [])
+    |> List_.filter_map (fun (stmt : G.stmt) ->
+           match stmt.G.s with
+           | G.DefStmt
+               ({ name = G.EN (G.Id (id, id_info)); attrs; _ }, G.UseOuterDecl _)
+             when H.has_keyword_attr G.ByReference attrs ->
+               Some (var_of_id_info id id_info)
+           | _ -> None)
+  in
+  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody; fcaptured_by_reference }
 
 (****************************************************************************)
 (* Entry points *)

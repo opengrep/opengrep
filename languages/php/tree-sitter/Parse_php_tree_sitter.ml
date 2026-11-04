@@ -257,16 +257,16 @@ let map_namespace_name_as_prefix (env : env) (x : CST.namespace_name_as_prefix)
 
 let map_anonymous_function_use_clause (env : env)
     ((v1, v2, v3, v4, v5, v6, v7) : CST.anonymous_function_use_clause) :
-    (bool (* is_ref *) * A.var) list =
+    (Tok.t option (* & *) * A.var) list =
   let v1 = (* pattern [uU][sS][eE] *) token env v1 in
   let v2 = (* "(" *) token env v2 in
-  let v3 = (* "&" *) Option.is_some v3 in
+  let v3 = (* "&" *) Option.map (token env) v3 in
   let v4 = map_variable_name env v4 in
   let v5 =
     List_.map
       (fun (v1, v2, v3) ->
         let v1 = (* "," *) token env v1 in
-        let v2 = (* "&" *) Option.is_some v2 in
+        let v2 = (* "&" *) Option.map (token env) v2 in
         let v3 = map_variable_name env v3 in
         (v2, v3))
       v5

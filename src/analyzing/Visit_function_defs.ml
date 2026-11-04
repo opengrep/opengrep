@@ -216,15 +216,15 @@ let entity_to_il_name (ent : G.entity) : IL.name option =
    not a distinct callable. The fake token wraps the source position so the
    resulting [Function_id] is position-distinct via [Function_id.key]. *)
 let synth_lambda_il_name_of_tok (tok : Tok.t) : IL.name =
-  let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
+  let fake_tok = Tok.fake_tok tok IL.lambda_var_ident in
   IL.{
-    ident = ("_tmp_lambda", fake_tok);
+    ident = (IL.lambda_var_ident, fake_tok);
     sid = G.SId.unsafe_default;
     id_info = G.empty_id_info ();
   }
 
 let synth_lambda_il_name (fdef : G.function_definition) : IL.name =
-  synth_lambda_il_name_of_tok (snd fdef.fkind)
+  synth_lambda_il_name_of_tok (AST_generic_helpers.lambda_tok fdef)
 
 (* Use the synthetic lambda IL.name when [fdef] is a lambda; otherwise use the
    entity's name. Keeps the parent_path consistent with what
@@ -417,6 +417,27 @@ let fold_with_parent_path ~(lang : Lang.t)
       acc_ref := f !acc_ref opt_ent parent_path fdef)
     ast;
   !acc_ref
+
+(* The modules whose bodies [visitor_with_parent_path] takes as the scope of
+   the first element of a path, as it does for a class. *)
+let module_scopes (ast : G.program) : IL.name list =
+  let v =
+    object (_self : 'self)
+      inherit [_] G.iter_no_id_info as super
+
+      method! visit_definition (modules : IL.name list ref) ((ent, def_kind) as def) =
+        (match (def_kind, ent.G.name) with
+        | G.ModuleDef { G.mbody = G.ModuleStruct _; _ }, G.EN name ->
+            Option.iter
+              (fun (module_name : IL.name) -> modules := module_name :: !modules)
+              (g_name_to_il_name name)
+        | _ -> ());
+        super#visit_definition modules def
+    end
+  in
+  let modules = ref [] in
+  v#visit_program modules ast;
+  !modules
 
 (* Visitor for Call expressions at top-level only (skips function bodies).
    Handles both function calls f(...) and method calls obj.m(...) *)

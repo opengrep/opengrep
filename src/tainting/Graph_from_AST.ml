@@ -151,7 +151,8 @@ type fdef_edges = {
 }
 
 (* Tables are per-fdef / per-file top-level, so callee shape + arity suffice. *)
-type callee_memo = (string * int, Func_info.fn_id option) Hashtbl.t
+type callee_memo =
+  (string * (int * AST_generic.canonical_name option list), Func_info.fn_id option) Hashtbl.t
 
 let callee_bare_name_id_info (callee : G.expr) : G.id_info option =
   match callee.G.e with
@@ -172,13 +173,13 @@ let write_back_callee_definition (callee : G.expr) (fn_id : fn_id) : unit =
 
 (* Non-memoisable callee shapes bypass the cache; sole AST write-back chokepoint. *)
 let memo_lookup_or_compute ~(lang : Lang.t) (memo_tbl : callee_memo)
-    ~(call_arity : int) (callee : G.expr)
+    ~(call : Callee_resolution.call) (callee : G.expr)
     (compute : unit -> fn_id option) : fn_id option =
   let result =
     match canonical_callee_key ~lang callee with
     | None -> compute ()
     | Some k ->
-      let key = (k, call_arity) in
+      let key = (k, Callee_resolution.call_key call) in
       (match Hashtbl.find_opt memo_tbl key with
        | Some r -> r
        | None ->
@@ -279,9 +280,9 @@ let extract_calls ~(lang : Lang.t)
     | _ -> acc
   in
   let memo_tbl : callee_memo = Hashtbl.create 64 in
-  let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
-    memo_lookup_or_compute ~lang memo_tbl ~call_arity callee (fun () ->
-        identify_callee ~func_lookup ~caller_parent_path ~call_arity callee)
+  let identify_callee_cached ~(call : Callee_resolution.call) (callee : G.expr) : fn_id option =
+    memo_lookup_or_compute ~lang memo_tbl ~call callee (fun () ->
+        identify_callee ~func_lookup ~caller_parent_path ~call callee)
   in
   (* Lang-gated: off where nested lambdas need the enclosing scope. *)
   let skip_nested =
@@ -327,9 +328,9 @@ let extract_calls ~(lang : Lang.t)
             | Some (sent_callee, sent_args) -> (sent_callee, sent_args)
             | None -> (call_callee, call_args_list)
           in
-          let call_arity = List.length call_args_list in
+          let call = Callee_resolution.call_of_arguments ~lang call_args_list in
           let calls =
-            match identify_callee_cached ~call_arity call_callee with
+            match identify_callee_cached ~call call_callee with
             | Some fn_id ->
               (* Ruby/Crystal [ClassName.new()] uses the class-name token, not the method token. *)
               let tok =
@@ -410,7 +411,7 @@ let extract_calls ~(lang : Lang.t)
     callbacks = callbacks;
     unresolved_call_sites = max 0 (total - List.length resolved) }
 
-let extract_decorator_calls
+let extract_decorator_calls ~(lang : Lang.t)
     ~(identify_callee : Callee_resolution.call_site_resolver)
     ~(func_lookup : Func_lookup.t)
     ?(caller_parent_path = [])
@@ -420,10 +421,8 @@ let extract_decorator_calls
     | G.NamedAttr (_, name, _args) ->
       let synth = G.{ e = G.N name; e_id = -1; e_range = None;
                        is_implicit_return = false; facts = [] } in
-      let call_arity = match _args with
-        | (_, args, _) -> List.length args
-      in
-      (match identify_callee ~func_lookup ~caller_parent_path ~call_arity synth with
+      let call = Callee_resolution.call_of_arguments ~lang (Tok.unbracket _args) in
+      (match identify_callee ~func_lookup ~caller_parent_path ~call synth with
        | Some fn_id ->
          let tok = match name with
            | G.Id ((_, t), _) -> t
@@ -444,17 +443,15 @@ let extract_toplevel_calls ~(lang : Lang.t)
   let func_lookup = Func_lookup.with_local_imports func_lookup None in
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let memo_tbl : callee_memo = Hashtbl.create 64 in
-  let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
-    memo_lookup_or_compute ~lang memo_tbl ~call_arity callee (fun () ->
-        identify_callee ~func_lookup ~caller_parent_path:[] ~call_arity callee)
+  let identify_callee_cached ~(call : Callee_resolution.call) (callee : G.expr) : fn_id option =
+    memo_lookup_or_compute ~lang memo_tbl ~call callee (fun () ->
+        identify_callee ~func_lookup ~caller_parent_path:[] ~call callee)
   in
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
     match e.G.e with
     | G.Call (callee, args) ->
-      let call_arity =
-        let _, args_list, _ = args in List.length args_list
-      in
-      (match identify_callee_cached ~call_arity callee with
+      let call = Callee_resolution.call_of_arguments ~lang (Tok.unbracket args) in
+      (match identify_callee_cached ~call callee with
        | Some fn_id ->
          let tok =
            match callee.G.e with
@@ -527,6 +524,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ~singleton_names:Func_lookup.Class_qn_map.empty
       ~method_sets:(Lang_config.get lang).Lang_config.method_sets
       ~scope_table:Func_lookup.empty_scope_table
+      ~module_scopes:(Visit_function_defs.module_scopes ast)
       ()
   in
   (* Visit all calls in the AST, tracking the current function context *)
@@ -886,18 +884,22 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
   visitor#visit_program (None, []) ast;
 
   (* Now select the innermost (smallest) function for each range *)
+  let top_level_fn_id = [ None; Some (top_level_name_of_ast ast) ] in
+  (* The functions are kept in a list, in the order they are selected, and
+     in a set for the membership test. *)
+  let add_selected ((seen, selected) : FnIdSet.t * fn_id list) (fn_id : fn_id)
+      : FnIdSet.t * fn_id list =
+    if FnIdSet.mem fn_id seen then (seen, selected)
+    else (FnIdSet.add fn_id seen, fn_id :: selected)
+  in
   List.fold_left (fun matching_funcs range ->
     let _, funcs_list = Hashtbl.find range_table range in
-    if List.is_empty funcs_list then
-      let top_level_fn_id = [ None; Some (top_level_name_of_ast ast) ] in
-      if List.exists (Func_info.equal_fn_id top_level_fn_id) matching_funcs
-      then matching_funcs
-      else top_level_fn_id :: matching_funcs
+    if List.is_empty funcs_list then add_selected matching_funcs top_level_fn_id
     else
       (* Prefer a named encloser over a lambda: a lambda isn't a call-graph vertex, so a source/sink on it would prune the enclosing function. *)
       let is_lambda_fn_id (fn_id : fn_id) =
         match List_.last_opt fn_id with
-        | Some (Some name) -> String.equal (fst name.IL.ident) "_tmp_lambda"
+        | Some (Some name) -> String.equal (fst name.IL.ident) IL.lambda_var_ident
         | _ -> false
       in
       let pick_smallest lst =
@@ -918,9 +920,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       in
       match innermost with
       | None -> matching_funcs
-      | Some (innermost_fn_id, _) ->
-        if List.exists (Func_info.equal_fn_id innermost_fn_id) matching_funcs
-        then matching_funcs
-        else innermost_fn_id :: matching_funcs
-  ) [] ranges
+      | Some (innermost_fn_id, _) -> add_selected matching_funcs innermost_fn_id
+  ) (FnIdSet.empty, []) ranges
+  |> snd
   |> List.filter_map fn_id_to_node

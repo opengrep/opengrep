@@ -1,0 +1,11 @@
+rules:
+  - id: php_closure_captures_by_value
+    message: taint through a variable a closure captures
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

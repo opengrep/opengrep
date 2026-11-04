@@ -1,0 +1,12 @@
+rules:
+- id: taint_focus_on_source_reports_every_source
+  languages: [js]
+  message: tainted query
+  severity: ERROR
+  mode: taint
+  options:
+    taint_focus_on: source
+  pattern-sources:
+    - pattern: req.query.$X
+  pattern-sinks:
+    - pattern: db.query(...)

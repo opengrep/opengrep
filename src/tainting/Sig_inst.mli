@@ -32,7 +32,7 @@ type call_effect =
     }
   | ToSinkInCall of {
       callee : IL.exp;
-      arg : Taint.arg;
+      arg : Taint.formal;
       arg_offset : Taint.offset list;
       args_taints : Shape_and_sig.Effect.args_taints;
       guards : Effect_guard.t;
@@ -40,6 +40,10 @@ type call_effect =
               caller resolves the callback at a deeper call chain the
               guard travels with the effect and may still drop it. *)
     }
+  | ToClosures of Shape_and_sig.Shape.closure Shape_and_sig.ClosureMap.t
+      (** The closures of the callee's lambdas, instantiated at the call site,
+          that the [Closed] references in the other effects refer to: they
+          join the caller's table. *)
 
 type call_effects = call_effect list
 
@@ -69,6 +73,8 @@ val instantiate_function_signature :
   ?lookup_sig:(IL.exp -> int -> Shape_and_sig.Signature.t option) ->
   ?depth:int ->
   ?recursive_cache:sig_inst_cache ->
+  ?site_callee:IL.exp ->
+  ?instantiating:Shape_and_sig.Signature.t list ->
   unit ->
   call_effects option
 (** Replaces taint, shape and guard variables in the callee's signature
@@ -92,3 +98,14 @@ val instantiate_function_signature :
     by sig-param position, which the instantiator has no other way to
     obtain. When [outer_params] is omitted, rebinding does not apply
     and unknown guards are dropped. *)
+
+val param_of_index : IL.param list -> int -> IL.name_param option
+(** The parameter numbered [index] as [Taint.arg] numbers parameters: a
+    receiver takes no index. *)
+
+val redirect_captured_writes :
+  params:IL.param list -> Shape_and_sig.Shape.closure -> call_effects -> call_effects
+(** A write that a call of a closure makes to a variable it captures is a
+    write to what the captured variable refers to, when the closure records
+    it: a variable, a parameter among [params] of the function that makes the
+    call, or its [this]. *)
