@@ -4749,7 +4749,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
         let prev_effects = !(env.effects_acc) in
         env.did_self_recurse := false;
         let end_mapping, status =
-          DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+          DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
             ~trans ~forward:true ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -4783,7 +4783,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       in
       run_to_sig_fixpoint 0
     else
-      DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+      DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
         ~trans ~forward:true ~flow
   in
   log_timeout_warning taint_inst env.func.name timeout_status;

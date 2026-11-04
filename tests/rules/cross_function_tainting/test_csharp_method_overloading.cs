@@ -21,7 +21,8 @@ class C
         C c = new C();
         string tainted = source();
         c.Process(tainted);
-        // OK: csharp_method_overload not found, double method with this arity
+        // The type of the argument chooses Process(string) among the overloads of one argument.
+        // ruleid: csharp_method_overload
         sink(c.data);
         c.Process(2, tainted);
         // ruleid: csharp_method_overload

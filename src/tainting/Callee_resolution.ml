@@ -85,13 +85,94 @@ let get_func_arity ~(lang : Lang.t) (f : func_info) : int =
     ~is_static:(Receiver.is_static f.entity)
     (Tok.unbracket f.fdef.G.fparams)
 
+(* A call as the resolver sees it: the number of its arguments and the type
+   of each, where the declaration of an argument variable gives one. *)
+type call = { arity : int; arg_types : G.type_ option list }
+
+(* Where overloads are resolved at compile time, the declared type of an
+   argument variable selects the overload, not the class of the object it
+   holds; the class of the object stands in only for an undeclared type. *)
+let type_of_argument ~(lang : Lang.t) (arg : G.argument) : G.type_ option =
+  match arg with
+  | G.Arg { G.e = G.N (G.Id (_, (info : G.id_info))); _ } ->
+      if Lang_config.overloads_by_type lang then
+        match !(info.G.id_type) with
+        | Some _ as declared -> declared
+        | None -> !(info.G.id_instance_type)
+      else Ty_bare_name.instance_or_declared_type info
+  | _ -> None
+
+let call_of_arguments ~(lang : Lang.t) (args : G.argument list) : call =
+  { arity = List.length args; arg_types = List_.map (type_of_argument ~lang) args }
+
+(* The class a type refers to, by its canonical name: the name naming
+   resolved it to, or else its name as written, which is all a built-in
+   class such as Java's [String] has. An instance of a generic class is of
+   the class. Other types refer to no single class. *)
+let rec class_of_type (ty : G.type_) : G.canonical_name option =
+  let of_name (name : G.name) : G.canonical_name option =
+    let (info : G.id_info), (written : G.canonical_name) =
+      match name with
+      | G.Id ((id, _), info) -> (info, [ id ])
+      | G.IdQualified { name_info; name_last = (id, _), _; name_middle; _ } ->
+          let middle =
+            match name_middle with
+            | Some (G.QDots dots) -> List_.map (fun (((s, _), _) : G.ident * _) -> s) dots
+            | Some (G.QExpr _) | None -> []
+          in
+          (name_info, middle @ [ id ])
+    in
+    match !(info.G.id_resolved) with
+    | Some ((G.ImportedEntity canonical | G.GlobalName (canonical, _)), _) -> Some canonical
+    | Some _ | None -> Some written
+  in
+  match ty.G.t with
+  | G.TyN name
+  | G.TyExpr { G.e = G.N name; _ } ->
+      of_name name
+  | G.TyApply (generic, _) -> class_of_type generic
+  | _ -> None
+
+(* The arity and the argument classes of [call], which decide its
+   resolution: a key for a memo of resolutions. *)
+let call_key (call : call) : int * G.canonical_name option list =
+  (call.arity, List_.map (fun (ty : G.type_ option) -> Option.bind ty class_of_type) call.arg_types)
+
+(* Whether [f] can take the arguments of [call] by the classes of their
+   types: a class unknown on either side does not exclude it. The parameters
+   and the arguments are aligned from the last, as a receiver parameter is
+   not an argument. *)
+let admits_argument_types (call : call) (f : func_info) : bool =
+  let class_of (ty : G.type_ option) : G.canonical_name option =
+    Option.bind ty class_of_type
+  in
+  let param_classes =
+    Tok.unbracket f.fdef.G.fparams
+    |> List_.map (fun (param : G.parameter) ->
+           match param with
+           | G.Param { G.ptype; _ } -> class_of ptype
+           | _ -> None)
+  in
+  let rec aligned (params : G.canonical_name option list)
+      (args : G.canonical_name option list) : bool =
+    match (params, args) with
+    | (p : G.canonical_name option) :: params, (a : G.canonical_name option) :: args ->
+        (match (p, a) with
+         | Some p, Some a -> List.equal String.equal p a
+         | _ -> true)
+        && aligned params args
+    | _ -> true
+  in
+  aligned (List.rev param_classes) (List.rev (List_.map class_of call.arg_types))
+
 (* Disambiguate among candidate functions matching a call site by name.
-   [matches] are the candidates; [call_arity] is the number of arguments
-   at the call site ([None] when arity info is not available). Returns
+   [matches] are the candidates; [call] gives the number of arguments at the
+   call site and their classes ([None] when the call is not known). Returns
    [Some] only when the result is unambiguous:
    - exactly one candidate by name: use it regardless of arity;
-   - multiple candidates with arity info: filter by exact arity, accept
-     iff exactly one survives;
+   - multiple candidates with arity info: filter by exact arity, then by the
+     classes of the argument types ([admits_argument_types]), accept iff
+     exactly one survives;
    - multiple candidates without arity info: cannot disambiguate, give
      up rather than guess.
    Unlike [Shape_and_sig.find_by_arity], which disambiguates among
@@ -149,7 +230,8 @@ let overload_representative ~(overload_groups : bool)
 
 let pick_by_arity ?(overload_groups = false)
     ?(top_level_scope_is_project = false) ~(lang : Lang.t)
-    (call_arity : int option) (matches : func_info list) : fn_id option =
+    (call : call option) (matches : func_info list) : fn_id option =
+  let call_arity = Option.map (fun (c : call) -> c.arity) call in
   let matches = prefer_concrete matches in
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
      with an empty param list) against a positional-arg call.  A body-less
@@ -185,6 +267,19 @@ let pick_by_arity ?(overload_groups = false)
                   (List.length matches) arity);
               None
           | _ -> (
+              (* Overloads by parameter type: the classes of the arguments
+                 choose among them where they tell them apart. *)
+              let arity_matches =
+                match call with
+                | Some (call : call) -> (
+                    match List.filter (admits_argument_types call) arity_matches with
+                    | [] -> arity_matches
+                    | admitted -> admitted)
+                | None -> arity_matches
+              in
+              match arity_matches with
+              | [ single_match ] -> Some single_match.fn_id
+              | _ ->
               (* Overloads by parameter type, or entries with the same simple
                  name across scopes. *)
               match
@@ -297,7 +392,7 @@ type invocation_resolver =
 type call_site_resolver =
   ?func_lookup:Func_lookup.t ->
   ?caller_parent_path:IL.name option list ->
-  ?call_arity:int ->
+  ?call:call ->
   ?allow_constructor:bool ->
   G.expr ->
   fn_id option
@@ -332,19 +427,19 @@ let rec identify_callee ~(lang : Lang.t)
     ?(all_funcs = [])
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ?(type_state : Type_state.t = Type_state.empty)
-    ?(caller_parent_path = []) ?(call_arity : int option)
+    ?(caller_parent_path = []) ?(call : call option)
     ?(allow_constructor = true) (callee : G.expr) : fn_id option =
   let is_locally_imported (name : string) : bool =
     Func_lookup.is_locally_imported func_lookup name
   in
   (* every arity tie-break below knows whether overload groups exist *)
-  let pick_by_arity ~(lang : Lang.t) (call_arity : int option)
+  let pick_by_arity ~(lang : Lang.t) (call : call option)
       (matches : func_info list) : fn_id option =
     pick_by_arity
       ~overload_groups:(Func_lookup.overload_groups func_lookup)
       ~top_level_scope_is_project:
         (Func_lookup.top_level_scope_is_project func_lookup)
-      ~lang call_arity matches
+      ~lang call matches
   in
   let rec collect_dotted_chain (e : G.expr) : (string * string list) option =
     match e.G.e with
@@ -437,7 +532,7 @@ let rec identify_callee ~(lang : Lang.t)
     in
     match interface_match with
     | Some f -> Some f.fn_id
-    | None -> pick_by_arity ~lang call_arity matches
+    | None -> pick_by_arity ~lang call matches
   in
   let exceeds (lst : 'a list) (n : int) : bool =
     let rec go lst k =
@@ -464,13 +559,13 @@ let rec identify_callee ~(lang : Lang.t)
         List.sort_uniq String.compare (List.filter_map distinct_key xs)
       in
       let dk = distinct cands in
-      if Int.equal (List.length dk) 1 then pick_by_arity ~lang call_arity cands
+      if Int.equal (List.length dk) 1 then pick_by_arity ~lang call cands
       else if List.length dk > unique_call_threshold then None
       else
         let same = same_file_filter cands in
         if Int.equal (List.length (distinct same)) 1
            && List.length same < List.length cands then
-          pick_by_arity ~lang call_arity same
+          pick_by_arity ~lang call same
         else None
   in
   let try_unique_callee ~(callee_name : string) : fn_id option =
@@ -513,7 +608,7 @@ let rec identify_callee ~(lang : Lang.t)
            Func_lookup.funcs_in_module func_lookup module_qn
            |> List.filter (fun f -> is_free_named f bare_name)
          in
-         pick_by_arity ~lang call_arity candidates)
+         pick_by_arity ~lang call candidates)
   in
   let try_unique_method_call ~(method_name : string) : fn_id option =
     try_unique_by_distinct_key
@@ -542,7 +637,7 @@ let rec identify_callee ~(lang : Lang.t)
         Func_lookup.funcs_in_module func_lookup target_qn
         |> List.filter (fun f -> is_free_named f method_name)
       in
-      (match pick_by_arity ~lang call_arity candidates with
+      (match pick_by_arity ~lang call candidates with
           | Some _ as r -> r
           | None ->
             let cls_simple =
@@ -556,7 +651,7 @@ let rec identify_callee ~(lang : Lang.t)
                 Type_state.find_methods type_state ~fallback:[]
                   ~class_name:cls_simple ~method_name
               in
-              pick_by_arity ~lang call_arity method_matches)
+              pick_by_arity ~lang call method_matches)
   in
   let try_dotted_definition ~(base : string) ~(parts : string list)
       ~(method_name : string) : fn_id option =
@@ -566,7 +661,7 @@ let rec identify_callee ~(lang : Lang.t)
       let candidates = funcs_with_dotted_name ~all_funcs chain in
       match find_func_in_scope candidates caller_parent_path method_name with
       | Some (f : func_info) -> Some f.fn_id
-      | None -> pick_by_arity ~lang call_arity candidates
+      | None -> pick_by_arity ~lang call candidates
   in
   (* Kept un-narrowed for the bare-generic [foo<T>()] reroute. *)
   let unnarrowed_all_funcs = all_funcs in
@@ -619,9 +714,15 @@ let rec identify_callee ~(lang : Lang.t)
                       (Lang_config.get lang).bare_call_reaches_methods
                       || Func_lookup.is_module_scope func_lookup class_name
                     then
-                      Type_state.find_methods type_state ~fallback:all_funcs
-                        ~class_name:class_name_str ~method_name:callee_name_str
-                      |> pick_by_arity ~lang call_arity
+                      let methods =
+                        Type_state.find_methods type_state ~fallback:all_funcs
+                          ~class_name:class_name_str ~method_name:callee_name_str
+                      in
+                      (* Where neither the arity nor the argument classes
+                         choose among the methods, the first is taken. *)
+                      match pick_by_arity ~lang call methods with
+                      | Some _ as picked -> picked
+                      | None -> Option.map (fun (f : func_info) -> f.fn_id) (List_.hd_opt methods)
                     else None
                   in
                   (* Build [all_names] inside the lambda: O(N) only when debug is on. *)
@@ -699,7 +800,7 @@ let rec identify_callee ~(lang : Lang.t)
                                    Func_lookup.funcs_in_module func_lookup module_qn
                                    |> List.filter (fun f -> is_free_named f bare_name)
                                  in
-                                 (match pick_by_arity ~lang call_arity candidates with
+                                 (match pick_by_arity ~lang call candidates with
                                   | Some _ as r -> r
                                   | None ->
                                     try_unique_callee ~callee_name:callee_name_str)))))
@@ -711,7 +812,7 @@ let rec identify_callee ~(lang : Lang.t)
             let synth = { callee with G.e = G.N (G.Id (id, name_info)) } in
             identify_callee ~lang
               ~all_funcs:unnarrowed_all_funcs ~func_lookup ~type_state
-              ~caller_parent_path ?call_arity synth
+              ~caller_parent_path ?call synth
         | G.N (G.IdQualified { name_last = (id, _), _; name_middle; _ }) ->
             let callee_name_str = id in
             let qualified_match =
@@ -739,7 +840,7 @@ let rec identify_callee ~(lang : Lang.t)
                           |> List.filter (fun f ->
                                is_free_named f callee_name_str)
                         in
-                        pick_by_arity ~lang call_arity candidates
+                        pick_by_arity ~lang call candidates
                 in
                 (match alias_match with
                 | Some _ as r -> r
@@ -760,7 +861,7 @@ let rec identify_callee ~(lang : Lang.t)
                         ~class_name:class_name_str
                         ~method_name:callee_name_str
                     in
-                    pick_by_arity ~lang call_arity method_matches)))
+                    pick_by_arity ~lang call method_matches)))
         (* Method call: this.method() or self.method() *)
         | G.DotAccess
             ( { e = G.IdSpecial ((G.This | G.Self), _); _ },
@@ -777,7 +878,7 @@ let rec identify_callee ~(lang : Lang.t)
                   Type_state.find_methods type_state ~fallback:all_funcs
                     ~class_name:class_name_str ~method_name:method_name_str
                 in
-                pick_by_arity ~lang call_arity method_matches
+                pick_by_arity ~lang call method_matches
             | None -> None)
         (* No ctor/fuzzy fallback here (FP-prone on namespaced libs). *)
         | G.DotAccess
@@ -789,7 +890,7 @@ let rec identify_callee ~(lang : Lang.t)
               Type_state.find_methods type_state ~fallback:all_funcs
                 ~class_name:obj_name ~method_name:method_name_str
             in
-            pick_by_arity ~lang call_arity class_member_matches
+            pick_by_arity ~lang call class_member_matches
         (* Method call: obj.method() - look up obj's class *)
         | G.DotAccess
             ( { e = G.N (G.Id ((obj_name, _), obj_id_info)); _ },
@@ -849,7 +950,7 @@ let rec identify_callee ~(lang : Lang.t)
                   in
                   from_class @ from_all
                 in
-                (match pick_by_arity ~lang call_arity class_member_matches with
+                (match pick_by_arity ~lang call class_member_matches with
                 | Some _ as r -> r
                 | None ->
                     let module_match =
@@ -1457,7 +1558,7 @@ let identify_callee_interfile ~(lang : Lang.t)
     ~(type_state : Type_state.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ?(caller_parent_path : IL.name option list = [])
-    ?(call_arity : int option)
+    ?(call : call option)
     ?(allow_constructor = Lang_config.constructs_by_bare_call lang)
     (callee : G.expr) : fn_id option =
   let pick (matches : func_info list) : fn_id option =
@@ -1465,7 +1566,7 @@ let identify_callee_interfile ~(lang : Lang.t)
       ~overload_groups:(Func_lookup.overload_groups func_lookup)
       ~top_level_scope_is_project:
         (Func_lookup.top_level_scope_is_project func_lookup)
-      ~lang call_arity matches
+      ~lang call matches
   in
   let along_order ~(receiver : Func_lookup.method_receiver)
       (class_qn : Names.Class_qn.t) (method_name : string) : fn_id option =

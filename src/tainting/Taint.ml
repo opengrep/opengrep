@@ -624,12 +624,12 @@ module Taint_set = struct
 
   (* A set keeps the taint variables ([Var], [Shape_var]) of at most
      [Limits_semgrep.taint_MAX_PLACEHOLDERS_PER_INPUT] paths of each input,
-     the two variables of a path counting once; past it, those of the input become
-     the variables of the input itself, [Var] for the taint of its value and
-     [Shape_var] for every taint below it, which hold them all at a coarser
-     path ([Sig_inst.instantiate_taint_var]). A set that has [Shape_var] of
-     the input itself keeps no other variable of the input at a non-empty
-     path. *)
+     the two variables of a path counting once; past it, those of the input
+     become the variables of the longest path that all of them extend, [Var]
+     for the taint of its value and [Shape_var] for every taint below it,
+     which hold them all at a coarser path ([Sig_inst.instantiate_taint_var]).
+     A set that has [Shape_var] of the input itself keeps no other variable of
+     the input at a non-empty path. *)
   and bound_placeholders (set : t) : t =
     (* The taint variables that count towards the bound of their input: all
        but [Var] of the input itself, with whether it is [Shape_var] of the
@@ -698,13 +698,25 @@ module Taint_set = struct
               || (Path_set.mem [] paths && n > 1))
             counts
         in
+        (* The longest path that every path of [paths] extends. *)
+        let common_prefix (paths : Path_set.t) : offset list =
+          let rec prefix (p1 : offset list) (p2 : offset list) : offset list =
+            match (p1, p2) with
+            | o1 :: rest1, o2 :: rest2 when equal_offset o1 o2 -> o1 :: prefix rest1 rest2
+            | _ -> []
+          in
+          match Path_set.elements paths with
+          | [] -> []
+          | first :: rest -> List.fold_left prefix first rest
+        in
         if Base_map.is_empty collapsed then set
         else
           Base_map.fold
-            (fun (base : base) ((_, guard) : Path_set.t * EG.t) (acc : t) ->
+            (fun (base : base) ((paths, guard) : Path_set.t * EG.t) (acc : t) ->
+              let offset = common_prefix paths in
               acc
-              |> add { taint = { orig = Var { base; offset = [] }; tokens = [] }; guard }
-              |> add { taint = { orig = Shape_var { base; offset = [] }; tokens = [] }; guard })
+              |> add { taint = { orig = Var { base; offset }; tokens = [] }; guard }
+              |> add { taint = { orig = Shape_var { base; offset }; tokens = [] }; guard })
             collapsed
             (Taints.filter
                (fun (key : taint) (_ : guarded_taint) ->

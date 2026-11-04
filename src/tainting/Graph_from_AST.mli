@@ -51,6 +51,7 @@ val extract_calls :
   fdef_edges
 
 val extract_decorator_calls :
+  lang : Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
   func_lookup : Func_lookup.t ->
   ?caller_parent_path : fn_id ->

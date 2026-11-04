@@ -117,6 +117,17 @@ let (inout_to_str : ('env -> string) -> 'env inout -> string) =
  *)
 type 'env transfn = 'env mapping -> nodei -> 'env inout
 
+(* The order in which the fixpoint computes the nodes. *)
+type iteration =
+  | Weak_topological_order
+      (* Bourdoncle's recursive strategy over the weak topological order: a
+         node is computed after its predecessors outside the cycles it is in,
+         and a cycle's head bounds the rounds of the cycle. *)
+  | Worklist
+      (* The least pending node first, each node visited at most
+         [Limits_semgrep.taint_MAX_VISITS_PER_NODE] times; it builds no
+         order, so a fixpoint over a small graph allocates little. *)
+
 module Make (F : Flow) = struct
   let mapping_to_str (f : F.flow) env_to_str mapping =
     array_fold_left_idx
@@ -141,7 +152,7 @@ module Make (F : Flow) = struct
      order: a vertex is computed once, after its predecessors outside the
      cycles it is in; a component computes its head, then its body, until the
      head is stable or has used its rounds. *)
-  let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
+  let weak_topological_worker eq_env mapping trans (flow : F.flow) succs
       (start : nodei) workset =
     let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
     (* A node is computed on its first visit and again only when a
@@ -221,6 +232,40 @@ module Make (F : Flow) = struct
      else NodeiSet.iter (fun (ni : nodei) -> ignore (update ni : bool)) workset);
     (mapping, `Ok)
 
+  let worklist_worker eq_env mapping trans (flow : F.flow) succs workset =
+    (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
+    let max_nodei = Array.length mapping - 1 in
+    let num_vertices = flow.graph#nb_nodes in
+    let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
+    let max_iterations = min 100000 (num_vertices * max_visits_per_node) in
+    let visit_counts = Array.make (max_nodei + 1) 0 in
+    let rec loop i work =
+      if NodeiSet.is_empty work then (mapping, `Ok)
+      else
+        (* Check iteration limit first (deterministic) *)
+        if i >= max_iterations then (mapping, `Timeout)
+        else
+          (* Use min_elt instead of choose for deterministic processing order *)
+          let ni = NodeiSet.min_elt work in
+          let work' = NodeiSet.remove ni work in
+          visit_counts.(ni) <- visit_counts.(ni) + 1;
+          (* Limit all nodes to max visits to prevent infinite loops *)
+          if visit_counts.(ni) > max_visits_per_node then
+            (* Skip this node and continue *)
+            loop (i + 1) work'
+          else
+            let old = mapping.(ni) in
+            let new_ = trans mapping ni in
+            let work'' =
+              if eq_inout eq_env old new_ then work'
+              else (
+                mapping.(ni) <- new_;
+                NodeiSet.union work' (succs flow ni))
+            in
+            loop (i + 1) work''
+    in
+    loop 0 workset
+
   let forward_succs (f : F.flow) n =
     (f.graph#successors n)#fold
       (fun s (ni, _) -> NodeiSet.add ni s)
@@ -232,6 +277,7 @@ module Make (F : Flow) = struct
       NodeiSet.empty
 
   let (fixpoint :
+        iteration:iteration ->
         timeout:float ->
         eq_env:('env -> 'env -> bool) ->
         init:'env mapping ->
@@ -239,14 +285,17 @@ module Make (F : Flow) = struct
         flow:F.flow ->
         forward:bool ->
         'env mapping * [ `Ok | `Timeout ]) =
-   fun ~timeout ~eq_env ~init ~trans ~flow ~forward ->
+   fun ~iteration ~timeout:_ ~eq_env ~init ~trans ~flow ~forward ->
     let succs = if forward then forward_succs else backward_succs in
     let work =
       (* This prevents dead code from getting analyzed. *)
       flow.reachable
     in
-    let start = if forward then flow.entry else flow.exit in
-    fixpoint_worker ~timeout eq_env init trans flow succs start work
+    match iteration with
+    | Weak_topological_order ->
+        let start = if forward then flow.entry else flow.exit in
+        weak_topological_worker eq_env init trans flow succs start work
+    | Worklist -> worklist_worker eq_env init trans flow succs work
 
   (*****************************************************************************)
   (* Helpers *)

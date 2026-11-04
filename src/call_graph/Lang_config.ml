@@ -723,7 +723,9 @@ let construction_method (lang : Lang.t) : string option =
 
 (* Languages where one scope holds several concrete functions of one name
    and arity told apart by parameter types. Elsewhere such definitions are
-   pattern clauses (Elixir, Clojure) or redefinitions, never a group. *)
+   pattern clauses (Elixir, Clojure) or redefinitions, never a group. In each
+   of these languages the declared types of the arguments select the overload
+   at compile time. *)
 let overloads_by_type (lang : Lang.t) : bool =
   match lang with
   | Lang.Java

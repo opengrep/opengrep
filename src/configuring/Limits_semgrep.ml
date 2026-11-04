@@ -81,8 +81,11 @@ let taint_MAX_TAINT_SET_SIZE = 25
 let taint_MAX_SOURCES_PER_LABEL = 8
 
 (* The paths of one input whose taint variables a taint set keeps before they
- * are replaced by the variables of the whole input. *)
-let taint_MAX_PLACEHOLDERS_PER_INPUT = 8
+ * are replaced by the variables of the longest path they all extend. It is
+ * [taint_MAX_OBJ_FIELDS]: the reads of a function that reads every field an
+ * object holds stay apart. A larger bound slows the signature fixpoint on
+ * large JavaScript projects (moodle interfile with rules_new). *)
+let taint_MAX_PLACEHOLDERS_PER_INPUT = 10
 
 (* The functions that a call through a value holding several of them
  * resolves to, each by its signature: one read through an index the
