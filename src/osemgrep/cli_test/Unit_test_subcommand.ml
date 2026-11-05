@@ -469,6 +469,54 @@ let check_single_result (name : string) (res : Semgrep_output_v1_t.tests_result)
       | _ -> Alcotest.fail (name ^ ": expected one target"))
   | _ -> Alcotest.fail (name ^ ": expected one rule with one check")
 
+(* A rule whose options set interfile, and a target that reaches the sink
+   through a call into helper.py. *)
+let interfile_files : F.t list =
+  [
+    F.File
+      ( "rule.yaml",
+        {|
+rules:
+  - id: interfile-taint
+    mode: taint
+    options:
+      interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "cross-file taint"
+    languages: [python]
+    severity: ERROR
+|}
+      );
+    F.File ("helper.py", "def wrap():\n    return source()\n");
+    F.File
+      ( "main.py",
+        "from helper import wrap\n\ndef go():\n    # ruleid: interfile-taint\n\
+        \    sink(wrap())\n" );
+  ]
+
+(* The cross-file flow is found only under --enable-interfile, only with a
+   depth that reaches helper.py, and not under --disable-intrafile. *)
+let test_enable_interfile_and_depth (caps : Test_subcommand.caps) () =
+  let check (name : string) (flags : string list) ~(passed : bool) : unit =
+    let (_ : Exit_code.t), res =
+      run_test_json caps interfile_files
+        ([ "--config"; "rule.yaml"; "main.py" ] @ flags)
+    in
+    check_single_result name res ~passed ~expected_lines:[ 5 ]
+      ~reported_lines:(if passed then [ 5 ] else [])
+  in
+  check "without --enable-interfile" [] ~passed:false;
+  check "with --enable-interfile" [ "--enable-interfile" ] ~passed:true;
+  check "with --enable-interfile and depth 0"
+    [ "--enable-interfile"; "--interfile-depth"; "0" ]
+    ~passed:false;
+  check "with --enable-interfile and --disable-intrafile"
+    [ "--enable-interfile"; "--disable-intrafile" ]
+    ~passed:false
+
 (* python: test.py takes the todook: and todoruleid: lines out of both the
    expected and the reported set before comparing them, so a stale annotation
    of either kind cannot fail the check. *)
@@ -917,6 +965,9 @@ let tests (caps : < Test_subcommand.caps >) =
         t "missing test targets abort the run" (test_missing_targets caps);
         t "a rules directory and a targets directory pair by name"
           (test_rules_and_targets_directories caps);
+        t "an interfile rule passes only under --enable-interfile, a depth \
+           that reaches the source, and without --disable-intrafile"
+          (test_enable_interfile_and_depth caps);
         t "todoruleid: and todook: lines are left out of the comparison"
           (test_todo_annotations caps);
         t "a rule with two test targets" (test_two_targets_for_one_rule caps);

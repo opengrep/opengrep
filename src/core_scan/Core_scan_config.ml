@@ -75,6 +75,9 @@ type t = {
   (* a rule runs interfile only when this is set and its own options set
    * taint_interfile; otherwise that option is ignored *)
   enable_interfile : bool;
+  (* overrides taint_intrafile, enable_interfile and the rule options
+   * taint_intrafile and taint_interfile *)
+  disable_intrafile : bool;
   taint_interfile_depth : int;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   scanning_roots : Scanning_root.directory list;
@@ -143,6 +146,7 @@ let default =
     taint_intrafile = false;
     effect_guards = false;
     enable_interfile = false;
+    disable_intrafile = false;
     taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
     interfile_dedup_by = Core_match.Sink;
     scanning_roots = [];

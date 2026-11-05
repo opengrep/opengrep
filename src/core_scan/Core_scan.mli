@@ -51,8 +51,9 @@ val rules_of_config :
 (** Get the rules
  *  if filter_by_targets is true (default false): use targeting info in config
  *  to filter irrelevant rules.
- *  The taint_interfile option of a rule is turned off unless
- *  config.enable_interfile is set.
+ *  The taint options of the rules are set by Rule.restrict_taint_modes from
+ *  config.taint_intrafile, config.disable_intrafile and
+ *  config.enable_interfile.
  *)
 
 (* This is also used by semgrep-proprietary. It filters the rules that

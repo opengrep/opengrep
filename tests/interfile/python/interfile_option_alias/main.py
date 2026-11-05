@@ -1,5 +1,4 @@
-def wrap():
-    return source()
+from helper import wrap
 
 
 def main():

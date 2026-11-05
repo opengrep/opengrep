@@ -117,6 +117,17 @@ def ls_taint_main():
     ls_taint_sink(x)
 |}
 
+(* The same flow for the rule whose options set interfile. *)
+let interfile_taint_content =
+  {|
+def get_data():
+    return ls_interfile_source()
+
+def ls_interfile_main():
+    x = get_data()
+    ls_interfile_sink(x)
+|}
+
 let login_url_regex =
   Pcre2_.pcre_compile {|https://semgrep.dev/login\?cli-token=.*"|}
 
@@ -386,14 +397,20 @@ let mock_workspaces root =
   ( (Fpath.v workspace1_root, workspace1_files),
     (Fpath.v workspace2_root, workspace2_files) )
 
-let mock_taint_file root : Fpath.t =
-  let file = Fpath.(root / "taint.py") in
+let mock_file ~(name : string) ~(content : string) (root : Fpath.t) : Fpath.t =
+  let file = Fpath.(root / name) in
   let oc =
     open_out_gen [ Open_creat; Open_wronly ] 0o777 (Fpath.to_string file)
   in
-  output_string oc taint_content;
+  output_string oc content;
   close_out oc;
   file
+
+let mock_taint_file (root : Fpath.t) : Fpath.t =
+  mock_file ~name:"taint.py" ~content:taint_content root
+
+let mock_interfile_taint_file (root : Fpath.t) : Fpath.t =
+  mock_file ~name:"interfile_taint.py" ~content:interfile_taint_content root
 
 let mock_search_files root : Fpath.t list =
   let path1 = root / "a" / "b" / "c.py" in
@@ -1245,11 +1262,13 @@ let test_ls_delete_cache caps () =
 
       Lwt.return ())
 
-let test_ls_taint_intrafile ~taint_intrafile ~expected_ids caps () =
+let test_ls_taint ~(mock : Fpath.t -> Fpath.t) ~(taint_intrafile : bool)
+    ~(expected_ids : YS.t list) caps () =
   with_session caps (fun { server = info; root } ->
-      let file = mock_taint_file root in
+      let file = mock root in
       let%lwt info =
-        send_initialize info ~only_git_dirty:false ~taint_intrafile [ root ]
+        send_initialize info ~only_git_dirty:false ~taint_intrafile
+          [ root ]
       in
       let%lwt info, _ = send_did_open info file receive_notification in
       let%lwt _info, packets = send_initialized info Fun.id in
@@ -1303,11 +1322,21 @@ let promise_tests caps =
     pair "LS multi-workspaces" (test_ls_multi caps) ~tolerate_chdir:true;
     pair "Test LS cache deletion" (test_ls_delete_cache caps);
     pair "LS taint-intrafile enabled"
-      (test_ls_taint_intrafile ~taint_intrafile:true
+      (test_ls_taint ~mock:mock_taint_file ~taint_intrafile:true
          ~expected_ids:[ `String "taint-cross-fn" ]
          caps);
     pair "LS taint-intrafile disabled"
-      (test_ls_taint_intrafile ~taint_intrafile:false ~expected_ids:[] caps);
+      (test_ls_taint ~mock:mock_taint_file ~taint_intrafile:false
+         ~expected_ids:[] caps);
+    (* interfile is off: the rule runs as if its option were absent, without
+       the cross-function analysis that the option implies *)
+    pair "LS runs an interfile rule per file"
+      (test_ls_taint ~mock:mock_interfile_taint_file ~taint_intrafile:false
+         ~expected_ids:[] caps);
+    pair "LS runs an interfile rule with taint-intrafile"
+      (test_ls_taint ~mock:mock_interfile_taint_file ~taint_intrafile:true
+         ~expected_ids:[ `String "taint-cross-fn-interfile" ]
+         caps);
   ]
   |> List_.split
 

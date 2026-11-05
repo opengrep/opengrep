@@ -146,17 +146,11 @@ let default_conf : conf =
     engine_config = Engine_config.default;
   }
 
-let effective_taint_modes ~(disable_intrafile : bool) ~(intrafile : bool)
-    ~(enable_interfile : bool) : bool * bool =
-  (intrafile && not disable_intrafile, enable_interfile && not disable_intrafile)
-
 let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
-  let allow_intrafile, allow_interfile =
-    effective_taint_modes ~disable_intrafile:conf.disable_intrafile
-      ~intrafile:true ~enable_interfile:conf.enable_interfile
-  in
   List_.map
-    (Rule.restrict_taint_modes ~allow_intrafile ~allow_interfile)
+    (Rule.restrict_taint_modes ~taint_intrafile:conf.taint_intrafile
+       ~disable_intrafile:conf.disable_intrafile
+       ~enable_interfile:conf.enable_interfile)
     rules
 
 (*************************************************************************)
@@ -384,8 +378,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    effect_guards;
    enable_interfile;
    taint_interfile_depth;
-   (* already applied to the taint flags and the rules *)
-   disable_intrafile = _;
+   disable_intrafile;
    interfile_dedup_by;
    nosem = _TODO;
    strict;
@@ -415,6 +408,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         taint_intrafile;
         effect_guards;
         enable_interfile;
+        disable_intrafile;
         taint_interfile_depth;
         interfile_dedup_by;
         scanning_roots = [];

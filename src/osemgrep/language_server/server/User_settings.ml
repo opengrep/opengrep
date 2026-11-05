@@ -94,6 +94,8 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       inline_metavariables = false;
       taint_intrafile = settings.taint_intrafile || settings.pro_intrafile;
       effect_guards = false;
+      (* the targets of the language server carry no project root, from
+         which the interfile analysis builds its call graph *)
       enable_interfile = false;
       taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
       disable_intrafile = false;

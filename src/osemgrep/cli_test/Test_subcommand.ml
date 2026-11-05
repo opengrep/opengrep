@@ -561,8 +561,9 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
       Option.value conf.max_memory_mb
         ~default:Core_runner.default_conf.max_memory_mb;
     effect_guards = false;
-    enable_interfile = false;
-    taint_interfile_depth = 3;
+    enable_interfile = conf.enable_interfile;
+    disable_intrafile = conf.disable_intrafile;
+    taint_interfile_depth = conf.taint_interfile_depth;
   }
 
 let run_rules_against_targets caps (env : env) (rules : Rule.t list)

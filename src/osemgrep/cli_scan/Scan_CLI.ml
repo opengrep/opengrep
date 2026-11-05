@@ -691,39 +691,6 @@ let o_taint_intrafile : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
-let o_enable_interfile : bool Term.t =
-  let info =
-    Arg.info [ "enable-interfile" ]
-      ~doc:
-        ("Enable cross-file taint analysis for the taint rules whose options \
-          set interfile or taint_interfile; without this flag those rules \
-          run as if the option were absent. \
-          When a file has sources but no sinks (or vice versa), companion \
-          files are discovered from the project-wide interfile call graph, \
-          parsed, and analysed together. Implies --taint-intrafile behaviour \
-          for those rules.")
-  in
-  Arg.value (Arg.flag info)
-
-let o_disable_intrafile : bool Term.t =
-  let info =
-    Arg.info [ "disable-intrafile" ]
-      ~doc:
-        ("Disable intra-file inter-procedural taint analysis, even for rules \
-          that enable it with the taint_intrafile option. Also disables \
-          cross-file taint analysis.")
-  in
-  Arg.value (Arg.flag info)
-
-let o_taint_interfile_depth : int Term.t =
-  let info =
-    Arg.info [ "taint-interfile-depth" ]
-      ~doc:
-        ("Maximum call chain depth for companion file discovery in \
-          cross-file taint analysis. Default is 3.")
-  in
-  Arg.value (Arg.opt Arg.int 3 info)
-
 let o_interfile_dedup_by : Core_match.interfile_dedup_by Term.t =
   let info =
     Arg.info [ "interfile-dedup-by" ]
@@ -1236,8 +1203,9 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
-    ~strict ~taint_intrafile ~opengrep_ignore_pattern ~timeout
-    ~timeout_threshold ~max_memory_mb ~common : Test_CLI.conf option =
+    ~strict ~taint_intrafile ~disable_intrafile ~enable_interfile
+    ~taint_interfile_depth ~opengrep_ignore_pattern ~timeout ~timeout_threshold
+    ~max_memory_mb ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
@@ -1259,6 +1227,9 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
           common;
           matching_diagnosis = false;
           taint_intrafile;
+          disable_intrafile;
+          enable_interfile;
+          taint_interfile_depth;
           opengrep_ignore_pattern;
           timeout;
           timeout_threshold;
@@ -1372,10 +1343,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           rule_source_conf ~config ~pattern ~lang ~replacement
             ~allow_empty_config ~maturity:common.maturity
     in
-    let taint_intrafile, enable_interfile =
-      Core_runner.effective_taint_modes ~disable_intrafile
-        ~intrafile:taint_intrafile ~enable_interfile
-    in
     let core_runner_conf : Core_runner.conf =
       {
         Core_runner.num_jobs;
@@ -1466,7 +1433,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
       test_CLI_conf ~test ~target_roots ~config ~json ~force_color
-        ~optimizations ~strict ~taint_intrafile ~opengrep_ignore_pattern
+        ~optimizations ~strict ~taint_intrafile ~disable_intrafile
+        ~enable_interfile ~taint_interfile_depth ~opengrep_ignore_pattern
         ~timeout ~timeout_threshold ~max_memory_mb ~common:common_of_dispatched
     in
     (* warnings *)
@@ -1543,8 +1511,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ CLI_common.o_opengrep_ignore_pattern
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
-    $ o_enable_interfile $ o_taint_interfile_depth $ o_taint_intrafile
-    $ o_disable_intrafile
+    $ CLI_common.o_enable_interfile $ CLI_common.o_interfile_depth
+    $ o_taint_intrafile $ CLI_common.o_disable_intrafile
     $ o_effect_guards
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions

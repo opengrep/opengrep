@@ -245,6 +245,13 @@ let make_test_rule_file ?(fail_callback = fun _i m -> Alcotest.fail m)
             base_xconf.config
         in
         let xconf = { base_xconf with config } in
+        (* as a scan without --enable-interfile runs them *)
+        let rules =
+          List_.map
+            (Rule.restrict_taint_modes ~taint_intrafile:config.taint_intrafile
+               ~disable_intrafile:false ~enable_interfile:false)
+            rules
+        in
 
         Core_profiling.profiling := true;
         let res =

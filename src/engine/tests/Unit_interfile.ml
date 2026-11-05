@@ -173,6 +173,10 @@ let regression_tests (caps : Core_scan.caps) : Testo.t list =
     Testo.create "regression: rule-option interfile implies intrafile"
       (run_test ~taint_intrafile:false caps
          Fpath.(root / "python" / "mutual_recursion"));
+    (* The same for [interfile: true], the alias of the option. *)
+    Testo.create "regression: rule-option interfile alias implies intrafile"
+      (run_test ~taint_intrafile:false caps
+         Fpath.(root / "python" / "interfile_option_alias"));
     (* The scan's depth applies to a rule without one: four hops need a
        depth of four, and a negative depth is unbounded. *)
     Testo.create "regression: scan depth reaches a four-hop sink"

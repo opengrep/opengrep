@@ -2,7 +2,7 @@
 
 Regression tests for interfile taint analysis.  Each test case is a
 self-contained directory with source files and a taint rule.  The call
-graph is built in-process by `opengrep_project_index` (projidx) — no
+graph is built in-process by `opengrep_project_index` (projidx); no
 external indexer is needed.
 
 ## Running tests
@@ -23,7 +23,7 @@ Each test case can also be run manually with the CLI.  Example for
     bin/opengrep scan \
       -f tests/interfile/go/cycle_pruning/rule.yaml \
       tests/interfile/go/cycle_pruning/ \
-      --taint-interfile \
+      --enable-interfile \
       --json
 
 ## Adding a new test case
@@ -31,5 +31,7 @@ Each test case can also be run manually with the CLI.  Example for
 1. Create a directory under `tests/interfile/<lang>/<case_name>/`.
 2. Add source files with `// ruleid: <rule-id>` and `// ok: <rule-id>`
    annotations on the lines where findings are (or are not) expected.
-3. Add `rule.yaml` with the taint rule(s).
+3. Add `rule.yaml` with the taint rule(s), each with
+   `taint_interfile: true` (or its alias `interfile: true`) under
+   `options`; without the option a rule runs per target.
 4. The test is automatically discovered.

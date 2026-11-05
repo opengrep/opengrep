@@ -395,8 +395,9 @@ let rules_of_config ~filter_by_targets (config : Core_scan_config.t) :
   in
   let rules =
     List_.map
-      (Rule.restrict_taint_modes ~allow_intrafile:true
-         ~allow_interfile:config.enable_interfile)
+      (Rule.restrict_taint_modes ~taint_intrafile:config.taint_intrafile
+         ~disable_intrafile:config.disable_intrafile
+         ~enable_interfile:config.enable_interfile)
       rules
   in
   if not filter_by_targets then (rules, invalid_rules)
@@ -679,14 +680,21 @@ let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
   let rules = rules_with_dep_matches |> List_.map fst in
   (rules, dependency_match_table)
 
+(* The options of the scan flags, which
+   Match_env.adjust_xconfig_with_rule_options merges with the options of
+   each rule. *)
+let rule_options_of_config (config : Core_scan_config.t) : Rule_options.t =
+  {
+    Rule_options.default with
+    taint_intrafile = config.taint_intrafile && not config.disable_intrafile;
+    effect_guards = config.effect_guards;
+    taint_interfile_depth = Some config.taint_interfile_depth;
+  }
+
 let interfile_xconfig (config : Core_scan_config.t)
     ~(equivs : Equivalence.equivalences)
     : Match_env.xconfig =
-  { Match_env.config =
-      { Rule_options.default with
-        taint_intrafile = config.taint_intrafile;
-        effect_guards = config.effect_guards;
-        taint_interfile_depth = Some config.taint_interfile_depth };
+  { Match_env.config = rule_options_of_config config;
     equivs;
     nested_formula = false;
     matching_conf = config.matching_conf;
@@ -734,11 +742,7 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       let match_hook _ = () in
       let xconf =
         {
-          Match_env.config = { Rule_options.default with
-            taint_intrafile = config.taint_intrafile;
-            effect_guards = config.effect_guards;
-            taint_interfile_depth = Some config.taint_interfile_depth;
-          };
+          Match_env.config = rule_options_of_config config;
           equivs;
           nested_formula = false;
           matching_conf = config.matching_conf;

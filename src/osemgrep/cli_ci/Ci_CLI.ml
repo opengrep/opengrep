@@ -135,10 +135,6 @@ let cmdline_term : conf Term.t =
         Engine_config.custom_ignore_pattern = None;
       }
     in
-    let taint_intrafile, enable_interfile =
-      Core_runner.effective_taint_modes ~disable_intrafile
-        ~intrafile:taint_intrafile ~enable_interfile
-    in
     let core_runner_conf : Core_runner.conf =
       {
         Core_runner.num_jobs;
@@ -279,8 +275,9 @@ let cmdline_term : conf Term.t =
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ Skin_CLI.o_skin
     $ o_subdir
-    $ o_suppress_errors $ SC.o_enable_interfile $ SC.o_taint_interfile_depth
-    $ SC.o_taint_intrafile $ SC.o_disable_intrafile
+    $ o_suppress_errors $ CLI_common.o_enable_interfile
+    $ CLI_common.o_interfile_depth
+    $ SC.o_taint_intrafile $ CLI_common.o_disable_intrafile
     $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
     $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_vim $ SC.o_vim_outputs)

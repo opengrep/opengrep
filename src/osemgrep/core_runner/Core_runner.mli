@@ -78,15 +78,9 @@ type func = {
 
 val default_conf : conf
 
-(* The (taint_intrafile, enable_interfile) pair left after applying
-   [disable_intrafile], which disables interfile too. *)
-val effective_taint_modes :
-  disable_intrafile:bool -> intrafile:bool -> enable_interfile:bool -> bool * bool
-
-(* The rules with their taint_intrafile/taint_interfile options restricted
-   by [conf.disable_intrafile] and [conf.enable_interfile]: taint_interfile
-   is kept only under enable_interfile, and disabling intrafile disables
-   interfile too. *)
+(* The rules with their taint_intrafile/taint_interfile options set by
+   Rule.restrict_taint_modes from [conf.taint_intrafile],
+   [conf.disable_intrafile] and [conf.enable_interfile]. *)
 val restrict_rule_taint_modes : conf -> Rule.rules -> Rule.rules
 
 (* builder *)
