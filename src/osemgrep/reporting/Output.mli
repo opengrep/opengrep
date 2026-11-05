@@ -47,8 +47,7 @@ val skin_ctx :
   Skin.ctx
 
 
-val is_interfile_rule_id :
-  taint_interfile:bool -> Rule.hrules -> Rule_ID.t -> bool
+val is_interfile_rule_id : Rule.hrules -> Rule_ID.t -> bool
 
 (* Aborts on a destination that is not written to: a URL, a symbolic link,
  * a file with other hard links, a relative path inside one of [targets]

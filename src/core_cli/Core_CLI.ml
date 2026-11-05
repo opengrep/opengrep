@@ -92,7 +92,7 @@ let equivalences_file = ref None
 let taint_intrafile = ref Core_scan_config.default.taint_intrafile
 
 (* interfile tainting mode *)
-let taint_interfile = ref Core_scan_config.default.taint_interfile
+let enable_interfile = ref Core_scan_config.default.enable_interfile
 let taint_interfile_depth = ref Core_scan_config.default.taint_interfile_depth
 let interfile_dedup_by = ref Core_scan_config.default.interfile_dedup_by
 
@@ -266,7 +266,6 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
         Logs_.with_debug_trace ~__FUNCTION__ (fun () ->
             Core_json_output.core_output_of_matches_and_errors
               ~inline:config.inline_metavariables
-              ~taint_interfile:config.taint_interfile
               ~interfile_dedup_by:config.interfile_dedup_by res)
       in
       (*
@@ -303,7 +302,6 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
           in
           let matches =
             Core_json_output.dedup_and_sort
-              ~taint_interfile:config.taint_interfile
               ~interfile_dedup_by:config.interfile_dedup_by
               (Core_match.to_rule_id_options_map
                  List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches))
@@ -360,10 +358,9 @@ let mk_config () : Core_scan_config.t =
     max_match_per_file = !max_match_per_file;
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
-    (* taint_interfile implies taint_intrafile; enforced in Core_scan.scan. *)
     taint_intrafile = !taint_intrafile;
     effect_guards = false;
-    taint_interfile = !taint_interfile;
+    enable_interfile = !enable_interfile;
     taint_interfile_depth = !taint_interfile_depth;
     interfile_dedup_by = !interfile_dedup_by;
     scanning_roots = [];
@@ -699,9 +696,10 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-taint_intrafile",
       Arg.Set taint_intrafile,
       " activate intrafile tainting mode" );
-    ( "-taint_interfile",
-      Arg.Set taint_interfile,
-      " activate interfile tainting mode (implies -taint_intrafile)" );
+    ( "-enable_interfile",
+      Arg.Set enable_interfile,
+      " run the rules whose options set interfile or taint_interfile in \
+       interfile tainting mode" );
     ( "-taint_interfile_depth",
       Arg.Set_int taint_interfile_depth,
       " <int> maximum call chain depth for companion file discovery (default 3)" );

@@ -1,6 +1,8 @@
 rules:
 - id: taint-call
   mode: taint
+  options:
+    taint_interfile: true
   languages: [clojure]
   message: "tainted"
   severity: INFO

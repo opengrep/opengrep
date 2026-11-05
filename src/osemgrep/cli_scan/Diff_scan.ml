@@ -197,16 +197,12 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                     { target_fpath = fpath; project_root = None })
                   fpaths
               in
-              (* A rule can turn interfile on by itself, so the CLI flag alone
-                 does not decide this. *)
               (* The interfile rules replay over the baseline's full target
                  set, every other rule over the files that carry a match:
                  one interfile rule does not make every rule rescan the
                  tree. *)
               let interfile_rules, other_rules =
-                List.partition
-                  (Interfile_dispatch.rule_is_interfile
-                     ~taint_interfile:conf.core_runner_conf.taint_interfile)
+                List.partition Interfile_dispatch.rule_is_interfile
                   baseline_rules
               in
               let interfile_targets () : replay_input =

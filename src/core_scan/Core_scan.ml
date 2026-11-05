@@ -393,6 +393,12 @@ let rules_of_config ~filter_by_targets (config : Core_scan_config.t) :
             failwith ("Error in parsing: " ^ Rule_error.string_of_error e))
     | Core_scan_config.Rules rules -> (rules, [])
   in
+  let rules =
+    List_.map
+      (Rule.restrict_taint_modes ~allow_intrafile:true
+         ~allow_interfile:config.enable_interfile)
+      rules
+  in
   if not filter_by_targets then (rules, invalid_rules)
   else
     let targets, _ = targets_of_config config in
@@ -680,7 +686,6 @@ let interfile_xconfig (config : Core_scan_config.t)
       { Rule_options.default with
         taint_intrafile = config.taint_intrafile;
         effect_guards = config.effect_guards;
-        taint_interfile = config.taint_interfile;
         taint_interfile_depth = Some config.taint_interfile_depth };
     equivs;
     nested_formula = false;
@@ -732,7 +737,6 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
           Match_env.config = { Rule_options.default with
             taint_intrafile = config.taint_intrafile;
             effect_guards = config.effect_guards;
-            taint_interfile = config.taint_interfile;
             taint_interfile_depth = Some config.taint_interfile_depth;
           };
           equivs;
@@ -1042,8 +1046,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
      a large project. Reported only when there is a graph to build, so that
      the phase does not change twice with nothing in between. *)
   let interfile_rule_ids =
-    Interfile_dispatch.interfile_taint_rule_ids
-      ~taint_interfile:config.taint_interfile valid_rules
+    Interfile_dispatch.interfile_taint_rule_ids valid_rules
   in
   let has_interfile_work = not (List_.null interfile_rule_ids) in
   if has_interfile_work then
@@ -1053,7 +1056,6 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores:config.ncores
-      ~taint_interfile:config.taint_interfile
       ~max_memory_mb:config.max_memory_mb
       ~valid_rules ~targets
       ~respect_rule_paths:config.respect_rule_paths
@@ -1149,15 +1151,6 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
 (* NOTE: Where new and old cli meet, to invoke scan. *)
 let scan (caps : < caps ; .. >) (config : Core_scan_config.t) :
     Core_result.result_or_exn =
-  (* taint_interfile implies taint_intrafile: interfile builds on the
-     intrafile per-function dataflow, and signature-db lookups gate on
-     taint_intrafile — without this, interfile dispatch would run but
-     instantiate nothing.  Enforced here so no caller can construct a scan
-     with interfile enabled and intrafile off. *)
-  let config =
-    { config with
-      taint_intrafile = config.taint_intrafile || config.taint_interfile }
-  in
   try
     let timed_rules =
       Common.with_time (fun () ->

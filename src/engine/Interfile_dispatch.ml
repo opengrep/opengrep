@@ -76,26 +76,24 @@ type lang_context = {
 let file_of_fid (fid : Function_id.t) : Fpath.t option =
   Option.map Fpath.normalize (Function_id.file_of fid)
 
-(* A taint rule, interfile via the global flag or the rule's own option. *)
-let rule_is_interfile ~(taint_interfile : bool) (rule : R.rule) : bool =
+(* A taint rule whose options turn interfile on. *)
+let rule_is_interfile (rule : R.rule) : bool =
   (match rule.R.mode with
    | `Taint _ -> true
    | _ -> false)
-  && (taint_interfile
-     ||
-     match rule.R.options with
-     | Some opts -> opts.taint_interfile
-     | None -> false)
+  &&
+  match rule.R.options with
+  | Some opts -> opts.taint_interfile
+  | None -> false
 
 let interfile_taint_rules_by_lang
-    ~(taint_interfile : bool)
     (valid_rules : R.rule list)
     : (Lang.t * R.taint_rule list) list =
   let tbl : (Lang.t, R.taint_rule list) Hashtbl.t = Hashtbl.create 4 in
   List.iter (fun (rule : R.rule) ->
     match rule.R.mode with
     | `Taint _ as mode ->
-      if rule_is_interfile ~taint_interfile rule then begin
+      if rule_is_interfile rule then begin
         (* [to_langs] not [to_lang]: a JS rule [L (Js,[Ts])] must register
            under Ts too, else TS targets get zero findings. *)
         let taint_rule : R.taint_rule = { rule with mode } in
@@ -114,13 +112,12 @@ let interfile_taint_rules_by_lang
     (lang, rules) :: acc) tbl []
 
 let interfile_taint_rule_ids
-    ~(taint_interfile : bool)
     (valid_rules : R.rule list)
     : Rule_ID.t list =
   List.filter_map (fun (rule : R.rule) ->
     match rule.R.mode with
     | `Taint _ ->
-      if rule_is_interfile ~taint_interfile rule then Some (fst rule.R.id)
+      if rule_is_interfile rule then Some (fst rule.R.id)
       else None
     | _ -> None
   ) valid_rules
@@ -1444,7 +1441,6 @@ let parse_companion_files
 let build_rule_states
     (caps : < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
     ~(ncores : int)
-    ~(taint_interfile : bool)
     ~(max_memory_mb : int)
     ~(valid_rules : R.rule list)
     ~(targets : Target.t list)
@@ -1454,10 +1450,7 @@ let build_rule_states
     ~(xconf : Match_env.xconfig)
     : rule_state list * Xlang.t list * E.t list
       * (Fpath.t -> Tok.location list) =
-  (* A rule-local option counts, not just the global flag. *)
-  let lang_rules =
-    interfile_taint_rules_by_lang ~taint_interfile valid_rules
-  in
+  let lang_rules = interfile_taint_rules_by_lang valid_rules in
   match lang_rules with
   | [] -> ([], [], [], fun (_ : Fpath.t) -> [])
   | _ ->

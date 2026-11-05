@@ -94,10 +94,9 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       inline_metavariables = false;
       taint_intrafile = settings.taint_intrafile || settings.pro_intrafile;
       effect_guards = false;
-      taint_interfile = false;
+      enable_interfile = false;
       taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
       disable_intrafile = false;
-      disable_interfile = false;
       interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
       engine_config = Engine_config.default;
     }

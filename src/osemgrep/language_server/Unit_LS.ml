@@ -103,7 +103,6 @@ let mock_run_results (files : string list) : Core_runner.result =
       core;
       hrules;
       scanned;
-      taint_interfile = false;
       interfile_dedup_by = Core_match.Sink;
     }
 

@@ -5,7 +5,8 @@ pipeline laid out here.
 
 ## The five-line summary
 
-1. The user runs `opengrep --taint-interfile <rules> <target>`.
+1. The user runs `opengrep scan --enable-interfile <rules> <target>`, with
+   rules that carry `options.taint_interfile: true`.
 2. For every language with interfile taint rules, **projidx** walks
    the project tree once and builds a project-wide call graph.
 3. **Interfile_dispatch** takes that graph and, for each rule,
@@ -27,7 +28,7 @@ indexer.
 
 | Stage | Module | Output |
 |---|---|---|
-| CLI parse, decide `taint_interfile = true` | `src/osemgrep/cli_scan/Scan_CLI.ml` | `Core_scan_config.taint_interfile : bool` (per-rule: `Rule_options.taint_interfile`) |
+| CLI parse, decide `enable_interfile = true` | `src/osemgrep/cli_scan/Scan_CLI.ml` | `Core_scan_config.enable_interfile : bool`; per rule, `Rule_options.taint_interfile`, turned off by `Rule.restrict_taint_modes` without `enable_interfile` |
 | Group rules by language and targets by `project_root` | `src/engine/Interfile_dispatch.ml` `build_rule_states` | `lang_context` list (one per `(lang, root)` group) |
 | Build the project-wide call graph | `src/engine/Interfile_graph.ml` → `src/project_index/` (projidx) | `Call_graph.G.t` |
 | Filter targets to those present in the graph | `Interfile_dispatch.targets_in_interfile_graph` | `interfile_target list` |
