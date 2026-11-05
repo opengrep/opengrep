@@ -249,7 +249,8 @@ let test_enclosing_context_unused (caps : Scan_subcommand.caps) () =
 
 let test_interfile_source (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
-      Exit_code.Check.ok (scan caps ~files:interfile_files []))
+      Exit_code.Check.ok
+        (scan caps ~files:interfile_files [ "--enable-interfile" ]))
 
 (* A log file under a regular file cannot be created, whoever runs the test,
    so the scan prints a warning on stderr and continues. *)

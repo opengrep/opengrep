@@ -125,6 +125,7 @@ let dedup_scan (caps : Scan_subcommand.caps) ~(case : string) ~(rule : string)
                         "--config";
                         rule;
                         "--json";
+                        "--enable-interfile";
                       ]
                      @ args)))
             |> ignore)
@@ -623,7 +624,8 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_b.py";
              ]
            ~format_args:[]
-           ~extra_args:("--dataflow-traces" :: source_sink_args));
+           ~extra_args:
+             ("--enable-interfile" :: "--dataflow-traces" :: source_sink_args));
       t
         "findings: under --interfile-dedup-by source-sink, the text output \
          lists the two sources of a sink below the sink line"
@@ -637,7 +639,8 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_a.py";
                "dedup_two_sources/caller_b.py";
              ]
-           ~format_args:[] ~extra_args:source_sink_args);
+           ~format_args:[]
+           ~extra_args:("--enable-interfile" :: source_sink_args));
       t
         "findings: under --interfile-dedup-by source-sink, the text output \
          lists the sources of each of the two sinks of a file"
@@ -645,7 +648,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root:interfile_fixtures_root
            ~rule:"dedup_two_sinks/rule.yaml"
            ~targets:[ "dedup_two_sinks/two_sinks.py" ]
-           ~format_args:[] ~extra_args:source_sink_args);
+           ~format_args:[]
+           ~extra_args:("--enable-interfile" :: source_sink_args));
       t
         "findings: with --dataflow-traces and --interfile-dedup-by \
          source-sink, the text output prints one taint trace per source of \
@@ -655,7 +659,8 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"dedup_two_sinks/rule.yaml"
            ~targets:[ "dedup_two_sinks/two_sinks.py" ]
            ~format_args:[]
-           ~extra_args:("--dataflow-traces" :: source_sink_args));
+           ~extra_args:
+             ("--enable-interfile" :: "--dataflow-traces" :: source_sink_args));
       t
         "findings: each --emacs line ends with its taint source under \
          --interfile-dedup-by source-sink"
@@ -669,7 +674,8 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_a.py";
                "dedup_two_sources/caller_b.py";
              ]
-           ~format_args:[ "--emacs" ] ~extra_args:source_sink_args);
+           ~format_args:[ "--emacs" ]
+           ~extra_args:("--enable-interfile" :: source_sink_args));
       t
         "findings: each --vim line ends with its taint source under \
          --interfile-dedup-by source-sink"
@@ -683,7 +689,8 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_a.py";
                "dedup_two_sources/caller_b.py";
              ]
-           ~format_args:[ "--vim" ] ~extra_args:source_sink_args);
+           ~format_args:[ "--vim" ]
+           ~extra_args:("--enable-interfile" :: source_sink_args));
       t
         "findings: each --emacs line ends with its taint source under the \
          default dedup"
@@ -697,7 +704,7 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_a.py";
                "dedup_two_sources/caller_b.py";
              ]
-           ~format_args:[ "--emacs" ]);
+           ~format_args:[ "--emacs" ] ~extra_args:[ "--enable-interfile" ]);
       t
         "findings: each --vim line ends with its taint source under the \
          default dedup"
@@ -711,7 +718,7 @@ let tests (caps : < Scan_subcommand.caps >) =
                "dedup_two_sources/caller_a.py";
                "dedup_two_sources/caller_b.py";
              ]
-           ~format_args:[ "--vim" ]);
+           ~format_args:[ "--vim" ] ~extra_args:[ "--enable-interfile" ]);
       t
         "findings: under --interfile-dedup-by source-sink, the GitLab SAST \
          output gives the two findings at one sink different vulnerability ids"
@@ -720,7 +727,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root:interfile_fixtures_root
            ~rule:"dedup_two_sinks/rule.yaml"
            ~targets:[ "dedup_two_sinks/two_sinks.py" ]
-           ~format_args:[ "--gitlab-sast" ] ~extra_args:source_sink_args);
+           ~format_args:[ "--gitlab-sast" ]
+           ~extra_args:("--enable-interfile" :: source_sink_args));
       t
         "findings: under --interfile-dedup-by source-sink, the SARIF output \
          gives each finding its code flow without --dataflow-traces"
@@ -728,7 +736,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root:interfile_fixtures_root
            ~rule:"dedup_two_sinks/rule.yaml"
            ~targets:[ "dedup_two_sinks/two_sinks.py" ]
-           ~format_args:[ "--sarif" ] ~extra_args:source_sink_args);
+           ~format_args:[ "--sarif" ]
+           ~extra_args:("--enable-interfile" :: source_sink_args));
     ]
     @ (aliengrep_cases
       |> List.map (fun ((rule : string), (target : string)) ->

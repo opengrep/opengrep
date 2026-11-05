@@ -561,7 +561,7 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
       Option.value conf.max_memory_mb
         ~default:Core_runner.default_conf.max_memory_mb;
     effect_guards = false;
-    taint_interfile = false;
+    enable_interfile = false;
     taint_interfile_depth = 3;
   }
 

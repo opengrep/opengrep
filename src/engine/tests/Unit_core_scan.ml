@@ -91,6 +91,7 @@ let test_progress_adds_up (caps : Core_scan.caps) ~(ncores : int) () =
             rule_source = Rule_file rule_file;
             target_source = Targets targets;
             output_format = NoOutput;
+            enable_interfile = true;
             ncores;
             progress_hook = Some progress_hook;
           }

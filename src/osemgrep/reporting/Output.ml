@@ -88,19 +88,10 @@ let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t 
   | Some (Profiler.Start t) -> Some (Timedesc.Timestamp.of_float_s t)
   | _ -> None
 
-let is_interfile_rule_id ~(taint_interfile : bool) (hrules : Rule.hrules)
-    (id : Rule_ID.t) : bool =
+let is_interfile_rule_id (hrules : Rule.hrules) (id : Rule_ID.t) : bool =
   match Hashtbl.find_opt hrules id with
   | None -> false
-  | Some (rule : Rule.rule) ->
-      (match rule.Rule.mode with
-      | `Taint _ -> true
-      | _else_ -> false)
-      && (taint_interfile
-         ||
-         match rule.Rule.options with
-         | Some (opts : Rule_options.t) -> opts.Rule_options_t.taint_interfile
-         | None -> false)
+  | Some (rule : Rule.rule) -> Interfile_dispatch.rule_is_interfile rule
 
 let message_with_taint_source ~(is_interfile : Rule_ID.t -> bool)
     (m : Out.cli_match) : string =
@@ -563,8 +554,7 @@ let output_result ~(keep_ignored : bool)
   let cli_output = cli_output_of_result ~keep_ignored conf profiler res in
   dispatch caps profiler conf cli_output res.hrules
     ~interfile_dedup_by:res.interfile_dedup_by
-    ~is_interfile:
-      (is_interfile_rule_id ~taint_interfile:res.taint_interfile res.hrules);
+    ~is_interfile:(is_interfile_rule_id res.hrules);
   (* we return cli_output as the caller might use it *)
   cli_output
 [@@profiling]

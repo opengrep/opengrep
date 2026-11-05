@@ -497,15 +497,15 @@ let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
                 Scan_subcommand.main caps
                   [|
                     "opengrep-scan"; "--config"; "rules.yml";
-                    "--taint-interfile"; "--incremental-output";
+                    "--enable-interfile"; "--incremental-output";
                   |])
           in
           Exit_code.Check.ok exit_code))
 
 (* The mode each taint rule option ends up in under every combination of
-   --taint-intrafile/--taint-interfile and --disable-intrafile/
-   --disable-interfile. intra.py has a flow only intrafile finds, and
-   main.py -> sinks.py one only interfile finds. *)
+   --taint-intrafile, --enable-interfile and --disable-intrafile. intra.py
+   has a flow only intrafile finds, and main.py -> sinks.py one only
+   interfile finds. *)
 let test_disable_taint_modes (caps : Scan_subcommand.caps) () =
   let rule (id : string) (options : string) =
     spf {|  - id: %s
@@ -524,6 +524,7 @@ let test_disable_taint_modes (caps : Scan_subcommand.caps) () =
     ^ rule "no-option" ""
     ^ rule "intrafile-option" "    options:\n      taint_intrafile: true\n"
     ^ rule "interfile-option" "    options:\n      taint_interfile: true\n"
+    ^ rule "interfile-alias" "    options:\n      interfile: true\n"
   in
   let intra_py = {|
 def get():
@@ -542,20 +543,22 @@ def go():
     | "interfile" -> [ "intra.py"; "sinks.py" ]
     | _ -> failwith mode
   in
-  (* (flags, modes of no-option, intrafile-option, interfile-option) *)
-  let cases : (string list * (string * string * string)) list =
+  (* (flags, modes of no-option, intrafile-option, interfile-option,
+     interfile-alias) *)
+  let cases : (string list * (string * string * string * string)) list =
     [
-      ([], ("none", "intrafile", "interfile"));
-      ([ "--disable-interfile" ], ("none", "intrafile", "intrafile"));
-      ([ "--disable-intrafile" ], ("none", "none", "none"));
-      ([ "--taint-intrafile" ], ("intrafile", "intrafile", "interfile"));
-      ([ "--taint-intrafile"; "--disable-interfile" ],
-       ("intrafile", "intrafile", "intrafile"));
-      ([ "--taint-intrafile"; "--disable-intrafile" ], ("none", "none", "none"));
-      ([ "--taint-interfile" ], ("interfile", "interfile", "interfile"));
-      ([ "--taint-interfile"; "--disable-interfile" ],
-       ("intrafile", "intrafile", "intrafile"));
-      ([ "--taint-interfile"; "--disable-intrafile" ], ("none", "none", "none"));
+      ([], ("none", "intrafile", "none", "none"));
+      ([ "--disable-intrafile" ], ("none", "none", "none", "none"));
+      ([ "--taint-intrafile" ],
+       ("intrafile", "intrafile", "intrafile", "intrafile"));
+      ([ "--taint-intrafile"; "--disable-intrafile" ],
+       ("none", "none", "none", "none"));
+      ([ "--enable-interfile" ],
+       ("none", "intrafile", "interfile", "interfile"));
+      ([ "--enable-interfile"; "--taint-intrafile" ],
+       ("intrafile", "intrafile", "interfile", "interfile"));
+      ([ "--enable-interfile"; "--disable-intrafile" ],
+       ("none", "none", "none", "none"));
     ]
   in
   with_env_app_token (fun () ->
@@ -568,7 +571,8 @@ def go():
         ]
         (fun _cwd ->
           cases
-          |> List.iter (fun ((flags : string list), (no_opt, intra, inter)) ->
+          |> List.iter
+               (fun ((flags : string list), (no_opt, intra, inter, alias)) ->
                  let (), stdout_output =
                    Testo.with_capture stdout (fun () ->
                        without_settings (fun () ->
@@ -591,7 +595,7 @@ def go():
                    |> List.sort String.compare
                  in
                  [ ("no-option", no_opt); ("intrafile-option", intra);
-                   ("interfile-option", inter) ]
+                   ("interfile-option", inter); ("interfile-alias", alias) ]
                  |> List.iter (fun ((id : string), (mode : string)) ->
                         Alcotest.(check (list string))
                           (spf "%s with [%s] runs %s" id
@@ -631,6 +635,8 @@ function go() {
     severity: WARNING
     message: builder
     mode: taint
+    options:
+      taint_interfile: true
     pattern-sources:
       - pattern: source(...)
     pattern-sinks:
@@ -647,7 +653,7 @@ function go() {
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--json"; "--taint-interfile";
+                        "rules.yml"; "--json"; "--enable-interfile";
                         "--interfile-timeout"; "10";
                       |])
                 |> ignore)
@@ -742,7 +748,7 @@ let test_interfile_finding_in_non_target (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--json"; "--taint-interfile"; "main.py";
+                        "rules.yml"; "--json"; "--enable-interfile"; "main.py";
                       |])
                 |> ignore)
           in
@@ -763,6 +769,8 @@ let test_interfile_rule_paths (caps : Scan_subcommand.caps) () =
     severity: WARNING
     message: excluded
     mode: taint
+    options:
+      taint_interfile: true
     paths:
       exclude:
         - sinks.py
@@ -785,7 +793,7 @@ let test_interfile_rule_paths (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--json"; "--taint-interfile";
+                        "rules.yml"; "--json"; "--enable-interfile";
                       |])
                 |> ignore)
           in
@@ -816,7 +824,7 @@ let test_interfile_symlinked_root (caps : Scan_subcommand.caps) () =
                         Scan_subcommand.main caps
                           [|
                             "opengrep-scan"; "--config";
-                            "rules.yml"; "--json"; "--taint-interfile";
+                            "rules.yml"; "--json"; "--enable-interfile";
                             Fpath.to_string link;
                           |])
                     |> ignore)
@@ -856,7 +864,7 @@ let test_interfile_empty_file_is_covered (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--json"; "--taint-interfile";
+                        "rules.yml"; "--json"; "--enable-interfile";
                       |])
                 |> ignore)
           in
@@ -880,6 +888,8 @@ let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
     severity: WARNING
     message: t
     mode: taint
+    options:
+      taint_interfile: true
     pattern-sources:
       - pattern: source(...)
     pattern-sinks:
@@ -906,7 +916,7 @@ let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--json"; "--taint-interfile";
+                        "rules.yml"; "--json"; "--enable-interfile";
                       |])
                 |> ignore)
           in
@@ -955,7 +965,7 @@ let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--json"; "--taint-interfile";
+                        "rules.yml"; "--json"; "--enable-interfile";
                         "--baseline-commit"; "HEAD~1"; Fpath.to_string cwd;
                       |])
                 |> ignore)
@@ -1007,7 +1017,7 @@ def handler():
                         (Array.of_list
                            ([
                               "opengrep-scan"; "--config";
-                              "rules.yml"; "--json"; "--taint-interfile";
+                              "rules.yml"; "--json"; "--enable-interfile";
                             ]
                            @ args)))
                   |> ignore)
@@ -1060,7 +1070,7 @@ let test_interfile_partial_target (caps : Scan_subcommand.caps) () =
                 Scan_subcommand.main caps
                   [|
                     "opengrep-scan"; "--config"; "rules.yml";
-                    "--taint-interfile"; "sinks.py";
+                    "--enable-interfile"; "sinks.py";
                   |])
           in
           Exit_code.Check.ok exit_code))
@@ -1082,7 +1092,7 @@ let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps)
                   (Array.of_list
                      ([
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--taint-interfile"; "--dataflow-traces";
+                        "rules.yml"; "--enable-interfile"; "--dataflow-traces";
                       ]
                      @ args)))
           in
@@ -1107,7 +1117,7 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--json"; "--time";
-                        "--config"; "rules.yml"; "--taint-interfile";
+                        "--config"; "rules.yml"; "--enable-interfile";
                       |]))
           in
           Exit_code.Check.ok exit_code;
@@ -1155,7 +1165,7 @@ let test_interfile_parse_error (caps : Scan_subcommand.caps)
                   (Array.of_list
                      ([
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--taint-interfile";
+                        "rules.yml"; "--enable-interfile";
                       ]
                      @ args)))
           in
@@ -1184,7 +1194,7 @@ let test_interfile_target_absent_from_graph (caps : Scan_subcommand.caps)
                   (Array.of_list
                      ([
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--taint-interfile";
+                        "rules.yml"; "--enable-interfile";
                       ]
                      @ args
                      @ [ "main.py"; "sinks.py"; "gen/extra.py" ])))
@@ -1218,7 +1228,7 @@ let interfile_scan_stdout (caps : Scan_subcommand.caps)
 let test_interfile_json_output (caps : Scan_subcommand.caps) () =
   let scan () : Semgrep_output_v1_t.cli_match list =
     let exit_code, stdout_output =
-      interfile_scan_stdout caps [ "--json"; "--taint-interfile" ]
+      interfile_scan_stdout caps [ "--json"; "--enable-interfile" ]
     in
     Exit_code.Check.ok exit_code;
     (Semgrep_output_v1_j.cli_output_of_string stdout_output).results
@@ -1241,7 +1251,7 @@ let test_interfile_json_output (caps : Scan_subcommand.caps) () =
    file. *)
 let test_interfile_sarif_output (caps : Scan_subcommand.caps) () =
   let exit_code, stdout_output =
-    interfile_scan_stdout caps [ "--sarif"; "--taint-interfile" ]
+    interfile_scan_stdout caps [ "--sarif"; "--enable-interfile" ]
   in
   Exit_code.Check.ok exit_code;
   let open Yojson.Safe.Util in
@@ -1264,7 +1274,7 @@ let test_interfile_ignored_caller (caps : Scan_subcommand.caps) () =
   let exit_code, stdout_output =
     interfile_scan_stdout caps
       ~extra_files:[ F.File (".semgrepignore", "main.py\n") ]
-      [ "--json"; "--taint-interfile" ]
+      [ "--json"; "--enable-interfile" ]
   in
   Exit_code.Check.ok exit_code;
   let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
@@ -1272,8 +1282,8 @@ let test_interfile_ignored_caller (caps : Scan_subcommand.caps) () =
   Alcotest.(check (list string)) "the caller is not scanned" [ "sinks.py" ]
     (out.paths.scanned |> List_.map Fpath.to_string)
 
-(* An interfile rule (by its own option, no CLI flag), a search rule and an
-   intrafile taint rule over the same targets: each reports its own
+(* An interfile rule (by its own option, under --enable-interfile), a search
+   rule and an intrafile taint rule over the same targets: each reports its own
    findings once, the intrafile rule sees no cross-file flow, and every
    target is scanned. *)
 let mixed_rules_content =
@@ -1308,7 +1318,8 @@ rules:
 
 let test_interfile_mixed_rules (caps : Scan_subcommand.caps) () =
   let exit_code, stdout_output =
-    interfile_scan_stdout caps ~rules:mixed_rules_content [ "--json" ]
+    interfile_scan_stdout caps ~rules:mixed_rules_content
+      [ "--json"; "--enable-interfile" ]
   in
   Exit_code.Check.ok exit_code;
   let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
@@ -1343,7 +1354,7 @@ let test_interfile_limits (caps : Scan_subcommand.caps) () =
                         (Array.of_list
                            ([
                               "opengrep-scan"; "--json";
-                              "--config"; "rules.yml"; "--taint-interfile";
+                              "--config"; "rules.yml"; "--enable-interfile";
                             ]
                            @ args))))
             in
@@ -1411,7 +1422,7 @@ let test_interfile_diff_scan (caps : Scan_subcommand.caps) () =
                 Scan_subcommand.main caps
                   [|
                     "opengrep-scan"; "--config"; "rules.yml";
-                    "--taint-interfile"; "--baseline-commit"; "HEAD~1";
+                    "--enable-interfile"; "--baseline-commit"; "HEAD~1";
                   |])
           in
           Exit_code.Check.ok exit_code))
@@ -1441,7 +1452,7 @@ let test_interfile_diff_scan_preexisting (caps : Scan_subcommand.caps) () =
                 Scan_subcommand.main caps
                   [|
                     "opengrep-scan"; "--config"; "rules.yml";
-                    "--taint-interfile"; "--baseline-commit"; "HEAD~1";
+                    "--enable-interfile"; "--baseline-commit"; "HEAD~1";
                   |])
           in
           Exit_code.Check.ok exit_code))
@@ -1473,7 +1484,7 @@ let test_interfile_scan_from_subdir (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--taint-interfile";
+                        "rules.yml"; "--enable-interfile";
                       |]))
           in
           Exit_code.Check.ok exit_code))
@@ -1510,7 +1521,7 @@ let test_interfile_diff_scan_subdir (caps : Scan_subcommand.caps) () =
                     Scan_subcommand.main caps
                       [|
                         "opengrep-scan"; "--config";
-                        "rules.yml"; "--taint-interfile"; "--baseline-commit";
+                        "rules.yml"; "--enable-interfile"; "--baseline-commit";
                         "HEAD~1";
                       |]))
           in
@@ -2983,7 +2994,7 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile findings with --incremental-output"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_incremental_output caps);
-      t "--disable-intrafile and --disable-interfile against the taint flags \
+      t "--enable-interfile and --disable-intrafile against the taint flags \
          and rule options" (test_disable_taint_modes caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
