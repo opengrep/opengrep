@@ -431,12 +431,39 @@ and extract_reduction = Separate | Concat [@@deriving show]
 (* Paths *)
 (*****************************************************************************)
 
-(* TODO? store also the compiled glob directly? but we preprocess the pattern
- * in Filter_target.filter_paths, so we would need to recompile it anyway,
- * or call Filter_target.filter_paths preprocessing in Parse_rule.ml
- *)
-type glob = string (* original string *) * Glob.Pattern.t (* parsed glob *)
+(* The matchers are compiled once, when the rule is parsed: a target is
+ * checked against every glob of every applicable rule. *)
+type glob = {
+  source : string; (* original string *)
+  matchers : Glob.Match.compiled_pattern list;
+}
 [@@deriving show]
+
+let glob_of_pattern (source : string) (pat : Glob.Pattern.t) : glob =
+  (* ugly: pysemgrep adds a leading **/ and a suffix /** to each pattern.
+   * See target_manager.py preprocess_path_patterns()
+   * python:
+   *    Convert semgrep's path include/exclude patterns to wcmatch's glob
+   *    patterns. In semgrep, pattern "foo/bar" should match paths
+   *    "x/foo/bar", "foo/bar/x", and "x/foo/bar/x". It implicitly matches
+   *    zero or more directories at the beginning and the end
+   *    of the pattern. In contrast, we have to explicitly specify the
+   *    globstar (**) patterns in wcmatch. This function will converts
+   *    a pattern "foo/bar" into "**/foo/bar" and "**/foo/bar/**". We need
+   *    the pattern without the trailing "/**" because "foo/bar.py/**"
+   *    won't match "foo/bar.py".
+   * LATER? compute the ppath instead? and use a Gitignore like semantic?
+   *)
+  let pat1 = Glob.Pattern.(append [ Any_subpath ] pat) in
+  let pat2 =
+    Glob.Pattern.(append [ Any_subpath ] (append pat [ Any_subpath ]))
+  in
+  let loc = Glob.Match.string_loc ~source_kind:None source in
+  {
+    source;
+    matchers =
+      [ Glob.Match.compile ~source:loc pat1; Glob.Match.compile ~source:loc pat2 ];
+  }
 
 (* TODO? should we provide a pattern-filename: Xpattern to combine
  * with other Xpattern instead of adhoc paths: extra field in the rule?

@@ -65,39 +65,16 @@ let filter_target_for_xlang (xlang : Xlang.t) (path : Fpath.t) : bool =
    include/exclude too. Can we find back this code?
 *)
 let filter_paths (paths : Rule.paths) (path : Fpath.t) : bool =
-  let match_glob (pat : Rule.glob) (path : Fpath.t) : bool =
-    (* ugly: pysemgrep adds a leading **/ and a suffix /** to each pattern.
-     * See target_manager.py preprocess_path_patterns()
-     * python:
-     *    Convert semgrep's path include/exclude patterns to wcmatch's glob
-     *    patterns. In semgrep, pattern "foo/bar" should match paths
-     *    "x/foo/bar", "foo/bar/x", and "x/foo/bar/x". It implicitly matches
-     *    zero or more directories at the beginning and the end
-     *    of the pattern. In contrast, we have to explicitly specify the
-     *    globstar (**) patterns in wcmatch. This function will converts
-     *    a pattern "foo/bar" into "**/foo/bar" and "**/foo/bar/**". We need
-     *    the pattern without the trailing "/**" because "foo/bar.py/**"
-     *    won't match "foo/bar.py".
-     * LATER? compute the ppath instead? and use a Gitignore like semantic?
-     *)
-    let pat1 = Glob.Pattern.(append [ Any_subpath ] (snd pat)) in
-    let pat2 =
-      Glob.Pattern.(append [ Any_subpath ] (append (snd pat) [ Any_subpath ]))
-    in
-    let cpat1 =
-      Glob.Match.(compile ~source:(string_loc ~source_kind:None (fst pat)) pat1)
-    in
-    let cpat2 =
-      Glob.Match.(compile ~source:(string_loc ~source_kind:None (fst pat)) pat2)
-    in
-    let path_str = Fpath.to_string path
-    in
-    Glob.Match.run cpat1 path_str
-    || Glob.Match.run cpat2 path_str
+  let path_str = Fpath.to_string path in
+  (* A glob matches at any depth: see [Rule.glob_of_pattern]. *)
+  let match_glob (glob : Rule.glob) : bool =
+    glob.matchers
+    |> List.exists (fun (matcher : Glob.Match.compiled_pattern) ->
+           Glob.Match.run matcher path_str)
   in
 
   let { Rule.require; exclude } = paths in
-  let is_excluded = exclude |> List.exists (fun pat -> match_glob pat path) in
+  let is_excluded = exclude |> List.exists match_glob in
   (* from the doc: "when mixing inclusion and exclusion filters,
    * the exclusion ones take precedence."
    *)
@@ -107,7 +84,7 @@ let filter_paths (paths : Rule.paths) (path : Fpath.t) : bool =
       match require with
       (* no require patterns means no constraints *)
       | [] -> true
-      | _xs -> require |> List.exists (fun pat -> match_glob pat path)
+      | _xs -> require |> List.exists match_glob
     in
     is_required
 [@@profiling]
