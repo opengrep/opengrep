@@ -519,7 +519,7 @@ let handle_target_with_protection
     (config : Core_scan_config.t)
     (handle_target : target_handler)
     (target : Target.t)
-    (rules : Rule.t list)
+    (rules_of_target : Target.t -> Rule.t list)
     : Core_profiling.file_profiling Core_result.match_result * Target.t option =
   let internal_path = Target.internal_path target in
   let noprof = Core_profiling.empty_partial_profiling internal_path in
@@ -542,7 +542,9 @@ let handle_target_with_protection
                  e.g. while parsing it, must not be attributed to
                  the last rule of the previous target *)
               TLS.set Rule.last_matched_rule None;
-              let res, was_scanned = handle_target target rules in
+              let res, was_scanned =
+                handle_target target (rules_of_target target)
+              in
               (* old: This was to test -max_memory, to give a chance
                * to Gc.create_alarm to run even if the program does
                * not even need to run the Gc. However, this has a
@@ -773,9 +775,11 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
 module DLS = Domain.DLS
 
 (* A target carries the size the scheduling took for it: that is the byte
-   count --time reports, without a system call of its own. *)
+   count --time reports, without a system call of its own. It does not carry
+   the target's rules: the parallel map holds every item until the last one
+   is done, so a list per item would stay live for the whole scan. *)
 type scan_work_item =
-  | Per_target of Target.t * int (* size in bytes *) * Rule.t list
+  | Per_target of Target.t * int (* size in bytes *)
   | Interfile_rule of Interfile_dispatch.rule_state
 
 type scan_work_result =
@@ -797,9 +801,10 @@ let handle_work_item
     (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
     (config : Core_scan_config.t)
     (target_handler : target_handler)
+    ~(rules_of_target : Target.t -> Rule.t list)
     (item : scan_work_item) : scan_work_result =
   match item with
-  | Per_target (target, file_size, rules) ->
+  | Per_target (target, file_size) ->
     (* Counted here rather than in [file_match_hook]: a target that raises
        or is skipped never reaches that hook, and interfile matches reach it
        for files that are not work items. *)
@@ -807,7 +812,8 @@ let handle_work_item
       Common.protect
         ~finally:(fun () -> report_progress config Core_scan_config.Target_done)
         (fun () ->
-          handle_target_with_protection caps config target_handler target rules)
+          handle_target_with_protection caps config target_handler target
+            rules_of_target)
     in
     let result =
       Core_result.map_profiling
@@ -873,7 +879,7 @@ let handle_work_item
 let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     : scan_work_error =
   match item with
-  | Per_target (target, _size, _rules) ->
+  | Per_target (target, _size) ->
     let internal_path = Target.internal_path target in
     Logs.debug (fun m ->
         m "exception on %s (%s)" !!internal_path (Exception.to_string e));
@@ -902,14 +908,14 @@ let iter_unified_and_get_matches_and_exn_to_errors
   let to_run, dispatched =
     targets
     |> List.fold_left
-         (fun ((to_run : (Target.t * int * Rule.t list) list),
+         (fun ((to_run : (Target.t * int) list),
                (dispatched : (Target.t * int) list))
               (target : Target.t) ->
            match target_rules target with
            | No_applicable_rule -> (to_run, dispatched)
-           | Per_target_rules rules ->
+           | Per_target_rules _ ->
                let size = UFile.filesize (Target.internal_path target) in
-               ((target, size, rules) :: to_run, dispatched)
+               ((target, size) :: to_run, dispatched)
            | Interfile_dispatch_only ->
                let size = UFile.filesize (Target.internal_path target) in
                (to_run, (target, size) :: dispatched))
@@ -925,9 +931,9 @@ let iter_unified_and_get_matches_and_exn_to_errors
     in
     let target_items =
       to_run
-      |> List_.sort_by_key (fun (_, size, _) -> size) (Fun.flip Int.compare)
-      |> List_.map (fun ((target : Target.t), (size : int), rules) ->
-             Per_target (target, size, rules))
+      |> List_.sort_by_key (fun (_, size) -> size) (Fun.flip Int.compare)
+      |> List_.map (fun ((target : Target.t), (size : int)) ->
+             Per_target (target, size))
     in
     interfile_items @ target_items
   in
@@ -948,13 +954,24 @@ let iter_unified_and_get_matches_and_exn_to_errors
                 (fun (p : Core_profiling.file_profiling) ->
                   { p with file_size_bytes = Some size }))
   in
+  (* Called in the worker, under the target's memory limit and error
+     handling. [Per_target] does not carry the rules, for the memory reason
+     given at [scan_work_item], so they are computed a second time after the
+     classification above. *)
+  let rules_of_target (target : Target.t) : Rule.t list =
+    match target_rules target with
+    | Per_target_rules rules -> rules
+    | Interfile_dispatch_only
+    | No_applicable_rule -> []
+  in
   let work_results =
     Parallel_targets.map_work_items
       (caps :> < Cap.fork >)
       config.ncores
       ~exception_handler:unified_exception_handler
       (handle_work_item
-         (caps :> < Cap.memory_limit ; Cap.time_limit >) config target_handler)
+         (caps :> < Cap.memory_limit ; Cap.time_limit >) config target_handler
+         ~rules_of_target)
       work_items
   in
   let file_results, scanned_targets, interfile_matches, interfile_rule_errors =
