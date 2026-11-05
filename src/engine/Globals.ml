@@ -61,7 +61,6 @@ let reset () =
   TLS.set Rule.last_matched_rule None; (* DONE *)
   TLS.set Match_patterns.last_matched_rule None; (* NEW, DONE *)
   (* TODO: There is probably more places where we need to do that: *)
-  let _ : _ Seq.t = Saturn.Htbl.remove_all Xpattern_matcher.hmemo in
   let _ : _ Seq.t = Saturn.Htbl.remove_all Range.hmemo in
   let _ : _ Seq.t = Saturn.Htbl.remove_all Spacegrep.Find_files.hmemo in
   (* TODO?

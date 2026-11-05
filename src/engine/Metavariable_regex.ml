@@ -90,7 +90,8 @@ let get_metavar_regex_capture_bindings env ~file r (mvar, re) =
 
           match
             Eval_generic.eval_regexp_matches ~base_offset:mval_start_pos.bytepos
-              ~regexp:re ~file:file str
+              ~regexp:re ~file:file
+              ~linecol:(Eval_generic.linecol_of_env env) str
           with
           | [] -> None
           | matches -> Some (List_.map snd matches))
