@@ -171,6 +171,29 @@ let o_opengrep_ignore_pattern : string option Term.t =
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
+let o_enable_interfile : bool Term.t =
+  let info =
+    Arg.info [ "enable-interfile" ]
+      ~doc:
+        ("Enable cross-file taint analysis for the taint rules whose options \
+          set interfile or taint_interfile; without this flag those rules \
+          run as if the option were absent. \
+          When a file has sources but no sinks (or vice versa), companion \
+          files are discovered from the project-wide interfile call graph, \
+          parsed, and analysed together. Implies --taint-intrafile behaviour \
+          for those rules.")
+  in
+  Arg.value (Arg.flag info)
+
+let o_interfile_depth : int Term.t =
+  let info =
+    Arg.info [ "interfile-depth" ]
+      ~doc:
+        ("Maximum call chain depth for companion file discovery in \
+          cross-file taint analysis. Default is 3.")
+  in
+  Arg.value (Arg.opt Arg.int 3 info)
+
 (*************************************************************************)
 (* Term for all common CLI flags *)
 (*************************************************************************)

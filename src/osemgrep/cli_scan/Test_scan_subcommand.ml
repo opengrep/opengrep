@@ -503,9 +503,9 @@ let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
           Exit_code.Check.ok exit_code))
 
 (* The mode each taint rule option ends up in under every combination of
-   --taint-intrafile, --enable-interfile and --disable-intrafile. intra.py
-   has a flow only intrafile finds, and main.py -> sinks.py one only
-   interfile finds. *)
+   --taint-intrafile, --enable-interfile and --disable-intrafile. local.py
+   has a flow inside one function, which every mode finds, intra.py one only
+   intrafile finds, and main.py -> sinks.py one only interfile finds. *)
 let test_disable_taint_modes (caps : Scan_subcommand.caps) () =
   let rule (id : string) (options : string) =
     spf {|  - id: %s
@@ -519,13 +519,28 @@ let test_disable_taint_modes (caps : Scan_subcommand.caps) () =
     severity: ERROR
 |} id options
   in
+  let rule_options : (string * string) list =
+    [
+      ("no-option", "");
+      ("intrafile-option", "    options:\n      taint_intrafile: true\n");
+      ("interfile-option", "    options:\n      taint_interfile: true\n");
+      ("interfile-alias", "    options:\n      interfile: true\n");
+      ( "both-options",
+        "    options:\n      taint_intrafile: true\n"
+        ^ "      taint_interfile: true\n" );
+    ]
+  in
   let rules =
     "rules:\n"
-    ^ rule "no-option" ""
-    ^ rule "intrafile-option" "    options:\n      taint_intrafile: true\n"
-    ^ rule "interfile-option" "    options:\n      taint_interfile: true\n"
-    ^ rule "interfile-alias" "    options:\n      interfile: true\n"
+    ^ String.concat ""
+        (List_.map
+           (fun ((id : string), (options : string)) -> rule id options)
+           rule_options)
   in
+  let local_py = {|
+def go():
+    sink(source())
+|} in
   let intra_py = {|
 def get():
     return source()
@@ -538,41 +553,40 @@ def go():
 |} in
   let files_of_mode (mode : string) : string list =
     match mode with
-    | "none" -> []
-    | "intrafile" -> [ "intra.py" ]
-    | "interfile" -> [ "intra.py"; "sinks.py" ]
+    | "intraprocedural" -> [ "local.py" ]
+    | "intrafile" -> [ "intra.py"; "local.py" ]
+    | "interfile" -> [ "intra.py"; "local.py"; "sinks.py" ]
     | _ -> failwith mode
   in
-  (* (flags, modes of no-option, intrafile-option, interfile-option,
-     interfile-alias) *)
-  let cases : (string list * (string * string * string * string)) list =
+  (* (flags, the mode of each rule of [rule_options], in order) *)
+  let cases : (string list * string list) list =
+    let local = "intraprocedural" and intra = "intrafile"
+    and inter = "interfile" in
     [
-      ([], ("none", "intrafile", "none", "none"));
-      ([ "--disable-intrafile" ], ("none", "none", "none", "none"));
-      ([ "--taint-intrafile" ],
-       ("intrafile", "intrafile", "intrafile", "intrafile"));
+      ([], [ local; intra; local; local; intra ]);
+      ([ "--disable-intrafile" ], [ local; local; local; local; local ]);
+      ([ "--taint-intrafile" ], [ intra; intra; intra; intra; intra ]);
       ([ "--taint-intrafile"; "--disable-intrafile" ],
-       ("none", "none", "none", "none"));
-      ([ "--enable-interfile" ],
-       ("none", "intrafile", "interfile", "interfile"));
+       [ local; local; local; local; local ]);
+      ([ "--enable-interfile" ], [ local; intra; inter; inter; inter ]);
       ([ "--enable-interfile"; "--taint-intrafile" ],
-       ("intrafile", "intrafile", "interfile", "interfile"));
+       [ intra; intra; inter; inter; inter ]);
       ([ "--enable-interfile"; "--disable-intrafile" ],
-       ("none", "none", "none", "none"));
+       [ local; local; local; local; local ]);
     ]
   in
   with_env_app_token (fun () ->
       Testutil_git.with_git_repo
         [
           F.File ("rules.yml", rules);
+          F.File ("local.py", local_py);
           F.File ("intra.py", intra_py);
           F.File ("main.py", interfile_caller_py_content);
           F.File ("sinks.py", interfile_sink_py_content);
         ]
         (fun _cwd ->
           cases
-          |> List.iter
-               (fun ((flags : string list), (no_opt, intra, inter, alias)) ->
+          |> List.iter (fun ((flags : string list), (modes : string list)) ->
                  let (), stdout_output =
                    Testo.with_capture stdout (fun () ->
                        without_settings (fun () ->
@@ -594,13 +608,45 @@ def go():
                           Fpath.to_string m.path)
                    |> List.sort String.compare
                  in
-                 [ ("no-option", no_opt); ("intrafile-option", intra);
-                   ("interfile-option", inter); ("interfile-alias", alias) ]
+                 List.combine (List_.map fst rule_options) modes
                  |> List.iter (fun ((id : string), (mode : string)) ->
                         Alcotest.(check (list string))
                           (spf "%s with [%s] runs %s" id
                              (String.concat " " flags) mode)
                           (files_of_mode mode) (files_of_rule id)))))
+
+(* scan --test passes --enable-interfile and --interfile-depth on to the test
+   run: main.py reaches the sink through a call into helper.py, so its
+   annotation holds only under --enable-interfile with a depth above 0. *)
+let test_scan_test_interfile_flags (caps : Scan_subcommand.caps) () =
+  let caller_py = {|from helper import wrap
+
+def go():
+    # ruleid: interfile-taint
+    sink(wrap())
+|} in
+  let helper_py = {|def wrap():
+    return source()
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", caller_py);
+          F.File ("helper.py", helper_py);
+        ]
+        (fun _cwd ->
+          let run (flags : string list) : Exit_code.t =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([ "opengrep-scan"; "--test"; "--config"; "rules.yml" ]
+                     @ flags @ [ "main.py" ])))
+          in
+          Exit_code.Check.findings (run []);
+          Exit_code.Check.ok (run [ "--enable-interfile" ]);
+          Exit_code.Check.findings
+            (run [ "--enable-interfile"; "--interfile-depth"; "0" ])))
 
 (* A self-recursive builder stores its own result under six fields of a
    fresh object. Its stored return shape is a six-way tree, and every
@@ -1041,10 +1087,10 @@ def handler():
   Alcotest.(check bool) "the warning names the rule and the depth flag" true
     (List.for_all
        (fun (m : string) ->
-         String_.contains m ~term:"--taint-interfile-depth"
+         String_.contains m ~term:"--interfile-depth"
          && String_.contains m ~term:"interfile-taint")
        (messages cut));
-  let deep = scan [ "--taint-interfile-depth"; "4" ] in
+  let deep = scan [ "--interfile-depth"; "4" ] in
   Alcotest.(check (list string)) "found at depth four" [ "chain.py" ]
     (files deep);
   Alcotest.(check (list string)) "no warning at depth four" [] (messages deep)
@@ -2996,6 +3042,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_incremental_output caps);
       t "--enable-interfile and --disable-intrafile against the taint flags \
          and rule options" (test_disable_taint_modes caps);
+      t "scan --test with --enable-interfile and --interfile-depth"
+        (test_scan_test_interfile_flags caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);

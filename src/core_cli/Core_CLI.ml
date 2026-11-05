@@ -700,7 +700,7 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
       Arg.Set enable_interfile,
       " run the rules whose options set interfile or taint_interfile in \
        interfile tainting mode" );
-    ( "-taint_interfile_depth",
+    ( "-interfile_depth",
       Arg.Set_int taint_interfile_depth,
       " <int> maximum call chain depth for companion file discovery (default 3)" );
     ( "-interfile_dedup_by",

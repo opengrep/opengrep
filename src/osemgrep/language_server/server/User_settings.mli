@@ -17,6 +17,7 @@ type t = {
   do_hover : bool;
   pro_intrafile : bool;
   taint_intrafile : bool;
+  enable_interfile : bool;
 }
 
 val default : t

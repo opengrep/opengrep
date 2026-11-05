@@ -2090,7 +2090,7 @@ let build_rule_states
                       "rule %s: the interfile search stopped at depth %d \
                        with calls beyond it, so a longer chain of calls from \
                        a source to a sink is not followed; \
-                       --taint-interfile-depth raises the depth, -1 removes it"
+                       --interfile-depth raises the depth, -1 removes it"
                       (Rule_ID.to_string rule_id) depth)
                  Out.SemgrepWarning))
       rule_subgraphs

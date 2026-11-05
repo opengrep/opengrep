@@ -151,10 +151,8 @@ let effective_taint_modes ~(disable_intrafile : bool) ~(intrafile : bool)
   (intrafile && not disable_intrafile, enable_interfile && not disable_intrafile)
 
 let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
-  let allow_intrafile, allow_interfile =
-    effective_taint_modes ~disable_intrafile:conf.disable_intrafile
-      ~intrafile:true ~enable_interfile:conf.enable_interfile
-  in
+  let allow_intrafile = not conf.disable_intrafile in
+  let allow_interfile = conf.enable_interfile && allow_intrafile in
   List_.map
     (Rule.restrict_taint_modes ~allow_intrafile ~allow_interfile)
     rules

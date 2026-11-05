@@ -279,7 +279,8 @@ let cmdline_term : conf Term.t =
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ Skin_CLI.o_skin
     $ o_subdir
-    $ o_suppress_errors $ SC.o_enable_interfile $ SC.o_taint_interfile_depth
+    $ o_suppress_errors $ CLI_common.o_enable_interfile
+    $ CLI_common.o_interfile_depth
     $ SC.o_taint_intrafile $ SC.o_disable_intrafile
     $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile

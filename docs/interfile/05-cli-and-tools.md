@@ -30,16 +30,19 @@ the option were absent: per target, and without the intrafile
 cross-function analysis that the option implies (unless
 `--taint-intrafile` or `options.taint_intrafile: true` turns it on).
 `--disable-intrafile` disables interfile too.
-`--taint-interfile-depth` and
-the per-rule `taint_interfile_depth` combine by **max** (the deeper of
-the two wins).
+`opengrep test` and `opengrep scan --test` take `--enable-interfile` as
+well, `opengrep --core` takes `-enable_interfile`, and the language
+server has the setting `enableInterfile`.
+A rule's own `taint_interfile_depth` wins over `--interfile-depth`;
+a rule without one takes the scan's.
 
 `options.interfile: true` is an alias for
 `options.taint_interfile: true`; a rule that sets both is rejected as
 an invalid rule.
 
-An interfile rule implies `--taint-intrafile` for that rule because
-interfile builds on the intrafile per-function dataflow.
+Under `--enable-interfile`, an interfile rule implies `--taint-intrafile`
+for that rule because interfile builds on the intrafile per-function
+dataflow.
 
 ### Finding deduplication
 
@@ -57,7 +60,7 @@ So the same rule and target can report more findings under
 not new dataflow.  (`core_unique_key` in
 `src/reporting/Core_json_output.ml`.)
 
-### `--taint-interfile-depth N` (default 3)
+### `--interfile-depth N` (default 3)
 
 Bounds the BFS that computes the relevant subgraph (see [§ 3](03-dispatch.md)
 "Phase E").  Higher values include longer call chains; runtime grows
@@ -66,9 +69,9 @@ chains of length 5+ are rare in practice.
 
 ### `--taint-intrafile`
 
-Independent flag.  Enables the intrafile cross-function analysis
-without enabling interfile.  Required for interfile; can be used
-alone for single-file interprocedural taint.
+Independent flag.  Enables the intrafile cross-function analysis for
+every taint rule, without enabling interfile.  Under
+`--enable-interfile` an interfile rule does not need it.
 
 ## The interfile call graph as a standalone product
 

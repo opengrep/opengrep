@@ -32,6 +32,8 @@ type conf = {
   strict : bool;
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  enable_interfile : bool;
+  interfile_depth : int;
   (* the ignore annotations of a scan apply to a test run too *)
   opengrep_ignore_pattern : string option;
   (* None when the flag was not given, in which case the engine defaults
@@ -229,9 +231,9 @@ let target_kind_of_roots_and_config target_roots config =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common config force_color json matching_diagnosis
-      max_memory_mb opengrep_ignore_pattern strict taint_intrafile timeout
-      timeout_threshold =
+  let combine args common config enable_interfile force_color interfile_depth
+      json matching_diagnosis max_memory_mb opengrep_ignore_pattern strict
+      taint_intrafile timeout timeout_threshold =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -244,6 +246,8 @@ let cmdline_term : conf Term.t =
       optimizations = true;
       matching_diagnosis;
       taint_intrafile;
+      enable_interfile;
+      interfile_depth;
       opengrep_ignore_pattern;
       timeout;
       timeout_threshold;
@@ -253,9 +257,9 @@ let cmdline_term : conf Term.t =
   Term.(
     const combine $ o_args
     $ CLI_common.o_common ~unsupported_flags
-    $ o_config
+    $ o_config $ CLI_common.o_enable_interfile
     $ CLI_common.o_force_color ~default:Output.default.force_color
-    $ o_json $ o_matching_diagnosis
+    $ CLI_common.o_interfile_depth $ o_json $ o_matching_diagnosis
     $ o_max_memory_mb $ CLI_common.o_opengrep_ignore_pattern $ o_strict
     $ o_taint_intrafile $ o_timeout $ o_timeout_threshold)
 

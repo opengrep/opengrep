@@ -39,3 +39,14 @@ rules:
       - pattern: ls_taint_source()
     pattern-sinks:
       - pattern: ls_taint_sink(...)
+  - id: taint-cross-fn-interfile
+    mode: taint
+    options:
+      interfile: true
+    languages: [python]
+    severity: ERROR
+    message: "tainted data crosses function boundary in an interfile rule"
+    pattern-sources:
+      - pattern: ls_interfile_source()
+    pattern-sinks:
+      - pattern: ls_interfile_sink(...)
