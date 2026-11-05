@@ -51,9 +51,10 @@ type timeout_config = {
 (* Helpers *)
 (*****************************************************************************)
 
-let timeout_function (rule : Rule.t) (file : Fpath.t)
-    (timeout : timeout_config option) f =
-  let timeout =
+(* The time limit for work on [file] under the rule options [options]: a
+   rule's own, or [None] for work that belongs to no rule. *)
+let time_limit (options : Rule_options.t option) (file : Fpath.t)
+    (timeout : timeout_config option) : (float * < Cap.time_limit >) option =
     match timeout with
     | None -> None
     | Some { timeout; caps; threshold = _;
@@ -63,13 +64,13 @@ let timeout_function (rule : Rule.t) (file : Fpath.t)
         else
 
           let dynamic_timeout =
-            match allow_rule_timeout_control, rule.Rule.options with
+            match allow_rule_timeout_control, options with
             | true, Some { dynamic_timeout = Some dt; _ } -> dt
             | _ -> dynamic_timeout
           in
 
           let timeout =
-            match allow_rule_timeout_control, rule.Rule.options with
+            match allow_rule_timeout_control, options with
             | true, Some { timeout = Some tm; _ } ->
               Log.info (fun m ->
                   m "setting timeout for %s to %.2fs using a rule override"
@@ -84,13 +85,13 @@ let timeout_function (rule : Rule.t) (file : Fpath.t)
           else
 
             let dynamic_timeout_unit_kb =
-              match allow_rule_timeout_control, rule.Rule.options with
+              match allow_rule_timeout_control, options with
               | true, Some { dynamic_timeout_unit_kb = Some dtk; _ } -> dtk
               | _ -> dynamic_timeout_unit_kb
             in
 
             let dynamic_timeout_max_multiplier =
-              match allow_rule_timeout_control, rule.Rule.options with
+              match allow_rule_timeout_control, options with
               | true, Some { dynamic_timeout_max_multiplier = Some dtm; _ } -> dtm
               | _ -> dynamic_timeout_max_multiplier
             in
@@ -110,9 +111,13 @@ let timeout_function (rule : Rule.t) (file : Fpath.t)
                 m "setting timeout for %s to %.2fs using a factor of %.2f derived from the file size"
                   !!file size_adjusted_timeout timeout_multiplier);
             Some (size_adjusted_timeout, caps)
-  in
+
+let timeout_function (rule : Rule.t) (file : Fpath.t)
+    (timeout : timeout_config option) f =
   match
-    Time_limit.set_timeout_opt ~name:"Match_rules.timeout_function" timeout f
+    Time_limit.set_timeout_opt ~name:"Match_rules.timeout_function"
+      (time_limit rule.Rule.options file timeout)
+      f
   with
   | Some res -> Some res
   | None ->
@@ -170,6 +175,55 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
 (* This function separates out rules into groups of taint rules by languages,
    all of the nontaint rules, and the rules which we skip due to prefiltering.
 *)
+type search_or_extract_rule = [ R.search_mode | R.extract_mode ] R.rule_info
+
+(* Whether matching [rule] converts byte offsets of the target into lines and
+   columns: a regexp or aliengrep pattern, or a metavariable-regex or
+   metavariable-comparison condition. A nested formula matches a temporary
+   file, which has a converter of its own. *)
+let reads_target_positions (rule : R.t) : bool =
+  let rec of_formula (formula : R.formula) : bool =
+    (match formula.f with
+    | P { pat = Regexp _ | Aliengrep _; _ } -> true
+    | P { pat = Sem _ | Spacegrep _; _ } -> false
+    | Anywhere (_, sub)
+    | Inside (_, sub)
+    | Not (_, sub) ->
+        of_formula sub
+    | Or (_, subs)
+    | And (_, subs) ->
+        List.exists of_formula subs)
+    || List.exists
+         (fun ((_, condition) : _ * R.metavar_cond) ->
+           match condition with
+           | CondRegexp _
+           | CondEval _ ->
+               true
+           | CondNestedFormula _
+           | CondName _
+           | CondType _
+           | CondAnalysis _ ->
+               false)
+         formula.conditions
+  in
+  List.exists of_formula (R.formulas_of_mode rule.mode)
+
+(* Whether matching [rule] parses the target as a spacegrep document. *)
+let has_spacegrep_pattern (rule : R.t) : bool =
+  let rec of_formula (formula : R.formula) : bool =
+    match formula.f with
+    | P { pat = Spacegrep _; _ } -> true
+    | P { pat = Sem _ | Regexp _ | Aliengrep _; _ } -> false
+    | Anywhere (_, sub)
+    | Inside (_, sub)
+    | Not (_, sub) ->
+        of_formula sub
+    | Or (_, subs)
+    | And (_, subs) ->
+        List.exists of_formula subs
+  in
+  List.exists of_formula (R.formulas_of_mode rule.mode)
+
 let group_rules xconf rules xtarget =
   let relevant_taint_rules, relevant_nontaint_rules, skipped_rules =
     rules
@@ -330,37 +384,139 @@ let check
   let taint_rules_groups, nontaint_rules, _skipped_rules =
     group_rules xconf rules xtarget
   in
+  (* The converter and the spacegrep documents of the target are built before
+     the rules that read them run, under the file's time limit and outside the
+     rules' own: a time limit that interrupts a lazy value leaves it raising
+     for every later rule. A build that times out gives a Timeout to each rule
+     that needs it, which does not run. *)
+  let build (type a) (f : unit -> a) : a option =
+    (* An error while building belongs to no rule. *)
+    TLS.set Rule.last_matched_rule None;
+    Time_limit.set_timeout_opt ~name:"Match_rules.target_build"
+      (time_limit None file timeout)
+      f
+  in
+  let timed_out_results (rules : R.rule list) =
+    (match timeout with
+    | Some { threshold; _ } when threshold > 0 && List.length rules >= threshold
+      ->
+        raise (File_timeout (List_.map (fun (r : R.rule) -> fst r.id) rules))
+    | _else_ -> ());
+    let loc = Tok.first_loc_of_file file in
+    List_.map
+      (fun (r : R.rule) ->
+        RP.mk_match_result []
+          (Core_error.ErrorSet.singleton
+             (E.mk_error ~rule_id:(fst r.id) ~loc OutJ.Timeout))
+          (Core_profiling.empty_rule_profiling r))
+      rules
+  in
+  let xtarget, linecol_timed_out =
+    if
+      List.exists reads_target_positions
+        (List.concat_map (List_.map (fun (r : R.taint_rule) -> (r :> R.rule)))
+           taint_rules_groups
+        @ List_.map (fun (r : search_or_extract_rule) -> (r :> R.rule))
+            nontaint_rules)
+    then
+      match build (fun () -> Pos.full_converters_large file) with
+      | Some converters ->
+          ({ xtarget with lazy_linecol = Lazy.from_val converters }, false)
+      | None -> (xtarget, true)
+    else (xtarget, false)
+  in
+  let runs (r : R.rule) : bool =
+    not (linecol_timed_out && reads_target_positions r)
+  in
   let res_taint_rules =
     taint_rules_groups
-    |> List.concat_map (fun taint_rules ->
-           Match_tainting_mode.check_rules ~match_hook
-             ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt
-             taint_rules xconf xtarget)
-  in
-  let res_nontaint_rules =
-    nontaint_rules
-    |> List_.map (fun r ->
-           let xconf =
-             Match_env.adjust_xconfig_with_rule_options xconf r.R.options
+    |> List.concat_map (fun (taint_rules : R.taint_rule list) ->
+           let running, timed_out =
+             List.partition (fun (r : R.taint_rule) -> runs (r :> R.rule))
+               taint_rules
            in
-           per_rule_boilerplate_fn
-             (r :> R.rule)
-             (fun () ->
-               Logs_.with_debug_trace ~__FUNCTION__
-                 ~pp_input:(fun _ ->
-                   "target: " ^ !!file ^ "\nruleid: "
-                   ^ (r.id |> fst |> Rule_ID.to_string))
-                 (fun () ->
-                   (* dispatching *)
-                   match r.R.mode with
-                   | `Search _formula as mode ->
-                       Match_search_mode.check_rule { r with mode } match_hook
-                         xconf xtarget
-                   | `Extract extract_spec ->
-                       Match_search_mode.check_rule
-                         { r with mode = `Search extract_spec.R.formula }
-                         match_hook xconf xtarget
-                   | `Steps _ -> raise Multistep_rules_not_available)))
+           timed_out_results
+             (List_.map (fun (r : R.taint_rule) -> (r :> R.rule)) timed_out)
+           @ Match_tainting_mode.check_rules ~match_hook
+               ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt running
+               xconf xtarget)
+  in
+  let check_search_rule
+      (spacegrep_doc : Xpattern_match_spacegrep.parsed option)
+      (r : search_or_extract_rule) =
+    let xconf = Match_env.adjust_xconfig_with_rule_options xconf r.R.options in
+    per_rule_boilerplate_fn
+      (r :> R.rule)
+      (fun () ->
+        Logs_.with_debug_trace ~__FUNCTION__
+          ~pp_input:(fun _ ->
+            "target: " ^ !!file ^ "\nruleid: "
+            ^ (r.id |> fst |> Rule_ID.to_string))
+          (fun () ->
+            (* dispatching *)
+            match r.R.mode with
+            | `Search _formula as mode ->
+                Match_search_mode.check_rule ~spacegrep_doc { r with mode }
+                  match_hook xconf xtarget
+            | `Extract extract_spec ->
+                Match_search_mode.check_rule ~spacegrep_doc
+                  { r with mode = `Search extract_spec.R.formula }
+                  match_hook xconf xtarget))
+  in
+  let comment_style_of (r : search_or_extract_rule) =
+    (Match_env.adjust_xconfig_with_rule_options xconf r.R.options).config
+      .generic_comment_style
+  in
+  (* The rules run in groups of one comment style, and each group parses the
+     target once, so that one spacegrep document is live at a time. The
+     results keep the order of the rules. *)
+  let res_nontaint_rules =
+    let indexed_rules = List.mapi (fun (index : int) r -> (index, r)) nontaint_rules in
+    [ None; Some `C; Some `Cpp; Some `Shell ]
+    |> List.concat_map
+         (fun (style : Rule_options_t.generic_comment_style option) ->
+           let group =
+             List.filter
+               (fun ((_, r) : int * search_or_extract_rule) ->
+                 Xpattern_match_spacegrep.equal_comment_style style
+                   (comment_style_of r))
+               indexed_rules
+           in
+           let spacegrep_doc, doc_timed_out =
+             if
+               List.exists
+                 (fun ((_, r) : int * search_or_extract_rule) ->
+                   has_spacegrep_pattern (r :> R.rule))
+                 group
+             then
+               match
+                 build (fun () ->
+                     Xpattern_match_spacegrep.parse_target
+                       ~nested_formula:false style file)
+               with
+               | Some parsed -> (Some parsed, false)
+               | None -> (None, true)
+             else (None, false)
+           in
+           let running, timed_out =
+             List.partition
+               (fun ((_, r) : int * search_or_extract_rule) ->
+                 runs (r :> R.rule)
+                 && not (doc_timed_out && has_spacegrep_pattern (r :> R.rule)))
+               group
+           in
+           List.combine (List_.map fst timed_out)
+             (timed_out_results
+                (List_.map
+                   (fun ((_, r) : int * search_or_extract_rule) -> (r :> R.rule))
+                   timed_out))
+           @ List_.map
+               (fun ((index, r) : int * search_or_extract_rule) ->
+                 (index, check_search_rule spacegrep_doc r))
+               running)
+    |> List.sort (fun ((index1, _) : int * _) ((index2, _) : int * _) ->
+           Int.compare index1 index2)
+    |> List_.map snd
   in
   let res_total = res_taint_rules @ res_nontaint_rules in
   (* TODO: detect if a target was fully skipped because no rule

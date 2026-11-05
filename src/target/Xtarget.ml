@@ -20,6 +20,7 @@ type t = {
   xlang : Xlang.t;
   lazy_content : string lazy_t; (* TODO: Check concurrent usage; also below. *)
   lazy_ast_and_errors : (AST_generic.program * Tok.location list) lazy_t;
+  lazy_linecol : Pos.bytepos_linecol_converters lazy_t;
   project_root : Fpath.t option;
 }
 
@@ -47,6 +48,8 @@ let resolve_with_ast ast (target : Target.regular) : t =
      * only spawn one parallel task per target. *)
     lazy_content = lazy (UFile.read_file target.path.internal_path_to_content);
     lazy_ast_and_errors = ast;
+    lazy_linecol =
+      lazy (Pos.full_converters_large target.path.internal_path_to_content);
     project_root = target.project_root;
   }
 

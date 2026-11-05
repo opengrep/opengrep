@@ -1,5 +1,6 @@
 (* main entry point *)
 val check_rule :
+  spacegrep_doc:Xpattern_match_spacegrep.parsed option ->
   Rule.search_rule ->
   (Core_match.t list -> Core_match.t list) ->
   Match_env.xconfig ->
@@ -8,6 +9,7 @@ val check_rule :
 
 (* called from check_rule above and from Match_tainting_mode *)
 val matches_of_formula :
+  spacegrep_doc:Xpattern_match_spacegrep.parsed option ->
   Match_env.xconfig ->
   Rule.rule ->
   Xtarget.t ->

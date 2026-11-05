@@ -59,6 +59,7 @@ type env = {
         matches that have position data localized to the originating file,
         rather than the originating match.
       *)
+  linecol : Pos.bytepos_linecol_converters Lazy.t;
 }
 
 (* we restrict ourselves to simple expressions for now *)
@@ -113,6 +114,7 @@ let parse_json (file : string) : env * code =
               mvars = Hashtbl_.hash_of_list metavars;
               constant_propagation = true;
               file = Fpath.v file;
+              linecol = lazy (Pos.full_converters_large (Fpath.v file));
             }
           in
           (env, code)
@@ -223,17 +225,22 @@ let value_of_lit ~code x : value =
   | G.Float (Some f, _t) -> Float f
   | _ -> raise (NotHandled code)
 
-let eval_regexp_matches ?(base_offset = 0) ~file ~regexp str =
+let linecol_of_env (env : env) : Pos.bytepos_linecol_converters Lazy.t =
+  env.linecol
+
+let eval_regexp_matches ?(base_offset = 0) ~file
+    ~(linecol : Pos.bytepos_linecol_converters Lazy.t) ~regexp str =
   (* alt: take the text range of the metavariable in the original file,
      * and enforce e1 can only be an Id metavariable.
      * alt: let s = value_to_string v in
      * to convert anything in a string before using regexps on it
   *)
-  Xpattern_match_regexp.regexp_matcher ~base_offset str file regexp
+  Xpattern_match_regexp.regexp_matcher ~base_offset ~linecol str file regexp
 
-let eval_regexp_pattern_matches ?(base_offset = 0) ~file ~regexp str =
+let eval_regexp_pattern_matches ?(base_offset = 0) ~file
+    ~(linecol : Pos.bytepos_linecol_converters Lazy.t) ~regexp str =
   let compiled = Pcre2_.regexp ~flags:[ `ANCHORED ] regexp in
-    eval_regexp_matches ~base_offset ~file ~regexp:compiled str
+    eval_regexp_matches ~base_offset ~file ~linecol ~regexp:compiled str
 
 let rec eval env code =
   match code.G.e with
@@ -331,7 +338,8 @@ let rec eval env code =
       match eval env e with
       | String str ->
           let v : value =
-            match eval_regexp_pattern_matches ~file:env.file ~regexp:re str with
+            match eval_regexp_pattern_matches ~file:env.file ~linecol:env.linecol
+                ~regexp:re str with
             | [] -> Bool false
             | _ -> Bool true
           in
@@ -516,7 +524,8 @@ let string_of_binding mvar mval =
   let* x = text_of_binding mvar mval in
   Some (mvar, (AST x : value))
 
-let bindings_to_env (config : Rule_options.t) ~file bindings =
+let bindings_to_env (config : Rule_options.t) ~file
+    ~(linecol : Pos.bytepos_linecol_converters Lazy.t) bindings =
   let constant_propagation = config.constant_propagation in
   let mvars =
     bindings
@@ -526,7 +535,8 @@ let bindings_to_env (config : Rule_options.t) ~file bindings =
                Some
                  ( mvar,
                    eval
-                     { mvars = Hashtbl.create 0; constant_propagation; file }
+                     { mvars = Hashtbl.create 0; constant_propagation; file;
+                       linecol }
                      e )
              with
              | NotHandled _
@@ -553,16 +563,17 @@ let bindings_to_env (config : Rule_options.t) ~file bindings =
     |> Hashtbl_.hash_of_list
   in
 
-  { mvars; constant_propagation; file }
+  { mvars; constant_propagation; file; linecol }
 
-let bindings_to_env_just_strings (config : Rule_options.t) ~file xs =
+let bindings_to_env_just_strings (config : Rule_options.t) ~file
+    ~(linecol : Pos.bytepos_linecol_converters Lazy.t) xs =
   let mvars =
     xs
     |> List_.filter_map (fun (mvar, mval) -> string_of_binding mvar mval)
     |> Hashtbl_.hash_of_list
   in
 
-  { mvars; constant_propagation = config.constant_propagation; file }
+  { mvars; constant_propagation = config.constant_propagation; file; linecol }
 
 (*****************************************************************************)
 (* Entry points *)
