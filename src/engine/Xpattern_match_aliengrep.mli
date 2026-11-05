@@ -4,6 +4,7 @@
 val matches_of_aliengrep :
   (Aliengrep.Pat_compile.t * Xpattern.pattern_id * string) list ->
   string Lazy.t ->
+  Pos.bytepos_linecol_converters Lazy.t ->
   Fpath.t ->
   Origin.t ->
   Core_profiling.times Core_result.match_result

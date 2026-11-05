@@ -673,6 +673,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     path = { internal_path_to_content = file; _ };
     xlang;
     lazy_ast_and_errors;
+    lazy_linecol;
     _;
   } : Xtarget.t =
     xtarget
@@ -704,7 +705,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
   (* TODO: 'debug_taint' should just be part of 'res'
    * (i.e., add a "debugging" field to 'Report.match_result'). *)
   match
-    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache
+    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache ~lazy_linecol
       xconf lang file (ast, []) rule
   with
   | None -> (Some (report_of_matches []), None)

@@ -177,7 +177,9 @@ let run_core_search xconf rule (file : Fpath.t) =
       if is_relevant_rule then
         (* !!calling the engine!! *)
         let ({ Core_result.matches; _ } : _ Core_result.match_result) =
-          Match_search_mode.check_rule rule hook xconf xtarget
+          Match_search_mode.check_rule
+            ~spacegrep_doc:None
+            rule hook xconf xtarget
         in
         let matches_with_fixes =
           matches
