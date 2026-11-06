@@ -385,38 +385,15 @@ let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
                });
     }
   in
-  let rec sanitize_intermediate_var (v : Out.match_intermediate_var) :
-      Out.match_intermediate_var =
-    {
-      v with
-      content = sanitize v.content;
-      through_call =
-        v.through_call
-        |> Option.map (fun (call : Out.match_through_call) ->
-               {
-                 Out.inside = List_.map sanitize_intermediate_var call.inside;
-               });
-    }
-  in
-  let rec sanitize_call_trace (trace : Out.match_call_trace) :
-      Out.match_call_trace =
-    match trace with
-    | CliLoc (loc, content) -> CliLoc (loc, sanitize content)
-    | CliCall ((loc, content), vars, trace) ->
-        CliCall
-          ( (loc, sanitize content),
-            List_.map sanitize_intermediate_var vars,
-            sanitize_call_trace trace )
-  in
-  let sanitize_dataflow_trace (trace : Out.match_dataflow_trace) :
+  let rec sanitize_dataflow_trace (trace : Out.match_dataflow_trace) :
       Out.match_dataflow_trace =
-    {
-      taint_source = trace.taint_source |> Option.map sanitize_call_trace;
-      intermediate_vars =
-        trace.intermediate_vars
-        |> Option.map (List_.map sanitize_intermediate_var);
-      taint_sink = trace.taint_sink |> Option.map sanitize_call_trace;
-    }
+    trace
+    |> List_.map (fun (step : Out.match_dataflow_step) ->
+           {
+             step with
+             content = sanitize step.content;
+             children = sanitize_dataflow_trace step.children;
+           })
   in
   let extra = m.extra in
   {
@@ -624,21 +601,6 @@ let index_match_based_ids
   |> List.concat_map snd
   |> List.sort (fun (a, _) (b, _) -> a - b)
   |> List_.map snd
-
-let flat_cli_match (m : Out.cli_match) : Out.cli_match =
-  {
-    m with
-    extra =
-      {
-        m.extra with
-        dataflow_trace =
-          Option.map Semgrep_output_utils.flat_dataflow_trace
-            m.extra.dataflow_trace;
-      };
-  }
-
-let flat_cli_output (output : Out.cli_output) : Out.cli_output =
-  { output with results = List_.map flat_cli_match output.results }
 
 (*****************************************************************************)
 (* Entry point *)

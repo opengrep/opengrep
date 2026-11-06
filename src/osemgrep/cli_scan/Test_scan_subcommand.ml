@@ -2959,91 +2959,168 @@ let scan_through_call (caps : Scan_subcommand.caps) (args : string list) :
     string =
   scan_with_traces caps ~target:through_call_py args
 
-(* the order in which the taint goes through the variables: the name of the
-   function called, its parameter, the variables inside, then the variable
-   that receives the result *)
-let through_call_path : (string * int) list =
-  [ ("a", 6); ("pass_taint", 7); ("x", 1); ("y", 2); ("b", 7) ]
+let kind : Semgrep_output_v1_t.match_dataflow_step_kind Alcotest.testable =
+  Alcotest.testable Semgrep_output_v1_t.pp_match_dataflow_step_kind
+    (fun (a : Semgrep_output_v1_t.match_dataflow_step_kind) b ->
+      Int.equal (Semgrep_output_v1_t.compare_match_dataflow_step_kind a b) 0)
 
-(* The JSON output carries the variables of the trace flat, in that order,
-   without the call that the text report draws. *)
-let test_json_trace_through_call (caps : Scan_subcommand.caps) () =
-  let json = scan_through_call caps [ "--json" ] in
-  let out = Semgrep_output_v1_j.cli_output_of_string json in
-  let vars =
-    out.results
-    |> List.concat_map (fun (m : Semgrep_output_v1_t.cli_match) ->
-           match m.extra.dataflow_trace with
-           | Some { intermediate_vars = Some vars; _ } -> vars
-           | Some _
-           | None ->
-               [])
-  in
-  Alcotest.(check (list (pair string int)))
-    "the variables, in execution order" through_call_path
-    (vars
-    |> List_.map (fun (v : Semgrep_output_v1_t.match_intermediate_var) ->
-           (v.content, v.location.start.line)));
-  Alcotest.(check bool)
-    "no call in the JSON" false
-    (String_.contains ~term:"through_call" json);
-  Alcotest.(check bool)
-    "no role in the JSON" false
-    (String_.contains ~term:{|"role"|} json)
+(* a step of a trace: its depth in the tree, its kind, its content and its
+   line *)
+type flat_step =
+  int * Semgrep_output_v1_t.match_dataflow_step_kind * string * int
 
-(* The thread flow of the SARIF output follows the same order, from the
-   source to the sink. *)
-let test_sarif_trace_through_call (caps : Scan_subcommand.caps) () =
-  let open Yojson.Safe.Util in
-  let lines =
-    Yojson.Safe.from_string (scan_through_call caps [ "--sarif" ])
-    |> member "runs" |> index 0 |> member "results" |> index 0
-    |> member "codeFlows" |> index 0 |> member "threadFlows" |> index 0
-    |> member "locations" |> to_list
-    |> List_.map (fun (step : Yojson.Safe.t) ->
-           step |> member "location" |> member "physicalLocation"
-           |> member "region" |> member "startLine" |> to_int)
-  in
-  Alcotest.(check (list int))
-    "the source, the variables and the sink"
-    ((6 :: List_.map snd through_call_path) @ [ 8 ])
-    lines
+let flat_step : flat_step Alcotest.testable =
+  Alcotest.testable
+    (fun (ppf : Format.formatter) ((depth, k, content, line) : flat_step) ->
+      Format.fprintf ppf "(%d, %a, %S, %d)" depth (Alcotest.pp kind) k content
+        line)
+    (fun ((d1, k1, c1, l1) : flat_step) ((d2, k2, c2, l2) : flat_step) ->
+      Int.equal d1 d2 && Alcotest.equal kind k1 k2 && String.equal c1 c2
+      && Int.equal l1 l2)
 
-(* The variables of the trace of a finding, with their lines: those of the
-   trace to the source, of the trace in the function and of the trace to the
-   sink. *)
-let trace_variables (m : Semgrep_output_v1_t.cli_match) : (string * int) list
-    =
-  let names (vars : Semgrep_output_v1_t.match_intermediate_var list) :
-      (string * int) list =
-    vars
-    |> List_.map (fun (v : Semgrep_output_v1_t.match_intermediate_var) ->
-           (v.content, v.location.start.line))
-  in
-  let rec call_vars (trace : Semgrep_output_v1_t.match_call_trace) :
-      (string * int) list =
-    match trace with
-    | CliLoc _ -> []
-    | CliCall (_, vars, inner) -> names vars @ call_vars inner
-  in
+(* the steps of a trace, each step before the steps under it *)
+let rec flat_steps ?(depth = 0) (trace : Semgrep_output_v1_t.match_dataflow_trace)
+    : flat_step list =
+  trace
+  |> List.concat_map (fun (step : Semgrep_output_v1_t.match_dataflow_step) ->
+         (depth, step.kind, step.content, step.location.start.line)
+         :: flat_steps ~depth:(depth + 1) step.children)
+
+(* The steps of the trace of a finding. *)
+let trace_steps (m : Semgrep_output_v1_t.cli_match) : flat_step list =
   match m.extra.dataflow_trace with
-  | Some trace ->
-      (Option.fold ~none:[] ~some:call_vars trace.taint_source
-      @ names (Option.value ~default:[] trace.intermediate_vars))
-      @ Option.fold ~none:[] ~some:call_vars trace.taint_sink
+  | Some trace -> flat_steps trace
   | None -> []
 
-(* The variables of the trace of each finding in the JSON output of a scan
-   of [target]: in execution order, each once. *)
+(* the order in which the taint goes from the source to the sink: the call,
+   then under it the argument, the variables inside and the return, then
+   the variable that receives the result *)
+let through_call_path : flat_step list =
+  [
+    (0, Source, "source()", 6);
+    (0, Through, "a", 6);
+    (0, ThroughCall, "pass_taint", 7);
+    (1, Argument, "x", 1);
+    (1, Through, "y", 2);
+    (1, Return, "return", 3);
+    (0, Through, "b", 7);
+    (0, Sink, "sink(b)", 8);
+  ]
+
+(* The JSON output carries the trace as a tree of steps, in that order. *)
+let test_json_trace_through_call (caps : Scan_subcommand.caps) () =
+  let out =
+    Semgrep_output_v1_j.cli_output_of_string
+      (scan_through_call caps [ "--json" ])
+  in
+  Alcotest.(check (list (list flat_step)))
+    "the steps, in execution order" [ through_call_path ]
+    (out.results |> List_.map trace_steps)
+
+(* the line, the nesting level and the kinds of each location of the thread
+   flow of the SARIF output of a scan of [target] *)
+let sarif_steps (caps : Scan_subcommand.caps) ~(target : string) :
+    (int * int * string list) list =
+  let open Yojson.Safe.Util in
+  Yojson.Safe.from_string (scan_with_traces caps ~target [ "--sarif" ])
+  |> member "runs" |> index 0 |> member "results" |> index 0
+  |> member "codeFlows" |> index 0 |> member "threadFlows" |> index 0
+  |> member "locations" |> to_list
+  |> List_.map (fun (step : Yojson.Safe.t) ->
+         ( step |> member "location" |> member "physicalLocation"
+           |> member "region" |> member "startLine" |> to_int,
+           step |> member "nestingLevel" |> to_int,
+           match member "kinds" step with
+           | `Null -> []
+           | kinds -> kinds |> to_list |> List_.map to_string ))
+
+(* The thread flow of the SARIF output is the tree flattened, from the
+   source to the sink, with the depth of each step as its level. *)
+let test_sarif_trace_through_call (caps : Scan_subcommand.caps) () =
+  Alcotest.(check (list (triple int int (list string))))
+    "the source, the variables and the sink"
+    [
+      (6, 0, []);
+      (6, 0, []);
+      (7, 0, [ "call" ]);
+      (1, 1, [ "enter" ]);
+      (2, 1, []);
+      (3, 1, [ "exit" ]);
+      (7, 0, []);
+      (8, 0, []);
+    ]
+    (sarif_steps caps ~target:through_call_py)
+
+(* The source is two calls down, and the sink one call down. *)
+let source_and_sink_calls_py =
+  {|def deep():
+    d = source()
+    return d
+
+def read():
+    r = deep()
+    return r
+
+def run(cmd):
+    q = cmd
+    sink(q)
+
+def go():
+    a = read()
+    run(a)
+|}
+
+(* Each call is followed by the locations inside the function called, one
+   level deeper. *)
+let test_sarif_trace_source_and_sink_calls (caps : Scan_subcommand.caps) () =
+  Alcotest.(check (list (triple int int (list string))))
+    "the calls, the source, the variables and the sink"
+    [
+      (14, 0, [ "call" ]);
+      (6, 1, [ "call" ]);
+      (2, 2, []);
+      (2, 2, []);
+      (3, 2, [ "exit" ]);
+      (6, 1, []);
+      (7, 1, [ "exit" ]);
+      (14, 0, []);
+      (15, 0, [ "call" ]);
+      (9, 1, [ "enter" ]);
+      (10, 1, []);
+      (11, 1, []);
+    ]
+    (sarif_steps caps ~target:source_and_sink_calls_py)
+
+(* The steps of the trace of each finding in the JSON output of a scan of
+   [target]. *)
 let check_json_trace (caps : Scan_subcommand.caps) ~(target : string)
-    (expected : (string * int) list) : unit =
+    (expected : flat_step list) : unit =
   let out =
     Semgrep_output_v1_j.cli_output_of_string
       (scan_with_traces caps ~target [ "--json" ])
   in
-  Alcotest.(check (list (list (pair string int))))
-    "the variables of the trace" [ expected ]
-    (out.results |> List_.map trace_variables)
+  Alcotest.(check (list (list flat_step)))
+    "the steps of the trace" [ expected ]
+    (out.results |> List_.map trace_steps)
+
+(* The steps inside a call to a function in which the source or the sink
+   is are under the call. *)
+let test_json_trace_source_and_sink_calls (caps : Scan_subcommand.caps) () =
+  check_json_trace caps ~target:source_and_sink_calls_py
+    [
+      (0, SourceInCall, "read", 14);
+      (1, SourceInCall, "deep", 6);
+      (2, Source, "source()", 2);
+      (2, Through, "d", 2);
+      (2, Return, "return", 3);
+      (1, Through, "r", 6);
+      (1, Return, "return", 7);
+      (0, Through, "a", 14);
+      (0, SinkInCall, "run", 15);
+      (1, Argument, "cmd", 9);
+      (1, Through, "q", 10);
+      (1, Sink, "sink(q)", 11);
+    ]
 
 (* The taint is returned inside an object. *)
 let returned_object_py =
@@ -3065,7 +3142,16 @@ def go():
 
 let test_json_trace_returned_object (caps : Scan_subcommand.caps) () =
   check_json_trace caps ~target:returned_object_py
-    [ ("a", 12); ("wrap", 13); ("x", 5); ("z", 7); ("d", 8) ]
+    [
+      (0, Source, "source()", 12);
+      (0, Through, "a", 12);
+      (0, ThroughCall, "wrap", 13);
+      (1, Argument, "x", 5);
+      (1, Through, "z", 7);
+      (1, Through, "d", 8);
+      (1, Return, "return", 9);
+      (0, Sink, "sink(w.k)", 14);
+    ]
 
 (* The taint is passed to a callback. *)
 let callback_py =
@@ -3084,7 +3170,17 @@ def go():
 
 let test_json_trace_callback (caps : Scan_subcommand.caps) () =
   check_json_trace caps ~target:callback_py
-    [ ("a", 10); ("apply", 11); ("x", 1); ("y", 2); ("z", 3); ("v", 6) ]
+    [
+      (0, Source, "source()", 10);
+      (0, Through, "a", 10);
+      (0, ThroughCall, "apply", 11);
+      (1, Argument, "x", 1);
+      (1, Through, "y", 2);
+      (1, Through, "z", 3);
+      (0, SinkInCall, "f", 4);
+      (1, Argument, "v", 6);
+      (1, Sink, "sink(v)", 7);
+    ]
 
 (* The source is in a function that returns it inside an object. *)
 let returned_source_py =
@@ -3104,7 +3200,15 @@ def go():
 |}
 
 let test_json_trace_returned_source (caps : Scan_subcommand.caps) () =
-  check_json_trace caps ~target:returned_source_py [ ("t", 6); ("d", 8) ]
+  check_json_trace caps ~target:returned_source_py
+    [
+      (0, SourceInCall, "make", 12);
+      (1, Source, "source()", 6);
+      (1, Through, "t", 6);
+      (1, Through, "d", 8);
+      (1, Return, "return", 9);
+      (0, Sink, "sink(m.k)", 13);
+    ]
 
 (* The taint is written to a field of an argument. *)
 let field_written_py =
@@ -3124,10 +3228,18 @@ def go():
 
 let test_json_trace_field_written (caps : Scan_subcommand.caps) () =
   check_json_trace caps ~target:field_written_py
-    [ ("b", 9); ("fill", 11); ("v", 5); ("box", 6); ("c", 11) ]
+    [
+      (0, Source, "source()", 9);
+      (0, Through, "b", 9);
+      (0, ThroughCall, "fill", 11);
+      (1, Argument, "v", 5);
+      (1, Through, "box", 6);
+      (0, Through, "c", 11);
+      (0, Sink, "sink(c.k)", 12);
+    ]
 
 (* --incremental-output prints each finding as it is found, with its trace
-   flat, as the JSON output does. *)
+   as the JSON output carries it. *)
 let test_incremental_trace_through_call (caps : Scan_subcommand.caps) () =
   let output = scan_through_call caps [ "--incremental-output"; "--json" ] in
   let first_line =
@@ -3135,15 +3247,12 @@ let test_incremental_trace_through_call (caps : Scan_subcommand.caps) () =
     | line :: _ -> line
     | [] -> ""
   in
-  Alcotest.(check (list (pair string int)))
-    "the variables of the finding printed first" through_call_path
-    (trace_variables (Semgrep_output_v1_j.cli_match_of_string first_line));
-  Alcotest.(check bool)
-    "no call in the output" false
-    (String_.contains ~term:"through_call" output)
+  Alcotest.(check (list flat_step))
+    "the steps of the finding printed first" through_call_path
+    (trace_steps (Semgrep_output_v1_j.cli_match_of_string first_line))
 
 (* A function in another file that the taint goes through: under
-   --taint-interfile the variables inside it carry the path of that file. *)
+   --taint-interfile the steps inside it carry the path of that file. *)
 let test_interfile_json_trace_through_call (caps : Scan_subcommand.caps) () =
   let helper_py = {|def pass_taint(x):
     y = x
@@ -3164,27 +3273,30 @@ def go():
          ~files:[ F.File ("helper.py", helper_py); F.File ("main.py", main_py) ]
          [ "--json"; "--taint-interfile" ])
   in
-  let vars =
+  let steps =
     out.results
     |> List.concat_map (fun (m : Semgrep_output_v1_t.cli_match) ->
            match m.extra.dataflow_trace with
-           | Some { intermediate_vars = Some vars; _ } -> vars
-           | Some _
-           | None ->
-               [])
-    |> List_.map (fun (v : Semgrep_output_v1_t.match_intermediate_var) ->
-           (Fpath.to_string v.location.path, v.content, v.location.start.line))
+           | Some trace -> Semgrep_output_utils.flat_dataflow_steps trace
+           | None -> [])
+    |> List_.map (fun (step : Semgrep_output_v1_t.match_dataflow_step) ->
+           ( Fpath.to_string step.location.path,
+             step.content,
+             step.location.start.line ))
   in
   Alcotest.(check (list (triple string string int)))
-    "the variables, with their files"
+    "the steps, with their files"
     [
+      ("main.py", "source()", 4);
       ("main.py", "a", 4);
       ("main.py", "pass_taint", 5);
       ("helper.py", "x", 1);
       ("helper.py", "y", 2);
+      ("helper.py", "return", 3);
       ("main.py", "b", 5);
+      ("main.py", "sink(b)", 6);
     ]
-    vars
+    steps
 
 (* The legacy report prints the same variables as one flat step. *)
 let test_legacy_trace_through_call (caps : Scan_subcommand.caps) () =
@@ -3199,8 +3311,10 @@ let tests (caps : < Scan_subcommand.caps >) =
     [
       t "basic output" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output caps);
-      t "a JSON dataflow trace through a call is flat"
+      t "the JSON dataflow trace of a call that the taint goes through"
         (test_json_trace_through_call caps);
+      t "the JSON dataflow trace of calls to the source and the sink"
+        (test_json_trace_source_and_sink_calls caps);
       t "the JSON dataflow trace of a call that returns an object"
         (test_json_trace_returned_object caps);
       t "the JSON dataflow trace of a call to a callback"
@@ -3209,12 +3323,14 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_json_trace_returned_source caps);
       t "the JSON dataflow trace of a call that writes a field"
         (test_json_trace_field_written caps);
-      t "an incremental dataflow trace through a call is flat"
+      t "an incremental dataflow trace through a call"
         (test_incremental_trace_through_call caps);
-      t "an interfile JSON dataflow trace through a call is flat"
+      t "an interfile JSON dataflow trace through a call"
         (test_interfile_json_trace_through_call caps);
-      t "a SARIF dataflow trace through a call is in execution order"
+      t "the SARIF thread flow of a call that the taint goes through"
         (test_sarif_trace_through_call caps);
+      t "the SARIF thread flow of calls to the source and the sink"
+        (test_sarif_trace_source_and_sink_calls caps);
       t "a legacy dataflow trace through a call"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_legacy_trace_through_call caps);

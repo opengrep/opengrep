@@ -219,12 +219,12 @@ let pp_code (ctx : Skin.ctx) (look : finding_look) ~(digits : int)
 let step_label (kind : Findings_layout.step_kind) : string =
   match kind with
   | Source -> "source"
-  | Source_call -> "source in call"
-  | Intermediate -> "through"
-  | Intermediate_call -> "through call"
-  | Parameter -> "arg"
+  | SourceInCall -> "source in call"
+  | Through -> "through"
+  | ThroughCall -> "through call"
+  | Argument -> "arg"
   | Return -> "return"
-  | Sink_call -> "sink in call"
+  | SinkInCall -> "sink in call"
   | Sink -> "sink"
 
 (* Under --interfile-dedup-by source-sink the findings that share this sink

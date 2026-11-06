@@ -29,11 +29,33 @@ val position_range :
 val location_of_token_location : Tok.location -> Semgrep_output_v1_t.location
 val tokens_to_single_loc : Tok.t list -> Semgrep_output_v1_t.location option
 
-(* The trace with each call that the taint goes through inline, as the JSON
-   and SARIF outputs carry it. *)
-val flat_dataflow_trace :
+(* Whether the step is the source or a call to a function in which the
+   source is. *)
+val leads_to_source : Semgrep_output_v1_t.match_dataflow_step -> bool
+
+(* Whether the step is the sink or a call to a function in which the sink
+   is. *)
+val leads_to_sink : Semgrep_output_v1_t.match_dataflow_step -> bool
+
+(* The step of the trace that leads to the source, the steps after it, and
+   the step that leads to the sink, if the trace has both. *)
+val split_dataflow_trace :
   Semgrep_output_v1_t.match_dataflow_trace ->
-  Semgrep_output_v1_t.match_dataflow_trace
+  (Semgrep_output_v1_t.match_dataflow_step
+  * Semgrep_output_v1_t.match_dataflow_trace
+  * Semgrep_output_v1_t.match_dataflow_step)
+  option
+
+(* The steps and the steps under them, each step before the steps under it,
+   as a flat report prints them. *)
+val flat_dataflow_steps :
+  Semgrep_output_v1_t.match_dataflow_trace ->
+  Semgrep_output_v1_t.match_dataflow_step list
+
+(* The source of the trace, at any depth. *)
+val dataflow_source :
+  Semgrep_output_v1_t.match_dataflow_trace ->
+  Semgrep_output_v1_t.match_dataflow_step option
 
 (*
    Sort results in the most natural way possible, typically preferring

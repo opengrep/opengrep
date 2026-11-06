@@ -137,7 +137,8 @@ let semgrep_core_tests (caps : Cap.all_caps) : Testo.t list =
              tests/semgrep-core-e2e/targets.json -debug -json -output_enclosing_context"
           in
           run_main caps cmd |> assert_Ok);
-      (* the trace of a function that the taint goes through is flat *)
+      (* the variables of a function that the taint goes through carry their
+         nesting levels and roles *)
       t ~checked_output:(Testo.stdout ()) ~normalize
         "-json with a dataflow trace through a call" (fun () ->
           let cmd =

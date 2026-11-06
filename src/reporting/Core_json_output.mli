@@ -13,10 +13,6 @@ val core_output_of_matches_and_errors :
 val match_to_match :
  ?inline:bool -> Core_result.processed_match -> (Out.core_match, Core_error.t) result
 
-val leaf_of_call_trace : Out.match_call_trace -> Out.loc_and_content
-
-(* the output with its traces flat, as the JSON of the engine carries it *)
-val flat_core_output : Out.core_output -> Out.core_output
 
 (* now used also in osemgrep *)
 val error_to_error : Core_error.t -> Out.core_error

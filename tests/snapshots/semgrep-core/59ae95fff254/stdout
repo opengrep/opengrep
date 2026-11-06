@@ -10,6 +10,7 @@ tests/semgrep-core-e2e/targets/through_call.py:8 with rule through-call
     - pass_taint @l.7
     - x @l.1
     - y @l.2
+    - return @l.3
     - b @l.7
   * This is how taint reaches the sink:
     tests/semgrep-core-e2e/targets/through_call.py:8

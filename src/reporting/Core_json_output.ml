@@ -102,16 +102,6 @@ let range_of_any_opt startp_of_match_range any =
 type key = string * string * int * int * string option * string option
 [@@deriving show]
 
-(* Leaf [CliLoc] of a call trace, unwinding [CliCall] wrappers. *)
-let rec leaf_of_call_trace (trace : Out.match_call_trace) :
-    Out.loc_and_content =
-  match trace with
-  | Out.CliLoc leaf -> leaf
-  | Out.CliCall (_, _, inner) -> leaf_of_call_trace inner
-
-let leaf_source (trace : Out.match_call_trace) : Out.match_call_trace =
-  Out.CliLoc (leaf_of_call_trace trace)
-
 (* This is a port of the original pysemgrep cli_unique_key. This used to be in the CLI,
    but has since been moved to core.
 *)
@@ -145,11 +135,9 @@ let core_unique_key ~(taint_interfile : bool)
     c.extra.message,
     (if not source_in_key then None
      else
-       match c.extra.dataflow_trace with
-       | None -> None
-       | Some { taint_source = Some src; _ } ->
-           Some (Semgrep_output_v1_j.string_of_match_call_trace (leaf_source src))
-       | Some _ -> None)
+       let* trace = c.extra.dataflow_trace in
+       let* source = OutUtils.dataflow_source trace in
+       Some (Semgrep_output_v1_j.string_of_match_dataflow_step source))
     (* NOTE: previously, we considered self.match.extra.validation_state
        here, but since in some cases (e.g., with `anywhere`) we generate
        many matches in certain cases, we want to consider secrets
@@ -301,7 +289,7 @@ let metavars startp_of_match_range (s, mval) =
 let content_of_loc (loc : Out.location) : string =
   OutUtils.content_of_file_at_range (loc.start, loc.end_) loc.path
 
-let token_to_intermediate_var token : Out.match_intermediate_var option =
+let location_of_token token : Out.location option =
   match token with
   (* HACK: This is just for clojure... to avoid polluting text / json / sarif
    * output with fake intermediate variables that are the result of macroexpansion.
@@ -316,85 +304,61 @@ let token_to_intermediate_var token : Out.match_intermediate_var option =
    * TODO: At least make the condition str =*= AST_generic.fake_ident and then
    * other places can use it. *)
   | Tok.OriginTok {str;_ } when str =*= "G__1111" || str =*= "" -> None
-  | _ ->
-    let* location = OutUtils.tokens_to_single_loc [ token ] in
-    Some
-      (Out.
-         {
-           location;
-           content = content_of_loc location;
-           role = None;
-           through_call = None;
-         }
-        : Out.match_intermediate_var)
+  | _ -> OutUtils.tokens_to_single_loc [ token ]
 
-(* A call that the taint goes through is the variable of the name of the
-   function, carrying the path inside it. A call without a name keeps that
-   path among the variables around it. *)
-let rec tokens_to_intermediate_vars (path : Taint_trace.tainted_tokens) :
-    Out.match_intermediate_var list =
-  let var ?(role : Out.match_intermediate_var_role option) (tok : Tok.t) :
-      Out.match_intermediate_var list =
-    token_to_intermediate_var tok
-    |> Option.map (fun (var : Out.match_intermediate_var) -> { var with role })
-    |> Option.to_list
+let step ?(children : Out.match_dataflow_trace = [])
+    (kind : Out.match_dataflow_step_kind) (location : Out.location) :
+    Out.match_dataflow_step =
+  { kind; location; content = content_of_loc location; children }
+
+(* The steps of [path]. A call that the taint goes through is a step with
+   the path inside the function under it. [roles] is false in the path
+   inside a call without a name, which has no argument or return. *)
+let rec steps_of_path ~(roles : bool) (path : Taint_trace.tainted_tokens) :
+    Out.match_dataflow_trace =
+  let at (kind : Out.match_dataflow_step_kind) (tok : Tok.t) :
+      Out.match_dataflow_trace =
+    location_of_token tok |> Option.map (step kind) |> Option.to_list
+  in
+  let rest_steps (rest : Taint_trace.tainted_tokens) : Out.match_dataflow_trace
+      =
+    steps_of_path ~roles rest
   in
   match path with
   | Taint_trace.Nil -> []
-  | Taint_trace.Variable (tok, rest) ->
-      var tok @ tokens_to_intermediate_vars rest
+  | Taint_trace.Variable (tok, rest) -> at Through tok @ rest_steps rest
   | Taint_trace.Parameter (tok, rest) ->
-      var ~role:`Parameter tok @ tokens_to_intermediate_vars rest
+      at (if roles then Argument else Through) tok @ rest_steps rest
   | Taint_trace.Return (tok, rest) ->
-      var ~role:`Return tok @ tokens_to_intermediate_vars rest
+      (if roles then at Return tok else []) @ rest_steps rest
   | Taint_trace.Through_call ({ callee; inside; size = _ }, rest) ->
-      let inside = tokens_to_intermediate_vars inside in
-      (match Option.bind callee token_to_intermediate_var with
-      | Some (var : Out.match_intermediate_var) ->
-          [ { var with through_call = Some { inside } } ]
+      (match Option.bind callee location_of_token with
+      | Some (location : Out.location) ->
+          [ step ThroughCall location ~children:(steps_of_path ~roles:true inside) ]
       (* a call without a name has no step of its own: the path inside it
-         is part of the path of the caller, with no parameter or return *)
-      | None ->
-          inside
-          |> List.filter_map (fun (var : Out.match_intermediate_var) ->
-                 match var.role with
-                 | Some `Return -> None
-                 | Some `Parameter
-                 | None ->
-                     Some { var with role = None }))
-      @ tokens_to_intermediate_vars rest
+         is part of the path of the caller, with no argument or return *)
+      | None -> steps_of_path ~roles:false inside)
+      @ rest_steps rest
 
-(* the output with the traces flat, as the JSON of the engine carries them *)
-let flat_core_output (output : Out.core_output) : Out.core_output =
-  {
-    output with
-    results =
-      output.results
-      |> List_.map (fun (m : Out.core_match) ->
-             {
-               m with
-               extra =
-                 {
-                   m.extra with
-                   dataflow_trace =
-                     Option.map OutUtils.flat_dataflow_trace
-                       m.extra.dataflow_trace;
-                 };
-             });
-  }
-
-let rec taint_call_trace (trace : Taint_trace.call_trace) :
-    Out.match_call_trace option =
+(* The step that leads to the source, if [source], or to the sink. *)
+let rec call_trace_step ~(source : bool) (trace : Taint_trace.call_trace) :
+    Out.match_dataflow_step option =
   match trace with
   | Toks toks ->
       let* loc = OutUtils.tokens_to_single_loc toks in
-      Some (Out.CliLoc (loc, content_of_loc loc))
+      Some (step (if source then Source else Sink) loc)
   | Call { call_trace; intermediate_vars; call_toks } ->
       let* loc = OutUtils.tokens_to_single_loc call_toks in
-      let intermediate_vars = tokens_to_intermediate_vars intermediate_vars in
-      let* call_trace = taint_call_trace call_trace in
+      let vars = steps_of_path ~roles:true intermediate_vars in
+      let* inner = call_trace_step ~source call_trace in
       Some
-        (Out.CliCall ((loc, content_of_loc loc), intermediate_vars, call_trace))
+        (step
+           (if source then SourceInCall else SinkInCall)
+           loc
+           ~children:
+             (* in the function called, the taint goes from the source to
+                the return, or from the argument to the sink *)
+             (if source then inner :: vars else vars @ [ inner ]))
 
 let taint_trace_to_dataflow_trace (traces : Taint_trace.item list) :
     Out.match_dataflow_trace =
@@ -415,12 +379,9 @@ let taint_trace_to_dataflow_trace (traces : Taint_trace.item list) :
     | { Taint_trace.source_trace; tokens; sink_trace } :: _ ->
         (source_trace, tokens, sink_trace)
   in
-  Out.
-    {
-      taint_source = taint_call_trace source_call_trace;
-      intermediate_vars = Some (tokens_to_intermediate_vars tokens);
-      taint_sink = taint_call_trace sink_call_trace;
-    }
+  Option.to_list (call_trace_step ~source:true source_call_trace)
+  @ steps_of_path ~roles:true tokens
+  @ Option.to_list (call_trace_step ~source:false sink_call_trace)
 
 let unsafe_match_to_match ?(inline = false)
     ({ pm = x; is_ignored; autofix_edit } : Core_result.processed_match) :

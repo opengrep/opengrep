@@ -104,12 +104,14 @@ let is_interfile_rule_id ~(taint_interfile : bool) (hrules : Rule.hrules)
 
 let message_with_taint_source ~(is_interfile : Rule_ID.t -> bool)
     (m : Out.cli_match) : string =
-  match (is_interfile m.check_id, m.extra.dataflow_trace) with
-  | true, Some { Out.taint_source = Some source; _ } ->
-      let (loc : Out.location), (_code : string) =
-        Core_json_output.leaf_of_call_trace source
-      in
-      spf "%s [source %s:%d]" m.extra.message !!(loc.path) loc.start.line
+  match
+    ( is_interfile m.check_id,
+      Option.bind m.extra.dataflow_trace Semgrep_output_utils.dataflow_source )
+  with
+  | true, Some (source : Out.match_dataflow_step) ->
+      spf "%s [source %s:%d]" m.extra.message
+        !!(source.location.path)
+        source.location.start.line
   | _ -> m.extra.message
 
 (*****************************************************************************)
@@ -125,7 +127,7 @@ let format ~(profiler : Profiler.t) ~(is_interfile : Rule_ID.t -> bool)
   | Incremental ->
       failwith (spf "format not supported here: %s" (Output_format.show kind))
   | Json ->
-      [ Out.string_of_cli_output (Cli_json_output.flat_cli_output cli_output) ]
+      [ Out.string_of_cli_output cli_output ]
   | Junit_xml -> [ Junit_xml_output.junit_xml_output cli_output ]
   | Gitlab_sast ->
       let start_time = start_time_from_profiler_opt profiler in

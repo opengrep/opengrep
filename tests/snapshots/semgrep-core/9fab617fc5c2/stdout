@@ -23,6 +23,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
                7┆     b = pass_taint(a)
                1┆ def pass_taint(x):
                2┆     y = x
+               3┆     return y
                7┆     b = pass_taint(a)
 
              This is how taint reaches the sink:

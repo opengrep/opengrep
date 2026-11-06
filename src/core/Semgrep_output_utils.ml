@@ -111,35 +111,62 @@ let tokens_to_single_loc (toks : Tok.t list) : location option =
 (* Dataflow traces *)
 (*****************************************************************************)
 
-(* The variables with each call inline, as the JSON and SARIF outputs carry
-   them: the name of the function called, then the variables inside it,
-   without the return. *)
-let rec flat_intermediate_vars (vars : match_intermediate_var list) :
-    match_intermediate_var list =
-  vars
-  |> List.concat_map (fun (var : match_intermediate_var) ->
-         match (var.role, var.through_call) with
-         | Some `Return, _ -> []
-         | _, None -> [ { var with role = None } ]
-         | _, Some (call : match_through_call) ->
-             { var with role = None; through_call = None }
-             :: flat_intermediate_vars call.inside)
+let leads_to_source (step : match_dataflow_step) : bool =
+  match step.kind with
+  | Source
+  | SourceInCall ->
+      true
+  | Through
+  | ThroughCall
+  | Argument
+  | Return
+  | SinkInCall
+  | Sink ->
+      false
 
-let rec flat_call_trace (trace : match_call_trace) : match_call_trace
+let leads_to_sink (step : match_dataflow_step) : bool =
+  match step.kind with
+  | Sink
+  | SinkInCall ->
+      true
+  | Source
+  | SourceInCall
+  | Through
+  | ThroughCall
+  | Argument
+  | Return ->
+      false
+
+let split_dataflow_trace (trace : match_dataflow_trace) :
+    (match_dataflow_step * match_dataflow_trace * match_dataflow_step) option
     =
-  match trace with
-  | CliLoc _ -> trace
-  | CliCall (call, vars, inner) ->
-      CliCall (call, flat_intermediate_vars vars, flat_call_trace inner)
+  match List.partition leads_to_source trace with
+  | [ source ], rest -> (
+      match List.partition leads_to_sink rest with
+      | [ sink ], between -> Some (source, between, sink)
+      | _ -> None)
+  | _ -> None
 
-let flat_dataflow_trace (trace : match_dataflow_trace) :
-    match_dataflow_trace =
-  {
-    taint_source = Option.map flat_call_trace trace.taint_source;
-    intermediate_vars =
-      Option.map flat_intermediate_vars trace.intermediate_vars;
-    taint_sink = Option.map flat_call_trace trace.taint_sink;
-  }
+let rec flat_dataflow_steps (trace : match_dataflow_trace) :
+    match_dataflow_step list =
+  trace
+  |> List.concat_map (fun (step : match_dataflow_step) ->
+         step :: flat_dataflow_steps step.children)
+
+let rec dataflow_source (trace : match_dataflow_trace) :
+    match_dataflow_step option =
+  trace
+  |> List.find_map (fun (step : match_dataflow_step) ->
+         match step.kind with
+         | Source -> Some step
+         | SourceInCall
+         | Through
+         | ThroughCall
+         | Argument
+         | Return
+         | SinkInCall
+         | Sink ->
+             dataflow_source step.children)
 
 (*****************************************************************************)
 (* Compare (=~ deriving ord) *)
