@@ -178,9 +178,9 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
 type search_or_extract_rule = [ R.search_mode | R.extract_mode ] R.rule_info
 
 (* Whether matching [rule] converts byte offsets of the target into lines and
-   columns: a regexp or aliengrep pattern, or a metavariable-regex or
-   metavariable-comparison condition. A nested formula matches a temporary
-   file, which has a converter of its own. *)
+   columns: a regexp or aliengrep pattern, a metavariable-regex condition, or a
+   metavariable-comparison that calls re.match. A nested formula matches a
+   temporary file, which has a converter of its own. *)
 let reads_target_positions (rule : R.t) : bool =
   let rec of_formula (formula : R.formula) : bool =
     (match formula.f with
@@ -196,9 +196,8 @@ let reads_target_positions (rule : R.t) : bool =
     || List.exists
          (fun ((_, condition) : _ * R.metavar_cond) ->
            match condition with
-           | CondRegexp _
-           | CondEval _ ->
-               true
+           | CondRegexp _ -> true
+           | CondEval code -> Eval_generic.calls_regexp_match code
            | CondNestedFormula _
            | CondName _
            | CondType _
@@ -266,15 +265,19 @@ let group_rules xconf rules xtarget =
 let per_rule_boilerplate_fn (timeout : timeout_config option) =
   let cnt_timeout = ref 0 in
   let rule_timeouts = ref [] in
-  fun (file : Fpath.t) (rule : Rule.t) f ->
+  fun (file : Fpath.t) (rule : Rule.t) (attempt : (unit -> _) option) ->
     let rule_id = fst rule.R.id in
     TLS.set Rule.last_matched_rule (Some rule_id);
     let res_opt =
-      Profiling.profile_code
-        (spf "real_rule:%s" (Rule_ID.to_string rule_id))
-        (fun () ->
-          (* here we handle the rule! *)
-          timeout_function rule file timeout f)
+      match attempt with
+      (* the rule timed out before it ran, while a value it reads was built *)
+      | None -> None
+      | Some f ->
+          Profiling.profile_code
+            (spf "real_rule:%s" (Rule_ID.to_string rule_id))
+            (fun () ->
+              (* here we handle the rule! *)
+              timeout_function rule file timeout f)
     in
     match res_opt with
     | Some res -> res
@@ -295,15 +298,19 @@ let per_rule_boilerplate_fn (timeout : timeout_config option) =
 let per_rule_boilerplate_fn_opt (timeout : timeout_config option) =
   let cnt_timeout = ref 0 in
   let rule_timeouts = ref [] in
-  fun (file : Fpath.t) (rule : Rule.t) f ->
+  fun (file : Fpath.t) (rule : Rule.t) (attempt : (unit -> _) option) ->
     let rule_id = fst rule.R.id in
     TLS.set Rule.last_matched_rule (Some rule_id);
     let res_opt =
-      Profiling.profile_code
-        (spf "real_rule:%s" (Rule_ID.to_string rule_id))
-        (fun () ->
-          (* here we handle the rule! *)
-          timeout_function rule file timeout f)
+      match attempt with
+      (* the rule timed out before it ran, while a value it reads was built *)
+      | None -> None
+      | Some f ->
+          Profiling.profile_code
+            (spf "real_rule:%s" (Rule_ID.to_string rule_id))
+            (fun () ->
+              (* here we handle the rule! *)
+              timeout_function rule file timeout f)
     in
     match res_opt with
     | Some res -> res
@@ -396,21 +403,6 @@ let check
       (time_limit None file timeout)
       f
   in
-  let timed_out_results (rules : R.rule list) =
-    (match timeout with
-    | Some { threshold; _ } when threshold > 0 && List.length rules >= threshold
-      ->
-        raise (File_timeout (List_.map (fun (r : R.rule) -> fst r.id) rules))
-    | _else_ -> ());
-    let loc = Tok.first_loc_of_file file in
-    List_.map
-      (fun (r : R.rule) ->
-        RP.mk_match_result []
-          (Core_error.ErrorSet.singleton
-             (E.mk_error ~rule_id:(fst r.id) ~loc OutJ.Timeout))
-          (Core_profiling.empty_rule_profiling r))
-      rules
-  in
   let xtarget, linecol_timed_out =
     if
       List.exists reads_target_positions
@@ -428,6 +420,8 @@ let check
   let runs (r : R.rule) : bool =
     not (linecol_timed_out && reads_target_positions r)
   in
+  (* A rule that cannot run goes through its boilerplate as a timeout, which
+     counts it toward the file's timeout threshold. *)
   let res_taint_rules =
     taint_rules_groups
     |> List.concat_map (fun (taint_rules : R.taint_rule list) ->
@@ -435,8 +429,10 @@ let check
              List.partition (fun (r : R.taint_rule) -> runs (r :> R.rule))
                taint_rules
            in
-           timed_out_results
-             (List_.map (fun (r : R.taint_rule) -> (r :> R.rule)) timed_out)
+           List_.filter_map
+             (fun (r : R.taint_rule) ->
+               per_rule_boilerplate_fn_opt (r :> R.rule) None)
+             timed_out
            @ Match_tainting_mode.check_rules ~match_hook
                ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt running
                xconf xtarget)
@@ -447,76 +443,69 @@ let check
     let xconf = Match_env.adjust_xconfig_with_rule_options xconf r.R.options in
     per_rule_boilerplate_fn
       (r :> R.rule)
-      (fun () ->
-        Logs_.with_debug_trace ~__FUNCTION__
-          ~pp_input:(fun _ ->
-            "target: " ^ !!file ^ "\nruleid: "
-            ^ (r.id |> fst |> Rule_ID.to_string))
-          (fun () ->
-            (* dispatching *)
-            match r.R.mode with
-            | `Search _formula as mode ->
-                Match_search_mode.check_rule ~spacegrep_doc { r with mode }
-                  match_hook xconf xtarget
-            | `Extract extract_spec ->
-                Match_search_mode.check_rule ~spacegrep_doc
-                  { r with mode = `Search extract_spec.R.formula }
-                  match_hook xconf xtarget))
+      (Some
+         (fun () ->
+           Logs_.with_debug_trace ~__FUNCTION__
+             ~pp_input:(fun _ ->
+               "target: " ^ !!file ^ "\nruleid: "
+               ^ (r.id |> fst |> Rule_ID.to_string))
+             (fun () ->
+               (* dispatching *)
+               match r.R.mode with
+               | `Search _formula as mode ->
+                   Match_search_mode.check_rule ~spacegrep_doc { r with mode }
+                     match_hook xconf xtarget
+               | `Extract extract_spec ->
+                   Match_search_mode.check_rule ~spacegrep_doc
+                     { r with mode = `Search extract_spec.R.formula }
+                     match_hook xconf xtarget)))
   in
   let comment_style_of (r : search_or_extract_rule) =
     (Match_env.adjust_xconfig_with_rule_options xconf r.R.options).config
       .generic_comment_style
   in
-  (* The rules run in groups of one comment style, and each group parses the
-     target once, so that one spacegrep document is live at a time. The
-     results keep the order of the rules. *)
+  (* The rules run in their order, in runs of consecutive rules of one comment
+     style; each run that has a spacegrep pattern parses the target once, so
+     that one spacegrep document is live at a time. *)
+  let style_runs : search_or_extract_rule list list =
+    List.fold_right
+      (fun (r : search_or_extract_rule)
+           (runs_after : search_or_extract_rule list list) ->
+        match runs_after with
+        | (next :: _ as run) :: rest
+          when Xpattern_match_spacegrep.equal_comment_style (comment_style_of r)
+                 (comment_style_of next) ->
+            (r :: run) :: rest
+        | _ -> [ r ] :: runs_after)
+      nontaint_rules []
+  in
   let res_nontaint_rules =
-    let indexed_rules = List.mapi (fun (index : int) r -> (index, r)) nontaint_rules in
-    [ None; Some `C; Some `Cpp; Some `Shell ]
-    |> List.concat_map
-         (fun (style : Rule_options_t.generic_comment_style option) ->
-           let group =
-             List.filter
-               (fun ((_, r) : int * search_or_extract_rule) ->
-                 Xpattern_match_spacegrep.equal_comment_style style
-                   (comment_style_of r))
-               indexed_rules
-           in
+    style_runs
+    |> List.concat_map (fun (run : search_or_extract_rule list) ->
            let spacegrep_doc, doc_timed_out =
-             if
-               List.exists
-                 (fun ((_, r) : int * search_or_extract_rule) ->
-                   has_spacegrep_pattern (r :> R.rule))
-                 group
-             then
-               match
-                 build (fun () ->
-                     Xpattern_match_spacegrep.parse_target
-                       ~nested_formula:false style file)
-               with
-               | Some parsed -> (Some parsed, false)
-               | None -> (None, true)
-             else (None, false)
+             match run with
+             | first :: _
+               when List.exists
+                      (fun (r : search_or_extract_rule) ->
+                        has_spacegrep_pattern (r :> R.rule))
+                      run -> (
+                 match
+                   build (fun () ->
+                       Xpattern_match_spacegrep.parse_target
+                         ~nested_formula:false (comment_style_of first) file)
+                 with
+                 | Some parsed -> (Some parsed, false)
+                 | None -> (None, true))
+             | _ -> (None, false)
            in
-           let running, timed_out =
-             List.partition
-               (fun ((_, r) : int * search_or_extract_rule) ->
+           List_.map
+             (fun (r : search_or_extract_rule) ->
+               if
                  runs (r :> R.rule)
-                 && not (doc_timed_out && has_spacegrep_pattern (r :> R.rule)))
-               group
-           in
-           List.combine (List_.map fst timed_out)
-             (timed_out_results
-                (List_.map
-                   (fun ((_, r) : int * search_or_extract_rule) -> (r :> R.rule))
-                   timed_out))
-           @ List_.map
-               (fun ((index, r) : int * search_or_extract_rule) ->
-                 (index, check_search_rule spacegrep_doc r))
-               running)
-    |> List.sort (fun ((index1, _) : int * _) ((index2, _) : int * _) ->
-           Int.compare index1 index2)
-    |> List_.map snd
+                 && not (doc_timed_out && has_spacegrep_pattern (r :> R.rule))
+               then check_search_rule spacegrep_doc r
+               else per_rule_boilerplate_fn (r :> R.rule) None)
+             run)
   in
   let res_total = res_taint_rules @ res_nontaint_rules in
   (* TODO: detect if a target was fully skipped because no rule

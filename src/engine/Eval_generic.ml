@@ -225,6 +225,34 @@ let value_of_lit ~code x : value =
   | G.Float (Some f, _t) -> Float f
   | _ -> raise (NotHandled code)
 
+(* Whether [code] contains a call of [re.match], the only expression [eval]
+   evaluates by matching a regexp, and so by converting byte offsets. *)
+let calls_regexp_match (code : code) : bool =
+  let exception Found in
+  let visitor =
+    object
+      inherit [_] G.iter as super
+
+      method! visit_expr env (e : G.expr) =
+        match e.e with
+        | G.Call
+            ( {
+                e =
+                  G.DotAccess
+                    ( { e = G.N (G.Id (("re", _), _)); _ },
+                      _,
+                      FN (Id (("match", _), _)) );
+                _;
+              },
+              _ ) ->
+            raise Found
+        | _ -> super#visit_expr env e
+    end
+  in
+  match visitor#visit_expr () code with
+  | () -> false
+  | exception Found -> true
+
 let linecol_of_env (env : env) : Pos.bytepos_linecol_converters Lazy.t =
   env.linecol
 
