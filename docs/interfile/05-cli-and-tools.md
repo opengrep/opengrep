@@ -9,8 +9,10 @@ what you have to work with.
 The minimum invocation:
 
 ```
-opengrep scan --taint-interfile <rules> <target>
+opengrep scan --enable-interfile <rules> <target>
 ```
+
+with rules that carry `options.taint_interfile: true`.
 
 That's it.  No external indexer.  opengrep groups the scan's
 targets by the `project_root` carried on each target (set during
@@ -20,27 +22,32 @@ project_root)` group in-process via projidx, and runs the analysis.
 The standalone `opengrep-interfile-graph` tool takes `--project-root
 DIR` explicitly.
 
-The flag also accepts per-rule control via `options.taint_interfile:
-true` in the rule YAML.  The CLI flag and the per-rule option combine
-by **OR**: a rule runs interfile when the flag is on *or* its own
-option is set.  So with the flag on, every rule is interfile; with
-the flag off, only rules carrying `options.taint_interfile: true` go
-through interfile dispatch.  The two settings never cancel each other
-— neither side can turn the other off.  `--taint-interfile-depth` and
-the per-rule `taint_interfile_depth` combine by **max** (the deeper of
-the two wins).
+The CLI flag and the per-rule option combine by **AND**: a taint rule
+runs interfile only when `--enable-interfile` is given *and* the rule
+carries `options.taint_interfile: true`.  A rule without the option is
+never interfile.  Without the flag, a rule with the option runs as if
+the option were absent: per target, and without the intrafile
+cross-function analysis that the option implies (unless
+`--taint-intrafile` or `options.taint_intrafile: true` turns it on).
+`--disable-intrafile` disables interfile too.
+`opengrep test` and `opengrep scan --test` take `--enable-interfile` as
+well, `opengrep --core` takes `-enable_interfile`, and the language
+server has the setting `enableInterfile`.
+A rule's own `taint_interfile_depth` wins over `--interfile-depth`;
+a rule without one takes the scan's.
 
 `options.interfile: true` is an alias for
 `options.taint_interfile: true`; a rule that sets both is rejected as
 an invalid rule.
 
-Implies `--taint-intrafile` because interfile builds on the
-intrafile per-function dataflow.
+Under `--enable-interfile`, an interfile rule implies `--taint-intrafile`
+for that rule because interfile builds on the intrafile per-function
+dataflow.
 
 ### Finding deduplication
 
 The taint source is part of a finding's dedup key **only when the
-rule is interfile** (flag or per-rule option, per the OR above).  The
+rule is interfile** (flag and per-rule option, per the AND above).  The
 practical effect:
 
 - **Interfile:** two findings at the same sink reached from different
@@ -49,11 +56,11 @@ practical effect:
   of source.
 
 So the same rule and target can report more findings under
-`--taint-interfile` than without it — that is the dedup key widening,
+`--enable-interfile` than without it: that is the dedup key widening,
 not new dataflow.  (`core_unique_key` in
 `src/reporting/Core_json_output.ml`.)
 
-### `--taint-interfile-depth N` (default 3)
+### `--interfile-depth N` (default 3)
 
 Bounds the BFS that computes the relevant subgraph (see [§ 3](03-dispatch.md)
 "Phase E").  Higher values include longer call chains; runtime grows
@@ -62,9 +69,9 @@ chains of length 5+ are rare in practice.
 
 ### `--taint-intrafile`
 
-Independent flag.  Enables the intrafile cross-function analysis
-without enabling interfile.  Required for interfile; can be used
-alone for single-file interprocedural taint.
+Independent flag.  Enables the intrafile cross-function analysis for
+every taint rule, without enabling interfile.  Under
+`--enable-interfile` an interfile rule does not need it.
 
 ## The interfile call graph as a standalone product
 
@@ -113,6 +120,10 @@ $ bin/opengrep-interfile-graph topo-order   --rules my-rule.yaml /path/to/code -
   the topological order each rule would walk; with `--signatures`
   also run the signature-extraction fold and show the final signature
   for each function.
+
+`relevant-graph` and `topo-order` take only the taint rules that carry
+`options.taint_interfile: true`, as a scan under `--enable-interfile`
+does.
 
 This is the right tool when a taint finding is missing and you
 suspect the call graph or the relevant subgraph.

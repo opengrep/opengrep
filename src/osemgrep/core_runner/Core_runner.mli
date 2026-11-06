@@ -29,12 +29,13 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
-  taint_interfile : bool;
+  (* a rule runs interfile only when this is set and its own options set
+   * taint_interfile; otherwise that option is ignored *)
+  enable_interfile : bool;
   taint_interfile_depth : int;
-  (* override taint_intrafile/taint_interfile and the rule options of the
-   * same names *)
+  (* override taint_intrafile, enable_interfile and the rule options
+   * taint_intrafile and taint_interfile *)
   disable_intrafile : bool;
-  disable_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
@@ -46,7 +47,6 @@ type result = {
   core : Semgrep_output_v1_t.core_output;
   hrules : Rule.hrules;
   scanned : Fpath.t Set_.t;
-  taint_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
 }
 
@@ -78,24 +78,20 @@ type func = {
 
 val default_conf : conf
 
-(* The (taint_intrafile, taint_interfile) pair left after applying
-   [disable_intrafile] and [disable_interfile]. Interfile implies intrafile,
-   and disabling intrafile disables interfile too. *)
+(* The (taint_intrafile, enable_interfile) pair left after applying
+   [disable_intrafile], which disables interfile too. *)
 val effective_taint_modes :
-  disable_intrafile:bool ->
-  disable_interfile:bool ->
-  intrafile:bool ->
-  interfile:bool ->
-  bool * bool
+  disable_intrafile:bool -> intrafile:bool -> enable_interfile:bool -> bool * bool
 
 (* The rules with their taint_intrafile/taint_interfile options restricted
-   by [conf.disable_intrafile] and [conf.disable_interfile]. *)
+   by [conf.disable_intrafile] and [conf.enable_interfile]: taint_interfile
+   is kept only under enable_interfile, and disabling intrafile disables
+   interfile too. *)
 val restrict_rule_taint_modes : conf -> Rule.rules -> Rule.rules
 
 (* builder *)
 val mk_result :
   ?inline:bool ->
-  ?taint_interfile:bool ->
   ?interfile_dedup_by:Core_match.interfile_dedup_by ->
   Rule.rule list ->
   Core_result.t ->

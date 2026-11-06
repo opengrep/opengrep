@@ -109,19 +109,15 @@ let adjust_xconfig_with_rule_options xconf options =
     | None -> xconf.config
     | Some (rule_opts : Rule_options.t) ->
         (* Merge rule options with existing config, preserving command-line taint settings.
-           taint_interfile implies taint_intrafile: the signature machinery
-           gates on taint_intrafile, and interfile dispatch instantiates
-           nothing without it. Core_scan.scan enforces the same implication
-           for the config-level flags; this covers the per-rule option. *)
-        let taint_interfile =
-          xconf.config.taint_interfile || rule_opts.taint_interfile
-        in
+           taint_interfile implies taint_intrafile: interfile builds on the
+           intrafile per-function dataflow, the signature machinery gates on
+           taint_intrafile, and interfile dispatch instantiates nothing
+           without it. *)
         { rule_opts with
           taint_intrafile =
             xconf.config.taint_intrafile || rule_opts.taint_intrafile
-            || taint_interfile;
+            || rule_opts.taint_interfile;
           effect_guards = xconf.config.effect_guards || rule_opts.effect_guards;
-          taint_interfile;
           (* a depth set by the rule wins; an unset one keeps the scan's *)
           taint_interfile_depth =
             (match rule_opts.taint_interfile_depth with

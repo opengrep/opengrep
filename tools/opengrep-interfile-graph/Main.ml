@@ -22,7 +22,8 @@ let load_graph (project_root : string) (lang : Lang.t) : Call_graph.G.t =
 let load_rules (rules_file : string) : Rule.t list =
   let config : Core_scan_config.t =
     { Core_scan_config.default with
-      rule_source = Core_scan_config.Rule_file (Fpath.v rules_file) }
+      rule_source = Core_scan_config.Rule_file (Fpath.v rules_file);
+      enable_interfile = true }
   in
   let (rules, invalid) =
     Core_scan.rules_of_config ~filter_by_targets:false config
@@ -318,7 +319,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
     { Core_scan_config.default with
       rule_source = Core_scan_config.Rules rules;
       target_source = Core_scan_config.Targets targets;
-      taint_interfile = true;
+      enable_interfile = true;
       taint_intrafile = true;
       taint_interfile_depth = 3;
     }
@@ -333,7 +334,6 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores
-      ~taint_interfile:true
       ~max_memory_mb:config.max_memory_mb
       ~valid_rules:rules ~targets
       ~respect_rule_paths:true

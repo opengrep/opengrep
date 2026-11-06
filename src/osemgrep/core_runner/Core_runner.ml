@@ -53,12 +53,13 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
-  taint_interfile : bool;
+  (* a rule runs interfile only when this is set and its own options set
+   * taint_interfile; otherwise that option is ignored *)
+  enable_interfile : bool;
   taint_interfile_depth : int;
-  (* override taint_intrafile/taint_interfile and the rule options of the
-   * same names *)
+  (* override taint_intrafile, enable_interfile and the rule options
+   * taint_intrafile and taint_interfile *)
   disable_intrafile : bool;
-  disable_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
@@ -76,7 +77,6 @@ type result = {
   core : Semgrep_output_v1_t.core_output;
   hrules : Rule.hrules;
   scanned : Fpath.t Set_.t;
-  taint_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
 }
 
@@ -137,36 +137,25 @@ let default_conf : conf =
     inline_metavariables = false;
     taint_intrafile = false;
     effect_guards = false;
-    taint_interfile = false;
+    enable_interfile = false;
     taint_interfile_depth = 3;
     disable_intrafile = false;
-    disable_interfile = false;
     interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
     nosem = true;
     strict = false;
     engine_config = Engine_config.default;
   }
 
-let effective_taint_modes ~disable_intrafile ~disable_interfile ~intrafile
-    ~interfile : bool * bool =
-  ( (intrafile || interfile) && not disable_intrafile,
-    interfile && not (disable_intrafile || disable_interfile) )
+let effective_taint_modes ~(disable_intrafile : bool) ~(intrafile : bool)
+    ~(enable_interfile : bool) : bool * bool =
+  (intrafile && not disable_intrafile, enable_interfile && not disable_intrafile)
 
 let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
-  if not (conf.disable_intrafile || conf.disable_interfile) then rules
-  else
-    List_.map
-      (fun (rule : Rule.t) ->
-        match rule.options with
-        | None -> rule
-        | Some (opts : Rule_options.t) ->
-            let taint_intrafile, taint_interfile =
-              effective_taint_modes ~disable_intrafile:conf.disable_intrafile
-                ~disable_interfile:conf.disable_interfile
-                ~intrafile:opts.taint_intrafile ~interfile:opts.taint_interfile
-            in
-            { rule with options = Some { opts with taint_intrafile; taint_interfile } })
-      rules
+  let allow_intrafile = not conf.disable_intrafile in
+  let allow_interfile = conf.enable_interfile && allow_intrafile in
+  List_.map
+    (Rule.restrict_taint_modes ~allow_intrafile ~allow_interfile)
+    rules
 
 (*************************************************************************)
 (* Extract mode *)
@@ -391,11 +380,10 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    matching_explanations;
    taint_intrafile;
    effect_guards;
-   taint_interfile;
+   enable_interfile;
    taint_interfile_depth;
    (* already applied to the taint flags and the rules *)
    disable_intrafile = _;
-   disable_interfile = _;
    interfile_dedup_by;
    nosem = _TODO;
    strict;
@@ -424,7 +412,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         matching_explanations;
         taint_intrafile;
         effect_guards;
-        taint_interfile;
+        enable_interfile;
         taint_interfile_depth;
         interfile_dedup_by;
         scanning_roots = [];
@@ -453,13 +441,12 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
  * LATER: we want to avoid this intermediate data structure but
  * for now that's what pysemgrep used to get so simpler to return it.
  *)
-let mk_result ?(inline = false) ?(taint_interfile = false)
-    ?(interfile_dedup_by = Core_match.Sink) (all_rules : Rule.rule list)
-    (res : Core_result.t) : result =
+let mk_result ?(inline = false) ?(interfile_dedup_by = Core_match.Sink)
+    (all_rules : Rule.rule list) (res : Core_result.t) : result =
   (* similar to Core_command.output_core_results code *)
   let scanned = res.scanned |> List_.map Target.internal_path |> Set_.of_list in
   let match_results =
-    Core_json_output.core_output_of_matches_and_errors ~inline ~taint_interfile
+    Core_json_output.core_output_of_matches_and_errors ~inline
       ~interfile_dedup_by res
   in
   (* TOPORT? or move in semgrep-core so get info ASAP
@@ -477,7 +464,6 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
     core = match_results;
     hrules = Rule.hrules_of_rules all_rules;
     scanned;
-    taint_interfile;
     interfile_dedup_by;
   }
 

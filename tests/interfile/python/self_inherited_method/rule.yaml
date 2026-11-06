@@ -4,6 +4,8 @@ rules:
     severity: ERROR
     message: taint reaches a method invoked as self.<method> and inherited from an ancestor class
     mode: taint
+    options:
+      taint_interfile: true
     pattern-sources:
       - pattern: source()
     pattern-sinks:

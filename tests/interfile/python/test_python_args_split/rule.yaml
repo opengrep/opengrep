@@ -4,6 +4,8 @@ rules:
   message: "tainted data reached sink"
   severity: ERROR
   mode: taint
+  options:
+    taint_interfile: true
   pattern-sources:
     - pattern: |
         source()

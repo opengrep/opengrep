@@ -115,6 +115,36 @@ rules:
     severity: ERROR
 |}
 
+(* a taint rule whose options set interfile; foo.py passes a source to a
+ * sink defined in sinks.py *)
+let interfile_rule_content =
+  {|
+rules:
+  - id: interfile-taint
+    mode: taint
+    options:
+      interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "cross-file taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+let interfile_caller_py_content = {|
+from sinks import leak
+
+def go():
+    leak(source())
+|}
+
+let interfile_sinks_py_content = {|
+def leak(v):
+    sink(v)
+|}
+
 let clean_py_content = {|
 def foo(a, b):
     return a + b
@@ -183,6 +213,17 @@ let test_no_findings (caps : Ci_subcommand.caps) () =
 let test_blocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
     ~check:Exit_code.Check.findings ()
+
+(* the cross-file flow is a finding only under --enable-interfile *)
+let test_enable_interfile (caps : Ci_subcommand.caps) () =
+  let run (extra_args : string list) (check : Exit_code.t -> unit) =
+    run_ci caps ~rule:interfile_rule_content
+      ~target:interfile_caller_py_content
+      ~extra_files:[ F.File ("sinks.py", interfile_sinks_py_content) ]
+      ~extra_args ~check ()
+  in
+  run [] Exit_code.Check.ok;
+  run [ "--enable-interfile" ] Exit_code.Check.findings
 
 let test_nonblocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:nonblocking_rule_content ~target:finding_py_content ()
@@ -871,6 +912,8 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_no_findings caps);
       t "blocking findings exit with findings" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_blocking_findings caps);
+      t "an interfile rule finds the cross-file flow only under \
+         --enable-interfile" (test_enable_interfile caps);
       t "non-blocking findings exit ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_nonblocking_findings caps);
       t "scalar block action exits with findings"

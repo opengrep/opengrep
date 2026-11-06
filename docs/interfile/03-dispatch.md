@@ -72,7 +72,7 @@ still analysed.
 ### Phase A: Group rules by language
 
 `interfile_taint_rules_by_lang` walks every rule with `taint_interfile
-= true` (either via the CLI flag or the rule's own `options`) and
+= true` in its `options` (kept only under `--enable-interfile`) and
 groups them by their target language.  Rules of different languages
 are independent; we'll process each group separately.
 

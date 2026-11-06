@@ -259,7 +259,6 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
       (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
       |> fst
       |> Core_json_output.dedup_and_sort
-           ~taint_interfile:conf.core_runner_conf.taint_interfile
            ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
            Core_match.(to_rule_id_options_map pms)
     in
@@ -317,7 +316,6 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
                 (incremental_text_printer caps
                    ~is_interfile:
                      (Output.is_interfile_rule_id
-                        ~taint_interfile:conf.core_runner_conf.taint_interfile
                         (Rule.hrules_of_rules rules)))) )
   | {
    output_conf = { output_format = Output_format.Json; _ };
@@ -719,7 +717,6 @@ let check_targets_with_rules ?(print_summary = true)
           let (res : Core_runner.result) =
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
-              ~taint_interfile:conf.core_runner_conf.taint_interfile
               ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
               rules
               result
@@ -878,9 +875,7 @@ let check_targets_with_rules ?(print_summary = true)
               (caps :> < Cap.stdout >)
               profiler output_conf cli_output res.hrules
               ~interfile_dedup_by:res.interfile_dedup_by
-              ~is_interfile:
-                (Output.is_interfile_rule_id
-                   ~taint_interfile:res.taint_interfile res.hrules);
+              ~is_interfile:(Output.is_interfile_rule_id res.hrules);
             (* python: the timeout warnings printed in text mode with the
                results (not with --quiet, on either side) *)
             (match output_format with
