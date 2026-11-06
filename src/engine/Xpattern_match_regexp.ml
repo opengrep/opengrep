@@ -17,8 +17,9 @@ open Xpattern_matcher
 module MV = Metavariable
 module Log = Log_engine.Log
 
-let regexp_matcher ?(base_offset = 0) (big_str : string) (file : Fpath.t)
-    (regexp : Pcre2_.t) =
+let regexp_matcher ?(base_offset = 0)
+    ~(linecol : Pos.bytepos_linecol_converters Lazy.t) (big_str : string)
+    (file : Fpath.t) (regexp : Pcre2_.t) =
   let subs = Pcre2_.exec_all_noerr ~rex:regexp big_str in
   subs |> Array.to_list
   |> List_.map (fun sub ->
@@ -33,13 +34,13 @@ let regexp_matcher ?(base_offset = 0) (big_str : string) (file : Fpath.t)
          let bytepos, _ = Pcre2.get_substring_ofs sub 0 in
          let bytepos = bytepos + base_offset in
          let str = matched_str in
-         let line, column = line_col_of_charpos file bytepos in
+         let line, column = line_col_of_charpos linecol bytepos in
          let pos = Pos.make file ~line ~column bytepos in
          let loc1 = { Tok.str; pos } in
 
          let bytepos = bytepos + String.length str in
          let str = "" in
-         let line, column = line_col_of_charpos file bytepos in
+         let line, column = line_col_of_charpos linecol bytepos in
          let pos = Pos.make file ~line ~column bytepos in
          let loc2 = { Tok.str; pos } in
 
@@ -60,7 +61,7 @@ let regexp_matcher ?(base_offset = 0) (big_str : string) (file : Fpath.t)
                       try
                         let bytepos, _ = Pcre2.get_substring_ofs sub n in
                         let str = Pcre2.get_substring sub n in
-                        let line, column = line_col_of_charpos file bytepos in
+                        let line, column = line_col_of_charpos linecol bytepos in
                         let pos = Pos.make file ~line ~column bytepos in
                         let loc = { Tok.str; pos } in
                         let t = Tok.tok_of_loc loc in
@@ -89,7 +90,7 @@ let regexp_matcher ?(base_offset = 0) (big_str : string) (file : Fpath.t)
                         (Pcre2_.pcre_regexp regexp)
                         name sub
                     in
-                    let line, column = line_col_of_charpos file bytepos in
+                    let line, column = line_col_of_charpos linecol bytepos in
                     let pos = Pos.make file ~line ~column bytepos in
                     let loc = { Tok.str; pos } in
                     let t = Tok.tok_of_loc loc in
@@ -103,11 +104,12 @@ let regexp_matcher ?(base_offset = 0) (big_str : string) (file : Fpath.t)
          in
          ((loc1, loc2), names_env @ numbers_env))
 
-let matches_of_regexs regexps lazy_content (file : Fpath.t) origin =
+let matches_of_regexs regexps lazy_content
+    (linecol : Pos.bytepos_linecol_converters Lazy.t) (file : Fpath.t) origin =
   matches_of_matcher regexps
     {
       init = (fun _fpath -> assert Fpath.(equal _fpath file); Some (Lazy.force lazy_content));
-      matcher = regexp_matcher;
+      matcher = regexp_matcher ~linecol;
     }
     file origin
 [@@profiling]

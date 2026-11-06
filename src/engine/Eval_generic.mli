@@ -25,10 +25,18 @@ val eval : env -> code -> value
  *)
 val eval_opt : env -> code -> value option
 
+(* Whether the expression calls [re.match], the only expression [eval]
+   evaluates by matching a regexp. *)
+val calls_regexp_match : code -> bool
+
+(* The line and column converter of the file the environment matches. *)
+val linecol_of_env : env -> Pos.bytepos_linecol_converters Lazy.t
+
 (* match a compiled regexp *)
 val eval_regexp_matches :
   ?base_offset:int ->
   file:Fpath.t ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
   regexp:Pcre2_.t ->
   string ->
   ((Tok.location * Tok.location) * (string * Metavariable.mvalue) list) list
@@ -37,6 +45,7 @@ val eval_regexp_matches :
 val eval_regexp_pattern_matches :
   ?base_offset:int ->
   file:Fpath.t ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
   regexp:string ->
   string ->
   ((Tok.location * Tok.location) * (string * Metavariable.mvalue) list) list
@@ -54,11 +63,19 @@ val parse_json : string (* filename *) -> env * code
 
 (* for metavariable-comparison and also for metavariable-regex with constant-propagation: true *)
 val bindings_to_env_just_strings :
-  Rule_options.t -> file:Fpath.t -> Metavariable.bindings -> env
+  Rule_options.t ->
+  file:Fpath.t ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
+  Metavariable.bindings ->
+  env
 
 (* For entropy analysis and other string analyzers.
    The mvar is only for making an error message. *)
 val text_of_binding : Metavariable.mvar -> Metavariable.mvalue -> string option
 
 val bindings_to_env :
-  Rule_options.t -> file:Fpath.t -> Metavariable.bindings -> env
+  Rule_options.t ->
+  file:Fpath.t ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
+  Metavariable.bindings ->
+  env

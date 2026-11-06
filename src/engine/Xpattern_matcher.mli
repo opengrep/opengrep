@@ -27,9 +27,8 @@ val matches_of_matcher :
   Origin.t ->
   Core_profiling.times Core_result.match_result
 
-(* use an hmemo internally to speedup things *)
-val line_col_of_charpos : Fpath.t -> int -> int * int
+val line_col_of_charpos :
+  Pos.bytepos_linecol_converters Lazy.t -> int -> int * int
 val mval_of_string : string -> Tok.t -> Metavariable.mvalue
 val info_of_token_location : Tok.location -> Tok.t
 
-val hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Saturn.Htbl.t

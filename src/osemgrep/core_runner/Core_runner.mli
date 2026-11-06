@@ -78,6 +78,10 @@ type func = {
 
 val default_conf : conf
 
+(* The number of cores a scan runs on for [-j jobs]: at most the cores of the
+   machine, and the default for 0 or less. *)
+val cores_of_jobs : int -> int
+
 (* The (taint_intrafile, taint_interfile) pair left after applying
    [disable_intrafile] and [disable_interfile]. Interfile implies intrafile,
    and disabling intrafile disables interfile too. *)

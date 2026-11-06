@@ -168,8 +168,11 @@ let parse_paths env key value =
   let parse_glob_list env (key : key) e =
     let extract_string env = function
       | { G.e = G.L (String (_, (value, _), _)); _ } -> (
-          try Ok (value, Glob.Parse.parse_string value) with
-          | Glob.Lexer.Syntax_error _ ->
+          (* Pcre2.Error: a glob that parses but whose translation to a
+             regexp does not compile, such as the range [z-a] *)
+          try Ok (R.glob_of_pattern value (Glob.Parse.parse_string value)) with
+          | Glob.Lexer.Syntax_error _
+          | Pcre2.Error _ ->
               error_at_key env.id key ("Invalid glob for " ^ fst key))
       | _ ->
           error_at_key env.id key

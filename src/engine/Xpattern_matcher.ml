@@ -105,20 +105,9 @@ let (matches_of_matcher :
         RP.mk_match_result res Core_error.ErrorSet.empty
           { Core_profiling.parse_time; match_time }
 
-(* XXX: This *must* be cleared for baseline scanning, after the head scan! *)
-let hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Saturn.Htbl.t =
-  Saturn.Htbl.create ~hashed_type:(module Fpath_.Hashed) ()
-
-let () =
-  (* nosemgrep: forbid-tmp *)
-  UTmp.register_temp_file_cleanup_hook (fun file ->
-      ignore (Saturn.Htbl.try_remove hmemo file : bool))
-
-let line_col_of_charpos (file : Fpath.t) (charpos : int) : int * int =
-  let conv =
-    Common.memoized hmemo file (fun () -> Pos.full_converters_large file)
-  in
-  conv.bytepos_to_linecol_fun charpos
+let line_col_of_charpos (linecol : Pos.bytepos_linecol_converters Lazy.t)
+    (charpos : int) : int * int =
+  (Lazy.force linecol).bytepos_to_linecol_fun charpos
 
 let mval_of_string str t =
   let literal =

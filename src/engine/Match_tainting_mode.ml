@@ -673,6 +673,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     path = { internal_path_to_content = file; _ };
     xlang;
     lazy_ast_and_errors;
+    lazy_linecol;
     _;
   } : Xtarget.t =
     xtarget
@@ -704,7 +705,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
   (* TODO: 'debug_taint' should just be part of 'res'
    * (i.e., add a "debugging" field to 'Report.match_result'). *)
   match
-    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache
+    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache ~lazy_linecol
       xconf lang file (ast, []) rule
   with
   | None -> (Some (report_of_matches []), None)
@@ -956,7 +957,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
 let check_rules ~match_hook
     ~(per_rule_boilerplate_fn :
        R.rule ->
-       (unit -> Core_profiling.rule_profiling Core_result.match_result option) ->
+       (unit -> Core_profiling.rule_profiling Core_result.match_result option)
+       option ->
        Core_profiling.rule_profiling Core_result.match_result option)
     (rules : R.taint_rule list) (xconf : Match_env.xconfig)
     (xtarget : Xtarget.t) :
@@ -1088,7 +1090,7 @@ let check_rules ~match_hook
            in
            per_rule_boilerplate_fn
              (rule :> R.rule)
-             (fun () ->
+             (Some (fun () ->
                Logs_.with_debug_trace ~__FUNCTION__
                  ~pp_input:(fun _ ->
                    "target: "
@@ -1102,7 +1104,7 @@ let check_rules ~match_hook
                        ~local_ast_call_graph:rule_local_ast_call_graph
                        xconf xtarget
                    in
-                   report)))
+                   report))))
   in
 
   results

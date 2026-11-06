@@ -147,6 +147,12 @@ let default_conf : conf =
     engine_config = Engine_config.default;
   }
 
+(* The number of cores a scan runs on for [-j jobs]: at most the cores of the
+   machine, and the default for 0 or less. *)
+let cores_of_jobs (jobs : int) : int =
+  if jobs > 0 then min jobs (Domainslib_.get_cpu_count ())
+  else default_conf.num_jobs
+
 let effective_taint_modes ~disable_intrafile ~disable_interfile ~intrafile
     ~interfile : bool * bool =
   ( (intrafile || interfile) && not disable_intrafile,
@@ -409,7 +415,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
       let output_format = Core_scan_config.NoOutput in
       let filter_irrelevant_rules = optimizations in
       {
-        ncores = num_jobs;
+        ncores = cores_of_jobs num_jobs;
         output_format;
         inline_metavariables;
         timeout;

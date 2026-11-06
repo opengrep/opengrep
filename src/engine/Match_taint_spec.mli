@@ -28,6 +28,7 @@ type spec_matches = {
 *)
 val taint_config_of_rule :
   per_file_formula_cache:Formula_cache.t ->
+  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
   ?handle_effects:Taint_rule_inst.effects_handler
     (** Use 'handle_effects' to e.g. apply hash-consing (see 'Deep_tainting'), or
         to do some side-effect if needed.
@@ -63,6 +64,7 @@ val taint_config_of_spec_matches :
    no source/sink emptiness rule and builds no [Taint_rule_inst.t]. *)
 val spec_matches_of_taint_rule :
   per_file_formula_cache:Formula_cache.t ->
+  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
   Match_env.xconfig ->
   string ->
   AST_generic.program * Tok.location list ->

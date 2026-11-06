@@ -254,6 +254,7 @@ let extract_specs_for_rule
           match
             Match_taint_spec.spec_matches_of_taint_rule
               ~per_file_formula_cache:formula_cache
+              ~lazy_linecol:(lazy (Pos.full_converters_large target.abs_path))
               xconf (Fpath.to_string target.abs_path) (ast, []) rule
           with
           | exception exn ->
@@ -386,6 +387,7 @@ let init_file
     | None ->
       Match_taint_spec.taint_config_of_rule
         ~per_file_formula_cache:formula_cache
+        ~lazy_linecol:(lazy (Pos.full_converters_large file_path))
         ~allow_partial:true
         xconf' lang file_path (ast, []) rule
       |> Option.map (fun (ti, _spec_matches, _expls) -> ti)
