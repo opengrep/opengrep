@@ -25,6 +25,10 @@ val eval : env -> code -> value
  *)
 val eval_opt : env -> code -> value option
 
+(* Whether the expression calls [re.match], the only expression [eval]
+   evaluates by matching a regexp. *)
+val calls_regexp_match : code -> bool
+
 (* The line and column converter of the file the environment matches. *)
 val linecol_of_env : env -> Pos.bytepos_linecol_converters Lazy.t
 
