@@ -128,9 +128,29 @@ let default : conf =
  * ci.py). $SEMGREP_ENABLE_VERSION_CHECK and $OPENGREP_ENABLE_VERSION_CHECK
  * are ignored, whatever they hold.
  * --allow-local-builds: Opengrep never builds the scanned project.
+ * --oss-only: it selected the open source engine, the only one opengrep has.
+ * --no-secrets-validation, --allow-untrusted-validators, --secrets-timeout:
+ * settings of the secrets validators, which opengrep does not have.
+ * --forbid-rule-timeout-control: the default, see
+ * --allow-rule-timeout-control.
+ * --metrics: opengrep sends no metrics.
+ * --diff-depth: the depth of the differential scan of the Pro engine.
  *)
 let unsupported_flags : string list =
-  [ "allow-local-builds"; "enable-version-check"; "disable-version-check" ]
+  [
+    "allow-local-builds";
+    "enable-version-check";
+    "disable-version-check";
+    "oss-only";
+    "no-secrets-validation";
+    "allow-untrusted-validators";
+    "forbid-rule-timeout-control";
+  ]
+  @ CLI_common.tracing_flags
+
+(* the options that take a value, among those above *)
+let unsupported_options : string list =
+  [ "metrics"; "secrets-timeout"; "diff-depth" ] @ CLI_common.tracing_options
 
 (* ------------------------------------------------------------------ *)
 (* Path options *)
@@ -1534,6 +1554,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_autofix $ o_baseline_commit
     $ CLI_common.o_common
         ~unsupported_flags:(unsupported_flags @ Test_CLI.unsupported_flags)
+        ~unsupported_options
     $ o_config
     $ o_dataflow_traces $ o_dryrun $ o_dump_ast
     $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb

@@ -41,12 +41,21 @@ val o_profile : bool Cmdliner.Term.t
 (* for --opengrep-ignore-pattern, shared by 'scan', 'ci' and 'test' *)
 val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 
-(* gather all the common flags under one term; [unsupported_flags] are the
- * long names of the subcommand's own flags inherited from Semgrep that
- * opengrep does not support, accepted, left out of the help and warned
- * about by setup_logging. --experimental is accepted and left out of the
- * help too, without a warning. *)
-val o_common : unsupported_flags:string list -> conf Cmdliner.Term.t
+(* the tracing flags and options of Semgrep, for the subcommands that
+ * accepted them *)
+val tracing_flags : string list
+val tracing_options : string list
+
+(* gather all the common flags under one term; [unsupported_flags] and
+ * [unsupported_options] (which take a value) are the names, without dashes,
+ * of the subcommand's own flags inherited from Semgrep that opengrep does
+ * not support. They are accepted, left out of the help and warned about by
+ * setup_logging, as --legacy is in every subcommand. --experimental is
+ * accepted and left out of the help too, without a warning. *)
+val o_common :
+  unsupported_flags:string list ->
+  unsupported_options:string list ->
+  conf Cmdliner.Term.t
 
 (* the exit codes a subcommand can return, to document in its man page;
    pass them to Cmdliner.Cmd.info ~exits, otherwise cmdliner documents its

@@ -81,7 +81,8 @@ let cmdline_term : conf Term.t =
   in
   Term.(
     const combine $ o_args
-    $ CLI_common.o_common ~unsupported_flags:[]
+    $ CLI_common.o_common ~unsupported_flags:CLI_common.tracing_flags
+        ~unsupported_options:CLI_common.tracing_options
     $ CLI_common.o_force_color ~default:Output.default.force_color
     $ Skin_CLI.o_skin)
 

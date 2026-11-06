@@ -11,8 +11,10 @@ module SC = Scan_CLI
 (* 'opengrep ci' command-line parsing.
  *
  * The flags are the scan_options subset that the ci command of ci.py
- * accepts, plus the ci-only flags, minus flags with no effect here:
- * --oss-only, --supply-chain, --code, --autofix and the --x-* internals.
+ * accepts, plus the ci-only flags. The flags of ci.py that would have no
+ * effect here are accepted with a warning (see unsupported_flags); those
+ * that ask for what opengrep does not do, such as --pro or --supply-chain,
+ * and the --x-* internals are unknown options.
  *)
 
 (*****************************************************************************)
@@ -70,6 +72,15 @@ relative path.|}
   in
   Arg.value (Arg.opt (Arg.some Arg.string) None info)
 
+(* The flags of ci.py that opengrep accepts but does not support, see
+ * CLI_common.o_common, on top of Scan_CLI.unsupported_flags.
+ * --code: it selected code scanning, the only product opengrep has.
+ * --dry-run: it kept the results from being uploaded; opengrep uploads none.
+ * -a, --autofix and --no-autofix: ci.py never applied fixes.
+ *)
+let unsupported_flags : string list =
+  SC.unsupported_flags @ [ "code"; "dry-run"; "a"; "autofix"; "no-autofix" ]
+
 (*************************************************************************)
 (* Turn argv into conf *)
 (*************************************************************************)
@@ -81,7 +92,8 @@ let cmdline_term : conf Term.t =
   let combine allow_rule_timeout_control apply_includes_excludes_to_files
       audit_on baseline_commit common config dataflow_traces dynamic_timeout
       dynamic_timeout_max_multiplier dynamic_timeout_unit_kb emacs
-      emacs_outputs exclude_ exclude_rule_ids files_with_matches force_color
+      emacs_outputs exclude_ exclude_minified_files exclude_rule_ids
+      files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       include_ inline_metavariables interfile_dedup_by json json_outputs
       junit_xml junit_xml_outputs matching_explanations max_chars_per_line
@@ -196,7 +208,7 @@ let cmdline_term : conf Term.t =
         respect_semgrepignore_files = true;
         default_semgrepignore_patterns = Semgrepignore.Semgrep_scan_legacy;
         semgrepignore_filename = None;
-        exclude_minified_files = false;
+        exclude_minified_files;
       }
     in
     let rule_filtering_conf : Rule_filtering.conf =
@@ -263,11 +275,13 @@ let cmdline_term : conf Term.t =
     const combine $ SC.o_allow_rule_timeout_control
     $ SC.o_apply_includes_excludes_to_files $ o_audit_on
     $ SC.o_baseline_commit
-    $ CLI_common.o_common ~unsupported_flags:SC.unsupported_flags
+    $ CLI_common.o_common ~unsupported_flags
+        ~unsupported_options:SC.unsupported_options
     $ SC.o_config
     $ SC.o_dataflow_traces $ SC.o_dynamic_timeout
     $ SC.o_dynamic_timeout_max_multiplier $ SC.o_dynamic_timeout_unit_kb
-    $ SC.o_emacs $ SC.o_emacs_outputs $ SC.o_exclude $ SC.o_exclude_rule_ids
+    $ SC.o_emacs $ SC.o_emacs_outputs $ SC.o_exclude
+    $ SC.o_exclude_minified_files $ SC.o_exclude_rule_ids
     $ SC.o_files_with_matches $ SC.o_force_color $ SC.o_gitlab_sast
     $ SC.o_gitlab_sast_outputs $ SC.o_gitlab_secrets
     $ SC.o_gitlab_secrets_outputs $ SC.o_include $ SC.o_inline_metavariables
