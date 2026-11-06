@@ -134,6 +134,208 @@ def go():
     run(source())
 |}
 
+(* The source in a function that returns it, and the sink in a function
+   that receives it, so that the trace has a call on each side. *)
+let sources_py = {|
+def read():
+    data = source()
+    return data
+|}
+
+let calls_py = {|
+from sources import read
+from sinks import run
+
+def go():
+    run(read())
+|}
+
+(* The rule of the traces through calls, one construct per target. *)
+let through_rule =
+  {|
+rules:
+  - id: through-calls
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [python]
+    severity: ERROR
+|}
+
+let through_js_rule =
+  {|
+rules:
+  - id: through-calls
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [javascript]
+    severity: ERROR
+|}
+
+(* A function that the taint goes through, in by its parameter and out by
+   its return: the steps inside it are drawn under the call. *)
+let through_return_py = {|
+def pass_taint(x):
+    y = x
+    return y
+
+def go():
+    a = source()
+    b = pass_taint(a)
+    sink(b)
+|}
+
+(* A function that writes the taint to a field of its argument: the path
+   inside it has no return. *)
+let through_lval_py = {|
+class Box:
+    def __init__(self):
+        self.v = None
+
+def fill(box, x):
+    box.v = x
+
+def go():
+    a = source()
+    c = Box()
+    fill(c, a)
+    sink(c.v)
+|}
+
+(* A call on the tainted value whose result is clean: the trace has no
+   call. *)
+let clean_result_py = {|
+def length(x):
+    return 0
+
+def go():
+    a = source()
+    n = length(a)
+    sink(a, n)
+|}
+
+(* A recursive function that the taint goes through. *)
+let recursive_py = {|
+def rec(i, x):
+    if i < 0:
+        return x
+    return rec(i - 1, x)
+
+def go():
+    a = source()
+    b = rec(3, a)
+    sink(b)
+|}
+
+(* Three nested calls that the taint goes through: each is drawn under the
+   one that makes it. *)
+let nested_calls_py = {|
+def f3(x):
+    return x
+
+def f2(x):
+    y = f3(x)
+    return y
+
+def f1(x):
+    y = f2(x)
+    return y
+
+def go():
+    a = source()
+    b = f1(a)
+    sink(b)
+|}
+
+(* A call to a lambda, which has no name, so it has no step of its own: the
+   steps inside it are steps of the caller, without a parameter or a
+   return. *)
+let nameless_call_js = {|
+function go() {
+  const a = source();
+  const b = ((v) => {
+    const w = v;
+    return w;
+  })(a);
+  sink(b);
+}
+|}
+
+(* A source that is a parameter of the function called. *)
+let source_param_rule =
+  {|
+rules:
+  - id: source-parameter
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def handler($REQ):
+                ...
+          - focus-metavariable: $REQ
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [python]
+    severity: ERROR
+|}
+
+let source_param_py = {|
+def handler(request):
+    x = request
+    return x
+
+def main(a):
+    y = handler(a)
+    sink(y)
+|}
+
+(* A method that the taint enters by its receiver. *)
+let receiver_rule =
+  {|
+rules:
+  - id: receiver
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [go]
+    severity: ERROR
+|}
+
+let receiver_go = {|
+package main
+
+type T struct{ f string }
+
+func (r T) Get() string {
+	v := r.f
+	return v
+}
+
+func main() {
+	t := T{f: source()}
+	sink(t.Get())
+}
+|}
+
 (* A -e/--pattern run builds a rule with the id "-" and the pattern as its
    message; the report prints neither. One file and one match, so that the
    snapshot shows only the absence of the heading. *)
@@ -156,6 +358,26 @@ let pattern_files : F.t list = [ F.File ("p.py", pattern_py) ]
 
 let context_files : F.t list =
   [ F.File ("rules.yml", two_rules); F.File ("c.py", context_py) ]
+
+let through_files (target : string) : F.t list =
+  [ F.File ("rules.yml", through_rule); F.File ("t.py", target) ]
+
+let nameless_call_files : F.t list =
+  [ F.File ("rules.yml", through_js_rule); F.File ("l.js", nameless_call_js) ]
+
+let source_param_files : F.t list =
+  [ F.File ("rules.yml", source_param_rule); F.File ("s.py", source_param_py) ]
+
+let receiver_files : F.t list =
+  [ F.File ("rules.yml", receiver_rule); F.File ("r.go", receiver_go) ]
+
+let calls_files : F.t list =
+  [
+    F.File ("rules.yml", interfile_rule);
+    F.File ("sources.py", sources_py);
+    F.File ("sinks.py", sinks_py);
+    F.File ("calls.py", calls_py);
+  ]
 
 let interfile_files : F.t list =
   [
@@ -238,6 +460,34 @@ let test_enclosing_context (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
       Exit_code.Check.ok
         (scan caps ~files:context_files [ "--output-enclosing-context" ]))
+
+(* The trace of the finding in [files], as [skin] draws it. *)
+let test_trace (caps : Scan_subcommand.caps) ~(files : F.t list)
+    (skin : string) () =
+  with_skin skin (fun () ->
+      Exit_code.Check.ok (scan caps ~files [ "--dataflow-traces" ]))
+
+(* A call to a function that contains the source or the sink is drawn with
+   the steps inside that function under it. *)
+let test_calls_in_trace (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:calls_files [ "--dataflow-traces" ]))
+
+(* The path inside a call to the function whose parameter is the source
+   starts at the source, not at a parameter: the taint does not enter by
+   an argument. *)
+let test_source_param (caps : Scan_subcommand.caps) () =
+  with_skin "simple" (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:source_param_files [ "--dataflow-traces" ]))
+
+(* The path inside a call to a method starts at its receiver when the taint
+   enters by the receiver. *)
+let test_receiver (caps : Scan_subcommand.caps) () =
+  with_skin "simple" (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:receiver_files [ "--dataflow-traces" ]))
 
 (* The emacs output has no enclosing context, so the scan warns that the
    option has no effect there, in the form of the skin. *)
@@ -376,6 +626,39 @@ let tests (caps : caps) =
       t "simple warns that the emacs output has no enclosing context"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_enclosing_context_unused narrow);
+      t "simple with a call that the taint goes through"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:(through_files through_return_py) "simple");
+      t "vivid with a call that the taint goes through"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:(through_files through_return_py) "vivid");
+      t "simple with a call that writes the taint to a field"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:(through_files through_lval_py) "simple");
+      t "simple with a call whose result is clean"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:(through_files clean_result_py) "simple");
+      t "simple with a recursive call that the taint goes through"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:(through_files recursive_py) "simple");
+      t "simple with nested calls that the taint goes through"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:(through_files nested_calls_py) "simple");
+      t "simple with calls in a trace"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_calls_in_trace narrow "simple");
+      t "vivid with calls in a trace"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_calls_in_trace narrow "vivid");
+      t "simple with a call without a name"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow ~files:nameless_call_files "simple");
+      t "simple with a source that is a parameter of a call"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_source_param narrow);
+      t "simple with a call that the taint enters by its receiver"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_receiver narrow);
       t "simple with an interfile source"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_source narrow "simple");

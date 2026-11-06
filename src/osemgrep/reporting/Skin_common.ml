@@ -219,10 +219,12 @@ let pp_code (ctx : Skin.ctx) (look : finding_look) ~(digits : int)
 let step_label (kind : Findings_layout.step_kind) : string =
   match kind with
   | Source -> "source"
-  | Source_call
-  | Sink_call ->
-      "call"
-  | Intermediate -> "through"
+  | SourceInCall -> "source in call"
+  | Through -> "through"
+  | ThroughCall -> "through call"
+  | Argument -> "arg"
+  | Return -> "return"
+  | SinkInCall -> "sink in call"
   | Sink -> "sink"
 
 (* Under --interfile-dedup-by source-sink the findings that share this sink
@@ -328,7 +330,7 @@ let pp_finding ?(group : OutJ.cli_match list = []) ?(heading = true)
               match o.trace with
               | Some (trace : OutJ.match_dataflow_trace) ->
                   not
-                    (List_.null (Findings_layout.steps_of_dataflow_trace trace))
+                    (List_.null (Findings_layout.tree_of_dataflow_trace trace))
               | None -> false)
   in
   (match

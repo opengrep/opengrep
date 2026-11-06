@@ -37,7 +37,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
 
   (* Create a taint from BThis to pass to the callback *)
   let this_taint =
-    Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
+    Taint.{ orig = Var { base = BThis; offset = [] }; tokens = Taint_trace.Nil }
   in
   let this_taint_set = Taint.Taint_set.singleton this_taint in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
@@ -118,7 +118,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
   (* Create a taint from the data parameter to pass to the callback *)
   let data_arg = { Taint.name = "data"; index = data_index } in
   let data_param_taint =
-    Taint.{ orig = Var { base = BArg data_arg; offset = [] }; tokens = [] }
+    Taint.{ orig = Var { base = BArg data_arg; offset = [] }; tokens = Taint_trace.Nil }
   in
   let data_taint_set = Taint.Taint_set.singleton data_param_taint in
   let args_taints = make_args_taints data_taint_set taint_arg_index in
@@ -191,7 +191,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
 
   (* Create a taint from BThis to pass to the callback *)
   let this_taint =
-    Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
+    Taint.{ orig = Var { base = BThis; offset = [] }; tokens = Taint_trace.Nil }
   in
   let this_taint_set = Taint.Taint_set.singleton this_taint in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
@@ -263,7 +263,7 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
     Taint.
       {
         orig = Var { base = BArg impl_arg; offset = [ Oint data_index ] };
-        tokens = [];
+        tokens = Taint_trace.Nil;
       }
   in
   let data_taint_set = Taint.Taint_set.singleton data_param_taint in
@@ -428,12 +428,12 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
 (* ========================================================================== *)
 
 let this_taint_set () =
-  let taint = Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] } in
+  let taint = Taint.{ orig = Var { base = BThis; offset = [] }; tokens = Taint_trace.Nil } in
   Taint.Taint_set.singleton taint
 
 let arg_taint_set index =
   let arg = { Taint.name = "value"; index } in
-  let taint = Taint.{ orig = Var { base = BArg arg; offset = [] }; tokens = [] } in
+  let taint = Taint.{ orig = Var { base = BArg arg; offset = [] }; tokens = Taint_trace.Nil } in
   Taint.Taint_set.singleton taint
 
 let return_effect taint_set =

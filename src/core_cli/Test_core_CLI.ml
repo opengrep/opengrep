@@ -137,6 +137,22 @@ let semgrep_core_tests (caps : Cap.all_caps) : Testo.t list =
              tests/semgrep-core-e2e/targets.json -debug -json -output_enclosing_context"
           in
           run_main caps cmd |> assert_Ok);
+      (* the variables of a function that the taint goes through carry their
+         nesting levels and roles *)
+      t ~checked_output:(Testo.stdout ()) ~normalize
+        "-json with a dataflow trace through a call" (fun () ->
+          let cmd =
+            "-rules tests/semgrep-core-e2e/rules/through_call.yaml -l python \
+             tests/semgrep-core-e2e/targets/through_call.py -json"
+          in
+          run_main caps cmd |> assert_Ok);
+      t ~checked_output:(Testo.stdout ())
+        "the text output of a dataflow trace through a call" (fun () ->
+          let cmd =
+            "-rules tests/semgrep-core-e2e/rules/through_call.yaml -l python \
+             tests/semgrep-core-e2e/targets/through_call.py"
+          in
+          run_main caps cmd |> assert_Ok);
     ]
 
 let tests (caps : Cap.all_caps) : Testo.t list = semgrep_core_tests caps

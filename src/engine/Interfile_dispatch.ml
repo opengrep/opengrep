@@ -1040,7 +1040,8 @@ let rec rebase_call_trace (rebase : Fpath.t -> Fpath.t option)
       Taint_trace.Call
         {
           call_toks = List_.map (rebase_tok rebase) call_toks;
-          intermediate_vars = List_.map (rebase_tok rebase) intermediate_vars;
+          intermediate_vars =
+            Taint_trace.map_toks (rebase_tok rebase) intermediate_vars;
           call_trace = rebase_call_trace rebase call_trace;
         }
 
@@ -1050,7 +1051,8 @@ let rebase_trace (rebase : Fpath.t -> Fpath.t option) (trace : Taint_trace.t)
     (fun (item : Taint_trace.item) ->
       {
         Taint_trace.source_trace = rebase_call_trace rebase item.source_trace;
-        tokens = List_.map (rebase_tok rebase) item.Taint_trace.tokens;
+        tokens =
+          Taint_trace.map_toks (rebase_tok rebase) item.Taint_trace.tokens;
         sink_trace = rebase_call_trace rebase item.Taint_trace.sink_trace;
       })
     trace

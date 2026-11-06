@@ -1,0 +1,20 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 r.go
+ create mode 100644 rules.yml
+r.go
+
+  error  receiver
+  tainted data reaches a sink
+
+    13: sink(t.Get())
+        │
+        ├─ source           12: t := T{f: source()}
+        ├─ through          12: t := T{f: source()}
+        ├─ through call     13: sink(t.Get())
+        │  ├─ arg               6: func (r T) Get() string {
+        │  ├─ through           7: v := r.f
+        │  └─ return            8: return v
+        └─ sink             13: sink(t.Get())
+
