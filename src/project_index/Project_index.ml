@@ -912,7 +912,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Largest-first so megafiles don't stall the tail on one worker; stat once
      (decorate-sort-undecorate) to keep the comparator pure. *)
   let file_size_of fi =
-    Nonfatal.catch ~default:0 (fun () ->
+    Nonfatal.catch_info ~default:0 (fun () ->
       (Unix.stat (Fpath.to_string fi.fi_file)).Unix.st_size)
   in
   let file_infos =

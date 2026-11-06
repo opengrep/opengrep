@@ -131,7 +131,7 @@ let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
     if depth > max_depth then acc
     else
     let entries =
-      Nonfatal.catch ~default:[] (fun () ->
+      Nonfatal.catch_info ~default:[] (fun () ->
         Sys.readdir dir |> Array.to_list)
     in
     let build_path = Filename.concat dir "tsconfig.build.json" in
@@ -143,7 +143,18 @@ let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
     in
     List.fold_left (fun acc entry ->
       let full = Filename.concat dir entry in
-      let is_dir = Nonfatal.catch ~default:false (fun () -> Sys.is_directory full) in
+      let is_dir =
+        Nonfatal.catch ~default:false (fun () ->
+          match (Unix.stat full).Unix.st_kind with
+          | Unix.S_DIR -> true
+          | _ -> false
+          | exception Unix.Unix_error ((Unix.ENOENT | Unix.ELOOP), _, _)
+            when UFile.is_lnk (Fpath.v full) ->
+            Logs.info (fun m ->
+              m "%s: broken symbolic link, not searched for tsconfig.json"
+                full);
+            false)
+      in
       if is_dir && not (skip_dir entry) then walk (depth + 1) full acc
       else acc
     ) acc entries
