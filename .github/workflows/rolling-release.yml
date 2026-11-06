@@ -49,6 +49,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    environment: release
 
     needs:
       - build-linux-x86
