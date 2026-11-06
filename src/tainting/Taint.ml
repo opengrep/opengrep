@@ -92,11 +92,7 @@ let compare_metavar_env env1 env2 =
   Metavariable.compare_bindings env1 env2
 
 let compare_matches pm1 pm2 =
-  match
-    String.compare
-      (Rule_ID.to_string pm1.PM.rule_id.id)
-      (Rule_ID.to_string pm2.PM.rule_id.id)
-  with
+  match Rule_ID.compare pm1.PM.rule_id.id pm2.PM.rule_id.id with
   | 0 ->
       let compare_range_loc = Core_match.compare_range_loc pm1.range_loc pm2.range_loc in
       if compare_range_loc <> 0 then compare_range_loc

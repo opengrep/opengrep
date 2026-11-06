@@ -1,0 +1,13 @@
+rules:
+  - id: python_function_named_tmp_through_variable
+    message: taint through a function whose name starts with _tmp, passed by a variable
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
