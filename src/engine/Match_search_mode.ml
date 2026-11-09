@@ -697,8 +697,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
          match cond with
          | R.CondEval e ->
              let env =
-               Eval_generic.bindings_to_env env.xconf.config ~file
-                 ~linecol:env.xtarget.lazy_linecol bindings
+               Eval_generic.bindings_to_env env.xconf.config ~file bindings
              in
              Eval_generic.eval_bool env e |> map_bool r
          | R.CondNestedFormula (mvar, opt_lang, formula) -> (
@@ -770,17 +769,17 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
           *)
          | R.CondRegexp (mvar, re, const_prop) -> (
              let config = env.xconf.config in
+             let linecol = env.xtarget.lazy_linecol in
              let env =
                if const_prop && config.constant_propagation then
-                 Eval_generic.bindings_to_env config ~file
-                   ~linecol:env.xtarget.lazy_linecol bindings
+                 Eval_generic.bindings_to_env config ~file bindings
                else
-                 Eval_generic.bindings_to_env_just_strings config ~file
-                   ~linecol:env.xtarget.lazy_linecol bindings
+                 Eval_generic.bindings_to_env_just_strings config ~file bindings
              in
              (* TODO: could return expl for nested matching! *)
              match
-               Metavariable_regex.get_metavar_regex_capture_bindings env ~file r
+               Metavariable_regex.get_metavar_regex_capture_bindings env ~file
+                 ~linecol r
                  (mvar, re)
              with
              | None -> None

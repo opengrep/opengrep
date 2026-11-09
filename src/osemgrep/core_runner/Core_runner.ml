@@ -111,16 +111,12 @@ let default_conf : conf =
   {
     (* Maxing out number of cores used to 16 if more not requested to
      * not overload on large machines.
-     * Also, hardcode num_jobs to 1 for non-unix (i.e. Windows) because
-     * we don't believe that Parmap works in those environments
-     * TODO: figure out a solution for Windows multi-processing (OCaml 5 in
-     * the worst case)
      *)
     (* TODO: What if we are executing on a very large machine? The upper bound
      * should be configurable, especially since for very large repos we might
      * want to use all available cores. At least add environment variable or
      * a parameter on the CLI. Why not 50% of cores on a 64 or 128 core machine? *)
-    num_jobs = min 16 (Domainslib_.get_cpu_count ());
+    num_jobs = Domainslib_.default_num_domains ();
     timeout = 5.0;
     dynamic_timeout = Core_scan_config.default.dynamic_timeout;
     dynamic_timeout_max_multiplier = Core_scan_config.default.dynamic_timeout_max_multiplier;
@@ -146,12 +142,6 @@ let default_conf : conf =
     strict = false;
     engine_config = Engine_config.default;
   }
-
-(* The number of cores a scan runs on for [-j jobs]: at most the cores of the
-   machine, and the default for 0 or less. *)
-let cores_of_jobs (jobs : int) : int =
-  if jobs > 0 then min jobs (Domainslib_.get_cpu_count ())
-  else default_conf.num_jobs
 
 let rules_run_per_file_without_enable_interfile ~(enable_interfile : bool)
     ~(disable_intrafile : bool) (rules : Rule.rules) : Rule_ID.t list =
@@ -429,7 +419,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
       let output_format = Core_scan_config.NoOutput in
       let filter_irrelevant_rules = optimizations in
       {
-        ncores = cores_of_jobs num_jobs;
+        ncores = Domainslib_.num_domains_of_jobs num_jobs;
         output_format;
         inline_metavariables;
         timeout;

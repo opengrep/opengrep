@@ -11,7 +11,8 @@ let load_graph (project_root : string) (lang : Lang.t) : Call_graph.G.t =
   (* CLI entry point: this process owns its capabilities. *)
   let caps = (Cap.fork_and_limits_caps_UNSAFE () :> < Cap.fork >) in
   match
-    Interfile_graph.load_interfile_graph caps ~targeting_conf lang root
+    Interfile_graph.load_interfile_graph caps
+      ~ncores:(Domainslib_.default_num_domains ()) ~targeting_conf lang root
   with
   | Some graph -> graph
   | None ->

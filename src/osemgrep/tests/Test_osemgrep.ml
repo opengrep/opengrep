@@ -622,16 +622,17 @@ let test_text_with_json (caps : CLI.caps) () =
 (* Entry point *)
 (*****************************************************************************)
 
-let test_cores_of_jobs () =
+let test_num_domains_of_jobs () =
   let cpus = Domainslib_.get_cpu_count () in
   let default = Core_runner.default_conf.num_jobs in
-  Alcotest.(check int) "-j 1 runs on one core" 1 (Core_runner.cores_of_jobs 1);
+  Alcotest.(check int) "-j 1 runs on one core" 1
+    (Domainslib_.num_domains_of_jobs 1);
   Alcotest.(check int) "-j above the cores runs on all of them" cpus
-    (Core_runner.cores_of_jobs (cpus + 5));
+    (Domainslib_.num_domains_of_jobs (cpus + 5));
   Alcotest.(check int) "-j 0 runs on the default" default
-    (Core_runner.cores_of_jobs 0);
+    (Domainslib_.num_domains_of_jobs 0);
   Alcotest.(check int) "-j below 0 runs on the default" default
-    (Core_runner.cores_of_jobs (-3))
+    (Domainslib_.num_domains_of_jobs (-3))
 
 let tests (caps : CLI.caps) =
   let scan_caps = (caps :> Scan_subcommand.caps) in
@@ -668,7 +669,7 @@ let tests (caps : CLI.caps) =
         (test_baseline_core_time caps);
       Testo.create "--text does not win over --json" (test_text_with_json caps);
       Testo.create "-j selects the number of cores as v1.33.1 did"
-        test_cores_of_jobs;
+        test_num_domains_of_jobs;
     ]
     @ unsupported_flags_tests caps
     @ (unsupported_flags_of_subcommand

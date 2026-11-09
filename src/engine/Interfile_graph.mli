@@ -6,13 +6,13 @@ type skipped_tokens = (string, Tok.location list) Hashtbl.t
 
 val load_interfile_graph :
   < Cap.fork > ->
-  ?ncores:int ->
+  ncores:int ->
   targeting_conf:Find_targets.conf ->
   Lang.t -> Fpath.t -> interfile_graph option
 
 val load_interfile_build :
   < Cap.fork > ->
-  ?ncores:int ->
+  ncores:int ->
   targeting_conf:Find_targets.conf ->
   Lang.t -> Fpath.t ->
   (interfile_graph * resolved_asts * skipped_tokens * Core_error.t list)

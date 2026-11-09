@@ -17,7 +17,7 @@ type skipped_tokens = (string, Tok.location list) Hashtbl.t
    failed to process, each with its error; their functions and edges are
    missing from the graph, so the caller reports them as scan errors. *)
 let load_interfile_build (caps : < Cap.fork >)
-    ?(ncores : int = 0)
+    ~(ncores : int)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
     : (interfile_graph * resolved_asts * skipped_tokens * Core_error.t list)
@@ -29,9 +29,6 @@ let load_interfile_build (caps : < Cap.fork >)
     match Rpath.of_fpath abs with
     | Ok r -> Rpath.to_fpath r
     | Error _ -> abs
-  in
-  let ncores =
-    if ncores <= 0 then Domainslib_.get_cpu_count () else ncores
   in
   try
     let (graph, asts, skipped_tokens, failures) =
@@ -55,7 +52,7 @@ let load_interfile_build (caps : < Cap.fork >)
     None
 
 let load_interfile_graph (caps : < Cap.fork >)
-    ?(ncores : int = 0)
+    ~(ncores : int)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
     : interfile_graph option =

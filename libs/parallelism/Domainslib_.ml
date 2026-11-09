@@ -41,6 +41,11 @@ let wrap_result f ~exception_handler x =
  * be less than the real number of CPUs. *)
 let get_cpu_count () = Domain.recommended_domain_count ()
 
+let default_num_domains () : int = Int.min 16 (get_cpu_count ())
+
+let num_domains_of_jobs (jobs : int) : int =
+  if jobs > 0 then Int.min jobs (get_cpu_count ()) else default_num_domains ()
+
 (* WARNING: Do not pass any [f] that does not expect to be uniquely
  * executing in a [Thread.t] until it produces a result. For example,
  * do not pass [f] that makes use of [Domainslib] functions that create

@@ -82,10 +82,6 @@ type func = {
 
 val default_conf : conf
 
-(* The number of cores a scan runs on for [-j jobs]: at most the cores of the
-   machine, and the default for 0 or less. *)
-val cores_of_jobs : int -> int
-
 (* The interfile rules among [rules] that run per file because
    [enable_interfile] is not set; none under [disable_intrafile]. [rules]
    are those before [apply_taint_flags]. *)
