@@ -37,7 +37,7 @@ jobs:
     strategy:
       matrix:
         ocaml_version: ["5.5.1"]
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-15-intel' || 'macos-15' }}
     steps:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
