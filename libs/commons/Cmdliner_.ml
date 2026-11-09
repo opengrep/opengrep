@@ -228,6 +228,20 @@ let hidden_flags (options : string list) : string list Term.t =
   in
   Term.(const List_.deduplicate $ Arg.value (Arg.vflag_all [] flags))
 
+(* cmdliner has no counterpart of vflag_all for options that take a value,
+   so the term of each option is joined here *)
+let hidden_options (options : string list) : string list Term.t =
+  List.fold_right2
+    (fun (option : string) (flag : string) (given : string list Term.t) ->
+      let info = Arg.info [ option ] ~docs:Manpage.s_none in
+      let prepend (values : string list) (given : string list) =
+        if List_.null values then given else flag :: given
+      in
+      Term.(const prepend $ Arg.value (Arg.opt_all Arg.string [] info) $ given))
+    options
+    (add_option_dashes options)
+    (Term.const [])
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *

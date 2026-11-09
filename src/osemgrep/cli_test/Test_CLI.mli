@@ -45,8 +45,9 @@ and target_kind =
 *)
 val parse_argv : string array -> conf
 
-(* the flags of 'opengrep test' that opengrep does not support, see
-   CLI_common.o_common; used also in cli_scan for --test *)
+(* the flags of 'opengrep test', other than the tracing flags of
+   CLI_common, that opengrep does not support, see CLI_common.o_common; used
+   also in cli_scan for --test *)
 val unsupported_flags : string list
 
 val target_kind_of_roots_and_config :

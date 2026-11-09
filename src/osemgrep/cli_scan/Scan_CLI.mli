@@ -75,6 +75,7 @@ val o_exclude : string list Cmdliner.Term.t
 (* the flags of 'scan' and 'ci' that opengrep does not support, see
    CLI_common.o_common *)
 val unsupported_flags : string list
+val unsupported_options : string list
 val o_allow_rule_timeout_control : bool Cmdliner.Term.t
 val o_apply_includes_excludes_to_files : bool Cmdliner.Term.t
 val o_config : string list Cmdliner.Term.t

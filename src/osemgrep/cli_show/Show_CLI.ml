@@ -159,7 +159,7 @@ let cmdline_term : conf Term.t =
 
   Term.(
     const combine $ o_args
-    $ CLI_common.o_common ~unsupported_flags:[]
+    $ CLI_common.o_common ~unsupported_flags:[] ~unsupported_options:[]
     $ o_json $ o_html)
 
 let doc = "Show various types of information"

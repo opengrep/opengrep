@@ -181,13 +181,28 @@ let o_experimental : unit Term.t =
     const (fun (_ : string list) -> ())
     $ Cmdliner_.hidden_flags [ "experimental" ])
 
-let o_common ~(unsupported_flags : string list) : conf Term.t =
-  let combine logging profile maturity (() : unit) (given : string list) =
-    { logging_level = logging; profile; maturity; unsupported_flags = given }
+(* --legacy selected the Python CLI, which opengrep no longer has *)
+let unsupported_common_flags : string list = [ "legacy" ]
+
+(* Semgrep sent traces of its runs to a collector; opengrep sends none *)
+let tracing_flags : string list = [ "trace"; "no-trace" ]
+let tracing_options : string list = [ "trace-endpoint" ]
+
+let o_common ~(unsupported_flags : string list)
+    ~(unsupported_options : string list) : conf Term.t =
+  let combine logging profile maturity (() : unit) (flags : string list)
+      (options : string list) =
+    {
+      logging_level = logging;
+      profile;
+      maturity;
+      unsupported_flags = flags @ options;
+    }
   in
   Term.(
     const combine $ o_logging $ o_profile $ Maturity.o_maturity $ o_experimental
-    $ Cmdliner_.hidden_flags unsupported_flags)
+    $ Cmdliner_.hidden_flags (unsupported_common_flags @ unsupported_flags)
+    $ Cmdliner_.hidden_options unsupported_options)
 
 (*************************************************************************)
 (* Misc *)

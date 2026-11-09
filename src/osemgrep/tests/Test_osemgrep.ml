@@ -180,41 +180,96 @@ let test_man_page_exit_codes (caps : CLI.caps) (subcommand : string)
 (* Flags inherited from Semgrep that opengrep does not support *)
 (*****************************************************************************)
 
-(* the flags each subcommand accepts without supporting them and warns
-   about; every subcommand also accepts --experimental, without a warning *)
-let unsupported_flags_of_subcommand : (string * string list) list =
-  let scan_and_ci =
-    [ "--allow-local-builds"; "--enable-version-check"; "--disable-version-check" ]
+(* the flags a subcommand accepts without supporting them and warns about,
+   and the options among them, which take a value *)
+type unsupported = { flags : string list; options : string list }
+
+let ( ++ ) (a : unsupported) (b : unsupported) : unsupported =
+  { flags = a.flags @ b.flags; options = a.options @ b.options }
+
+(* every subcommand also accepts --experimental, without a warning *)
+let unsupported_of_subcommand : (string * unsupported) list =
+  let common = { flags = [ "--legacy" ]; options = [] } in
+  let tracing =
+    { flags = [ "--trace"; "--no-trace" ]; options = [ "--trace-endpoint" ] }
   in
-  let test = [ "--test-ignore-todo"; "--no-test-ignore-todo" ] in
+  let scan_and_ci =
+    {
+      flags =
+        [
+          "--allow-local-builds";
+          "--enable-version-check";
+          "--disable-version-check";
+          "--oss-only";
+          "--no-secrets-validation";
+          "--allow-untrusted-validators";
+          "--forbid-rule-timeout-control";
+        ];
+      options = [ "--metrics"; "--secrets-timeout"; "--diff-depth" ];
+    }
+    ++ tracing
+  in
+  let ci =
+    {
+      flags = [ "--code"; "--dry-run"; "-a"; "--autofix"; "--no-autofix" ];
+      options = [];
+    }
+  in
+  let test = { flags = [ "--test-ignore-todo"; "--no-test-ignore-todo" ]; options = [] } in
   [
-    ("ci", scan_and_ci);
-    ("lsp", []);
-    ("scan", scan_and_ci @ test);
-    ("show", []);
-    ("test", test);
-    ("validate", []);
+    ("ci", common ++ scan_and_ci ++ ci);
+    ("lsp", common ++ tracing);
+    ("scan", common ++ scan_and_ci ++ test);
+    ("show", common);
+    ("test", common ++ test ++ tracing);
+    ("validate", common ++ tracing);
   ]
 
-let unsupported_flags_of (subcommand : string) : string list =
-  List.assoc subcommand unsupported_flags_of_subcommand
+let unsupported_of (subcommand : string) : unsupported =
+  List.assoc subcommand unsupported_of_subcommand
+
+let names_of (unsupported : unsupported) : string list =
+  unsupported.flags @ unsupported.options
+
+(* the arguments that give each flag, and each option with a value *)
+let args_of (unsupported : unsupported) : string list =
+  unsupported.flags
+  @ List.concat_map (fun (option : string) -> [ option; "1" ]) unsupported.options
+
+(* the options a man page documents: the words that start with a dash on the
+   lines indented as an option, such as "       -a, --autofix" *)
+let documented_options (page : string) : string list =
+  String.split_on_char '\n' page
+  |> List.concat_map (fun (line : string) ->
+         if String.starts_with ~prefix:"       -" line then
+           String.split_on_char ' ' (String.trim line)
+           |> List.filter_map (fun (word : string) ->
+                  match String.split_on_char '=' word with
+                  | name :: _ when String.starts_with ~prefix:"-" name ->
+                      Some
+                        (if String.ends_with ~suffix:"," name then
+                           String.sub name 0 (String.length name - 1)
+                         else name)
+                  | _ -> None)
+         else [])
 
 (* The man page of a subcommand leaves out --experimental and the flags it
    does not support; --debug, which every subcommand documents, shows that
    the page lists the options at all. *)
 let test_man_page_leaves_out_unsupported_flags (caps : CLI.caps)
-    (subcommand : string) (flags : string list) () =
-  let out = man_page caps subcommand in
+    (subcommand : string) (unsupported : unsupported) () =
+  let documented = documented_options (man_page caps subcommand) in
+  let documents (flag : string) : bool =
+    List.exists (String.equal flag) documented
+  in
   Alcotest.(check bool)
     (Printf.sprintf "%s documents --debug" subcommand)
-    true
-    (String_.contains ~term:"--debug" out);
-  "--experimental" :: flags
+    true (documents "--debug");
+  "--experimental" :: names_of unsupported
   |> List.iter (fun (flag : string) ->
          Alcotest.(check bool)
            (Printf.sprintf "%s leaves out %s" subcommand flag)
-           false
-           (String_.contains ~term:flag out))
+           false (documents flag))
 
 let count_lines_containing (term : string) (text : string) : int =
   String.split_on_char '\n' text
@@ -266,36 +321,52 @@ let test_not_warned (caps : CLI.caps)
     (count_lines_containing "is not supported by opengrep" err)
 
 let unsupported_flags_tests (caps : CLI.caps) : Testo.t list =
-  let scan_flags = unsupported_flags_of "scan" in
+  let scan = unsupported_of "scan" in
   let target_args = [ "--config"; "rules.yaml"; "foo.py" ] in
+  (* each flag of [subcommand] is warned about once in the run of
+     'opengrep <subcommand> <its unsupported flags> <args>' *)
+  let warned_once (subcommand : string) (args : string list) : unit -> unit =
+    let unsupported = unsupported_of subcommand in
+    test_warned_once caps ~flags:(names_of unsupported)
+      ((subcommand :: args_of unsupported) @ args)
+  in
   [
     Testo.create "scan warns once about each unsupported flag given twice"
-      (test_warned_once caps ~flags:scan_flags
-         (("scan" :: scan_flags) @ scan_flags @ target_args));
+      (test_warned_once caps ~flags:(names_of scan)
+         (("scan" :: args_of scan) @ args_of scan @ target_args));
+    Testo.create "an unsupported option with an attached value is warned about"
+      (test_warned_once caps ~flags:[ "--metrics" ]
+         ("scan" :: "--metrics=off" :: target_args));
     (* scan hands the run over to the test, validate and show subcommands,
        which do not warn again *)
     Testo.create "scan --test warns once about each unsupported flag"
-      (test_warned_once caps ~flags:scan_flags
-         (("scan" :: "--test" :: scan_flags) @ target_args));
+      (test_warned_once caps ~flags:(names_of scan)
+         (("scan" :: "--test" :: args_of scan) @ target_args));
     (* validate fetches its metachecking rules, which the fixture of
        Test_rule_errors provides without the network *)
     Testo.create "scan --validate warns once about each unsupported flag"
       (Test_rule_errors.with_metarules
-         (test_warned_once caps ~flags:scan_flags
-            (("scan" :: "--validate" :: scan_flags)
+         (test_warned_once caps ~flags:(names_of scan)
+            (("scan" :: "--validate" :: args_of scan)
             @ [ "--config"; "rules.yaml" ])));
     Testo.create "scan --dump-ast warns once about each unsupported flag"
-      (test_warned_once caps ~flags:scan_flags
-         (("scan" :: "--dump-ast" :: scan_flags) @ [ "-l"; "python"; "foo.py" ]));
+      (test_warned_once caps ~flags:(names_of scan)
+         (("scan" :: "--dump-ast" :: args_of scan) @ [ "-l"; "python"; "foo.py" ]));
     Testo.create "ci warns about each unsupported flag"
-      (test_warned_once caps ~flags:(unsupported_flags_of "ci")
-         (("ci" :: unsupported_flags_of "ci") @ [ "--config"; "rules.yaml" ]));
+      (warned_once "ci" [ "--config"; "rules.yaml" ]);
+    (* CLI.main hands a flag given before the subcommand over to it *)
+    Testo.create "opengrep --legacy ci warns once about --legacy"
+      (test_warned_once caps ~flags:[ "--legacy" ]
+         [ "--legacy"; "ci"; "--config"; "rules.yaml" ]);
     Testo.create "test warns about each unsupported flag"
-      (test_warned_once caps ~flags:(unsupported_flags_of "test")
-         (("test" :: unsupported_flags_of "test") @ target_args));
+      (warned_once "test" target_args);
+    Testo.create "show warns about each unsupported flag"
+      (warned_once "show" [ "version" ]);
+    Testo.create "validate warns about each unsupported flag"
+      (Test_rule_errors.with_metarules (warned_once "validate" [ "rules.yaml" ]));
     Testo.create "scan --quiet does not warn about an unsupported flag"
       (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
-         (("scan" :: "--quiet" :: scan_flags) @ target_args));
+         (("scan" :: "--quiet" :: args_of scan) @ target_args));
     Testo.create "scan without an unsupported flag does not warn"
       (test_not_warned caps ~check_exit_code:Exit_code.Check.ok
          ("scan" :: target_args));
@@ -658,13 +729,13 @@ let tests (caps : CLI.caps) =
       Testo.create "--text does not win over --json" (test_text_with_json caps);
     ]
     @ unsupported_flags_tests caps
-    @ (unsupported_flags_of_subcommand
-      |> List_.map (fun ((subcommand : string), (flags : string list)) ->
+    @ (unsupported_of_subcommand
+      |> List_.map (fun ((subcommand : string), (unsupported : unsupported)) ->
              Testo.create
                (Printf.sprintf "the man page of %s leaves out unsupported flags"
                   subcommand)
                (test_man_page_leaves_out_unsupported_flags caps subcommand
-                  flags)))
+                  unsupported)))
     @ ([
          ("ci", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
          ("lsp", [ "0"; "2"; "141" ]);

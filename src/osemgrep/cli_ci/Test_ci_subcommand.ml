@@ -125,6 +125,11 @@ def foo(a, b):
     return a + b == a + b
 |}
 
+(* 1500 bytes without whitespace, which Skip_target.is_minified reports as
+ * minified *)
+let minified_py_content =
+  String.concat "" (List.init 300 (fun (_ : int) -> "a==a;"))
+
 (* coupling: Test_scan_subcommand.normalize *)
 let normalize =
   [
@@ -186,6 +191,15 @@ let test_blocking_findings (caps : Ci_subcommand.caps) () =
 
 let test_nonblocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:nonblocking_rule_content ~target:finding_py_content ()
+
+let test_exclude_minified_files (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:minified_py_content
+    ~extra_args:[ "--exclude-minified-files" ] ()
+
+(* the control: a minified target is scanned by default *)
+let test_minified_files_scanned (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:minified_py_content
+    ~check:Exit_code.Check.findings ()
 
 let test_scalar_blocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:scalar_blocking_rule_content ~target:finding_py_content
@@ -873,6 +887,10 @@ let tests (caps : < Ci_subcommand.caps >) =
         ~normalize (test_blocking_findings caps);
       t "non-blocking findings exit ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_nonblocking_findings caps);
+      t "--exclude-minified-files skips a minified target"
+        (test_exclude_minified_files caps);
+      t "a minified target is scanned by default"
+        (test_minified_files_scanned caps);
       t "scalar block action exits with findings"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_scalar_blocking_findings caps);
