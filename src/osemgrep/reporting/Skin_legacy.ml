@@ -107,6 +107,8 @@ let rules_status (_ctx : Skin.ctx) (start : M.Start.t) : string option =
       | Local -> styled `Bold "  Loading rules from local config..."
       | Pattern -> "  Using custom pattern.")
 
+(* the status starts with empty lines, so plan.follows_messages changes
+   nothing *)
 let on_plan (_ctx : Skin.ctx) (plan : M.Plan.t) : Skin.chunk list =
   [ app (fun ppf -> Status_report.pp_status ppf plan) ]
 
@@ -148,6 +150,10 @@ let shows_status_bar = false
 
 (* errors and warnings keep the header of the log reporter *)
 let pp_log_message = None
+
+(* the earlier report had no hints; a plain line under its warnings *)
+let pp_hint (ppf : Format.formatter) (txt : string) : unit =
+  Fmt.pf ppf "hint: %s" txt
 
 (* the earlier report did not show the enclosing context *)
 let shows_enclosing_context = false

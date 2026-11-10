@@ -412,7 +412,9 @@ let rules_status (_ctx : Skin.ctx) (_start : M.Start.t) : string option = None
 
 let on_plan (look : look) (_ctx : Skin.ctx) (plan : M.Plan.t) :
     Skin.chunk list =
-  [
+  (* an empty line after a warning, which would otherwise run into the plan *)
+  (if plan.follows_messages then [ line (fun _ppf -> ()) ] else [])
+  @ [
     line (fun ppf ->
         look.pp_plan plan.run ppf
           (if plan.num_rules_with_a_target = 0 || plan.num_files_with_a_rule = 0
@@ -496,18 +498,26 @@ let log_margin : int =
 
 (* "warning  a message", with the lines after the first indented to the
    text *)
+let pp_with_word ((word : string), (style : Fmt.style))
+    (ppf : Format.formatter) (txt : string) : unit =
+  String.split_on_char '\n' txt
+  |> List.iteri (fun (i : int) (line : string) ->
+         if Int.equal i 0 then
+           Fmt.pf ppf "%a%s%s"
+             Fmt.(styled style string)
+             word
+             (String.make (log_margin - String.length word) ' ')
+             line
+         else if String.equal line "" then Fmt.pf ppf "@\n"
+         else Fmt.pf ppf "@\n%s%s" (String.make log_margin ' ') line)
+
 let pp_log_message (level : Logs.level) (ppf : Format.formatter)
     (txt : string) : unit =
   match log_word level with
   | None -> Fmt.string ppf txt
-  | Some (word, style) ->
-      String.split_on_char '\n' txt
-      |> List.iteri (fun (i : int) (line : string) ->
-             if Int.equal i 0 then
-               Fmt.pf ppf "%a%s%s"
-                 Fmt.(styled style string)
-                 word
-                 (String.make (log_margin - String.length word) ' ')
-                 line
-             else if String.equal line "" then Fmt.pf ppf "@\n"
-             else Fmt.pf ppf "@\n%s%s" (String.make log_margin ' ') line)
+  | Some (word_and_style : string * Fmt.style) ->
+      pp_with_word word_and_style ppf txt
+
+(* "hint     a hint", its text in the column of the text of a message *)
+let pp_hint (ppf : Format.formatter) (txt : string) : unit =
+  pp_with_word ("hint", `Fg `Cyan) ppf txt

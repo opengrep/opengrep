@@ -492,7 +492,6 @@ let check_targets_with_rules ?(print_summary = true)
   (* TODO: we should probably warn the user about rules using the same id *)
   let rules =
     rules
-    |> Core_runner.restrict_rule_taint_modes conf.core_runner_conf
     |> List_.deduplicate_gen_with_warning
         ~get_key:(fun r -> Rule_ID.to_string (fst r.Rule.id))
         ~warning:(fun r ->
@@ -501,6 +500,11 @@ let check_targets_with_rules ?(print_summary = true)
               (Rule_ID.to_string (fst r.Rule.id))
               (Tok.stringpos_of_tok (snd r.Rule.id))))
   in
+  let rules_run_per_file : Rule_ID.t list =
+    Core_runner.rules_run_per_file_without_enable_interfile
+      conf.core_runner_conf rules
+  in
+  let rules = Core_runner.restrict_rule_taint_modes conf.core_runner_conf rules in
   (* A configuration that resolved but holds no rule ('rules: []') is not a
      missing configuration: "No config given" is raised on the number of
      configs that resolved, not on the number of rules they gave, and an
@@ -586,16 +590,57 @@ let check_targets_with_rules ?(print_summary = true)
             None
         | _else_ -> status_bar
       in
+      (* Set when the warning below was printed and no plan has followed
+         it yet: the next plan is then set apart from it. *)
+      let warning_before_plan : bool ref = ref false in
       (* the plan is not built while logging is off: see Skin.S.on_plan *)
       let on_plan : (Skin_model.Plan.t -> unit) option =
         if Skin_emit.stderr_is_shown () then
           Some
             (fun (plan : Skin_model.Plan.t) ->
-              Skin_emit.emit (Sk.on_plan skin_ctx plan))
+              let follows_messages = !warning_before_plan in
+              warning_before_plan := false;
+              Skin_emit.emit
+                (Sk.on_plan skin_ctx { plan with follows_messages }))
         else None
       in
       let progress_hook : Core_scan_config.progress -> unit =
         Status_bar.progress_hook status_bar
+      in
+      (* One warning for the interfile rules run per file that have a
+         target, one rule per line: the first [max_listed] of them at the
+         default level, all of them under --verbose or --debug. *)
+      let warn_rules_run_per_file (rules_with_targets : Rule.t list) : unit =
+        let max_listed = 5 in
+        match
+          rules_run_per_file
+          |> List.filter (fun (id : Rule_ID.t) ->
+                 List.exists
+                   (fun (rule : Rule.t) -> Rule_ID.equal id (fst rule.id))
+                   rules_with_targets)
+          |> List_.map Rule_ID.to_string
+        with
+        | [] -> ()
+        | (ids : string list) ->
+            let num_ids = List.length ids in
+            let listed =
+              if
+                num_ids <= max_listed
+                || not (Logs_.is_terse_level (Logs.level ()))
+              then ids
+              else
+                List_.take max_listed ids
+                @ [ spf "and %d more, see --verbose" (num_ids - max_listed) ]
+            in
+            Logs.warn (fun m ->
+                m "interfile mode not enabled: %s per file only:\n%s"
+                  (if Int.equal num_ids 1 then "1 interfile rule runs"
+                   else spf "%d interfile rules run" num_ids)
+                  (String.concat "\n" listed));
+            Logs.app (fun m ->
+                m "%a" Sk.pp_hint
+                  "use --enable-interfile for cross-file analysis");
+            warning_before_plan := true
       in
       (match (output_format, conf.output_conf.output) with
       | Output_format.Incremental, Some _ ->
@@ -622,7 +667,8 @@ let check_targets_with_rules ?(print_summary = true)
                 let { run } : Core_runner.func =
                   mk_core_run_for_osemgrep caps
                 in
-                run ?file_match_hook ?on_plan ~progress_hook
+                run ?file_match_hook ?on_plan
+                  ~on_rules_with_targets:warn_rules_run_per_file ~progress_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
                   ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
@@ -673,7 +719,12 @@ let check_targets_with_rules ?(print_summary = true)
                       Find_targets.explicit_targets = table;
                     }
               in
-              run ?file_match_hook ?on_plan ~progress_hook
+              (* the baseline scan runs the same rules, warned about once *)
+              let on_rules_with_targets =
+                if baseline then None else Some warn_rules_run_per_file
+              in
+              run ?file_match_hook ?on_plan ?on_rules_with_targets
+                ~progress_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf
                 conf.matching_conf (rules, invalid_rules) targets

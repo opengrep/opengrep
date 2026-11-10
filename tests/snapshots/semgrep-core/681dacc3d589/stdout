@@ -1,0 +1,6 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 22 insertions(+)
+ create mode 100644 caller.py
+ create mode 100644 rules.yml
+ create mode 100644 sinks.py

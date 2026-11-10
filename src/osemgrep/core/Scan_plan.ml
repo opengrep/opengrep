@@ -134,4 +134,6 @@ let of_lang_jobs ~(rules : Rule.t list) ~(num_targets : int)
     (* The engine runs the same way for both scans; Scan_subcommand marks
        the plan of the baseline scan. *)
     run = P.Current;
+    (* Scan_subcommand sets it from the warnings it printed before the plan *)
+    follows_messages = false;
   }

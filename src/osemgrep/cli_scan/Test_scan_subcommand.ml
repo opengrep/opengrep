@@ -615,6 +615,108 @@ def go():
                              (String.concat " " flags) mode)
                           (files_of_mode mode) (files_of_rule id)))))
 
+(* Without --enable-interfile, the interfile rules that have a target are
+   reported on stderr in one warning, one rule per line, at most five but
+   all under --verbose, followed by a hint: not the interfile rule of a
+   language with no target, nor a rule without the option, and nothing under
+   --enable-interfile, --disable-intrafile or --quiet. *)
+let test_interfile_rule_run_per_file_warning (caps : Scan_subcommand.caps) ()
+    =
+  let rule (id : string) (lang : string) (options : string) =
+    spf {|  - id: %s
+    mode: taint
+%s    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: m
+    languages: [%s]
+    severity: ERROR
+|} id options lang
+  in
+  let interfile = "    options:\n      interfile: true\n" in
+  (* the lines of the warning and of the hint after it, without the prefix
+     of a log line *)
+  let warning (rules : string) (flags : string list) : string list =
+    with_env_app_token (fun () ->
+        Testutil_git.with_git_repo
+          [
+            F.File ("rules.yml", "rules:\n" ^ rules);
+            F.File ("main.py", interfile_caller_py_content);
+            F.File ("sinks.py", interfile_sink_py_content);
+          ]
+          (fun _cwd ->
+            let (_ : Exit_code.t), stderr_output =
+              Testo.with_capture stderr (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([ "opengrep-scan"; "--config"; "rules.yml" ]
+                           @ flags))))
+            in
+            let after (term : string) (line : string) : string option =
+              match Str.search_forward (Str.regexp_string term) line 0 with
+              | i -> Some (Str.string_after line i)
+              | exception Not_found -> None
+            in
+            let warning_start = "interfile mode not enabled"
+            and hint = "use --enable-interfile" in
+            let rec block (lines : string list) : string list =
+              match lines with
+              | [] -> []
+              | line :: rest -> (
+                  match after hint line with
+                  | Some (text : string) -> [ text ]
+                  | None -> String.trim line :: block rest)
+            in
+            let rec find (lines : string list) : string list =
+              match lines with
+              | [] -> []
+              | line :: rest -> (
+                  match after warning_start line with
+                  | Some (text : string) -> text :: block rest
+                  | None -> find rest)
+            in
+            find (String.split_on_char '\n' stderr_output)))
+  in
+  let hint = "use --enable-interfile for cross-file analysis" in
+  let rules =
+    rule "py-interfile" "python" interfile
+    ^ rule "js-interfile" "javascript"
+        "    options:\n      taint_interfile: true\n"
+    ^ rule "py-plain" "python" ""
+  in
+  Alcotest.(check (list string))
+    "without --enable-interfile"
+    [ "interfile mode not enabled: 1 interfile rule runs per file only:"; "py-interfile";
+      hint ]
+    (warning rules []);
+  Alcotest.(check (list string))
+    "with --enable-interfile" [] (warning rules [ "--enable-interfile" ]);
+  Alcotest.(check (list string))
+    "with --disable-intrafile" [] (warning rules [ "--disable-intrafile" ]);
+  let six_rules =
+    [ "r1"; "r2"; "r3"; "r4"; "r5"; "r6" ]
+    |> List_.map (fun (id : string) -> rule id "python" interfile)
+    |> String.concat ""
+  in
+  Alcotest.(check (list string))
+    "six rules"
+    [
+      "interfile mode not enabled: 6 interfile rules run per file only:"; "r1"; "r2";
+      "r3"; "r4"; "r5"; "and 1 more, see --verbose"; hint;
+    ]
+    (warning six_rules []);
+  Alcotest.(check (list string))
+    "six rules under --verbose"
+    [
+      "interfile mode not enabled: 6 interfile rules run per file only:"; "r1";
+      "r2"; "r3"; "r4"; "r5"; "r6"; hint;
+    ]
+    (warning six_rules [ "--verbose" ]);
+  Alcotest.(check (list string))
+    "under --quiet" [] (warning six_rules [ "--quiet" ])
+
 (* scan --test passes --enable-interfile and --interfile-depth on to the test
    run: main.py reaches the sink through a call into helper.py, so its
    annotation holds only under --enable-interfile with a depth above 0. *)
@@ -3044,6 +3146,9 @@ let tests (caps : < Scan_subcommand.caps >) =
          and rule options" (test_disable_taint_modes caps);
       t "scan --test with --enable-interfile and --interfile-depth"
         (test_scan_test_interfile_flags caps);
+      t "the interfile rules with a target are reported in one warning as \
+         run per file without --enable-interfile"
+        (test_interfile_rule_run_per_file_warning caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);

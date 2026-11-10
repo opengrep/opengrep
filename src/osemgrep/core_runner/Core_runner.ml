@@ -93,6 +93,7 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Scan_plan.t -> unit) ->
+    ?on_rules_with_targets:(Rule.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -145,6 +146,14 @@ let default_conf : conf =
     strict = false;
     engine_config = Engine_config.default;
   }
+
+let rules_run_per_file_without_enable_interfile (conf : conf)
+    (rules : Rule.rules) : Rule_ID.t list =
+  if conf.enable_interfile || conf.disable_intrafile then []
+  else
+    rules
+    |> List.filter Interfile_dispatch.rule_is_interfile
+    |> List_.map (fun (rule : Rule.t) -> fst rule.id)
 
 let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
   List_.map
@@ -470,6 +479,7 @@ let mk_result ?(inline = false) ?(interfile_dedup_by = Core_match.Sink)
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
   let run ?file_match_hook ?(on_plan : (Scan_plan.t -> unit) option)
+      ?(on_rules_with_targets : (Rule.t list -> unit) option)
       ?(progress_hook : (Core_scan_config.progress -> unit) option)
       ~(git_repo : bool)
       ~(scanning_roots : Scanning_root.directory list) (conf : conf)
@@ -506,6 +516,12 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
        See https://www.notion.so/r2cdev/Osemgrep-scanning-algorithm-5962232bfd74433ba50f97c86bd1a0f3
     *)
     let lang_jobs = split_jobs_by_language targeting_conf valid_rules targets in
+    let rules_with_targets =
+      lang_jobs |> List.concat_map (fun { Lang_job.rules; _ } -> rules)
+    in
+    on_rules_with_targets
+    |> Option.iter (fun (on_rules_with_targets : Rule.t list -> unit) ->
+           on_rules_with_targets rules_with_targets);
     (* the targets are those tracked by git only when git listed them and
        its exclusions were respected *)
     on_plan
@@ -549,9 +565,6 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
     in
     (* !!!!Finally! this is where we branch to semgrep-core core scan fun!!! *)
     let/ res = core_scan_func config in
-    let rules_with_targets =
-      lang_jobs |> List.concat_map (fun { Lang_job.rules; _ } -> rules)
-    in
     (* Reinject rule errors *)
     let res =
       {

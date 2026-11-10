@@ -214,16 +214,26 @@ let test_blocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
     ~check:Exit_code.Check.findings ()
 
-(* the cross-file flow is a finding only under --enable-interfile *)
+(* the cross-file flow is a finding only under --enable-interfile, and
+ * without it the rule is reported as run per file *)
 let test_enable_interfile (caps : Ci_subcommand.caps) () =
-  let run (extra_args : string list) (check : Exit_code.t -> unit) =
-    run_ci caps ~rule:interfile_rule_content
-      ~target:interfile_caller_py_content
-      ~extra_files:[ F.File ("sinks.py", interfile_sinks_py_content) ]
-      ~extra_args ~check ()
+  let run (extra_args : string list) (check : Exit_code.t -> unit) : bool =
+    let (), (stderr_output : string) =
+      Testo.with_capture stderr (fun () ->
+          run_ci caps ~rule:interfile_rule_content
+            ~target:interfile_caller_py_content
+            ~extra_files:[ F.File ("sinks.py", interfile_sinks_py_content) ]
+            ~extra_args ~check ())
+    in
+    String_.contains stderr_output
+      ~term:"interfile mode not enabled: 1 interfile rule runs per file only:"
   in
-  run [] Exit_code.Check.ok;
-  run [ "--enable-interfile" ] Exit_code.Check.findings
+  Alcotest.(check bool)
+    "without --enable-interfile, the warning" true
+    (run [] Exit_code.Check.ok);
+  Alcotest.(check bool)
+    "with --enable-interfile, no warning" false
+    (run [ "--enable-interfile" ] Exit_code.Check.findings)
 
 let test_nonblocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:nonblocking_rule_content ~target:finding_py_content ()

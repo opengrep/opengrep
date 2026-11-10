@@ -60,11 +60,14 @@ type result = {
  * git_repo says whether the targets came from git, for the scan status.
  * on_plan receives the plan once the language jobs pair targets with rules;
  * the runner prints nothing itself, and builds no plan without on_plan.
+ * on_rules_with_targets receives the rules that have a target, at the same
+ * point, before on_plan and before the engine runs.
  *)
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Scan_plan.t -> unit) ->
+    ?on_rules_with_targets:(Rule.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -77,6 +80,12 @@ type func = {
 }
 
 val default_conf : conf
+
+(* The interfile rules among [rules] that run per file because
+   [conf.enable_interfile] is not set; none under [conf.disable_intrafile].
+   [rules] are those before [restrict_rule_taint_modes]. *)
+val rules_run_per_file_without_enable_interfile :
+  conf -> Rule.rules -> Rule_ID.t list
 
 (* The rules with their taint_intrafile/taint_interfile options set by
    Rule.restrict_taint_modes from [conf.taint_intrafile],

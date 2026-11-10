@@ -1,0 +1,27 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][WARNING]: interfile mode not enabled: 1 interfile rule runs per file only:
+interfile-flow
+hint: use --enable-interfile for cross-file analysis
+
+
+┌<RULE>┐
+│ Scan Status │
+└<RULE>┘
+  Scanning 3 files tracked by git with 1 Code rule:
+  Scanning 2 files.
+
+
+┌<RULE>┐
+│ Scan Summary │
+└<RULE>┘
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+
+Ran 1 rule on 2 files: 0 findings.
+ASSERT exit code
