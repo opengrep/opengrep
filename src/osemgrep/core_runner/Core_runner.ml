@@ -93,7 +93,7 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Scan_plan.t -> unit) ->
-    ?on_rules_with_targets:(Rule.t list -> unit) ->
+    ?on_lang_jobs:(Lang_job.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -154,6 +154,30 @@ let rules_run_per_file_without_enable_interfile (conf : conf)
     rules
     |> List.filter Interfile_dispatch.rule_is_interfile
     |> List_.map (fun (rule : Rule.t) -> fst rule.id)
+
+(* A taint rule of [restrict_rule_taint_modes] that runs the cross-function
+   analysis: its taint_intrafile option, or its taint_interfile option, which
+   implies it; a rule without options takes the scan's. *)
+let runs_intrafile (conf : conf) (rule : Rule.t) : bool =
+  (match rule.mode with
+  | `Taint _ -> true
+  | _ -> false)
+  &&
+  match rule.options with
+  | Some (opts : Rule_options.t) -> opts.taint_intrafile || opts.taint_interfile
+  | None -> conf.taint_intrafile && not conf.disable_intrafile
+
+let intrafile_unsupported_languages (conf : conf) (lang_jobs : Lang_job.t list)
+    : Lang.t list =
+  lang_jobs
+  |> List.filter_map (fun (job : Lang_job.t) ->
+         match (job.xlang, job.targets) with
+         | _, [] -> None
+         | Xlang.L (lang, _), _ :: _
+           when (not (Lang_config.supports_intrafile lang))
+                && List.exists (runs_intrafile conf) job.rules ->
+             Some lang
+         | _ -> None)
 
 let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
   List_.map
@@ -479,7 +503,7 @@ let mk_result ?(inline = false) ?(interfile_dedup_by = Core_match.Sink)
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
   let run ?file_match_hook ?(on_plan : (Scan_plan.t -> unit) option)
-      ?(on_rules_with_targets : (Rule.t list -> unit) option)
+      ?(on_lang_jobs : (Lang_job.t list -> unit) option)
       ?(progress_hook : (Core_scan_config.progress -> unit) option)
       ~(git_repo : bool)
       ~(scanning_roots : Scanning_root.directory list) (conf : conf)
@@ -519,9 +543,9 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
     let rules_with_targets =
       lang_jobs |> List.concat_map (fun { Lang_job.rules; _ } -> rules)
     in
-    on_rules_with_targets
-    |> Option.iter (fun (on_rules_with_targets : Rule.t list -> unit) ->
-           on_rules_with_targets rules_with_targets);
+    on_lang_jobs
+    |> Option.iter (fun (on_lang_jobs : Lang_job.t list -> unit) ->
+           on_lang_jobs lang_jobs);
     (* the targets are those tracked by git only when git listed them and
        its exclusions were respected *)
     on_plan

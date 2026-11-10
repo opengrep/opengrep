@@ -277,7 +277,7 @@ let cmdline_term : conf Term.t =
     $ o_subdir
     $ o_suppress_errors $ CLI_common.o_enable_interfile
     $ CLI_common.o_interfile_depth
-    $ SC.o_taint_intrafile $ CLI_common.o_disable_intrafile
+    $ CLI_common.o_taint_intrafile $ CLI_common.o_disable_intrafile
     $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
     $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_vim $ SC.o_vim_outputs)

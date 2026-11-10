@@ -44,6 +44,9 @@ val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 (* for --enable-interfile, shared by 'scan', 'ci' and 'test' *)
 val o_enable_interfile : bool Cmdliner.Term.t
 
+(* for --taint-intrafile, shared by 'scan', 'ci' and 'test' *)
+val o_taint_intrafile : bool Cmdliner.Term.t
+
 (* for --disable-intrafile, shared by 'scan', 'ci' and 'test' *)
 val o_disable_intrafile : bool Cmdliner.Term.t
 

@@ -185,6 +185,19 @@ let o_enable_interfile : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
+(* coupling: the languages of Lang_config.supports_intrafile *)
+let o_taint_intrafile : bool Term.t =
+  let info =
+    Arg.info [ "taint-intrafile" ]
+      ~doc:
+        "Enable intra-file inter-procedural taint analysis. Supported \
+         languages: Apex, C, Clojure, C#, C++, Crystal, Dart, Elixir, Go, \
+         Java, JavaScript, Julia, Kotlin, Lua, PHP, Python, Ruby, Rust, \
+         Scala, Swift, TypeScript, Visual Basic. Other languages will fall \
+         back to intraprocedural analysis only."
+  in
+  Arg.value (Arg.flag info)
+
 let o_disable_intrafile : bool Term.t =
   let info =
     Arg.info [ "disable-intrafile" ]

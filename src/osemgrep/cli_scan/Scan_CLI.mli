@@ -115,7 +115,6 @@ val o_optimizations : bool Cmdliner.Term.t
 val o_output : string option Cmdliner.Term.t
 val o_output_enclosing_context : bool Cmdliner.Term.t
 val o_interfile_dedup_by : Core_match.interfile_dedup_by Cmdliner.Term.t
-val o_taint_intrafile : bool Cmdliner.Term.t
 val o_rewrite_rule_ids : bool Cmdliner.Term.t
 val o_sarif : bool Cmdliner.Term.t
 val o_sarif_outputs : string list Cmdliner.Term.t

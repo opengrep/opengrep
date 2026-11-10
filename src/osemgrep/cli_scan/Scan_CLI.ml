@@ -681,16 +681,6 @@ let o_effect_guards : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
-let o_taint_intrafile : bool Term.t =
-  let info =
-    Arg.info [ "taint-intrafile" ]
-      ~doc:
-        ("Enable intra-file inter-procedural taint analysis. \
-          Supported languages: Apex, C, Clojure, C#, C++, Dart, Elixir, Go, Java, JavaScript, Julia, Kotlin, Lua, Python, Ruby, Rust, Scala, Swift, TypeScript, Visual Basic. \
-          Other languages will fall back to intraprocedural analysis only.")
-  in
-  Arg.value (Arg.flag info)
-
 let o_interfile_dedup_by : Core_match.interfile_dedup_by Term.t =
   let info =
     Arg.info [ "interfile-dedup-by" ]
@@ -1512,7 +1502,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
     $ CLI_common.o_enable_interfile $ CLI_common.o_interfile_depth
-    $ o_taint_intrafile $ CLI_common.o_disable_intrafile
+    $ CLI_common.o_taint_intrafile $ CLI_common.o_disable_intrafile
     $ o_effect_guards
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions

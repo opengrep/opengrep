@@ -60,14 +60,14 @@ type result = {
  * git_repo says whether the targets came from git, for the scan status.
  * on_plan receives the plan once the language jobs pair targets with rules;
  * the runner prints nothing itself, and builds no plan without on_plan.
- * on_rules_with_targets receives the rules that have a target, at the same
- * point, before on_plan and before the engine runs.
+ * on_lang_jobs receives the language jobs at the same point, before on_plan
+ * and before the engine runs.
  *)
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Scan_plan.t -> unit) ->
-    ?on_rules_with_targets:(Rule.t list -> unit) ->
+    ?on_lang_jobs:(Lang_job.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -86,6 +86,12 @@ val default_conf : conf
    [rules] are those before [restrict_rule_taint_modes]. *)
 val rules_run_per_file_without_enable_interfile :
   conf -> Rule.rules -> Rule_ID.t list
+
+(* The languages of [lang_jobs] that have a target and a taint rule that
+   runs the cross-function analysis, but for which that analysis is not
+   supported (Lang_config.supports_intrafile). The rules are those of
+   [restrict_rule_taint_modes]. *)
+val intrafile_unsupported_languages : conf -> Lang_job.t list -> Lang.t list
 
 (* The rules with their taint_intrafile/taint_interfile options set by
    Rule.restrict_taint_modes from [conf.taint_intrafile],

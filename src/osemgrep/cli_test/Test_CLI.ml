@@ -169,19 +169,6 @@ directory.|}
   in
   Arg.value (Arg.pos_all Arg.string [] info)
 
-(* ------------------------------------------------------------------ *)
-(* Intrafile tainting *)
-(* ------------------------------------------------------------------ *)
-let o_taint_intrafile : bool Term.t =
-  let info =
-    Arg.info [ "taint-intrafile" ]
-      ~doc:
-        ("Enable intra-file inter-procedural taint analysis. \
-          Supported languages: Apex, C, Clojure, C#, C++, Dart, Elixir, Go, Java, JavaScript, Julia, Kotlin, Lua, Python, Ruby, Rust, Scala, Swift, TypeScript, Visual Basic. \
-          Other languages will fall back to intraprocedural analysis only.")
-  in
-  Arg.value (Arg.flag info)
-
 (*************************************************************************)
 (* Command-line parsing: turn argv into conf *)
 (*************************************************************************)
@@ -265,7 +252,7 @@ let cmdline_term : conf Term.t =
     $ CLI_common.o_force_color ~default:Output.default.force_color
     $ CLI_common.o_interfile_depth $ o_json $ o_matching_diagnosis
     $ o_max_memory_mb $ CLI_common.o_opengrep_ignore_pattern $ o_strict
-    $ o_taint_intrafile $ o_timeout $ o_timeout_threshold)
+    $ CLI_common.o_taint_intrafile $ o_timeout $ o_timeout_threshold)
 
 let doc = "testing the rules"
 

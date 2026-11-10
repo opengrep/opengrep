@@ -590,8 +590,8 @@ let check_targets_with_rules ?(print_summary = true)
             None
         | _else_ -> status_bar
       in
-      (* Set when the warning below was printed and no plan has followed
-         it yet: the next plan is then set apart from it. *)
+      (* Set when one of the warnings below was printed and no plan has
+         followed it yet: the next plan is then set apart from it. *)
       let warning_before_plan : bool ref = ref false in
       (* the plan is not built while logging is off: see Skin.S.on_plan *)
       let on_plan : (Skin_model.Plan.t -> unit) option =
@@ -642,6 +642,31 @@ let check_targets_with_rules ?(print_summary = true)
                   "use --enable-interfile for cross-file analysis");
             warning_before_plan := true
       in
+      (* once per language whose targets a taint rule analyses across
+         functions, where that analysis is not supported *)
+      let warn_intrafile_unsupported (lang_jobs : Lang_job.t list) : unit =
+        Core_runner.intrafile_unsupported_languages conf.core_runner_conf
+          lang_jobs
+        |> List.iter (fun (lang : Lang.t) ->
+               Logs.warn (fun m ->
+                   m
+                     "cross-function taint analysis (--taint-intrafile) not \
+                      fully supported for %s: results may be limited to \
+                      intraprocedural analysis only"
+                     (Lang.to_string lang));
+               warning_before_plan := true)
+      in
+      (* the warnings about how the rules run, before the plan *)
+      let warn_before_scan (lang_jobs : Lang_job.t list) : unit =
+        warn_intrafile_unsupported lang_jobs;
+        (* a job without targets is kept for the destination language of an
+           extract rule, and its rules run on no file *)
+        warn_rules_run_per_file
+          (List.concat_map
+             (fun (job : Lang_job.t) ->
+               if List_.null job.targets then [] else job.rules)
+             lang_jobs)
+      in
       (match (output_format, conf.output_conf.output) with
       | Output_format.Incremental, Some _ ->
           Logs.warn (fun m ->
@@ -668,7 +693,7 @@ let check_targets_with_rules ?(print_summary = true)
                   mk_core_run_for_osemgrep caps
                 in
                 run ?file_match_hook ?on_plan
-                  ~on_rules_with_targets:warn_rules_run_per_file ~progress_hook
+                  ~on_lang_jobs:warn_before_scan ~progress_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
                   ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
@@ -720,10 +745,10 @@ let check_targets_with_rules ?(print_summary = true)
                     }
               in
               (* the baseline scan runs the same rules, warned about once *)
-              let on_rules_with_targets =
-                if baseline then None else Some warn_rules_run_per_file
+              let on_lang_jobs =
+                if baseline then None else Some warn_before_scan
               in
-              run ?file_match_hook ?on_plan ?on_rules_with_targets
+              run ?file_match_hook ?on_plan ?on_lang_jobs
                 ~progress_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf

@@ -695,6 +695,24 @@ let test_interfile_rule_run_per_file_warning (caps : Scan_subcommand.caps) ()
     "with --enable-interfile" [] (warning rules [ "--enable-interfile" ]);
   Alcotest.(check (list string))
     "with --disable-intrafile" [] (warning rules [ "--disable-intrafile" ]);
+  (* An extract rule to javascript keeps a javascript job without targets:
+     js-interfile is in it and runs on no file. *)
+  let extract_to_javascript =
+    {|  - id: extract-javascript
+    mode: extract
+    languages: [python]
+    pattern: js($X)
+    extract: $X
+    dest-language: javascript
+    message: m
+    severity: INFO
+|}
+  in
+  Alcotest.(check (list string))
+    "with an extract rule to the language of no target"
+    [ "interfile mode not enabled: 1 interfile rule runs per file only:";
+      "py-interfile"; hint ]
+    (warning (rules ^ extract_to_javascript) []);
   let six_rules =
     [ "r1"; "r2"; "r3"; "r4"; "r5"; "r6" ]
     |> List_.map (fun (id : string) -> rule id "python" interfile)
@@ -716,6 +734,73 @@ let test_interfile_rule_run_per_file_warning (caps : Scan_subcommand.caps) ()
     (warning six_rules [ "--verbose" ]);
   Alcotest.(check (list string))
     "under --quiet" [] (warning six_rules [ "--quiet" ])
+
+(* A language whose cross-function analysis is not supported is reported
+   once, however many of its targets a taint rule analyses across functions:
+   under --taint-intrafile, or by the rule's own option, and not without
+   either, nor under --disable-intrafile, nor for a supported language. *)
+let test_intrafile_unsupported_language_warning (caps : Scan_subcommand.caps)
+    () =
+  let rule (lang : string) (options : string) =
+    spf {|rules:
+  - id: taint
+    mode: taint
+%s    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink
+    message: m
+    languages: [%s]
+    severity: ERROR
+|} options lang
+  in
+  let intrafile_option = "    options:\n      taint_intrafile: true\n" in
+  let warnings (rules : string) (flags : string list) : string list =
+    with_env_app_token (fun () ->
+        Testutil_git.with_git_repo
+          [
+            F.File ("rules.yml", rules);
+            F.File ("a.sh", "echo $x\n");
+            F.File ("b.sh", "echo $y\n");
+            F.File ("c.py", "x = 1\n");
+          ]
+          (fun _cwd ->
+            let (_ : Exit_code.t), stderr_output =
+              Testo.with_capture stderr (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([ "opengrep-scan"; "--config"; "rules.yml" ]
+                           @ flags))))
+            in
+            String.split_on_char '\n' stderr_output
+            |> List.filter (fun (line : string) ->
+                   String_.contains line ~term:"not fully supported for")))
+  in
+  let bash_warning =
+    "cross-function taint analysis (--taint-intrafile) not fully supported \
+     for Bash: results may be limited to intraprocedural analysis only"
+  in
+  let count (lines : string list) : int =
+    lines
+    |> List.filter (fun (line : string) ->
+           String_.contains line ~term:bash_warning)
+    |> List.length
+  in
+  Alcotest.(check int)
+    "under --taint-intrafile" 1
+    (count (warnings (rule "bash" "") [ "--taint-intrafile" ]));
+  Alcotest.(check int)
+    "by the rule's option" 1
+    (count (warnings (rule "bash" intrafile_option) []));
+  Alcotest.(check (list string))
+    "without either" [] (warnings (rule "bash" "") []);
+  Alcotest.(check (list string))
+    "under --disable-intrafile" []
+    (warnings (rule "bash" "") [ "--taint-intrafile"; "--disable-intrafile" ]);
+  Alcotest.(check (list string))
+    "for a supported language" []
+    (warnings (rule "python" "") [ "--taint-intrafile" ])
 
 (* scan --test passes --enable-interfile and --interfile-depth on to the test
    run: main.py reaches the sink through a call into helper.py, so its
@@ -3149,6 +3234,8 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "the interfile rules with a target are reported in one warning as \
          run per file without --enable-interfile"
         (test_interfile_rule_run_per_file_warning caps);
+      t "a language without cross-function taint analysis is reported once"
+        (test_intrafile_unsupported_language_warning caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);

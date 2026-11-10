@@ -961,57 +961,11 @@ let check_rules ~match_hook
     (rules : R.taint_rule list) (xconf : Match_env.xconfig)
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
-  (* Check for language support warnings when taint_intrafile is enabled *)
-  (Dataflow_tainting.reset_constructor ();
-   (* Clear the per-domain guard-cond intern table: rules run on a domain in
-    * sequence, so a previous rule's canonical conds must not leak into this
-    * one. *)
-   Effect_guard.reset_intern ();
-   match rules with
-   | rule :: _ -> (
-       (* Check if any rule has taint_intrafile enabled *)
-       let has_taint_intrafile =
-         match rule.options with
-         | Some opts -> opts.taint_intrafile
-         | None -> xconf.config.taint_intrafile
-       in
-       if has_taint_intrafile then
-         (* Warn for unsupported languages *)
-         let lang = xtarget.xlang |> Xlang.to_lang_exn in
-         match lang with
-         | Lang.Apex
-         | Lang.C
-         | Lang.Clojure
-         | Lang.Cpp
-         | Lang.Crystal
-         | Lang.Csharp
-         | Lang.Dart
-         | Lang.Elixir
-         | Lang.Go
-         | Lang.Java
-         | Lang.Js
-         | Lang.Julia
-         | Lang.Kotlin
-         | Lang.Lua
-         | Lang.Php
-         | Lang.Python
-         | Lang.Ruby
-         | Lang.Rust
-         | Lang.Scala
-         | Lang.Swift
-         | Lang.Ts
-         | Lang.Vb ->
-             (* Known supported languages - no warning *)
-             ()
-         | other_lang ->
-             (* Unknown or unsupported language - warn user *)
-             Logs.warn (fun m ->
-                 m
-                   "Cross-function taint analysis (--taint-intrafile) may not \
-                    be fully supported for %s. Results may be limited to \
-                    intraprocedural analysis only."
-                   (Lang.to_string other_lang)))
-   | [] -> ());
+  Dataflow_tainting.reset_constructor ();
+  (* Clear the per-domain guard-cond intern table: rules run on a domain in
+   * sequence, so a previous rule's canonical conds must not leak into this
+   * one. *)
+  Effect_guard.reset_intern ();
 
   (* We create a "formula cache" here, before dealing with individual rules, to
      permit sharing of matches for sources, sanitizers, propagators, and sinks

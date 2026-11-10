@@ -613,6 +613,37 @@ let union_type_constructors (lang : Lang.t) : string list list =
       [ [ "typing"; "Optional" ]; [ "typing"; "Union" ] ]
   | _ -> []
 
+(* The languages for which cross-function (intrafile) taint analysis is
+   supported; in the others a taint rule may report only the flows inside
+   one function.
+   coupling: the help text of --taint-intrafile in CLI_common *)
+let supports_intrafile (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Apex
+  | Lang.C
+  | Lang.Clojure
+  | Lang.Cpp
+  | Lang.Crystal
+  | Lang.Csharp
+  | Lang.Dart
+  | Lang.Elixir
+  | Lang.Go
+  | Lang.Java
+  | Lang.Js
+  | Lang.Julia
+  | Lang.Kotlin
+  | Lang.Lua
+  | Lang.Php
+  | Lang.Python
+  | Lang.Ruby
+  | Lang.Rust
+  | Lang.Scala
+  | Lang.Swift
+  | Lang.Ts
+  | Lang.Vb ->
+      true
+  | _ -> false
+
 (* A Scala XML literal is data: an element is not a call of the function
    with its tag. *)
 let xml_elements_are_calls (lang : Lang.t) : bool =
