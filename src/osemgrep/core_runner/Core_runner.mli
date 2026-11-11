@@ -29,12 +29,13 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
-  taint_interfile : bool;
+  (* a rule runs interfile only when this is set and its own options set
+   * taint_interfile; otherwise that option is ignored *)
+  enable_interfile : bool;
   taint_interfile_depth : int;
-  (* override taint_intrafile/taint_interfile and the rule options of the
-   * same names *)
+  (* override taint_intrafile, enable_interfile and the rule options
+   * taint_intrafile and taint_interfile *)
   disable_intrafile : bool;
-  disable_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
@@ -46,7 +47,6 @@ type result = {
   core : Semgrep_output_v1_t.core_output;
   hrules : Rule.hrules;
   scanned : Fpath.t Set_.t;
-  taint_interfile : bool;
   interfile_dedup_by : Core_match.interfile_dedup_by;
 }
 
@@ -56,15 +56,19 @@ type result = {
  *
  * The list of targets below are final targets (not scanning roots).
  * no further scanning of the filesystem shall be performed.
+ * The rules are those of apply_taint_flags with the same conf.
  * The Find_targets.conf argument is for explicit target management.
  * git_repo says whether the targets came from git, for the scan status.
  * on_plan receives the plan once the language jobs pair targets with rules;
  * the runner prints nothing itself, and builds no plan without on_plan.
+ * on_lang_jobs receives the language jobs at the same point, before on_plan
+ * and before the engine runs.
  *)
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     ?on_plan:(Scan_plan.t -> unit) ->
+    ?on_lang_jobs:(Lang_job.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
@@ -78,24 +82,27 @@ type func = {
 
 val default_conf : conf
 
-(* The (taint_intrafile, taint_interfile) pair left after applying
-   [disable_intrafile] and [disable_interfile]. Interfile implies intrafile,
-   and disabling intrafile disables interfile too. *)
-val effective_taint_modes :
-  disable_intrafile:bool ->
-  disable_interfile:bool ->
-  intrafile:bool ->
-  interfile:bool ->
-  bool * bool
+(* The interfile rules among [rules] that run per file because
+   [enable_interfile] is not set; none under [disable_intrafile]. [rules]
+   are those before [apply_taint_flags]. *)
+val rules_run_per_file_without_enable_interfile :
+  enable_interfile:bool -> disable_intrafile:bool -> Rule.rules ->
+  Rule_ID.t list
 
-(* The rules with their taint_intrafile/taint_interfile options restricted
-   by [conf.disable_intrafile] and [conf.disable_interfile]. *)
-val restrict_rule_taint_modes : conf -> Rule.rules -> Rule.rules
+(* The languages of [lang_jobs] that have a target and a taint rule that
+   runs the cross-function analysis, but for which that analysis is not
+   supported (Lang_config.supports_intrafile). The rules are those of
+   [apply_taint_flags]. *)
+val intrafile_unsupported_languages : conf -> Lang_job.t list -> Lang.t list
+
+(* The rules with their taint_intrafile/taint_interfile options set by
+   Rule.apply_taint_flags from [conf.taint_intrafile],
+   [conf.disable_intrafile] and [conf.enable_interfile]. *)
+val apply_taint_flags : conf -> Rule.rules -> Rule.rules
 
 (* builder *)
 val mk_result :
   ?inline:bool ->
-  ?taint_interfile:bool ->
   ?interfile_dedup_by:Core_match.interfile_dedup_by ->
   Rule.rule list ->
   Core_result.t ->

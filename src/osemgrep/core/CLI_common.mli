@@ -41,6 +41,18 @@ val o_profile : bool Cmdliner.Term.t
 (* for --opengrep-ignore-pattern, shared by 'scan', 'ci' and 'test' *)
 val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 
+(* for --enable-interfile, shared by 'scan', 'ci' and 'test' *)
+val o_enable_interfile : bool Cmdliner.Term.t
+
+(* for --taint-intrafile, shared by 'scan', 'ci' and 'test' *)
+val o_taint_intrafile : bool Cmdliner.Term.t
+
+(* for --disable-intrafile, shared by 'scan', 'ci' and 'test' *)
+val o_disable_intrafile : bool Cmdliner.Term.t
+
+(* for --interfile-depth, shared by 'scan', 'ci' and 'test' *)
+val o_interfile_depth : int Cmdliner.Term.t
+
 (* gather all the common flags under one term; [unsupported_flags] are the
  * long names of the subcommand's own flags inherited from Semgrep that
  * opengrep does not support, accepted, left out of the help and warned

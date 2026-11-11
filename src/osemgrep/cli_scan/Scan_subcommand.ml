@@ -259,7 +259,6 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
       (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
       |> fst
       |> Core_json_output.dedup_and_sort
-           ~taint_interfile:conf.core_runner_conf.taint_interfile
            ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
            Core_match.(to_rule_id_options_map pms)
     in
@@ -317,7 +316,6 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
                 (incremental_text_printer caps
                    ~is_interfile:
                      (Output.is_interfile_rule_id
-                        ~taint_interfile:conf.core_runner_conf.taint_interfile
                         (Rule.hrules_of_rules rules)))) )
   | {
    output_conf = { output_format = Output_format.Json; _ };
@@ -494,7 +492,6 @@ let check_targets_with_rules ?(print_summary = true)
   (* TODO: we should probably warn the user about rules using the same id *)
   let rules =
     rules
-    |> Core_runner.restrict_rule_taint_modes conf.core_runner_conf
     |> List_.deduplicate_gen_with_warning
         ~get_key:(fun r -> Rule_ID.to_string (fst r.Rule.id))
         ~warning:(fun r ->
@@ -503,6 +500,12 @@ let check_targets_with_rules ?(print_summary = true)
               (Rule_ID.to_string (fst r.Rule.id))
               (Tok.stringpos_of_tok (snd r.Rule.id))))
   in
+  let rules_run_per_file : Rule_ID.t list =
+    Core_runner.rules_run_per_file_without_enable_interfile
+      ~enable_interfile:conf.core_runner_conf.enable_interfile
+      ~disable_intrafile:conf.core_runner_conf.disable_intrafile rules
+  in
+  let rules = Core_runner.apply_taint_flags conf.core_runner_conf rules in
   (* A configuration that resolved but holds no rule ('rules: []') is not a
      missing configuration: "No config given" is raised on the number of
      configs that resolved, not on the number of rules they gave, and an
@@ -588,16 +591,61 @@ let check_targets_with_rules ?(print_summary = true)
             None
         | _else_ -> status_bar
       in
+      (* Set when one of the warnings below was printed and no plan has
+         followed it yet: the next plan is then set apart from it. *)
+      let warning_before_plan : bool ref = ref false in
       (* the plan is not built while logging is off: see Skin.S.on_plan *)
       let on_plan : (Skin_model.Plan.t -> unit) option =
         if Skin_emit.stderr_is_shown () then
           Some
             (fun (plan : Skin_model.Plan.t) ->
-              Skin_emit.emit (Sk.on_plan skin_ctx plan))
+              let follows_messages = !warning_before_plan in
+              warning_before_plan := false;
+              Skin_emit.emit
+                (Sk.on_plan skin_ctx { plan with follows_messages }))
         else None
       in
       let progress_hook : Core_scan_config.progress -> unit =
         Status_bar.progress_hook status_bar
+      in
+      (* the interfile rules run per file that have a target *)
+      let warn_rules_run_per_file (rules_with_targets : Rule.t list) : unit =
+        match
+          rules_run_per_file
+          |> List.filter (fun (id : Rule_ID.t) ->
+                 List.exists
+                   (fun (rule : Rule.t) -> Rule_ID.equal id (fst rule.id))
+                   rules_with_targets)
+        with
+        | [] -> ()
+        | (ids : Rule_ID.t list) ->
+            Rules_report.warn_rules_run_per_file ~pp_hint:Sk.pp_hint ids;
+            warning_before_plan := true
+      in
+      (* once per language whose targets a taint rule analyses across
+         functions, where that analysis is not supported *)
+      let warn_intrafile_unsupported (lang_jobs : Lang_job.t list) : unit =
+        Core_runner.intrafile_unsupported_languages conf.core_runner_conf
+          lang_jobs
+        |> List.iter (fun (lang : Lang.t) ->
+               Logs.warn (fun m ->
+                   m
+                     "cross-function taint analysis (--taint-intrafile) not \
+                      fully supported for %s: results may be limited to \
+                      intraprocedural analysis only"
+                     (Lang.to_string lang));
+               warning_before_plan := true)
+      in
+      (* the warnings about how the rules run, before the plan *)
+      let warn_before_scan (lang_jobs : Lang_job.t list) : unit =
+        warn_intrafile_unsupported lang_jobs;
+        (* a job without targets is kept for the destination language of an
+           extract rule, and its rules run on no file *)
+        warn_rules_run_per_file
+          (List.concat_map
+             (fun (job : Lang_job.t) ->
+               if List_.null job.targets then [] else job.rules)
+             lang_jobs)
       in
       (match (output_format, conf.output_conf.output) with
       | Output_format.Incremental, Some _ ->
@@ -624,7 +672,8 @@ let check_targets_with_rules ?(print_summary = true)
                 let { run } : Core_runner.func =
                   mk_core_run_for_osemgrep caps
                 in
-                run ?file_match_hook ?on_plan ~progress_hook
+                run ?file_match_hook ?on_plan
+                  ~on_lang_jobs:warn_before_scan ~progress_hook
                   ~git_repo:targets_and_skipped.Find_targets.git_repo
                   ~scanning_roots:targets_and_skipped.Find_targets.roots
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
@@ -675,7 +724,12 @@ let check_targets_with_rules ?(print_summary = true)
                       Find_targets.explicit_targets = table;
                     }
               in
-              run ?file_match_hook ?on_plan ~progress_hook
+              (* the baseline scan runs the same rules, warned about once *)
+              let on_lang_jobs =
+                if baseline then None else Some warn_before_scan
+              in
+              run ?file_match_hook ?on_plan ?on_lang_jobs
+                ~progress_hook
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf
                 conf.matching_conf (rules, invalid_rules) targets
@@ -719,7 +773,6 @@ let check_targets_with_rules ?(print_summary = true)
           let (res : Core_runner.result) =
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
-              ~taint_interfile:conf.core_runner_conf.taint_interfile
               ~interfile_dedup_by:conf.core_runner_conf.interfile_dedup_by
               rules
               result
@@ -878,9 +931,7 @@ let check_targets_with_rules ?(print_summary = true)
               (caps :> < Cap.stdout >)
               profiler output_conf cli_output res.hrules
               ~interfile_dedup_by:res.interfile_dedup_by
-              ~is_interfile:
-                (Output.is_interfile_rule_id
-                   ~taint_interfile:res.taint_interfile res.hrules);
+              ~is_interfile:(Output.is_interfile_rule_id res.hrules);
             (* python: the timeout warnings printed in text mode with the
                results (not with --quiet, on either side) *)
             (match output_format with

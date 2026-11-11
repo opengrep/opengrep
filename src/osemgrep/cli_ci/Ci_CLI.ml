@@ -89,8 +89,8 @@ let cmdline_term : conf Term.t =
       max_memory_mb max_target_bytes nosem num_jobs
       opengrep_ignore_pattern
       optimizations output rewrite_rule_ids sarif sarif_outputs
-      scan_unknown_extensions skin subdir suppress_errors taint_interfile
-      taint_interfile_depth taint_intrafile disable_intrafile disable_interfile
+      scan_unknown_extensions skin subdir suppress_errors enable_interfile
+      taint_interfile_depth taint_intrafile disable_intrafile
       text text_outputs time_flag timeout
       timeout_interfile timeout_threshold use_git vim vim_outputs =
     let output_format : Output_format.t =
@@ -135,10 +135,6 @@ let cmdline_term : conf Term.t =
         Engine_config.custom_ignore_pattern = None;
       }
     in
-    let taint_intrafile, taint_interfile =
-      Core_runner.effective_taint_modes ~disable_intrafile ~disable_interfile
-        ~intrafile:taint_intrafile ~interfile:taint_interfile
-    in
     let core_runner_conf : Core_runner.conf =
       {
         Core_runner.num_jobs;
@@ -166,10 +162,9 @@ let cmdline_term : conf Term.t =
         matching_explanations;
         taint_intrafile;
         effect_guards = false;
-        taint_interfile;
+        enable_interfile;
         taint_interfile_depth;
         disable_intrafile;
-        disable_interfile;
         interfile_dedup_by;
         engine_config;
       }
@@ -280,8 +275,9 @@ let cmdline_term : conf Term.t =
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ Skin_CLI.o_skin
     $ o_subdir
-    $ o_suppress_errors $ SC.o_taint_interfile $ SC.o_taint_interfile_depth
-    $ SC.o_taint_intrafile $ SC.o_disable_intrafile $ SC.o_disable_interfile
+    $ o_suppress_errors $ CLI_common.o_enable_interfile
+    $ CLI_common.o_interfile_depth
+    $ CLI_common.o_taint_intrafile $ CLI_common.o_disable_intrafile
     $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
     $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_vim $ SC.o_vim_outputs)

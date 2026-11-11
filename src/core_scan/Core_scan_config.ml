@@ -13,7 +13,9 @@ type output_format =
 (*
    'Rule_file' is for the semgrep-core CLI.
    'Rules' is for osemgrep or when for some reason the rules had to be
-    preparsed.
+    preparsed. The scan applies its taint flags (Rule.apply_taint_flags) to
+    the rules of a 'Rule_file'; the rules of 'Rules' have them applied
+    already.
 *)
 type rule_source = Rule_file of Fpath.t | Rules of Rule.t list
 
@@ -72,7 +74,12 @@ type t = {
   matching_explanations : bool;
   taint_intrafile : bool;
   effect_guards : bool;
-  taint_interfile : bool;
+  (* a rule runs interfile only when this is set and its own options set
+   * taint_interfile; otherwise that option is ignored *)
+  enable_interfile : bool;
+  (* overrides taint_intrafile, enable_interfile and the rule options
+   * taint_intrafile and taint_interfile *)
+  disable_intrafile : bool;
   taint_interfile_depth : int;
   interfile_dedup_by : Core_match.interfile_dedup_by;
   scanning_roots : Scanning_root.directory list;
@@ -140,7 +147,8 @@ let default =
     matching_explanations = false;
     taint_intrafile = false;
     effect_guards = false;
-    taint_interfile = false;
+    enable_interfile = false;
+    disable_intrafile = false;
     taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
     interfile_dedup_by = Core_match.Sink;
     scanning_roots = [];

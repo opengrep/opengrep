@@ -438,10 +438,12 @@ let plans : M.Plan.t list =
       lang_rows = [ { language = "python"; rules = 1; files = 1 } ];
       origin_rows = [ { origin = "local"; rules = 1 } ];
       run = M.Plan.Current;
+      follows_messages = false;
     }
   in
   [
     plan;
+    { plan with follows_messages = true };
     {
       plan with
       num_files_with_a_rule = 0;

@@ -110,6 +110,9 @@ module Plan = struct
     (* sorted by rules desc, then origin *)
     origin_rows : origin_row list;
     run : run;
+    (* a warning was printed right before the plan, which a skin then sets
+       apart from it *)
+    follows_messages : bool;
   }
 end
 

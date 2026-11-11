@@ -17,20 +17,17 @@ val extract_signatures : rule_state -> Shape_and_sig.signature_database
 
 val run_rule : rule_state -> Core_match.t list
 
-val rule_is_interfile : taint_interfile:bool -> Rule.t -> bool
-(** A taint rule the interfile task runs: the global flag or the rule's
-    own option. *)
+val rule_is_interfile : Rule.t -> bool
+(** A taint rule the interfile task runs: its options turn interfile on. *)
 
 val interfile_taint_rule_ids :
-  taint_interfile:bool ->
   Rule.t list ->
   Rule_ID.t list
-(** IDs of taint rules that are interfile (global flag or per-rule option). *)
+(** IDs of taint rules that are interfile. *)
 
 val build_rule_states :
   < Cap.fork ; Cap.time_limit ; Cap.memory_limit > ->
   ncores:int ->
-  taint_interfile:bool ->
   max_memory_mb:int ->
   valid_rules:Rule.t list ->
   targets:Target.t list ->

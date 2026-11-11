@@ -249,6 +249,13 @@ let test_enclosing_context_unused (caps : Scan_subcommand.caps) () =
 
 let test_interfile_source (caps : Scan_subcommand.caps) (skin : string) () =
   with_skin skin (fun () ->
+      Exit_code.Check.ok
+        (scan caps ~files:interfile_files [ "--enable-interfile" ]))
+
+(* Without --enable-interfile the interfile rule runs per file: the warning
+   and its hint come before the plan, which the skin sets apart from them. *)
+let test_interfile_warning (caps : Scan_subcommand.caps) (skin : string) () =
+  with_skin skin (fun () ->
       Exit_code.Check.ok (scan caps ~files:interfile_files []))
 
 (* A log file under a regular file cannot be created, whoever runs the test,
@@ -382,6 +389,15 @@ let tests (caps : caps) =
       t "vivid with an interfile source"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_source narrow "vivid");
+      t "simple warns about an interfile rule run per file"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_warning narrow "simple");
+      t "vivid warns about an interfile rule run per file"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_warning narrow "vivid");
+      t "legacy warns about an interfile rule run per file"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_warning narrow "legacy");
       t "simple with -e" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (test_pattern narrow "simple");

@@ -171,6 +171,56 @@ let o_opengrep_ignore_pattern : string option Term.t =
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
+let o_enable_interfile : bool Term.t =
+  let info =
+    Arg.info [ "enable-interfile" ]
+      ~doc:
+        ("Enable cross-file taint analysis for the taint rules whose options \
+          set interfile or taint_interfile; without this flag those rules \
+          run as if the option were absent. \
+          When a file has sources but no sinks (or vice versa), companion \
+          files are discovered from the project-wide interfile call graph, \
+          parsed, and analysed together. Implies --taint-intrafile behaviour \
+          for those rules.")
+  in
+  Arg.value (Arg.flag info)
+
+(* coupling: the languages of Lang_config.supports_intrafile *)
+let o_taint_intrafile : bool Term.t =
+  let info =
+    Arg.info [ "taint-intrafile" ]
+      ~doc:
+        "Enable intra-file inter-procedural taint analysis. Supported \
+         languages: Apex, C, Clojure, C#, C++, Crystal, Dart, Elixir, Go, \
+         Java, JavaScript, Julia, Kotlin, Lua, PHP, Python, Ruby, Rust, \
+         Scala, Swift, TypeScript, Visual Basic. Other languages will fall \
+         back to intraprocedural analysis only."
+  in
+  Arg.value (Arg.flag info)
+
+let o_disable_intrafile : bool Term.t =
+  let info =
+    Arg.info [ "disable-intrafile" ]
+      ~doc:
+        ("Disable intra-file inter-procedural taint analysis, even for rules \
+          that enable it with the taint_intrafile option. Also disables \
+          cross-file taint analysis.")
+  in
+  Arg.value (Arg.flag info)
+
+let o_interfile_depth : int Term.t =
+  let default = Limits_semgrep.taint_INTERFILE_DEPTH in
+  let info =
+    Arg.info [ "interfile-depth" ]
+      ~doc:
+        (Common.spf
+           "Maximum call chain depth for companion file discovery in \
+            cross-file taint analysis; it has an effect only with \
+            --enable-interfile. Default is %d."
+           default)
+  in
+  Arg.value (Arg.opt Arg.int default info)
+
 (*************************************************************************)
 (* Term for all common CLI flags *)
 (*************************************************************************)

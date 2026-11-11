@@ -83,6 +83,7 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
         in
         Logs.info (fun m -> m "Scanning %d targets" (List.length targets));
         let runner_conf = Session.runner_conf session in
+        let rules = Core_runner.apply_taint_flags runner_conf rules in
         (* This is currently just ripped from Scan_subcommand. *)
         let core_run_func =
           Core_runner.mk_core_run_for_osemgrep (Core_scan.scan session.caps)

@@ -39,6 +39,18 @@ Opengrep has introduced significant improvements since the fork. Highlights incl
 
 See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial) and [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial) for details.
 
+**Cross-file Taint Analysis** (`--enable-interfile`):
+- Follows taint from a source in one file to a sink in another, through a project-wide call graph built in-process
+- Applies to the taint rules whose `options` set `interfile: true` or `taint_interfile: true`, and only when `--enable-interfile` is given; without the flag those rules run as if the option were absent, and `scan`, `ci` and `test` print a warning that lists them
+- `--interfile-depth N` bounds the length of the call chains followed (default 3)
+- `opengrep test` and `opengrep scan --test` take both flags too, as well as `--disable-intrafile`; the language server does not run interfile
+
+```sh
+opengrep scan --enable-interfile --config rules.yaml path/to/project
+```
+
+See [docs/interfile](docs/interfile/README.md) for details.
+
 **Language Support:**
 - **Visual Basic** - not available in Semgrep CE or Pro
 - **Apex, Elixir** - not in Semgrep CE

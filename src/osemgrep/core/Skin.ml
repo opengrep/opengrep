@@ -96,6 +96,9 @@ module type S = sig
      header of the log reporter, with the time and the level in capitals. *)
   val pp_log_message : (Logs.level -> string Fmt.t) option
 
+  (* How a hint is printed on stderr, after the warnings it concerns. *)
+  val pp_hint : string Fmt.t
+
   (* whether the text report shows the enclosing context of a match, which
      --output-enclosing-context computes *)
   val shows_enclosing_context : bool

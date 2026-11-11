@@ -681,6 +681,32 @@ let partition_rules (rules : rules) :
   in
   part_rules [] [] [] [] rules
 
+(* The rule with its taint_intrafile and taint_interfile options set to the
+   modes it runs in under the scan flags --taint-intrafile,
+   --disable-intrafile and --enable-interfile: the scan's taint_intrafile
+   adds to the rule's, taint_interfile needs enable_interfile, and
+   disable_intrafile turns both off. A rule without options keeps none; the
+   scan's own flags apply to it. *)
+let apply_taint_flags ~(taint_intrafile : bool) ~(disable_intrafile : bool)
+    ~(enable_interfile : bool) (rule : 'mode rule_info) : 'mode rule_info =
+  match rule.options with
+  | None -> rule
+  | Some (opts : Rule_options.t) ->
+      {
+        rule with
+        options =
+          Some
+            {
+              opts with
+              taint_intrafile =
+                (opts.taint_intrafile || taint_intrafile)
+                && not disable_intrafile;
+              taint_interfile =
+                opts.taint_interfile && enable_interfile
+                && not disable_intrafile;
+            };
+      }
+
 (* for informational messages *)
 let show_id rule = rule.id |> fst |> Rule_ID.to_string
 
