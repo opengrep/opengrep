@@ -635,6 +635,8 @@ let supports_intrafile (lang : Lang.t) : bool =
   | Lang.Lua
   | Lang.Php
   | Lang.Python
+  | Lang.Python2
+  | Lang.Python3
   | Lang.Ruby
   | Lang.Rust
   | Lang.Scala

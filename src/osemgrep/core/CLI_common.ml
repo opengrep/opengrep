@@ -209,13 +209,17 @@ let o_disable_intrafile : bool Term.t =
   Arg.value (Arg.flag info)
 
 let o_interfile_depth : int Term.t =
+  let default = Limits_semgrep.taint_INTERFILE_DEPTH in
   let info =
     Arg.info [ "interfile-depth" ]
       ~doc:
-        ("Maximum call chain depth for companion file discovery in \
-          cross-file taint analysis. Default is 3.")
+        (Common.spf
+           "Maximum call chain depth for companion file discovery in \
+            cross-file taint analysis; it has an effect only with \
+            --enable-interfile. Default is %d."
+           default)
   in
-  Arg.value (Arg.opt Arg.int 3 info)
+  Arg.value (Arg.opt Arg.int default info)
 
 (*************************************************************************)
 (* Term for all common CLI flags *)

@@ -800,7 +800,10 @@ let test_intrafile_unsupported_language_warning (caps : Scan_subcommand.caps)
     (warnings (rule "bash" "") [ "--taint-intrafile"; "--disable-intrafile" ]);
   Alcotest.(check (list string))
     "for a supported language" []
-    (warnings (rule "python" "") [ "--taint-intrafile" ])
+    (warnings (rule "python" "") [ "--taint-intrafile" ]);
+  Alcotest.(check (list string))
+    "for python3, which is python" []
+    (warnings (rule "python3" "") [ "--taint-intrafile" ])
 
 (* scan --test passes --enable-interfile and --interfile-depth on to the test
    run: main.py reaches the sink through a call into helper.py, so its

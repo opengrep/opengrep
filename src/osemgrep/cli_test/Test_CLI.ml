@@ -148,8 +148,8 @@ let o_max_memory_mb : int option Term.t =
       ~doc:
         (Common.spf
            {|Maximum system memory in MiB to use during the interfile pre-processing
-phase, or when running a rule on a single file. If set to 0, will
-not have memory limit. Defaults to %d.
+phase (with --enable-interfile), or when running a rule on a single file. If
+set to 0, will not have memory limit. Defaults to %d.
 |}
            Core_runner.default_conf.max_memory_mb)
   in
