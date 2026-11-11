@@ -13,7 +13,9 @@ type output_format =
 (*
    'Rule_file' is for the semgrep-core CLI.
    'Rules' is for osemgrep or when for some reason the rules had to be
-    preparsed.
+    preparsed. The scan applies its taint flags (Rule.apply_taint_flags) to
+    the rules of a 'Rule_file'; the rules of 'Rules' have them applied
+    already.
 *)
 type rule_source = Rule_file of Fpath.t | Rules of Rule.t list
 

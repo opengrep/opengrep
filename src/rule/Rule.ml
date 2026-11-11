@@ -687,7 +687,7 @@ let partition_rules (rules : rules) :
    adds to the rule's, taint_interfile needs enable_interfile, and
    disable_intrafile turns both off. A rule without options keeps none; the
    scan's own flags apply to it. *)
-let restrict_taint_modes ~(taint_intrafile : bool) ~(disable_intrafile : bool)
+let apply_taint_flags ~(taint_intrafile : bool) ~(disable_intrafile : bool)
     ~(enable_interfile : bool) (rule : 'mode rule_info) : 'mode rule_info =
   match rule.options with
   | None -> rule

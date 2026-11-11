@@ -531,7 +531,13 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
     (targets : Target.t list) : Core_scan_config.t =
   {
     Core_scan_config.default with
-    rule_source = Rules rules;
+    rule_source =
+      Rules
+        (List_.map
+           (Rule.apply_taint_flags ~taint_intrafile:conf.taint_intrafile
+              ~disable_intrafile:conf.disable_intrafile
+              ~enable_interfile:conf.enable_interfile)
+           rules);
     target_source = Targets targets;
     output_format = NoOutput;
     (* activate matching explanations for Diagnosis to work *)

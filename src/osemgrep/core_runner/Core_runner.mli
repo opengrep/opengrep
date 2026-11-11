@@ -56,6 +56,7 @@ type result = {
  *
  * The list of targets below are final targets (not scanning roots).
  * no further scanning of the filesystem shall be performed.
+ * The rules are those of apply_taint_flags with the same conf.
  * The Find_targets.conf argument is for explicit target management.
  * git_repo says whether the targets came from git, for the scan status.
  * on_plan receives the plan once the language jobs pair targets with rules;
@@ -83,20 +84,20 @@ val default_conf : conf
 
 (* The interfile rules among [rules] that run per file because
    [conf.enable_interfile] is not set; none under [conf.disable_intrafile].
-   [rules] are those before [restrict_rule_taint_modes]. *)
+   [rules] are those before [apply_taint_flags]. *)
 val rules_run_per_file_without_enable_interfile :
   conf -> Rule.rules -> Rule_ID.t list
 
 (* The languages of [lang_jobs] that have a target and a taint rule that
    runs the cross-function analysis, but for which that analysis is not
    supported (Lang_config.supports_intrafile). The rules are those of
-   [restrict_rule_taint_modes]. *)
+   [apply_taint_flags]. *)
 val intrafile_unsupported_languages : conf -> Lang_job.t list -> Lang.t list
 
 (* The rules with their taint_intrafile/taint_interfile options set by
-   Rule.restrict_taint_modes from [conf.taint_intrafile],
+   Rule.apply_taint_flags from [conf.taint_intrafile],
    [conf.disable_intrafile] and [conf.enable_interfile]. *)
-val restrict_rule_taint_modes : conf -> Rule.rules -> Rule.rules
+val apply_taint_flags : conf -> Rule.rules -> Rule.rules
 
 (* builder *)
 val mk_result :

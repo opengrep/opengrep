@@ -28,7 +28,7 @@ indexer.
 
 | Stage | Module | Output |
 |---|---|---|
-| CLI parse, decide `enable_interfile = true` | `src/osemgrep/cli_scan/Scan_CLI.ml` | `Core_scan_config.enable_interfile : bool`; per rule, `Rule_options.taint_interfile`, turned off by `Rule.restrict_taint_modes` without `enable_interfile` |
+| CLI parse, decide `enable_interfile = true` | `src/osemgrep/cli_scan/Scan_CLI.ml` | `Core_scan_config.enable_interfile : bool`; per rule, `Rule_options.taint_interfile`, turned off by `Rule.apply_taint_flags` without `enable_interfile` |
 | Group rules by language and targets by `project_root` | `src/engine/Interfile_dispatch.ml` `build_rule_states` | `lang_context` list (one per `(lang, root)` group) |
 | Build the project-wide call graph | `src/engine/Interfile_graph.ml` → `src/project_index/` (projidx) | `Call_graph.G.t` |
 | Filter targets to those present in the graph | `Interfile_dispatch.targets_in_interfile_graph` | `interfile_target list` |

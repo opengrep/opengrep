@@ -155,17 +155,15 @@ let rules_run_per_file_without_enable_interfile (conf : conf)
     |> List.filter Interfile_dispatch.rule_is_interfile
     |> List_.map (fun (rule : Rule.t) -> fst rule.id)
 
-(* A taint rule of [restrict_rule_taint_modes] that runs the cross-function
-   analysis: its taint_intrafile option, or its taint_interfile option, which
-   implies it; a rule without options takes the scan's. *)
+(* A taint rule of [apply_taint_flags] that runs the cross-function
+   analysis, under the scan setting of Core_scan.rule_options_of_config. *)
 let runs_intrafile (conf : conf) (rule : Rule.t) : bool =
   (match rule.mode with
   | `Taint _ -> true
   | _ -> false)
-  &&
-  match rule.options with
-  | Some (opts : Rule_options.t) -> opts.taint_intrafile || opts.taint_interfile
-  | None -> conf.taint_intrafile && not conf.disable_intrafile
+  && Match_env.runs_intrafile
+       ~scan_taint_intrafile:(conf.taint_intrafile && not conf.disable_intrafile)
+       rule.options
 
 let intrafile_unsupported_languages (conf : conf) (lang_jobs : Lang_job.t list)
     : Lang.t list =
@@ -179,9 +177,9 @@ let intrafile_unsupported_languages (conf : conf) (lang_jobs : Lang_job.t list)
              Some lang
          | _ -> None)
 
-let restrict_rule_taint_modes (conf : conf) (rules : Rule.rules) : Rule.rules =
+let apply_taint_flags (conf : conf) (rules : Rule.rules) : Rule.rules =
   List_.map
-    (Rule.restrict_taint_modes ~taint_intrafile:conf.taint_intrafile
+    (Rule.apply_taint_flags ~taint_intrafile:conf.taint_intrafile
        ~disable_intrafile:conf.disable_intrafile
        ~enable_interfile:conf.enable_interfile)
     rules

@@ -388,17 +388,16 @@ let rules_of_config ~filter_by_targets (config : Core_scan_config.t) :
     | Core_scan_config.Rule_file file -> (
         Logs.info (fun m -> m "Parsing rules in %s" !!file);
         match Parse_rule.parse_and_filter_invalid_rules file with
-        | Ok rules -> rules
+        | Ok (rules, invalid_rules) ->
+            ( List_.map
+                (Rule.apply_taint_flags ~taint_intrafile:config.taint_intrafile
+                   ~disable_intrafile:config.disable_intrafile
+                   ~enable_interfile:config.enable_interfile)
+                rules,
+              invalid_rules )
         | Error e ->
             failwith ("Error in parsing: " ^ Rule_error.string_of_error e))
     | Core_scan_config.Rules rules -> (rules, [])
-  in
-  let rules =
-    List_.map
-      (Rule.restrict_taint_modes ~taint_intrafile:config.taint_intrafile
-         ~disable_intrafile:config.disable_intrafile
-         ~enable_interfile:config.enable_interfile)
-      rules
   in
   if not filter_by_targets then (rules, invalid_rules)
   else

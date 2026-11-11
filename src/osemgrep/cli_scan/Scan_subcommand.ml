@@ -504,7 +504,7 @@ let check_targets_with_rules ?(print_summary = true)
     Core_runner.rules_run_per_file_without_enable_interfile
       conf.core_runner_conf rules
   in
-  let rules = Core_runner.restrict_rule_taint_modes conf.core_runner_conf rules in
+  let rules = Core_runner.apply_taint_flags conf.core_runner_conf rules in
   (* A configuration that resolved but holds no rule ('rules: []') is not a
      missing configuration: "No config given" is raised on the number of
      configs that resolved, not on the number of rules they gave, and an

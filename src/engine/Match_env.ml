@@ -100,6 +100,20 @@ let fake_rule_id (id, str) =
     options = None;
   }
 
+(* Whether a rule runs the cross-function (intrafile) taint analysis: under
+   the scan's setting, or by its own taint_intrafile option, or by its
+   taint_interfile option. taint_interfile implies taint_intrafile: interfile
+   builds on the intrafile per-function dataflow, the signature machinery
+   gates on taint_intrafile, and interfile dispatch instantiates nothing
+   without it. *)
+let runs_intrafile ~(scan_taint_intrafile : bool)
+    (options : Rule_options.t option) : bool =
+  scan_taint_intrafile
+  ||
+  match options with
+  | Some (opts : Rule_options.t) -> opts.taint_intrafile || opts.taint_interfile
+  | None -> false
+
 let adjust_xconfig_with_rule_options xconf options =
   (* When rule options are present, we need to merge them with the existing config
    * rather than replace it entirely. This preserves command-line flags like
@@ -108,15 +122,11 @@ let adjust_xconfig_with_rule_options xconf options =
     match options with
     | None -> xconf.config
     | Some (rule_opts : Rule_options.t) ->
-        (* Merge rule options with existing config, preserving command-line taint settings.
-           taint_interfile implies taint_intrafile: interfile builds on the
-           intrafile per-function dataflow, the signature machinery gates on
-           taint_intrafile, and interfile dispatch instantiates nothing
-           without it. *)
+        (* Merge rule options with existing config, preserving command-line taint settings. *)
         { rule_opts with
           taint_intrafile =
-            xconf.config.taint_intrafile || rule_opts.taint_intrafile
-            || rule_opts.taint_interfile;
+            runs_intrafile ~scan_taint_intrafile:xconf.config.taint_intrafile
+              (Some rule_opts);
           effect_guards = xconf.config.effect_guards || rule_opts.effect_guards;
           (* a depth set by the rule wins; an unset one keeps the scan's *)
           taint_interfile_depth =

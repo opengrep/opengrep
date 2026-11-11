@@ -216,7 +216,7 @@ let check_targets_rules (caps : < caps ; .. >)
       core_runner_conf
       (* These two configs are irrelevant to the "validate" subcommand *)
       Find_targets.default_conf Match_patterns.default_matching_conf
-      (metarules, [])
+      (Core_runner.apply_taint_flags core_runner_conf metarules, [])
       (List_.map
         (fun (fpath : Fpath.t) : Target_and_root.t ->
           { target_fpath = fpath; project_root = None })
