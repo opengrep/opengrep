@@ -517,6 +517,28 @@ let test_enable_interfile_and_depth (caps : Test_subcommand.caps) () =
     [ "--enable-interfile"; "--disable-intrafile" ]
     ~passed:false
 
+(* Without --enable-interfile, the interfile rule that a test runs per file
+   is reported on stderr. *)
+let test_interfile_rule_run_per_file_warning (caps : Test_subcommand.caps) ()
+    =
+  let warned (flags : string list) : bool =
+    Testutil_files.with_tempfiles ~chdir:true interfile_files (fun _cwd ->
+        let (_ : Exit_code.t), (stderr_output : string) =
+          Testo.with_capture stderr (fun () ->
+              Test_subcommand.main caps
+                (Array.of_list
+                   ([ "opengrep-test"; "--config"; "rule.yaml"; "main.py" ]
+                   @ flags)))
+        in
+        String_.contains stderr_output
+          ~term:"interfile mode not enabled: 1 interfile rule runs per file \
+                 only:")
+  in
+  Alcotest.(check bool) "without --enable-interfile" true (warned []);
+  Alcotest.(check bool)
+    "with --enable-interfile" false
+    (warned [ "--enable-interfile" ])
+
 (* python: test.py takes the todook: and todoruleid: lines out of both the
    expected and the reported set before comparing them, so a stale annotation
    of either kind cannot fail the check. *)
@@ -968,6 +990,8 @@ let tests (caps : < Test_subcommand.caps >) =
         t "an interfile rule passes only under --enable-interfile, a depth \
            that reaches the source, and without --disable-intrafile"
           (test_enable_interfile_and_depth caps);
+        t "an interfile rule run per file is reported"
+          (test_interfile_rule_run_per_file_warning caps);
         t "todoruleid: and todook: lines are left out of the comparison"
           (test_todo_annotations caps);
         t "a rule with two test targets" (test_two_targets_for_one_rule caps);

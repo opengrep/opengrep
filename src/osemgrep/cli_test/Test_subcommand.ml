@@ -917,9 +917,12 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
   (checks, fixtest)
 
 (* run the tests of one rule file *)
+(* The checks and the fixtests of a rule file, and its interfile rules that
+   run per file because --enable-interfile is not given. *)
 let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
     (rule_file : Fpath.t) (rules : Rule.t list) (target_files : Fpath.t list)
-    (errors : error list ref) : test_result list * fixtest_result list =
+    (errors : error list ref) :
+    test_result list * fixtest_result list * Rule_ID.t list =
   (* note that even one target file can result in different targets
    * if the rules contain multiple xlangs.
    *)
@@ -929,12 +932,20 @@ let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
   in
 
   let env = { rule_file; target_files; conf; errors } in
-  run_engine caps env rules targets files_and_annots
+  let checks, fixtests = run_engine caps env rules targets files_and_annots in
+  ( checks,
+    fixtests,
+    Core_runner.rules_run_per_file_without_enable_interfile
+      ~enable_interfile:conf.enable_interfile
+      ~disable_intrafile:conf.disable_intrafile rules )
 
+(* The results of the tests, and the interfile rules run per file. *)
 let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
     (errors : error list ref) :
-    (Fpath.t (* rule file *) * test_result list * fixtest_result list) list =
+    (Fpath.t (* rule file *) * test_result list * fixtest_result list) list
+    * Rule_ID.t list =
   (* LATER: in theory we could use Parmap here *)
+  let results_and_rules_run_per_file =
   tests
   |> List_.filter_map (fun (rule_file, target_files) ->
          Logs.info (fun m -> m "processing rule file %s" !!rule_file);
@@ -952,10 +963,10 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
              Logs.info (fun m ->
                  m "processing target(s) %s"
                    (target_files |> Fpath_.to_strings |> String.concat ", "));
-             let checks, fixtest =
+             let checks, fixtest, rules_run_per_file =
                run_test caps conf rule_file rules target_files errors
              in
-             Some (rule_file, checks, fixtest)
+             Some ((rule_file, checks, fixtest), rules_run_per_file)
          (* capture 's' and return it in the error so the user will see something
           * like "Missing semgrep extenstion needed for parsing X. Try --pro"
           *)
@@ -970,6 +981,9 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
          | (exception Parsing_error.Syntax_error _)
          | (exception Parsing_error.Other_error _) ->
              failwith "impossible: Parse_rule should not raise exns anymore")
+  in
+  ( List_.map fst results_and_rules_run_per_file,
+    List.concat_map snd results_and_rules_run_per_file )
 
 (*****************************************************************************)
 (* Run the conf *)
@@ -988,7 +1002,12 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   let tests : tests = rules_and_targets conf.target errors in
 
   (* step2: run the tests *)
-  let result : tests_result = run_tests caps conf tests errors in
+  let (result : tests_result), (rules_run_per_file : Rule_ID.t list) =
+    run_tests caps conf tests errors
+  in
+  (* the test command prints its messages as the legacy skin does *)
+  Rules_report.warn_rules_run_per_file ~pp_hint:Skin_legacy.pp_hint
+    rules_run_per_file;
   (* python: check_rule_id_mismatch exits before any report *)
   if
     !errors

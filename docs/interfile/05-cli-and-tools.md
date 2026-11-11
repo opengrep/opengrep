@@ -31,7 +31,7 @@ cross-function analysis that the option implies (unless
 `--taint-intrafile` or `options.taint_intrafile: true` turns it on).
 `scan` and `ci` then print one warning that lists such rules that have a
 target, at most five of them (all under `--verbose`), before the scan
-starts.
+starts; `test` and `scan --test` print it before their report.
 `--disable-intrafile` disables interfile too.
 `opengrep test` and `opengrep scan --test` take `--enable-interfile`,
 `--interfile-depth` and `--disable-intrafile` as well, `opengrep --core`

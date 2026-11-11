@@ -502,7 +502,8 @@ let check_targets_with_rules ?(print_summary = true)
   in
   let rules_run_per_file : Rule_ID.t list =
     Core_runner.rules_run_per_file_without_enable_interfile
-      conf.core_runner_conf rules
+      ~enable_interfile:conf.core_runner_conf.enable_interfile
+      ~disable_intrafile:conf.core_runner_conf.disable_intrafile rules
   in
   let rules = Core_runner.apply_taint_flags conf.core_runner_conf rules in
   (* A configuration that resolved but holds no rule ('rules: []') is not a
@@ -607,39 +608,18 @@ let check_targets_with_rules ?(print_summary = true)
       let progress_hook : Core_scan_config.progress -> unit =
         Status_bar.progress_hook status_bar
       in
-      (* One warning for the interfile rules run per file that have a
-         target, one rule per line: the first [max_listed] of them at the
-         default level, all of them under --verbose or --debug. *)
+      (* the interfile rules run per file that have a target *)
       let warn_rules_run_per_file (rules_with_targets : Rule.t list) : unit =
-        let max_listed = 5 in
         match
           rules_run_per_file
           |> List.filter (fun (id : Rule_ID.t) ->
                  List.exists
                    (fun (rule : Rule.t) -> Rule_ID.equal id (fst rule.id))
                    rules_with_targets)
-          |> List_.map Rule_ID.to_string
         with
         | [] -> ()
-        | (ids : string list) ->
-            let num_ids = List.length ids in
-            let listed =
-              if
-                num_ids <= max_listed
-                || not (Logs_.is_terse_level (Logs.level ()))
-              then ids
-              else
-                List_.take max_listed ids
-                @ [ spf "and %d more, see --verbose" (num_ids - max_listed) ]
-            in
-            Logs.warn (fun m ->
-                m "interfile mode not enabled: %s per file only:\n%s"
-                  (if Int.equal num_ids 1 then "1 interfile rule runs"
-                   else spf "%d interfile rules run" num_ids)
-                  (String.concat "\n" listed));
-            Logs.app (fun m ->
-                m "%a" Sk.pp_hint
-                  "use --enable-interfile for cross-file analysis");
+        | (ids : Rule_ID.t list) ->
+            Rules_report.warn_rules_run_per_file ~pp_hint:Sk.pp_hint ids;
             warning_before_plan := true
       in
       (* once per language whose targets a taint rule analyses across

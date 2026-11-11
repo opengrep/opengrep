@@ -32,3 +32,29 @@ let pp_rules ~too_many_entries ppf (rules_source, filtered_rules) =
     |> List.sort (fun r1 r2 -> Rule_ID.compare (rule_id r1) (rule_id r2))
     |> List.iter (fun rule ->
            Fmt.pf ppf "- %s@." (Rule_ID.to_string (rule_id rule)))
+
+(* One warning for the interfile rules [ids] that run per file because
+   --enable-interfile is not given, one rule per line: the first
+   [max_listed] of them at the default level, all of them under --verbose or
+   --debug; then a hint printed by [pp_hint]. Nothing when [ids] is empty. *)
+let warn_rules_run_per_file ~(pp_hint : string Fmt.t) (ids : Rule_ID.t list) :
+    unit =
+  let max_listed = 5 in
+  match List_.map Rule_ID.to_string ids with
+  | [] -> ()
+  | (ids : string list) ->
+      let num_ids = List.length ids in
+      let listed =
+        if num_ids <= max_listed || not (Logs_.is_terse_level (Logs.level ()))
+        then ids
+        else
+          List_.take max_listed ids
+          @ [ Common.spf "and %d more, see --verbose" (num_ids - max_listed) ]
+      in
+      Logs.warn (fun m ->
+          m "interfile mode not enabled: %s per file only:\n%s"
+            (if Int.equal num_ids 1 then "1 interfile rule runs"
+             else Common.spf "%d interfile rules run" num_ids)
+            (String.concat "\n" listed));
+      Logs.app (fun m ->
+          m "%a" pp_hint "use --enable-interfile for cross-file analysis")

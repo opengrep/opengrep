@@ -83,10 +83,11 @@ type func = {
 val default_conf : conf
 
 (* The interfile rules among [rules] that run per file because
-   [conf.enable_interfile] is not set; none under [conf.disable_intrafile].
-   [rules] are those before [apply_taint_flags]. *)
+   [enable_interfile] is not set; none under [disable_intrafile]. [rules]
+   are those before [apply_taint_flags]. *)
 val rules_run_per_file_without_enable_interfile :
-  conf -> Rule.rules -> Rule_ID.t list
+  enable_interfile:bool -> disable_intrafile:bool -> Rule.rules ->
+  Rule_ID.t list
 
 (* The languages of [lang_jobs] that have a target and a taint rule that
    runs the cross-function analysis, but for which that analysis is not

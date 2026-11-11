@@ -147,9 +147,9 @@ let default_conf : conf =
     engine_config = Engine_config.default;
   }
 
-let rules_run_per_file_without_enable_interfile (conf : conf)
-    (rules : Rule.rules) : Rule_ID.t list =
-  if conf.enable_interfile || conf.disable_intrafile then []
+let rules_run_per_file_without_enable_interfile ~(enable_interfile : bool)
+    ~(disable_intrafile : bool) (rules : Rule.rules) : Rule_ID.t list =
+  if enable_interfile || disable_intrafile then []
   else
     rules
     |> List.filter Interfile_dispatch.rule_is_interfile
