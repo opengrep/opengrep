@@ -223,17 +223,14 @@ let value_of_lit ~code x : value =
   | G.Float (Some f, _t) -> Float f
   | _ -> raise (NotHandled code)
 
-let eval_regexp_matches ?(base_offset = 0) ~file ~regexp str =
+let eval_regexp_matches ?(base_offset = 0) ~file
+    ~(linecol : Pos.bytepos_linecol_converters Lazy.t) ~regexp str =
   (* alt: take the text range of the metavariable in the original file,
      * and enforce e1 can only be an Id metavariable.
      * alt: let s = value_to_string v in
      * to convert anything in a string before using regexps on it
   *)
-  Xpattern_match_regexp.regexp_matcher ~base_offset str file regexp
-
-let eval_regexp_pattern_matches ?(base_offset = 0) ~file ~regexp str =
-  let compiled = Pcre2_.regexp ~flags:[ `ANCHORED ] regexp in
-    eval_regexp_matches ~base_offset ~file ~regexp:compiled str
+  Xpattern_match_regexp.regexp_matcher ~base_offset ~linecol str file regexp
 
 let rec eval env code =
   match code.G.e with
@@ -330,11 +327,9 @@ let rec eval env code =
     -> (
       match eval env e with
       | String str ->
-          let v : value =
-            match eval_regexp_pattern_matches ~file:env.file ~regexp:re str with
-            | [] -> Bool false
-            | _ -> Bool true
-          in
+          (* Only whether the regexp matches at the start of [str] counts,
+             so no position is computed. *)
+          let v : value = Bool (Pcre2_.anchored_match (Pcre2_.regexp re) str) in
           Log.debug (fun m ->
               m "regexp %s on %s return %s" re str (show_value v));
           v

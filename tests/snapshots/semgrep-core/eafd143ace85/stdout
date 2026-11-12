@@ -1,0 +1,33 @@
+--- begin input files ---
+rules/invalid-paths-glob-range.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/invalid-paths-glob-range.yaml
+ create mode 100644 target.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    target.py
+    ❯❱ rules.valid-rule
+          the other rule of the file still runs
+
+            1┆ x == x
+
+exit code: 4
+--- begin input files ---
+rules/invalid-paths-glob-range.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/invalid-paths-glob-range.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[{"check_id":"rules.valid-rule","path":"target.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"x"}},"message":"the other rule of the file still runs","metadata":{},"severity":"WARNING","fingerprint":"cd28751ab162350318a1f630a7268143d85c3b1ab6a61e2ac44d62e20ea9924c444d0cc23c3fe0b776d34d09cf765d0ba78d47a3199cc584a57fe045c67c4474_0","lines":"x == x","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"Opengrep"}}],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.invalid-paths-glob-range","message":"Invalid rule schema at line rules/invalid-paths-glob-range.yaml:8:\n Invalid glob for include","path":"rules/invalid-paths-glob-range.yaml","long_msg":"Invalid glob for include","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-paths-glob-range.yaml","start":{"line":8,"col":7,"offset":176},"end":{"line":8,"col":14,"offset":183}}]}],"paths":{"scanned":["target.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 4

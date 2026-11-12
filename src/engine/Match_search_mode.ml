@@ -268,6 +268,7 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
     xlang;
     lazy_ast_and_errors;
     lazy_content = _;
+    lazy_linecol = _;
     project_root = _;
   } : Xtarget.t =
     xtarget
@@ -534,11 +535,13 @@ let apply_as_on_ranges ranges as_ =
 (* Evaluating xpatterns *)
 (*****************************************************************************)
 
-let matches_of_xpatterns ~has_as_metavariable ~mvar_context rule
+let matches_of_xpatterns ~has_as_metavariable ~mvar_context
+    ~(spacegrep_doc : Xpattern_match_spacegrep.parsed option) rule
     (xconf : xconfig) (xtarget : Xtarget.t)
     (xpatterns : (Xpattern.t * bool) list) :
     Core_profiling.times Core_result.match_result =
-  let ({ path = { internal_path_to_content; origin }; lazy_content; _ }
+  let ({ path = { internal_path_to_content; origin }; lazy_content;
+         lazy_linecol; _ }
         : Xtarget.t) =
     xtarget
   in
@@ -557,12 +560,13 @@ let matches_of_xpatterns ~has_as_metavariable ~mvar_context rule
     [
       matches_of_patterns ~has_as_metavariable ?mvar_context rule xconf xtarget
         patterns;
-      Xpattern_match_spacegrep.matches_of_spacegrep xconf spacegreps
+      Xpattern_match_spacegrep.matches_of_spacegrep ~doc:spacegrep_doc xconf
+        spacegreps
         internal_path_to_content origin;
       Xpattern_match_aliengrep.matches_of_aliengrep aliengreps lazy_content
-        internal_path_to_content origin;
+        lazy_linecol internal_path_to_content origin;
       Xpattern_match_regexp.matches_of_regexs regexps lazy_content
-        internal_path_to_content origin;
+        lazy_linecol internal_path_to_content origin;
     ]
 [@@profiling]
 
@@ -765,6 +769,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
           *)
          | R.CondRegexp (mvar, re, const_prop) -> (
              let config = env.xconf.config in
+             let linecol = env.xtarget.lazy_linecol in
              let env =
                if const_prop && config.constant_propagation then
                  Eval_generic.bindings_to_env config ~file bindings
@@ -773,7 +778,8 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              in
              (* TODO: could return expl for nested matching! *)
              match
-               Metavariable_regex.get_metavar_regex_capture_bindings env ~file r
+               Metavariable_regex.get_metavar_regex_capture_bindings env ~file
+                 ~linecol r
                  (mvar, re)
              with
              | None -> None
@@ -823,7 +829,9 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
 
 and get_nested_formula_matches env formula range =
   let res, final_ranges =
-    matches_of_formula
+    (* The target of a nested formula is a temporary file, parsed for this
+       formula only. *)
+    matches_of_formula ~spacegrep_doc:None
       { env.xconf with nested_formula = true }
       env.rule env.xtarget formula (Some range)
   in
@@ -1077,7 +1085,8 @@ and evaluate_formula_kind env opt_context (kind : Rule.formula_kind) =
           (ranges, expl))
   | R.Not _ -> failwith "Invalid Not; you can only negate inside an And"
 
-and matches_of_formula xconf rule xtarget formula opt_context :
+and matches_of_formula ~(spacegrep_doc : Xpattern_match_spacegrep.parsed option) xconf
+    rule xtarget formula opt_context :
     Core_profiling.rule_profiling Core_result.match_result * RM.ranges =
   let xpatterns = xpatterns_in_formula formula in
   let mvar_context : Metavariable.bindings option =
@@ -1089,8 +1098,8 @@ and matches_of_formula xconf rule xtarget formula opt_context :
         (Rule_ID.to_string (fst rule.id))
         has_as_metavariable);
   let res =
-    matches_of_xpatterns ~has_as_metavariable ~mvar_context rule xconf xtarget
-      xpatterns
+    matches_of_xpatterns ~has_as_metavariable ~mvar_context ~spacegrep_doc rule
+      xconf xtarget xpatterns
     |> RP.add_rule rule
   in
   Log.info (fun m -> m "found %d matches" (List.length res.matches));
@@ -1130,9 +1139,12 @@ and matches_of_formula xconf rule xtarget formula opt_context :
 (* Main entry point *)
 (*****************************************************************************)
 
-let check_rule ({ R.mode = `Search formula; _ } as r) hook xconf xtarget =
+let check_rule ~(spacegrep_doc : Xpattern_match_spacegrep.parsed option)
+    ({ R.mode = `Search formula; _ } as r) hook xconf xtarget =
   let rule_id = fst r.id in
-  let res, final_ranges = matches_of_formula xconf r xtarget formula None in
+  let res, final_ranges =
+    matches_of_formula ~spacegrep_doc xconf r xtarget formula None
+  in
   let errors = res.errors |> E.ErrorSet.map (error_with_rule_id rule_id) in
   {
     res with

@@ -128,147 +128,102 @@ let complete_position (file : Fpath.t) converters (x : t) =
   }
 
 (*
-   line_arr maps byte position to line.
-   col_arr maps byte position to column.
+   [line_starts] holds the byte position at which each line starts, in order;
+   the last line ends at [last_line_end]. A byte position after it maps to
+   [after_last_line]. Positions are clamped to the [size] positions of the
+   input.
 *)
-let converters_of_arrays line_arr col_arr : bytepos_linecol_converters =
-  let len1 = Bigarray.Array1.dim line_arr in
-  let len2 = Bigarray.Array1.dim col_arr in
-  (* len1 and len2 should be equal but we're playing it safe *)
-  let len = min len1 len2 in
-  match len with
+let converters_of_line_starts ~(size : int) ~(last_line_end : int)
+    ~(after_last_line : int * int) (line_starts : int array) :
+    bytepos_linecol_converters =
+  match size with
   | 2 ->
       {
         bytepos_to_linecol_fun = (fun _i -> (1, 0));
         linecol_to_bytepos_fun = (fun _ -> 0);
       }
   | _ ->
+      let cmp = Ord.to_comparison Int.compare in
+      let nlines = Array.length line_starts in
       {
         bytepos_to_linecol_fun =
-          (fun i ->
-            let i = max 0 (min i (len - 1)) in
-            (line_arr.{i}, col_arr.{i}));
+          (fun (i : int) ->
+            let i = max 0 (min i (size - 1)) in
+            if i > last_line_end then after_last_line
+            else
+              (* The line of [i] is the last one that starts at or before
+                 [i]. *)
+              match
+                Ord.binary_search_arr
+                  ~f:(fun _ (line_start : int) -> cmp i line_start)
+                  line_starts
+              with
+              | Ok (idx, _) -> (idx + 1, 0)
+              | Error idx -> (idx, i - line_starts.(idx - 1)));
         linecol_to_bytepos_fun =
-          (let cmp = Ord.to_comparison Int.compare in
-           (* This is the line/col we're trying to find the pos of.
-           *)
-           fun (line, col) ->
-             let res =
-               line_arr
-               |> Ord.binary_search_bigarr1 ~f:(fun bytepos line' ->
-                      let col' = col_arr.{bytepos} in
-                      (* We want the relationship of the varying line' with
-                         respect to the line we are trying to search for.
-                         For instance, if we want to find line 5, but are given
-                         line 3, we should want to say Greater, because we want
-                         to go greater.
-                      *)
-                      match cmp line line' with
-                      | Ord.Equal -> cmp col col'
-                      | Ord.Less -> Ord.Less
-                      | Ord.Greater -> Ord.Greater)
-             in
-             match res with
-             | Error _idx -> raise Not_found
-             | Ok (bytepos, _) -> bytepos);
+          (fun ((line, col) : int * int) ->
+            if line < 1 || line > nlines || col < 0 then raise Not_found
+            else
+              let line_start = line_starts.(line - 1) in
+              let line_end =
+                if line < nlines then line_starts.(line) - 1 else last_line_end
+              in
+              if line_start + col > line_end then raise Not_found
+              else line_start + col);
       }
 
 (* coupling: see also Parse_tree_sitter_helpers.line_col_to_pos *)
 let full_converters_large (file : Fpath.t) : bytepos_linecol_converters =
   let size = UFile.filesize file + 2 in
-
-  (* old: let arr = Array.create size  (0,0) in *)
-  let arr1 = Bigarray.Array1.create Bigarray.int Bigarray.c_layout size in
-  let arr2 = Bigarray.Array1.create Bigarray.int Bigarray.c_layout size in
-  Bigarray.Array1.fill arr1 0;
-  Bigarray.Array1.fill arr2 0;
-
-  let charpos = ref 0 in
-  let line = ref 0 in
-
-  UFile.with_open_in file (fun chan ->
-      let full_charpos_to_pos_aux () =
-        try
-          while true do
-            let s = input_line chan in
-            incr line;
-            let len = String.length s in
-
-            (* '... +1 do'  cos input_line does not return the trailing \n *)
-            let col = ref 0 in
-            for i = 0 to len - 1 + 1 do
-              (* old: arr.(!charpos + i) <- (!line, i); *)
-              arr1.{!charpos + i} <- !line;
-              arr2.{!charpos + i} <- !col;
-              (* old: hack for weird Windows files containing a single
-               * carriage return (CR) (\r) instead of a carriage return +
-               * newline feed (LF) (\r\n) to delimit newlines.
-               *   if i < len - 1 && String.get s i =$= '\r' then (
-               *      incr line;
-               *      col := -1);
-               * Not recognizing those single \r as a newline marker prevents
-               * Javascript ASI to correctly insert semicolons.
-               * However, this hack is commented because having one part
-               * of the program recognizing those single CR as newlines
-               * (e.g., the Javascript parser), and other parts not
-               * (e.g., any function using Stdlib.input_line such as
-               * UFile.lines_of_file_exn) can cause a mismatch such as
-               * array out of bound exceptions in some functions.
-               * Simpler to be consistent. Note that tools such
-               * as `wc -l` do not recognize either those single CR as newlines.
-               * Same for the tree-sitter libraries.
-               *)
-              incr col
-            done;
-            charpos := !charpos + len + 1
-          done
-        with
-        | End_of_file ->
-            for
-              i = !charpos
-              to (* old: Array.length arr *)
-                 Bigarray.Array1.dim arr1 - 1
-            do
-              (* old: arr.(i) <- (!line, 0); *)
-              arr1.{i} <- !line;
-              arr2.{i} <- 0
-            done;
-            ()
-      in
-      full_charpos_to_pos_aux ());
-  converters_of_arrays arr1 arr2
+  (* Each line covers its bytes and the newline after it, which
+     input_line does not return.
+     old: hack for weird Windows files containing a single
+     carriage return (CR) (\r) instead of a carriage return +
+     newline feed (LF) (\r\n) to delimit newlines.
+       if i < len - 1 && String.get s i =$= '\r' then (
+          incr line;
+          col := -1);
+     Not recognizing those single \r as a newline marker prevents
+     Javascript ASI to correctly insert semicolons.
+     However, this hack is commented because having one part
+     of the program recognizing those single CR as newlines
+     (e.g., the Javascript parser), and other parts not
+     (e.g., any function using Stdlib.input_line such as
+     UFile.lines_of_file_exn) can cause a mismatch such as
+     array out of bound exceptions in some functions.
+     Simpler to be consistent. Note that tools such
+     as `wc -l` do not recognize either those single CR as newlines.
+     Same for the tree-sitter libraries. *)
+  let rec read_line_starts (chan : in_channel) (line_start : int)
+      (line_starts : int list) : int list * int =
+    match input_line chan with
+    | line ->
+        read_line_starts chan
+          (line_start + String.length line + 1)
+          (line_start :: line_starts)
+    | exception End_of_file -> (line_starts, line_start)
+  in
+  let line_starts, next_line_start =
+    UFile.with_open_in file (fun chan -> read_line_starts chan 0 [])
+  in
+  let line_starts = Array.of_list (List.rev line_starts) in
+  converters_of_line_starts ~size ~last_line_end:(next_line_start - 1)
+    ~after_last_line:(Array.length line_starts, 0)
+    line_starts
 [@@profiling]
 
-(* This is mostly a copy-paste of full_charpos_to_pos_large,
-   but using a string for a target instead of a file. *)
 let full_converters_str (s : string) : bytepos_linecol_converters =
   let size = String.length s + 2 in
-
-  let arr1 = Bigarray.Array1.create Bigarray.int Bigarray.c_layout size in
-  let arr2 = Bigarray.Array1.create Bigarray.int Bigarray.c_layout size in
-  Bigarray.Array1.fill arr1 0;
-  Bigarray.Array1.fill arr2 0;
-
-  let charpos = ref 0 in
-  let line = ref 0 in
-  let str_lines = String.split_on_char '\n' s in
-
-  let full_charpos_to_pos_aux () =
-    List.iter
-      (fun s ->
-        incr line;
-        let len = String.length s in
-        let col = ref 0 in
-        for i = 0 to len - 1 + 1 do
-          arr1.{!charpos + i} <- !line;
-          arr2.{!charpos + i} <- !col;
-          incr col
-        done;
-        charpos := !charpos + len + 1)
-      str_lines
+  let line_starts, next_line_start =
+    String.split_on_char '\n' s
+    |> List.fold_left
+         (fun ((line_starts, line_start) : int list * int) (line : string) ->
+           (line_start :: line_starts, line_start + String.length line + 1))
+         ([], 0)
   in
-  full_charpos_to_pos_aux ();
-  converters_of_arrays arr1 arr2
+  converters_of_line_starts ~size ~last_line_end:(next_line_start - 1)
+    ~after_last_line:(0, 0)
+    (Array.of_list (List.rev line_starts))
 [@@profiling]
 
 (*****************************************************************************)

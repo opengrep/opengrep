@@ -324,7 +324,8 @@ let o_num_jobs : int Term.t =
     Arg.info [ "j"; "jobs" ]
       ~doc:
         {|Number of cores to use to run checks in
-parallel. Defaults to the number of cores detected on the system.
+parallel, at most the number of cores detected on the system. Defaults to
+that number, up to 16; 0 also selects the default.
 |}
   in
   Arg.value (Arg.opt Arg.int default.core_runner_conf.num_jobs info)

@@ -207,6 +207,7 @@ let get_nested_metavar_pattern_bindings get_nested_formula_matches env r mvar
                             };
                           lazy_ast_and_errors = lazy (mast', []);
                           lazy_content = lazy contents;
+                          lazy_linecol = lazy (Pos.full_converters_large file);
                         }
                       in
                       (* Persist the bindings from inside the `metavariable-pattern`
@@ -319,6 +320,8 @@ let get_nested_metavar_pattern_bindings get_nested_formula_matches env r mvar
                               xlang;
                               lazy_ast_and_errors;
                               lazy_content = lazy contents;
+                              lazy_linecol =
+                                lazy (Pos.full_converters_large file);
                               project_root = None;
                             }
                           in

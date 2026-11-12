@@ -251,6 +251,7 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       in
       (match
          Interfile_graph.load_interfile_graph (caps :> < Cap.fork >)
+           ~ncores:(Domainslib_.default_num_domains ())
            ~targeting_conf lang project_root
        with
        | None ->

@@ -357,7 +357,7 @@ let mk_config () : Core_scan_config.t =
     max_memory_mb = !max_memory_mb;
     interfile_timeout = !interfile_timeout;
     max_match_per_file = !max_match_per_file;
-    ncores = !ncores;
+    ncores = Domainslib_.num_domains_of_jobs !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
     taint_intrafile = !taint_intrafile;
     effect_guards = false;
@@ -584,7 +584,7 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-equivalences",
       Arg.String (fun s -> equivalences_file := Some (Fpath.v s)),
       " <file> obtain list of code equivalences from YAML file" );
-    ("-j", Arg.Set_int ncores, " <int> number of cores to use (default = 1)");
+    ("-j", Arg.Set_int ncores, " <int> number of cores to use, at most the number of CPUs; 0 or less selects 16 or the number of CPUs if lower (default = 1)");
     ( "-max_target_bytes",
       Arg.Set_int Flag.max_target_bytes,
       " maximum size of a single target file, in bytes. This applies to \

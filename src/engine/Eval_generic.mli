@@ -29,15 +29,8 @@ val eval_opt : env -> code -> value option
 val eval_regexp_matches :
   ?base_offset:int ->
   file:Fpath.t ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
   regexp:Pcre2_.t ->
-  string ->
-  ((Tok.location * Tok.location) * (string * Metavariable.mvalue) list) list
-
-(* match a regexp string *)
-val eval_regexp_pattern_matches :
-  ?base_offset:int ->
-  file:Fpath.t ->
-  regexp:string ->
   string ->
   ((Tok.location * Tok.location) * (string * Metavariable.mvalue) list) list
 

@@ -11,6 +11,7 @@
 val get_metavar_regex_capture_bindings :
   Eval_generic.env ->
   file:Fpath.t ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
   Range_with_metavars.t ->
   Metavariable.mvar * Pcre2_.t ->
   Metavariable.bindings list option

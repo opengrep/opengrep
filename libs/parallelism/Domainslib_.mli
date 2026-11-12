@@ -25,3 +25,11 @@ val parmap :
 
 val get_cpu_count : unit -> int
 (** Return the number of domains, kept original name for compatibility. *)
+
+val default_num_domains : unit -> int
+(** The number of domains a scan runs on by default: at most 16, and at most
+    [get_cpu_count ()]. *)
+
+val num_domains_of_jobs : int -> int
+(** The number of domains for [-j jobs]: at most [get_cpu_count ()], and
+    [default_num_domains ()] for 0 or less. *)

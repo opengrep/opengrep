@@ -87,7 +87,9 @@ let range_w_metas_of_formula (xconf : Match_env.xconfig) (xtarget : Xtarget.t)
     (rule : R.t) (formula : R.formula) : RM.ranges * ME.t list =
   (* !! Calling Match_search_mode here !! *)
   let report, ranges =
-    Match_search_mode.matches_of_formula xconf rule xtarget formula None
+    Match_search_mode.matches_of_formula
+      ~spacegrep_doc:None
+      xconf rule xtarget formula None
   in
   (ranges, report.explanations)
 
@@ -215,8 +217,9 @@ let find_propagators_matches formula_cache (xconf : Match_env.xconfig)
 (* Spec matches *)
 (*****************************************************************************)
 
-let spec_matches_of_taint_rule ~per_file_formula_cache xconf file ast_and_errors
-    ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
+let spec_matches_of_taint_rule ~per_file_formula_cache
+    ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t) xconf file
+    ast_and_errors ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
   let file = Fpath.v file in
   let formula_cache = per_file_formula_cache in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
@@ -241,6 +244,7 @@ let spec_matches_of_taint_rule ~per_file_formula_cache xconf file ast_and_errors
       xlang = rule.target_analyzer;
       lazy_content = lazy (UFile.read_file file);
       lazy_ast_and_errors;
+      lazy_linecol;
       project_root = None;
     }
   in
@@ -474,11 +478,12 @@ let taint_config_of_spec_matches
             })
 
 let taint_config_of_rule ~per_file_formula_cache
+    ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t)
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
     xconf lang file ast_and_errors (rule : R.taint_rule) =
   let spec_matches, expls =
-    spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
-      ast_and_errors rule
+    spec_matches_of_taint_rule ~per_file_formula_cache ~lazy_linecol xconf
+      !!file ast_and_errors rule
   in
   taint_config_of_spec_matches ~handle_effects ~allow_partial xconf lang file
     rule spec_matches

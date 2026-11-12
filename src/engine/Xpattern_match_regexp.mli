@@ -3,6 +3,7 @@
 *)
 val regexp_matcher :
   ?base_offset:int ->
+  linecol:Pos.bytepos_linecol_converters Lazy.t ->
   (* str *) string ->
   Fpath.t ->
   Pcre2_.t ->
@@ -11,6 +12,7 @@ val regexp_matcher :
 val matches_of_regexs :
   (Pcre2_.t * Xpattern.pattern_id * string) list ->
   string Lazy.t ->
+  Pos.bytepos_linecol_converters Lazy.t ->
   Fpath.t ->
   Origin.t ->
   Core_profiling.times Core_result.match_result

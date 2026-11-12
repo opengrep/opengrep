@@ -11,7 +11,8 @@ let load_graph (project_root : string) (lang : Lang.t) : Call_graph.G.t =
   (* CLI entry point: this process owns its capabilities. *)
   let caps = (Cap.fork_and_limits_caps_UNSAFE () :> < Cap.fork >) in
   match
-    Interfile_graph.load_interfile_graph caps ~targeting_conf lang root
+    Interfile_graph.load_interfile_graph caps
+      ~ncores:(Domainslib_.default_num_domains ()) ~targeting_conf lang root
   with
   | Some graph -> graph
   | None ->
@@ -497,9 +498,14 @@ let o_verbose : bool Term.t =
 let o_ncores : int Term.t =
   let info =
     Arg.info [ "j"; "ncores" ] ~docv:"N"
-      ~doc:"Number of cores for parallel processing (default: all available)"
+      ~doc:
+        "Number of cores for parallel processing, at most the number of \
+         CPUs; 0 or less selects 16 or the number of CPUs if lower \
+         (default: all available)"
   in
-  Arg.value (Arg.opt Arg.int (Domainslib_.get_cpu_count ()) info)
+  Term.(
+    const Domainslib_.num_domains_of_jobs
+    $ Arg.value (Arg.opt Arg.int (Domainslib_.get_cpu_count ()) info))
 
 let o_targets : string list Term.t =
   let info =
