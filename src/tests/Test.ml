@@ -138,6 +138,7 @@ let tests (caps : Cap.all_caps) =
       Unit_Ppath.tests;
       Unit_Rpath.tests;
       Unit_git_wrapper.tests;
+      Unit_parallelism.tests;
       Unit_ugly_print_AST.tests;
       Unit_autofix.tests;
       Unit_autofix_printer.tests;

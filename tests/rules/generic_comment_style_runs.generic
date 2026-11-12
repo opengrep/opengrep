@@ -1,0 +1,8 @@
+// ruleid: c-comments-first, regexp-between, c-comments-second, comments-kept, c-comments-last
+alpha omega
+
+// ruleid: c-comments-first, c-comments-second, c-comments-last
+alpha /* beta */ omega
+
+// ruleid: regexp-between, comments-kept
+/* alpha omega */

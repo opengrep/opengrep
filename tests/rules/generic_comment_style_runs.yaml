@@ -1,0 +1,37 @@
+rules:
+- id: c-comments-first
+  languages:
+  - generic
+  pattern: alpha omega
+  options:
+    generic_comment_style: c
+  message: found
+  severity: ERROR
+- id: regexp-between
+  languages:
+  - generic
+  pattern-regex: alpha omega
+  message: found
+  severity: ERROR
+- id: c-comments-second
+  languages:
+  - generic
+  pattern: alpha omega
+  options:
+    generic_comment_style: c
+  message: found
+  severity: ERROR
+- id: comments-kept
+  languages:
+  - generic
+  pattern: alpha omega
+  message: found
+  severity: ERROR
+- id: c-comments-last
+  languages:
+  - generic
+  pattern: alpha omega
+  options:
+    generic_comment_style: c
+  message: found
+  severity: ERROR
