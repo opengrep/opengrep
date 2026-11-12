@@ -212,8 +212,6 @@ let full_converters_large (file : Fpath.t) : bytepos_linecol_converters =
     line_starts
 [@@profiling]
 
-(* This is mostly a copy-paste of full_charpos_to_pos_large,
-   but using a string for a target instead of a file. *)
 let full_converters_str (s : string) : bytepos_linecol_converters =
   let size = String.length s + 2 in
   let line_starts, next_line_start =

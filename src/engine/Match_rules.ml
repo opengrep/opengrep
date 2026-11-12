@@ -382,9 +382,8 @@ let check
      limit that interrupts a lazy value leaves it raising for every later
      rule. A build that times out gives a Timeout to each rule
      that needs it, which does not run. *)
-  (* A build covers work that each rule needing it did within its own time
-     limit: it runs under the largest of their limits, and with no limit when
-     one of them has none. *)
+  (* A build runs under the largest time limit of the rules that need it, and
+     with no limit when one of them has none. *)
   let build (type a) (rules : R.rule list) (f : unit -> a) : a option =
     let limits =
       List_.map (fun (r : R.rule) -> time_limit r.R.options file timeout) rules

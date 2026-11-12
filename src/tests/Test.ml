@@ -134,6 +134,7 @@ let tests (caps : Cap.all_caps) =
       Unit_ReDoS.tests;
       Unit_guess_lang.tests;
       Unit_tok.tests;
+      Unit_pos.tests;
       Unit_AST_generic.tests;
       Unit_Ppath.tests;
       Unit_Rpath.tests;

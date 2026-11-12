@@ -31,6 +31,5 @@ val default_num_domains : unit -> int
     [get_cpu_count ()]. *)
 
 val num_domains_of_jobs : int -> int
-(** The number of domains for [-j jobs], as the v1.33.1 command line selected
-    it: at most [get_cpu_count ()], and [default_num_domains ()] for 0 or
-    less. *)
+(** The number of domains for [-j jobs]: at most [get_cpu_count ()], and
+    [default_num_domains ()] for 0 or less. *)

@@ -17,6 +17,6 @@ let test_num_domains_of_jobs () =
 let tests =
   Testo.categorize "Domainslib_"
     [
-      Testo.create "-j selects the number of cores as v1.33.1 did"
+      Testo.create "-j selects at most the machine's cores, and the default for 0 or less"
         test_num_domains_of_jobs;
     ]
