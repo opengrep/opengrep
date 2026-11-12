@@ -385,29 +385,15 @@ let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
                });
     }
   in
-  let sanitize_intermediate_var (v : Out.match_intermediate_var) :
-      Out.match_intermediate_var =
-    { v with content = sanitize v.content }
-  in
-  let rec sanitize_call_trace (trace : Out.match_call_trace) :
-      Out.match_call_trace =
-    match trace with
-    | CliLoc (loc, content) -> CliLoc (loc, sanitize content)
-    | CliCall ((loc, content), vars, trace) ->
-        CliCall
-          ( (loc, sanitize content),
-            List_.map sanitize_intermediate_var vars,
-            sanitize_call_trace trace )
-  in
-  let sanitize_dataflow_trace (trace : Out.match_dataflow_trace) :
+  let rec sanitize_dataflow_trace (trace : Out.match_dataflow_trace) :
       Out.match_dataflow_trace =
-    {
-      taint_source = trace.taint_source |> Option.map sanitize_call_trace;
-      intermediate_vars =
-        trace.intermediate_vars
-        |> Option.map (List_.map sanitize_intermediate_var);
-      taint_sink = trace.taint_sink |> Option.map sanitize_call_trace;
-    }
+    trace
+    |> List_.map (fun (step : Out.match_dataflow_step) ->
+           {
+             step with
+             content = sanitize step.content;
+             children = sanitize_dataflow_trace step.children;
+           })
   in
   let extra = m.extra in
   {

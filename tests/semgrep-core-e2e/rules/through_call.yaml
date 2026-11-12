@@ -1,0 +1,12 @@
+rules:
+  - id: through-call
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [python]
+    severity: ERROR

@@ -576,94 +576,145 @@ let fix_lines ?(first_col = 1) (fix : string) : string list =
 (* Taint traces *)
 (*****************************************************************************)
 
-(* What the locations of a step are: the source, a call on the way from the
-   source, the intermediate variables, a call on the way to the sink, or the
-   sink. *)
-type step_kind =
+type step_kind = OutJ.match_dataflow_step_kind =
   | Source
-  | Source_call
-  | Intermediate
-  | Sink_call
+  | SourceInCall
+  | Through
+  | ThroughCall
+  | Parameter
+  | Return
+  | SinkInCall
   | Sink
 
 (* coupling: a kind added to [step_kind] must be added here too, since the
    labels of a trace are padded to the widest of these *)
 let step_kinds : step_kind list =
-  [ Source; Source_call; Intermediate; Sink_call; Sink ]
+  [
+    Source;
+    SourceInCall;
+    Through;
+    ThroughCall;
+    Parameter;
+    Return;
+    SinkInCall;
+    Sink;
+  ]
 
-(* One step of a taint trace flattened into a sequence: its kind, the label
-   of the legacy report, and the locations it refers to. Every skin uses
-   this sequence; only the drawing differs. *)
+(* One step of a taint trace flattened into a sequence, as the legacy
+   report prints it: its label and the locations it refers to. *)
 type trace_step = {
-  kind : step_kind;
   label : string;
   locations : OutJ.location list;
 }
 
 let intermediate_label = "Taint flows through these intermediate variables:"
 
-(* the locations of the intermediate variables, without consecutive
-   locations on the same line *)
-let locations_of_vars (vars : OutJ.match_intermediate_var list) :
+let same_line (a : OutJ.location) (b : OutJ.location) : bool =
+  Fpath.equal a.path b.path && Int.equal a.start.line b.start.line
+
+(* the locations of the steps and of the steps under them, without
+   consecutive locations on the same line *)
+let locations_of_steps (steps : OutJ.match_dataflow_trace) :
     OutJ.location list =
-  vars
+  Semgrep_output_utils.flat_dataflow_steps steps
   |> List.fold_left
-       (fun (acc : OutJ.location list) (var : OutJ.match_intermediate_var) ->
+       (fun (acc : OutJ.location list) (step : OutJ.match_dataflow_step) ->
          match acc with
-         | (previous : OutJ.location) :: _
-           when Int.equal previous.start.line var.location.start.line ->
+         | (previous : OutJ.location) :: _ when same_line previous step.location
+           ->
              acc
-         | _ -> var.location :: acc)
+         | _ -> step.location :: acc)
        []
   |> List.rev
 
-let intermediate_step (vars : OutJ.match_intermediate_var list) :
-    trace_step list =
-  match locations_of_vars vars with
+let intermediate_step (steps : OutJ.match_dataflow_trace) : trace_step list =
+  match locations_of_steps steps with
   | [] -> []
-  | locations ->
-      [ { kind = Intermediate; label = intermediate_label; locations } ]
+  | locations -> [ { label = intermediate_label; locations } ]
 
-(* [reverse] holds for a source trace and not for a sink trace. *)
-let rec steps_of_call_trace ~(reverse : bool) (label : string)
-    (trace : OutJ.match_call_trace) : trace_step list =
-  match trace with
-  | OutJ.CliLoc (loc, _) ->
-      [
-        {
-          kind = (if reverse then Source else Sink);
-          label;
-          locations = [ loc ];
-        };
-      ]
-  | OutJ.CliCall ((loc, _), vars, inner) ->
-      if reverse then
-        (* a source trace is read from the origin outwards *)
-        steps_of_call_trace ~reverse label inner
-        @ intermediate_step vars
-        @ [
-            {
-              kind = Source_call;
-              label = "then call to:";
-              locations = [ loc ];
-            };
-          ]
-      else
-        ({ kind = Sink_call; label; locations = [ loc ] }
-        :: intermediate_step vars)
-        @ steps_of_call_trace ~reverse "then reaches:" inner
+(* a source trace is read from the origin outwards *)
+let rec steps_to_source (label : string) (step : OutJ.match_dataflow_step) :
+    trace_step list =
+  let inner, vars =
+    List.partition Semgrep_output_utils.leads_to_source step.children
+  in
+  match step.kind with
+  | SourceInCall ->
+      List.concat_map (steps_to_source label) inner
+      @ intermediate_step vars
+      @ [ { label = "then call to:"; locations = [ step.location ] } ]
+  | Source
+  | Through
+  | ThroughCall
+  | Parameter
+  | Return
+  | SinkInCall
+  | Sink ->
+      [ { label; locations = [ step.location ] } ]
+
+let rec steps_to_sink (label : string) (step : OutJ.match_dataflow_step) :
+    trace_step list =
+  let inner, vars =
+    List.partition Semgrep_output_utils.leads_to_sink step.children
+  in
+  match step.kind with
+  | SinkInCall ->
+      ({ label; locations = [ step.location ] } :: intermediate_step vars)
+      @ List.concat_map (steps_to_sink "then reaches:") inner
+  | Source
+  | SourceInCall
+  | Through
+  | ThroughCall
+  | Parameter
+  | Return
+  | Sink ->
+      [ { label; locations = [ step.location ] } ]
 
 let steps_of_dataflow_trace (trace : OutJ.match_dataflow_trace) :
     trace_step list =
-  match (trace.taint_source, trace.taint_sink) with
-  | Some source, Some sink ->
-      steps_of_call_trace ~reverse:true "Taint comes from:" source
-      @ (match trace.intermediate_vars with
-        | Some vars -> intermediate_step vars
-        | None -> [])
-      @ steps_of_call_trace ~reverse:false
-          "This is how taint reaches the sink:" sink
-  | _ -> []
+  match Semgrep_output_utils.split_dataflow_trace trace with
+  | Some (source, between, sink) ->
+      steps_to_source "Taint comes from:" source
+      @ intermediate_step between
+      @ steps_to_sink "This is how taint reaches the sink:" sink
+  | None -> []
+
+(* A taint trace as a skin draws it: each step, without consecutive
+   intermediate variables on the same line, and nothing for a trace without
+   its source or its sink. *)
+let tree_of_dataflow_trace (trace : OutJ.match_dataflow_trace) :
+    OutJ.match_dataflow_trace =
+  let through (step : OutJ.match_dataflow_step) : bool =
+    match step.kind with
+    | Through -> true
+    | Source
+    | SourceInCall
+    | ThroughCall
+    | Parameter
+    | Return
+    | SinkInCall
+    | Sink ->
+        false
+  in
+  let rec steps (trace : OutJ.match_dataflow_trace) : OutJ.match_dataflow_trace
+      =
+    trace
+    (* the steps in reverse *)
+    |> List.fold_left
+         (fun (acc : OutJ.match_dataflow_trace)
+              (step : OutJ.match_dataflow_step) ->
+           match acc with
+           | previous :: _
+             when through previous && through step
+                  && same_line previous.location step.location ->
+               acc
+           | _ -> { step with children = steps step.children } :: acc)
+         []
+    |> List.rev
+  in
+  match Semgrep_output_utils.split_dataflow_trace trace with
+  | Some _ -> steps trace
+  | None -> []
 
 (* False for a -e/--pattern run: Rule.rule_of_formula builds a rule with id
    "-", a default severity, and the pattern as its message. The legacy report
@@ -707,13 +758,9 @@ let one_line_of_code (code : string) : string =
    line *)
 let source_of_finding (finding : OutJ.cli_match) :
     (OutJ.location * string) option =
-  match finding.extra.dataflow_trace with
-  | Some { OutJ.taint_source = Some source; _ } ->
-      let loc, code = Core_json_output.leaf_of_call_trace source in
-      Some (loc, one_line_of_code code)
-  | Some _
-  | None ->
-      None
+  Option.bind finding.extra.dataflow_trace Semgrep_output_utils.dataflow_source
+  |> Option.map (fun (source : OutJ.match_dataflow_step) ->
+         (source.location, one_line_of_code source.content))
 
 let sources_of_sink (findings : OutJ.cli_match list) :
     (OutJ.location * string) list =
@@ -744,6 +791,13 @@ let esc_prefix (ppf : Format.formatter) =
   if Fmt.style_renderer ppf = `Ansi_tty then Fmt.any "\027[22m\027[24m  "
   else Fmt.any "  "
 
+let rec widest_line (acc : int) (nodes : OutJ.match_dataflow_trace) : int =
+  nodes
+  |> List.fold_left
+       (fun (acc : int) (node : OutJ.match_dataflow_step) ->
+         widest_line (max acc node.location.start.line) node.children)
+       acc
+
 (* The number of digits of the largest line number in the traces of these
    findings. A skin sizes its trace gutter from this rather than from the
    line of the finding, since a trace step can be in another file or much
@@ -755,16 +809,7 @@ let trace_line_digits (findings : OutJ.cli_match list) : int =
          (fun (acc : int) (finding : OutJ.cli_match) ->
            match finding.extra.dataflow_trace with
            | None -> acc
-           | Some trace ->
-               steps_of_dataflow_trace trace
-               |> List.fold_left
-                    (fun (acc : int) (step : trace_step) ->
-                      step.locations
-                      |> List.fold_left
-                           (fun (acc : int) (loc : OutJ.location) ->
-                             max acc loc.start.line)
-                           acc)
-                    acc)
+           | Some trace -> widest_line acc (tree_of_dataflow_trace trace))
          1
   in
   String.length (string_of_int (max 1 widest))
@@ -1144,10 +1189,14 @@ let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
              Fmt.pf ppf "%s%s%a%a%a@." (lead i) gutter (pp_span unhighlighted)
                before (pp_span highlight) covered (pp_span unhighlighted) after)
 
-(* A trace drawn as a tree under the match: one branch per step, the last
-   one closing the tree, and a vertical line joining the first branch to the
-   match above. The first line of a step starts with the [label] of its
-   kind, padded to the widest label of all kinds.
+(* A trace drawn as a tree under the match: one branch per node, the last
+   one closing its level, and a vertical line joining the first branch to
+   the match above. The first line of a node starts with the [label] of its
+   kind, padded to the widest label of all kinds; the nodes under a call are
+   one level deeper, under the label of the call. A node prints its file
+   when it is not the file of the node printed before it, or for the first
+   node the file of the finding, so that a line without a file is in the
+   last file printed above it.
 
    [line_prefix] starts every line, and [glyph] renders the box-drawing
    characters, so that a skin sets their style and any text before them. *)
@@ -1157,8 +1206,6 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
     ~(highlight : Fmt.style list) ~(unhighlighted : Fmt.style list)
     ~(label : step_kind -> string) ppf (trace : OutJ.match_dataflow_trace) :
     unit =
-  let steps = steps_of_dataflow_trace trace in
-  let last = List.length steps - 1 in
   let width =
     step_kinds
     |> List.fold_left
@@ -1166,24 +1213,45 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
            max acc (Utf8.length (label kind)))
          0
   in
+  (* [indent] holds the stems of the levels above, before the branches of
+     [nodes], and [current] the file of the node printed last; returns the
+     file of the last node that [nodes] print *)
+  let rec pp_nodes (current : Fpath.t option) (indent : string)
+      (nodes : OutJ.match_dataflow_trace) : Fpath.t option =
+    let last = List.length nodes - 1 in
+    nodes
+    |> List.fold_left
+         (fun ((i : int), (current : Fpath.t option)) (node : OutJ.match_dataflow_step) ->
+           let is_last = Int.equal i last in
+           let branch = glyph (if is_last then "└─ " else "├─ ")
+           and stem = indent ^ glyph (if is_last then "   " else "│  ") in
+           let txt = label node.kind in
+           let first_prefix =
+             line_prefix ^ indent ^ branch ^ txt
+             ^ String.make (width - Utf8.length txt + 1) ' '
+           (* the lines after the first of a node with nodes under it carry
+              the vertical line that joins them to the node *)
+           and prefix =
+             line_prefix ^ stem
+             ^
+             if List_.null node.children then String.make (width + 1) ' '
+             else glyph "│" ^ String.make width ' '
+           in
+           pp_trace_location ?finding_path:current ~dedent ~first_prefix
+             ~prefix ~gutter ~gutter_blank ~highlight ~unhighlighted ppf
+             node.location;
+           ( i + 1,
+             pp_nodes
+               (Option.map (fun (_ : Fpath.t) -> node.location.path) current)
+               stem node.children ))
+         (0, current)
+    |> snd
+  in
+  let nodes = tree_of_dataflow_trace trace in
   (* the vertical line that joins the first step to the match *)
-  if not (List_.null steps) then Fmt.pf ppf "%s%s@." line_prefix (glyph "│");
-  steps
-  |> List.iteri (fun (i : int) (step : trace_step) ->
-         let is_last = Int.equal i last in
-         let branch = glyph (if is_last then "└─ " else "├─ ")
-         and stem = line_prefix ^ glyph (if is_last then "   " else "│  ") in
-         let txt = label step.kind in
-         let first_prefix =
-           line_prefix ^ branch ^ txt
-           ^ String.make (width - Utf8.length txt + 1) ' '
-         and prefix = stem ^ String.make (width + 1) ' ' in
-         step.locations
-         |> List.iteri (fun (j : int) (loc : OutJ.location) ->
-                pp_trace_location ?finding_path ~dedent
-                  ~first_prefix:(if Int.equal j 0 then first_prefix else prefix)
-                  ~prefix ~gutter ~gutter_blank ~highlight ~unhighlighted ppf
-                  loc))
+  if not (List_.null nodes) then Fmt.pf ppf "%s%s@." line_prefix (glyph "│");
+  let (_ : Fpath.t option) = pp_nodes finding_path "" nodes in
+  ()
 
 (* The taint trace of a match as a flat sequence of steps, as the legacy
    report prints it. [indent] starts every line and [gutter] precedes the

@@ -108,6 +108,67 @@ let tokens_to_single_loc (toks : Tok.t list) : location option =
   Some { path = first_loc.path; start = first_loc.start; end_ = last_loc.end_ }
 
 (*****************************************************************************)
+(* Dataflow traces *)
+(*****************************************************************************)
+
+let leads_to_source (step : match_dataflow_step) : bool =
+  match step.kind with
+  | Source
+  | SourceInCall ->
+      true
+  | Through
+  | ThroughCall
+  | Parameter
+  | Return
+  | SinkInCall
+  | Sink ->
+      false
+
+let leads_to_sink (step : match_dataflow_step) : bool =
+  match step.kind with
+  | Sink
+  | SinkInCall ->
+      true
+  | Source
+  | SourceInCall
+  | Through
+  | ThroughCall
+  | Parameter
+  | Return ->
+      false
+
+let split_dataflow_trace (trace : match_dataflow_trace) :
+    (match_dataflow_step * match_dataflow_trace * match_dataflow_step) option
+    =
+  match List.partition leads_to_source trace with
+  | [ source ], rest -> (
+      match List.partition leads_to_sink rest with
+      | [ sink ], between -> Some (source, between, sink)
+      | _ -> None)
+  | _ -> None
+
+let rec flat_dataflow_steps (trace : match_dataflow_trace) :
+    match_dataflow_step list =
+  trace
+  |> List.concat_map (fun (step : match_dataflow_step) ->
+         step :: flat_dataflow_steps step.children)
+
+let rec dataflow_source (trace : match_dataflow_trace) :
+    match_dataflow_step option =
+  trace
+  |> List.find_map (fun (step : match_dataflow_step) ->
+         match step.kind with
+         | Source -> Some step
+         | SourceInCall
+         | Through
+         | ThroughCall
+         | Parameter
+         | Return
+         | SinkInCall
+         | Sink ->
+             dataflow_source step.children)
+
+(*****************************************************************************)
 (* Compare (=~ deriving ord) *)
 (*****************************************************************************)
 

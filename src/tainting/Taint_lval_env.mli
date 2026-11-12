@@ -38,6 +38,12 @@ val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
     x.a_1. ... .a_i (i < N) (unless they become tainted separately).
  *)
 
+val add_param_lval_shape :
+  Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
+(** Like [add_lval_shape], for a parameter of the function analysed, which
+    the call binds: the path of each taint records it as a
+    Taint_trace.Parameter instead of a Taint_trace.Variable. *)
+
 val add : Lang.t -> IL.name -> Taint.offset list -> Taint.taints -> env -> env
 
 val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env

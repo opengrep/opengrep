@@ -216,7 +216,7 @@ let sarif_fixes (cli_match : Out.cli_match) : Sarif.fix list option =
   in
   Some [ fix ]
 
-let thread_flow_location message
+let thread_flow_location ?(kinds : string list option) message
     (location : Out.location) content nesting_level =
   let location =
     Sarif.create_location ~message
@@ -231,121 +231,80 @@ let thread_flow_location message
            ())
       ()
   in
-  Sarif.create_thread_flow_location
+  Sarif.create_thread_flow_location ?kinds
     ~nesting_level:(Int64.of_int nesting_level)
     ~location ()
 
-let intermediate_var_locations intermediate_vars =
-  intermediate_vars
-  |> List_.map (fun ({ location; content } : Out.match_intermediate_var) ->
-         let propagation_message_text =
-           spf "Propagator : '%s' @ '%s:%d'" content
-             (Fpath.to_string location.path)
-             location.start.line
-           |> message
-         in
-         thread_flow_location propagation_message_text location
-           content 0)
+(* The SARIF kinds of a step are "call" for a call, "enter" for the
+   parameter by which the taint enters the function called and "exit" for
+   the return by which it leaves it. *)
+let thread_flow_location_of_step ~(nesting_level : int)
+    (step : Out.match_dataflow_step) : Sarif.thread_flow_location =
+  let label, kinds =
+    match step.kind with
+    | Source -> ("Source:", None)
+    | SourceInCall
+    | ThroughCall
+    | SinkInCall ->
+        ("Call:", Some [ "call" ])
+    | Through -> ("Propagator :", None)
+    | Parameter -> ("Propagator :", Some [ "enter" ])
+    | Return -> ("Propagator :", Some [ "exit" ])
+    | Sink -> ("Sink:", None)
+  in
+  let message_text =
+    spf "%s '%s' @ '%s:%d'" label step.content
+      (Fpath.to_string step.location.path)
+      step.location.start.line
+    |> message
+  in
+  thread_flow_location ?kinds message_text step.location step.content
+    nesting_level
 
-let rec final_location_of_trace (mct: Out.match_call_trace) : Out.location =
-  match mct with
-  | CliLoc (location, _content) -> location
-  | CliCall (_, _, mct) -> final_location_of_trace mct
-
-type flow_kind = Source | Sink
-
-let rec thread_flows
-    ?(nesting_level = 0)
-    ~(flow_kind : flow_kind)
-    (match_call_trace: Out.match_call_trace) =
-  match match_call_trace with
-  | CliLoc (location, content) ->
-    let loc_message_text =
-      spf "%s: '%s' @ '%s:%d'"
-        (match flow_kind with Source -> "Source" | Sink -> "Sink")
-        content
-        (Fpath.to_string location.path)
-        location.start.line
-      |> message
-    in
-    [ thread_flow_location loc_message_text location content nesting_level ]
-  | CliCall ((location, content), intermediate_vars, nested_match_call_trace) ->
-    let nested_flows = 
-      thread_flows
-        ~nesting_level:(nesting_level + 1)
-        ~flow_kind
-        nested_match_call_trace
-    in
-    let call_message_text =
-      spf "Call: '%s' @ '%s:%d'"
-        content
-        (Fpath.to_string location.path)
-        location.start.line
-      |> message
-    in
-    let call_flow_location =
-      thread_flow_location call_message_text location content nesting_level
-    in
-    let intermediate_var_locations =
-      intermediate_var_locations intermediate_vars
-    in
-    match flow_kind with
-    | Source ->
-      nested_flows @ (intermediate_var_locations @ [ call_flow_location ])
-    | Sink ->
-      call_flow_location :: (intermediate_var_locations @ nested_flows)
+(* The locations of the steps in execution order, as SARIF requires them: a
+   call is followed by the steps inside the function called, one level
+   deeper. *)
+let rec thread_flow_locations ~(nesting_level : int)
+    (trace : Out.match_dataflow_trace) : Sarif.thread_flow_location list =
+  trace
+  |> List.concat_map (fun (step : Out.match_dataflow_step) ->
+         thread_flow_location_of_step ~nesting_level step
+         :: thread_flow_locations ~nesting_level:(nesting_level + 1)
+              step.children)
 
 let sarif_codeflow (cli_match : Out.cli_match) : Sarif.code_flow list option =
   match cli_match.extra.dataflow_trace with
-  | None
-  | Some { Out.taint_source = None; _ } ->
-      None
-  | Some { Out.taint_source = Some _; taint_sink = None ; _ } ->
-      None (* TODO: raise, this should not happen. *)
-  | Some
-      ({ taint_source = Some source_mct;
-         intermediate_vars;
-         taint_sink = Some sink_mct })
-    ->
-      let location = final_location_of_trace source_mct
-      in
-      (* TODO from sarif.py: handle taint_sink *)
-      let code_flow_message =
-        spf "Untrusted dataflow from %s:%d to %s:%d"
-          (Fpath.to_string location.path)
-          location.start.line
-          (Fpath.to_string cli_match.path)
-          cli_match.start.line
-      in
-      let source_flows =
-        thread_flows
-          ~flow_kind:Source
-          source_mct
-      in
-      let intermediate_var_locations =
-        match intermediate_vars with
-        | None -> []
-        | Some intermediate_vars ->
-          intermediate_var_locations intermediate_vars
-      in
-      let sink_flows =
-        thread_flows
-          ~flow_kind:Sink
-          sink_mct
-      in
-      let thread_flows =
-        [ Sarif.create_thread_flow
-          ~locations:
-            (source_flows @ intermediate_var_locations @ sink_flows)
-          ()
-        ]
-      in
-      Some
-        [
-          Sarif.create_code_flow
-            ~message:(message code_flow_message)
-            ~thread_flows ();
-        ]
+  | None -> None
+  | Some trace -> (
+      match
+        ( Semgrep_output_utils.dataflow_source trace,
+          Semgrep_output_utils.split_dataflow_trace trace )
+      with
+      | None, _ -> None
+      | Some _, None -> None (* TODO: raise, this should not happen. *)
+      | Some (source : Out.match_dataflow_step), Some _ ->
+          let location = source.location in
+          (* TODO from sarif.py: handle taint_sink *)
+          let code_flow_message =
+            spf "Untrusted dataflow from %s:%d to %s:%d"
+              (Fpath.to_string location.path)
+              location.start.line
+              (Fpath.to_string cli_match.path)
+              cli_match.start.line
+          in
+          let thread_flows =
+            [
+              Sarif.create_thread_flow
+                ~locations:(thread_flow_locations ~nesting_level:0 trace)
+                ();
+            ]
+          in
+          Some
+            [
+              Sarif.create_code_flow
+                ~message:(message code_flow_message)
+                ~thread_flows ();
+            ])
 
 let result ~(is_interfile : Rule_ID.t -> bool) (show_dataflow_traces : bool)
     (cli_match : Out.cli_match) : Sarif.result =
