@@ -64,47 +64,72 @@ let print_match_lines ?(str = "") ?(spaces = 0) (caps : < Cap.stdout >)
   lines_str |> List.iter (fun s -> print (spaces_string ^ " " ^ s))
 
 let print_intermediate_vars ~spaces (caps : < Cap.stdout >)
-    (vars : Out.match_intermediate_var list) : unit =
+    (steps : Out.match_dataflow_trace) : unit =
   let spaces_string = String.init spaces (fun _ -> ' ') in
   let print str = CapConsole.print caps#stdout (spaces_string ^ str) in
   let rec loop_print curr_file = function
     | [] -> ()
-    | (var : Out.match_intermediate_var) :: vars ->
-        if Some var.location.path <> curr_file then print !!(var.location.path);
-        print (spf "- %s @l.%d" var.content var.location.start.line);
-        loop_print (Some var.location.path) vars
+    | (step : Out.match_dataflow_step) :: steps ->
+        if not (Option.equal Fpath.equal (Some step.location.path) curr_file)
+        then print !!(step.location.path);
+        print (spf "- %s @l.%d" step.content step.location.start.line);
+        loop_print (Some step.location.path) steps
   in
-  loop_print None vars
+  loop_print None (Semgrep_output_utils.flat_dataflow_steps steps)
 
-let rec print_taint_call_trace (caps : < Cap.stdout >) ~spaces = function
-  | Out.CliLoc (loc, _content) ->
-      print_match_lines caps ~spaces loc.path loc.start.line loc.end_.line
-  | CliCall ((loc, _content), intermediate_vars, call_trace) ->
+(* [leads_to_end] holds for the step under a call that leads to the source
+   or to the sink *)
+let rec print_taint_call_trace (caps : < Cap.stdout >) ~spaces
+    ~(leads_to_end : Out.match_dataflow_step -> bool)
+    (step : Out.match_dataflow_step) =
+  let loc = step.location in
+  match step.kind with
+  | Out.SourceInCall
+  | Out.SinkInCall ->
+      let call_trace, intermediate_vars =
+        List.partition leads_to_end step.children
+      in
       let print = CapConsole.print caps#stdout in
       let spaces_string = String.init spaces (fun _ -> ' ') in
       print (spaces_string ^ "call to");
       print_match_lines caps ~spaces loc.path loc.start.line loc.end_.line;
-      if intermediate_vars <> [] then (
+      if not (List_.null intermediate_vars) then (
         print (spf "%sthese intermediate values are tainted:" spaces_string);
         print_intermediate_vars caps ~spaces:(spaces + 2) intermediate_vars);
       print (spaces_string ^ "then");
-      print_taint_call_trace caps ~spaces:(spaces + 2) call_trace
+      call_trace
+      |> List.iter
+           (print_taint_call_trace caps ~spaces:(spaces + 2) ~leads_to_end)
+  | Out.Source
+  | Out.Through
+  | Out.ThroughCall
+  | Out.Parameter
+  | Out.Return
+  | Out.Sink ->
+      print_match_lines caps ~spaces loc.path loc.start.line loc.end_.line
 
 let print_taint_trace (caps : < Cap.stdout >)
     (taint_trace : Out.match_dataflow_trace) =
   let print = CapConsole.print caps#stdout in
+  let to_source, rest =
+    List.partition Semgrep_output_utils.leads_to_source taint_trace
+  in
+  let to_sink, intermediate_vars =
+    List.partition Semgrep_output_utils.leads_to_sink rest
+  in
   print "  * Taint may come from this source:";
-  taint_trace.taint_source
-  |> Option.iter (print_taint_call_trace caps ~spaces:4);
-  (match taint_trace.intermediate_vars with
-  | Some []
-  | None ->
-      ()
-  | Some intermediate_vars ->
-      print "  * These intermediate values are tainted:";
-      print_intermediate_vars caps ~spaces:4 intermediate_vars);
+  to_source
+  |> List.iter
+       (print_taint_call_trace caps ~spaces:4
+          ~leads_to_end:Semgrep_output_utils.leads_to_source);
+  if not (List_.null intermediate_vars) then (
+    print "  * These intermediate values are tainted:";
+    print_intermediate_vars caps ~spaces:4 intermediate_vars);
   print "  * This is how taint reaches the sink:";
-  taint_trace.taint_sink |> Option.iter (print_taint_call_trace caps ~spaces:4)
+  to_sink
+  |> List.iter
+       (print_taint_call_trace caps ~spaces:4
+          ~leads_to_end:Semgrep_output_utils.leads_to_sink)
 
 (*****************************************************************************)
 (* Entry point *)

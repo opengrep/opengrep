@@ -1,0 +1,18 @@
+executing: opengrep --core -rules tests/semgrep-core-e2e/rules/through_call.yaml -l python tests/semgrep-core-e2e/targets/through_call.py
+tests/semgrep-core-e2e/targets/through_call.py:8 with rule through-call
+     sink(b)
+  * Taint may come from this source:
+    tests/semgrep-core-e2e/targets/through_call.py:6
+         a = source()
+  * These intermediate values are tainted:
+    tests/semgrep-core-e2e/targets/through_call.py
+    - a @l.6
+    - pass_taint @l.7
+    - x @l.1
+    - y @l.2
+    - return @l.3
+    - b @l.7
+  * This is how taint reaches the sink:
+    tests/semgrep-core-e2e/targets/through_call.py:8
+         sink(b)
+OK

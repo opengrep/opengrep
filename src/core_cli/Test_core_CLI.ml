@@ -228,6 +228,22 @@ let semgrep_core_tests (caps : Cap.all_caps) : Testo.t list =
       t "an interfile rule runs interfile only under -enable_interfile, and \
          not under -disable_intrafile"
         (test_enable_interfile caps);
+      (* a call that the taint goes through is a step with the steps inside
+         the function called as its children *)
+      t ~checked_output:(Testo.stdout ()) ~normalize
+        "-json with a dataflow trace through a call" (fun () ->
+          let cmd =
+            "-rules tests/semgrep-core-e2e/rules/through_call.yaml -l python \
+             tests/semgrep-core-e2e/targets/through_call.py -json"
+          in
+          run_main_in_checkout caps cmd |> assert_Ok);
+      t ~checked_output:(Testo.stdout ())
+        "the text output of a dataflow trace through a call" (fun () ->
+          let cmd =
+            "-rules tests/semgrep-core-e2e/rules/through_call.yaml -l python \
+             tests/semgrep-core-e2e/targets/through_call.py"
+          in
+          run_main_in_checkout caps cmd |> assert_Ok);
     ]
 
 let tests (caps : Cap.all_caps) : Testo.t list = semgrep_core_tests caps

@@ -95,12 +95,14 @@ let is_interfile_rule_id (hrules : Rule.hrules) (id : Rule_ID.t) : bool =
 
 let message_with_taint_source ~(is_interfile : Rule_ID.t -> bool)
     (m : Out.cli_match) : string =
-  match (is_interfile m.check_id, m.extra.dataflow_trace) with
-  | true, Some { Out.taint_source = Some source; _ } ->
-      let (loc : Out.location), (_code : string) =
-        Core_json_output.leaf_of_call_trace source
-      in
-      spf "%s [source %s:%d]" m.extra.message !!(loc.path) loc.start.line
+  match
+    ( is_interfile m.check_id,
+      Option.bind m.extra.dataflow_trace Semgrep_output_utils.dataflow_source )
+  with
+  | true, Some (source : Out.match_dataflow_step) ->
+      spf "%s [source %s:%d]" m.extra.message
+        !!(source.location.path)
+        source.location.start.line
   | _ -> m.extra.message
 
 (*****************************************************************************)

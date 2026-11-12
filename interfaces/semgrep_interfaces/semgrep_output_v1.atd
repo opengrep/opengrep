@@ -406,55 +406,52 @@ type matching_operation
  * 8:   y = x
  * 9:   bar(y)
  *
- * and here is roughly the generated match_dataflow_trace assuming
- * a Semgrep rule where source() is a taint source and sink() the taint sink:
+ * and here is the generated match_dataflow_trace assuming a Semgrep rule
+ * where source() is a taint source and sink() the taint sink:
  *
- *  taint_source = CliCall("foo() @l7", [], CliLoc "source() @l2")
- *  intermediate_vars = ["x", "y"]
- *  taint_sink = CliCall("bar()" @l9, ["v"], CliLoc "sink(v) @l5")
+ *  [ SourceInCall "foo" @l7 [ Source "source()" @l2; Return "return" @l2 ];
+ *    Through "x" @l7;
+ *    Through "y" @l8;
+ *    SinkInCall "bar" @l9 [ Parameter "v" @l4; Sink "sink(v)" @l5 ] ]
+ *
+ * The steps of a trace, and the children of a step, are in execution order.
+ * A trace has at most one Source and at most one Sink: a step whose tokens
+ * have no location in the file is left out. Only the three kinds of call
+ * have children.
  *)
-
 type match_dataflow_trace
+  <ocaml attr="deriving show, ord"> = match_dataflow_step list
+
+type match_dataflow_step
   <ocaml attr="deriving show, ord">
   <python decorator="dataclass(frozen=True)"> = {
-  ?taint_source: match_call_trace option;
-  (* Intermediate variables which are involved in the dataflow. This
-   * explains how the taint flows from the source to the sink. *)
-  ?intermediate_vars: match_intermediate_var list option;
-  ?taint_sink: match_call_trace option;
-}
-
-(* The string attached to the location is the actual code from the file.
- * This can contain sensitive information so be careful!
- *
- * TODO: the type seems redundant since location already specifies a range.
- * maybe this saves some effort to the user of this type which do not
- * need to read the file to get the content.
- *)
-type loc_and_content
- <ocaml attr="deriving show, ord"> =
- (location * string)
-
-type match_call_trace
-  <ocaml attr="deriving show, ord">
-  <python decorator="dataclass(frozen=True, order=True)"> =
-[
-  | CliLoc of loc_and_content
-  | CliCall of (loc_and_content * match_intermediate_var list * match_call_trace)
-] <ocaml repr="classic">
-
-
-(* This type happens to be mostly the same as a loc_and_content for now, but
- * it's split out because Iago has plans to extend this with more information
-*)
-type match_intermediate_var
-  <ocaml attr="deriving show, ord">
-  <python decorator="dataclass(frozen=True)"> = {
+  kind: match_dataflow_step_kind;
   location: location;
-  (* Unlike abstract_content, this is the actual text read from the
-   * corresponding source file *)
+  (* The code at the location, read from the file (unlike abstract_content),
+   * so that a reader of the trace need not read the file. This can contain
+   * sensitive information so be careful! *)
   content: string;
+  (* the path inside the function called, for a call *)
+  children: match_dataflow_trace;
 }
+
+type match_dataflow_step_kind
+  <ocaml attr="deriving show, ord"> = [
+  | Source <json name="source">
+  (* a call to a function in which the source is *)
+  | SourceInCall <json name="source_in_call">
+  (* a variable that the taint goes through *)
+  | Through <json name="through">
+  (* a call to a function that the taint goes through *)
+  | ThroughCall <json name="through_call">
+  (* the parameter by which the taint enters a function called *)
+  | Parameter <json name="parameter">
+  (* the return by which the taint leaves a function called *)
+  | Return <json name="return">
+  (* a call to a function in which the sink is *)
+  | SinkInCall <json name="sink_in_call">
+  | Sink <json name="sink">
+] <ocaml repr="classic">
 
 (*****************************************************************************)
 (* Software Composition Analysis (SCA) match info (SCA part1) *)
