@@ -498,9 +498,14 @@ let o_verbose : bool Term.t =
 let o_ncores : int Term.t =
   let info =
     Arg.info [ "j"; "ncores" ] ~docv:"N"
-      ~doc:"Number of cores for parallel processing (default: all available)"
+      ~doc:
+        "Number of cores for parallel processing, at most the number of \
+         CPUs; 0 or less selects 16 or the number of CPUs if lower \
+         (default: all available)"
   in
-  Arg.value (Arg.opt Arg.int (Domainslib_.get_cpu_count ()) info)
+  Term.(
+    const Domainslib_.num_domains_of_jobs
+    $ Arg.value (Arg.opt Arg.int (Domainslib_.get_cpu_count ()) info))
 
 let o_targets : string list Term.t =
   let info =
