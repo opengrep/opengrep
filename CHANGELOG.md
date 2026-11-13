@@ -1,5 +1,74 @@
 # Changelog
 
+## [2.0.0](https://github.com/opengrep/opengrep/releases/tag/v2.0.0) - 13-11-2026
+
+### Architecture
+
+* Remove python by @dimitris-m in #827
+
+### New features
+
+* Interfile taint analysis by @corneliuhoffman in #779
+* Skins + progress bar by @maciejpirog in #838
+* Networking: rule downloads work through an http proxy by @dimitris-m in #850
+
+### Language support
+
+* Ruby, Crystal: heredocs, last-expression returns, yield, and taint through instance variables by @corneliuhoffman in #851
+* Python: parse PEP 695 'type' alias statements in the menhir parser by @timols in #845
+* Python: parse PEP 758 unparenthesized except-tuples in the menhir parser by @timols in #846
+* PHP: improvements to matching by @maciejpirog in #875
+* C#: upstream the tree-sitter grammar by @maciejpirog in #885
+* ASP.net: support for .ashx and .asmx files by @maciejpirog in #888
+* Typescript: support .mts and .cts file extensions by @JoeJoeflyn in #771
+* Scala: support for Scala 3 by @maciejpirog in #881
+* Typescript: upstream the tree-sitter parser, support Flow syntax in JavaScript files, by @maciejpirog in #899
+* Regexp, Python: regexes parse without failure, and Python string literals carry their Python value by @maciejpirog in #901
+
+### Engine
+
+* Taint: a join keeps the taint of a whole value when the other path has an object by @corneliuhoffman in #852
+* Represent switch value labels as values in the AST by @sk8erboi17 in #859
+* Switch following language rules in the IL and the matcher by @dimitris-m in #880
+* Naming: use per-language namespaces by @maciejpirog in #879
+* Taint: names, expressions and rule ids compare by their type-specific comparison by @corneliuhoffman in #910
+* Engine: a target's line and column converter and generic documents live with it by @corneliuhoffman in #911
+* Tainting: dataflow traces as trees by @maciejpirog in #891
+
+### Improvements
+
+* Add Lua comment syntax to test annotations by @jim-liu in #853
+* Remove `install-ci` command by @dimitris-m in #871
+* CLI: Unsupported flags are hidden from the help and warned about once by @maciejpirog in #907
+* Interfile: a rule runs interfile only under --enable-interfile by @maciejpirog in #913
+
+### Bug fixes
+
+* Make --test work on Windows (#192) by @Tito0015 in #844
+* Scan: exit code no longer depends on the order of the errors by @avgkoster in #895
+* Taint: Ruby methods that yield to an implicit block no longer abort the file's analysis by @corneliuhoffman in #861
+
+### Infrastructure
+
+* Remove leftover libcurl and OpenSSL link flags and packages by @dimitris-m in #872
+
+### CI
+
+* CI: pin more recent releases of each action by @dimitris-m in #906
+* CI: macOS uses macos-15 and macos-15-intel runners by @dimitris-m in #916
+
+### New Contributors
+
+* @timols made their first contribution in #845
+* @jim-liu made their first contribution in #853
+* @sk8erboi17 made their first contribution in #859
+* @Tito0015 made their first contribution in #844
+* @avgkoster made their first contribution in #895
+* @JoeJoeflyn made their first contribution in #771
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.30.0...v2.0.0
+
+
 ## [1.30.0](https://github.com/opengrep/opengrep/releases/tag/v1.30.0) - 07-09-2026
 
 ### New features
