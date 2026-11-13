@@ -404,6 +404,7 @@ let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
         message = sanitize extra.message;
         lines = sanitize extra.lines;
         fix = extra.fix |> Option.map sanitize;
+        justification = extra.justification |> Option.map sanitize;
         fixed_lines = extra.fixed_lines |> Option.map (List_.map sanitize);
         metavars =
           extra.metavars
@@ -453,6 +454,7 @@ let cli_match_of_core_match ~(cwd : Fpath.t) ~fixed_lines fixed_env
        historical_info;
        fix;
        is_ignored;
+       justification;
        dataflow_trace;
        sca_match;
        enclosing_context
@@ -511,6 +513,7 @@ let cli_match_of_core_match ~(cwd : Fpath.t) ~fixed_lines fixed_env
             metadata;
             fix;
             is_ignored = Some is_ignored;
+            justification;
             fingerprint =
               Semgrep_hashing_functions.Match_based_id.partial rule rule_id
                 metavars
