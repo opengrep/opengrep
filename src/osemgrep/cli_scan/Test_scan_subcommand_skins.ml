@@ -238,6 +238,81 @@ def go():
     sink(b)
 |}
 
+(* The same function with the recursive return before the other one. *)
+let recursive_return_first_py = {|
+def rec(i, x):
+    if i >= 0:
+        return rec(i - 1, x)
+    return x
+
+def go():
+    a = source()
+    b = rec(3, a)
+    sink(b)
+|}
+
+(* A recursive function that reaches a sink directly and through its
+   recursive call, the recursive call first. *)
+let recursive_sink_call_first_py = {|
+def rec(i, x):
+    if i >= 0:
+        rec(i - 1, x)
+    else:
+        sink(x)
+
+def go():
+    a = source()
+    rec(3, a)
+|}
+
+(* The same function with the sink first. *)
+let recursive_sink_first_py = {|
+def rec(i, x):
+    if i < 0:
+        sink(x)
+    else:
+        rec(i - 1, x)
+
+def go():
+    a = source()
+    rec(3, a)
+|}
+
+(* A recursive function that writes the taint to a global directly and
+   through its recursive call, the recursive call first. *)
+let recursive_global_write_call_first_py = {|
+g = None
+
+def rec(i, x):
+    global g
+    if i >= 0:
+        rec(i - 1, x)
+    else:
+        g = x
+
+def go():
+    a = source()
+    rec(3, a)
+    sink(g)
+|}
+
+(* The same function with the write first. *)
+let recursive_global_write_first_py = {|
+g = None
+
+def rec(i, x):
+    global g
+    if i < 0:
+        g = x
+    else:
+        rec(i - 1, x)
+
+def go():
+    a = source()
+    rec(3, a)
+    sink(g)
+|}
+
 (* Three nested calls that the taint goes through: each is drawn under the
    one that makes it. *)
 let nested_calls_py = {|
@@ -649,6 +724,26 @@ let tests (caps : caps) =
       t "simple with a recursive call that the taint goes through"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_trace narrow ~files:(through_files recursive_py) "simple");
+      t "simple with a recursive call whose recursive return comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_return_first_py) "simple");
+      t "simple with a recursive function whose recursive call reaches the sink first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_sink_call_first_py) "simple");
+      t "simple with a recursive function whose sink comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_sink_first_py) "simple");
+      t "simple with a recursive function whose recursive call writes the global first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_global_write_call_first_py) "simple");
+      t "simple with a recursive function whose global write comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_global_write_first_py) "simple");
       t "simple with nested calls that the taint goes through"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_trace narrow ~files:(through_files nested_calls_py) "simple");

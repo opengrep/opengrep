@@ -178,6 +178,11 @@ module rec Shape : sig
       test; identity and fusion keying keep using [equal_cell]. *)
 
   val equal_shape : shape -> shape -> bool
+
+  val equal_shape_with_guards : shape -> shape -> bool
+  (** Like [equal_shape], with guards compared as [equal_cell_with_guards]
+      compares them. *)
+
   val compare_shape : shape -> shape -> int
   val show_cell : cell -> string
   val show_shape : shape -> string
@@ -268,6 +273,9 @@ end = struct
 
   let equal_cell_with_guards cell1 cell2 =
     equal_cell_with_guards_depth 0 cell1 cell2
+
+  let equal_shape_with_guards (shape1 : shape) (shape2 : shape) : bool =
+    equal_shape_with_guards_depth 0 shape1 shape2
 
   (*************************************)
   (* Comparison *)
@@ -469,12 +477,18 @@ and Effect : sig
   (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with every
       guard-bearing payload fused disjunctively: the effect-level guard, the
       per-item [ToSink] guards, and the bundle guards inside the [Taints.t]
-      payloads. The fused effect applies iff either of the two would. *)
+      payloads. The fused effect applies iff either of the two would. Where
+      [e2] has the shorter trace, it takes [e2]'s [ToSink] item, its
+      [ToReturn] taint and [return_tok], or its [ToLval] taint. *)
 
   val guards_equal : t -> t -> bool
   (** Whether two identity-equal effects carry the same guards in every
       guard-bearing payload. Insertion no-op checks and fixpoint stability
       tests must use this; effect identity ([compare]) is guard-blind. *)
+
+  val shorter_trace : t -> t -> bool
+  (** Whether the first of two identity-equal [ToSink], [ToReturn] or [ToLval]
+      effects has a shorter path for one of its taints than the second. *)
 
   val show : ?truncate_guards:bool -> t -> string
 
@@ -758,19 +772,49 @@ end = struct
     | ToLval { guards; _ } -> guards
     | ToSinkInCall { guards; _ } -> guards
 
+  (* Whether [ttr1] returns a taint with a shorter trace than identity-equal
+     [ttr2], with a shape of the same guards: a return with other guards in
+     its shape, such as those of a returned callback, is not replaced. *)
+  let shorter_return (ttr1 : taints_to_return) (ttr2 : taints_to_return) :
+      bool =
+    Taints.shorter_traces ttr1.data_taints ttr2.data_taints
+    && Shape.equal_shape_with_guards ttr1.data_shape ttr2.data_shape
+
+  (* Whether the path of [item1] to its sink is shorter than that of
+     [item2], an identity-equal item: by the calls of the sink trace, then by
+     the trace of the taint. *)
+  let shorter_sink_path (item1 : taint_to_sink_item)
+      (item2 : taint_to_sink_item) : bool =
+    match
+      Int.compare
+        (T.length_of_call_trace item1.sink_trace)
+        (T.length_of_call_trace item2.sink_trace)
+    with
+    | 0 -> T.shorter_trace item1.taint item2.taint
+    | cmp -> cmp < 0
+
   (* Precondition: [compare e1 e2 = 0], so both are the same constructor.
    * The fused effect applies iff either input would, hence the [Or]. *)
   let fuse_guards e1 e2 =
     match (e1, e2) with
     | ToSink tts1, ToSink tts2 ->
         (* [compare e1 e2 = 0] gives pairwise identity-equal items in the same
-         * order, so the per-item guards fuse positionally. *)
+         * order, so the per-item guards fuse positionally. Each item keeps
+         * the shorter of the two paths to the sink, with the preconditions
+         * of the two merged. *)
         let items1, pre = tts1.taints_with_precondition in
         let items2, _ = tts2.taints_with_precondition in
         let items =
           List.map2
             (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
-              { i1 with guard = Effect_guard.compose_or i1.guard i2.guard })
+              let taint1, taint2 =
+                Taints.merge_preconditions i1.taint i2.taint
+              in
+              let i1 = { i1 with taint = taint1 } in
+              let i2 = { i2 with taint = taint2 } in
+              let shorter = if shorter_sink_path i2 i1 then i2 else i1 in
+              { shorter with
+                guard = Effect_guard.compose_or i1.guard i2.guard })
             items1 items2
         in
         ToSink
@@ -781,9 +825,14 @@ end = struct
         (* [Taints.union] fuses identity-equal bundles' guards via
          * [compose_or]; on identity-equal sets that is exactly per-bundle
          * guard fusion. *)
+        (* The fused effect keeps [ttr1]'s [data_shape] and [return_tok]
+         * unless [shorter_return ttr2 ttr1]: the return and the traces in
+         * the shape belong to the path of the kept effect, and a shape with
+         * other guards is never dropped for a shorter trace. *)
+        let kept = if shorter_return ttr2 ttr1 then ttr2 else ttr1 in
         ToReturn
-          { ttr1 with
-            data_taints = Taints.union ttr1.data_taints ttr2.data_taints;
+          { kept with
+            data_taints = Taints.union ttr2.data_taints ttr1.data_taints;
             control_taints =
               Taints.union ttr1.control_taints ttr2.control_taints;
             guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
@@ -847,6 +896,16 @@ end = struct
             | (IL.Unnamed _ | IL.Named _), _ -> true)
           c1.args_taints c2.args_taints
     | _ -> true
+
+  let shorter_trace (e1 : t) (e2 : t) : bool =
+    match (e1, e2) with
+    | ToSink tts1, ToSink tts2 ->
+        List.exists2 shorter_sink_path
+          (fst tts1.taints_with_precondition)
+          (fst tts2.taints_with_precondition)
+    | ToReturn ttr1, ToReturn ttr2 -> shorter_return ttr1 ttr2
+    | ToLval ttl1, ToLval ttl2 -> Taints.shorter_traces ttl1.taints ttl2.taints
+    | (ToSink _ | ToReturn _ | ToLval _ | ToSinkInCall _), _ -> false
 end
 
 and Effects : sig
@@ -882,13 +941,20 @@ end = struct
    * clause-set dedup), so the dataflow fixpoint still reaches a fixed
    * point; it compares every guard-bearing payload, not just the
    * effect-level guard — an item- or bundle-guard-only refinement must
-   * not be discarded. *)
+   * not be discarded. An effect with a shorter trace for one of the taints
+   * that [Effect.shorter_trace] compares replaces the stored one too, so a
+   * shorter trace recorded later is kept; of two traces of equal length,
+   * the stored one stays. Traces only shorten, so this happens finitely
+   * often. *)
   let add eff set =
     match find_opt eff set with
     | None -> add eff set
     | Some existing ->
         let fused = Effect.fuse_guards existing eff in
-        if Effect.guards_equal fused existing then set
+        if
+          Effect.guards_equal fused existing
+          && not (Effect.shorter_trace eff existing)
+        then set
         else add fused (remove existing set)
 
   let union s1 s2 =
