@@ -1,0 +1,13 @@
+rules:
+  - id: taint_exit_visit_cap
+    message: taint written into an argument on one of several return paths
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -514,6 +514,7 @@ and fixpoint_with_env lang enter_env fun_cfg =
   let flow = fun_cfg.cfg in
   let mapping, timeout =
     DataflowX.fixpoint ~timeout:Limits_semgrep.svalue_prop_FIXPOINT_TIMEOUT
+      ~max_visits_per_node:Limits_semgrep.taint_MAX_VISITS_PER_NODE
       ~eq_env:(Var_env.eq_env Eval.eq)
       ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
       ~trans:(transfer ~lang ~enter_env ~fun_cfg)
