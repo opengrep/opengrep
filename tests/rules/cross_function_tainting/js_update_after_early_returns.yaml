@@ -1,0 +1,10 @@
+rules:
+  - id: js_update_after_early_returns
+    mode: taint
+    languages: [javascript]
+    message: A tainted value written into a parameter reaches the sink
+    severity: ERROR
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

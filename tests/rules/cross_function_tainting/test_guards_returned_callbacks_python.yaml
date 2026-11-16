@@ -1,0 +1,14 @@
+rules:
+  - id: test-guards-returned-callbacks
+    message: Each returned callback keeps its own guard
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+      guarded_taint_signatures: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

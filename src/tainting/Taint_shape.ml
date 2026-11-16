@@ -422,16 +422,8 @@ and unify_shape ~lang shape1 shape2 =
   | ( Fun { params = params1; params_il = params_il1; effects = effects1 },
       Fun { params = params2; params_il = params_il2; effects = effects2 } )
     ->
-      let equal_il_param p1 p2 =
-        match
-          (IL_helpers.pname_of_param p1, IL_helpers.pname_of_param p2)
-        with
-        | None, None -> true
-        | Some n1, Some n2 -> IL.equal_name n1 n2
-        | _ -> false
-      in
       if Signature.equal_params params1 params2
-         && List.equal equal_il_param params_il1 params_il2
+         && Signature.equal_params_il params_il1 params_il2
       then
         Fun {
           params = params1;

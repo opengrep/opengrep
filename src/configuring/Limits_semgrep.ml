@@ -50,9 +50,10 @@ let taint_FIXPOINT_TIMEOUT = 0.2
 (* Maximum call chain depth followed by interfile taint when neither the
  * scan nor the rule sets one; negative is unbounded. *)
 let taint_INTERFILE_DEPTH = 3
-(* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
- * is visted more often than this the assumption is that it is a cycle and so the
- * fixpoint stops *)
+(* The rounds of a loop (a component of the weak topological order) after
+ * its first pass in the taint fixpoint, the visits of a node in the worklist
+ * fixpoint of constant propagation, and the depth of nested callback
+ * instantiation in [Sig_inst]. *)
 let taint_MAX_VISITS_PER_NODE = 4
 
 (** Bounds the number of variables we can track. *)
