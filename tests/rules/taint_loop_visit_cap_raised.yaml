@@ -1,0 +1,12 @@
+rules:
+  - id: taint-loop-visit-cap-raised
+    languages: [php]
+    severity: WARNING
+    message: request input reaches echo through a loop-carried chain
+    mode: taint
+    options:
+      taint_max_visits_per_node: 8
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sinks:
+      - pattern: echo $X;

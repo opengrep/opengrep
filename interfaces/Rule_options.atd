@@ -197,6 +197,12 @@ type t = {
   (* override the default taint fixpoint timeout. *)
   ?taint_fixpoint_timeout : float option;
 
+  (* override how many times the taint fixpoint may visit a CFG node that
+   * is on a loop (default Limits_semgrep.taint_MAX_VISITS_PER_NODE). A flow
+   * carried through a loop needs one visit per pass, so a variable chain of
+   * length N inside a loop needs N + 2. *)
+  ?taint_max_visits_per_node : int option;
+
   (* rule-specific timeout. *)
   ?timeout : float option;
 

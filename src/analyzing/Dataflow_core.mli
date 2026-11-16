@@ -40,9 +40,13 @@ module type Flow = sig
 end
 
 module Make (F : Flow) : sig
-  (* main entry point *)
+  (* main entry point. [max_visits_per_node] limits the nodes on a cycle of
+   * [flow]. Returns [`Timeout] when the iteration budget runs out, or when a
+   * node past that limit was skipped with input still pending, since the
+   * mapping may then be missing facts. *)
   val fixpoint :
     timeout:float ->
+    max_visits_per_node:int ->
     eq_env:('env -> 'env -> bool) ->
     init:'env mapping ->
     trans:'env transfn ->

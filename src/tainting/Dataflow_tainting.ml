@@ -172,8 +172,9 @@ let log_timeout_warning (taint_inst : Taint_rule_inst.t) opt_name timeout =
       (* nosemgrep: no-logs-in-library *)
       Logs.warn (fun m ->
           m
-            "Fixpoint timeout while performing taint analysis [rule: %s file: \
-             %s func: %s]"
+            "Fixpoint timeout while performing taint analysis, so flows may \
+             be missing; options.taint_max_visits_per_node raises the limit \
+             [rule: %s file: %s func: %s]"
             (Rule_ID.to_string taint_inst.rule_id)
             !!(taint_inst.file)
             (Option.map IL.str_of_name opt_name ||| "???"))
@@ -3775,6 +3776,11 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       base_timeout *. interfile_timeout_multiplier
     else base_timeout
   in
+  let max_visits_per_node =
+    Common.(
+      taint_inst.options.taint_max_visits_per_node
+      ||| Limits_semgrep.taint_MAX_VISITS_PER_NODE)
+  in
   (* The inner [DataflowX.fixpoint] converges on per-node [lval_env]
    * stability, but not on [effects_acc] — the latter is function-global
    * monotonic state that grows as the body records taint effects. Direct
@@ -3797,7 +3803,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
         let prev_effects = !(env.effects_acc) in
         env.did_self_recurse := false;
         let end_mapping, status =
-          DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+          DataflowX.fixpoint ~timeout ~max_visits_per_node
+            ~eq_env:Lval_env.equal ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -3831,8 +3838,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       in
       run_to_sig_fixpoint 0
     else
-      DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
-        ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
+      DataflowX.fixpoint ~timeout ~max_visits_per_node ~eq_env:Lval_env.equal
+        ~init:init_mapping ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
   log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in

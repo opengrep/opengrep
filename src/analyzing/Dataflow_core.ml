@@ -135,16 +135,61 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
-  let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
-      workset =
+  (* Tarjan's SCC algorithm. A node is cyclic when its component has more than
+   * one node or a self-loop. *)
+  let cyclic_nodes (flow : F.flow) size =
+    let index = Array.make size (-1) in
+    let lowlink = Array.make size 0 in
+    let on_stack = Array.make size false in
+    let cyclic = Array.make size false in
+    let stack = ref [] in
+    let counter = ref 0 in
+    let succs v = (flow.graph#successors v)#tolist |> List.map fst in
+    let rec visit v =
+      index.(v) <- !counter;
+      lowlink.(v) <- !counter;
+      incr counter;
+      stack := v :: !stack;
+      on_stack.(v) <- true;
+      succs v
+      |> List.iter (fun w ->
+             if index.(w) < 0 then (
+               visit w;
+               lowlink.(v) <- min lowlink.(v) lowlink.(w))
+             else if on_stack.(w) then lowlink.(v) <- min lowlink.(v) index.(w));
+      if Int.equal lowlink.(v) index.(v) then
+        let rec pop members =
+          match !stack with
+          | [] -> members
+          | w :: rest ->
+              stack := rest;
+              on_stack.(w) <- false;
+              if Int.equal w v then w :: members else pop (w :: members)
+        in
+        match pop [] with
+        | [ w ] -> cyclic.(w) <- List.exists (Int.equal w) (succs w)
+        | members -> List.iter (fun w -> cyclic.(w) <- true) members
+    in
+    flow.graph#nodes#tolist
+    |> List.iter (fun (v, _) -> if index.(v) < 0 then visit v);
+    cyclic
+
+  let fixpoint_worker ~timeout:_ ~max_visits_per_node eq_env mapping trans
+      (flow : F.flow) succs workset =
     (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
     let max_nodei = Array.length mapping - 1 in
     let num_vertices = flow.graph#nb_nodes in
-    let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
+    let max_visits_per_node = max 1 max_visits_per_node in
     let max_iterations = min 100000 (num_vertices * max_visits_per_node) in
     let visit_counts = Array.make (max_nodei + 1) 0 in
-    let rec loop i work =
-      if NodeiSet.is_empty work then (mapping, `Ok)
+    (* Only a cycle can stop the iteration from converging. A node off every
+     * cycle is revisited once per change of a predecessor, so the exit node of
+     * a function with several returns would otherwise hit the limit without
+     * any loop in the function. *)
+    let cyclic = cyclic_nodes flow (max_nodei + 1) in
+    let rec loop i work ~capped =
+      if NodeiSet.is_empty work then
+        (mapping, if capped then `Timeout else `Ok)
       else
         (* Check iteration limit first (deterministic) *)
         if i >= max_iterations then (mapping, `Timeout)
@@ -153,10 +198,11 @@ module Make (F : Flow) = struct
           let ni = NodeiSet.min_elt work in
           let work' = NodeiSet.remove ni work in
           visit_counts.(ni) <- visit_counts.(ni) + 1;
-          (* Limit all nodes to max visits to prevent infinite loops *)
-          if visit_counts.(ni) > max_visits_per_node then
-            (* Skip this node and continue *)
-            loop (i + 1) work'
+          if cyclic.(ni) && visit_counts.(ni) > max_visits_per_node then
+            (* A predecessor changed since this node's last visit, so its
+             * result may be stale. [trans] cannot be run to check, because
+             * transfer functions record effects as they go. *)
+            loop (i + 1) work' ~capped:true
           else
             let old = mapping.(ni) in
             let new_ = trans mapping ni in
@@ -166,9 +212,9 @@ module Make (F : Flow) = struct
                 mapping.(ni) <- new_;
                 NodeiSet.union work' (succs flow ni))
             in
-            loop (i + 1) work''
+            loop (i + 1) work'' ~capped
     in
-    loop 0 workset
+    loop 0 workset ~capped:false
 
   let forward_succs (f : F.flow) n =
     (f.graph#successors n)#fold
@@ -182,19 +228,21 @@ module Make (F : Flow) = struct
 
   let (fixpoint :
         timeout:float ->
+        max_visits_per_node:int ->
         eq_env:('env -> 'env -> bool) ->
         init:'env mapping ->
         trans:'env transfn ->
         flow:F.flow ->
         forward:bool ->
         'env mapping * [ `Ok | `Timeout ]) =
-   fun ~timeout ~eq_env ~init ~trans ~flow ~forward ->
+   fun ~timeout ~max_visits_per_node ~eq_env ~init ~trans ~flow ~forward ->
     let succs = if forward then forward_succs else backward_succs in
     let work =
       (* This prevents dead code from getting analyzed. *)
       flow.reachable
     in
-    fixpoint_worker ~timeout eq_env init trans flow succs work
+    fixpoint_worker ~timeout ~max_visits_per_node eq_env init trans flow succs
+      work
 
   (*****************************************************************************)
   (* Helpers *)
