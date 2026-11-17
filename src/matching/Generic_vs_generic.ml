@@ -3621,14 +3621,16 @@ and m_parameter a b =
     when Mvar.is_metavar_name str -> (
       match b with
       | OtherParam _
-      | ParamPattern _
-      | ParamReceiver _ ->
+      | ParamPattern _ ->
           envf (str, tok) (MV.Params [ b ])
-      (* We want to first match in the same way `m_parameter_classic` would,
-         to maintain previous behavior.
-         If there are no matches, then we can just unconditionally match.
+      (* An ordinary or receiver parameter is first matched as by
+         `m_parameter_classic`, which binds the metavariable to the
+         parameter's identifier, so the metavariable can be reused as an
+         identifier in the body. If that fails, the metavariable binds the
+         whole parameter.
       *)
-      | Param b1 ->
+      | Param b1
+      | ParamReceiver b1 ->
           m_parameter_classic a1 b1 >!> fun () ->
           envf (str, tok) (MV.Params [ b ])
       | ParamRest _
