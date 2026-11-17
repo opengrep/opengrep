@@ -35,14 +35,6 @@ module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
-(* Domain-local storage for constructor instance variable taint *)
-let constructor_instance_vars : (string, Lval_env.t) Hashtbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
-
-(* Reset domain-local hashtable *)
-let reset_constructor () =
-  Hashtbl.clear (Domain.DLS.get constructor_instance_vars)
-
 (* TODO: Rename things to make clear that there are "sub-matches" and there are
  * "best matches". *)
 
@@ -3875,14 +3867,9 @@ and (fixpoint :
             (* This is not a constructor, check if we have stored instance variable taint *)
             match class_name with
             | Some cls -> (
-                let storage_key =
-                  Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
-                in
                 try
                   let class_instance_vars =
-                    Hashtbl.find
-                      (Domain.DLS.get constructor_instance_vars)
-                      storage_key
+                    Hashtbl.find taint_inst.constructor_instance_vars cls
                   in
                   Lval_env.union ~lang:taint_inst.lang in_env
                     class_instance_vars
@@ -4241,12 +4228,8 @@ and (fixpoint :
                  |> Lval_env.filter_tainted (fun var ->
                         not (Tok.is_fake (snd var.IL.ident)))
                in
-               let storage_key =
-                 Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
-               in
-               Hashtbl.replace
-                 (Domain.DLS.get constructor_instance_vars)
-                 storage_key final_env
+               Hashtbl.replace taint_inst.constructor_instance_vars cls
+                 final_env
            | None -> ())
      | None -> ());
   (effects, mapping)

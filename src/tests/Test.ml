@@ -157,6 +157,7 @@ let tests (caps : Cap.all_caps) =
       (* TODO Unit_matcher_php.unittest; sgrep/spatch/refactoring/unparsing *)
       Unit_engine.tests ();
       Unit_jsonnet.tests (caps :> < Cap.time_limit >);
+      Unit_time_limit.tests (caps :> < Cap.time_limit >);
       Unit_metachecking.tests (caps :> Core_scan.caps);
       Unit_interfile.tests (caps :> Core_scan.caps);
       Unit_core_scan.tests (caps :> Core_scan.caps);

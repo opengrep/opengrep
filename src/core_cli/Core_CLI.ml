@@ -662,8 +662,9 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
        detected. Try 5% less or 15000 if you have 16 GB." );
     ( "-interfile_timeout",
       Arg.Set_int interfile_timeout,
-      " <int> maximum time to spend on the interfile analysis of a rule (in \
-       seconds); 0 disables it (default is 0)" );
+      " <int> maximum time during which the interfile analysis of a rule runs \
+       (in seconds), its parts that run at the same time counting once; 0 \
+       disables it (default is 0)" );
     ( "-max_tainted_vars",
       Arg.Set_int Flag_semgrep.max_tainted_vars,
       "<int> maximum number of vars to store. This is mostly for internal use \

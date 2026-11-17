@@ -833,7 +833,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             | None -> false
           in
           (* A constructor stores its instance variable taint in
-             [Dataflow_tainting.constructor_instance_vars], which the other
+             [Taint_rule_inst.constructor_instance_vars], which the other
              methods of its class read. The table is read and written only
              under a class name, which signature extraction does not pass to
              [Dataflow_tainting.fixpoint] and [extract_and_check] does. So
@@ -963,7 +963,6 @@ let check_rules ~match_hook
     (rules : R.taint_rule list) (xconf : Match_env.xconfig)
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
-  Dataflow_tainting.reset_constructor ();
   (* Clear the per-domain guard-cond intern table: rules run on a domain in
    * sequence, so a previous rule's canonical conds must not leak into this
    * one. *)

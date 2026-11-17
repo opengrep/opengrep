@@ -789,10 +789,17 @@ type scan_work_item =
   | Per_target of Target.t * int (* size in bytes *)
   | Interfile_rule of Interfile_dispatch.rule_state
 
+(* The signatures of an interfile rule, with the time limit that its
+   signature fixpoint and its chunks share under [--interfile-timeout]. *)
+type interfile_rule_run = {
+  sigs : Interfile_dispatch.rule_signatures;
+  limit : Time_limit.shared_limit option;
+}
+
 type scan_work_result =
   | Target_result of
       Core_profiling.file_profiling Core_result.match_result * Target.t option
-  | Interfile_result of PM.t list * E.t list
+  | Interfile_signatures of interfile_rule_run option * E.t list
 
 type scan_work_error =
   | Target_error of Target.t * Core_error.t
@@ -803,6 +810,48 @@ let report_progress (config : Core_scan_config.t)
   match config.progress_hook with
   | Some (hook : Core_scan_config.progress -> unit) -> hook p
   | None -> ()
+
+(* [f] is one task of an interfile rule: its signature fixpoint or the
+   analysis of a chunk of its files. None when the rule's time limit runs
+   out. *)
+let with_interfile_limits
+    (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
+    (config : Core_scan_config.t) (limit : Time_limit.shared_limit option)
+    (rule_id : Rule_ID.t) (f : unit -> 'a) : 'a option =
+  (* Run under the global memory limit so [--max-memory] applies to
+     interfile dispatch too, and under the rule's [--interfile-timeout],
+     which bounds the time during which at least one task of the rule runs;
+     the per-target [--timeout] does not apply here. *)
+  Memory_limit.run_with_global_memory_limit
+    (caps :> < Cap.memory_limit >)
+    ~get_context:(fun () ->
+      spf "interfile rule %s" (Rule_ID.to_string rule_id))
+    ~mem_limit_mb:config.max_memory_mb
+    (fun () ->
+      match limit with
+      | None -> Some (f ())
+      | Some limit ->
+          Time_limit.with_shared_limit
+            (caps :> < Cap.time_limit >)
+            ~name:"Core_scan.interfile_timeout_function" limit f)
+
+(* The findings of an interfile rule, reported through the match hook. *)
+let stream_interfile_matches (config : Core_scan_config.t) (matches : PM.t list)
+    : unit =
+  (* Stream these like per-target matches.  [Output_format.Incremental] skips
+     the final render on the assumption everything was already emitted through
+     this hook, so an interfile match that never reaches it is counted in the
+     totals and the exit code but never printed.  Grouped by file because the
+     hook is documented per-file, even though the emitting rule spans several. *)
+  config.file_match_hook
+  |> Option.iter (fun hook ->
+      matches
+      |> Assoc.group_by (fun (pm : PM.t) ->
+           pm.PM.path.Target.internal_path_to_content)
+      |> List.iter (fun (file, pms) ->
+          hook file
+            (Core_result.mk_match_result pms ESet.empty
+               (Core_profiling.empty_partial_profiling file))))
 
 let handle_work_item
     (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
@@ -830,58 +879,22 @@ let handle_work_item
     in
     Target_result (result, target_opt)
   | Interfile_rule rs ->
-    Common.protect ~finally:(fun () ->
-        report_progress config Core_scan_config.Interfile_rule_done)
-    @@ fun () ->
-    (* Run under the global memory limit so [--max-memory] applies to
-       interfile dispatch too, and under [--interfile-timeout], which bounds
-       the dispatch of one rule; the per-target [--timeout] does not apply
-       here. *)
     let rule_id = Interfile_dispatch.rule_id_of rs in
-    let time_limit =
+    let limit =
       if config.interfile_timeout > 0 then
         Some
-          (float_of_int config.interfile_timeout,
-           (caps :> < Cap.time_limit >))
+          (Time_limit.create_shared_limit
+             (float_of_int config.interfile_timeout))
       else None
     in
-    let matches, errors =
-      Memory_limit.run_with_global_memory_limit
-        (caps :> < Cap.memory_limit >)
-        ~get_context:(fun () ->
-          spf "interfile rule %s" (Rule_ID.to_string rule_id))
-        ~mem_limit_mb:config.max_memory_mb
-        (fun () ->
-          match
-            Time_limit.set_timeout_opt
-              ~name:"Core_scan.interfile_timeout_function" time_limit
-              (fun () -> Interfile_dispatch.run_rule rs)
-          with
-          | Some matches -> (matches, [])
-          | None ->
-            (* [Time_limit] returns None when the limit expires; the timeout
-               is reported as an Out.Timeout error for the rule, as
-               [Match_rules] reports a per-rule timeout. *)
-            Logs.err (fun m ->
-                m "timeout for rule %s in interfile analysis"
-                  (Rule_ID.to_string rule_id));
-            ([], [ E.mk_error ~rule_id Out.Timeout ]))
-    in
-    (* Stream these like per-target matches.  [Output_format.Incremental] skips
-       the final render on the assumption everything was already emitted through
-       this hook, so an interfile match that never reaches it is counted in the
-       totals and the exit code but never printed.  Grouped by file because the
-       hook is documented per-file, even though the emitting rule spans several. *)
-    config.file_match_hook
-    |> Option.iter (fun hook ->
-        matches
-        |> Assoc.group_by (fun (pm : PM.t) ->
-             pm.PM.path.Target.internal_path_to_content)
-        |> List.iter (fun (file, pms) ->
-            hook file
-              (Core_result.mk_match_result pms ESet.empty
-                 (Core_profiling.empty_partial_profiling file))));
-    Interfile_result (matches, errors)
+    (match
+       with_interfile_limits caps config limit rule_id (fun () ->
+           Interfile_dispatch.signature_fixpoint rs)
+     with
+     | Some sigs -> Interfile_signatures (Some { sigs; limit }, [])
+     | None ->
+         Interfile_signatures
+           (None, [ Interfile_dispatch.rule_timeout_error rule_id ]))
 
 let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     : scan_work_error =
@@ -897,8 +910,7 @@ let unified_exception_handler (item : scan_work_item) (e : Exception.t)
         m "interfile dispatch: exception on rule %s: %s"
           (Rule_ID.to_string rule_id)
           (Exception.to_string e));
-    let base_err = E.exn_to_error e in
-    Interfile_error (rule_id, { base_err with E.rule_id = Some rule_id })
+    Interfile_error (rule_id, Interfile_dispatch.rule_error rule_id e)
 
 let iter_unified_and_get_matches_and_exn_to_errors
     (caps : < Cap.fork ; Cap.memory_limit ; Cap.time_limit ; .. >)
@@ -981,12 +993,13 @@ let iter_unified_and_get_matches_and_exn_to_errors
          ~rules_of_target)
       work_items
   in
-  let file_results, scanned_targets, interfile_matches, interfile_rule_errors =
+  let file_results, scanned_targets, rev_interfile_signatures,
+      interfile_rule_errors =
     List.fold_left
       (fun ((files :
                Core_profiling.file_profiling Core_result.match_result list),
             (scanned : Target.t list),
-            (interfile : PM.t list),
+            (interfile : interfile_rule_run list),
             (rule_errors : E.t list))
         (result : (scan_work_result, scan_work_error) result) ->
         match result with
@@ -997,9 +1010,12 @@ let iter_unified_and_get_matches_and_exn_to_errors
             | None -> scanned
           in
           (res :: files, scanned', interfile, rule_errors)
-        | Ok (Interfile_result (matches, errors)) ->
-          (files, scanned, List.rev_append matches interfile,
+        | Ok (Interfile_signatures (Some run, errors)) ->
+          (files, scanned, run :: interfile,
            List.rev_append errors rule_errors)
+        | Ok (Interfile_signatures (None, errors)) ->
+          report_progress config Core_scan_config.Interfile_rule_done;
+          (files, scanned, interfile, List.rev_append errors rule_errors)
         | Error (Target_error (target, e)) ->
           let internal_path = Target.internal_path target in
           let noprof =
@@ -1019,9 +1035,37 @@ let iter_unified_and_get_matches_and_exn_to_errors
           Logs.warn (fun m ->
               m "interfile: rule %s failed; surfacing as error"
                 (Rule_ID.to_string rule_id));
+          report_progress config Core_scan_config.Interfile_rule_done;
           (files, scanned, interfile, err :: rule_errors))
       (dispatched_results, List_.map fst dispatched, [], [])
       work_results
+  in
+  let interfile_signatures = List.rev rev_interfile_signatures in
+  let interfile_matches, interfile_rule_errors =
+    Interfile_dispatch.findings_of_rules
+      (caps :> < Cap.fork >)
+      ~ncores:config.ncores
+      ~limit:
+        {
+          run =
+            (fun (limit : Time_limit.shared_limit option)
+                 (rule_id : Rule_ID.t) f ->
+              with_interfile_limits
+                (caps :> < Cap.memory_limit ; Cap.time_limit >)
+                config limit rule_id f);
+        }
+      ~on_findings:(stream_interfile_matches config)
+      (List_.map
+         (fun (run : interfile_rule_run) -> (run.sigs, run.limit))
+         interfile_signatures)
+    |> List.fold_left
+         (fun ((matches_acc, errors_acc) : PM.t list * E.t list)
+              ((_rule_id, result) : Rule_ID.t * (PM.t list, E.t) result) ->
+           report_progress config Core_scan_config.Interfile_rule_done;
+           match result with
+           | Error err -> (matches_acc, err :: errors_acc)
+           | Ok matches -> (List.rev_append matches matches_acc, errors_acc))
+         ([], interfile_rule_errors)
   in
   (List.rev file_results, List.rev scanned_targets, interfile_matches,
    interfile_rule_errors)

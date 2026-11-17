@@ -462,9 +462,9 @@ let o_timeout_interfile : int Term.t =
   let info =
     Arg.info [ "interfile-timeout" ]
       ~doc:
-        {|Maximum time in seconds to spend on the interfile analysis of a rule;
-it has an effect only with --enable-interfile. If set to 0 will not have time
-limit. Defaults to 0.
+        {|Maximum time in seconds during which the interfile analysis of a rule
+runs; parts of it that run at the same time count once. It has an effect only
+with --enable-interfile. If set to 0 will not have time limit. Defaults to 0.
 |}
   in
   Arg.value (Arg.opt Arg.int default info)

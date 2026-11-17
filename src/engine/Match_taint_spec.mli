@@ -9,6 +9,14 @@ type propagator_match = {
 }
 (** Taint will flow from `from` to `to_` through the axiliary variable `id`. *)
 
+type source_sink_matches = {
+  sources : (Range_with_metavars.t * Rule.taint_source) list;
+  sinks : (Range_with_metavars.t * Rule.taint_sink) list;
+  source_explanations : Matching_explanation.t list;
+  sink_explanations : Matching_explanation.t list;
+}
+(** The matches of `pattern-sources:` and `pattern-sinks:` alone. *)
+
 type spec_matches = {
   sources : (Range_with_metavars.t * Rule.taint_source) list;
       (** Ranges matched by `pattern-sources:` *)
@@ -59,6 +67,30 @@ val taint_config_of_spec_matches :
   Rule.taint_rule ->
   spec_matches ->
   Taint_rule_inst.t option
+
+(* The first half of [spec_matches_of_taint_rule]: the matches of the
+   sources and sinks, which decide whether a file takes part in the rule. *)
+val source_sink_matches_of_taint_rule :
+  per_file_formula_cache:Formula_cache.t ->
+  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
+  Match_env.xconfig ->
+  string ->
+  AST_generic.program * Tok.location list ->
+  Rule.taint_rule ->
+  source_sink_matches
+
+(* The second half of [spec_matches_of_taint_rule]: the propagators and the
+   sanitizers of the same rule and file bytes, added to their sources and
+   sinks. *)
+val complete_spec_matches :
+  per_file_formula_cache:Formula_cache.t ->
+  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
+  Match_env.xconfig ->
+  string ->
+  AST_generic.program * Tok.location list ->
+  Rule.taint_rule ->
+  source_sink_matches ->
+  spec_matches * Matching_explanation.t list
 
 (* The raw spec matches, ungated: unlike [taint_config_of_rule] it applies
    no source/sink emptiness rule and builds no [Taint_rule_inst.t]. *)
