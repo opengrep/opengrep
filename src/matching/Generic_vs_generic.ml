@@ -3482,11 +3482,17 @@ and m_signature_definition a b =
 and m_type_parameter a b =
   match (a, b) with
   | G.TP a1, B.TP b1 -> m_type_parameter_classic a1 b1
+  | G.TPVariadic (a0, a1), B.TPVariadic (b0, b1)
+  | G.TPParamSpec (a0, a1), B.TPParamSpec (b0, b1) ->
+      let* () = m_tok a0 b0 in
+      m_type_parameter_classic a1 b1
   | G.OtherTypeParam (a1, a2), B.OtherTypeParam (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
   (* those constructs should be handled in the caller *)
   | G.TParamEllipsis a1, B.TParamEllipsis b1 -> m_tok a1 b1
   | G.TP _, _
+  | G.TPVariadic _, _
+  | G.TPParamSpec _, _
   | G.TParamEllipsis _, _
   | G.OtherTypeParam _, _ ->
       fail ()

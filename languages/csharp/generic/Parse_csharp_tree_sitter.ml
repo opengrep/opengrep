@@ -51,6 +51,9 @@ let type_parameters_with_constraints (tparams : type_parameters option)
       let tparams' =
         tparams
         |> List_.map (function
+             | TPVariadic _
+             | TPParamSpec _ ->
+                 raise Impossible
              (* we do not generate those semgrep constructs for now in
               * semgrep-java, we parse Java patterns in the Java pfff parser *)
              | TParamEllipsis _ -> raise Impossible

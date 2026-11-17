@@ -1021,7 +1021,9 @@ let declare_type_parameters (env : env) (tparams : type_parameters option) :
       tparams
       |> List.iter (fun (tparam : type_parameter) ->
              match tparam with
-             | TP { tp_id; _ } ->
+             | TP { tp_id; _ }
+             | TPVariadic (_, { tp_id; _ })
+             | TPParamSpec (_, { tp_id; _ }) ->
                  let sid =
                    SId.of_tok ~binding:(fresh_binding env) ~file:env.file
                      (snd tp_id)
