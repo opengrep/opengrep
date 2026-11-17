@@ -73,6 +73,11 @@ Bounds the BFS that computes the relevant subgraph (see [§ 3](03-dispatch.md)
 with the chain depth.  Default 3 is enough for almost every rule;
 chains of length 5+ are rare in practice.
 
+A negative value removes the bound.  The command-line parser reads an
+argument that starts with `-` as an option, so a negative value is
+written with an equal sign, `--interfile-depth=-1`, as one argument;
+`--interfile-depth -1` is rejected with `unknown option '-1'`.
+
 ### `--taint-intrafile`
 
 Independent flag.  Enables the intrafile cross-function analysis for

@@ -216,7 +216,8 @@ let o_interfile_depth : int Term.t =
         (Common.spf
            "Maximum call chain depth for companion file discovery in \
             cross-file taint analysis; it has an effect only with \
-            --enable-interfile. Default is %d."
+            --enable-interfile. Default is %d. Use --interfile-depth=-1 \
+            to remove the limit."
            default)
   in
   Arg.value (Arg.opt Arg.int default info)
