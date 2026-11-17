@@ -43,7 +43,6 @@ opam --version
 
 make install-deps-ALPINE-for-semgrep-core
 
-git config --global --add safe.directory $(pwd)
 git config --global fetch.parallel 50
 
 # Install tree-sitter

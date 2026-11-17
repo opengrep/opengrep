@@ -234,7 +234,7 @@ let main (caps : Cap.all_caps) : unit =
   let project_root = Test_LS_e2e.project_root () in
   (* Don't read ~/.gitconfig since it varies from one developer to another,
      resulting in variable output *)
-  Unix.putenv "GIT_CONFIG_NOGLOBAL" "true";
+  Unix.putenv "GIT_CONFIG_GLOBAL" "/dev/null";
   (* The expected outputs are in the legacy skin. The variable applies to
      every test, and a test can still select another skin with --skin. *)
   Unix.putenv "OPENGREP_SKIN" "legacy";
