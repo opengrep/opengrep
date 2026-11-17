@@ -1,0 +1,13 @@
+rules:
+- id: throws-type-parameter
+  languages: [java]
+  severity: INFO
+  message: a method throws its own type parameter
+  patterns:
+    - pattern-inside: |
+        class $C {
+          ...
+          <$E extends Exception> void $M() throws $E { ... }
+          ...
+        }
+    - pattern: void $M() throws $X { ... }

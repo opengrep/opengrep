@@ -3505,6 +3505,7 @@ and m_type_parameter_classic a b =
         tp_bounds = a3;
         tp_default = a4;
         tp_variance = a5;
+        tp_info = a6;
       },
       {
         B.tp_id = b1;
@@ -3512,8 +3513,9 @@ and m_type_parameter_classic a b =
         tp_bounds = b3;
         tp_default = b4;
         tp_variance = b5;
+        tp_info = b6;
       } ) ->
-      let* () = m_ident a1 b1 in
+      let* () = m_ident_and_id_info (a1, a6) (b1, b6) in
       let* () = m_attributes a2 b2 in
       m_list__m_type_any_order a3 b3 >>= fun () ->
       (m_option m_type_) a4 b4 >>= fun () ->

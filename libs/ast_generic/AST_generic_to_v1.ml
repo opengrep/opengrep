@@ -1118,7 +1118,7 @@ and map_type_parameter = function
       `OtherTypeParam (v1, v2)
 
 and map_type_parameter_classic
-    { tp_id; tp_attrs; tp_bounds; tp_default; tp_variance } =
+    { tp_id; tp_attrs; tp_bounds; tp_default; tp_variance; tp_info = _ } =
   let tp_id = map_ident tp_id in
   let tp_attrs = map_of_list map_attribute tp_attrs in
   let tp_bounds = map_of_list map_type_ tp_bounds in

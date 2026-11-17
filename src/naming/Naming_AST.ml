@@ -328,7 +328,7 @@ type namespaces = {
   searched_by : Lang_namespaces.use_position -> namespace_hash list list;
   class_rebinds_import : Lang_namespaces.import_rebinding;
   class_in_scope_in_its_definition : bool;
-  attributes_in_type_parameter_scope : bool;
+  attribute_in_type_parameter_scope : attribute -> bool;
 }
 
 type env = {
@@ -396,7 +396,7 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
       | Base_class -> base_class);
     class_rebinds_import = N.class_rebinds_import;
     class_in_scope_in_its_definition = N.class_in_scope_in_its_definition;
-    attributes_in_type_parameter_scope = N.attributes_in_type_parameter_scope;
+    attribute_in_type_parameter_scope = N.attribute_in_type_parameter_scope;
   }
 
 let default_env (namespaces : namespaces) (lang : Lang.t) (file : string) : env
@@ -1014,6 +1014,18 @@ let resolve_constructors (env : env) (entity : entity)
                  | _ -> ()))
   | _ -> ()
 
+(* The declaration of a type parameter that binds its identifier. *)
+let binding_type_parameter (tparam : type_parameter) :
+    type_parameter_classic option =
+  match tparam with
+  | TP classic
+  | TPVariadic (_, classic)
+  | TPParamSpec (_, classic) ->
+      Some classic
+  | TParamEllipsis _
+  | OtherTypeParam _ ->
+      None
+
 (* Type parameters bind in the current scope, which the caller opens: a use
    in their scope refers to them, not to a type of the same name outside. *)
 let declare_type_parameters (env : env) (tparams : type_parameters option) :
@@ -1022,30 +1034,30 @@ let declare_type_parameters (env : env) (tparams : type_parameters option) :
   | Some (_, tparams, _), (_ :: _ as namespaces) ->
       tparams
       |> List.iter (fun (tparam : type_parameter) ->
-             match tparam with
-             | TP { tp_id; _ }
-             | TPVariadic (_, { tp_id; _ })
-             | TPParamSpec (_, { tp_id; _ }) ->
+             match binding_type_parameter tparam with
+             | Some { tp_id; tp_info; _ } ->
                  let sid =
                    SId.of_tok ~binding:(fresh_binding env) ~file:env.file
                      (snd tp_id)
                  in
+                 let resolved = { entname = (Parameter, sid); enttype = None } in
+                 set_resolved env tp_info resolved;
                  namespaces
                  |> List.iter (fun (ns : namespace_hash) ->
-                        add_current_scope ns tp_id
-                          { entname = (Parameter, sid); enttype = None }
-                          env.names)
-             | TParamEllipsis _
-             | OtherTypeParam _ ->
-                 ())
+                        add_current_scope ns tp_id resolved env.names)
+             | None -> ())
   | _ -> ()
 
-(* Runs [f] in a block scope that holds the type parameters of a function,
+(* Runs [f] in a block scope that holds the type parameters of a definition,
    when it has some that bind. *)
 let with_type_parameters (env : env) (tparams : type_parameters option)
     (f : unit -> unit) : unit =
   match (tparams, namespace_of env Type_parameter) with
-  | Some _, _ :: _ ->
+  | Some (_, tparam_list, _), _ :: _
+    when List.exists
+           (fun (tparam : type_parameter) ->
+             Option.is_some (binding_type_parameter tparam))
+           tparam_list ->
       with_new_block_scope env.names (fun () ->
           declare_type_parameters env tparams;
           f ())
@@ -1155,16 +1167,17 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
           self#visit_attributes_and_type_parameters venv attrs tparams
       | _ -> self#visit_entity venv entity
 
-    (* In a language whose attributes are outside the scope of the type
-       parameters, visits the attributes of [entity] and returns it without
-       them, to be visited once that scope is open; otherwise returns it
-       unchanged. *)
+    (* Visits the attributes of [entity] that are outside the scope of its type
+       parameters, and returns it with the others, to be visited once that
+       scope is open. *)
     method private visit_attributes_outside_type_parameters (venv : unit)
         (entity : entity) : entity =
-      if env.namespaces.attributes_in_type_parameter_scope then entity
-      else (
-        List.iter (self#visit_attribute venv) entity.attrs;
-        { entity with attrs = [] })
+      let inside, outside =
+        List.partition env.namespaces.attribute_in_type_parameter_scope
+          entity.attrs
+      in
+      List.iter (self#visit_attribute venv) outside;
+      { entity with attrs = inside }
 
     method private visit_in_type_parameter_scope (venv : unit)
         (entity : entity) (visit : entity -> unit) =
@@ -1487,8 +1500,9 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       | entity, (TypeDef def as kind) ->
           with_class_or_type_binding env lang entity (type_definition_kind def)
             (fun () ->
-              self#visit_defining_entity venv entity;
-              self#visit_definition_kind venv kind)
+              self#visit_in_type_parameter_scope venv entity (fun entity ->
+                  self#visit_defining_entity venv entity;
+                  self#visit_definition_kind venv kind))
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
 

@@ -1759,6 +1759,7 @@ and map_named_field_type_parameter (env : env) ((v1, v2, v3) : CST.named_field)
       tp_bounds = [];
       tp_default = Some (TyExpr v3 |> G.t);
       tp_variance = None;
+      tp_info = G.empty_id_info ();
     }
 
 and map_named_field (env : env) ((v1, v2, v3) : CST.named_field) =

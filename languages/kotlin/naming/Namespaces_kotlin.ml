@@ -48,4 +48,5 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
 
 let class_rebinds_import = Lang_namespaces.Inner_scopes
 let class_in_scope_in_its_definition = true
-let attributes_in_type_parameter_scope = true
+let attribute_in_type_parameter_scope (_ : AST_generic.attribute) : bool =
+  true

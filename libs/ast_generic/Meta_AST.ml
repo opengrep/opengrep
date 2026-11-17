@@ -1253,8 +1253,12 @@ and vof_type_parameter_classic
       tp_bounds = v3;
       tp_default = v4;
       tp_variance = v5;
+      tp_info = v6;
     } =
   let bnds = [] in
+  let arg = vof_id_info v6 in
+  let bnd = ("tp_info", arg) in
+  let bnds = bnd :: bnds in
   let arg = OCaml.vof_option (vof_wrap vof_variance) v5 in
   let bnd = ("tp_variance", arg) in
   let bnds = bnd :: bnds in

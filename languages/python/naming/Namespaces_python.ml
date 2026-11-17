@@ -11,4 +11,5 @@ let class_in_scope_in_its_definition = false
 
 (* decorators are evaluated outside the annotation scope that holds the type
    parameters (PEP 695) *)
-let attributes_in_type_parameter_scope = false
+let attribute_in_type_parameter_scope (_ : AST_generic.attribute) : bool =
+  false

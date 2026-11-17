@@ -1,0 +1,8 @@
+rules:
+- id: annotation-refers-to-type-parameter
+  languages: [java]
+  severity: INFO
+  message: the annotation of a class refers to its type parameter
+  pattern: |
+    @$A($T.class)
+    class $C<$T> {}

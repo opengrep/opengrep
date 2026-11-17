@@ -1,0 +1,11 @@
+rules:
+- id: field-outside-generic-class
+  languages: [java]
+  severity: INFO
+  message: a field of a class without type parameters
+  patterns:
+    - pattern-not-inside: |
+        class $C<$T> {
+          ...
+        }
+    - pattern: $T $F;

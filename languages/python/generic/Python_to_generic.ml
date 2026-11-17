@@ -537,6 +537,7 @@ and type_parameter (env : env) (v : type_parameter) : G.type_parameter =
       tp_bounds = bound |> Option.to_list |> list (type_ env);
       tp_default = option (type_ env) default;
       tp_variance = None;
+      tp_info = G.empty_id_info ();
     }
   in
   match v with

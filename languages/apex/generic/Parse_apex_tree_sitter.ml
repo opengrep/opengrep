@@ -3025,6 +3025,7 @@ and type_parameter (env : env) (x : CST.type_parameter) : G.type_parameter =
           tp_bounds = v3;
           tp_default = None;
           tp_variance = None;
+          tp_info = G.empty_id_info ();
         }
 
 (* NEW *)

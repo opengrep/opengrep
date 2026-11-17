@@ -664,7 +664,22 @@ let tests parse_program =
             [ "Global"; "Global"; "Global" ]
             (attribute_resolutions_of_name ast "T"
             |> List.map kind_of_resolution));
-      t "java annotation of a generic class is outside its type parameters"
+      t "python type alias type parameters are in scope in its value"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/python/type_alias_type_parameter.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment (line 1), the uses in [Pair],
+             which refer to its type parameter (line 3), those in [Plain],
+             which refer to the global. *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T" [ 1; 3; 3; 1; 1 ]
+            (resolutions_of_name ast "T" |> List.map definition_line));
+      t "java annotations are outside the type parameters of their declaration"
         (fun () ->
           let file =
             Fpath.v
@@ -673,10 +688,12 @@ let tests parse_program =
           in
           let ast = parse_program file in
           Naming_AST.resolve Lang.Java ast;
-          (* the use in the annotation refers to the class (line 1), the type
-             of the field to the type parameter (line 4) *)
+          (* the annotation of [B] refers to the class (line 1), the type of
+             its field to its type parameter (line 4), the annotation of [m] to
+             the class, the type of the parameter of [m] to the type parameter
+             of [m] (line 10) *)
           Alcotest.(check (list int))
-            "the definitions of the uses of T" [ 1; 4 ]
+            "the definitions of the uses of T" [ 1; 4; 1; 10 ]
             (resolutions_of_name ast "T" @ type_resolutions_of_name ast "T"
             |> List.map definition_line));
       t "cpp template parameters are in scope in an out-of-class member and \

@@ -1023,7 +1023,15 @@ and v_type_parameter
   in
   let tp_bounds = [] in
   (* TODO *)
-  TP { G.tp_id; tp_variance; tp_attrs; tp_bounds; tp_default = None }
+  TP
+    {
+      G.tp_id;
+      tp_variance;
+      tp_attrs;
+      tp_bounds;
+      tp_default = None;
+      tp_info = G.empty_id_info ();
+    }
 
 and v_variance = function
   | Covariant -> G.Covariant

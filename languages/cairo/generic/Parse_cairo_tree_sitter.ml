@@ -556,6 +556,7 @@ and map_type_parameters (env : env) (x : CST.type_parameter_list) :
         tp_default = None;
         tp_attrs = [];
         tp_variance = None;
+        tp_info = G.empty_id_info ();
       }
   in
 
@@ -568,6 +569,7 @@ and map_type_parameters (env : env) (x : CST.type_parameter_list) :
         tp_default = None;
         tp_attrs = [ G.KeywordAttr (G.Const, token env const) ];
         tp_variance = None;
+        tp_info = G.empty_id_info ();
       }
   in
 
@@ -580,6 +582,7 @@ and map_type_parameters (env : env) (x : CST.type_parameter_list) :
         tp_default = None;
         tp_attrs = [];
         tp_variance = None;
+        tp_info = G.empty_id_info ();
       }
   in
 

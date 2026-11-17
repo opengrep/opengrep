@@ -46,4 +46,5 @@ let class_in_scope_in_its_definition = true
 
 (* a decorator is resolved from the declaration that encloses the decorated
    class or member, outside its type parameters *)
-let attributes_in_type_parameter_scope = false
+let attribute_in_type_parameter_scope (_ : AST_generic.attribute) : bool =
+  false

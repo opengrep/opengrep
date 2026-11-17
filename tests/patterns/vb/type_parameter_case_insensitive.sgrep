@@ -1,0 +1,3 @@
+Function $F(Of $T)(x As $T) As $T
+    ...
+End Function
