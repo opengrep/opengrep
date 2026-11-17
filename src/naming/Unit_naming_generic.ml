@@ -79,6 +79,14 @@ let kind_of_resolution = function
       | AST_generic.ImportedModule _ -> "ImportedModule"
       | _ -> "Other")
 
+(* The line of the definition a use refers to, 0 for an unresolved use. *)
+let definition_line (use : AST_generic.resolved_name option) : int =
+  match use with
+  | Some (_, sid) ->
+      let _, _, line, _ = AST_generic.SId.to_loc sid in
+      line
+  | None -> 0
+
 let check_resolutions ast name expected =
   let actual =
     resolutions_of_name ast name |> List.map kind_of_resolution
@@ -638,6 +646,39 @@ let tests parse_program =
               Alcotest.failf
                 "expected one class and three uses of Foo, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "java annotation of a generic class is outside its type parameters"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/annotation_and_type_parameter.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the use in the annotation refers to the class (line 1), the type
+             of the field to the type parameter (line 4) *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T" [ 1; 4 ]
+            (resolutions_of_name ast "T" @ type_resolutions_of_name ast "T"
+            |> List.map definition_line));
+      t "cpp template parameters are in scope in an out-of-class member and \
+         in attributes" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/cpp/template_member_out_of_class.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* the uses in the class refer to its template parameter (line 3),
+             those in the out-of-class member and in its qualifier to the
+             member's (line 7), those in [g] to the typedef (line 1), those in
+             [h], its attribute included, to the parameter of [h] (line 15) *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T"
+            [ 3; 3; 7; 7; 7; 1; 1; 15; 15; 15 ]
+            (type_resolutions_of_name ast "T" @ resolutions_of_name ast "T"
+            |> List.map definition_line));
       t "go local type is in scope in its own definition" (fun () ->
           let file =
             Fpath.v

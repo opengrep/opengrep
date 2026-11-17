@@ -42,3 +42,4 @@ let class_rebinds_import = Lang_namespaces.Every_scope
 (* a tag is in scope just after its appearance in its declaration (C11
    6.2.1), as in [struct node { struct node *next; }] *)
 let class_in_scope_in_its_definition = true
+let attributes_in_type_parameter_scope = true

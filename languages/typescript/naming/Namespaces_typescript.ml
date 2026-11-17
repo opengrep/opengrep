@@ -43,3 +43,7 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
 
 let class_rebinds_import = Lang_namespaces.Every_scope
 let class_in_scope_in_its_definition = true
+
+(* a decorator is resolved from the declaration that encloses the decorated
+   class or member, outside its type parameters *)
+let attributes_in_type_parameter_scope = false

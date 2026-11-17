@@ -61,6 +61,10 @@ module type NAMESPACES = sig
   (* A class, a type definition or a type alias is in scope in its own
      definition; otherwise it binds once its definition is visited. *)
   val class_in_scope_in_its_definition : bool
+
+  (* The attributes of a definition (annotations, decorators) are in the
+     scope of its type parameters. *)
+  val attributes_in_type_parameter_scope : bool
 end
 
 (* A single namespace for every definition. *)
@@ -73,6 +77,7 @@ module Single : NAMESPACES = struct
   let searched_by (_ : use_position) : t list list = [ [ Value ] ]
   let class_rebinds_import = Every_scope
   let class_in_scope_in_its_definition = true
+  let attributes_in_type_parameter_scope = true
 end
 
 (* A single namespace, in which classes, types and type parameters bind

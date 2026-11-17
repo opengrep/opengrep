@@ -48,3 +48,7 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
 
 let class_rebinds_import = Lang_namespaces.Every_scope
 let class_in_scope_in_its_definition = true
+
+(* the scope of a type parameter excludes the modifiers of its declaration,
+   which hold its annotations (JLS 6.3) *)
+let attributes_in_type_parameter_scope = false

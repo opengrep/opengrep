@@ -8,3 +8,7 @@ include Lang_namespaces.Single
 
 let class_rebinds_import = Lang_namespaces.No_scope
 let class_in_scope_in_its_definition = false
+
+(* decorators are evaluated outside the annotation scope that holds the type
+   parameters (PEP 695) *)
+let attributes_in_type_parameter_scope = false
