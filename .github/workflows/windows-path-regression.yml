@@ -49,7 +49,7 @@ jobs:
           # root diverges from git's canonical casing -- the bug's trigger.
           winlower="${winbase}\\mixedrepo"
           echo "root: $winlower"
-          PYTHONIOENCODING=utf-8 "$CLI" scan --json -f "$winrules" "$winlower" > out.json 2>err.txt || true
+          "$CLI" scan --json -f "$winrules" "$winlower" > out.json 2>err.txt || true
           echo "--- stderr (first 400 chars) ---"; head -c 400 err.txt; echo
           echo "--- result paths ---"
           paths="$(grep -o '"path":[[:space:]]*"[^"]*"' out.json || true)"
