@@ -304,6 +304,18 @@ and lsif_type = Type of type_ | Arrow of parameters * type_
 (* used in inheritance, to allow default value for metaclass *)
 and type_parent = argument
 
+(* python3.12: type parameter lists (PEP 695), with defaults (PEP 696):
+ * 'def f[T: int = bool, *Ts, **P]()'. A bound can be a tuple of
+ * constraints, as in 'T: (int, str)'. *)
+and type_parameter =
+  | TypeVar of name * type_ option (* bound *) * type_ option (* default *)
+  | TypeVarTuple of tok (* * *) * name * type_ option (* default *)
+  | ParamSpec of tok (* ** *) * name * type_ option (* default *)
+  (* sgrep-ext: *)
+  | TypeParamEllipsis of tok
+
+and type_parameters = type_parameter list bracket
+
 (*****************************************************************************)
 (* Pattern *)
 (*****************************************************************************)
@@ -390,9 +402,12 @@ type stmt =
   (* should be allowed just at the toplevel *)
   | FunctionDef of function_definition
   | ClassDef of class_definition
-  (* python3.12: 'type' statement (PEP 695), e.g. 'type IntList = list[int]'.
-   * No support yet for the generic form 'type X[T] = ...'. *)
-  | TypeAlias of tok (* 'type' *) * name (* alias *) * type_ (* value *)
+  (* python3.12: 'type' statement (PEP 695), e.g. 'type IntList = list[int]'. *)
+  | TypeAlias of
+      tok (* 'type' *)
+      * name (* alias *)
+      * type_parameters option
+      * type_ (* value *)
 
 and case_and_body =
   | CasesAndBody of case list * stmt list
@@ -435,6 +450,7 @@ and decorator = tok (* @ *) * expr
 and function_definition =
   tok (* 'def' *)
   * name (* name *)
+  * type_parameters option
   * parameters (* args *)
   * type_ option
   * (* return type *)
@@ -448,6 +464,7 @@ and function_definition =
 and class_definition =
   tok (* 'class' *)
   * name (* name *)
+  * type_parameters option
   * type_parent list (* bases *)
   * stmt list (* body *)
   * decorator list (* decorator_list *)

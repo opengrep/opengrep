@@ -84,6 +84,14 @@ let tuple_expr_store l =
     | Some Param -> e
     | _ -> expr_store e
 
+(* A starred element makes the index a tuple, even alone: 'x[*a]' is
+ * 'x[*a,]' (PEP 646). *)
+let is_starred_index (element : slice) : bool =
+  match element with
+  | Index (ExprStar _) -> true
+  | Index _
+  | Slice _ -> false
+
 let mk_str ii =
   let s = Tok.content_of_tok ii in
   Str (s, ii)
@@ -375,11 +383,11 @@ namedexpr_or_star_expr:
 (* Function definition *)
 (*************************************************************************)
 (* this rule is referenced in compound_stmt shown later *)
-funcdef: DEF NAME parameters return_type? ":" suite
-    { FunctionDef ($1, $2, $3, $4, $6, []) }
+funcdef: DEF NAME type_params? parameters return_type? ":" suite
+    { FunctionDef ($1, $2, $3, $4, $5, $7, []) }
 
-async_funcdef: ASYNC DEF NAME parameters return_type? ":" suite
-    { FunctionDef ($2, $3, $4, $5, $7, [] (* TODO $1 *)) }
+async_funcdef: ASYNC DEF NAME type_params? parameters return_type? ":" suite
+    { FunctionDef ($2, $3, $4, $5, $6, $8, [] (* TODO $1 *)) }
 
 (* typing-ext: *)
 return_type:
@@ -404,6 +412,8 @@ typed_parameter:
   (* TODO check default args come after variable args later *)
   | tfpdef "=" test { ParamDefault ($1, $3) }
   | "*" tfpdef      { ParamStar ($1, $2) }
+  (* python3.11+ (PEP 646): a starred annotation, '*args: *Ts' *)
+  | "*" NAME ":" star_expr { ParamStar ($1, ($2, Some $4)) }
   | "*"             { ParamSingleStar $1 }
   (* python3-ext: https://www.python.org/dev/peps/pep-0570/ *)
   | "/"             { ParamSlash $1 }
@@ -448,12 +458,31 @@ fplist:
   | fpdef            { [$1] }
   | fpdef "," fplist { $1::$3 }
 
+(*----------------------------*)
+(* type parameters *)
+(*----------------------------*)
+
+(* python3.12+ (PEP 695), with defaults (PEP 696) *)
+type_params: "[" list_comma(type_param) "]" { $1, $2, $3 }
+
+type_param:
+  | NAME type_param_bound? type_param_default? { TypeVar ($1, $2, $3) }
+  | "*" NAME                         { TypeVarTuple ($1, $2, None) }
+  | "*" NAME "=" test_or_star_expr   { TypeVarTuple ($1, $2, Some $4) }
+  | "**" NAME type_param_default?    { ParamSpec ($1, $2, $3) }
+  (* sgrep-ext: *)
+  | "..."           { Flag_parsing.sgrep_guard (TypeParamEllipsis $1) }
+
+type_param_bound: ":" test { $2 }
+
+type_param_default: "=" test { $2 }
+
 (*************************************************************************)
 (* Class definition *)
 (*************************************************************************)
 
-classdef: CLASS NAME arglist_paren_opt ":" suite
-  { ClassDef ($1, $2, $3, $5, []) }
+classdef: CLASS NAME type_params? arglist_paren_opt ":" suite
+  { ClassDef ($1, $2, $3, $4, $6, []) }
 
 arglist_paren_opt:
  | (* empty *) { [] }
@@ -557,10 +586,10 @@ assert_stmt:
   | ASSERT test          { Assert ($1, $2, None) }
   | ASSERT test "," test { Assert ($1, $2, Some $4) }
 
-(* python3.12+ (PEP 695): 'type' statement. No generics ('type X[T] = ...')
- * yet; see Parsing_hacks_python for how TYPE gets synthesized. *)
+(* python3.12+ (PEP 695): 'type' statement; see Parsing_hacks_python for
+ * how TYPE gets synthesized. *)
 type_alias_stmt:
-  | TYPE NAME "=" test { TypeAlias ($1, $2, $4) }
+  | TYPE NAME type_params? "=" test { TypeAlias ($1, $2, $3, $5) }
 
 compound_stmt:
   | if_stmt     { $1 }
@@ -581,17 +610,17 @@ compound_stmt:
 decorated:
   | decorator+ classdef {
      match $2 with
-     | ClassDef (t, a, b, c, d) -> ClassDef (t, a, b, c, $1 @ d)
+     | ClassDef (t, a, b, c, d, e) -> ClassDef (t, a, b, c, d, $1 @ e)
      | _ -> raise Impossible
    }
   | decorator+ funcdef {
      match $2 with
-     | FunctionDef (t, a, b, c, d, e) -> FunctionDef (t, a, b, c, d, $1 @ e)
+     | FunctionDef (t, a, b, c, d, e, f) -> FunctionDef (t, a, b, c, d, e, $1 @ f)
      | _ -> raise Impossible
    }
   | decorator+ async_funcdef {
      match $2 with
-     | FunctionDef (t, a, b, c, d, e) -> FunctionDef (t, a, b, c, d, $1 @ e)
+     | FunctionDef (t, a, b, c, d, e, f) -> FunctionDef (t, a, b, c, d, e, $1 @ f)
      | _ -> raise Impossible
   }
 
@@ -883,7 +912,7 @@ atom_and_trailers:
 
   | atom_and_trailers "[" list_comma(subscript)   "]"
       { match $3 with
-        | [s] -> Subscript ($1, ($2, [s], $4), Load)
+        | [s] when not (is_starred_index s) -> Subscript ($1, ($2, [s], $4), Load)
         | l ->
           (* Comma separated values within brackets as part of an array (or
            * other) access are treated as tuple elements, even when one or more
@@ -1073,6 +1102,8 @@ dictorset_elem:
 
 subscript:
   | test { Index ($1) }
+  (* python3.11+ (PEP 646): 'tuple[*Ts]' *)
+  | "*" test { Index (ExprStar $2) }
   | test? ":" test? { Slice ($1, $3, None) }
   | test? ":" test? ":" test? { Slice ($1, $3, $5) }
 

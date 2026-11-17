@@ -65,3 +65,8 @@ type = 5
 type AnotherAlias = str
 print(type)
 type YetAnother = float
+
+# type followed by [ is a subscript of 'type', not a generic alias
+type[int]
+t = type[x]
+type[x] = 5

@@ -523,6 +523,29 @@ and type_parent env v : G.class_parent =
   (* see argument code *)
   | _ -> raise Impossible
 
+and type_parameters (env : env) (v : type_parameters) : G.type_parameters =
+  bracket (list (type_parameter env)) v
+
+(* The constraints of a type variable, as in 'T: (int, str)', are kept as
+ * one bound, the tuple expression. *)
+and type_parameter (env : env) (v : type_parameter) : G.type_parameter =
+  let classic (id : name) (bound : type_ option) (default : type_ option) :
+      G.type_parameter_classic =
+    {
+      G.tp_id = name env id;
+      tp_attrs = [];
+      tp_bounds = bound |> Option.to_list |> list (type_ env);
+      tp_default = option (type_ env) default;
+      tp_variance = None;
+    }
+  in
+  match v with
+  | TypeVar (id, bound, default) -> G.TP (classic id bound default)
+  | TypeVarTuple (star, id, default) ->
+      G.TPVariadic (star, classic id None default)
+  | ParamSpec (pow, id, default) -> G.TPParamSpec (pow, classic id None default)
+  | TypeParamEllipsis tok -> G.TParamEllipsis tok
+
 and list_stmt1 env xs =
   match list (stmt env) xs with
   (* bugfix: We do not want actually to optimize and remove the
@@ -589,7 +612,7 @@ and fieldstmt x =
 
 and stmt_aux env x =
   match x with
-  | FunctionDef (t, v1, v2, v3, v4, v5) ->
+  | FunctionDef (t, v1, tparams, v2, v3, v4, v5) ->
       let fkind =
         match env.context with
         | InClass -> G.Method
@@ -597,11 +620,12 @@ and stmt_aux env x =
       in
       let env = { env with context = InFunctionOrMethod } in
       let v1 = name env v1
+      and tparams = option (type_parameters env) tparams
       and v2 = parameters env v2
       and v3 = option (type_ env) v3
       and v4 = list_stmt1 env v4
       and v5 = list (decorator env) v5 in
-      let ent = G.basic_entity v1 ~attrs:v5 in
+      let ent = G.basic_entity v1 ~attrs:v5 ?tparams in
       let def =
         {
           G.fparams = fb v2;
@@ -612,13 +636,14 @@ and stmt_aux env x =
         }
       in
       [ G.DefStmt (ent, G.FuncDef def) |> G.s ]
-  | ClassDef (v0, v1, v2, v3, v4) ->
+  | ClassDef (v0, v1, tparams, v2, v3, v4) ->
       let env = { env with context = InClass } in
       let v1 = name env v1
+      and tparams = option (type_parameters env) tparams
       and v2 = list (type_parent env) v2
       and v3 = list_stmt env v3
       and v4 = list (decorator env) v4 in
-      let ent = G.basic_entity v1 ~attrs:v4 in
+      let ent = G.basic_entity v1 ~attrs:v4 ?tparams in
       let def =
         {
           G.ckind = (G.Class, v0);
@@ -831,9 +856,11 @@ and stmt_aux env x =
   | ImportFrom (t, v1, v2) ->
       let v1 = module_name env v1 and v2 = list (alias env) v2 in
       [ G.DirectiveStmt (G.ImportFrom (t, v1, v2) |> G.d) |> G.s ]
-  | TypeAlias (t, v1, v2) ->
-      let v1 = name env v1 and v2 = type_ env v2 in
-      let ent = G.basic_entity v1 in
+  | TypeAlias (t, v1, tparams, v2) ->
+      let v1 = name env v1
+      and tparams = option (type_parameters env) tparams
+      and v2 = type_ env v2 in
+      let ent = G.basic_entity v1 ?tparams in
       let st = G.DefStmt (ent, G.TypeDef { G.tbody = G.AliasType v2 }) |> G.s in
       (* The 'type' keyword is not otherwise part of the generic AST, so set
        * the range explicitly to cover the whole statement. *)

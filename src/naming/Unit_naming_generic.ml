@@ -646,6 +646,24 @@ let tests parse_program =
               Alcotest.failf
                 "expected one class and three uses of Foo, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "python type parameters are in scope in the body, not in decorators"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/python/type_parameter_scope.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment, the uses in the bodies of f,
+             C.m and K.run, the use at the top level. *)
+          check_resolutions ast "T"
+            [ "Global"; "Parameter"; "Parameter"; "Parameter"; "Global" ];
+          Alcotest.(check (list string))
+            "the decorators refer to the global"
+            [ "Global"; "Global"; "Global" ]
+            (attribute_resolutions_of_name ast "T"
+            |> List.map kind_of_resolution));
       t "java annotation of a generic class is outside its type parameters"
         (fun () ->
           let file =

@@ -106,22 +106,53 @@ let block_starts_with_case xs =
       | _ -> false)
   | _ -> false
 
-(* Scan forward at paren depth [depth] looking for a match-header COLON.
+(* The replacement field of an f-string opens with FSTRING_LBRACE and
+ * closes with RBRACE. *)
+let is_opening_bracket (tok : T.token) : bool =
+  match tok with
+  | T.LPAREN _
+  | T.LBRACK _
+  | T.LBRACE _
+  | T.FSTRING_LBRACE _ ->
+      true
+  | _ -> false
+
+let is_closing_bracket (tok : T.token) : bool =
+  match tok with
+  | T.RPAREN _
+  | T.RBRACK _
+  | T.RBRACE _ ->
+      true
+  | _ -> false
+
+(* The tokens after the bracket that closes the [depth] brackets already
+ * open, or [None] if a NEWLINE or EOF comes first. The lexer turns a
+ * newline inside brackets into TCommentSpace, so in valid input no NEWLINE
+ * comes before the closing bracket. *)
+let rec after_closing_bracket (depth : int) (toks : T.token list) :
+    T.token list option =
+  match toks with
+  | [] -> None
+  | t :: xs when is_opening_bracket t -> after_closing_bracket (depth + 1) xs
+  | t :: xs when is_closing_bracket t ->
+      if depth <= 1 then Some xs else after_closing_bracket (depth - 1) xs
+  | (T.NEWLINE _ | T.EOF _) :: _ -> None
+  | _ :: xs -> after_closing_bracket depth xs
+
+(* Scan forward looking for a match-header COLON outside brackets.
  * Returns [Some xs] where [xs] are the tokens after the colon, or [None]
  * if we reach a top-level NEWLINE / EOF first (i.e. not a header line).
  *)
-let rec find_header_after_colon depth = function
+let rec find_header_after_colon (toks : T.token list) : T.token list option =
+  match toks with
   | [] -> None
-  | (T.LPAREN _ | T.LBRACK _ | T.LBRACE _) :: xs ->
-      find_header_after_colon (depth + 1) xs
-  | (T.RPAREN _ | T.RBRACK _ | T.RBRACE _) :: xs when depth > 0 ->
-      find_header_after_colon (depth - 1) xs
+  | t :: xs when is_opening_bracket t ->
+      Option.bind (after_closing_bracket 1 xs) find_header_after_colon
   (* unbalanced closer at top level: malformed, bail out *)
-  | (T.RPAREN _ | T.RBRACK _ | T.RBRACE _) :: _ -> None
-  | T.COLON _ :: xs when depth = 0 -> Some xs
-  | T.NEWLINE _ :: _ when depth = 0 -> None
-  | T.EOF _ :: _ -> None
-  | _ :: xs -> find_header_after_colon depth xs
+  | t :: _ when is_closing_bracket t -> None
+  | T.COLON _ :: xs -> Some xs
+  | (T.NEWLINE _ | T.EOF _) :: _ -> None
+  | _ :: xs -> find_header_after_colon xs
 
 (* True iff the current indent [depth] is exactly one level under the
  * innermost active match body, which is where a statement-start
@@ -152,7 +183,7 @@ let rec rewrite depth match_depths prev_bound = function
       in
       T.DEDENT ii :: rewrite depth' match_depths' true xs
   | (T.NAME ("match", ii) as t) :: xs when prev_bound -> (
-      match find_header_after_colon 0 xs with
+      match find_header_after_colon xs with
       | Some after when block_starts_with_case after ->
           T.MATCH ii :: rewrite depth (depth :: match_depths) false xs
       | _ -> t :: rewrite depth match_depths false xs)
@@ -171,16 +202,26 @@ let rewrite_match_case toks = rewrite 0 [] true toks
 (* Soft keyword: type (PEP 695 'type' statement)                             *)
 (*****************************************************************************)
 (* Mirrors rewrite_match_case above: rewrite NAME("type") to TYPE only when
- * it unambiguously heads a `type X = ...` statement (not `type(x)`,
- * `type = 5`, or the unsupported generic `type X[T] = ...`).
+ * it unambiguously heads a `type X = ...` or `type X[T] = ...` statement
+ * (not `type(x)`, `type = 5` or `type[x] = 5`). Two names in a row are not
+ * an expression, so `type X` at the start of a statement has no other
+ * reading.
  *)
 
-let starts_type_alias xs =
-  match skip_trivia xs with
+let starts_with_eq (toks : T.token list) : bool =
+  match skip_trivia toks with
+  | T.EQ _ :: _ -> true
+  | _ -> false
+
+let starts_type_alias (toks : T.token list) : bool =
+  match skip_trivia toks with
   | T.NAME _ :: xs -> (
       match skip_trivia xs with
-      | T.EQ _ :: _ -> true
-      | _ -> false)
+      | T.LBRACK _ :: xs -> (
+          match after_closing_bracket 1 xs with
+          | Some rest -> starts_with_eq rest
+          | None -> false)
+      | xs -> starts_with_eq xs)
   | _ -> false
 
 let rec rewrite_type_alias_aux prev_bound = function
