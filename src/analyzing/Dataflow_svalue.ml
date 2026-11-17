@@ -513,7 +513,7 @@ and do_lambdas lang lambdas in_env node =
 and fixpoint_with_env lang enter_env fun_cfg =
   let flow = fun_cfg.cfg in
   let mapping, timeout =
-    DataflowX.fixpoint ~iteration:Dataflow_core.Worklist
+    DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order
       ~timeout:Limits_semgrep.svalue_prop_FIXPOINT_TIMEOUT
       ~eq_env:(Var_env.eq_env Eval.eq)
       ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
