@@ -186,6 +186,14 @@ let any_of_orig = function
   | Related any -> any
   | NoOrig -> G.Anys []
 
+(* The AST function definition that an IL function definition is lowered
+   from, so that the IL definition can be traced back to it. It is printed as
+   a placeholder, to keep -dump_il readable. *)
+type function_orig = G.function_definition [@@deriving ord]
+
+let pp_function_orig (fmt : Format.formatter) (_ : function_orig) : unit =
+  Format.pp_print_string fmt "<function_orig>"
+
 (*****************************************************************************)
 (* Parameters and arguments *)
 (*****************************************************************************)
@@ -238,6 +246,7 @@ class virtual ['self] iter_parent =
         self#visit_tok env tok
 
     method visit_orig _env _orig = ()
+    method visit_function_orig _env _function_orig = ()
 
     method visit_param env param =
       match param with
@@ -478,6 +487,7 @@ and function_definition = {
   fparams : param list;
   frettype : G.type_ option;
   fbody : stmt list;
+  forig : function_orig;
 }
 
 (*****************************************************************************)
