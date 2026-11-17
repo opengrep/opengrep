@@ -277,9 +277,12 @@ let extract_specs_for_rule
           in
           match
             Match_taint_spec.source_sink_matches_of_taint_rule
-              ~per_file_formula_cache:formula_cache
-              ~lazy_linecol:(lazy (Pos.full_converters_large target.abs_path))
-              xconf (Fpath.to_string target.abs_path) (ast, []) rule
+              ~per_file_formula_cache:formula_cache xconf
+              (Match_taint_spec.xtarget_of_file
+                 ~lazy_linecol:
+                   (lazy (Pos.full_converters_large target.abs_path))
+                 target.abs_path (ast, []) rule)
+              rule
           with
           | exception exn ->
             (* contained to the file: its sources and sinks are missing *)
@@ -408,8 +411,10 @@ let init_file
     match Hashtbl.find_opt spec_matches abs_file with
     | Some source_sink_matches ->
       Match_taint_spec.complete_spec_matches
-        ~per_file_formula_cache:formula_cache ~lazy_linecol xconf'
-        (Fpath.to_string file_path) (ast, []) rule source_sink_matches
+        ~per_file_formula_cache:formula_cache xconf'
+        (Match_taint_spec.xtarget_of_file ~lazy_linecol file_path (ast, [])
+           rule)
+        rule source_sink_matches
       |> fst
       |> Match_taint_spec.taint_config_of_spec_matches ~allow_partial:true
            xconf' lang file_path rule

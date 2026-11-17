@@ -13,7 +13,6 @@
  * LICENSE for more details.
  *)
 open Common
-open Fpath_.Operators
 module Log = Log_tainting.Log
 module G = AST_generic
 module ME = Matching_explanation
@@ -237,11 +236,9 @@ let xtarget_of_file ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t)
     project_root = None;
   }
 
-let source_sink_matches_of_taint_rule ~per_file_formula_cache
-    ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t) xconf file
-    ast_and_errors ({ mode = `Taint spec; _ } as rule : R.taint_rule) :
+let source_sink_matches_of_taint_rule ~per_file_formula_cache xconf
+    (xtarget : Xtarget.t) ({ mode = `Taint spec; _ } as rule : R.taint_rule) :
     source_sink_matches =
-  let file = Fpath.v file in
   let formula_cache = per_file_formula_cache in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
   (* Issue #499 gap B, same-file half: [apply_fn(sink, source())] never
@@ -255,9 +252,8 @@ let source_sink_matches_of_taint_rule ~per_file_formula_cache
      xconf.config.symbolic_propagation
      && (xconf.config.taint_intrafile || xconf.config.taint_interfile)
    then
-     let ast, _skipped_tokens = ast_and_errors in
+     let ast, _skipped_tokens = Lazy.force xtarget.lazy_ast_and_errors in
      Callback_svalue.stamp_program ast);
-  let xtarget = xtarget_of_file ~lazy_linecol file ast_and_errors rule in
   let (sources_ranges : (RM.t * R.taint_source) list), expls_sources =
     find_sources_ranges formula_cache xconf xtarget rule spec
   in
@@ -271,9 +267,8 @@ let source_sink_matches_of_taint_rule ~per_file_formula_cache
     sink_explanations = expls_sinks;
   }
 
-let complete_spec_matches ~per_file_formula_cache
-    ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t) xconf file
-    ast_and_errors ({ mode = `Taint spec; _ } as rule : R.taint_rule)
+let complete_spec_matches ~per_file_formula_cache xconf
+    (xtarget : Xtarget.t) ({ mode = `Taint spec; _ } as rule : R.taint_rule)
     ({
        sources = sources_ranges;
        sinks = sinks_ranges;
@@ -281,10 +276,8 @@ let complete_spec_matches ~per_file_formula_cache
        sink_explanations = expls_sinks;
      } :
       source_sink_matches) : spec_matches * ME.t list =
-  let file = Fpath.v file in
   let formula_cache = per_file_formula_cache in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
-  let xtarget = xtarget_of_file ~lazy_linecol file ast_and_errors rule in
   let (propagators_ranges : propagator_match list) =
     find_propagators_matches formula_cache xconf xtarget rule spec.propagators
   in
@@ -372,10 +365,11 @@ let complete_spec_matches ~per_file_formula_cache
 let spec_matches_of_taint_rule ~per_file_formula_cache
     ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t) xconf file
     ast_and_errors (rule : R.taint_rule) : spec_matches * ME.t list =
-  source_sink_matches_of_taint_rule ~per_file_formula_cache ~lazy_linecol xconf
-    file ast_and_errors rule
-  |> complete_spec_matches ~per_file_formula_cache ~lazy_linecol xconf file
-       ast_and_errors rule
+  let xtarget =
+    xtarget_of_file ~lazy_linecol (Fpath.v file) ast_and_errors rule
+  in
+  source_sink_matches_of_taint_rule ~per_file_formula_cache xconf xtarget rule
+  |> complete_spec_matches ~per_file_formula_cache xconf xtarget rule
 
 (*****************************************************************************)
 (* Testing whether a an AST node matches a taint spec *)
@@ -489,13 +483,26 @@ let mk_taint_spec_match_preds rule matches =
 
 let default_effect_handler _fun_name new_effects = new_effects
 
+(* A taint instance needs a source and a sink, unless [allow_partial]. *)
+let lacks_source_or_sink ~(allow_partial : bool) (sources : 'source list)
+    (sinks : 'sink list) : bool =
+  (not allow_partial)
+  &&
+  match (sources, sinks) with
+  | [], _
+  | _, [] ->
+      true
+  | _ :: _, _ :: _ -> false
+
 let taint_config_of_spec_matches
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
     xconf lang file ({ mode = `Taint spec; _ } as rule : R.taint_rule)
     (spec_matches : spec_matches) : Taint_rule_inst.t option =
   match spec_matches with
   | { sinks = []; sources = []; sanitizers = []; propagators = [] } -> None
-  | { sinks = []; _ } | { sources = []; _ } when not allow_partial -> None
+  | { sources; sinks; _ } when lacks_source_or_sink ~allow_partial sources sinks
+    ->
+      None
   | spec_matches ->
       let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
       let options = xconf.config in
@@ -521,11 +528,20 @@ let taint_config_of_rule ~per_file_formula_cache
     ~(lazy_linecol : Pos.bytepos_linecol_converters Lazy.t)
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
     xconf lang file ast_and_errors (rule : R.taint_rule) =
-  let spec_matches, expls =
-    spec_matches_of_taint_rule ~per_file_formula_cache ~lazy_linecol xconf
-      !!file ast_and_errors rule
+  let xtarget = xtarget_of_file ~lazy_linecol file ast_and_errors rule in
+  let source_sink : source_sink_matches =
+    source_sink_matches_of_taint_rule ~per_file_formula_cache xconf xtarget rule
   in
-  taint_config_of_spec_matches ~handle_effects ~allow_partial xconf lang file
-    rule spec_matches
-  |> Option.map (fun inst -> (inst, spec_matches, expls))
+  (* Without a source or a sink there is no instance, so the propagators and
+     sanitizers are not matched. *)
+  if lacks_source_or_sink ~allow_partial source_sink.sources source_sink.sinks
+  then None
+  else
+    let spec_matches, expls =
+      complete_spec_matches ~per_file_formula_cache xconf xtarget
+        rule source_sink
+    in
+    taint_config_of_spec_matches ~handle_effects ~allow_partial xconf lang file
+      rule spec_matches
+    |> Option.map (fun inst -> (inst, spec_matches, expls))
 [@@trace_trace]

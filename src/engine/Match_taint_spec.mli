@@ -68,14 +68,22 @@ val taint_config_of_spec_matches :
   spec_matches ->
   Taint_rule_inst.t option
 
+(* The target of a rule's spec matching: the file, its AST and its bytes,
+   read when a pattern needs them. Both halves of the spec matching of a file
+   take the same target. *)
+val xtarget_of_file :
+  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
+  Fpath.t ->
+  AST_generic.program * Tok.location list ->
+  Rule.taint_rule ->
+  Xtarget.t
+
 (* The first half of [spec_matches_of_taint_rule]: the matches of the
    sources and sinks, which decide whether a file takes part in the rule. *)
 val source_sink_matches_of_taint_rule :
   per_file_formula_cache:Formula_cache.t ->
-  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
   Match_env.xconfig ->
-  string ->
-  AST_generic.program * Tok.location list ->
+  Xtarget.t ->
   Rule.taint_rule ->
   source_sink_matches
 
@@ -84,10 +92,8 @@ val source_sink_matches_of_taint_rule :
    sinks. *)
 val complete_spec_matches :
   per_file_formula_cache:Formula_cache.t ->
-  lazy_linecol:Pos.bytepos_linecol_converters Lazy.t ->
   Match_env.xconfig ->
-  string ->
-  AST_generic.program * Tok.location list ->
+  Xtarget.t ->
   Rule.taint_rule ->
   source_sink_matches ->
   spec_matches * Matching_explanation.t list
