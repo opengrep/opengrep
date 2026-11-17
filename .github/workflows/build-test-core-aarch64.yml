@@ -25,9 +25,6 @@ jobs:
         with:
           submodules: true
 
-      - name: Configure git safedir properly
-        run: git config --global --add safe.directory $(pwd)
-
       - name: Compute OPAM cache fingerprint
         run: ./scripts/opam-cache-fingerprint.sh
 
@@ -57,9 +54,9 @@ jobs:
             sh -c \
             "set -e;
              mkdir -p _opam;
-             chown -R root:root /workspace/_opam;
+             chown -R root:root /workspace;
              ./scripts/workflow-build-inside-alpine-container.sh;
-             chown -R $(id -u):$(id -g) /workspace/_opam"
+             chown -R $(id -u):$(id -g) /workspace"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -79,9 +76,9 @@ jobs:
           name: opengrep-linux-aarch64
           path: opengrep.tgz
 
-  build-test-manylinux-aarch64:
+  test-binary-glibc-aarch64:
     needs:
       - build-core
-    uses: ./.github/workflows/build-test-manylinux.yml
+    uses: ./.github/workflows/test-binary-glibc.yml
     with:
       arch: aarch64
