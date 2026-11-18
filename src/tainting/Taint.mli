@@ -190,6 +190,14 @@ val show_taint : taint -> string
 val compare_lval : lval -> lval -> int
 val compare_taint : taint -> taint -> int
 
+val length_of_call_trace : 'a call_trace -> int
+(** The number of calls of a call trace. *)
+
+val shorter_trace : taint -> taint -> bool
+(** Whether the first of two taints that [compare_taint] equates has a
+    shorter trace than the second: a source by the calls of its call trace,
+    then by its tokens. *)
+
 (*****************************************************************************)
 (* Taint sets *)
 (*****************************************************************************)
@@ -224,6 +232,14 @@ module Taint_set : sig
       be equal (taint identity ignores guards, so plain [equal] treats a
       guard-only refinement as unchanged). For stability and insertion no-op
       checks over guard-bearing sets. *)
+
+  val merge_preconditions : taint -> taint -> taint * taint
+  (** The two taints, which [compare_taint] equates, each with the
+      precondition of the two merged, as [add] merges them. *)
+
+  val shorter_traces : t -> t -> bool
+  (** Whether a taint of the first set has a shorter trace than the taint of
+      the second set with the same identity. *)
 
   val compare : t -> t -> int
   val singleton : taint -> t

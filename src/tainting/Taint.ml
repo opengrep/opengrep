@@ -407,6 +407,26 @@ let lift_taint (t : taint) : guarded_taint = { taint = t; guard = EG.top }
 let with_guard (g : EG.t) (gt : guarded_taint) : guarded_taint =
   { gt with guard = EG.compose_and gt.guard g }
 
+(* Whether the trace of [taint1] is shorter than that of [taint2], where
+   [compare_taint taint1 taint2 = 0]: a source by the calls of its call trace,
+   then by its tokens. *)
+let shorter_trace (taint1 : taint) (taint2 : taint) : bool =
+  match (taint1.orig, taint2.orig) with
+  | Src src1, Src src2 -> (
+      match
+        Int.compare
+          (length_of_call_trace src1.call_trace)
+          (length_of_call_trace src2.call_trace)
+      with
+      | 0 -> Taint_trace.fewer_tokens taint1.tokens taint2.tokens
+      | cmp -> cmp < 0)
+  | Var _, Var _
+  | Shape_var _, Shape_var _
+  | Control, Control ->
+      (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
+      Taint_trace.fewer_tokens taint1.tokens taint2.tokens
+  | (Src _ | Var _ | Shape_var _ | Control), _ -> false
+
 module Taint_set = struct
   (* NOTE "Taint sets"
    *
@@ -466,6 +486,16 @@ module Taint_set = struct
            EG.equal b1.guard b2.guard)
          (elements set1) (elements set2)
 
+  (* Whether a taint of [set1] has a shorter trace than the taint of [set2]
+     with the same identity. *)
+  let shorter_traces (set1 : t) (set2 : t) : bool =
+    Taints.exists
+      (fun (key : taint) (b1 : guarded_taint) ->
+        match Taints.find_opt key set2 with
+        | Some (b2 : guarded_taint) -> shorter_trace b1.taint b2.taint
+        | None -> false)
+      set1
+
   (* If two taints are "the same", we still want to pick "the best", e.g.
    * the one with the shortest trace.
    *
@@ -501,10 +531,7 @@ module Taint_set = struct
   (* Merge two bundles with the same taint identity: best taint by the
    * shortest-trace rule, guards fused disjunctively. Returns
    * [curr_bundle] physically when nothing changes, so [Taints.update]
-   * returns the map unchanged. (For [Src] taints [pick_best_taint]
-   * rebuilds the source to merge preconditions, so [best_taint] is never
-   * physically [curr_bundle.taint] and this shortcut only fires for
-   * [Var]/[Shape_var]/[Control].) *)
+   * returns the map unchanged. *)
   and merge_bundles alt_bundle curr_bundle =
     let best_taint = pick_best_taint alt_bundle.taint curr_bundle.taint in
     let merged_guard = EG.compose_or alt_bundle.guard curr_bundle.guard in
@@ -529,10 +556,19 @@ module Taint_set = struct
     match (taint1.orig, taint2.orig) with
     | Var _, Var _
     | Shape_var _, Shape_var _
-    | Control, Control ->
-        (* Polymorphic taint should only be intraprocedural so the call-trace is irrelevant. *)
-        if Taint_trace.fewer_tokens taint1.tokens taint2.tokens then taint1
-        else taint2
+    | Control, Control
+    | Src _, Src _ ->
+        let taint1, taint2 = merge_preconditions taint1 taint2 in
+        if shorter_trace taint1 taint2 then taint1 else taint2
+    | (Src _ | Var _ | Shape_var _ | Control), _ ->
+        Log.err (fun m ->
+            m "Taint_set.pick_taint: Ooops, the impossible happened!");
+        taint2
+
+  (* [taint1] and [taint2], where [compare_taint taint1 taint2 = 0], both with
+     the precondition of the two merged. *)
+  and merge_preconditions (taint1 : taint) (taint2 : taint) : taint * taint =
+    match (taint1.orig, taint2.orig) with
     | Src src1, Src src2 ->
         let precondition =
           (* We don't pick a precondition, but we merge them! *)
@@ -561,7 +597,7 @@ module Taint_set = struct
               let ts2' = of_list (List_.map lift_taint ts2) in
               if equal ts1' ts2' then
                 (* Optimization: prefer sharing. *)
-                Some (ts1, p1)
+                src1.precondition
               else
                 let ts =
                   union ts1' ts2' |> elements
@@ -569,24 +605,13 @@ module Taint_set = struct
                 in
                 Some (ts, p1)
         in
-        let taint1 = { taint1 with orig = Src { src1 with precondition } } in
-        let taint2 = { taint2 with orig = Src { src2 with precondition } } in
-        let call_trace_cmp =
-          Int.compare
-            (length_of_call_trace src1.call_trace)
-            (length_of_call_trace src2.call_trace)
+        (* A taint whose precondition does not change is kept as it is. *)
+        let with_precondition (taint : taint) (src : source) : taint =
+          if Common.phys_equal src.precondition precondition then taint
+          else { taint with orig = Src { src with precondition } }
         in
-        if call_trace_cmp < 0 then taint1
-        else if call_trace_cmp > 0 then taint2
-        else if
-          (* same length *)
-          Taint_trace.fewer_tokens taint1.tokens taint2.tokens
-        then taint1
-        else taint2
-    | (Src _ | Var _ | Shape_var _ | Control), _ ->
-        Log.err (fun m ->
-            m "Taint_set.pick_taint: Ooops, the impossible happened!");
-        taint2
+        (with_precondition taint1 src1, with_precondition taint2 src2)
+    | (Src _ | Var _ | Shape_var _ | Control), _ -> (taint1, taint2)
 
   (* Keep set1's bindings whose key is absent in set2. [Taints.filter]
      shares the subtrees it retains, where [Taints.merge] rebuilds the

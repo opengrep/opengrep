@@ -1,0 +1,19 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 35 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 t.py
+t.py
+
+  error  guarded-through-calls
+  tainted data reaches a sink
+
+    21: sink(make(1, source()))
+        │
+        ├─ source           21: sink(make(1, source()))
+        ├─ through call     21: sink(make(1, source()))
+        │  ├─ param             2: def make(a, x):
+        │  ├─ through          12: o = x
+        │  └─ return           18: return o
+        └─ sink             21: sink(make(1, source()))
+

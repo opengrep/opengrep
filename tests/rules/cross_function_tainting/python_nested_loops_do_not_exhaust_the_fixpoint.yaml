@@ -1,0 +1,10 @@
+rules:
+- id: python_nested_loops_do_not_exhaust_the_fixpoint
+  languages: [python]
+  message: tainted data reached sink
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

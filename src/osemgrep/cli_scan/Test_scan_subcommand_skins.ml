@@ -167,6 +167,23 @@ rules:
     severity: ERROR
 |}
 
+let guarded_through_rule =
+  {|
+rules:
+  - id: guarded-through-calls
+    mode: taint
+    options:
+      taint_intrafile: true
+      guarded_taint_signatures: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "tainted data reaches a sink"
+    languages: [python]
+    severity: ERROR
+|}
+
 let through_js_rule =
   {|
 rules:
@@ -236,6 +253,213 @@ def go():
     a = source()
     b = rec(3, a)
     sink(b)
+|}
+
+(* The same function with the recursive return before the other one. *)
+let recursive_return_first_py = {|
+def rec(i, x):
+    if i >= 0:
+        return rec(i - 1, x)
+    return x
+
+def go():
+    a = source()
+    b = rec(3, a)
+    sink(b)
+|}
+
+(* A recursive function that reaches a sink directly and through its
+   recursive call, the recursive call first. *)
+let recursive_sink_call_first_py = {|
+def rec(i, x):
+    if i >= 0:
+        rec(i - 1, x)
+    else:
+        sink(x)
+
+def go():
+    a = source()
+    rec(3, a)
+|}
+
+(* The same function with the sink first. *)
+let recursive_sink_first_py = {|
+def rec(i, x):
+    if i < 0:
+        sink(x)
+    else:
+        rec(i - 1, x)
+
+def go():
+    a = source()
+    rec(3, a)
+|}
+
+(* A recursive function that writes the taint to a global directly and
+   through its recursive call, the recursive call first. *)
+let recursive_global_write_call_first_py = {|
+g = None
+
+def rec(i, x):
+    global g
+    if i >= 0:
+        rec(i - 1, x)
+    else:
+        g = x
+
+def go():
+    a = source()
+    rec(3, a)
+    sink(g)
+|}
+
+(* The same function with the write first. *)
+let recursive_global_write_first_py = {|
+g = None
+
+def rec(i, x):
+    global g
+    if i < 0:
+        g = x
+    else:
+        rec(i - 1, x)
+
+def go():
+    a = source()
+    rec(3, a)
+    sink(g)
+|}
+
+(* Two returns of an object that hold callbacks with other guards, the
+   shorter path to the return first. *)
+let guarded_returns_shorter_first_py = {|
+def make(a, x):
+    if a == 1:
+        o = x
+        def first(b):
+            if b == 1:
+                return x
+            return ""
+        o.cb = first
+        return o
+    y = x
+    o = y
+    def second(b):
+        if b == 2:
+            return x
+        return ""
+    o.cb = second
+    return o
+
+def go():
+    sink(make(1, source()))
+|}
+
+(* The same function with the shorter path to the return second. *)
+let guarded_returns_shorter_second_py = {|
+def make(a, x):
+    if a == 1:
+        y = x
+        o = y
+        def first(b):
+            if b == 1:
+                return x
+            return ""
+        o.cb = first
+        return o
+    o = x
+    def second(b):
+        if b == 2:
+            return x
+        return ""
+    o.cb = second
+    return o
+
+def go():
+    sink(make(1, source()))
+|}
+
+(* Two chains of two calls to one sink, the chain with more steps inside
+   its calls called first. *)
+let sink_chains_longer_first_py = {|
+def s(v):
+    sink(v)
+
+def g(p):
+    a = p
+    b = a
+    c = b
+    s(c)
+
+def h(p):
+    s(p)
+
+def go():
+    x = source()
+    g(x)
+    h(x)
+|}
+
+(* The same calls with the chain with fewer steps called first. *)
+let sink_chains_shorter_first_py = {|
+def s(v):
+    sink(v)
+
+def g(p):
+    a = p
+    b = a
+    c = b
+    s(c)
+
+def h(p):
+    s(p)
+
+def go():
+    x = source()
+    h(x)
+    g(x)
+|}
+
+(* Two chains of two calls to one sink: the chain with fewer steps inside
+   its calls has more steps before them, and the longer whole path is
+   called first. *)
+let sink_chains_longer_path_first_py = {|
+def s(v):
+    sink(v)
+
+def g(p):
+    s(p)
+
+def h(p):
+    a = p
+    s(a)
+
+def go():
+    x = source()
+    y = x
+    z = y
+    g(z)
+    h(x)
+|}
+
+(* The same calls with the shorter whole path called first. *)
+let sink_chains_shorter_path_first_py = {|
+def s(v):
+    sink(v)
+
+def g(p):
+    s(p)
+
+def h(p):
+    a = p
+    s(a)
+
+def go():
+    x = source()
+    y = x
+    z = y
+    h(x)
+    g(z)
 |}
 
 (* Three nested calls that the taint goes through: each is drawn under the
@@ -361,6 +585,9 @@ let context_files : F.t list =
 
 let through_files (target : string) : F.t list =
   [ F.File ("rules.yml", through_rule); F.File ("t.py", target) ]
+
+let guarded_through_files (target : string) : F.t list =
+  [ F.File ("rules.yml", guarded_through_rule); F.File ("t.py", target) ]
 
 let nameless_call_files : F.t list =
   [ F.File ("rules.yml", through_js_rule); F.File ("l.js", nameless_call_js) ]
@@ -649,6 +876,52 @@ let tests (caps : caps) =
       t "simple with a recursive call that the taint goes through"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_trace narrow ~files:(through_files recursive_py) "simple");
+      t "simple with a recursive call whose recursive return comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_return_first_py) "simple");
+      t "simple with a recursive function whose recursive call reaches the sink first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_sink_call_first_py) "simple");
+      t "simple with a recursive function whose sink comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_sink_first_py) "simple");
+      t "simple with a recursive function whose recursive call writes the global first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_global_write_call_first_py) "simple");
+      t "simple with a recursive function whose global write comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files recursive_global_write_first_py) "simple");
+      t "simple with guarded returns whose shorter path comes first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(guarded_through_files guarded_returns_shorter_first_py)
+           "simple");
+      t "simple with guarded returns whose shorter path comes second"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(guarded_through_files guarded_returns_shorter_second_py)
+           "simple");
+      t "simple with two chains of equal calls to a sink, the longer called first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files sink_chains_longer_first_py) "simple");
+      t "simple with two chains of equal calls to a sink, the shorter called first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files sink_chains_shorter_first_py) "simple");
+      t "simple with two chains of equal calls to a sink, the longer whole path called first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files sink_chains_longer_path_first_py) "simple");
+      t "simple with two chains of equal calls to a sink, the shorter whole path called first"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_trace narrow
+           ~files:(through_files sink_chains_shorter_path_first_py) "simple");
       t "simple with nested calls that the taint goes through"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_trace narrow ~files:(through_files nested_calls_py) "simple");

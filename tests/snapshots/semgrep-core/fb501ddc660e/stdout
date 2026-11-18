@@ -1,0 +1,19 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 t.py
+t.py
+
+  error  through-calls
+  tainted data reaches a sink
+
+    14: sink(g)
+        │
+        ├─ source           12: a = source()
+        ├─ through          12: a = source()
+        ├─ through call     13: rec(3, a)
+        │  ├─ param             4: def rec(i, x):
+        │  └─ through           9: g = x
+        └─ sink             14: sink(g)
+

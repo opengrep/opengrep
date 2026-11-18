@@ -178,6 +178,19 @@ module rec Shape : sig
       test; identity and fusion keying keep using [equal_cell]. *)
 
   val equal_shape : shape -> shape -> bool
+
+  val equal_shape_with_guards : shape -> shape -> bool
+  (** Like [equal_shape], with guards compared as [equal_cell_with_guards]
+      compares them. *)
+
+  val conjoin_guard_in_shape : Effect_guard.t -> shape -> shape
+  (** The shape with the guard conjoined into the guards of the effects of
+      each of its [Fun] shapes. *)
+
+  val join_equal_shapes : shape -> shape -> shape
+  (** The join of two shapes that [compare_shape] equates: the taints and
+      the effects of both, each with its own guards. *)
+
   val compare_shape : shape -> shape -> int
   val show_cell : cell -> string
   val show_shape : shape -> string
@@ -268,6 +281,81 @@ end = struct
 
   let equal_cell_with_guards cell1 cell2 =
     equal_cell_with_guards_depth 0 cell1 cell2
+
+  let equal_shape_with_guards (shape1 : shape) (shape2 : shape) : bool =
+    equal_shape_with_guards_depth 0 shape1 shape2
+
+  (*************************************)
+  (* Guards in shapes *)
+  (*************************************)
+
+  let rec contains_fun (shape : shape) : bool =
+    match shape with
+    | Bot
+    | Arg _ ->
+        false
+    | Fun _ -> true
+    | Obj obj ->
+        Fields.exists (fun _ (Cell (_, shape) : cell) -> contains_fun shape) obj
+
+  let rec conjoin_guard_in_fun_shapes (guard : Effect_guard.t) (shape : shape)
+      : shape =
+    match shape with
+    | Bot
+    | Arg _ ->
+        shape
+    | Obj obj ->
+        Obj
+          (Fields.map
+             (fun (Cell (xtaint, shape) : cell) ->
+               Cell (xtaint, conjoin_guard_in_fun_shapes guard shape))
+             obj)
+    | Fun sig_ ->
+        Fun
+          {
+            sig_ with
+            effects = Effects.map (Effect.add_guards guard) sig_.effects;
+          }
+
+  let conjoin_guard_in_shape (guard : Effect_guard.t) (shape : shape) : shape =
+    if contains_fun shape then conjoin_guard_in_fun_shapes guard shape
+    else shape
+
+  (* [compare_shape] equates the two shapes, so they have the same
+     constructors, fields, taint identities and effect identities. *)
+  let rec join_equal_cells (cell1 : cell) (cell2 : cell) : cell =
+    let (Cell (xtaint1, shape1)) = cell1 in
+    let (Cell (xtaint2, shape2)) = cell2 in
+    let xtaint =
+      match (xtaint1, xtaint2) with
+      | `Tainted taints1, `Tainted taints2 ->
+          `Tainted (T.Taint_set.union taints1 taints2)
+      | (`Tainted _ | `None | `Clean), _ -> xtaint1
+    in
+    Cell (xtaint, join_equal_shapes shape1 shape2)
+
+  and join_equal_shapes (shape1 : shape) (shape2 : shape) : shape =
+    match (shape1, shape2) with
+    | Obj obj1, Obj obj2 ->
+        Obj
+          (Fields.union
+             (fun _ (cell1 : cell) (cell2 : cell) ->
+               Some (join_equal_cells cell1 cell2))
+             obj1 obj2)
+    | Fun sig1, Fun sig2 ->
+        (* Two lambdas bind different IL names, so neither [params_il]
+           anchors the guards of the other's effects; as for a signature
+           merged from several implementations, the join has none. *)
+        Fun
+          {
+            params = sig1.params;
+            params_il =
+              (if Signature.equal_params_il sig1.params_il sig2.params_il then
+                 sig1.params_il
+               else []);
+            effects = Effects.union sig1.effects sig2.effects;
+          }
+    | (Bot | Obj _ | Arg _ | Fun _), _ -> shape1
 
   (*************************************)
   (* Comparison *)
@@ -469,18 +557,26 @@ and Effect : sig
   (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with every
       guard-bearing payload fused disjunctively: the effect-level guard, the
       per-item [ToSink] guards, and the bundle guards inside the [Taints.t]
-      payloads. The fused effect applies iff either of the two would. *)
+      payloads. The fused effect applies iff either of the two would. Where
+      [e2] has the shorter trace, it takes [e2]'s [ToSink] item, its
+      [ToReturn] taint and [return_tok], or its [ToLval] taint. *)
 
   val guards_equal : t -> t -> bool
   (** Whether two identity-equal effects carry the same guards in every
       guard-bearing payload. Insertion no-op checks and fixpoint stability
       tests must use this; effect identity ([compare]) is guard-blind. *)
 
+  val shorter_trace : t -> t -> bool
+  (** Whether the first of two identity-equal [ToSink], [ToReturn] or [ToLval]
+      effects has a shorter path for one of its taints than the second. *)
+
   val show : ?truncate_guards:bool -> t -> string
 
   val add_guards : Effect_guard.t -> t -> t
   (** [add_guards g eff] returns [eff] with [g] composed via [And] into its
-      [guards] field. [Effect_guard.top] returns [eff] unchanged. Used by the
+      [guards] field, and for [ToReturn] into the effects of the [Fun]
+      shapes of its [data_shape]. [Effect_guard.top] returns [eff]
+      unchanged. Used by the
       transfer when stamping effects with the branch context they were
       recorded under. *)
 
@@ -745,7 +841,12 @@ end = struct
       | ToSink tts ->
           ToSink { tts with guards = Effect_guard.compose_and tts.guards g }
       | ToReturn ttr ->
-          ToReturn { ttr with guards = Effect_guard.compose_and ttr.guards g }
+          ToReturn
+            {
+              ttr with
+              guards = Effect_guard.compose_and ttr.guards g;
+              data_shape = Shape.conjoin_guard_in_shape g ttr.data_shape;
+            }
       | ToLval ttl ->
           ToLval { ttl with guards = Effect_guard.compose_and ttl.guards g }
       | ToSinkInCall r ->
@@ -758,19 +859,54 @@ end = struct
     | ToLval { guards; _ } -> guards
     | ToSinkInCall { guards; _ } -> guards
 
+  (* Whether the path of [item1] to its sink is shorter than that of
+     [item2], an identity-equal item: by the calls of the sink trace, then by
+     the tokens of the whole path, those of the taint's trace and those
+     inside the calls, then by the trace of the taint. *)
+  let shorter_sink_path (item1 : taint_to_sink_item)
+      (item2 : taint_to_sink_item) : bool =
+    let rec tokens_in_calls (acc : int) (trace : unit T.call_trace) : int =
+      match trace with
+      | T.PM _ -> acc
+      | T.Call (_, inside, rest) ->
+          tokens_in_calls (acc + Taint_trace.size inside) rest
+    in
+    let path_tokens (item : taint_to_sink_item) : int =
+      tokens_in_calls (Taint_trace.size item.taint.tokens) item.sink_trace
+    in
+    match
+      Int.compare
+        (T.length_of_call_trace item1.sink_trace)
+        (T.length_of_call_trace item2.sink_trace)
+    with
+    | 0 -> (
+        match Int.compare (path_tokens item1) (path_tokens item2) with
+        | 0 -> T.shorter_trace item1.taint item2.taint
+        | cmp -> cmp < 0)
+    | cmp -> cmp < 0
+
   (* Precondition: [compare e1 e2 = 0], so both are the same constructor.
    * The fused effect applies iff either input would, hence the [Or]. *)
   let fuse_guards e1 e2 =
     match (e1, e2) with
     | ToSink tts1, ToSink tts2 ->
         (* [compare e1 e2 = 0] gives pairwise identity-equal items in the same
-         * order, so the per-item guards fuse positionally. *)
+         * order, so the per-item guards fuse positionally. Each item keeps
+         * the shorter of the two paths to the sink, with the preconditions
+         * of the two merged. *)
         let items1, pre = tts1.taints_with_precondition in
         let items2, _ = tts2.taints_with_precondition in
         let items =
           List.map2
             (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
-              { i1 with guard = Effect_guard.compose_or i1.guard i2.guard })
+              let taint1, taint2 =
+                Taints.merge_preconditions i1.taint i2.taint
+              in
+              let i1 = { i1 with taint = taint1 } in
+              let i2 = { i2 with taint = taint2 } in
+              let shorter = if shorter_sink_path i2 i1 then i2 else i1 in
+              { shorter with
+                guard = Effect_guard.compose_or i1.guard i2.guard })
             items1 items2
         in
         ToSink
@@ -781,9 +917,27 @@ end = struct
         (* [Taints.union] fuses identity-equal bundles' guards via
          * [compose_or]; on identity-equal sets that is exactly per-bundle
          * guard fusion. *)
+        (* The fused effect keeps the [return_tok] of [ttr1] unless [ttr2]
+         * has shorter data traces, so that the return belongs to the path
+         * of the data taints. Shapes that differ in their guards, such as
+         * two returned callbacks, are joined: [add_guards] has conjoined
+         * the guards of each effect into its shape. *)
+        let kept =
+          if Taints.shorter_traces ttr2.data_taints ttr1.data_taints then ttr2
+          else ttr1
+        in
+        let data_shape =
+          if
+            phys_equal ttr1.data_shape ttr2.data_shape
+            || Shape.equal_shape_with_guards ttr1.data_shape ttr2.data_shape
+          then
+            kept.data_shape
+          else Shape.join_equal_shapes ttr1.data_shape ttr2.data_shape
+        in
         ToReturn
-          { ttr1 with
-            data_taints = Taints.union ttr1.data_taints ttr2.data_taints;
+          { kept with
+            data_shape;
+            data_taints = Taints.union ttr2.data_taints ttr1.data_taints;
             control_taints =
               Taints.union ttr1.control_taints ttr2.control_taints;
             guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
@@ -834,6 +988,8 @@ end = struct
     | ToReturn ttr1, ToReturn ttr2 ->
         Taints.equal_with_guards ttr1.data_taints ttr2.data_taints
         && Taints.equal_with_guards ttr1.control_taints ttr2.control_taints
+        && (phys_equal ttr1.data_shape ttr2.data_shape
+           || Shape.equal_shape_with_guards ttr1.data_shape ttr2.data_shape)
     | ToLval ttl1, ToLval ttl2 ->
         Taints.equal_with_guards ttl1.taints ttl2.taints
     | ToSinkInCall c1, ToSinkInCall c2 ->
@@ -847,6 +1003,17 @@ end = struct
             | (IL.Unnamed _ | IL.Named _), _ -> true)
           c1.args_taints c2.args_taints
     | _ -> true
+
+  let shorter_trace (e1 : t) (e2 : t) : bool =
+    match (e1, e2) with
+    | ToSink tts1, ToSink tts2 ->
+        List.exists2 shorter_sink_path
+          (fst tts1.taints_with_precondition)
+          (fst tts2.taints_with_precondition)
+    | ToReturn ttr1, ToReturn ttr2 ->
+        Taints.shorter_traces ttr1.data_taints ttr2.data_taints
+    | ToLval ttl1, ToLval ttl2 -> Taints.shorter_traces ttl1.taints ttl2.taints
+    | (ToSink _ | ToReturn _ | ToLval _ | ToSinkInCall _), _ -> false
 end
 
 and Effects : sig
@@ -882,13 +1049,20 @@ end = struct
    * clause-set dedup), so the dataflow fixpoint still reaches a fixed
    * point; it compares every guard-bearing payload, not just the
    * effect-level guard — an item- or bundle-guard-only refinement must
-   * not be discarded. *)
+   * not be discarded. An effect with a shorter trace for one of the taints
+   * that [Effect.shorter_trace] compares replaces the stored one too, so a
+   * shorter trace recorded later is kept; of two traces of equal length,
+   * the stored one stays. Traces only shorten, so this happens finitely
+   * often. *)
   let add eff set =
     match find_opt eff set with
     | None -> add eff set
     | Some existing ->
         let fused = Effect.fuse_guards existing eff in
-        if Effect.guards_equal fused existing then set
+        if
+          Effect.guards_equal fused existing
+          && not (Effect.shorter_trace eff existing)
+        then set
         else add fused (remove existing set)
 
   let union s1 s2 =
@@ -997,6 +1171,10 @@ and Signature : sig
       test, via [Shape.equal_cell_with_guards] on [Fun] shapes. *)
 
   val compare : t -> t -> int
+
+  val equal_params_il : IL.param list -> IL.param list -> bool
+  (** Whether two parameter lists bind the same IL names, in order. *)
+
   val of_IL_params : IL.param list -> params
   val show_params : params -> string
   val show : ?truncate_guards:bool -> t -> string
@@ -1024,6 +1202,18 @@ end = struct
     | Other -> "_?"
 
   let equal_params params1 params2 = List.equal equal_param params1 params2
+
+  let equal_params_il (params_il1 : IL.param list)
+      (params_il2 : IL.param list) : bool =
+    List.equal
+      (fun (param1 : IL.param) (param2 : IL.param) ->
+        match
+          (IL_helpers.pname_of_param param1, IL_helpers.pname_of_param param2)
+        with
+        | None, None -> true
+        | Some name1, Some name2 -> IL.equal_name name1 name2
+        | _ -> false)
+      params_il1 params_il2
 
   let compare_params params1 params2 =
     List.compare compare_param params1 params2

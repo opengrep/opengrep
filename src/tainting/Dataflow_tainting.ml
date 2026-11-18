@@ -165,15 +165,18 @@ let propagate_through_indexes env =
 let add_taints_from_shape shape =
   Taints.union (Shape.gather_all_taints_in_shape shape)
 
-let log_timeout_warning (taint_inst : Taint_rule_inst.t) opt_name timeout =
-  match timeout with
+let log_unstable_loop (taint_inst : Taint_rule_inst.t)
+    (opt_name : IL.name option) (status : [ `Ok | `Timeout ]) : unit =
+  match status with
   | `Ok -> ()
   | `Timeout ->
       (* nosemgrep: no-logs-in-library *)
-      Logs.warn (fun m ->
+      Logs.info (fun m ->
           m
-            "Fixpoint timeout while performing taint analysis [rule: %s file: \
-             %s func: %s]"
+            "Taint values of a loop did not stabilise after its first pass \
+             and %d further rounds; the analysis keeps the values of the \
+             last round [rule: %s file: %s func: %s]"
+            Limits_semgrep.taint_MAX_VISITS_PER_NODE
             (Rule_ID.to_string taint_inst.rule_id)
             !!(taint_inst.file)
             (Option.map IL.str_of_name opt_name ||| "???"))
@@ -3797,7 +3800,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
         let prev_effects = !(env.effects_acc) in
         env.did_self_recurse := false;
         let end_mapping, status =
-          DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+          DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order
+            ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -3810,8 +3814,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
           (* Hit the pass cap while still self-recursing. If the effects also
            * stopped growing this pass it is a clean fixpoint; otherwise the
            * result under-approximates (possible false negatives), so surface
-           * it rather than truncating silently — the inner fixpoint timeout
-           * is reported the same way by [log_timeout_warning]. *)
+           * it rather than truncating silently; the inner fixpoint reports
+           * a loop that did not stabilise by [log_unstable_loop]. *)
           if not (Effects.equal_with_guards prev_effects !(env.effects_acc))
           then
             (* nosemgrep: no-logs-in-library *)
@@ -3831,10 +3835,11 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       in
       run_to_sig_fixpoint 0
     else
-      DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+      DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order
+        ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
         ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
-  log_timeout_warning taint_inst env.func.name timeout_status;
+  log_unstable_loop taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
   effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
   |> record_effects env;
