@@ -34,7 +34,7 @@ type conf = {
   taint_intrafile : bool;
   disable_intrafile : bool;
   enable_interfile : bool;
-  taint_interfile_depth : int;
+  taint_interfile_depth : int option;
   (* the ignore annotations of a scan apply to a test run too *)
   opengrep_ignore_pattern : string option;
   (* None when the flag was not given, in which case the engine defaults

@@ -51,7 +51,7 @@ val o_taint_intrafile : bool Cmdliner.Term.t
 val o_disable_intrafile : bool Cmdliner.Term.t
 
 (* for --interfile-depth, shared by 'scan', 'ci' and 'test' *)
-val o_interfile_depth : int Cmdliner.Term.t
+val o_interfile_depth : int option Cmdliner.Term.t
 
 (* gather all the common flags under one term; [unsupported_flags] are the
  * long names of the subcommand's own flags inherited from Semgrep that

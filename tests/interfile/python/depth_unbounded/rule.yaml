@@ -4,7 +4,8 @@ rules:
     severity: ERROR
     message: >
       The source reaches the sink through four cross-file call hops; the
-      rule's negative depth means unbounded and wins over the scan's depth.
+      rule's negative depth means unbounded and applies when the scan sets
+      no depth.
     mode: taint
     options:
       taint_interfile: true

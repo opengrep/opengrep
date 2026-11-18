@@ -707,8 +707,12 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
       " run the rules whose options set interfile or taint_interfile in \
        interfile tainting mode" );
     ( "-interfile_depth",
-      Arg.Set_int taint_interfile_depth,
-      " <int> maximum call chain depth for companion file discovery (default 3)" );
+      Arg.Int (fun (depth : int) -> taint_interfile_depth := Some depth),
+      spf
+        " <int> maximum call chain depth for companion file discovery; \
+         overrides the rule option taint_interfile_depth (default: the \
+         rule's limit, or %d)"
+        Limits_semgrep.taint_INTERFILE_DEPTH );
     ( "-interfile_dedup_by",
       Arg.String
         (fun (s : string) ->

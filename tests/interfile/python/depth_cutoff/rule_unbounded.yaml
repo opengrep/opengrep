@@ -1,0 +1,15 @@
+rules:
+  - id: depth-cutoff
+    languages: [python]
+    severity: ERROR
+    message: >
+      The same rule with an unbounded depth of its own, for a depth set by
+      the scan to override.
+    mode: taint
+    options:
+      taint_interfile: true
+      taint_interfile_depth: -1
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

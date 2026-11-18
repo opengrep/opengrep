@@ -1214,9 +1214,10 @@ let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
                    (Fpath.basename m.path, m.start.line)))))
 
 (* A chain of four calls from the source to the sink, one beyond the
-   default depth: the scan finds nothing and says why, one warning carrying
-   the rule and the depth flag; at depth four, and with the limit removed
-   by the form the warning prints, it finds the sink and says nothing. *)
+   default depth: the scan finds nothing and reports why, one warning
+   mentioning the rule and the depth flag; at depth four, and with the limit
+   removed by the form the warning prints, it finds the sink and reports no
+   warning. *)
 let test_interfile_depth_cut_warning (caps : Scan_subcommand.caps) () =
   let chain = {|
 def f1(x):
@@ -1274,7 +1275,7 @@ def handler():
   Alcotest.(check (list string)) "nothing found at the default depth" []
     (files cut);
   Alcotest.(check int) "one warning" 1 (List.length (messages cut));
-  Alcotest.(check bool) "the warning carries the rule and the depth flag" true
+  Alcotest.(check bool) "the warning mentions the rule and the depth flag" true
     (List.for_all
        (fun (m : string) ->
          String_.contains m ~term:"--interfile-depth=-1"

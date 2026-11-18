@@ -540,7 +540,7 @@ let compute_rule_subgraph
       Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
     in
     let interfile_graph = lc.lc_interfile_graph in
-    (* the scan always sets a depth; the default covers a bare xconfig *)
+    (* the default applies when neither the scan nor the rule sets a depth *)
     let interfile_depth =
       Some
         (Option.value ~default:Limits_semgrep.taint_INTERFILE_DEPTH

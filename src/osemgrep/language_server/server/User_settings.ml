@@ -97,7 +97,7 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       (* the targets of the language server carry no project root, from
          which the interfile analysis builds its call graph *)
       enable_interfile = false;
-      taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
+      taint_interfile_depth = None;
       disable_intrafile = false;
       interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
       engine_config = Engine_config.default;
