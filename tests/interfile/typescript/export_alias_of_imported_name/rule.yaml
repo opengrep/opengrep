@@ -1,0 +1,14 @@
+rules:
+  - id: export-alias-of-imported-name
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      A function exported under the name of a binding it imports and calls
+      is reached through that export from another file.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
