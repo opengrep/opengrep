@@ -540,7 +540,7 @@ let compute_rule_subgraph
       Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
     in
     let interfile_graph = lc.lc_interfile_graph in
-    (* the scan always sets a depth; the default covers a bare xconfig *)
+    (* the default applies when neither the scan nor the rule sets a depth *)
     let interfile_depth =
       Some
         (Option.value ~default:Limits_semgrep.taint_INTERFILE_DEPTH
@@ -2079,7 +2079,8 @@ let build_rule_states
   in
   (* One warning per rule whose search stopped at the depth with calls
      beyond it: a longer chain of calls from a source to a sink is not
-     followed, and the flag that raises the depth is named. *)
+     followed, and the message prints the flag that raises the depth and
+     the form that removes the limit. *)
   let depth_warnings : E.t list =
     List.filter_map
       (fun (rsg : rule_subgraph) ->
@@ -2094,7 +2095,8 @@ let build_rule_states
                       "rule %s: the interfile search stopped at depth %d \
                        with calls beyond it, so a longer chain of calls from \
                        a source to a sink is not followed; \
-                       --interfile-depth raises the depth, -1 removes it"
+                       --interfile-depth raises the depth, \
+                       --interfile-depth=-1 removes the limit"
                       (Rule_ID.to_string rule_id) depth)
                  Out.SemgrepWarning))
       rule_subgraphs

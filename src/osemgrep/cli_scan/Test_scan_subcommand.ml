@@ -1214,9 +1214,10 @@ let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
                    (Fpath.basename m.path, m.start.line)))))
 
 (* A chain of four calls from the source to the sink, one beyond the
-   default depth: the scan finds nothing and says why, one warning naming
-   the rule and the depth flag; at depth four it finds the sink and says
-   nothing. *)
+   default depth: the scan finds nothing and reports why, one warning
+   mentioning the rule and the depth flag; at depth four, and with the limit
+   removed by the form the warning prints, it finds the sink and reports no
+   warning. *)
 let test_interfile_depth_cut_warning (caps : Scan_subcommand.caps) () =
   let chain = {|
 def f1(x):
@@ -1274,16 +1275,21 @@ def handler():
   Alcotest.(check (list string)) "nothing found at the default depth" []
     (files cut);
   Alcotest.(check int) "one warning" 1 (List.length (messages cut));
-  Alcotest.(check bool) "the warning names the rule and the depth flag" true
+  Alcotest.(check bool) "the warning mentions the rule and the depth flag" true
     (List.for_all
        (fun (m : string) ->
-         String_.contains m ~term:"--interfile-depth"
+         String_.contains m ~term:"--interfile-depth=-1"
          && String_.contains m ~term:"interfile-taint")
        (messages cut));
   let deep = scan [ "--interfile-depth"; "4" ] in
   Alcotest.(check (list string)) "found at depth four" [ "chain.py" ]
     (files deep);
-  Alcotest.(check (list string)) "no warning at depth four" [] (messages deep)
+  Alcotest.(check (list string)) "no warning at depth four" [] (messages deep);
+  let unbounded = scan [ "--interfile-depth=-1" ] in
+  Alcotest.(check (list string)) "found without a depth limit" [ "chain.py" ]
+    (files unbounded);
+  Alcotest.(check (list string)) "no warning without a depth limit" []
+    (messages unbounded)
 
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files

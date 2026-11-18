@@ -62,7 +62,7 @@ type t = {
   (* enable cross-file taint analysis via the in-process project call graph *)
   ~taint_interfile <ocaml default="false"> : bool;
   (* maximum call chain depth for companion file discovery; negative is
-   * unbounded; unset defers to the scan's value *)
+   * unbounded; a depth set using the CLI parameter overrides it *)
   ?taint_interfile_depth : int option;
 
   (* 'ac' stands for associative-commutative matching *)

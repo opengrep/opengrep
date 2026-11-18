@@ -39,8 +39,10 @@ takes `-enable_interfile`, `-interfile_depth` and `-disable_intrafile`.
 The language server does not run interfile: its targets carry no project
 root to build the call graph from, so a rule with the option runs there as
 if the option were absent.
-A rule's own `taint_interfile_depth` wins over `--interfile-depth`;
-a rule without one takes the scan's.
+`--interfile-depth` takes precedence over a rule's own
+`taint_interfile_depth`; without the flag, a rule's
+`taint_interfile_depth` applies, and a rule without one takes the
+default.
 
 `options.interfile: true` is an alias for
 `options.taint_interfile: true`; a rule that sets both is rejected as
@@ -66,12 +68,14 @@ So the same rule and target can report more findings under
 not new dataflow.  (`core_unique_key` in
 `src/reporting/Core_json_output.ml`.)
 
-### `--interfile-depth N` (default 3)
+### `--interfile-depth N` (default: the rule's `taint_interfile_depth`, or 3)
 
 Bounds the BFS that computes the relevant subgraph (see [§ 3](03-dispatch.md)
 "Phase E").  Higher values include longer call chains; runtime grows
-with the chain depth.  Default 3 is enough for almost every rule;
-chains of length 5+ are rare in practice.
+with the chain depth.  The flag overrides the `taint_interfile_depth`
+option of every rule.
+
+A negative value removes the bound: `--interfile-depth=-1`.
 
 ### `--taint-intrafile`
 

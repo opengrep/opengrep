@@ -322,7 +322,6 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
       target_source = Core_scan_config.Targets targets;
       enable_interfile = true;
       taint_intrafile = true;
-      taint_interfile_depth = 3;
     }
   in
   let equivs = Core_scan.parse_equivalences config.equivalences_file in

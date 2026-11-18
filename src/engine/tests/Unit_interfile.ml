@@ -30,7 +30,7 @@ let discover_test_cases (root : Fpath.t)
     lang_dirs
 
 let run_test ?(enable_interfile = true) ?(taint_intrafile = true)
-    ?(taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH)
+    ?(taint_interfile_depth : int option)
     ?(rule_file = "rule.yaml")
     (caps : Core_scan.caps) (test_dir : Fpath.t) () : unit =
   let files = Testutil_files.read test_dir in
@@ -154,7 +154,9 @@ let run_test ?(enable_interfile = true) ?(taint_intrafile = true)
           TCM.compare_actual_to_expected_for_alcotest
             ~to_location:Fun.id actual_errors expected_errors))
 
-(* Cases needing non-default interfile config (fixtures run interfile on, depth 3). *)
+(* Cases that need a scan configuration other than the one of the discovered
+   fixtures, which run with enable_interfile set and no scan depth: a rule's
+   taint_interfile_depth applies, or Limits_semgrep.taint_INTERFILE_DEPTH. *)
 let regression_tests (caps : Core_scan.caps) : Testo.t list =
   let root = Fpath.v interfile_tests_path in
   [
@@ -184,6 +186,16 @@ let regression_tests (caps : Core_scan.caps) : Testo.t list =
          Fpath.(root / "python" / "depth_unbounded"));
     Testo.create "regression: negative scan depth is unbounded"
       (run_test ~taint_interfile_depth:(-1) ~rule_file:"rule_default.yaml"
+         caps
+         Fpath.(root / "python" / "depth_unbounded"));
+    (* A depth set by the scan overrides the rule's taint_interfile_depth,
+       whether it is lower than the rule's (3 against unbounded, the sink is
+       not reached) or higher (unbounded against 3, the sink is reached). *)
+    Testo.create "regression: scan depth overrides a deeper rule depth"
+      (run_test ~taint_interfile_depth:3 ~rule_file:"rule_unbounded.yaml" caps
+         Fpath.(root / "python" / "depth_cutoff"));
+    Testo.create "regression: scan depth overrides a shallower rule depth"
+      (run_test ~taint_interfile_depth:(-1) ~rule_file:"rule_shallow.yaml"
          caps
          Fpath.(root / "python" / "depth_unbounded"));
   ]

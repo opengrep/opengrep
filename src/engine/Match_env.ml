@@ -128,11 +128,12 @@ let adjust_xconfig_with_rule_options xconf options =
             runs_intrafile ~scan_taint_intrafile:xconf.config.taint_intrafile
               (Some rule_opts);
           effect_guards = xconf.config.effect_guards || rule_opts.effect_guards;
-          (* a depth set by the rule wins; an unset one keeps the scan's *)
+          (* a depth set by the scan wins; without one, the rule's limit
+             applies *)
           taint_interfile_depth =
-            (match rule_opts.taint_interfile_depth with
+            (match xconf.config.taint_interfile_depth with
              | Some _ as depth -> depth
-             | None -> xconf.config.taint_interfile_depth);
+             | None -> rule_opts.taint_interfile_depth);
         }
   in
   { xconf with config }

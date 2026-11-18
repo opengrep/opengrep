@@ -689,7 +689,7 @@ let rule_options_of_config (config : Core_scan_config.t) : Rule_options.t =
     Rule_options.default with
     taint_intrafile = config.taint_intrafile && not config.disable_intrafile;
     effect_guards = config.effect_guards;
-    taint_interfile_depth = Some config.taint_interfile_depth;
+    taint_interfile_depth = config.taint_interfile_depth;
   }
 
 let interfile_xconfig (config : Core_scan_config.t)

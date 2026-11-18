@@ -32,7 +32,8 @@ type conf = {
   (* a rule runs interfile only when this is set and its own options set
    * taint_interfile; otherwise that option is ignored *)
   enable_interfile : bool;
-  taint_interfile_depth : int;
+  (* when set, overrides the rule option taint_interfile_depth *)
+  taint_interfile_depth : int option;
   (* override taint_intrafile, enable_interfile and the rule options
    * taint_intrafile and taint_interfile *)
   disable_intrafile : bool;

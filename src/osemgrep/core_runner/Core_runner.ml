@@ -56,7 +56,7 @@ type conf = {
   (* a rule runs interfile only when this is set and its own options set
    * taint_interfile; otherwise that option is ignored *)
   enable_interfile : bool;
-  taint_interfile_depth : int;
+  taint_interfile_depth : int option;
   (* override taint_intrafile, enable_interfile and the rule options
    * taint_intrafile and taint_interfile *)
   disable_intrafile : bool;
@@ -135,7 +135,7 @@ let default_conf : conf =
     taint_intrafile = false;
     effect_guards = false;
     enable_interfile = false;
-    taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
+    taint_interfile_depth = None;
     disable_intrafile = false;
     interfile_dedup_by = Core_scan_config.default.interfile_dedup_by;
     nosem = true;
