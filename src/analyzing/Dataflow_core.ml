@@ -261,7 +261,7 @@ module Make (F : Flow) = struct
     in
     weak_topological_order flow succs (Array.length mapping) workset start
     |> List.iter run;
-    if !converged then (mapping, `Ok) else (mapping, `Timeout)
+    if !converged then (mapping, `Ok) else (mapping, `Not_converged)
 
   let worklist_worker eq_env mapping trans (flow : F.flow) succs workset =
     (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
@@ -274,7 +274,7 @@ module Make (F : Flow) = struct
       if NodeiSet.is_empty work then (mapping, `Ok)
       else
         (* Check iteration limit first (deterministic) *)
-        if i >= max_iterations then (mapping, `Timeout)
+        if i >= max_iterations then (mapping, `Not_converged)
         else
           (* Use min_elt instead of choose for deterministic processing order *)
           let ni = NodeiSet.min_elt work in
@@ -309,14 +309,13 @@ module Make (F : Flow) = struct
 
   let (fixpoint :
         iteration:iteration ->
-        timeout:float ->
         eq_env:('env -> 'env -> bool) ->
         init:'env mapping ->
         trans:'env transfn ->
         flow:F.flow ->
         forward:bool ->
-        'env mapping * [ `Ok | `Timeout ]) =
-   fun ~iteration ~timeout:_ ~eq_env ~init ~trans ~flow ~forward ->
+        'env mapping * [ `Ok | `Not_converged ]) =
+   fun ~iteration ~eq_env ~init ~trans ~flow ~forward ->
     let succs = if forward then forward_succs else backward_succs in
     let work =
       (* This prevents dead code from getting analyzed. *)
