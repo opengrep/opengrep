@@ -121,6 +121,10 @@ let band_str (ppf : Format.formatter) (label : string) : string =
 let match_style (color : tone) : Fmt.style list =
   [ `Bg color; `Fg (`Hi `White) ]
 
+(* the path of a source, and of a step of a trace in a file other than that
+   of the step above it *)
+let path_style : Fmt.style list = [ `Fg `Cyan ]
+
 (*****************************************************************************)
 (* A finding *)
 (*****************************************************************************)
@@ -153,12 +157,19 @@ let pp_code_line (color : tone) ~(digits : int) ~(width : int) ppf
    so it is passed already rendered, with the line numbers in the same band
    as those of the code. *)
 let trace (color : tone) (ppf : Format.formatter) ~(code_digits : int)
-    ~(digits : int) : Skin_common.trace_look =
+    ~digits:(trace_digits : int) : Skin_common.trace_look =
   {
     line_prefix =
       stripe_str color ppf ^ " " ^ String.make (band_width code_digits + 1) ' ';
-    gutter = (fun (n : int) -> band_str ppf (band_number ~digits n));
-    gutter_blank = band_str ppf (String.make (band_width digits) ' ');
+    (* the band has one width through all the traces under the finding, that
+       of their largest line number *)
+    gutter =
+      (fun ~digits:(_ : int) (n : int) ->
+        band_str ppf (band_number ~digits:trace_digits n));
+    gutter_blank =
+      (fun ~digits:(_ : int) ->
+        band_str ppf (String.make (band_width trace_digits) ' '));
+    path_style;
     highlight = match_style color;
     unhighlighted = [];
   }
@@ -194,7 +205,8 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
     pp_from_label =
       (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled `Faint string) "from");
     from_label_width = String.length "from ";
-    pp_from_location = Fmt.(styled (`Fg `Cyan) string);
+    pp_from_location =
+      (fun ~traced:(_ : bool) -> Findings_layout.styles path_style Fmt.string);
     trace = trace color;
     pp_fix_label =
       (fun ppf -> Fmt.pf ppf "%a " Fmt.(styled `Faint string) "fix");

@@ -15,12 +15,12 @@ t.py
         ├─ through call     15: b = f1(a)
         │  ├─ param             9: def f1(x):
         │  ├─ through call     10: y = f2(x)
-        │  │  ├─ param             5: def f2(x):
-        │  │  ├─ through call      6: y = f3(x)
-        │  │  │  ├─ param             2: def f3(x):
-        │  │  │  └─ return            3: return x
-        │  │  ├─ through           6: y = f3(x)
-        │  │  └─ return            7: return y
+        │  │  ├─ param            5: def f2(x):
+        │  │  ├─ through call     6: y = f3(x)
+        │  │  │  ├─ param            2: def f3(x):
+        │  │  │  └─ return           3: return x
+        │  │  ├─ through          6: y = f3(x)
+        │  │  └─ return           7: return y
         │  ├─ through          10: y = f2(x)
         │  └─ return           11: return y
         ├─ through          15: b = f1(a)

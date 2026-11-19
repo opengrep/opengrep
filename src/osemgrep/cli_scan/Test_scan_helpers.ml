@@ -167,6 +167,23 @@ let mask_temp_targets : (string -> string) list =
   ]
 
 (*****************************************************************************)
+(* Reading the output *)
+(*****************************************************************************)
+
+(* the first of [lines] that contains every term of [terms]; the test fails
+   when there is none *)
+let line_containing_all (terms : string list) (lines : string list) : string =
+  let contains_all (line : string) : bool =
+    List.for_all (fun (term : string) -> String_.contains ~term line) terms
+  in
+  match List.find_opt contains_all lines with
+  | Some line -> line
+  | None ->
+      Alcotest.fail
+        (Printf.sprintf "no line containing %s"
+           (terms |> List_.map (Printf.sprintf "%S") |> String.concat " and "))
+
+(*****************************************************************************)
 (* Running a scan *)
 (*****************************************************************************)
 
