@@ -791,6 +791,8 @@ let esc_prefix (ppf : Format.formatter) =
   if Fmt.style_renderer ppf = `Ansi_tty then Fmt.any "\027[22m\027[24m  "
   else Fmt.any "  "
 
+let line_digits (n : int) : int = String.length (string_of_int (max 1 n))
+
 let rec widest_line (acc : int) (nodes : OutJ.match_dataflow_trace) : int =
   nodes
   |> List.fold_left
@@ -812,7 +814,7 @@ let trace_line_digits (findings : OutJ.cli_match list) : int =
            | Some trace -> widest_line acc (tree_of_dataflow_trace trace))
          1
   in
-  String.length (string_of_int (max 1 widest))
+  line_digits widest
 
 (*****************************************************************************)
 (* What a report is made of *)
@@ -944,11 +946,13 @@ let enclosing_context (m : OutJ.cli_match) : (string * string) list =
    finding, or for each finding of [group], which share its sink. For an
    interfile rule, the location and the code of the [source] of each, since
    for a flow across files the sink does not show where the untrusted value
-   entered. With --dataflow-traces, the [trace] of each.
+   entered. With --dataflow-traces, the [trace] of each, None for a trace
+   that tree_of_dataflow_trace reduces to no step, which the report does not
+   draw.
 
    A blank line precedes the block when it starts with a source, and
-   separates two entries only when each has a trace: the vertical line of a
-   trace already joins it to the snippet above, and a list of sources is
+   separates two entries only under --dataflow-traces: the vertical line of
+   a trace already joins it to the snippet above, and a list of sources is
    printed without blank lines. *)
 type origin = {
   finding : OutJ.cli_match;
@@ -971,8 +975,14 @@ let origins ~(is_interfile : Rule_ID.t -> bool) ~(show_dataflow_traces : bool)
              source =
                (if name_sources then source_of_finding finding else None);
              trace =
-               (if show_dataflow_traces then finding.extra.dataflow_trace
-                else None);
+               (match finding.extra.dataflow_trace with
+               | Some (trace : OutJ.match_dataflow_trace)
+                 when show_dataflow_traces
+                      && not (List_.null (tree_of_dataflow_trace trace)) ->
+                   Some trace
+               | Some _
+               | None ->
+                   None);
            })
 
 (* A line of the fix shown under a finding: the first, after the skin's
@@ -1049,9 +1059,10 @@ let step_path ?(finding_path : Fpath.t option) (loc : OutJ.location) :
   | None ->
       None
 
-let pp_step_path ~(prefix : string) ppf (path : Fpath.t) : unit =
+let pp_step_path ~(prefix : string) ~(style : Fmt.style list)
+    (ppf : Format.formatter) (path : Fpath.t) : unit =
   Fmt.pf ppf "%s%a@." prefix
-    Fmt.(styled (`Fg `Cyan) (esc_prefix ppf ++ string))
+    (styles style Fmt.(esc_prefix ppf ++ string))
     (Fpath.to_string path)
 
 let located_lines (loc : OutJ.location) : string list =
@@ -1100,7 +1111,8 @@ let pp_joined_location ?(finding_path : Fpath.t option) ~(prefix : string)
        *)
     in
     let a, b, c = cut lines_to_print start_col end_col in
-    step_path ?finding_path loc |> Option.iter (pp_step_path ~prefix ppf);
+    step_path ?finding_path loc
+    |> Option.iter (pp_step_path ~prefix ~style:[ `Fg `Cyan ] ppf);
     Fmt.pf ppf "%s%s%s%a%s@." prefix (gutter start_line_num) a pp_highlight b c
   with
   | ex ->
@@ -1138,7 +1150,8 @@ let covered_spans ~(start_col : int) ~(end_col : int) (lines : string list) :
    style.
 
    [finding_path] is the file of the finding: the path of a step in another
-   file is printed, so that a trace across files can be followed.
+   file is printed, styled with [path_style], so that a trace across files
+   can be followed.
 
    [first_prefix] takes the place of [prefix] on the first line printed,
    the path or the first located line, where a skin can put a label.
@@ -1147,10 +1160,12 @@ let covered_spans ~(start_col : int) ~(end_col : int) (lines : string list) :
    step deep inside a function is not shifted to the right. *)
 let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
     ~(first_prefix : string) ~(prefix : string) ~(gutter : int -> string)
-    ~(gutter_blank : string) ~(highlight : Fmt.style list)
-    ~(unhighlighted : Fmt.style list) ppf (loc : OutJ.location) : unit =
+    ~(gutter_blank : string) ~(path_style : Fmt.style list)
+    ~(highlight : Fmt.style list) ~(unhighlighted : Fmt.style list)
+    (ppf : Format.formatter) (loc : OutJ.location) : unit =
   let path = step_path ?finding_path loc in
-  path |> Option.iter (pp_step_path ~prefix:first_prefix ppf);
+  path
+  |> Option.iter (pp_step_path ~prefix:first_prefix ~style:path_style ppf);
   let lead (i : int) : string =
     if Int.equal i 0 && Option.is_none path then first_prefix else prefix
   in
@@ -1199,13 +1214,19 @@ let pp_trace_location ?(finding_path : Fpath.t option) ?(dedent = false)
    last file printed above it.
 
    [line_prefix] starts every line, and [glyph] renders the box-drawing
-   characters, so that a skin sets their style and any text before them. *)
+   characters, so that a skin sets their style and any text before them.
+
+   [gutter] and [gutter_blank] receive the [digits] of the largest line
+   number among the nodes of one level (the top level, or the children of
+   one node), so that a skin can align the line numbers of those nodes with
+   each other only. *)
 let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
     ~(line_prefix : string) ~(glyph : string -> string)
-    ~(gutter : int -> string) ~(gutter_blank : string)
-    ~(highlight : Fmt.style list) ~(unhighlighted : Fmt.style list)
-    ~(label : step_kind -> string) ppf (trace : OutJ.match_dataflow_trace) :
-    unit =
+    ~(gutter : digits:int -> int -> string)
+    ~(gutter_blank : digits:int -> string)
+    ~(path_style : Fmt.style list) ~(highlight : Fmt.style list)
+    ~(unhighlighted : Fmt.style list) ~(label : step_kind -> string)
+    (ppf : Format.formatter) (trace : OutJ.match_dataflow_trace) : unit =
   let width =
     step_kinds
     |> List.fold_left
@@ -1219,6 +1240,15 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
   let rec pp_nodes (current : Fpath.t option) (indent : string)
       (nodes : OutJ.match_dataflow_trace) : Fpath.t option =
     let last = List.length nodes - 1 in
+    let digits =
+      nodes
+      |> List.fold_left
+           (fun (acc : int) (node : OutJ.match_dataflow_step) ->
+             max acc node.location.start.line)
+           1
+      |> line_digits
+    in
+    let gutter = gutter ~digits and gutter_blank = gutter_blank ~digits in
     nodes
     |> List.fold_left
          (fun ((i : int), (current : Fpath.t option)) (node : OutJ.match_dataflow_step) ->
@@ -1238,8 +1268,8 @@ let pp_dataflow_tree ?(finding_path : Fpath.t option) ?(dedent = true)
              else glyph "│" ^ String.make width ' '
            in
            pp_trace_location ?finding_path:current ~dedent ~first_prefix
-             ~prefix ~gutter ~gutter_blank ~highlight ~unhighlighted ppf
-             node.location;
+             ~prefix ~gutter ~gutter_blank ~path_style ~highlight
+             ~unhighlighted ppf node.location;
            ( i + 1,
              pp_nodes
                (Option.map (fun (_ : Fpath.t) -> node.location.path) current)
