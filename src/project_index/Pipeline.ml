@@ -155,7 +155,7 @@ let stamp_import_value_aliases
     if Hashtbl.length by_local > 0 then begin
       let visitor =
         object
-          inherit [_] G.iter as super
+          inherit [_] G.iter_no_id_info as super
 
           method! visit_expr () e =
             (match e.G.e with

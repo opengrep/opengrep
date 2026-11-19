@@ -1,6 +1,7 @@
 (* Per-rule interfile taint dispatch: rules run in parallel (no shared
-   mutable state), each folding its subgraph in topo order (leaves first)
-   with a shared sig db.  Formula_cache.t is per-file, not thread-safe. *)
+   mutable state), each computing the signatures of its subgraph in topo
+   order (leaves first), then analysing its files in chunks, in parallel,
+   against those signatures.  Formula_cache.t is per-file, not thread-safe. *)
 
 module Log = Log_tainting.Log
 module R = Rule
@@ -183,6 +184,30 @@ let file_error ?(rule_id : Rule_ID.t option) ~(file : Fpath.t)
     (exn : Exception.t) : E.t =
   { (E.exn_to_error ~file exn) with E.rule_id }
 
+(* An exception of a rule, which spans many files: the error carries the rule
+   and no file. *)
+let rule_error (rule_id : Rule_ID.t) (exn : Exception.t) : E.t =
+  { (E.exn_to_error exn) with E.rule_id = Some rule_id }
+
+(* For the union of two maps: a key bound in both keeps its earlier binding. *)
+let keep_earlier (_key : 'k) (earlier : 'a) (_later : 'a) : 'a option =
+  Some earlier
+
+(* A rule whose analysis raised reports the exception as its error. *)
+let rule_failure (rule_id : Rule_ID.t) (exn : Exception.t) : E.t =
+  Log.warn (fun m ->
+      m "interfile: rule %s failed (%s); surfacing as error"
+        (Rule_ID.to_string rule_id) (Exception.to_string exn));
+  rule_error rule_id exn
+
+(* A rule whose time limit ran out reports an Out.Timeout error, as
+   [Match_rules] reports a per-rule timeout. *)
+let rule_timeout_error (rule_id : Rule_ID.t) : E.t =
+  Log.err (fun m ->
+      m "timeout for rule %s in interfile analysis"
+        (Rule_ID.to_string rule_id));
+  E.mk_error ~rule_id Out.Timeout
+
 type rule_specs = {
   rs_rule : R.taint_rule;
   rs_sources : Function_id.t list;
@@ -190,10 +215,11 @@ type rule_specs = {
   rs_errors : E.t list;  (* targets whose extraction failed *)
   rs_target_files : FpathSet.t;
       (* the rule's targets: the scan's, less what its paths: excludes *)
-  rs_spec_matches : (Fpath.t, Match_taint_spec.spec_matches) Hashtbl.t;
-      (* the source/sink/sanitizer/propagator matches of extraction, by
-         normalized absolute path, so [init_file] does not match the rule
-         on the file a second time.  Matching is positional, and the
+  rs_spec_matches : (Fpath.t, Match_taint_spec.source_sink_matches) Hashtbl.t;
+      (* the source/sink matches of extraction, by normalized absolute
+         path, so [init_file] does not match them on the file a second time;
+         [init_file] matches the propagators and sanitizers, which only the
+         files of the rule's subgraph need.  Matching is positional, and the
          extraction and dispatch read the same AST (see [stamped_files]),
          so the matches hold for dispatch. *)
 }
@@ -231,7 +257,8 @@ let extract_specs_for_rule
         | Some content -> func content
         | None -> true)
   in
-  let spec_matches_by_file : (Fpath.t, Match_taint_spec.spec_matches) Hashtbl.t =
+  let spec_matches_by_file :
+      (Fpath.t, Match_taint_spec.source_sink_matches) Hashtbl.t =
     Hashtbl.create (List.length matching_targets)
   in
   let sources, sinks, errors =
@@ -249,10 +276,13 @@ let extract_specs_for_rule
             Formula_cache.mk_specialized_formula_cache [rule]
           in
           match
-            Match_taint_spec.spec_matches_of_taint_rule
-              ~per_file_formula_cache:formula_cache
-              ~lazy_linecol:(lazy (Pos.full_converters_large target.abs_path))
-              xconf (Fpath.to_string target.abs_path) (ast, []) rule
+            Match_taint_spec.source_sink_matches_of_taint_rule
+              ~per_file_formula_cache:formula_cache xconf
+              (Match_taint_spec.xtarget_of_file
+                 ~lazy_linecol:
+                   (lazy (Pos.full_converters_large target.abs_path))
+                 target.abs_path (ast, []) rule)
+              rule
           with
           | exception exn ->
             (* contained to the file: its sources and sinks are missing *)
@@ -263,7 +293,7 @@ let extract_specs_for_rule
                   (Fpath.to_string target.abs_path));
             (src_acc, snk_acc,
              file_error ~rule_id ~file:target.abs_path exn :: err_acc)
-          | spec_matches, _expls ->
+          | (spec_matches : Match_taint_spec.source_sink_matches) ->
           Hashtbl.replace spec_matches_by_file
             (Fpath.normalize target.abs_path) spec_matches;
           let resolve_ranges (ranges : Range.t list)
@@ -318,7 +348,7 @@ let extract_specs_for_rule
   let n_matched = Hashtbl.length spec_matches_by_file in
   let n_hits =
     Hashtbl.fold
-      (fun _ (sm : Match_taint_spec.spec_matches) acc ->
+      (fun _ (sm : Match_taint_spec.source_sink_matches) acc ->
         if List_.null sm.sources && List_.null sm.sinks then acc else acc + 1)
       spec_matches_by_file 0
   in
@@ -353,7 +383,7 @@ let init_file
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
-    ~(spec_matches : (Fpath.t, Match_taint_spec.spec_matches) Hashtbl.t)
+    ~(spec_matches : (Fpath.t, Match_taint_spec.source_sink_matches) Hashtbl.t)
     ~(file_path : Fpath.t)
     (acc : file_init_acc)
     : file_init_acc =
@@ -373,18 +403,24 @@ let init_file
   let xconf' =
     Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
   in
-  (* Extraction already matched the rule on this file: reuse its matches.
-     A file without them (a companion, or one the extraction prefilter
-     skipped) is matched here, as before. *)
+  let lazy_linecol = lazy (Pos.full_converters_large file_path) in
+  (* Extraction already matched the rule's sources and sinks on this file:
+     reuse them and match the rest. A file without them (a companion, or
+     one the extraction prefilter skipped) is matched here, as before. *)
   let inst_opt =
     match Hashtbl.find_opt spec_matches abs_file with
-    | Some matches ->
-      Match_taint_spec.taint_config_of_spec_matches ~allow_partial:true
-        xconf' lang file_path rule matches
+    | Some source_sink_matches ->
+      Match_taint_spec.complete_spec_matches
+        ~per_file_formula_cache:formula_cache xconf'
+        (Match_taint_spec.xtarget_of_file ~lazy_linecol file_path (ast, [])
+           rule)
+        rule source_sink_matches
+      |> fst
+      |> Match_taint_spec.taint_config_of_spec_matches ~allow_partial:true
+           xconf' lang file_path rule
     | None ->
       Match_taint_spec.taint_config_of_rule
-        ~per_file_formula_cache:formula_cache
-        ~lazy_linecol:(lazy (Pos.full_converters_large file_path))
+        ~per_file_formula_cache:formula_cache ~lazy_linecol
         ~allow_partial:true
         xconf' lang file_path (ast, []) rule
       |> Option.map (fun (ti, _spec_matches, _expls) -> ti)
@@ -411,6 +447,7 @@ let init_file
         handle_effects = (fun _fn_name effects -> effects);
         recursive = false;
         java_props_cache = Hashtbl.create 0;
+        constructor_instance_vars = Hashtbl.create 16;
       }
   in
   let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
@@ -445,9 +482,7 @@ let init_file
       enriched_map FunctionMap.empty
   in
   { fi_info_map =
-      FunctionMap.union
-        (fun _k existing _new -> Some existing)
-        acc.fi_info_map resolved_map;
+      FunctionMap.union keep_earlier acc.fi_info_map resolved_map;
     fi_file_envs =
       FpathMap.add abs_file file_env acc.fi_file_envs;
     fi_errors = acc.fi_errors;
@@ -636,19 +671,33 @@ let compute_rule_subgraph
         rsg_depth_cut = (if depth_cut then interfile_depth else None);
       }
 
-(* Precondition: all [rsg] files are in [ast_table]. *)
-let init_rule_state
+let empty_file_init_acc : file_init_acc =
+  { fi_info_map = FunctionMap.empty;
+    fi_file_envs = FpathMap.empty;
+    fi_errors = [] }
+
+(* [earlier] covers files before [later] in the rule's file order; the merge
+   gives the result of one fold over both. *)
+let merge_file_init_accs (earlier : file_init_acc) (later : file_init_acc)
+    : file_init_acc =
+  { fi_info_map =
+      FunctionMap.union keep_earlier earlier.fi_info_map later.fi_info_map;
+    fi_file_envs =
+      FpathMap.union keep_earlier earlier.fi_file_envs later.fi_file_envs;
+    fi_errors = later.fi_errors @ earlier.fi_errors;
+  }
+
+(* Precondition: all [files] are in [ast_table]. *)
+let init_files
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(target_root_map : path_with_root FpathMap.t)
-    ~(scanning_roots : Scanning_root.directory list)
-    (rsg : rule_subgraph)
-    : rule_state * E.t list =
+    (rsg : rule_subgraph) (files : Fpath.t list)
+    : file_init_acc =
   let lang = rsg.rsg_lang_context.lc_lang in
   let rule = rsg.rsg_specs.rs_rule in
   let rule_id = fst rule.R.id in
-  let init_acc =
     List.fold_left
       (fun (acc : file_init_acc) (file_path : Fpath.t) ->
          let path_root = path_root_for_file target_root_map file_path in
@@ -671,11 +720,15 @@ let init_rule_state
            { acc with
              fi_errors =
                file_error ~rule_id ~file:file_path exn :: acc.fi_errors })
-      { fi_info_map = FunctionMap.empty;
-        fi_file_envs = FpathMap.empty;
-        fi_errors = [] }
-      rsg.rsg_files
-  in
+      empty_file_init_acc files
+
+let rule_state_of_init
+    ~(target_root_map : path_with_root FpathMap.t)
+    ~(scanning_roots : Scanning_root.directory list)
+    (rsg : rule_subgraph) (init_acc : file_init_acc)
+    : rule_state * E.t list =
+  let lang = rsg.rsg_lang_context.lc_lang in
+  let rule = rsg.rsg_specs.rs_rule in
   let sccs = Sig_fixpoint.sccs_callees_first rsg.rsg_relevant_graph in
   ({
     rule;
@@ -852,8 +905,18 @@ let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
     (Tok.unbracket info.Match_tainting_mode.fdef.AST_generic.fparams)
     info rs.lang
 
-let topo_fold ~(detect_findings : bool) (rs : rule_state)
-    : Shape_and_sig.signature_database * PM.t list =
+(* The signatures of a rule's functions once the fixpoint is stable. *)
+type rule_signatures = {
+  sig_rule_state : rule_state;
+  converged_db : Shape_and_sig.signature_database;
+  topo_universe : FidSet.t;
+}
+
+let signature_fixpoint (rs : rule_state) : rule_signatures =
+  (* Same task boundary for the guard-atom intern table: it is domain-local
+     and cleared per target in the intrafile path, but a run of interfile
+     rules on one domain would otherwise let it grow unbounded. *)
+  Effect_guard.reset_intern ();
   let initial_db = initial_sig_db rs in
   (* A function's own signatures replace its db entry ([Sig_fixpoint.store]). *)
   let extract_replace (fid : Function_id.t)
@@ -931,57 +994,56 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
     Sig_fixpoint.run ~rule_id:(fst rs.rule.R.id) ~graph:rs.relevant_graph
       ~sccs:rs.sccs ~analyze initial_db
   in
-  (* Phase 2: single match-emission pass over the converged DB.  Every
-     function's callees already have their final signatures, so order is
-     irrelevant and the DB is not threaded. *)
-  let emit (matches_acc : PM.t list) (fid : Function_id.t) : PM.t list =
-    match FunctionMap.find_opt fid rs.info_map with
-    | None -> matches_acc
-    | Some info -> (
-        match info.Match_tainting_mode.fdef.G.fbody with
-        | G.FBDecl _
-        | G.FBNothing -> matches_acc
-        | _ ->
-          let fid_file = file_of_fid fid in
-          (* Detect in companions too, not just targets.  A cross-file finding
-             is emitted while analysing the CALLER that instantiates the
-             callee's signature, so when only the sink's file was targeted the
-             caller is a companion and gating on it drops the finding even
-             though the sink itself is in scope.  Every finding is then kept
-             by its own file, whoever was analysed: a target caller's finding
-             at a sink in a companion is outside the requested scope too.  On
-             a whole-project scan every file is a target and this costs
-             nothing. *)
-          let do_detect = detect_findings && Option.is_some fid_file in
-          if not do_detect then matches_acc
-          else
-            (* The re-extraction against [converged_db] is NOT redundant:
-               [check_fundef_with_cfg] depends on the immediately preceding
-               extraction against a db that already holds this function's own
-               converged signature (and its lambda/nested sub-signatures).
-               Checking against [converged_db] without re-extracting collapses
-               some sink ranges onto the taint origin, and skipping the
-               phase-1 summary for no-successor nodes loses source-variant
-               findings.  Both were observed on gitlab; don't optimise this
-               away without an A/B on a large corpus. *)
-            let _db, findings =
-              extract_and_check_function rs fid info ~detect_findings:true
-                converged_db
-            in
-            let findings =
-              List.filter
-                (fun (pm : PM.t) ->
-                   is_target_file rs.target_root_map
-                     pm.PM.path.Target.internal_path_to_content)
-                findings
-            in
-            List.rev_append findings matches_acc)
-  in
-  let matches =
-    timed (Printf.sprintf "rule %s: evaluation (finding emission)" rule_id_str)
-    @@ fun () -> List.fold_left emit [] rs.topo_order
-  in
-  (converged_db, matches)
+  {
+    sig_rule_state = rs;
+    converged_db;
+    topo_universe = FidSet.of_list rs.topo_order;
+  }
+
+(* Phase 2: single match-emission pass over the converged DB.  Every
+   function's callees already have their final signatures, so the DB is not
+   threaded.  The constructor instance variable table is per file, in the
+   file's [taint_inst], so the functions of one file are analysed in
+   topological order. *)
+let function_findings (sigs : rule_signatures) (fid : Function_id.t)
+    : PM.t list =
+  let rs = sigs.sig_rule_state in
+  match FunctionMap.find_opt fid rs.info_map with
+  | None -> []
+  | Some info -> (
+      match info.Match_tainting_mode.fdef.G.fbody with
+      | G.FBDecl _
+      | G.FBNothing -> []
+      | _ ->
+        (* Detect in companions too, not just targets.  A cross-file finding
+           is emitted while analysing the CALLER that instantiates the
+           callee's signature, so when only the sink's file was targeted the
+           caller is a companion and gating on it drops the finding even
+           though the sink itself is in scope.  Every finding is then kept
+           by its own file, whoever was analysed: a target caller's finding
+           at a sink in a companion is outside the requested scope too.  On
+           a whole-project scan every file is a target and this costs
+           nothing. *)
+        if Option.is_none (file_of_fid fid) then []
+        else
+          (* The re-extraction against [converged_db] is NOT redundant:
+             [check_fundef_with_cfg] depends on the immediately preceding
+             extraction against a db that already holds this function's own
+             converged signature (and its lambda/nested sub-signatures).
+             Checking against [converged_db] without re-extracting collapses
+             some sink ranges onto the taint origin, and skipping the
+             phase-1 summary for no-successor nodes loses source-variant
+             findings.  Both were observed on gitlab; don't optimise this
+             away without an A/B on a large corpus. *)
+          let _db, findings =
+            extract_and_check_function rs fid info ~detect_findings:true
+              sigs.converged_db
+          in
+          List.filter
+            (fun (pm : PM.t) ->
+               is_target_file rs.target_root_map
+                 pm.PM.path.Target.internal_path_to_content)
+            findings)
 
 (* Consumed by tools/opengrep-interfile-graph (not built by [make core]). *)
 let extract_signatures (rs : rule_state)
@@ -990,10 +1052,7 @@ let extract_signatures (rs : rule_state)
       m "interfile dispatch: extracting signatures for rule %s (%d functions)"
         (Rule_ID.to_string (fst rs.rule.R.id))
         (List.length rs.topo_order));
-  let final_db, _no_findings =
-    topo_fold ~detect_findings:false rs
-  in
-  final_db
+  (signature_fixpoint rs).converged_db
 
 (* Findings must report the path the scan was given, not the normalised
    absolute form used internally for graph identity: the reported path is
@@ -1106,143 +1165,241 @@ let rebase_pm (scanning_roots : Scanning_root.directory list)
   in
   { pm with PM.path; range_loc; taint_trace; tokens }
 
-let run_rule (rs : rule_state) : PM.t list =
-  (* The constructor-instance-vars table is domain-local and keyed only by
-     [file:class]; without this reset it would carry a prior rule's
-     constructor taint into this rule when both run on the same domain. *)
-  Dataflow_tainting.reset_constructor ();
-  (* Same task boundary for the guard-atom intern table: it is domain-local
-     and cleared per target in the intrafile path, but a run of interfile
-     rules on one domain would otherwise let it grow unbounded. *)
+(* The cost of a chunk's epilogue, for the timing log. *)
+type epilogue_timing = {
+  epilogue_files : int;
+  cfg_secs : float;
+  class_init_secs : float;
+  top_secs : float;
+}
+
+(* The findings of one chunk of a rule's files: the global effects and the
+   epilogue of each file, and the findings of each function defined there. *)
+type chunk_findings = {
+  glob_by_file : PM.t list FpathMap.t;
+  by_function : PM.t list FunctionMap.t;
+  epilogue_by_file : (PM.t list * PM.t list) FpathMap.t;
+      (* class-init findings, top-level findings *)
+}
+
+let empty_chunk_findings : chunk_findings =
+  { glob_by_file = FpathMap.empty;
+    by_function = FunctionMap.empty;
+    epilogue_by_file = FpathMap.empty }
+
+let epilogue_relevant (sigs : rule_signatures) (file_path : Fpath.t)
+    (fe : file_env) : bool =
+  let rs = sigs.sig_rule_state in
+  let top_fid =
+    Function_id.of_il_name
+      (Graph_from_AST.top_level_name_of_ast fe.ast)
+    |> Interfile_graph.absolutify_fid
+         (path_root_for_file rs.target_root_map file_path)
+  in
+  FidSet.mem top_fid sigs.topo_universe
+
+let epilogue_file (sigs : rule_signatures)
+    (effects_to_matches : Effects.t -> PM.t list) (file_path : Fpath.t)
+    (fe : file_env) (timing : epilogue_timing)
+    : (PM.t list * PM.t list) * epilogue_timing =
+  let rs = sigs.sig_rule_state in
+  let final_db = sigs.converged_db in
+  (* Built per rule: only epilogue-relevant files reach here, and
+     the dataflow check below dominates the cfg build. *)
+  let (top_cfg, class_init_cfgs), cfg_secs =
+    Common.with_time @@ fun () ->
+    ( Match_tainting_mode.build_top_level_cfg rs.lang fe.ast,
+      Match_tainting_mode.build_class_init_cfgs rs.lang fe.ast )
+  in
+  let class_init_effects, class_init_secs =
+    Common.with_time @@ fun () ->
+    Match_tainting_mode.check_class_inits_prebuilt fe.taint_inst
+      class_init_cfgs
+      ~signature_db:final_db
+      ?builtin_signature_db:rs.builtin_signature_db
+      ()
+  in
+  let top_effects, top_secs =
+    Common.with_time @@ fun () ->
+    Match_tainting_mode.check_top_level_prebuilt fe.taint_inst
+      top_cfg
+      ~signature_db:final_db
+      ?builtin_signature_db:rs.builtin_signature_db
+      ()
+  in
+  (* the shape of an expensive top-level CFG: calls versus method
+     bodies lowered as lambdas *)
+  if top_secs > 0.3 then
+    Log_interfile_timing.Log.info (fun m ->
+        let _, (fun_cfg : IL.fun_cfg) = top_cfg in
+        let nodes = CFG.reachable_nodes fun_cfg.cfg |> List.of_seq in
+        let calls =
+          List.length
+            (List.filter
+               (fun (n : IL.node) ->
+                 match n.n with
+                 | IL.NInstr { i = IL.Call _; _ } -> true
+                 | _ -> false)
+               nodes)
+        in
+        let method_lambdas =
+          List.length
+            (List.filter
+               (fun (n : IL.node) ->
+                 match n.n with
+                 | IL.NInstr
+                     { i =
+                         IL.AssignAnon
+                           ( _,
+                             IL.Lambda
+                               { fkind = (G.Function | G.Method), _;
+                                 _ } );
+                       _ } ->
+                     true
+                 | _ -> false)
+               nodes)
+        in
+        m "[interfile timing] rule %s: epilogue file %s: top-level \
+           dataflow %.2fs, %d nodes, %d calls, %d lambdas of which \
+           %d method bodies"
+          (Rule_ID.to_string (fst rs.rule.R.id))
+          (Fpath.to_string file_path) top_secs (List.length nodes)
+          calls
+          (IL.NameMap.cardinal fun_cfg.lambdas)
+          method_lambdas);
+  ( (effects_to_matches class_init_effects, effects_to_matches top_effects),
+    { epilogue_files = timing.epilogue_files + 1;
+      cfg_secs = timing.cfg_secs +. cfg_secs;
+      class_init_secs = timing.class_init_secs +. class_init_secs;
+      top_secs = timing.top_secs +. top_secs } )
+
+let chunk_findings (sigs : rule_signatures) (files : Fpath.t list)
+    : chunk_findings =
+  let rs = sigs.sig_rule_state in
+  let rule_id_str = Rule_ID.to_string (fst rs.rule.R.id) in
+  (* The chunk continues from the constructor instance variable taint the
+     fixpoint left in each file's [taint_inst]: a method analysed before its
+     constructor reads the taint of the constructor's last analysis in the
+     fixpoint. *)
   Effect_guard.reset_intern ();
   let effects_to_matches =
     Match_tainting_mode.pms_of_effects ~lang:rs.lang ~match_on:rs.match_on
   in
-  (* glob_effects for target files (need no signatures). *)
-  let glob_matches =
-    FpathMap.fold
-      (fun (file_path : Fpath.t) (fe : file_env) (acc : PM.t list) ->
-         if is_target_file rs.target_root_map file_path then
-           List.rev_append (effects_to_matches fe.glob_effects) acc
-         else acc)
-      rs.file_envs []
+  let file_set = FpathSet.of_list files in
+  let file_envs : (Fpath.t * file_env) list =
+    List.filter_map
+      (fun (file_path : Fpath.t) ->
+        Option.map (fun (fe : file_env) -> (file_path, fe))
+          (FpathMap.find_opt file_path rs.file_envs))
+      files
   in
-  (* Topo fold: sig_db grows monotonically, callees precede callers. *)
-  let final_db, topo_matches =
-    topo_fold ~detect_findings:true rs
+  (* glob_effects for target files (need no signatures). *)
+  let glob_by_file =
+    List.fold_left
+      (fun (acc : PM.t list FpathMap.t) ((file_path, fe) : Fpath.t * file_env) ->
+        if is_target_file rs.target_root_map file_path then
+          FpathMap.add file_path (effects_to_matches fe.glob_effects) acc
+        else acc)
+      FpathMap.empty file_envs
+  in
+  let by_function =
+    timed
+      (Printf.sprintf "rule %s: evaluation (finding emission), %d files"
+         rule_id_str (List.length files))
+    @@ fun () ->
+    List.fold_left
+      (fun (acc : PM.t list FunctionMap.t) (fid : Function_id.t) ->
+        match file_of_fid fid with
+        | Some file when FpathSet.mem file file_set ->
+            FunctionMap.add fid (function_findings sigs fid) acc
+        | Some _
+        | None -> acc)
+      FunctionMap.empty rs.topo_order
   in
   (* Per-file epilogue (class-init + top-level) for target files.  Skip a
      file whose [<top_level>] vertex is outside rs.topo_order: its
      non-function code is on no source→sink path and can't produce a ToSink. *)
-  let topo_universe = FidSet.of_list rs.topo_order in
-  let epilogue_relevant (file_path : Fpath.t) (fe : file_env) : bool =
-    let top_fid =
-      Function_id.of_il_name
-        (Graph_from_AST.top_level_name_of_ast fe.ast)
-      |> Interfile_graph.absolutify_fid
-           (path_root_for_file rs.target_root_map file_path)
-    in
-    FidSet.mem top_fid topo_universe
-  in
-  let epilogue_files = ref 0 in
-  let epilogue_cfg_secs = ref 0. in
-  let epilogue_class_init_secs = ref 0. in
-  let epilogue_top_secs = ref 0. in
-  let epilogue_matches =
-    timed (Printf.sprintf "rule %s: epilogue (top-level/class-init)"
-             (Rule_ID.to_string (fst rs.rule.R.id)))
+  let epilogue_by_file, timing =
+    timed
+      (Printf.sprintf "rule %s: epilogue (top-level/class-init), %d files"
+         rule_id_str (List.length files))
     @@ fun () ->
-    FpathMap.fold
-      (fun (file_path : Fpath.t) (fe : file_env) (acc : PM.t list) ->
-         if not (is_target_file rs.target_root_map file_path) then acc
-         else if not (epilogue_relevant file_path fe) then acc
-         else
-           (* Built per rule: only epilogue-relevant files reach here, and
-              the dataflow check below dominates the cfg build. *)
-           let accum cell f =
-             let res, secs = Common.with_time f in
-             cell := !cell +. secs;
-             res
-           in
-           let top_cfg, class_init_cfgs =
-             accum epilogue_cfg_secs @@ fun () ->
-             ( Match_tainting_mode.build_top_level_cfg rs.lang fe.ast,
-               Match_tainting_mode.build_class_init_cfgs rs.lang fe.ast )
-           in
-           let class_init_effects =
-             accum epilogue_class_init_secs @@ fun () ->
-             Match_tainting_mode.check_class_inits_prebuilt fe.taint_inst
-               class_init_cfgs
-               ~signature_db:final_db
-               ?builtin_signature_db:rs.builtin_signature_db
-               ()
-           in
-           let top_effects, top_secs =
-             Common.with_time @@ fun () ->
-             Match_tainting_mode.check_top_level_prebuilt fe.taint_inst
-               top_cfg
-               ~signature_db:final_db
-               ?builtin_signature_db:rs.builtin_signature_db
-               ()
-           in
-           epilogue_top_secs := !epilogue_top_secs +. top_secs;
-           (* the shape of an expensive top-level CFG: calls versus method
-              bodies lowered as lambdas *)
-           if top_secs > 0.3 then
-             Log_interfile_timing.Log.info (fun m ->
-                 let _, (fun_cfg : IL.fun_cfg) = top_cfg in
-                 let nodes = CFG.reachable_nodes fun_cfg.cfg |> List.of_seq in
-                 let calls =
-                   List.length
-                     (List.filter
-                        (fun (n : IL.node) ->
-                          match n.n with
-                          | IL.NInstr { i = IL.Call _; _ } -> true
-                          | _ -> false)
-                        nodes)
-                 in
-                 let method_lambdas =
-                   List.length
-                     (List.filter
-                        (fun (n : IL.node) ->
-                          match n.n with
-                          | IL.NInstr
-                              { i =
-                                  IL.AssignAnon
-                                    ( _,
-                                      IL.Lambda
-                                        { fkind = (G.Function | G.Method), _;
-                                          _ } );
-                                _ } ->
-                              true
-                          | _ -> false)
-                        nodes)
-                 in
-                 m "[interfile timing] rule %s: epilogue file %s: top-level \
-                    dataflow %.2fs, %d nodes, %d calls, %d lambdas of which \
-                    %d method bodies"
-                   (Rule_ID.to_string (fst rs.rule.R.id))
-                   (Fpath.to_string file_path) top_secs (List.length nodes)
-                   calls
-                   (IL.NameMap.cardinal fun_cfg.lambdas)
-                   method_lambdas);
-           incr epilogue_files;
-           List.rev_append (effects_to_matches class_init_effects)
-             (List.rev_append (effects_to_matches top_effects) acc))
-      rs.file_envs []
+    List.fold_left
+      (fun ((acc, timing) : (PM.t list * PM.t list) FpathMap.t * epilogue_timing)
+           ((file_path, fe) : Fpath.t * file_env) ->
+        if not (is_target_file rs.target_root_map file_path) then (acc, timing)
+        else if not (epilogue_relevant sigs file_path fe) then (acc, timing)
+        else
+          let findings, timing =
+            epilogue_file sigs effects_to_matches file_path fe timing
+          in
+          (FpathMap.add file_path findings acc, timing))
+      (FpathMap.empty,
+       { epilogue_files = 0; cfg_secs = 0.; class_init_secs = 0.;
+         top_secs = 0. })
+      file_envs
   in
   Log_interfile_timing.Log.info (fun m ->
       m "[interfile timing] rule %s: epilogue detail: %d files, cfg build \
          %.2fs, class-init dataflow %.2fs, top-level dataflow %.2fs; dataflow \
          totals so far (all rules, all phases): %s"
         (Rule_ID.to_string (fst rs.rule.R.id))
-        !epilogue_files !epilogue_cfg_secs !epilogue_class_init_secs
-        !epilogue_top_secs (Taint_timing.report ()));
+        timing.epilogue_files timing.cfg_secs timing.class_init_secs
+        timing.top_secs (Taint_timing.report ()));
+  { glob_by_file; by_function; epilogue_by_file }
+
+(* The rule's findings from its chunks, in the order of one serial pass over
+   the rule's files and functions, so that [PM.uniq] keeps the same match of
+   each duplicate set.  A chunk that failed is missing and contributes no
+   findings. *)
+let rule_findings (sigs : rule_signatures) (chunks : chunk_findings list)
+    : PM.t list =
+  let rs = sigs.sig_rule_state in
+  let merged =
+    List.fold_left
+      (fun (acc : chunk_findings) (chunk : chunk_findings) ->
+        { glob_by_file =
+            FpathMap.union keep_earlier acc.glob_by_file chunk.glob_by_file;
+          by_function =
+            FunctionMap.union keep_earlier acc.by_function chunk.by_function;
+          epilogue_by_file =
+            FpathMap.union keep_earlier acc.epilogue_by_file
+              chunk.epilogue_by_file })
+      empty_chunk_findings chunks
+  in
+  let glob_matches =
+    FpathMap.fold
+      (fun (file_path : Fpath.t) (_ : file_env) (acc : PM.t list) ->
+        match FpathMap.find_opt file_path merged.glob_by_file with
+        | Some pms -> List.rev_append pms acc
+        | None -> acc)
+      rs.file_envs []
+  in
+  let topo_matches =
+    List.fold_left
+      (fun (acc : PM.t list) (fid : Function_id.t) ->
+        match FunctionMap.find_opt fid merged.by_function with
+        | Some pms -> List.rev_append pms acc
+        | None -> acc)
+      [] rs.topo_order
+  in
+  let epilogue_matches =
+    FpathMap.fold
+      (fun (file_path : Fpath.t) (_ : file_env) (acc : PM.t list) ->
+        match FpathMap.find_opt file_path merged.epilogue_by_file with
+        | Some (class_init, top) ->
+            List.rev_append class_init (List.rev_append top acc)
+        | None -> acc)
+      rs.file_envs []
+  in
   List.rev_append glob_matches
     (List.rev_append topo_matches epilogue_matches)
   |> List_.map (rebase_pm rs.scanning_roots rs.target_root_map)
   |> PM.uniq
   |> PM.no_submatches
+
+let rule_id_of_signatures (sigs : rule_signatures) : Rule_ID.t =
+  rule_id_of sigs.sig_rule_state
 
 (* Parallel when ncores>1 and >1 item, else serial; failures go to [on_exn],
    which runs inside the worker domain, so it must not touch shared state.
@@ -1271,6 +1428,20 @@ let parse_batch_size = 500
 
 let spec_extract_batch_size = 2000
 
+(* The files of a rule's state initialisation in one task: a rule's files are
+   spread over the domains, and one task builds the states of enough files
+   that its dispatch is a small part of its work. Batches of 250 to 1000 files
+   take the same time on the interfile benchmarks. *)
+let init_batch_size = 500
+
+(* The files of a rule in one findings chunk: the chunks of a rule with many
+   files spread over the domains, while one chunk analyses enough files that
+   its dispatch and its share of the merge are a small part of its work. On
+   the interfile benchmarks, where a few rules take most of the time, chunks
+   of 128 or 256 files are slower than chunks of 64, and chunks of 32 are not
+   faster. *)
+let file_batch_size = 64
+
 let chunks (n : int) (xs : 'a list) : 'a list list =
   let rec loop done_chunks cur cur_len = function
     | [] when cur_len = 0 -> List.rev done_chunks
@@ -1281,6 +1452,139 @@ let chunks (n : int) (xs : 'a list) : 'a list list =
       loop (List.rev cur :: done_chunks) [item] 1 rest
   in
   loop [] [] 0 xs
+
+module IntMap = Map.Make (Int)
+
+(* The chunks of every rule in one parallel map, so that a rule with many or
+   expensive files does not hold up the others: [f i chunk] for each chunk of
+   the [i]th rule. The results of a rule's chunks are folded with [merge]
+   from [empty ()] in the order of its chunks, which the parallel map keeps.
+   A rule with a failed chunk gives the error of its first failed chunk, from
+   [on_exn], which runs in the worker domain. *)
+let map_rule_chunks (caps : < Cap.fork >) ~(ncores : int)
+    ~(on_exn : int -> Exception.t -> E.t) ~(empty : unit -> 'acc)
+    ~(merge : 'acc -> 'result -> 'acc) (f : int -> 'chunk -> 'result)
+    (rule_chunks : 'chunk list list) : ('acc, E.t) result list =
+  let items : (int * 'chunk) list =
+    rule_chunks
+    |> List.mapi (fun (i : int) (chunks : 'chunk list) ->
+           List_.map (fun (chunk : 'chunk) -> (i, chunk)) chunks)
+    |> List.concat
+  in
+  let (successes : (int * 'result) list), (failures : (int * E.t) list) =
+    run_parmap caps ~ncores
+      ~on_exn:(fun ((i, _chunk) : int * 'chunk) (exn : Exception.t) ->
+        (i, on_exn i exn))
+      (fun ((i, chunk) : int * 'chunk) -> (i, f i chunk))
+      items
+  in
+  let first_failures : E.t IntMap.t =
+    List.fold_left
+      (fun (acc : E.t IntMap.t) ((i, err) : int * E.t) ->
+        IntMap.update i
+          (function None -> Some err | Some first -> Some first)
+          acc)
+      IntMap.empty failures
+  in
+  let accs : 'acc IntMap.t =
+    List.fold_left
+      (fun (acc : 'acc IntMap.t) ((i, result) : int * 'result) ->
+        IntMap.update i
+          (fun (prev : 'acc option) ->
+            Some (merge (Option.value prev ~default:(empty ())) result))
+          acc)
+      IntMap.empty successes
+  in
+  List.mapi
+    (fun (i : int) (_ : 'chunk list) ->
+      match IntMap.find_opt i first_failures with
+      | Some err -> Error err
+      | None -> Ok (Option.value (IntMap.find_opt i accs) ~default:(empty ())))
+    rule_chunks
+
+(* The rule's files in chunks of [file_batch_size]: the files of its states
+   and the files of its functions, so that no function is left out. *)
+let file_chunks (sigs : rule_signatures) : Fpath.t list list =
+  let rs = sigs.sig_rule_state in
+  FpathMap.fold
+    (fun (file_path : Fpath.t) (_ : file_env) (acc : FpathSet.t) ->
+      FpathSet.add file_path acc)
+    rs.file_envs FpathSet.empty
+  |> Fun.flip
+       (List.fold_left (fun (acc : FpathSet.t) (fid : Function_id.t) ->
+            match file_of_fid fid with
+            | Some file -> FpathSet.add file acc
+            | None -> acc))
+       rs.topo_order
+  |> FpathSet.elements
+  |> chunks file_batch_size
+
+(* Runs a task of a rule under the limits of the rule; None when the rule's
+   time limit runs out. *)
+type task_limit = {
+  run :
+    'a.
+    Time_limit.shared_limit option -> Rule_ID.t -> (unit -> 'a) -> 'a option;
+}
+
+(* Phase 2 for every rule, in one parallel map over the chunks of all rules,
+   each under the limits of its rule. The merge of a rule's chunks and
+   [on_findings] of its findings run under the same limits once its chunks
+   have returned. A rule with a failed or timed-out chunk or merge reports one
+   error and no findings, as a rule whose analysis fails or times out as a
+   whole. *)
+let findings_of_rules (caps : < Cap.fork >) ~(ncores : int)
+    ~(limit : task_limit) ~(on_findings : PM.t list -> unit)
+    (rules : (rule_signatures * Time_limit.shared_limit option) list) :
+    (Rule_ID.t * (PM.t list, E.t) result) list =
+  let rule_array = Array.of_list rules in
+  let outcomes : (chunk_findings list * bool, E.t) result list =
+    map_rule_chunks caps ~ncores
+      ~on_exn:(fun (i : int) (exn : Exception.t) ->
+        rule_failure (rule_id_of_signatures (fst rule_array.(i))) exn)
+      ~empty:(fun () -> ([], false))
+      ~merge:(fun ((chunks, timed_out) : chunk_findings list * bool)
+                  (result : chunk_findings option) ->
+        match result with
+        | Some chunk -> (chunk :: chunks, timed_out)
+        | None -> (chunks, true))
+      (fun (i : int) (files : Fpath.t list) ->
+        let sigs, rule_limit = rule_array.(i) in
+        limit.run rule_limit (rule_id_of_signatures sigs) (fun () ->
+            chunk_findings sigs files))
+      (List_.map
+         (fun ((sigs, _) : rule_signatures * Time_limit.shared_limit option) ->
+           file_chunks sigs)
+         rules)
+  in
+  List.map2
+    (fun ((sigs, rule_limit) : rule_signatures * Time_limit.shared_limit option)
+         (outcome : (chunk_findings list * bool, E.t) result) ->
+      let rule_id = rule_id_of_signatures sigs in
+      ( rule_id,
+        match outcome with
+        | Error err -> Error err
+        | Ok (_, true) -> Error (rule_timeout_error rule_id)
+        | Ok (chunks, false) -> (
+            (* [on_findings] runs once the rule's limits have returned, under
+               the handlers below, as the hook of a target does. *)
+            match
+              Option.map (fun (matches : PM.t list) -> on_findings matches; matches)
+                (limit.run rule_limit rule_id (fun () ->
+                     rule_findings sigs (List.rev chunks)))
+            with
+            | Some matches -> Ok matches
+            | None -> Error (rule_timeout_error rule_id)
+            (* As in the per-target handler of [Core_scan], a resource failure
+               is the rule's error, and any other exception is the rule's
+               error unless the scan fails fast. *)
+            | exception
+                ((Out_of_memory | Stack_overflow
+                 | Memory_limit.ExceededMemoryLimit _) as exn) ->
+                Error (rule_failure rule_id (Exception.catch exn))
+            | exception exn when not !Flag_semgrep.fail_fast ->
+                Error (rule_failure rule_id (Exception.catch exn))) ))
+    rules outcomes
 
 (* A parsed batch holds the ASTs by file, the skipped tokens of the files
    parsed here, and the files whose parse raised, each with its error. *)
@@ -1539,6 +1843,16 @@ let build_rule_states
               | Lockfile _ -> false)
               root_targets
           in
+          (* Without a target of the language under the root, the rules of
+             the language have no file to report in, and the graph is not
+             built. *)
+          if List_.null lang_targets then (
+            Log.info (fun m ->
+                m "interfile preprocess: no %s target under %s; its taint \
+                   rules do not run for that root"
+                  (Lang.to_string lang) (Fpath.to_string project_root));
+            (None, []))
+          else
           let build_opt, limit_failures =
             match bounded_build lang project_root with
             | Ok build_opt -> (build_opt, [])
@@ -1825,12 +2139,10 @@ let build_rule_states
         lc.lc_matching_targets
     else lc.lc_matching_targets
   in
-  let spec_chunk_items : (int * interfile_target list) list =
+  let spec_chunks : interfile_target list list list =
     spec_pairs |> Array.to_list
-    |> List.mapi (fun i pair ->
-         chunks spec_extract_batch_size (rule_targets pair)
-         |> List_.map (fun chunk -> (i, chunk)))
-    |> List.concat
+    |> List_.map (fun (pair : lang_context * R.taint_rule) ->
+           chunks spec_extract_batch_size (rule_targets pair))
   in
   (* Compiled once per rule; contents read once per file — both shared
      read-only across every (rule, chunk) item. *)
@@ -1856,82 +2168,70 @@ let build_rule_states
               | exception _ -> ())
           lc.lc_matching_targets)
       lang_contexts;
-  let (spec_partials : (int * rule_specs) list),
-      (failed_spec_chunks : (int * E.t) list) =
+  (* A failed chunk leaves the rule's seeds incomplete for this context;
+     dispatching a partial seeding would find an unpredictable subset.
+     Treat the rule as failed for the whole context — like a failed
+     rule state initialisation: no dispatch. *)
+  let spec_outcomes :
+      (Function_id.t list
+       * Function_id.t list
+       * E.t list
+       * FpathSet.t
+       * (Fpath.t, Match_taint_spec.source_sink_matches) Hashtbl.t,
+       E.t)
+      result
+      list =
     timed "spec extraction (source/sink matching)" @@ fun () ->
-    run_parmap caps ~ncores
-      ~on_exn:(fun ((i, _chunk) : int * interfile_target list)
-                 (exn : Exception.t) ->
+    map_rule_chunks caps ~ncores
+      ~on_exn:(fun (i : int) (exn : Exception.t) ->
         let _lc, rule = spec_pairs.(i) in
         let rule_id = fst rule.R.id in
         Log.warn (fun m ->
             m "interfile spec_extract: rule %s failed: %s"
               (Rule_ID.to_string rule_id) (Exception.to_string exn));
-        (i, { (E.exn_to_error exn) with E.rule_id = Some rule_id }))
-      (fun ((i, chunk) : int * interfile_target list) ->
+        rule_error rule_id exn)
+      ~empty:(fun () -> ([], [], [], FpathSet.empty, Hashtbl.create 16))
+      ~merge:(fun ((sources : Function_id.t list), (sinks : Function_id.t list),
+                   (errors : E.t list), (files : FpathSet.t),
+                   (matches :
+                     (Fpath.t, Match_taint_spec.source_sink_matches) Hashtbl.t))
+                  (specs : rule_specs) ->
+        Hashtbl.iter (Hashtbl.replace matches) specs.rs_spec_matches;
+        (List.rev_append specs.rs_sources sources,
+         List.rev_append specs.rs_sinks sinks,
+         List.rev_append specs.rs_errors errors,
+         FpathSet.union specs.rs_target_files files,
+         matches))
+      (fun (i : int) (chunk : interfile_target list) ->
         let lc, rule = spec_pairs.(i) in
-        let specs =
-          timed
-            (Printf.sprintf "rule %s: spec extraction chunk (%d files)"
-               (Rule_ID.to_string (fst rule.R.id)) (List.length chunk))
-          @@ fun () ->
-          extract_specs_for_rule ~lang:lc.lc_lang ~xconf
-            ~prefilter:rule_prefilters.(i)
-            ~contents:target_contents ~stamped_files
-            ~ast_table:(ast_table_for_lang target_ast_lookup lc.lc_lang)
-            ~matching_targets:chunk rule
-        in
-        (i, specs))
-      spec_chunk_items
+        timed
+          (Printf.sprintf "rule %s: spec extraction chunk (%d files)"
+             (Rule_ID.to_string (fst rule.R.id)) (List.length chunk))
+        @@ fun () ->
+        extract_specs_for_rule ~lang:lc.lc_lang ~xconf
+          ~prefilter:rule_prefilters.(i)
+          ~contents:target_contents ~stamped_files
+          ~ast_table:(ast_table_for_lang target_ast_lookup lc.lc_lang)
+          ~matching_targets:chunk rule)
+      spec_chunks
   in
-  (* A failed chunk leaves rule [i]'s seeds incomplete for this context;
-     dispatching a partial seeding would find an unpredictable subset.
-     Treat the rule as failed for the whole context — like a failed
-     [init_rule_state]: no dispatch. *)
-  (* the first failed chunk's error stands for the rule *)
-  let failed_spec_rules : (int, E.t) Hashtbl.t = Hashtbl.create 4 in
-  List.iter
-    (fun ((i, err) : int * E.t) ->
-       if not (Hashtbl.mem failed_spec_rules i) then
-         Hashtbl.replace failed_spec_rules i err)
-    failed_spec_chunks;
   let spec_failures : E.t list =
-    Hashtbl.fold (fun (_ : int) (err : E.t) acc -> err :: acc)
-      failed_spec_rules []
+    List.filter_map
+      (function Ok _ -> None | Error (err : E.t) -> Some err)
+      spec_outcomes
   in
   let all_specs : (lang_context * rule_specs) list =
-    let module IntMap = Map.Make (Int) in
-    let by_rule =
-      List.fold_left
-        (fun acc ((i, specs) : int * rule_specs) ->
-          let sources, sinks, errors, files, matches =
-            Option.value (IntMap.find_opt i acc)
-              ~default:([], [], [], FpathSet.empty, Hashtbl.create 16)
-          in
-          Hashtbl.iter (Hashtbl.replace matches) specs.rs_spec_matches;
-          IntMap.add i
-            (List.rev_append specs.rs_sources sources,
-             List.rev_append specs.rs_sinks sinks,
-             List.rev_append specs.rs_errors errors,
-             FpathSet.union specs.rs_target_files files,
-             matches)
-            acc)
-        IntMap.empty spec_partials
-    in
-    spec_pairs |> Array.to_list
-    |> List.mapi (fun i ((lc : lang_context), (rule : R.taint_rule)) ->
-         if Hashtbl.mem failed_spec_rules i then None
-         else
-           let rs_sources, rs_sinks, rs_errors, rs_target_files,
-               rs_spec_matches =
-             Option.value (IntMap.find_opt i by_rule)
-               ~default:([], [], [], FpathSet.empty, Hashtbl.create 0)
-           in
-           Some
-             (lc,
-              { rs_rule = rule; rs_sources; rs_sinks; rs_errors;
-                rs_target_files; rs_spec_matches }))
-    |> List.filter_map Fun.id
+    List.combine (Array.to_list spec_pairs) spec_outcomes
+    |> List.filter_map
+         (fun (((lc : lang_context), (rule : R.taint_rule)), outcome) ->
+           match outcome with
+           | Error (_ : E.t) -> None
+           | Ok (rs_sources, rs_sinks, rs_errors, rs_target_files,
+                 rs_spec_matches) ->
+               Some
+                 (lc,
+                  { rs_rule = rule; rs_sources; rs_sinks; rs_errors;
+                    rs_target_files; rs_spec_matches }))
   in
   let spec_file_failures : E.t list =
     List.concat_map
@@ -2044,31 +2344,66 @@ let build_rule_states
      missing from its rule's state. *)
   let (inits : (rule_state * E.t list) list), (init_failures : E.t list) =
     timed "init rule states" @@ fun () ->
-    run_parmap caps ~ncores
-      ~on_exn:(fun (rsg : rule_subgraph) (exn : Exception.t) ->
-        let rule_id = fst rsg.rsg_specs.rs_rule.R.id in
-        Log.warn (fun m ->
-            m "interfile init_rule: rule %s failed: %s"
-              (Rule_ID.to_string rule_id) (Exception.to_string exn));
-        { (E.exn_to_error exn) with E.rule_id = Some rule_id })
-      (fun (rsg : rule_subgraph) ->
-        (* the rule's targets only: a finding in a file its paths: excludes
-           is a companion's, and is not reported *)
-        let target_root_map =
-          FpathMap.filter
-            (fun abs _ -> FpathSet.mem abs rsg.rsg_specs.rs_target_files)
-            target_root_map
-        in
-        timed
-          (Printf.sprintf "rule %s: init rule state (%d files)"
-             (Rule_ID.to_string (fst rsg.rsg_specs.rs_rule.R.id))
-             (List.length rsg.rsg_files))
-        @@ fun () ->
-        init_rule_state
-          ~ast_table:(ast_table_for_lang full_ast_lookup
-                        rsg.rsg_lang_context.lc_lang)
-          ~function_maps ~target_root_map ~scanning_roots rsg)
+    let rule_init_failure (rsg : rule_subgraph) (exn : Exception.t) : E.t =
+      let rule_id = fst rsg.rsg_specs.rs_rule.R.id in
+      Log.warn (fun m ->
+          m "interfile init_rule: rule %s failed: %s"
+            (Rule_ID.to_string rule_id) (Exception.to_string exn));
+      rule_error rule_id exn
+    in
+    (* the rule's targets only: a finding in a file its paths: excludes
+       is a companion's, and is not reported *)
+    let rules : (rule_subgraph * path_with_root FpathMap.t) array =
       rule_subgraphs
+      |> List_.map (fun (rsg : rule_subgraph) ->
+             ( rsg,
+               FpathMap.filter
+                 (fun abs _ -> FpathSet.mem abs rsg.rsg_specs.rs_target_files)
+                 target_root_map ))
+      |> Array.of_list
+    in
+    let init_outcomes : (file_init_acc, E.t) result list =
+      map_rule_chunks caps ~ncores
+        ~on_exn:(fun (i : int) (exn : Exception.t) ->
+          rule_init_failure (fst rules.(i)) exn)
+        ~empty:(fun () -> empty_file_init_acc)
+        ~merge:merge_file_init_accs
+        (fun (i : int) (chunk : Fpath.t list) ->
+          let rsg, target_root_map = rules.(i) in
+          timed
+            (Printf.sprintf "rule %s: init rule state chunk (%d files)"
+               (Rule_ID.to_string (fst rsg.rsg_specs.rs_rule.R.id))
+               (List.length chunk))
+          @@ fun () ->
+          init_files
+            ~ast_table:(ast_table_for_lang full_ast_lookup
+                          rsg.rsg_lang_context.lc_lang)
+            ~function_maps ~target_root_map rsg chunk)
+        (rules |> Array.to_list
+         |> List_.map (fun ((rsg, _) : rule_subgraph * _) ->
+                chunks init_batch_size rsg.rsg_files))
+    in
+    let (assembled : (rule_state * E.t list) list),
+        (assembly_failures : E.t list) =
+      run_parmap caps ~ncores
+        ~on_exn:(fun ((i, _acc) : int * file_init_acc) (exn : Exception.t) ->
+          rule_init_failure (fst rules.(i)) exn)
+        (fun ((i, acc) : int * file_init_acc) ->
+          let rsg, target_root_map = rules.(i) in
+          rule_state_of_init ~target_root_map ~scanning_roots rsg acc)
+        (init_outcomes
+         |> List.mapi (fun (i : int) outcome -> (i, outcome))
+         |> List.filter_map
+              (fun ((i, outcome) : int * (file_init_acc, E.t) result) ->
+                match outcome with
+                | Ok acc -> Some (i, acc)
+                | Error (_ : E.t) -> None))
+    in
+    (assembled,
+     List.filter_map
+       (function Ok _ -> None | Error (err : E.t) -> Some err)
+       init_outcomes
+     @ assembly_failures)
   in
   let rule_states = List_.map fst inits in
   let init_file_failures = List.concat_map snd inits in

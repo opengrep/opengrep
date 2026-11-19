@@ -1,0 +1,6 @@
+rules:
+- id: cp_handler_after_four_calls
+  languages: [python]
+  message: the constant assigned before the try reaches the handler
+  severity: ERROR
+  pattern: sink("secret")

@@ -1,0 +1,6 @@
+rules:
+- id: cp_method_after_object_literal_method_ts
+  languages: [typescript]
+  message: the constant assigned in the method reaches the sink
+  severity: ERROR
+  pattern: sink("secret")

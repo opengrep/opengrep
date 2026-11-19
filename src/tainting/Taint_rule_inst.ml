@@ -86,6 +86,10 @@ type effects_handler =
 
 type java_props_cache = (string * AST_generic.SId.t, IL.name) Hashtbl.t
 
+(* The taint of the instance variables at the exit of the constructor of each
+   class of the file, by class name. *)
+type constructor_instance_vars = (string, Taint_lval_env.t) Hashtbl.t
+
 type t = {
   lang : Lang.t;
   file : Fpath.t;  (** File under analysis, for Deep Semgrep. *)
@@ -112,6 +116,9 @@ type t = {
     *
     * On very large files, allocating a new name every time could have a perf
     * impact, so we cache them. *)
+  constructor_instance_vars : constructor_instance_vars;
+      (** Written by the analysis of a constructor, read by the other methods
+          of its class. *)
 }
 (** Taint rule instantiated for a given file.
   *

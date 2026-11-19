@@ -4981,7 +4981,8 @@ and function_definition env fdef : function_definition =
   let fbody =
     rec_point_label_stmts @ instance_var_param_assigns env fdef.G.fparams @ fbody
   in
-  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
+  { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody;
+    forig = fdef }
 
 (****************************************************************************)
 (* Entry points *)

@@ -194,7 +194,8 @@ type t = {
   (* restrict the number of matches to report on a rule. *)
   ?max_match_per_file : int option;
 
-  (* override the default taint fixpoint timeout. *)
+  (* Accepted so that rules which set it still load; the taint fixpoint is
+     bounded by its visit count, not by time, and ignores it. *)
   ?taint_fixpoint_timeout : float option;
 
   (* rule-specific timeout. *)

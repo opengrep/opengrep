@@ -35,14 +35,6 @@ module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
-(* Domain-local storage for constructor instance variable taint *)
-let constructor_instance_vars : (string, Lval_env.t) Hashtbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
-
-(* Reset domain-local hashtable *)
-let reset_constructor () =
-  Hashtbl.clear (Domain.DLS.get constructor_instance_vars)
-
 (* TODO: Rename things to make clear that there are "sub-matches" and there are
  * "best matches". *)
 
@@ -166,10 +158,10 @@ let add_taints_from_shape shape =
   Taints.union (Shape.gather_all_taints_in_shape shape)
 
 let log_unstable_loop (taint_inst : Taint_rule_inst.t)
-    (opt_name : IL.name option) (status : [ `Ok | `Timeout ]) : unit =
+    (opt_name : IL.name option) (status : [ `Ok | `Not_converged ]) : unit =
   match status with
   | `Ok -> ()
-  | `Timeout ->
+  | `Not_converged ->
       (* nosemgrep: no-logs-in-library *)
       Logs.info (fun m ->
           m
@@ -3766,18 +3758,6 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
                (succs |> List.map string_of_int |> String.concat ", ")))
   ;
   *)
-  let base_timeout =
-    Common.(
-      taint_inst.options.taint_fixpoint_timeout
-      ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
-  in
-  (* Interfile runs many more functions per fixpoint; scale the timeout up to avoid false timeouts. *)
-  let interfile_timeout_multiplier = 20.0 in
-  let timeout =
-    if taint_inst.options.taint_intrafile then
-      base_timeout *. interfile_timeout_multiplier
-    else base_timeout
-  in
   (* The inner [DataflowX.fixpoint] converges on per-node [lval_env]
    * stability, but not on [effects_acc] — the latter is function-global
    * monotonic state that grows as the body records taint effects. Direct
@@ -3794,14 +3774,14 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   let needs_self_sig_fixpoint =
     match taint_inst.lang with Lang.Clojure -> true | _ -> false
   in
-  let end_mapping, timeout_status =
+  let end_mapping, fixpoint_status =
     if needs_self_sig_fixpoint then
       let rec run_to_sig_fixpoint passes =
         let prev_effects = !(env.effects_acc) in
         env.did_self_recurse := false;
         let end_mapping, status =
           DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order
-            ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+            ~eq_env:Lval_env.equal ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
         in
         (* Cheap checks first; only compute the stabilisation test (a set
@@ -3836,10 +3816,10 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       run_to_sig_fixpoint 0
     else
       DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order
-        ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+        ~eq_env:Lval_env.equal ~init:init_mapping
         ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
-  log_unstable_loop taint_inst env.func.name timeout_status;
+  log_unstable_loop taint_inst env.func.name fixpoint_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
   effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
   |> record_effects env;
@@ -3875,14 +3855,9 @@ and (fixpoint :
             (* This is not a constructor, check if we have stored instance variable taint *)
             match class_name with
             | Some cls -> (
-                let storage_key =
-                  Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
-                in
                 try
                   let class_instance_vars =
-                    Hashtbl.find
-                      (Domain.DLS.get constructor_instance_vars)
-                      storage_key
+                    Hashtbl.find taint_inst.constructor_instance_vars cls
                   in
                   Lval_env.union ~lang:taint_inst.lang in_env
                     class_instance_vars
@@ -4241,12 +4216,8 @@ and (fixpoint :
                  |> Lval_env.filter_tainted (fun var ->
                         not (Tok.is_fake (snd var.IL.ident)))
                in
-               let storage_key =
-                 Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
-               in
-               Hashtbl.replace
-                 (Domain.DLS.get constructor_instance_vars)
-                 storage_key final_env
+               Hashtbl.replace taint_inst.constructor_instance_vars cls
+                 final_env
            | None -> ())
      | None -> ());
   (effects, mapping)

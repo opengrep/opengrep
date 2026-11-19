@@ -24,3 +24,25 @@ val set_timeout_opt :
   (float * < Cap.time_limit >) option ->
   (unit -> 'a) ->
   'a option
+
+(*
+   A time limit shared by several computations, possibly on different
+   domains: the length of the union of their running intervals, the time
+   during which at least one of them runs.
+*)
+type shared_limit
+
+(* A shared limit of the given number of seconds. *)
+val create_shared_limit : float -> shared_limit
+
+(*
+   Runs the computation under 'set_timeout' of the time the shared limit has
+   left when it starts. Returns None when that time runs out, and does not run
+   the computation when none is left.
+*)
+val with_shared_limit :
+  < Cap.time_limit > ->
+  name:string ->
+  shared_limit ->
+  (unit -> 'a) ->
+  'a option
