@@ -56,9 +56,7 @@ let scan_output (caps : Scan_subcommand.caps) ~(channel : out_channel)
           String.split_on_char '\n' output))
 
 let line_containing (term : string) (lines : string list) : string =
-  match List.filter (fun (line : string) -> String_.contains ~term line) lines with
-  | line :: _ -> line
-  | [] -> Alcotest.fail (spf "no line containing %S" term)
+  line_containing_all [ term ] lines
 
 (* the size column of a line of the --time report: the four characters the
    report writes after the parenthesis that opens it *)

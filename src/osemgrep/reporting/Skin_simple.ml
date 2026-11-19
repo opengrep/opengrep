@@ -8,8 +8,9 @@ module OutJ = Semgrep_output_v1_t
  *
  * Each file is printed once above its findings; a finding is a severity, a
  * rule id and a message, with the code under them, each line after its
- * number at the left edge. Colour marks only the severity and the rule id;
- * the line numbers, the labels and the code around a match are faint.
+ * number at the left edge. Colour marks the severity, the rule id and the
+ * paths of a trace; the line numbers, the labels and the code around a match
+ * are faint.
  *
  * This module defines the look; Skin_common draws the report with it.
  *)
@@ -78,7 +79,7 @@ let severity_word (severity : OutJ.match_severity) : string * Fmt.style =
       ("warn", `Fg `Yellow)
   | `Info
   | `Low ->
-      ("info", `Fg `Green)
+      ("info", `Fg `Blue)
   | `Inventory
   | `Experiment ->
       ("note", `Fg `Cyan)
@@ -94,6 +95,11 @@ let match_unhighlighted : Fmt.style list = [ `Faint ]
 let annotation_style : Fmt.style list = [ `Faint ]
 let pp_annotation : string Fmt.t =
   Findings_layout.styles annotation_style Fmt.string
+
+(* The path of a step of a trace in a file other than that of the step
+   above it. The path of a source has the same style when a trace is drawn
+   under the source, and the colour of the text otherwise. *)
+let path_style : Fmt.style list = [ `Fg `Green ]
 
 (* a line number right-aligned in [width] columns and its separator, faint,
    rendered for [ppf] *)
@@ -139,17 +145,23 @@ let finding (severity : OutJ.match_severity) : Skin_common.finding_look =
     pp_from_label =
       (fun (ppf : Format.formatter) -> pp_annotation ppf from_label);
     from_label_width = String.length from_label;
-    pp_from_location = Fmt.string;
-    (* the line numbers of a trace are as wide as the largest of them, after
-       the label of each step *)
+    pp_from_location =
+      (fun ~(traced : bool) ->
+        if traced then Findings_layout.styles path_style Fmt.string
+        else Fmt.string);
+    (* the line numbers of the steps of one level of a trace are as wide as
+       the largest of them, after the label of each step *)
     trace =
-      (fun (ppf : Format.formatter) ~code_digits:_ ~(digits : int) ->
+      (fun (ppf : Format.formatter) ~code_digits:(_ : int) ~digits:(_ : int) ->
         {
           line_prefix = trace_margin;
           gutter =
-            (fun (n : int) -> trace_number_indent ^ numbered ppf digits n);
+            (fun ~(digits : int) (n : int) ->
+              trace_number_indent ^ numbered ppf digits n);
           gutter_blank =
-            trace_number_indent ^ String.make (digits + separator_width) ' ';
+            (fun ~(digits : int) ->
+              trace_number_indent ^ String.make (digits + separator_width) ' ');
+          path_style;
           highlight = match_highlight;
           unhighlighted = match_unhighlighted;
         });

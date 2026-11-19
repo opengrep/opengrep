@@ -16,6 +16,6 @@ t.py
            ├─ param             8: def h(p):
            ├─ through           9: a = p
            └─ sink in call     10: s(a)
-              ├─ param             2: def s(v):
-              └─ sink              3: sink(v)
+              ├─ param            2: def s(v):
+              └─ sink             3: sink(v)
 

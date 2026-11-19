@@ -27,8 +27,9 @@ module M = Skin_model
    Findings_layout.pp_dataflow_tree. *)
 type trace_look = {
   line_prefix : string;
-  gutter : int -> string;
-  gutter_blank : string;
+  gutter : digits:int -> int -> string;
+  gutter_blank : digits:int -> string;
+  path_style : Fmt.style list;
   highlight : Fmt.style list;
   unhighlighted : Fmt.style list;
 }
@@ -68,11 +69,14 @@ type finding_look = {
   (* the label before a source, and its width *)
   pp_from_label : Format.formatter -> unit;
   from_label_width : int;
-  (* the location of a source, after the label *)
-  pp_from_location : string Fmt.t;
-  (* the look of a trace, its styled parts rendered for this formatter, under
-     code whose line numbers are [code_digits] wide, with line numbers
-     [digits] wide *)
+  (* the location of a source, after the label, with [traced] true when a
+     trace is drawn under the source *)
+  pp_from_location : traced:bool -> string Fmt.t;
+  (* The look of a trace, its styled parts rendered for this formatter, under
+     code whose line numbers are [code_digits] wide. [digits] is the width of
+     the largest line number of all the traces under the finding; the gutter
+     of the look also receives that of each level of a trace, and a skin
+     sizes its line numbers from either. *)
   trace : Format.formatter -> code_digits:int -> digits:int -> trace_look;
   (* the label before a fix, and its width *)
   pp_fix_label : Format.formatter -> unit;
@@ -154,7 +158,7 @@ let pp_message (ctx : Skin.ctx) (look : finding_look) ppf (message : string) :
    shifted right by a long file elsewhere. *)
 let code_digits (m : OutJ.cli_match) (lines : Findings_layout.code_line list) :
     int =
-  String.length (string_of_int (m.start.line + max 0 (List.length lines - 1)))
+  Findings_layout.line_digits (m.start.line + max 0 (List.length lines - 1))
 
 (* the width at which a line of code is filled, --max-chars-per-line
    included *)
@@ -252,6 +256,9 @@ let pp_origins (ctx : Skin.ctx) (look : finding_look) ~(code_digits : int) ppf
          o.source
          |> Option.iter (fun ((loc : OutJ.location), (code : string)) ->
                 let hanging = String.make look.from_label_width ' ' in
+                let pp_location =
+                  look.pp_from_location ~traced:(Option.is_some o.trace)
+                in
                 (* the path is wrapped rather than shortened, since the
                    reader opens it *)
                 Findings_layout.wrap_lines ~filler:Textwrap
@@ -264,13 +271,13 @@ let pp_origins (ctx : Skin.ctx) (look : finding_look) ~(code_digits : int) ppf
                        look.pp_body_margin ppf;
                        if i = 0 then look.pp_from_label ppf
                        else Fmt.string ppf hanging;
-                       Fmt.pf ppf "%a@." look.pp_from_location txt);
+                       Fmt.pf ppf "%a@." pp_location txt);
                 (* The code of the source, which its trace carries, is drawn
                    as a line of the match, all of it matched. Its number is
                    as wide as those of the match when it fits, so that the
                    code of both starts at the same column. *)
                 let source_digits =
-                  max code_digits (String.length (string_of_int loc.start.line))
+                  max code_digits (Findings_layout.line_digits loc.start.line)
                 in
                 let width = code_line_width ctx look ~digits:source_digits in
                 (* one line, as the code of a source can be long *)
@@ -288,6 +295,7 @@ let pp_origins (ctx : Skin.ctx) (look : finding_look) ~(code_digits : int) ppf
                   ~line_prefix:trace_look.line_prefix ~glyph:faint
                   ~gutter:trace_look.gutter
                   ~gutter_blank:trace_look.gutter_blank
+                  ~path_style:trace_look.path_style
                   ~highlight:trace_look.highlight
                   ~unhighlighted:trace_look.unhighlighted ~label:step_label ppf
                   trace))
@@ -325,13 +333,7 @@ let pp_finding ?(group : OutJ.cli_match list = []) ?(heading = true)
     finding_look.blank_before_fix
     || origins
        |> List.exists (fun (o : Findings_layout.origin) ->
-              Option.is_some o.source
-              ||
-              match o.trace with
-              | Some (trace : OutJ.match_dataflow_trace) ->
-                  not
-                    (List_.null (Findings_layout.tree_of_dataflow_trace trace))
-              | None -> false)
+              Option.is_some o.source || Option.is_some o.trace)
   in
   (match
      Findings_layout.fix_display
@@ -476,8 +478,8 @@ let pp_findings (look : look) (ctx : Skin.ctx) ppf
     ~pp_by_file:(pp_by_file look ctx) ~pp_ci_heading:look.pp_ci_heading
     ~pp_rules_fired:(pp_rules_fired look ctx) ppf cli_output
 
-(* The word before a message on stderr, coloured as the severity of a
-   finding in the simple skin; an app message has none. *)
+(* The word before a message on stderr, coloured by its level; an app
+   message has none. *)
 let log_word (level : Logs.level) : (string * Fmt.style) option =
   match level with
   | Logs.Error -> Some ("error", `Fg `Red)
