@@ -63,7 +63,7 @@ let make_core_result () : Core_result.processed_match =
         facts = [];
       }
   in
-  Core_result.{ pm; is_ignored = false; autofix_edit = None }
+  Core_result.{ pm; is_ignored = false; justification = None; autofix_edit = None }
 
 let make_core_match ?(check_id = "fake-rule-id") ?annotated_rule_id
     ?(src = "unchanged") () : Out.core_match =
@@ -91,6 +91,7 @@ let make_core_match ?(check_id = "fake-rule-id") ?annotated_rule_id
         engine_kind = "Opengrep";
         dataflow_trace = None;
         is_ignored = false;
+        justification = None;
         sca_match = None;
         validation_state = None;
         historical_info = None;
@@ -151,4 +152,36 @@ let test_core_unique_key =
           "keys should not match" match1 match2);
      ]
 
-let tests = Testo.categorize "Core_json_output" test_core_unique_key
+let test_justification_utf8 () =
+  let cases =
+    [
+      (None, None);
+      (Some "", Some "");
+      (Some "generated code", Some "generated code");
+      (Some "caf\xc3\xa9", Some "caf\xc3\xa9");
+      (Some "caf\xe9", Some "caf\xef\xbf\xbd");
+      (Some "\xff\xe2\x82", Some "\xef\xbf\xbd\xef\xbf\xbd");
+    ]
+  in
+  List.iter
+    (fun (justification, expected) ->
+      let result = make_core_result () in
+      let result = { result with is_ignored = true; justification } in
+      let converted =
+        match Core_json_output.match_to_match result with
+        | Ok converted -> converted
+        | Error _ -> failwith "failed to convert core match"
+      in
+      Alcotest.(check (option string))
+        "sanitized justification" expected converted.extra.justification;
+      let json = Out.string_of_core_match converted in
+      Alcotest.(check string) "valid UTF-8 JSON" json (Utf8.sanitize json);
+      let decoded = Out.core_match_of_string json in
+      Alcotest.(check (option string))
+        "serialized justification" expected decoded.extra.justification)
+    cases
+
+let tests =
+  Testo.categorize "Core_json_output"
+    (test_core_unique_key
+    @ [ Testo.create "justification UTF-8" test_justification_utf8 ])
