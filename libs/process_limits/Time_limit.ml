@@ -39,20 +39,21 @@ module M = Memprof_limits
  * the granularity parameter should be set also by CLI flag. *)
 let set_timeout (_caps : < Cap.time_limit >) ?(granularity_float_s=0.1) ~name max_duration f =
   let token = M.Token.create () in
-  (* - Is there a more efficient way do this?
-   * - Should we calculate actual elapsed time? *)
+  (* - Is there a more efficient way do this? *)
   let finished_work = Atomic.make false in
-  let rec timeout duration =
+  let deadline = Unix.gettimeofday () +. max_duration in
+  let rec timeout () =
     if Atomic.get finished_work then ()
-    else if duration <= 0.0 then M.Token.set token 
-    else (
-      Thread.delay granularity_float_s;
-      timeout (duration -. granularity_float_s)
-    )
+    else
+      let left = deadline -. Unix.gettimeofday () in
+      if left <= 0.0 then M.Token.set token
+      else (
+        Thread.delay (Float.min granularity_float_s left);
+        timeout ())
   in
   (* TODO: Investigate why too many threads are created, to the point of failing
    * to create more. *)
-  ignore (Thread.create timeout max_duration);
+  ignore (Thread.create timeout ());
   match M.limit_with_token ~token
           (fun () -> Fun.protect ~finally:(fun () -> Atomic.set finished_work true) f) with
   | Ok res -> Some res
@@ -89,7 +90,9 @@ let used_at (now : float) (u : usage) : float =
 
 (* A task started at [s] with [r = limit - used s] stops by [s + r]: while
    tasks run, [used] grows at wall-clock rate, so the union of the running
-   intervals stays within [limit], up to the granularity of [set_timeout]. *)
+   intervals stays within [limit], up to the delay of the timer's wake-up
+   that crosses the deadline and the time to the task's next sampled
+   allocation. *)
 let with_shared_limit (caps : < Cap.time_limit >) ~(name : string)
     (shared : shared_limit) (f : unit -> 'a) : 'a option =
   let remaining =
