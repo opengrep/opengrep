@@ -613,6 +613,14 @@ let union_type_constructors (lang : Lang.t) : string list list =
       [ [ "typing"; "Optional" ]; [ "typing"; "Union" ] ]
   | _ -> []
 
+(* The name of the parameter that a named argument binds: in PHP the
+   argument 'ids: $v' binds the parameter '$ids'. In the other languages an
+   argument and its parameter are written alike. *)
+let parameter_of_named_argument (lang : Lang.t) (name : string) : string =
+  match lang with
+  | Lang.Php -> "$" ^ name
+  | _ -> name
+
 (* The languages for which cross-function (intrafile) taint analysis is
    supported; in the others a taint rule may report only the flows inside
    one function.
