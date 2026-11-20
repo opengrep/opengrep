@@ -604,6 +604,21 @@ let rest_leaves_trailing_args (lang : Lang.t) : bool =
       true
   | _ -> false
 
+(* The actual args of a call, each named arg under the name of the parameter
+   it binds, which [find_pos_in_actual_args] compares with the signature's
+   parameter names. A context arg is matched by position and keeps its tag. *)
+let named_args_by_parameter (lang : Lang.t) (args : 'a IL.argument list) :
+    'a IL.argument list =
+  List_.map
+    (fun (arg : 'a IL.argument) ->
+      match arg with
+      | IL.Named ((name, tok), v) when not (IL_helpers.is_context_arg arg) ->
+          IL.Named ((Lang_config.parameter_of_named_argument lang name, tok), v)
+      | IL.Named _
+      | IL.Unnamed _ ->
+          arg)
+    args
+
 let combine_rest_args_exp (es : IL.exp list) : IL.exp =
   let e = IL.Composite (IL.CList, Tok.unsafe_fake_bracket es) in
   let eorig =
@@ -1427,7 +1442,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
-          args_exps fparams pos
+          (named_args_by_parameter lang args_exps) fparams pos
       in
       match (arg_exp.e, tlval.offset) with
       | Fetch ({ base = Var obj; _ } as arg_lval), _ ->
@@ -1604,7 +1619,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_taint
-          args_taints fparams pos
+          (named_args_by_parameter lang args_taints) fparams pos
     | `Var var ->
         let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
         Some (Xtaint.to_taints xtaints, shape)
@@ -1772,7 +1787,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     match args with
     | None -> fun _ -> None
     | Some args ->
-        find_pos_in_actual_args args taint_sig.params
+        find_pos_in_actual_args (named_args_by_parameter lang args) taint_sig.params
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
           ~combine_rest_args:combine_rest_args_exp
   in
