@@ -3505,10 +3505,25 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
                     (Lval_env.equal_by_lval env.taint_inst.lang in' lval_env'
                        lval)
                 in
+                let appends =
+                  match lval.IL.rev_offset with
+                  | {
+                      oorig =
+                        SameAs { e = G.OtherExpr (("ArrayAppend", _), _); _ };
+                      _;
+                    }
+                    :: _ ->
+                      true
+                  | _ -> false
+                in
                 if lval_taints_changed then
                   (* The taint of 'lval' has changed, so there was a source or
                    * sanitizer acting by side-effect on this instruction. Thus we do NOT
                    * do anything more here. *)
+                  lval_env'
+                else if appends then
+                  (* An append (PHP 'a[] = e') adds an element and changes no
+                   * existing one, so a clean value appended cleans nothing. *)
                   lval_env'
                 else
                   (* No side-effects on 'lval', and the instruction returns safe data,
