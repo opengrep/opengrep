@@ -154,6 +154,7 @@ else
             "-lmirage_crypto_ec_stubs"
             "-lmirage_crypto_rng_unix_stubs"
             "-lmirage_crypto_stubs"
+            "-lmtime_clock_stubs"
             "-lmurmur3_stubs"
             "-lpcre2_stubs"
             "-lptime_clock_stubs"
