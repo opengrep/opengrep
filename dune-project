@@ -394,6 +394,7 @@ time and memory used by Semgrep.
     (commons (>= "1.5.5"))
     (memprof-limits (= "dev"))
     (memtrace (= "dev"))
+    (mtime (>= "2.0.0"))
   )
 )
 
@@ -525,6 +526,7 @@ For more information see https://opengrep.dev.
     (conf-libev (<> :os win32)) ; for lwt, to get better FD perf
     (memprof-limits (= "dev")) ; NOTE: Just to invalidate CI cache for now.
     (memtrace (= "dev"))
+    (mtime (>= "2.0.0")) ; the monotonic clock of the time limits
     thread-local-storage ; NOTE: We should not mess with memprof-limits, but in
                          ; fact there is a TLS module in there also; however, it's
                          ; not exposed in the public interface.

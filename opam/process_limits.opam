@@ -18,6 +18,7 @@ depends: [
   "commons" {>= "1.5.5"}
   "memprof-limits" {= "dev"}
   "memtrace" {= "dev"}
+  "mtime" {>= "2.0.0"}
   "odoc" {with-doc}
 ]
 build: [
