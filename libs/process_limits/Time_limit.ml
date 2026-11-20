@@ -33,6 +33,10 @@ module M = Memprof_limits
 
 (* could be in Control section *)
 
+(* Seconds on the monotonic clock: a step of the system clock does not move a
+   deadline. *)
+let now () : float = Int64.to_float (Mtime_clock.now_ns ()) *. 1e-9
+
 (* TODO: Limit by allocations. *)
 (* XXX: The sleeping threads delays the whole program! Hence the incremental sleeping,
  * and the approach of stopping the sleeping thread when the work is done. Ideally,
@@ -41,11 +45,11 @@ let set_timeout (_caps : < Cap.time_limit >) ?(granularity_float_s=0.1) ~name ma
   let token = M.Token.create () in
   (* - Is there a more efficient way do this? *)
   let finished_work = Atomic.make false in
-  let deadline = Unix.gettimeofday () +. max_duration in
+  let deadline = now () +. max_duration in
   let rec timeout () =
     if Atomic.get finished_work then ()
     else
-      let left = deadline -. Unix.gettimeofday () in
+      let left = deadline -. now () in
       if left <= 0.0 then M.Token.set token
       else (
         Thread.delay (Float.min granularity_float_s left);
@@ -97,7 +101,7 @@ let with_shared_limit (caps : < Cap.time_limit >) ~(name : string)
     (shared : shared_limit) (f : unit -> 'a) : 'a option =
   let remaining =
     update shared.usage (fun (u : usage) ->
-        let now = Unix.gettimeofday () in
+        let now = now () in
         let remaining = shared.limit -. used_at now u in
         if remaining <= 0. then (u, remaining)
         else
@@ -112,7 +116,7 @@ let with_shared_limit (caps : < Cap.time_limit >) ~(name : string)
     Fun.protect
       ~finally:(fun () ->
         update shared.usage (fun (u : usage) ->
-            let now = Unix.gettimeofday () in
+            let now = now () in
             let running = u.running - 1 in
             ( (if Int.equal running 0 then
                  { running; busy_since = 0.; used = u.used +. (now -. u.busy_since) }
@@ -122,6 +126,6 @@ let with_shared_limit (caps : < Cap.time_limit >) ~(name : string)
         (* The task may have waited since it was admitted: its timer gets the
            time left now. *)
         let remaining =
-          shared.limit -. used_at (Unix.gettimeofday ()) (Atomic.get shared.usage)
+          shared.limit -. used_at (now ()) (Atomic.get shared.usage)
         in
         if remaining <= 0. then None else set_timeout caps ~name remaining f)
