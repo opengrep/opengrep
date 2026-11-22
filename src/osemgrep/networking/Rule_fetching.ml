@@ -347,7 +347,7 @@ let parse_rule ~rewrite_rule_ids ~origin caps (file : Fpath.t) :
 (*****************************************************************************)
 
 (* Note that we don't sanity check Parse_rule.is_valid_rule_filename(),
- * so if you explicitely pass a file that does not have the right
+ * so if you explicitly pass a file that does not have the right
  * extension, we will still process it
  * (could be useful for .jsonnet, which is not recognized yet as a
  *  Parse_rule.is_valid_rule_filename, but we still need ojsonnet to
