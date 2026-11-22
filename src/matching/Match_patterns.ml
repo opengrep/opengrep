@@ -59,7 +59,7 @@ type env = {
 (*****************************************************************************)
 
 (* This is used to let the user know which rule the engine was using when
- * a Timeout or OutOfMemory exn occured.
+ * a Timeout or OutOfMemory exn occurred.
  *)
 let (last_matched_rule : Mini_rule.t option TLS.t) = TLS.create ()
 
