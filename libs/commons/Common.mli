@@ -67,7 +67,7 @@ exception Impossible
 exception Multi_found
 
 (* it's usually far easier to diagnose an error when you know on which
- * file it occured. An [Invalid_argument("index out of bounds")] is not
+ * file it occurred. An [Invalid_argument("index out of bounds")] is not
  * as good as [ErrorOnFile("out of bounds in lines_of_file()", 'foo.c')]
  *)
 exception ErrorOnFile of string (* error message *) * Fpath.t

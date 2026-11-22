@@ -235,7 +235,7 @@ let no_cycles_in_svalue (id_info : G.id_info) svalue =
   in
   (* Check that `c' contains no reference to `var'. It can contain references
    * to other occurrences of `var', but not to the same occurrence (that would
-   * be a cycle), and each occurence must have its own `id_svalue` ref. This
+   * be a cycle), and each occurrence must have its own `id_svalue` ref. This
    * is not supposed to happen, but if it does happen by accident then it would
    * cause an infinite loop, stack overflow, or segfault later on. *)
   match svalue with

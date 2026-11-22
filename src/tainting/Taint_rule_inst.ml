@@ -24,7 +24,7 @@
  *
  * Module 'Match_taint_spec' generates a taint rule instance given a taint rule
  * and a file, and 'Dataflow_tainting' runs the actual taint analysis given a
- * taint rule intance and a function from that file.
+ * taint rule instance and a function from that file.
  *)
 
 type var = Dataflow_var_env.var

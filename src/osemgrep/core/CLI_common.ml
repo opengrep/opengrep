@@ -37,7 +37,7 @@ let o_quiet : bool Term.t =
   let info = Arg.info [ "q"; "quiet" ] ~doc:{|Only output findings.|} in
   Arg.value (Arg.flag info)
 
-(* TODO: same, maybe we should take the doc as a paramter so each
+(* TODO: same, maybe we should take the doc as a parameter so each
  * cli_xxx command can give a different help
  *)
 let o_verbose : bool Term.t =

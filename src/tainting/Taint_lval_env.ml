@@ -176,7 +176,7 @@ let normalize_lval lang lval =
  * problems of its own... *)
 let remove_some_lval_from_tainted_set tainted =
   (* Try to make space for a new l-value by removing an auxiliary _tmp one first.
-   * By using using `find_first_opt` we try to find the one with the lowest sid,
+   * By using `find_first_opt` we try to find the one with the lowest sid,
    * which hopefully isn't needed anymore... (unless it's inside a loop...).
    * This could perhaps (?) break monotonicity and cause divergence of the fixpoint,
    * which stops at Limits_semgrep.taint_MAX_VISITS_PER_NODE. *)

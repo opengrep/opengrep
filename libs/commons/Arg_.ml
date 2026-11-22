@@ -27,7 +27,7 @@ open Common
  *  - isn't unison or scott-mcpeak-lib-in-cil handles that kind of
  *    stuff better ? That is the need to localize command line argument
  *    while still being able to gathering them. Same for logging.
- *    Similiar to the type prof = PALL | PNONE | PSOME of string list.
+ *    Similar to the type prof = PALL | PNONE | PSOME of string list.
  *    Same spirit of fine grain config in log4j ?
  *  - how mercurial/cvs/git manage command line options ? because they
  *    all have a kind of DSL around arguments with some common options,

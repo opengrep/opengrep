@@ -74,7 +74,7 @@ end)
  * shape, because they denote l-values. The first argument of a 'Cell' is its
  * xtaint or "taint status" (see 'Xtaint.t'). For each field and index, we track
  * its xtaint individually (field- and index-sensitivity). Field '.a' in
- * `Obj { .a -> Cell({"taint"}, _|_) }` has the the taint set {"taint"} attached.
+ * `Obj { .a -> Cell({"taint"}, _|_) }` has the taint set {"taint"} attached.
  * The second argument of 'Cell' is the shape of the objects stored in that cell.
  * The shape of field '.a' is '_|_' ("bottom") which is given to primitive types,
  * or whenever we "don't care" (or to act as "to-do" as well).

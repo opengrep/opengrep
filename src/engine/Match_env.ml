@@ -48,7 +48,7 @@ type xconfig = {
   (* ^^^ i.e. we are evaluating a nested formula within `metavariable-pattern`. *)
   (* Fields coming from Runner_config.t used by the engine.
    * We could just include the whole Runner_config.t, but it's
-   * cleaner to explicitely state what the engine depends on
+   * cleaner to explicitly state what the engine depends on
    * (there's lots of fields in Runner_config.t).
    *)
   matching_explanations : bool;
