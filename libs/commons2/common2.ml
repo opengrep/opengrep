@@ -1724,7 +1724,7 @@ let cmdline_flags_other () =
 (*****************************************************************************)
 (* Postlude *)
 (*****************************************************************************)
-(* stuff put here cos of of forward definition limitation of ocaml *)
+(* stuff put here cos of forward definition limitation of ocaml *)
 
 (*---------------------------------------------------------------------------*)
 (* Directories part 2 *)
