@@ -207,7 +207,7 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
         is_secrets_scan = None;
       }
 
-    (* to be overriden in children *)
+    (* to be overridden in children *)
     method repo_name =
       match env._SEMGREP_REPO_NAME with
       | Some repo_name -> repo_name
