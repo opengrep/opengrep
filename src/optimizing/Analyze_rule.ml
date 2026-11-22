@@ -42,7 +42,7 @@ module Log = Log_optimizing.Log
  * the current Mini_rules_filter used in Match_patterns will just see a flat
  * list of patterns, and will look separately for 'eval' and 'foo.js'
  * and filter certain patterns; But really, even if 'foo.js' is mentioned
- * in a file, we should completly skip the file if 'eval' is not in the file
+ * in a file, we should completely skip the file if 'eval' is not in the file
  * because after all 'foo.js' is mentioned in a pattern-not context!
  * The goal of this file is to process a rule holistically to
  * overcome the limitations of Analyze_pattern.ml
