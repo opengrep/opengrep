@@ -261,10 +261,10 @@ let check_rule_paths (caps : Scan_subcommand.caps) (msg : string)
                            None)
                 |> List.sort String.compare))))
 
-(* An --include or --exclude pattern that is not valid stops the scan
-   before it starts, with the message [expected]. *)
-let check_invalid_cli_pattern (caps : Scan_subcommand.caps) ~(option : string)
-    ~(pattern : string) ~(expected : string) : unit -> unit =
+(* In a git repository, 'opengrep scan -e MARK -l generic' with the
+   arguments [args] stops before it starts, with the message [expected]. *)
+let check_scan_aborts (caps : Scan_subcommand.caps) ~(args : string list)
+    ~(expected : string) : unit -> unit =
  fun () ->
   with_env_app_token (fun () ->
       Testutil_git.with_git_repo ~verbose:true [ F.File ("a.js", "MARK\n") ]
@@ -272,10 +272,8 @@ let check_invalid_cli_pattern (caps : Scan_subcommand.caps) ~(option : string)
           match
             without_settings (fun () ->
                 Scan_subcommand.main caps
-                  [|
-                    "opengrep-scan"; "-e"; "MARK"; "-l"; "generic"; option;
-                    pattern; ".";
-                  |])
+                  (Array.of_list
+                     ([ "opengrep-scan"; "-e"; "MARK"; "-l"; "generic" ] @ args)))
           with
           | (_ : Exit_code.t) -> Alcotest.fail "expected the scan to abort"
           | exception Error.Semgrep_error ((msg : string), _) ->
@@ -822,12 +820,22 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"include-star-a" ~dir:"sub"
            ~expected:(fun _ -> [ "../sub/a.py" ])
            (fun _ -> [ "../sub/a.py" ]));
+      (* An --include or --exclude pattern that is not valid stops the scan
+         before it starts. *)
       t "an --include pattern that is not valid"
-        (check_invalid_cli_pattern caps ~option:"--include" ~pattern:"[abc"
+        (check_scan_aborts caps ~args:[ "--include"; "[abc"; "." ]
            ~expected:"--include '[abc' is not a valid pattern (missing ']')");
       t "a negated --exclude pattern that is not valid"
-        (check_invalid_cli_pattern caps ~option:"--exclude" ~pattern:"![abc"
+        (check_scan_aborts caps ~args:[ "--exclude"; "![abc"; "." ]
            ~expected:"--exclude '![abc' is not a valid pattern (missing ']')");
+      t "--project-root with a baseline commit"
+        (check_scan_aborts caps
+           ~args:[ "--project-root"; "."; "--baseline-commit"; "HEAD"; "." ]
+           ~expected:
+             "--project-root cannot be used with a baseline commit \
+              (--baseline-commit, OPENGREP_BASELINE_COMMIT, \
+              OPENGREP_BASELINE_REF, SEMGREP_BASELINE_COMMIT or \
+              SEMGREP_BASELINE_REF)");
       (* A file given as a target is filtered as a given file even when a
          folder target holds it: a symbolic link given as a target is
          followed. *)

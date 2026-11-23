@@ -238,7 +238,7 @@ let o_use_git : bool Term.t =
         As a result of '--no-git-ignore', gitignored files and git submodules
         will be scanned.
         This flag has no effect if the scanning root is not
-        in a git repository.
+        in a git repository, or with '--project-root'.
         '--use-git-ignore' is opengrep's default behavior.|}
 
 let o_ignore_semgrepignore_files : bool Term.t =
@@ -299,7 +299,8 @@ let o_baseline_commit : string option Term.t =
           {|Only show results that are not found in this commit hash. Aborts run
 if not currently in a git directory, there are unstaged changes, or
 given baseline hash doesn't exist. An empty value means no baseline.
-May also be set with SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
+May also be set with OPENGREP_BASELINE_COMMIT, OPENGREP_BASELINE_REF,
+SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
 |})
 
 (* ------------------------------------------------------------------ *)
@@ -1363,6 +1364,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         engine_config;
       }
     in
+    (* a differential scan uses git, which --project-root turns off *)
+    if Option.is_some project_root && Option.is_some baseline_commit then
+      Error.abort
+        "--project-root cannot be used with a baseline commit \
+         (--baseline-commit, OPENGREP_BASELINE_COMMIT, OPENGREP_BASELINE_REF, \
+         SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF)";
     let include_ =
       match include_ with
       | [] -> None
