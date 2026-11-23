@@ -12,7 +12,8 @@ let syntax_error msg =
 let range (a : char) (b : char) : M.char_class_range =
   if Char.compare a b <= 0 then M.Range (a, b) else M.Class_char a
 
-(* The members of a POSIX character class, in the C locale. *)
+(* The members of a POSIX character class, in the C locale, except 'space',
+   which git limits to space, tab, LF and CR. *)
 let posix_class (name : string) : M.char_class_range list =
   match name with
   | "alpha" -> [ M.Range ('a', 'z'); M.Range ('A', 'Z') ]
@@ -21,7 +22,9 @@ let posix_class (name : string) : M.char_class_range list =
   | "upper" -> [ M.Range ('A', 'Z') ]
   | "lower" -> [ M.Range ('a', 'z') ]
   | "xdigit" -> [ M.Range ('0', '9'); M.Range ('a', 'f'); M.Range ('A', 'F') ]
-  | "space" -> [ M.Class_char ' '; M.Range ('\t', '\r') ]
+  | "space" ->
+      [ M.Class_char ' '; M.Class_char '\t'; M.Class_char '\n';
+        M.Class_char '\r' ]
   | "blank" -> [ M.Class_char ' '; M.Class_char '\t' ]
   | "punct" ->
       [ M.Range ('!', '/'); M.Range (':', '@'); M.Range ('[', '`');
@@ -35,8 +38,12 @@ let posix_class (name : string) : M.char_class_range list =
 let neg = ['^' '!']
 
 rule token = parse
-| '/'+     { SLASH }
-| "**"     { (* only special if it occupies a whole path segment. This
+(* each '/' separates two segments: 'a//b' holds an empty segment and
+   matches only a path with '//' there, as in git *)
+| '/'      { SLASH }
+(* three or more stars are '**', as in git *)
+| "**" '*'*
+           { (* only special if it occupies a whole path segment. This
                 is dealt with later. *)
              STARSTAR }
 | '*'      { STAR }
@@ -55,13 +62,14 @@ rule token = parse
            { CHAR c }
 | eof      { EOF }
 
-(* The members of a bracket expression, as in git: a ']' right
-   after '[' or the negation is a member, a '\' quotes the next character,
-   '[:name:]' is a POSIX class, and a '-' before the closing ']' is a
-   member. [first] is true before the first member. *)
+(* The members of a bracket expression, as in git: a ']' right after '[' or
+   the negation is a member, a '\' quotes the next character, '[:' up to
+   the next ']' is a POSIX class when that ']' follows a ':' (otherwise the
+   '[' is a member), and a '-' before the closing ']' is a member. [first]
+   is true before the first member. *)
 and char_class first acc = parse
 | ']'      { if first then range_or_member ']' acc lexbuf else List.rev acc }
-| "[:" (['a'-'z']+ as name) ":]"
+| "[:" ([^ ']']* as name) ":]"
            { char_class false (List.rev_append (posix_class name) acc) lexbuf }
 | '\\' (_ as c)
            { range_or_member c acc lexbuf }

@@ -158,6 +158,11 @@ let rec translate ~(match_leading_period : bool) (buf : Buffer.t)
       translate_seg ~match_leading_period buf seg;
       add buf "/+";
       translate ~match_leading_period buf pat
+  (* A trailing '**/' matches the folders inside the folder before it, not
+     that folder: at least one more segment, as in gitignore. *)
+  | [ Any_subpath; Segment [] ] ->
+      if match_leading_period then add buf ("/*(?:[^/]+/+)+" ^ eos)
+      else add buf ("/*(?:" ^ no_leading_period ^ "[^/]+/+)+" ^ eos)
   | Any_subpath :: pat ->
       if match_leading_period then add buf "/*(?:[^/]+/+)*"
       else add buf ("/*(?:" ^ no_leading_period ^ "[^/]+/+)*");

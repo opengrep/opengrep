@@ -121,6 +121,16 @@ let tests =
           Alcotest.check_raises __LOC__
             (Lexer.Syntax_error "unknown character class '[:foo:]'") (fun () ->
               ignore (Parse.parse_string "[[:foo:]]" : Pattern.t)));
+      t "POSIX class in upper case is a syntax error" (fun () ->
+          Alcotest.check_raises __LOC__
+            (Lexer.Syntax_error "unknown character class '[:ALPHA:]'")
+            (fun () -> ignore (Parse.parse_string "[[:ALPHA:]]" : Pattern.t)));
+      t "'[:' without ':]' before the next ']' is a member"
+        (test "[[:a]" ":" true);
+      t "POSIX class 'space' is space, tab, LF and CR"
+        (test "[[:space:]]" "\r" true);
+      t "POSIX class 'space' does not match a vertical tab"
+        (test "[[:space:]]" "\x0b" false);
       t "trailing slash 1" (test "a/" "a/" true);
       t "trailing slash 2" (test "a/" "a" false);
       t "trailing slash 3" (test "a" "a/" false);
@@ -143,7 +153,9 @@ let tests =
        *)
       t "ellipsis 10" (test "a**" "a/b" false);
       t "ellipsis 11" (test "****" "a" true);
-      t "ellipsis 12" (test "****" "a/b" false);
+      (* a segment of three or more stars is '**', as in git *)
+      t "ellipsis 12" (test "****" "a/b" true);
+      t "three stars are '**'" (test "a/***/b" "a/x/y/b" true);
       t "ellipsis 13" (test "**/*b" "/a/b" true);
       t "ellipsis 14" (test "**/*b" "a/b" true);
       t "ellipsis 15" (test "**/*b" "//a/b" true);
@@ -151,8 +163,14 @@ let tests =
       (* a trailing '**' matches everything inside, not the folder itself *)
       t "ellipsis 17" (test "a/**" "a/" false);
       t "ellipsis 18" (test "a/**" "a" false);
+      (* a trailing '**/' matches the folders inside, not the folder itself *)
+      t "trailing '**/' matches a folder inside" (test "a/**/" "a/b/" true);
+      t "trailing '**/' does not match the folder itself"
+        (test "a/**/" "a/" false);
+      t "trailing '**/' does not match a file" (test "a/**/" "a/b" false);
       t "double slash" (test "//a//b//" "//a//b//" true);
-      t "double slash in pattern" (test "//a//b//" "/a/b/" true);
+      (* each '/' of a pattern separates two segments, as in git *)
+      t "double slash in pattern" (test "//a//b//" "/a/b/" false);
       t "double slash in path" (test "/a/b/" "//a//b//" true);
       t "empty trailing segment" (test "a/*" "a/" false);
       t "empty leading segment" (test "*/a" "/a" false);
