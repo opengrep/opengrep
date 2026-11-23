@@ -71,6 +71,7 @@ depends: [
   "conf-libev" {os != "win32"}
   "memprof-limits" {= "dev"}
   "memtrace" {= "dev"}
+  "mtime" {>= "2.0.0"}
   "thread-local-storage"
   "domainslib"
   "saturn" {>= "1.0.0"}
