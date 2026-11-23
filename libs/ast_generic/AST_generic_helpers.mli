@@ -1,5 +1,13 @@
 val str_of_ident : AST_generic.ident -> string
 
+(* The code point of a text that is exactly one character in UTF-8, as the
+ * contents of a character literal written without an escape. *)
+val code_point_of_text : string -> int option
+
+(* [code_point_of_text] of the text between a leading and a trailing single
+ * quote, as a character literal kept with its quotes. *)
+val code_point_of_quoted_text : string -> int option
+
 (* expr conversions *)
 
 exception NotAnExpr

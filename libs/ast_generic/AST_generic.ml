@@ -976,7 +976,9 @@ and literal =
      * this long recursive type. *)
   | Int of (Parsed_int.t[@name "parsed_int"])
   | Float of float option wrap
-  | Char of string wrap
+  (* The text of the literal as the front end keeps it, and the code point of
+   * the character when the front end decodes it. *)
+  | Char of string wrap * int option
   (* String literals:
      The token includes the quotes (if any) but the string value excludes them.
      The value is the escaped string content. For example,

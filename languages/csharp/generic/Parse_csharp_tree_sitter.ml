@@ -660,7 +660,9 @@ let literal (env : env) (x : CST.literal) : literal =
         (* escape_sequence *)
       in
       let v3 = token env v3 (* "'" *) in
-      Char (s, Tok.combine_toks v1 [ t; v3 ])
+      Char
+        ( (s, Tok.combine_toks v1 [ t; v3 ]),
+          AST_generic_helpers.code_point_of_text s )
   | `Real_lit tok -> real_literal env tok (* real_literal *)
   | `Int_lit tok -> integer_literal env tok (* integer_literal *)
   | `Str_lit (v1, v2, v3, _v4TODO) ->

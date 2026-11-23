@@ -422,7 +422,7 @@ and map_literal = function
       let v0 = map_tok v0 in
       let v1 = map_wrap map_of_string v1 in
       `Atom (v0, v1)
-  | Char v1 ->
+  | Char (v1, _code_point) ->
       let v1 = map_wrap map_of_string v1 in
       `Char v1
   | String v1 ->

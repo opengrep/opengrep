@@ -364,11 +364,20 @@ let map_raw_string_literal (env : env)
   G.String
     (fb (start ^ content ^ end_, Tok.combine_toks start_tok [ content_tok; end_tok ]))
 
+(* A character literal 'c' or a byte literal b'c', kept with its quotes. *)
+let map_char_literal (env : env) (tok : CST.char_literal) : G.literal =
+  let s, t = str env tok in
+  let quoted =
+    if String.starts_with ~prefix:"b" s then String.sub s 1 (String.length s - 1)
+    else s
+  in
+  G.Char ((s, t), AST_generic_helpers.code_point_of_quoted_text quoted)
+
 let map_literal (env : env) (x : CST.literal) : G.literal =
   match x with
   | `Str_lit x -> map_string_literal env x
   | `Raw_str_lit x -> map_raw_string_literal env x
-  | `Char_lit tok -> G.Char (str env tok) (* char_literal *)
+  | `Char_lit tok -> map_char_literal env tok (* char_literal *)
   | `Bool_lit x -> map_boolean_literal env x
   | `Int_lit tok -> G.Int (integer_literal env tok) (* integer_literal *)
   | `Float_lit tok -> G.Float (float_literal env tok)
@@ -398,7 +407,7 @@ let map_literal_pattern (env : env) (x : CST.literal_pattern) : G.pattern =
   match x with
   | `Str_lit x -> G.PatLiteral (map_string_literal env x)
   | `Raw_str_lit x -> G.PatLiteral (map_raw_string_literal env x)
-  | `Char_lit tok -> G.PatLiteral (G.Char (str env tok)) (* char_literal *)
+  | `Char_lit tok -> G.PatLiteral (map_char_literal env tok) (* char_literal *)
   | `Bool_lit x -> G.PatLiteral (map_boolean_literal env x)
   | `Int_lit tok ->
       G.PatLiteral (G.Int (integer_literal env tok)) (* integer_literal *)
@@ -832,35 +841,29 @@ and map_range_pattern (env : env) (x : CST.range_pattern) : G.pattern =
   | `Choice_lit_pat_choice_choice_DOTDOTDOT_choice_lit_pat
       (v1, `Choice_DOTDOTDOT_choice_lit_pat (v2, v3)) ->
       let lbound = map_range_pattern_bound env v1 in
-      let _opTODO =
+      (* "..." is the inclusive range of Rust 2015 *)
+      let kind =
         match v2 with
-        | `DOTDOTDOT tok ->
-            let _tok = token env tok in
-            (* "..." *)
-            G.Range
-        | `DOTDOTEQ tok ->
-            let _tok = token env tok in
-            (* "..=" *)
-            G.RangeInclusive
-        | `DOTDOT tok ->
-            let _tok = token env tok in
-            (* ".." *)
-            G.Range
+        | `DOTDOTDOT tok -> ("RangePatternInclusive", token env tok)
+        | `DOTDOTEQ tok -> ("RangePatternInclusive", token env tok)
+        | `DOTDOT tok -> ("RangePatternExclusive", token env tok)
       in
       let rbound = map_range_pattern_bound env v3 in
-      G.PatDisj (lbound, rbound)
+      G.OtherPat (kind, [ G.P lbound; G.P rbound ])
   | `Choice_lit_pat_choice_choice_DOTDOTDOT_choice_lit_pat (v1, `DOTDOT tok) ->
       let lbound = map_range_pattern_bound env v1 in
       let dots = token env tok (* ".." *) in
       G.OtherPat (("RangePatternRightUnbounded", dots), [ G.P lbound ])
   | `Choice_DOTDOTEQ_choice_lit_pat (v1, v2) ->
-      let op =
+      let kind =
         match v1 with
-        | `DOTDOTEQ tok -> token env tok (* "..=" *)
-        | `DOTDOT tok -> token env tok (* ".." *)
+        | `DOTDOTEQ tok ->
+            ("RangePatternLeftUnboundedInclusive", token env tok (* "..=" *))
+        | `DOTDOT tok ->
+            ("RangePatternLeftUnboundedExclusive", token env tok (* ".." *))
       in
       let rbound = map_range_pattern_bound env v2 in
-      G.OtherPat (("RangePatternLeftUnbounded", op), [ G.P rbound ])
+      G.OtherPat (kind, [ G.P rbound ])
 
 and map_anon_choice_param_2c23cdc (env : env) _outer_attrTODO
     (x : CST.anon_choice_param_2c23cdc) : G.parameter =

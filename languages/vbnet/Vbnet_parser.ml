@@ -2538,7 +2538,12 @@ and literal_expression : G.expr parser = fun __n -> (
     begin
       (* literal_expression -> char_tok *)
       let* t = char_tok in
-      pure (G.L (G.Char (T.extract_string_content t, t.tok)) |> G.e)
+      let content = T.extract_string_content t in
+      pure
+        (G.L
+           (G.Char
+              ((content, t.tok), AST_generic_helpers.code_point_of_text content))
+        |> G.e)
     end;
     begin
       (* literal_expression -> date_literal_token *)

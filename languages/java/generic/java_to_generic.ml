@@ -236,7 +236,7 @@ and literal = function
       G.String (fb v1)
   | Char v1 ->
       let v1 = wrap string v1 in
-      G.Char v1
+      G.Char (v1, AST_generic_helpers.code_point_of_quoted_text (fst v1))
   | Null v1 ->
       let v1 = tok v1 in
       G.Null v1

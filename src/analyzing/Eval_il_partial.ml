@@ -263,6 +263,23 @@ let eval_binop_string ?tok op s1 s2 =
   | G.GtE -> G.Lit (literal_of_bool (String.compare s1 s2 >= 0))
   | __else__ -> G.Cst G.Cstr
 
+let eval_ordering_float op (f1 : float) (f2 : float) : G.svalue =
+  match op with
+  | G.Lt -> G.Lit (literal_of_bool (f1 < f2))
+  | G.LtE -> G.Lit (literal_of_bool (f1 <= f2))
+  | G.Gt -> G.Lit (literal_of_bool (f1 > f2))
+  | G.GtE -> G.Lit (literal_of_bool (f1 >= f2))
+  | __else__ -> G.NotCst
+
+(* Two characters are ordered by the code points their front end decoded. *)
+let eval_ordering_char op (code_point1 : int) (code_point2 : int) : G.svalue =
+  match op with
+  | G.Lt -> G.Lit (literal_of_bool (code_point1 < code_point2))
+  | G.LtE -> G.Lit (literal_of_bool (code_point1 <= code_point2))
+  | G.Gt -> G.Lit (literal_of_bool (code_point1 > code_point2))
+  | G.GtE -> G.Lit (literal_of_bool (code_point1 >= code_point2))
+  | __else__ -> G.NotCst
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -397,6 +414,12 @@ and eval_op memo (env : env) wop args =
   | op, [ G.Lit (G.String (_, (s1, _), _)); G.Lit (G.String (_, (s2, _), _)) ]
     ->
       eval_binop_string ~tok op s1 s2
+  | ( ((G.Lt | G.LtE | G.Gt | G.GtE) as op),
+      [ G.Lit (G.Float (Some f1, _)); G.Lit (G.Float (Some f2, _)) ] ) ->
+      eval_ordering_float op f1 f2
+  | ( ((G.Lt | G.LtE | G.Gt | G.GtE) as op),
+      [ G.Lit (G.Char (_, Some c1)); G.Lit (G.Char (_, Some c2)) ] ) ->
+      eval_ordering_char op c1 c2
   | G.Mult, [ (G.Lit (G.String _) | G.Cst G.Cstr); _N ]
     when Lang.equal env.lang Lang.Python ->
       (* Python: "..." * N, NOTE that we don't check the type of N, partly because

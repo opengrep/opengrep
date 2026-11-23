@@ -424,7 +424,7 @@ and literal = function
       G.Float v1
   | Char v1 ->
       let v1 = wrap string v1 in
-      G.Char v1
+      G.Char (v1, AST_generic_helpers.code_point_of_text (fst v1))
   | String v1 ->
       let v1 = wrap string v1 in
       G.String (fb v1)

@@ -433,7 +433,9 @@ let literal_constant (env : env) (x : CST.literal_constant) =
       in
       let v3 = token env v3 (* "'" *) in
       let toks = [ snd v2 ] @ [ v3 ] in
-      Char (fst v2, Tok.combine_toks v1 toks)
+      Char
+        ( (fst v2, Tok.combine_toks v1 toks),
+          AST_generic_helpers.code_point_of_text (fst v2) )
   | `Real_lit tok -> real_literal env tok (* real_literal *)
   | `Null tok -> Null (token env tok) (* "null" *)
   | `Long_lit (v1, v2) ->

@@ -1460,7 +1460,7 @@ and m_literal_inner a b =
   | G.Float a1, B.Float b1 -> m_wrap_m_float_opt a1 b1
   | G.Imag a1, B.Imag b1 -> (m_wrap m_string) a1 b1
   | G.Ratio a1, B.Ratio b1 -> (m_wrap m_string) a1 b1
-  | G.Char a1, B.Char b1 -> (m_wrap m_string) a1 b1
+  | G.Char (a1, _), B.Char (b1, _) -> (m_wrap m_string) a1 b1
   | G.Null a1, B.Null b1 -> m_tok a1 b1
   | G.Undefined a1, B.Undefined b1 -> m_tok a1 b1
   | G.Unit _, _

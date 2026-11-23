@@ -100,7 +100,7 @@ let pp_literal (lit : G.literal) =
       | Some s -> s)
   | G.Float (Some f, _) -> string_of_float f
   | G.Float (None, _) -> "<float>"
-  | G.Char (s, _) -> Printf.sprintf "'%s'" s
+  | G.Char ((s, _), _) -> Printf.sprintf "'%s'" s
   | G.String (_, (s, _), _) -> Printf.sprintf "\"%s\"" s
   | G.Regexp ((_, (pat, _), _), flags_opt) ->
       let flags =

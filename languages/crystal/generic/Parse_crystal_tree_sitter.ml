@@ -508,7 +508,7 @@ and map_expression_inner env x =
         | `Char_esc_seq tok ->
             str env tok
       in
-      G.L (G.Char x) |> G.e
+      G.L (G.Char (x, AST_generic_helpers.code_point_of_text (fst x))) |> G.e
   | `Str x -> map_string env x
   | `Chai_str (x, xs) ->
       let strings = x :: xs |> List_.map (map_string env) in

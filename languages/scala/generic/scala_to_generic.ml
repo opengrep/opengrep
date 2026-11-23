@@ -204,7 +204,7 @@ and v_literal = function
       Either.Left (G.Float v1)
   | Char v1 ->
       let v1 = v_wrap v_string v1 in
-      Either.Left (G.Char v1)
+      Either.Left (G.Char (v1, AST_generic_helpers.code_point_of_text (fst v1)))
   | String v1 ->
       let v1 = v_wrap v_string v1 in
       Either.Left (G.String (fb v1))

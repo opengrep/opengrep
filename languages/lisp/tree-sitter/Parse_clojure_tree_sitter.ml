@@ -568,8 +568,8 @@ let map_char (env : env) (tok : Tree_sitter_run.Token.t) : G.expr =
       (* unicode *) char_str_of_unicode s
     | _ -> String.sub s 1 (String.length s - 1)
   in
-  L (G.Char (s_char, t))
-  |> G.e 
+  L (G.Char ((s_char, t), AST_generic_helpers.code_point_of_text s_char))
+  |> G.e
 
 (*****************************************************************************)
 (* Translation                                                               *)

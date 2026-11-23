@@ -2240,7 +2240,8 @@ and map_string_literal (env : env) (x : CST.string_) : expr =
   | `Char_lit tok ->
       (* character_literal *)
       let s, tok = str env tok in
-      L (Char (s, tok)) |> G.e
+      L (Char ((s, tok), AST_generic_helpers.code_point_of_quoted_text s))
+      |> G.e
   | `Str_lit (v1, v2, v3) ->
       let l = (* string_start *) token env v1 in
       let xs = List_.map (map_anon_choice_str_content_838a78d env) v2 in

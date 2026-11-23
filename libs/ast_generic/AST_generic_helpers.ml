@@ -33,6 +33,22 @@ module Log = Log_ast_generic.Log
 
 let str_of_ident = fst
 
+let code_point_of_text (text : string) : int option =
+  if Int.equal (String.length text) 0 then None
+  else
+    let decoded = String.get_utf_8_uchar text 0 in
+    if
+      Uchar.utf_decode_is_valid decoded
+      && Int.equal (Uchar.utf_decode_length decoded) (String.length text)
+    then Some (Uchar.to_int (Uchar.utf_decode_uchar decoded))
+    else None
+
+let code_point_of_quoted_text (text : string) : int option =
+  let len = String.length text in
+  if len >= 3 && Char.equal text.[0] '\'' && Char.equal text.[len - 1] '\''
+  then code_point_of_text (String.sub text 1 (len - 2))
+  else None
+
 let name_of_ids_with_opt_typeargs xs =
   match List.rev xs with
   | [] -> failwith "name_of_ids_with_opt_typeargs: empty ids"

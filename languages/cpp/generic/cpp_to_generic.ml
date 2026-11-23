@@ -723,7 +723,7 @@ and map_constant env x : G.expr =
       G.L (G.Float v1) |> G.e
   | Char v1 ->
       let v1 = map_wrap env map_of_string v1 in
-      G.L (G.Char v1) |> G.e
+      G.L (G.Char (v1, AST_generic_helpers.code_point_of_text (fst v1))) |> G.e
   | String v1 ->
       let v1 = map_wrap env map_of_string v1 in
       G.L (G.String (fb v1)) |> G.e
