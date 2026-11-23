@@ -181,30 +181,38 @@ let output_and_exit_from_fatal_exn ~(msg : string) ~(exit_code : Exit_code.t)
 let get_targets_or_exit ?status_bar (caps : < Cap.stdout >)
     (conf : Scan_CLI.conf) (profiler : Profiler.t) :
     (Target_and_root.t Find_targets.targets, Exit_code.t) result =
-  let missing_roots : Fpath.t list =
+  let missing_roots : string list =
     conf.target_roots
     |> List_.map Scanning_root.to_fpath
     |> List.filter (fun (root : Fpath.t) -> not (Sys.file_exists !!root))
+    |> List_.map (fun (root : Fpath.t) -> spf "File not found: %s" !!root)
   in
-  match missing_roots with
+  (* a pattern of --include or --exclude that is not valid stops the
+     scan before it starts *)
+  let invalid_patterns : string list =
+    let invalid (option : string) (pattern : string) : string option =
+      Parse_gitignore.cli_pattern_error pattern
+      |> Option.map (fun (reason : string) ->
+             spf "%s '%s' is not a valid pattern (%s)" option pattern reason)
+    in
+    List.filter_map (invalid "--exclude") conf.targeting_conf.exclude
+    @ List.filter_map (invalid "--include")
+        (Option.value conf.targeting_conf.include_ ~default:[])
+  in
+  match missing_roots @ invalid_patterns with
   | [] ->
       Ok
         (Find_targets.get_target_fpaths_with_project_roots conf.targeting_conf
            conf.target_roots)
-  | _ :: _ ->
+  | (messages : string list) ->
       let errors : Core_error.t list =
-        missing_roots
-        |> List_.map (fun (root : Fpath.t) ->
-               Core_error.mk_error
-                 ~msg:(spf "File not found: %s" !!root)
-                 Out.SemgrepError)
+        List_.map
+          (fun (msg : string) -> Core_error.mk_error ~msg Out.SemgrepError)
+          messages
       in
       Error
         (output_and_exit_from_fatal_core_errors_exn ?status_bar
-           ~text_message:
-             (errors
-             |> List_.map (fun (error : Core_error.t) -> error.msg)
-             |> String.concat "\n")
+           ~text_message:(String.concat "\n" messages)
            ~exit_code:(Exit_code.fatal ~__LOC__)
            caps conf profiler errors)
 

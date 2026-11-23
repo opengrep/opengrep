@@ -21,11 +21,20 @@ let create ~project_root patterns =
   let glob_matchers =
     List.concat_map
       (fun pat ->
-        Parse_gitignore.parse_cli_pattern
-          ~source:
-            (Glob.Match.string_loc ~source_name:"include pattern"
-               ~source_kind:(Some "include") pat)
-          ~anchor:Glob.Pattern.root_pattern pat)
+        match
+          Parse_gitignore.parse_cli_pattern
+            ~source:
+              (Glob.Match.string_loc ~source_name:"include pattern"
+                 ~source_kind:(Some "include") pat)
+            ~anchor:Glob.Pattern.root_pattern pat
+        with
+        | matchers -> matchers
+        (* a pattern that is not valid selects nothing, as one of
+           --exclude excludes nothing *)
+        | exception Glob.Lexer.Syntax_error (reason : string) ->
+            Parse_gitignore.warn_invalid_pattern ~source_name:"include pattern"
+              ~line_number:1 pat reason;
+            [])
       patterns
   in
   let no_match_loc =

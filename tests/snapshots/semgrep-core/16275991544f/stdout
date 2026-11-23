@@ -1,0 +1,17 @@
+Test name: with git > built-in patterns apply below a folder target
+--- Files added before 'git add' ---
+src/build/b.js
+src/s.js
+--- begin input files ---
+src/build/b.js
+src/s.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 src/build/b.js
+ create mode 100644 src/s.js
+--- Selected targets ---
+selected src/s.js
+--- Skipped targets ---
+ignored src/build [Semgrep_output_v1_t.Semgrepignore_patterns_match]

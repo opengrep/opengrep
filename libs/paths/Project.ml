@@ -19,7 +19,6 @@ and kind =
   | Mercurial_project
   | Subversion_project
   | Darcs_project
-  | Gitignore_project
   | No_VCS_project
 [@@deriving show]
 

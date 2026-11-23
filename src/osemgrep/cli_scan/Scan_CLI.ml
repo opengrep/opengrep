@@ -145,11 +145,9 @@ let o_exclude : string list Term.t =
     Arg.info [ "exclude" ] ~docv:"PATTERN"
       ~doc:
         (*
-         Note that osemgrep also supports negated "de-ignore" patterns such
-         as used in '--exclude=tests --exclude=!tests/main.c' to
-         re-include tests/main.c.
-         We're a bit evasive about this for now since pysemgrep and osemgrep
-         differ in that respect.
+         A negated pattern does not re-include a file under an excluded
+         folder: after '--exclude=tests', '--exclude=!tests/main.c' leaves
+         tests/main.c excluded, as in gitignore.
       *)
         {|Skip any file or directory whose path that matches $(docv).
 '--exclude=*.py' will ignore the following: 'foo.py', 'src/foo.py',
@@ -900,7 +898,7 @@ let o_project_root : string option Term.t =
       ~doc:
         {|Opengrep normally determines the type of project (git or novcs)
           and the project root automatically. The project root is then used
-          to locate and use '.gitignore' and '.semgrepignore' files which
+          to locate and use the '.semgrepignore' files which
           determine target files that should be ignored by opengrep.
           This option forces the project root to be a specific folder
           and assumes a local project without version control (novcs).

@@ -1,0 +1,20 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'commit' '-m' 'Add files'
+
+
+┌────────────────┐
+│ Debugging Info │
+└────────────────┘
+
+  SCAN ENVIRONMENT
+  versions    - opengrep <MASKED>
+  environment - running in environment git, triggering event is unknown
+
+[<MASKED TIMESTAMP>][ERROR]: --exclude '[abc' is not a valid pattern (missing ']')
+[<MASKED TIMESTAMP>][ERROR]: There were errors during analysis but the scan will succeed because there were no blocking findings, use --no-suppress-errors if you want it to fail when there are errors.
+ASSERT exit code

@@ -1,0 +1,9 @@
+Test name: without git > built-in patterns do not apply to the folders above a folder target
+--- Files not added to git ---
+build/app/a.js
+build/b.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected build/app/a.js
+--- Skipped targets ---

@@ -105,8 +105,9 @@ type gitignores_cache = {
   (* TODO? why we use a cache? Why not loading all those .gitiginore at once?*)
   cache : (string, level option) Hashtbl.t;
   (* The ignore files that could not be read, reported once each: the
-     '.semgrepignore' of the working directory is read both as a level of
-     its own and by the walk that enters that directory. *)
+     project root's '.semgrepignore' is read to decide whether the
+     built-in patterns apply and again as that folder's ignore file, and
+     an ignore file given by an absolute path is read for every folder. *)
   unreadable_reported : (string, unit) Hashtbl.t;
 }
 
@@ -123,11 +124,10 @@ type filter = {
   project_root : Fpath.t;
   higher_priority_levels : level list;
   gitignore_file_cache : gitignores_cache;
-  lower_priority_levels : level list;
-  (* Selection events and levels after each directory has been checked
-     with the higher-priority levels, keyed by the directory's path: every
-     path below a directory starts from that state instead of matching the
-     directory's ancestors again. See Gitignore_filter.select_path. *)
+  (* Selection events and levels after each directory has been checked,
+     keyed by the directory's path: every path below a directory starts
+     from that state instead of matching the directory's ancestors again.
+     See Gitignore_filter.select_path. *)
   dir_states : (string, selection_event list * level list) Hashtbl.t;
 }
 

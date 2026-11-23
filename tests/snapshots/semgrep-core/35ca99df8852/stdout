@@ -1,0 +1,23 @@
+Test name: with git > built-in patterns take precedence over an exclude negation
+--- Files added before 'git add' ---
+ok.js
+src/tests/b.js
+tests/a.js
+--- begin input files ---
+ok.js
+src/tests/b.js
+tests/a.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 ok.js
+ create mode 100644 src/tests/b.js
+ create mode 100644 tests/a.js
+--- '--exclude' patterns ---
+!tests
+--- Selected targets ---
+selected ok.js
+--- Skipped targets ---
+ignored src/tests [Semgrep_output_v1_t.Semgrepignore_patterns_match]
+ignored tests [Semgrep_output_v1_t.Semgrepignore_patterns_match]

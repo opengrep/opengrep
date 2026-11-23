@@ -1,0 +1,25 @@
+Test name: with git > semgrepignore directory pattern below a negated directory
+--- Files added before 'git add' ---
+.semgrepignore
+a/b/x.js
+b/y.js
+ok.js
+--- begin input files ---
+.semgrepignore
+a/b/x.js
+b/y.js
+ok.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 2 insertions(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 a/b/x.js
+ create mode 100644 b/y.js
+ create mode 100644 ok.js
+--- Selected targets ---
+selected .semgrepignore
+selected ok.js
+--- Skipped targets ---
+ignored a/b [Semgrep_output_v1_t.Semgrepignore_patterns_match]
+ignored b [Semgrep_output_v1_t.Semgrepignore_patterns_match]

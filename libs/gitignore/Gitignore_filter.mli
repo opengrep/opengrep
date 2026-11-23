@@ -5,7 +5,6 @@
 *)
 val create :
   ?higher_priority_levels:Gitignore.level list ->
-  ?lower_priority_levels:Gitignore.level list ->
   gitignore_file_cache:Gitignore.gitignores_cache ->
   unit ->
   Gitignore.filter

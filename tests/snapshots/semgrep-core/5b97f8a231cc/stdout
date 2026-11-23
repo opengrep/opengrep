@@ -1,0 +1,14 @@
+Test name: without git > semgrepignore including a gitignore with a negation
+--- Files not added to git ---
+.gitignore
+.semgrepignore
+app/y.js
+frontend/src/app/x.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected .gitignore
+selected .semgrepignore
+selected frontend/src/app/x.js
+--- Skipped targets ---
+ignored app [Semgrep_output_v1_t.Semgrepignore_patterns_match]

@@ -1,0 +1,20 @@
+Test name: with git > include pattern that is not valid selects nothing
+--- Files added before 'git add' ---
+a.js
+ok.txt
+--- begin input files ---
+a.js
+ok.txt
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 a.js
+ create mode 100644 ok.txt
+--- '--include' patterns ---
+[abc
+*.js
+--- Selected targets ---
+selected a.js
+--- Skipped targets ---
+ignored ok.txt [Semgrep_output_v1_t.Cli_include_flags_do_not_match]

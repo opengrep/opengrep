@@ -1,0 +1,13 @@
+Test name: without git > include pattern that is not valid selects nothing
+--- Files not added to git ---
+a.js
+ok.txt
+--- begin input files ---
+--- end input files ---
+--- '--include' patterns ---
+[abc
+*.js
+--- Selected targets ---
+selected a.js
+--- Skipped targets ---
+ignored ok.txt [Semgrep_output_v1_t.Cli_include_flags_do_not_match]

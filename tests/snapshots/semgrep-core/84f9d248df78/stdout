@@ -1,0 +1,21 @@
+Test name: with git > semgrepignore of the scanning root matching everything under it
+--- Files added before 'git add' ---
+.semgrepignore
+drop.js
+keep.js
+--- begin input files ---
+.semgrepignore
+drop.js
+keep.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 2 insertions(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 drop.js
+ create mode 100644 keep.js
+--- Selected targets ---
+selected keep.js
+--- Skipped targets ---
+ignored .semgrepignore [Semgrep_output_v1_t.Semgrepignore_patterns_match]
+ignored drop.js [Semgrep_output_v1_t.Semgrepignore_patterns_match]

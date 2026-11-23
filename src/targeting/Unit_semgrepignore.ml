@@ -14,7 +14,7 @@ let t = Testo.create
 
 (*
    In these tests, the file hierarchy must contain the
-   .gitignore and .semgrepignore files but the target files are not
+   .semgrepignore files but the target files are not
    needed. Tests that check for the detection of target files are
    in Unit_find_targets.ml.
 
@@ -33,8 +33,8 @@ let test_filter ?excludes:cli_patterns (files : F.t list) selection () =
       let filter =
         Semgrepignore.create ?cli_patterns ~default_semgrepignore_patterns:Empty
           ~exclusion_mechanism:
-            { use_gitignore_files = true; use_semgrepignore_files = true }
-          ~project_root:root ()
+            { use_semgrepignore_files = true }
+          ~project_root:root () ~builtin_patterns_root:Ppath.root
       in
       let error = ref false in
       selection
@@ -85,8 +85,8 @@ let test_filter_custom_filename ~semgrepignore_filename (files : F.t list) selec
       let filter =
         Semgrepignore.create ~semgrepignore_filename ~default_semgrepignore_patterns:Empty
           ~exclusion_mechanism:
-            { use_gitignore_files = true; use_semgrepignore_files = true }
-          ~project_root:root ()
+            { use_semgrepignore_files = true }
+          ~project_root:root () ~builtin_patterns_root:Ppath.root
       in
       let error = ref false in
       selection
@@ -121,15 +121,48 @@ let test_filter_custom_filename ~semgrepignore_filename (files : F.t list) selec
 let tests =
   Testo.categorize "Semgrepignore"
     [
-      t "gitignore + semgrepignore"
+      t "gitignore is not read"
+        (test_filter
+           [ File (".gitignore", "*.c"); file "hello.c" ]
+           [ ("/hello.c", true); ("/generated.c", true) ]);
+      t "semgrepignore negation re-includes a file"
         (test_filter
            [
-             File (".gitignore", "*.c");
-             File (".semgrepignore", "!hello.*");
+             File (".semgrepignore", "*.c\n!hello.*");
              file "hello.c";
-             file "hello.ml";
+             file "bye.c";
            ]
-           [ ("/hello.ml", true); ("/hello.c", true); ("/generated.c", false) ]);
+           [ ("/hello.c", true); ("/bye.c", false) ]);
+      t "semgrepignore escaped trailing space"
+        (test_filter
+           [ File (".semgrepignore", "a.js\\ \n"); file "a.js "; file "a.js" ]
+           [ ("/a.js ", false); ("/a.js", true) ]);
+      t "semgrepignore trailing spaces of the last line"
+        (test_filter
+           [ File (".semgrepignore", "a.js  "); file "a.js"; file "b.js" ]
+           [ ("/a.js", false); ("/b.js", true) ]);
+      t "semgrepignore line that is not valid UTF-8"
+        (test_filter
+           [ File (".semgrepignore", "caf\xE9.js\nb.js\n"); file "c.js" ]
+           [ ("/caf\xE9.js", false); ("/b.js", false); ("/c.js", true) ]);
+      t "semgrepignore with a UTF-8 byte order mark"
+        (test_filter
+           [ File (".semgrepignore", "\xEF\xBB\xBFa.js\nb.js\n"); file "c.js" ]
+           [ ("/a.js", false); ("/b.js", false); ("/c.js", true) ]);
+      t "semgrepignore with Windows line endings"
+        (test_filter
+           [ File (".semgrepignore", "a.js\r\nb.js \r\nc.js\r"); file "d.js" ]
+           [
+             ("/a.js", false); ("/b.js", false); ("/c.js", false); ("/d.js", true);
+           ]);
+      t "semgrepignore pattern that is not a valid glob matches nothing"
+        (test_filter
+           [ File (".semgrepignore", "[abc\nc.js\n"); file "[abc"; file "c.js" ]
+           [ ("/[abc", true); ("/c.js", false) ]);
+      t "semgrepignore pattern with a trailing backslash matches nothing"
+        (test_filter
+           [ File (".semgrepignore", "a.js\\\n"); file "a.js" ]
+           [ ("/a.js", true) ]);
       t "semgrepignore alone"
         (test_filter
            [ File (".semgrepignore", "hello.*"); file "hello.c"; file "bye.c" ]
@@ -159,7 +192,21 @@ let tests =
              ("/subdir/a", false);
              ("/subdir/b", true);
            ]);
-      t "deep semgrepignore + gitignore"
+      (* A path that is not valid UTF-8 cannot be created on every file
+         system, so the warning of the directive shows that the line is
+         read as one. *)
+      t "legacy semgrepignore with :include of a path that is not valid UTF-8"
+        (fun () ->
+          let (), (output : string) =
+            Testo.with_capture stderr
+              (test_filter
+                 [ File (".semgrepignore", ":include caf\xE9\n"); file "a" ]
+                 [ ("/a", true) ])
+          in
+          Alcotest.(check bool)
+            "the line is an include directive" true
+            (String_.contains ~term:"Deprecated include directive" output));
+      t "nested semgrepignore, gitignore is not read"
         (test_filter
            [
              File (".gitignore", "a");
@@ -169,9 +216,9 @@ let tests =
              file "b";
            ]
            [
-             ("/a", false);
+             ("/a", true);
              ("/b", true);
-             ("/dir/a", false);
+             ("/dir/a", true);
              ("/dir/b", false);
              ("/dir/c", true);
            ]);
@@ -225,7 +272,7 @@ let tests =
                  Semgrepignore.create ~semgrepignore_filename:"config/ignore.txt"
                    ~default_semgrepignore_patterns:Empty
                    ~exclusion_mechanism:
-                     { use_gitignore_files = true; use_semgrepignore_files = true }
+                     { use_semgrepignore_files = true }
                    ~project_root:root ()
                in
                Alcotest.fail "Expected Invalid_argument exception for path with slash"

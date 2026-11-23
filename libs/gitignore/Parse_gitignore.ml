@@ -164,6 +164,17 @@ let rec any_match (path : string) (patterns : M.compiled_pattern list) : bool =
   | [] -> false
   | pattern :: patterns -> M.run pattern path || any_match path patterns
 
+(* The warning for a line whose pattern is not a valid glob, which then
+   matches nothing. *)
+let warn_invalid_pattern ~(source_name : string) ~(line_number : int)
+    (line : string) (reason : string) : unit =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m
+        "%s, line %d: '%s' is not a valid pattern and is ignored (%s); \
+         correct or remove the line"
+        source_name line_number line reason)
+
 (* [compile] turns the pattern of a line into the matchers any of which
    selects a path. *)
 let parse_line_gen
@@ -187,12 +198,7 @@ let parse_line_gen
     (* a pattern that is not a valid glob matches nothing, as in gitignore *)
     match compile ~source:loc pattern_str with
     | exception Glob.Lexer.Syntax_error (msg : string) ->
-        (* nosemgrep: no-logs-in-library *)
-        Logs.warn (fun m ->
-            m
-              "%s, line %d: '%s' is not a valid pattern and is ignored (%s); \
-               correct or remove the line"
-              source_name line_number line_contents msg);
+        warn_invalid_pattern ~source_name ~line_number line_contents msg;
         None
     | patterns ->
         let matcher (ppath : Ppath.t) =

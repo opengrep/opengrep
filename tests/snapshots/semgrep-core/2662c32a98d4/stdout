@@ -1,0 +1,12 @@
+Test name: without git > built-in patterns take precedence over a nested semgrepignore negation
+--- Files not added to git ---
+ok.js
+src/.semgrepignore
+src/tests/t.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected ok.js
+selected src/.semgrepignore
+--- Skipped targets ---
+ignored src/tests [Semgrep_output_v1_t.Semgrepignore_patterns_match]

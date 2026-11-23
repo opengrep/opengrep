@@ -67,3 +67,8 @@ val parse_cli_pattern :
 (* The reason a pattern of the command line, possibly negated, is not a
    valid pattern; None when it is valid. *)
 val cli_pattern_error : string -> string option
+
+(* The warning for the line [line] of [source_name], whose pattern is not a
+   valid glob for the reason given, and which then matches nothing. *)
+val warn_invalid_pattern :
+  source_name:string -> line_number:int -> string -> string -> unit

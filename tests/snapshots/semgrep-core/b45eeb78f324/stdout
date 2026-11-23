@@ -1,0 +1,12 @@
+Test name: without git > semgrepignore of a folder scanning root matching everything under it
+--- Files not added to git ---
+sub/.semgrepignore
+sub/drop.js
+sub/keep.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected sub/keep.js
+--- Skipped targets ---
+ignored sub/.semgrepignore [Semgrep_output_v1_t.Semgrepignore_patterns_match]
+ignored sub/drop.js [Semgrep_output_v1_t.Semgrepignore_patterns_match]

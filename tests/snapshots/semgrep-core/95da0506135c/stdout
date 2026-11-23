@@ -1,0 +1,23 @@
+Test name: with git > include wildcard matches a leading period
+--- Files added before 'git add' ---
+.hidden.js
+a.js
+ok.txt
+--- begin input files ---
+.hidden.js
+a.js
+ok.txt
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 .hidden.js
+ create mode 100644 a.js
+ create mode 100644 ok.txt
+--- '--include' patterns ---
+*.js
+--- Selected targets ---
+selected .hidden.js
+selected a.js
+--- Skipped targets ---
+ignored ok.txt [Semgrep_output_v1_t.Cli_include_flags_do_not_match]

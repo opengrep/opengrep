@@ -9,3 +9,4 @@ Initialized empty Git repository in<MASKED>
  create mode 100644 a
 RUN opengrep scan --x-ls .
 .gitignore
+a
