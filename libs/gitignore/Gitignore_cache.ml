@@ -35,7 +35,9 @@ let warn_unreadable (t : gitignores_cache) (path : Fpath.t) (reason : string) :
    warning and the scan goes on. pysemgrep scanned normally when the path
    was a folder (it tested is_file() and fell back to the built-in patterns)
    and died with a PermissionError, exit code 2, when it was a file it could
-   not open. *)
+   not open. A file that starts with a UTF-16 byte order mark is left out
+   with a warning too: git reads it as bytes, and none of its lines matches
+   a path. *)
 let read_ignore_file_opt (t : gitignores_cache) (path : Fpath.t) :
     string option =
   let warn (reason : string) : string option =
@@ -46,9 +48,14 @@ let read_ignore_file_opt (t : gitignores_cache) (path : Fpath.t) :
   else if not (UFile.is_reg ~follow_symlinks:true path) then
     warn "not a regular file"
   else
-    try Some (UFile.read_file path) with
-    | Sys_error (msg : string) -> warn msg
-    | Unix.Unix_error ((err : Unix.error), _, _) ->
+    match UFile.read_file path with
+    | contents
+      when String.starts_with ~prefix:"\xFF\xFE" contents
+           || String.starts_with ~prefix:"\xFE\xFF" contents ->
+        warn "encoded in UTF-16; save it as UTF-8"
+    | contents -> Some contents
+    | exception Sys_error (msg : string) -> warn msg
+    | exception Unix.Unix_error ((err : Unix.error), _, _) ->
         warn (Unix.error_message err)
 
 let read_ignore_file (t : gitignores_cache) ~(anchor : Glob.Pattern.t)

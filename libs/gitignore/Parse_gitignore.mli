@@ -1,4 +1,7 @@
-(* Parsing functions. They will raise exceptions if the input is malformed.
+(* Parsing functions. [parse_pattern] and [parse_cli_pattern] raise
+   Glob.Lexer.Syntax_error for a pattern that is not a valid glob; the
+   functions that read lines print a warning for such a line and leave it
+   out.
 
    The anchor is the pattern that matches the path from the git project
    root to the work folder, typically the one containing the gitignore file.
@@ -60,3 +63,7 @@ val parse_cli_pattern :
   anchor:Glob.Pattern.t ->
   string ->
   Glob.Match.compiled_pattern list
+
+(* The reason a pattern of the command line, possibly negated, is not a
+   valid pattern; None when it is valid. *)
+val cli_pattern_error : string -> string option

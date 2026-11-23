@@ -5,29 +5,60 @@ module M = Glob.Match
 (* Helpers *)
 (*****************************************************************************)
 
-let read_lines_from_string =
+(* The line without its trailing spaces, except the ones a backslash
+   quotes, as in gitignore. *)
+let trim_trailing_spaces (line : string) : string =
+  let length = String.length line in
+  (* [kept]: the length of the line up to its last character that is not
+     a trailing space *)
+  let rec scan (i : int) (kept : int) : int =
+    if i >= length then kept
+    else
+      match line.[i] with
+      | ' ' -> scan (i + 1) kept
+      | '\\' when i + 1 < length -> scan (i + 2) (i + 2)
+      | _ -> scan (i + 1) (i + 1)
+  in
+  String.sub line 0 (scan 0 0)
+
+(* The lines are bytes, as in git, so a line that is not valid UTF-8 is
+   read like any other. *)
+let read_lines_from_string (str : string) : string list =
   (*
-     - eliminate trailing spaces
+     - eliminate trailing spaces that a backslash does not quote
      - support Windows line endings regardless of current platform
   *)
-  let sep = Pcre2_.regexp " *\r?\n" in
-  fun str ->
-    match Pcre2_.split ~rex:sep str with
-    | Ok res -> res
-    | Error err ->
-        (* not sure why it would happen so we let it fail *)
-        raise (Pcre2.Error err)
+  String.split_on_char '\n' str
+  |> List_.map (fun (line : string) ->
+         let line =
+           if String.ends_with ~suffix:"\r" line then
+             String.sub line 0 (String.length line - 1)
+           else line
+         in
+         trim_trailing_spaces line)
 
-let is_ignored_line =
-  let rex = Pcre2_.regexp "^(?:[ \t]$|#.*)$" in
-  fun str -> Pcre2_.pmatch_noerr ~rex str
+let utf8_byte_order_mark = "\xEF\xBB\xBF"
+
+(* The lines of an ignore file. A UTF-8 byte order mark at its start is
+   skipped, as git does. *)
+let read_lines_from_file_contents (contents : string) : string list =
+  if String.starts_with ~prefix:utf8_byte_order_mark contents then
+    let bom_length = String.length utf8_byte_order_mark in
+    read_lines_from_string
+      (String.sub contents bom_length (String.length contents - bom_length))
+  else read_lines_from_string contents
+
+(* A blank line or a comment, as in gitignore: the trailing spaces are
+   already removed. *)
+let is_ignored_line (str : string) : bool =
+  String.equal str "" || String.starts_with ~prefix:"#" str
 
 (* semgrep-legacy (deprecated)
 
    Try to parse a line of input as a ':include' instruction
 *)
 let parse_maybe_include_line =
-  let rex = Pcre2_.regexp {|^[ \t]*:include[ \t]*([^ \t]*)[ \t]*$|} in
+  let rex = Pcre2_.regexp_bytes {|^[ \t]*:include[ \t]*([^ \t]*)[ \t]*$|} in
   let parse ~orig_semgrepignore_path line : Fpath.t option =
     match Pcre2_.exec ~rex line with
     | Ok (Some res) -> (
@@ -90,7 +121,7 @@ let parse_pattern ~source ~anchor str : M.compiled_pattern =
     if is_anchored_pattern pat then Glob.Pattern.append anchor pat
     else Glob.Pattern.append anchor (Any_subpath :: pat)
   in
-  M.compile ~source absolute_pattern
+  M.compile ~match_leading_period:true ~source absolute_pattern
 
 (*
    A '--include' or '--exclude' pattern from the command line anchors at
@@ -107,7 +138,24 @@ let parse_cli_pattern ~source ~anchor str : M.compiled_pattern list =
   in
   [ pat; Glob.Pattern.append pat [ Any_subpath ] ]
   |> List_.map (fun (pat : Glob.Pattern.t) ->
-         M.compile ~source (Glob.Pattern.append anchor pat))
+         M.compile ~match_leading_period:true ~source
+           (Glob.Pattern.append anchor pat))
+
+(* The reason a pattern of the command line is not valid, if it is not:
+   the compilation of [parse_cli_pattern], after a leading '!'. *)
+let cli_pattern_error (line : string) : string option =
+  let pattern_str =
+    match remove_negator line with
+    | None -> line
+    | Some s -> s
+  in
+  match
+    parse_cli_pattern
+      ~source:(M.string_loc ~source_kind:None line)
+      ~anchor:Glob.Pattern.root_pattern pattern_str
+  with
+  | (_ : M.compiled_pattern list) -> None
+  | exception Glob.Lexer.Syntax_error (msg : string) -> Some msg
 
 (* whether any of the patterns matches, without allocating a closure per
    call: this runs on every path of the scan *)
@@ -136,14 +184,24 @@ let parse_line_gen
       | None -> (false, line_contents)
       | Some s -> (true, s)
     in
-    let patterns = compile ~source:loc pattern_str in
-    let matcher (ppath : Ppath.t) =
-      match any_match (Ppath.to_string_fast ppath) patterns with
-      | true ->
-          if is_negated then Some (Deselected loc) else Some (Selected loc)
-      | false -> None
-    in
-    Some { loc; matcher }
+    (* a pattern that is not a valid glob matches nothing, as in gitignore *)
+    match compile ~source:loc pattern_str with
+    | exception Glob.Lexer.Syntax_error (msg : string) ->
+        (* nosemgrep: no-logs-in-library *)
+        Logs.warn (fun m ->
+            m
+              "%s, line %d: '%s' is not a valid pattern and is ignored (%s); \
+               correct or remove the line"
+              source_name line_number line_contents msg);
+        None
+    | patterns ->
+        let matcher (ppath : Ppath.t) =
+          match any_match (Ppath.to_string_fast ppath) patterns with
+          | true ->
+              if is_negated then Some (Deselected loc) else Some (Selected loc)
+          | false -> None
+        in
+        Some { loc; matcher }
 
 let compile_gitignore_pattern ~anchor ~source (str : string) :
     M.compiled_pattern list =
@@ -160,7 +218,10 @@ let is_unanchored_line (line : string) : bool =
     | None -> line
     | Some s -> s
   in
-  not (is_anchored_pattern (Glob.Parse.parse_string pattern_str))
+  match Glob.Parse.parse_string pattern_str with
+  | pattern -> not (is_anchored_pattern pattern)
+  (* kept, to be reported when the line is parsed *)
+  | exception Glob.Lexer.Syntax_error (_ : string) -> true
 
 (* semgrep-legacy *)
 let get_include_path ~orig_semgrepignore_path relative_include_path =
@@ -187,7 +248,7 @@ let rec expand_includes ~orig_semgrepignore_path lines =
           get_include_path ~orig_semgrepignore_path relative_include_path
         in
         if UFile.is_reg ~follow_symlinks:true include_path then
-          include_path |> UFile.read_file |> read_lines_from_string
+          include_path |> UFile.read_file |> read_lines_from_file_contents
         else
           (* ignore silently
              (why: git also ignores .gitignore files that are broken
@@ -255,8 +316,9 @@ and unanchored_from_string ~anchor ~name ~source_kind ~source_path str =
     ~allow_include:false ~name ~source_path:None ~source_kind lines
 
 and from_file_contents ~anchor ~format ~source_kind path contents =
-  from_string_gen
+  from_lines
     ~compile:(compile_gitignore_pattern ~anchor)
     ~allow_include:(format = Legacy_semgrepignore)
-    ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind contents
+    ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind
+    (read_lines_from_file_contents contents)
 [@@profiling]
