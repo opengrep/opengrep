@@ -41,6 +41,7 @@ let macro_expand_1 (expr : G.expr) : G.expr =
         frettype = None;
         fkind = (G.LambdaKind, fn_tok);
         fbody = G.FBExpr expr;
+        fattrs = [];
       }
     |> G.e
 

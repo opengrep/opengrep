@@ -311,6 +311,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     fparams = Tok.unsafe_fake_bracket [];
     frettype = None;
     fbody = G.FBNothing;
+    fattrs = [];
   } in
   let synth_func_info_for_class
       (class_il : IL.name) (name, tok) : FA.func_info =

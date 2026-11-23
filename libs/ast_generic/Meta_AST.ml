@@ -1277,8 +1277,17 @@ and vof_function_kind = function
   | BlockCases -> OCaml.VSum ("BlockCases", [])
 
 and vof_function_definition
-    { fkind; fparams = v_fparams; frettype = v_frettype; fbody = v_fbody } =
+    {
+      fkind;
+      fparams = v_fparams;
+      frettype = v_frettype;
+      fbody = v_fbody;
+      fattrs = v_fattrs;
+    } =
   let bnds = [] in
+  let arg = OCaml.vof_list vof_attribute v_fattrs in
+  let bnd = ("fattrs", arg) in
+  let bnds = bnd :: bnds in
   let arg = vof_function_body v_fbody in
   let bnd = ("fbody", arg) in
   let bnds = bnd :: bnds in
@@ -1596,6 +1605,9 @@ and vof_any = function
   | Tk v1 ->
       let v1 = vof_tok v1 in
       OCaml.VSum ("Tk", [ v1 ])
+  | Punct v1 ->
+      let v1 = vof_wrap OCaml.vof_string v1 in
+      OCaml.VSum ("Punct", [ v1 ])
   | Modn v1 ->
       let v1 = vof_module_name v1 in
       OCaml.VSum ("Modn", [ v1 ])

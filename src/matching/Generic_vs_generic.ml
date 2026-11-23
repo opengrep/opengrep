@@ -3535,11 +3535,13 @@ and m_function_kind a b =
 and m_function_definition a b =
   Trace_matching.(if on then print_function_definition_pair a b);
   match (a, b) with
-  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4 },
-      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4 } ) ->
+  | ( { G.fparams = a1; frettype = a2; fbody = a3; fkind = a4; fattrs = a5 },
+      { B.fparams = b1; frettype = b2; fbody = b3; fkind = b4; fattrs = b5 } )
+    ->
       m_parameters a1 b1 >>= fun () ->
       (m_option_none_can_match_some m_type_) a2 b2 >>= fun () ->
-      m_function_body a3 b3 >>= fun () -> m_wrap m_function_kind a4 b4
+      m_function_body a3 b3 >>= fun () ->
+      m_wrap m_function_kind a4 b4 >>= fun () -> m_attributes a5 b5
 
 and m_function_body a b =
   match (a, b) with
@@ -3595,7 +3597,10 @@ and m_parameter_list a b =
         | _ -> false)
         ~less_is_ok:false (* empty list can not match non-empty list *)
         ~is_metavar_ellipsis:(function
-        | Param { pname = Some (s, tok); _ } when Mvar.is_metavar_ellipsis s ->
+        | Param { pname = Some (s, tok); _ }
+        (* a parameter written as a pattern, such as a Rust closure's *)
+        | ParamPattern (PatId ((s, tok), _), _)
+          when Mvar.is_metavar_ellipsis s ->
             Some ((s, tok), fun xs -> MV.Params xs)
         | _ -> None)
         a b)
@@ -4256,6 +4261,7 @@ and m_any a b =
   | G.Modn a1, B.Modn b1 -> m_module_name a1 b1
   | G.ModDk a1, B.ModDk b1 -> m_module_definition_kind a1 b1
   | G.Tk a1, B.Tk b1 -> m_tok a1 b1
+  | G.Punct a1, B.Punct b1 -> m_wrap m_string a1 b1
   | G.TodoK a1, B.TodoK b1 -> m_todo_kind a1 b1
   | G.Di a1, B.Di b1 -> m_dotted_name a1 b1
   | G.En a1, B.En b1 -> m_entity a1 b1
@@ -4302,6 +4308,7 @@ and m_any a b =
   | G.Ss _, _
   | G.Flds _, _
   | G.Tk _, _
+  | G.Punct _, _
   | G.Lbli _, _
   | G.ModDk _, _
   | G.TodoK _, _

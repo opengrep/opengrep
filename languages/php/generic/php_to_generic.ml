@@ -521,6 +521,7 @@ and expr e : G.expr =
               frettype = rett;
               fbody = G.FBStmt body;
               fkind = (lambdakind, t);
+              fattrs = [];
             }
           |> G.e)
   | Match (tok, e, matches) ->
@@ -664,7 +665,13 @@ and func_def
     G.basic_entity id ~attrs:(modifiers @ attrs) ~case_insensitive:true
   in
   let def =
-    { G.fparams = fb params; frettype = fret; fbody = G.FBStmt body; fkind }
+    {
+      G.fparams = fb params;
+      frettype = fret;
+      fbody = G.FBStmt body;
+      fkind;
+      fattrs = [];
+    }
   in
   (ent, def)
 
@@ -874,6 +881,7 @@ and property_hook { ph_attrs; ph_modifiers; ph_ref; ph_kind; ph_params; ph_body 
     fparams = (fake "(", params, fake ")");
     frettype = None;
     fbody = body;
+    fattrs = [];
   } in
   let ent =
     G.basic_entity (name_str, tok) ~case_insensitive:false

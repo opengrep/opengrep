@@ -383,6 +383,7 @@ and expr e =
           frettype = None;
           fbody = G.FBStmt v2;
           fkind = (G.Arrow, t);
+          fattrs = [];
         }
   | SwitchE (v0, v1, v2) ->
       let v0 = info v0 in
@@ -667,6 +668,7 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
       frettype = rett;
       fbody;
       fkind = (G.Method, G.fake "");
+      fattrs = [];
     } )
 
 and field v = var_with_init v

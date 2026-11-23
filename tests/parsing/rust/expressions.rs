@@ -438,3 +438,56 @@ fn main() {
   if *x < 0 { const { &4i32.pow(4) } } else { x }
   let three_ranges = [const { (0..=5).into_inner() }; 3];
 }
+
+/*
+ * ===========================================
+ * Reference to a variable called raw
+ * ===========================================
+ */
+
+fn foo() {
+  let raw: i32 = 0;
+  let p = &raw;
+}
+
+/*
+ * ===========================================
+ * Raw borrows
+ * ===========================================
+ */
+
+fn foo() {
+  let p = &raw const x;
+  let q = &raw mut y;
+}
+
+/*
+ * ===========================================
+ * Gen blocks and gen as an identifier
+ * ===========================================
+ */
+
+fn foo() {
+  let gen = 1;
+  let it = gen { yield 1; };
+}
+
+/*
+ * ===========================================
+ * Field initialisers by index
+ * ===========================================
+ */
+
+fn foo() {
+  let s = S { 0: 1, 1: 2 };
+}
+
+/*
+ * ===========================================
+ * Negative literal as a const generic argument
+ * ===========================================
+ */
+
+fn foo() {
+  barrier::<-1>();
+}

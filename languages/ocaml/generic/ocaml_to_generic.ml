@@ -68,6 +68,7 @@ let mk_var_or_func tlet params tret body =
           fkind = (G.Function, tlet);
           (* TODO? maybe generate FBExpr when we can? *)
           fbody = G.FBStmt body;
+          fattrs = [];
         }
 
 let defs_of_bindings tlet attrs xs =
@@ -380,6 +381,7 @@ and expr e =
           frettype = None;
           fkind = (G.Function, t);
           fbody = G.FBExpr v2;
+          fattrs = [];
         }
       in
       G.Lambda def |> G.e
@@ -398,6 +400,7 @@ and expr e =
           frettype = None;
           fkind = (G.Function, t);
           fbody = G.FBStmt body_stmt;
+          fattrs = [];
         }
       |> G.e
   | ExprTodo (t, xs) ->
@@ -579,7 +582,9 @@ and class_field (fld : class_field) : G.field =
             let e = expr e in
             G.FBExpr e
       in
-      let fdef = G.{ fkind = (Method, m_tok); fparams; frettype; fbody } in
+      let fdef =
+        G.{ fkind = (Method, m_tok); fparams; frettype; fbody; fattrs = [] }
+      in
       G.fld (ent, G.FuncDef fdef)
   | InstanceVar { inst_tok = _; inst_name; inst_type; inst_expr } ->
       let id = ident inst_name in

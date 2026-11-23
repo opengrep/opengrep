@@ -314,6 +314,7 @@ let rec expr env (x : expr) =
           fbody = G.FBExpr v2;
           frettype = None;
           fkind = (G.LambdaKind, t0);
+          fattrs = [];
         }
       |> G.e
   | IfExp (v1, v2, v3) ->
@@ -607,6 +608,7 @@ and stmt_aux env x =
           frettype = v3;
           fbody = G.FBStmt v4;
           fkind = (fkind, t);
+          fattrs = [];
         }
       in
       [ G.DefStmt (ent, G.FuncDef def) |> G.s ]

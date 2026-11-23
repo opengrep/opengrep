@@ -13,4 +13,5 @@ Pr(
        attrs=[]; tparams=None; },
       FuncDef(
         {fkind=(Function, ()); fparams=[]; frettype=None; 
-         fbody=FBStmt(Block([Return((), Some(L(Int((Some(42), ())))), ())])); })))])
+         fbody=FBStmt(Block([Return((), Some(L(Int((Some(42), ())))), ())])); 
+         fattrs=[]; })))])

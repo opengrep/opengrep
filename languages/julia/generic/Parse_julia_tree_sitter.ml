@@ -326,6 +326,7 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
                   fparams;
                   frettype;
                   fbody = FBStmt body;
+                  fattrs = [];
                 }
               |> G.e,
               G.sc )
@@ -349,6 +350,7 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
               fparams = fb [];
               frettype = None;
               fbody = FBNothing;
+              fattrs = [];
             } )
       |> G.s
 
@@ -1237,6 +1239,7 @@ and map_do_clause (env : env) ((v1, v2, v3, v4) : CST.do_clause) =
       fparams = fb fparams;
       frettype = None;
       fbody = FBStmt body;
+      fattrs = [];
     }
   |> G.e
 
@@ -1311,6 +1314,7 @@ and map_operation (env : env) (x : CST.operation) =
           fparams;
           frettype = None;
           fbody = FBExpr v3;
+          fattrs = [];
         }
       |> G.e
   | `Juxt_exp (v1, v2) ->
@@ -1530,7 +1534,14 @@ and map_function_signature ~body ~func_tok (env : env)
         Some v2
     | None -> None
   in
-  (ent, { fkind = (Function, func_tok); fparams; frettype; fbody = body })
+  ( ent,
+    {
+      fkind = (Function, func_tok);
+      fparams;
+      frettype;
+      fbody = body;
+      fattrs = [];
+    } )
 
 and map_import_alias (env : env) ((v1, v2, v3) : CST.import_alias) :
     (dotted_ident * alias) option =

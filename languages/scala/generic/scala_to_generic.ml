@@ -71,6 +71,7 @@ let cases_to_lambda lb cases : G.function_definition =
     frettype = None;
     fparams = fb [ param ];
     fbody = G.FBStmt body;
+    fattrs = [];
   }
 
 (*****************************************************************************)
@@ -1091,6 +1092,7 @@ and v_given_definition { gtok; gattrs; gsig; gkind } : G.definition list =
                 fparams = fb params;
                 frettype = Some ty;
                 fbody;
+                fattrs = [];
               } )
         else
           let attrs =
@@ -1266,6 +1268,7 @@ and v_function_definition
       (match fbody with
       | None -> G.FBDecl G.sc
       | Some st -> st);
+    fattrs = [];
   }
 
 and v_function_kind = function

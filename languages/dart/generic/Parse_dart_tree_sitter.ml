@@ -1276,25 +1276,25 @@ and map_function_body (env : env) (x : CST.function_body) :
       (v1, FBStmt (Block v2 |> G.s))
 
 and map_function_expression_body (env : env) (x : CST.function_expression_body)
-    : function_body =
+    : attribute list * function_body =
   match x with
   | `Opt_async_EQGT_exp (v1, v2, v3) ->
-      let _v1_TODO =
+      let v1 =
         match v1 with
-        | Some tok -> Some ((* "async" *) token env tok)
-        | None -> None
+        | Some tok -> [ KeywordAttr (Async, (* "async" *) token env tok) ]
+        | None -> []
       in
       let _v2 = (* "=>" *) token env v2 in
       let v3 = map_expression env v3 in
-      FBExpr v3
+      (v1, FBExpr v3)
   | `Opt_choice_async_blk (v1, v2) ->
-      let _v1_TODO =
+      let v1 =
         match v1 with
-        | Some x -> Some (map_anon_choice_async_725f72f env x)
-        | None -> None
+        | Some x -> [ map_anon_choice_async_725f72f env x ]
+        | None -> []
       in
       let v2 = map_block env v2 in
-      FBStmt (Block v2 |> G.s)
+      (v1, FBStmt (Block v2 |> G.s))
 
 and map_function_formal_parameter (env : env)
     ((v1, v2, v3, v4, v5) : CST.function_formal_parameter) : parameter =
@@ -1359,7 +1359,7 @@ and map_function_signature ~attrs (env : env)
     | _ ->
         DefStmt
           ( basic_entity ~attrs ?tparams id,
-            FuncDef { fkind; fparams; frettype; fbody } )
+            FuncDef { fkind; fparams; frettype; fbody; fattrs = [] } )
         |> G.s
 
 and map_function_type (env : env) (x : CST.function_type) : type_ =
@@ -1900,9 +1900,15 @@ and map_primary (env : env) (p : CST.primary) : expr =
         | `Func_exp (v1, v2) ->
             let _tparams, fparams = map_formal_parameter_part env v1 in
             let lparen, _, _ = fparams in
-            let fbody = map_function_expression_body env v2 in
+            let fattrs, fbody = map_function_expression_body env v2 in
             Lambda
-                { fkind = (LambdaKind, lparen); fparams; frettype = None; fbody }
+                {
+                  fkind = (LambdaKind, lparen);
+                  fparams;
+                  frettype = None;
+                  fbody;
+                  fattrs;
+                }
             |> G.e
         | `Id tok ->
             N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
@@ -2915,7 +2921,8 @@ let map_setter_signature ~attrs (env : env)
   fun fbody ->
     DefStmt
       ( basic_entity ?tparams ~attrs v3,
-        FuncDef { fkind = (Function, v2); fparams; frettype; fbody } )
+        FuncDef
+          { fkind = (Function, v2); fparams; frettype; fbody; fattrs = [] } )
     |> G.s
 
 let map_operator_signature ?(attrs = []) (env : env)
@@ -2949,6 +2956,7 @@ let map_operator_signature ?(attrs = []) (env : env)
           fparams;
           fbody = FBNothing;
           frettype;
+          fattrs = [];
         } )
   |> G.s
 
@@ -3020,7 +3028,14 @@ let map_getter_signature ~attrs (env : env)
   fun fbody ->
     DefStmt
       ( basic_entity ~attrs v3,
-        FuncDef { fkind = (Function, t); fparams = fb []; frettype; fbody } )
+        FuncDef
+          {
+            fkind = (Function, t);
+            fparams = fb [];
+            frettype;
+            fbody;
+            fattrs = [];
+          } )
     |> G.s
 
 let map_constant_constructor_signature (env : env)
@@ -3339,7 +3354,13 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
       DefStmt
         ( ent,
           FuncDef
-            { fkind = (Method, fake "Method"); fparams; frettype = None; fbody }
+            {
+              fkind = (Method, fake "Method");
+              fparams;
+              frettype = None;
+              fbody;
+              fattrs = [];
+            }
         )
       |> G.s
   | `Fact_cons_sign x ->
@@ -3359,6 +3380,7 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
               fparams;
               frettype = None;
               fbody = body;
+              fattrs = [];
             } )
       |> G.s
   | `Opt_static_choice_func_sign (v1, v2) ->
@@ -3480,6 +3502,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fparams;
                 frettype = None;
                 fbody;
+                fattrs = [];
               } )
         |> G.s;
       ]
@@ -3505,6 +3528,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fparams;
                 frettype = None;
                 fbody;
+                fattrs = [];
               } )
         |> G.s;
       ]
@@ -3533,6 +3557,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fparams;
                 frettype = None;
                 fbody = FBNothing;
+                fattrs = [];
               } )
         |> G.s;
       ]
@@ -3555,6 +3580,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fparams;
                 frettype = None;
                 fbody = FBNothing;
+                fattrs = [];
               } )
         |> G.s;
       ]
@@ -3572,6 +3598,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fparams;
                 frettype = None;
                 fbody = FBNothing;
+                fattrs = [];
               } )
         |> G.s;
       ]
@@ -3611,6 +3638,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                   FBExpr
                     (OtherExpr (("Redirect", fake "Redirect"), [ G.T v7 ] @ v8)
                     |> G.e);
+                fattrs = [];
               } )
         |> G.s;
       ]
@@ -3633,6 +3661,7 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
                 fparams;
                 frettype = None;
                 fbody = FBNothing;
+                fattrs = [];
               } )
         |> G.s;
       ]

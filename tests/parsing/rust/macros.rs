@@ -64,3 +64,11 @@ macro_rules! zero_or_one {
         $($e),?
     };
 }
+
+macro_rules! edition_fragments {
+    ($e:expr_2021, $p:pat_param) => {};
+}
+
+macro_rules! square_brackets [
+    () => {};
+];

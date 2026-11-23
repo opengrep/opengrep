@@ -2129,7 +2129,8 @@ and event_statement (attrs : G.attribute list) : (G.ident * G.definition) parser
           | None -> fb []
           | Some ps -> ps);
         frettype = as_clause;
-        fbody = G.FBDecl Tok.unsafe_sc
+        fbody = G.FBDecl Tok.unsafe_sc;
+        fattrs = []
       }
   in
   pure (id, (entity, def))
@@ -2182,7 +2183,8 @@ and event_accessor_block ((event_name_str, _) : G.ident) (attrs : G.attribute li
       { fkind = (G.Function, tok.tok);
         fparams = params;
         frettype = None;
-        fbody = G.FBStmt stmt
+        fbody = G.FBStmt stmt;
+        fattrs = []
       }
   in
   pure (G.DefStmt (entity, def) |> G.s)
@@ -2509,7 +2511,8 @@ and declare_statement (attrs : G.attribute list) : G.stmt parser = fun __n -> (
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
-          fbody = G.FBDecl Tok.unsafe_sc
+          fbody = G.FBDecl Tok.unsafe_sc;
+          fattrs = []
         }
   in
   pure (G.DefStmt (entity, def) |> G.s)
@@ -2749,7 +2752,8 @@ and function_statement (where_am_i : G.function_kind) (attrs : G.attribute list)
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
-          fbody = G.FBDecl Tok.unsafe_sc
+          fbody = G.FBDecl Tok.unsafe_sc;
+          fattrs = []
         }
   in
   pure (entity, def)
@@ -2856,7 +2860,8 @@ and sub_statement (where_am_i : G.function_kind) (attrs : G.attribute list)
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
-          fbody = G.FBDecl Tok.unsafe_sc
+          fbody = G.FBDecl Tok.unsafe_sc;
+          fattrs = []
         }
   in
   pure (entity, def)
@@ -2941,7 +2946,8 @@ and constructor_block (attrs : G.attribute list) (class_name : G.name) : G.stmt 
             | None -> fb []
             | Some p -> p);
           frettype = None;
-          fbody = G.FBStmt stmt
+          fbody = G.FBStmt stmt;
+          fattrs = []
         }
   in
   pure (G.DefStmt (entity, def) |> G.s)
@@ -3005,7 +3011,8 @@ and operator_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
             | None -> fb []
             | Some p -> p);
           frettype = as_clause;
-          fbody = G.FBStmt stmt
+          fbody = G.FBStmt stmt;
+          fattrs = []
         }
   in
   pure (G.DefStmt (entity, def) |> G.s)
@@ -3093,7 +3100,8 @@ and property_accessor_block ((property_name_str, _) : G.ident)
           { fkind = (G.Method, get.tok);
             fparams = fb [];
             frettype = typ;
-            fbody = G.FBStmt stmt
+            fbody = G.FBStmt stmt;
+            fattrs = []
           }
       in
       pure (G.DefStmt (entity, def) |> G.s)
@@ -3119,7 +3127,8 @@ and property_accessor_block ((property_name_str, _) : G.ident)
               | Some p -> p
               | None -> fb []);
             frettype = typ;
-            fbody = G.FBStmt stmt
+            fbody = G.FBStmt stmt;
+            fattrs = []
           }
       in
       pure (G.DefStmt (entity, def) |> G.s)
@@ -4493,7 +4502,8 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
-            fbody = G.FBStmt (G.Block (fb [G.ExprStmt ({expr with is_implicit_return = true}, Tok.unsafe_sc) |> G.s]) |> G.s) }
+            fbody = G.FBStmt (G.Block (fb [G.ExprStmt ({expr with is_implicit_return = true}, Tok.unsafe_sc) |> G.s]) |> G.s);
+            fattrs = [] }
       in
       pure (G.Lambda fdef |> G.e)
     end;
@@ -4510,7 +4520,8 @@ and single_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
-            fbody = G.FBStmt (stmt_of_stmts ~always_block:true stmts) }
+            fbody = G.FBStmt (stmt_of_stmts ~always_block:true stmts);
+            fattrs = [] }
       in
       pure (G.Lambda fdef |> G.e)
     end;
@@ -4537,7 +4548,8 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
-            fbody = G.FBStmt stmt }
+            fbody = G.FBStmt stmt;
+            fattrs = [] }
       in
       pure (G.Lambda fdef |> G.e)
     end;
@@ -4557,7 +4569,8 @@ and multi_line_lambda_expression : G.expr parser = fun __n -> (
               | Some p -> p
               | None -> fb []);
             frettype = None;
-            fbody = G.FBStmt stmt }
+            fbody = G.FBStmt stmt;
+            fattrs = [] }
       in
       pure (G.Lambda fdef |> G.e)
     end;

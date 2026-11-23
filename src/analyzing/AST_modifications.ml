@@ -51,6 +51,7 @@ let convert_elixir_short_lambda (e : G.expr) : G.expr =
           frettype = None;
           fkind = (G.LambdaKind, tok);
           fbody = G.FBStmt body;
+          fattrs = [];
         }
       in
       G.Lambda fdef |> G.e

@@ -1659,6 +1659,7 @@ and map_function_signature (env : env) attrs body
         (match body with
         | None -> G.FBNothing
         | Some x -> G.FBStmt x);
+      fattrs = [];
     }
   in
   let fn_ent =
@@ -2025,6 +2026,7 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
               fparams = params;
               frettype = ret_type;
               fbody = G.FBExpr body;
+              fattrs = [];
             }
           in
           G.Lambda func_def |> G.e
@@ -2600,6 +2602,7 @@ and map_spec_function (env : env) (x : CST.spec_function) : G.stmt =
           fparams = params;
           frettype = Some ret_type;
           fbody = G.FBNothing;
+          fattrs = [];
         }
       in
       G.DefStmt (entity, G.FuncDef func_def) |> G.s
@@ -2613,6 +2616,7 @@ and map_spec_function (env : env) (x : CST.spec_function) : G.stmt =
           fparams = params;
           frettype = Some ret_type;
           fbody = G.FBStmt body;
+          fattrs = [];
         }
       in
       G.DefStmt (entity, G.FuncDef func_def) |> G.s
@@ -2626,6 +2630,7 @@ and map_spec_function (env : env) (x : CST.spec_function) : G.stmt =
           fparams = params;
           frettype = Some ret_type;
           fbody = G.FBNothing;
+          fattrs = [];
         }
       in
       G.DefStmt (entity, G.FuncDef func_def) |> G.s

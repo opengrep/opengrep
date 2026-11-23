@@ -1363,6 +1363,7 @@ let map_spec_block_target (env : env) (x : CST.spec_block_target) : G.any =
               G.fparams = params;
               G.frettype = ret_type;
               G.fbody = G.FBNothing;
+              G.fattrs = [];
             }
           in
           G.Anys [ G.Def (entity, G.FuncDef def_) ]
@@ -1463,6 +1464,7 @@ let map_function_signature (env : env) attrs
       fparams = params;
       frettype = Some ret_type;
       fbody = G.FBNothing;
+      fattrs = [];
     }
   in
   let fn_ent =
@@ -1790,6 +1792,7 @@ and map_expr (env : env) (x : CST.expr) =
           fparams = params;
           frettype = None;
           fbody = G.FBExpr body;
+          fattrs = [];
         }
       in
       G.Lambda func_def |> G.e
@@ -2125,6 +2128,7 @@ and map_spec_func (env : env) (x : CST.spec_func) =
             (match body with
             | None -> G.FBNothing
             | Some x -> G.FBStmt x);
+          fattrs = [];
         }
       in
       G.DefStmt (entity, G.FuncDef func_def) |> G.s
@@ -2139,6 +2143,7 @@ and map_spec_func (env : env) (x : CST.spec_func) =
           fparams = params;
           frettype = Some ret_type;
           fbody = G.FBNothing;
+          fattrs = [];
         }
       in
       let v4 = (* ";" *) token env v4 in

@@ -657,6 +657,7 @@ and map_function_declaration (env : env) (x : CST.function_declaration) :
         fparams = params;
         frettype = return_type;
         fbody = G.FBStmt (G.exprstmt body);
+        fattrs = [];
       } )
 
 and map_import_declaration (env : env) (x : CST.import_declaration) :
@@ -753,6 +754,7 @@ and map_trait_declaration (env : env) (x : CST.trait_declaration) : G.definition
                    (match body with
                    | Some body -> G.FBStmt body
                    | None -> G.FBNothing);
+                 fattrs = [];
                } ))
     in
 

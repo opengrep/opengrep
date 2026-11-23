@@ -436,6 +436,7 @@ and command (env : env) (cmd : command) : stmt_or_expr =
             fparams = fb [];
             frettype = None;
             fbody = G.FBStmt (command env def.body |> as_stmt);
+            fattrs = [];
           }
       in
       (* Function names are in another namespace than ordinary variables.

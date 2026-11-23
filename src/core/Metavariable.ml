@@ -160,6 +160,7 @@ let mvalue_of_any any =
   | Dir _
   | Pr _
   | Tk _
+  | Punct _
   | TodoK _
   | Ar _
   | Pa _

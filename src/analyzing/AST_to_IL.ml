@@ -2638,17 +2638,20 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
    * Lower as a [RecordOrDict] of [Entry (L (String f), v)] so the
    * shape layer builds per-field [Ostr] cells and caller-side
    * field-sensitivity survives the struct construction — the default
-   * [Composite (Constructor, …)] is positional and collapses fields. *)
+   * [Composite (Constructor, …)] is positional and collapses fields.
+   * A tuple field [S { 0: v }] arrives as [G.Assign (L (Int 0), _, v)] and
+   * is keyed by that integer, as its access [s.0] is. *)
   | G.Constructor (_cname, (_tok1, esorig, _tok2))
     when env.lang =*= Lang.Rust && esorig <> []
          && List.for_all
               (function
-                | { G.e = G.Assign ({ G.e = G.N (G.Id _); _ }, _, _); _ } ->
+                | { G.e = G.Assign ({ G.e = G.N (G.Id _) | G.L (G.Int _); _ }, _, _); _ }
+                  ->
                     true
                 | _ -> false)
               esorig ->
       (* Each element is guaranteed by the [for_all] guard to be a
-       * field-init [Assign (N (Id …), _, _)]; any non-matching shape
+       * field-init [Assign (N (Id …) | L (Int …), _, _)]; any non-matching shape
        * would indicate a parser change, in which case we skip that
        * element rather than assert — a missing [Entry] is a precision
        * loss, not a crash — and emit a warning so the drift is
@@ -2669,6 +2672,13 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                              (Tok.unsafe_fake_bracket (field_name, field_tok))))
                        (related_tok field_tok)
                    in
+                   Some (ss_v, Entry (key, ve))
+               | G.Assign
+                   ( { G.e = G.L (G.Int (_, index_tok) as index); _ },
+                     _,
+                     value_expr ) ->
+                   let ss_v, ve = expr env value_expr in
+                   let key = mk_e (Literal index) (related_tok index_tok) in
                    Some (ss_v, Entry (key, ve))
                | _ ->
                    Log.warn (fun m ->

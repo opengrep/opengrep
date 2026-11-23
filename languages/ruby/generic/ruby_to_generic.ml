@@ -188,6 +188,7 @@ let rec expr e =
           frettype = None;
           fbody = G.FBStmt st;
           fkind = (G.LambdaKind, t1);
+          fattrs = [];
         }
       in
       G.Lambda def
@@ -205,6 +206,7 @@ let rec expr e =
           frettype = None;
           fbody = G.FBStmt st;
           fkind = (G.LambdaKind, tok);
+          fattrs = [];
         }
       in
       G.Lambda def
@@ -818,6 +820,7 @@ and definition def =
           frettype = None;
           fbody = G.FBStmt body;
           fkind = (G.Method, t);
+          fattrs = [];
         }
       in
       match kind with
