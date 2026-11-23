@@ -51,7 +51,7 @@ let wrap_with_detach f = Lwt_platform.detach f ()
   * will be read from the config file. If [git_ref] is provided, it will be
   * used as the git ref for what matches are filtered out based on git diff.
   *)
-let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
+let run_semgrep ?(targets : Target_and_root.t list option) ?rules ?git_ref
     (session : Session.t) =
   let rules = Option.value ~default:session.cached_session.rules rules in
   match (rules, targets) with
@@ -100,11 +100,7 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
               runner_conf
               (* TODO: when running with LSP, could the config of matching be needed? *)
               Find_targets.default_conf Match_patterns.default_matching_conf
-              (rules, [])
-              (List_.map
-                (fun (fpath : Fpath.t) : Target_and_root.t ->
-                  { target_fpath = fpath; project_root = None })
-                targets))
+              (rules, []) targets)
           |> Profiler.record profiler ~name:"core_run"
         in
         match res_or_exn with
@@ -166,7 +162,8 @@ let run_core_search xconf rule (file : Fpath.t) =
   if Filter_target.filter_target_for_xlang xlang file then
     let xtarget =
       Xtarget.resolve parse_and_resolve_name
-        (Target.mk_regular xlang Product.all (File file))
+        (Target.mk_regular ~target_proj_path:Not_in_project xlang Product.all
+           (File file))
     in
     try
       let is_relevant_rule =
@@ -220,7 +217,10 @@ let scan_open_documents (session : Session.t) =
   let session_targets = Session.targets session in
   let open_documents =
     let open_documents = session.cached_session.open_documents in
-    List.filter (fun doc -> List.mem doc open_documents) session_targets
+    List.filter
+      (fun ({ target_fpath; _ } : Target_and_root.t) ->
+        List.exists (Fpath.equal target_fpath) open_documents)
+      session_targets
   in
   let packets, token =
     create_progress "Opengrep Scan in Progress" "Scanning Open Documents"
@@ -242,19 +242,22 @@ let scan_file session uri =
     let%lwt results =
       let%lwt results, _ =
         let targets =
-          let targets = [ file ] in
-          let session_targets = Session.targets session in
+          let targets =
+            Session.targets session
+            |> List.filter (fun ({ target_fpath; _ } : Target_and_root.t) ->
+                   Fpath.equal target_fpath file)
+          in
           (* If the file opened isn't a target, try updating targets just in case *)
           (* This feels fine since if it is an actual target, we need to do this, and if not *)
           (* then the user won't see results either way. *)
-          if not (List.mem file session_targets) then (
+          if List_.null targets then (
             Logs.debug (fun m ->
                 m
                   "File %a is not in the session targets recalculating targets \
                    just in case"
                   Fpath.pp file);
             Session.cache_workspace_targets session);
-          if List.mem file session_targets then targets else []
+          targets
         in
         run_semgrep_detached ~targets session
       in

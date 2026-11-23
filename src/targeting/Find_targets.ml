@@ -1219,8 +1219,14 @@ let get_target_fpaths_with_project_roots (conf : conf)
   let v = get_targets conf scanning_roots in
   let enriched =
     List_.map
-      (fun ({ Fppath.fpath; project_root; _ } : Fppath.t) ->
-        ({ target_fpath = fpath; project_root } : Target_and_root.t))
+      (fun ({ Fppath.fpath; ppath; project_root } : Fppath.t) ->
+        let target_proj_path : Target_and_root.target_proj_path =
+          if Explicit_targets.mem conf.explicit_targets fpath then
+            Not_in_project
+          else In_project ppath
+        in
+        ({ target_fpath = fpath; project_root; target_proj_path }
+          : Target_and_root.t))
       v.selected
   in
   { v with selected = enriched }

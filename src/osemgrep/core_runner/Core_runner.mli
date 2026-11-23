@@ -71,6 +71,8 @@ type func = {
     ?on_plan:(Scan_plan.t -> unit) ->
     ?on_lang_jobs:(Lang_job.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
+    (* where a target's content is read when it is not [target_fpath] *)
+    ?content_path:(Fpath.t -> Fpath.t) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
     conf ->
@@ -128,6 +130,16 @@ val mk_core_run_for_osemgrep : Core_scan.func -> func
 val targets_and_rules_for_files :
   Fpath.t list -> Rule.t list -> Target.t list * Rule.t list
 
-(* the targets of each language of the rules *)
+(* The targets and rules of [lang_jobs]; [content_path] as in [func]. *)
+val targets_and_rules_of_lang_jobs :
+  ?content_path:(Fpath.t -> Fpath.t) ->
+  Lang_job.t list ->
+  Target.t list * Rule.t list
+
+(* the targets of each language of the rules; [content_path] as in [func] *)
 val split_jobs_by_language :
-  Find_targets.conf -> Rule.t list -> Target_and_root.t list -> Lang_job.t list
+  ?content_path:(Fpath.t -> Fpath.t) ->
+  Find_targets.conf ->
+  Rule.t list ->
+  Target_and_root.t list ->
+  Lang_job.t list

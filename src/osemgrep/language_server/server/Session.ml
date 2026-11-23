@@ -57,7 +57,7 @@ type t = {
         fun fmt c ->
           Yojson.Safe.pretty_print fmt (ServerCapabilities.yojson_of_t c)]
   workspace_folders : Fpath.t list;
-  cached_workspace_targets : (Fpath.t, Fpath.t list) Hashtbl.t; [@opaque]
+  cached_workspace_targets : (Fpath.t, Target_and_root.t list) Hashtbl.t; [@opaque]
   cached_scans : (Fpath.t, Out.cli_match list) Hashtbl.t; [@opaque]
   cached_session : session_cache;
   skipped_local_fingerprints : string list;
@@ -107,7 +107,7 @@ let get_targets session (root : Fpath.t) =
   in
   let proj_root = Rfpath.of_fpath_exn root in
   let targets =
-    Find_targets.get_target_fpaths
+    Find_targets.get_target_fpaths_with_project_roots
       {
         targets_conf with
         force_project_root = Some (Find_targets.Filesystem proj_root);
@@ -152,8 +152,10 @@ let targets session =
     && ((not session.user_settings.only_git_dirty)
        || member_folder_dirty_files file folder)
   in
-  let member_workspaces t =
-    List.exists (fun f -> member_workspace_folder t f) session.workspace_folders
+  let member_workspaces ({ target_fpath; _ } : Target_and_root.t) =
+    List.exists
+      (fun f -> member_workspace_folder target_fpath f)
+      session.workspace_folders
   in
   let workspace_targets f =
     Hashtbl.find_opt session.cached_workspace_targets f

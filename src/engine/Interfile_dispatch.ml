@@ -64,7 +64,7 @@ type rule_state = {
 type interfile_target = {
   abs_path : Fpath.t;
   path_root : Fpath.t option;  (* base for absolutifying token paths; None if abs *)
-  origin : Origin.t;  (* the file as the user names it: what a rule's paths: see *)
+  matched_paths : string list;  (* what a rule's paths: are matched against *)
 }
 
 type lang_context = {
@@ -156,14 +156,18 @@ let targets_in_interfile_graph
     : interfile_target list =
   List.filter_map (fun (target : Target.t) ->
     match target with
-    | Regular ({ analyzer; path = { internal_path_to_content; origin }; _ }) ->
+    | Regular
+        ({ analyzer; path = { internal_path_to_content; origin };
+           target_proj_path; _ }) ->
       (match Xlang.to_lang analyzer with
        | Ok target_lang when Lang.equal target_lang lang ->
          let abs_path, (path_with_root : path_with_root) =
            canonical_path ~cwd internal_path_to_content
          in
          if Hashtbl.mem interfile_files abs_path then
-           Some { abs_path; path_root = path_with_root.root; origin }
+           Some { abs_path; path_root = path_with_root.root;
+                  matched_paths =
+                    Filter_target.matched_paths target_proj_path origin }
          else begin
            Log.warn (fun m ->
                m "interfile preprocess: target %s (abs: %s) not found in \
@@ -2135,7 +2139,7 @@ let build_rule_states
     if respect_rule_paths then
       List.filter
         (fun (t : interfile_target) ->
-          Filter_target.rule_applies_to_origin rule.R.paths t.origin)
+          Filter_target.rule_applies rule.R.paths t.matched_paths)
         lc.lc_matching_targets
     else lc.lc_matching_targets
   in

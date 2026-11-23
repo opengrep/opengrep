@@ -695,7 +695,7 @@ let check_targets_with_rules ?(print_summary = true)
                zero. *)
             let mk_diff_scan_func ?file_match_hook ?(baseline = false) () :
                 Diff_scan.diff_scan_func =
-             fun ?explicit_targets ~scanning_roots targets rules ->
+             fun ?explicit_targets ?content_path ~scanning_roots targets rules ->
               if baseline then
                 status_bar
                 |> Option.iter (fun (bar : Status_bar.t) ->
@@ -720,9 +720,9 @@ let check_targets_with_rules ?(print_summary = true)
                           else plan))
               in
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
-              (* the baseline scan names its targets relative to the current
-                 directory, and the targets of the command line are named
-                 the same way *)
+              (* for the baseline replay of [Diff_scan], the targets of the
+                 command line relative to the current directory, the paths by
+                 which it finds and reads its targets *)
               let targeting_conf : Find_targets.conf =
                 match explicit_targets with
                 | None -> conf.targeting_conf
@@ -737,7 +737,7 @@ let check_targets_with_rules ?(print_summary = true)
                 if baseline then None else Some warn_before_scan
               in
               run ?file_match_hook ?on_plan ?on_lang_jobs
-                ~progress_hook
+                ~progress_hook ?content_path
                 ~git_repo:targets_and_skipped.Find_targets.git_repo
                 ~scanning_roots conf.core_runner_conf targeting_conf
                 conf.matching_conf (rules, invalid_rules) targets

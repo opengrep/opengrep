@@ -36,6 +36,7 @@ module SS = Set.Make (String)
 (*****************************************************************************)
 type diff_scan_func =
   ?explicit_targets:Find_targets.Explicit_targets.t ->
+  ?content_path:(Fpath.t -> Fpath.t) ->
   scanning_roots:Scanning_root.directory list ->
   Target_and_root.t list ->
   Rule.rules ->
@@ -122,18 +123,67 @@ let remove_matches_in_baseline ~(from_cwd : Fpath.t -> Fpath.t) sigs
    from the results of the head checkout scan. *)
 let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
     (conf : Scan_CLI.conf) (profiler : Profiler.t)
-    ~(from_cwd : Fpath.t -> Fpath.t)
+    ~(cwd : Fpath.t) ~(from_cwd : Fpath.t -> Fpath.t)
     ~(explicit_targets : Find_targets.Explicit_targets.t)
+    ~(head_targets : Target_and_root.t list)
     (result_or_exn : Core_result.result_or_exn) (rules : Rule.rules)
     (commit : string) (status : Git_wrapper.status)
     (core : diff_scan_func) : Core_result.result_or_exn =
   let/ r = result_or_exn in
   if r.processed_matches <> [] then
-    let add_renamed paths =
-      List.fold_left (fun x (y, _) -> SS.add y x) paths status.renamed
+    let added = SS.of_list status.added in
+    let files_in_match =
+      r.processed_matches
+      |> List_.map (fun ({ pm; _ } : Core_result.processed_match) ->
+             !!(from_cwd pm.path.internal_path_to_content))
+      |> SS.of_list
     in
-    let remove_added paths =
-      List.fold_left (Fun.flip SS.remove) paths status.added
+    (* The head targets that carry a match. The replay keeps their path and
+       [target_proj_path], so rule paths: are matched as in the head scan,
+       and reads their content from the baseline worktree. Each comes with
+       its path relative to the current directory, the form git lists. *)
+    let head_targets_in_match : (string * Target_and_root.t) list =
+      head_targets
+      |> List_.filter_map (fun (target : Target_and_root.t) ->
+             let path = !!(from_cwd target.target_fpath) in
+             if SS.mem path files_in_match then Some (path, target) else None)
+    in
+    (* The old name of a renamed file that carries a match, as a target of
+       the same project as its new name: a file found under a directory
+       target is matched by the old name's path relative to the project
+       root, and is not replayed when the old name lies outside that root. *)
+    let renamed_targets : Target_and_root.t list =
+      status.renamed
+      |> List_.filter_map (fun ((before, after) : string * string) ->
+             match
+               List.find_map
+                 (fun ((path : string), (target : Target_and_root.t)) ->
+                   if String.equal path after then Some target else None)
+                 head_targets_in_match
+             with
+             | None -> None
+             | Some (_ : Target_and_root.t) when SS.mem before added -> None
+             | Some (head : Target_and_root.t) -> (
+                 let target_fpath = Fpath.v before in
+                 let target_proj_path : Target_and_root.target_proj_path option =
+                   match (head.target_proj_path, head.project_root) with
+                   | Not_in_project, (_ : Fpath.t option) -> Some Not_in_project
+                   | In_project (_ : Ppath.t), None -> None
+                   | In_project (_ : Ppath.t), Some (root : Fpath.t) -> (
+                       match
+                         Fpath.rem_prefix (Fpath.to_dir_path root)
+                           (Fpath.normalize Fpath.(cwd // target_fpath))
+                       with
+                       | Some (rel : Fpath.t) ->
+                           Some (In_project (Ppath.of_relative_fpath rel))
+                       | None -> None)
+                 in
+                 match target_proj_path with
+                 | None -> None
+                 | Some (target_proj_path : Target_and_root.target_proj_path) ->
+                     Some
+                       ({ target_fpath; project_root = None; target_proj_path }
+                         : Target_and_root.t)))
     in
     let rules_in_match =
       r.processed_matches
@@ -148,54 +198,51 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
       |> List.filter (fun x ->
              SS.mem (x.Rule.id |> fst |> Rule_ID.to_string) rules_in_match)
     in
-    (* The baseline scan names its targets relative to the current
-       directory, so the targets the command line named are made relative
-       too: a target counts as named on the command line only when the two
-       forms agree. Otherwise the size and '.min.js' bypass, and with
-       '--scan-unknown-extensions' language detection too, drop it in the
-       baseline scan, and the findings the baseline already had are reported
-       as new. Built once per baseline scan. *)
+    (* The targets of the command line in the form of the paths that
+       [interfile_targets] finds and [replay] reads in the baseline
+       worktree, relative to the current directory, so that they are still
+       recognised as given on the command line there. *)
     let baseline_explicit_targets =
       Find_targets.Explicit_targets.to_list explicit_targets
       |> List_.map from_cwd |> Find_targets.Explicit_targets.of_list
+    in
+    (* a target of the command line found again in the baseline worktree
+       gets back the form it was given in *)
+    let given_of_baseline : Fpath.t Fpath.Map.t =
+      Find_targets.Explicit_targets.to_list explicit_targets
+      |> List.fold_left
+           (fun (acc : Fpath.t Fpath.Map.t) (given : Fpath.t) ->
+             Fpath.Map.add (from_cwd given) given acc)
+           Fpath.Map.empty
     in
     let baseline_result =
       Profiler.record profiler ~name:"baseline_core_time" (fun () ->
           Git_wrapper.run_with_worktree caps ~commit (fun () ->
               Globals.reset ();
-              let prepare_targets paths =
-                paths |> SS.of_list |> add_renamed |> remove_added |> SS.to_seq
-                |> Seq.filter_map (fun x ->
-                       if
-                         Sys.file_exists x
-                         &&
-                         match (Unix.lstat x).st_kind with
-                         | S_LNK -> false
-                         | _ -> true
-                       then Some (Fpath.v x)
-                       else None)
-                |> List.of_seq
-              in
               (* the baseline worktree holds the same directories as the
                  repository, so a target relative to the current directory
                  names the same file there; an absolute one would name the
                  file of the head instead *)
-              let paths_in_match =
-                r.processed_matches
-                |> List_.map (fun ({ pm; _ } : Core_result.processed_match) ->
-                       !!(from_cwd pm.path.internal_path_to_content))
-                |> prepare_targets
+              let in_baseline ({ target_fpath; _ } : Target_and_root.t) : bool =
+                let x = !!(from_cwd target_fpath) in
+                Sys.file_exists x
+                &&
+                match (Unix.lstat x).st_kind with
+                | S_LNK -> false
+                | _ -> true
               in
               (* Per-target replay targets carry [project_root = None]: the
                  per-target engine does not consult it.  Interfile replay
                  targets get real roots below instead — see
                  [baseline_targets]. *)
-              let wrap_as_targets (fpaths : Fpath.t list)
-                  : Target_and_root.t list =
-                List_.map
-                  (fun (fpath : Fpath.t) : Target_and_root.t ->
-                    { target_fpath = fpath; project_root = None })
-                  fpaths
+              let targets_in_match =
+                List_.filter_map
+                  (fun ((path : string), (target : Target_and_root.t)) ->
+                    if SS.mem path added then None
+                    else Some { target with project_root = None })
+                  head_targets_in_match
+                @ renamed_targets
+                |> List.filter in_baseline
               in
               (* The interfile rules replay over the baseline's full target
                  set, every other rule over the files that carry a match:
@@ -208,7 +255,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               let interfile_targets () : replay_input =
                   (* An interfile match depends on files that carry no match of
                      their own — the caller supplying the taint — so replaying
-                     only [paths_in_match] cannot reproduce it: the baseline
+                     only [targets_in_match] cannot reproduce it: the baseline
                      comes up empty and every pre-existing cross-file finding
                      gets reported as newly introduced.  The head's scanned set
                      is no help either, since a diff scan already narrowed the
@@ -242,9 +289,22 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                   let { Find_targets.selected = all_in_baseline;
                         roots = resolved_baseline_roots; _ } =
                     Find_targets.get_target_fpaths_with_project_roots
-                      conf.targeting_conf baseline_roots
+                      { conf.targeting_conf with
+                        explicit_targets = baseline_explicit_targets }
+                      baseline_roots
                   in
-                  { replay_targets = all_in_baseline;
+                  let replay_targets =
+                    all_in_baseline
+                    |> List_.map (fun (target : Target_and_root.t) ->
+                           match
+                             Fpath.Map.find_opt target.target_fpath
+                               given_of_baseline
+                           with
+                           | Some (given : Fpath.t) ->
+                               { target with target_fpath = given }
+                           | None -> target)
+                  in
+                  { replay_targets;
                     replay_roots = resolved_baseline_roots }
               in
               (* [targets] is computed only when there is a rule to replay:
@@ -258,6 +318,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                     let input = targets () in
                     Some
                       (core ~explicit_targets:baseline_explicit_targets
+                         ~content_path:from_cwd
                          ~scanning_roots:input.replay_roots
                          input.replay_targets rules)
               in
@@ -276,7 +337,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                 in
                 merge
                   (replay other_rules (fun () : replay_input ->
-                       { replay_targets = wrap_as_targets paths_in_match;
+                       { replay_targets = targets_in_match;
                          replay_roots = [] }))
                   (replay interfile_rules interfile_targets)
               in
@@ -392,6 +453,6 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     Profiler.record profiler ~name:"head_core_time" (fun () ->
         head_scan_func ~scanning_roots targets rules)
   in
-  scan_baseline_and_remove_duplicates caps conf profiler
-    ~from_cwd:relative_to_cwd ~explicit_targets head_scan_result rules commit
-    status baseline_scan_func
+  scan_baseline_and_remove_duplicates caps conf profiler ~cwd
+    ~from_cwd:relative_to_cwd ~explicit_targets ~head_targets:targets
+    head_scan_result rules commit status baseline_scan_func

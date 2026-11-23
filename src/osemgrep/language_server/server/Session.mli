@@ -29,7 +29,7 @@ type session_cache = {
 type t = {
   capabilities : ServerCapabilities.t;
   workspace_folders : Fpath.t list;
-  cached_workspace_targets : (Fpath.t, Fpath.t list) Hashtbl.t;
+  cached_workspace_targets : (Fpath.t, Target_and_root.t list) Hashtbl.t;
   cached_scans : (Fpath.t, Semgrep_output_v1_t.cli_match list) Hashtbl.t;
   cached_session : session_cache;
   skipped_local_fingerprints : string list;
@@ -61,7 +61,7 @@ val cache_workspace_targets : t -> unit
     workspace folders, with includes and excludes in [t.user_settings], and git
     status taken into account if [t.user_settings.only_git_dirty] is set *)
 
-val targets : t -> Fpath.t list
+val targets : t -> Target_and_root.t list
 (** [targets t] returns the list of targets for the session. This is a list of files in
     workspace folders, with includes and excludes in [t.user_settings], and git
     status taken into account if [t.user_settings.only_git_dirty] is set *)

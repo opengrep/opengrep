@@ -205,6 +205,99 @@ let with_one_ignore_file_warning ~(reason : string) (f : unit -> unit) :
 (* Entry point *)
 (*****************************************************************************)
 
+(* Rules whose 'paths:' tell apart the path they are matched against. The
+   pattern does not match its own text, so the rule file has no finding. *)
+let rule_paths_rules : string =
+  let rule (id : string) (paths : string) : string =
+    Printf.sprintf
+      "  - id: %s\n\
+      \    languages: [regex]\n\
+      \    severity: INFO\n\
+      \    message: m\n\
+      \    pattern-regex: MA[R]K\n\
+      \    paths:\n\
+      \      %s\n"
+      id paths
+  in
+  "rules:\n"
+  ^ rule "include-star-a" "include: ['*/a.py']"
+  ^ rule "exclude-sub" "exclude: [sub]"
+  ^ rule "include-star-proj-a" "include: ['*/proj/a.py']"
+  ^ rule "include-star-hidden" "include: ['*hidden.py']"
+
+let rule_paths_files : F.t list =
+  [
+    F.File ("rules.yml", rule_paths_rules);
+    F.File ("a.py", "MARK\n");
+    F.File (".hidden.py", "MARK\n");
+    F.Dir ("sub", [ F.File ("a.py", "MARK\n") ]);
+    F.Dir (".dotdir", [ F.Dir ("proj", [ F.File ("a.py", "MARK\n") ]) ]);
+  ]
+
+(* In a git repository of [rule_paths_files], checks the files that the
+   rule [rule] reports in a scan of [args], run in the folder [dir]. [args]
+   and [expected] get the absolute path of the repository. *)
+let check_rule_paths (caps : Scan_subcommand.caps) (msg : string)
+    ~(expected : string -> string list) ~(rule : string) ~(dir : string)
+    (args : string -> string list) : unit -> unit =
+ fun () ->
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo ~verbose:true rule_paths_files
+        (fun (repo : Fpath.t) ->
+          let repo = Fpath.to_string repo in
+          Testutil_files.with_chdir (Fpath.v dir) (fun () ->
+              Alcotest.(check (list string))
+                msg (expected repo)
+                (json_matches caps
+                   ([ "--config"; Filename.concat repo "rules.yml" ]
+                   @ args repo)
+                |> List_.filter_map
+                     (fun (m : Semgrep_output_v1_t.cli_match) ->
+                       match Rule_ID.last_elt_opt m.check_id with
+                       | Some (id : string) when String.equal id rule ->
+                           Some (Fpath.to_string m.path)
+                       | Some (_ : string)
+                       | None ->
+                           None)
+                |> List.sort String.compare))))
+
+(* An --include or --exclude pattern that is not valid stops the scan
+   before it starts, with the message [expected]. *)
+let check_invalid_cli_pattern (caps : Scan_subcommand.caps) ~(option : string)
+    ~(pattern : string) ~(expected : string) : unit -> unit =
+ fun () ->
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo ~verbose:true [ F.File ("a.js", "MARK\n") ]
+        (fun (_ : Fpath.t) ->
+          match
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "-e"; "MARK"; "-l"; "generic"; option;
+                    pattern; ".";
+                  |])
+          with
+          | (_ : Exit_code.t) -> Alcotest.fail "expected the scan to abort"
+          | exception Error.Semgrep_error ((msg : string), _) ->
+              Alcotest.(check string) "the message" expected msg))
+
+(* In a git repository of [files], the paths of the findings of
+   'opengrep scan -e MARK -l generic' with the arguments [args], which get
+   the absolute path of the repository, sorted. *)
+let check_scanned_in_git_repo (caps : Scan_subcommand.caps) (msg : string)
+    ~(files : F.t list) ~(expected : string -> string list)
+    (args : string -> string list) : unit -> unit =
+ fun () ->
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo ~verbose:true files (fun (repo : Fpath.t) ->
+          let repo = Fpath.to_string repo in
+          Alcotest.(check (list string))
+            msg (expected repo)
+            (json_matches caps ([ "-e"; "MARK"; "-l"; "generic" ] @ args repo)
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path)
+            |> List.sort String.compare)))
+
 let tests (caps : < Scan_subcommand.caps >) =
   Testo.categorize "Osemgrep Scan targets (e2e)"
     ((filecount_dirs
@@ -270,6 +363,19 @@ let tests (caps : < Scan_subcommand.caps >) =
             failwith "expected the command line to be rejected"
           with
           | Error.Exit_code (code : Exit_code.t) -> Exit_code.Check.fatal code);
+      (* A target folder that a semgrepignore file skips is reported with
+         the pattern that skips it; the scan of the other target goes on. *)
+      t "a target folder skipped by a semgrepignore file"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[] ~rule:"rules/eqeq-basic.yaml"
+           ~targets:[]
+           ~extra_files:
+             [
+               F.File (".semgrepignore", "build/\n");
+               F.dir "build" [ F.dir "app" [ F.File ("a.js", "1 == 1\n") ] ];
+               F.dir "src" [ F.File ("s.js", "2 == 2\n") ];
+             ]
+           ~extra_args:[ "build/app"; "src" ]);
       (* outside a git repository: no line about git, and no block when
          nothing was skipped *)
       t "summary: no git repository, nothing skipped"
@@ -503,6 +609,24 @@ let tests (caps : < Scan_subcommand.caps >) =
                     ];
                 ]
               ~extra_args:[ "targets/nested_paths" ]));
+      (* the line 'src/' in UTF-16, with its byte order mark *)
+      t "ignore file in UTF-16" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (with_one_ignore_file_warning ~reason:"encoded in UTF-16"
+           (run_scan caps ~root ~git:false ~format_args:[ "--json" ]
+              ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+              ~extra_files:
+                [
+                  F.dir "targets"
+                    [
+                      target_dir_with "nested_paths"
+                        [
+                          F.File
+                            (".semgrepignore", "\xFF\xFEs\000r\000c\000/\000\n\000");
+                        ];
+                    ];
+                ]
+              ~extra_args:[ "targets/nested_paths" ]));
       (* The folder git keeps its data in is never reported, as the
          wrapper's PATHS_ALWAYS_SKIPPED was not. *)
       t "the git folder is not reported" ~checked_output:(Testo.stdout ())
@@ -660,4 +784,82 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"rules/per-rule-include.yaml" ~targets:[]
            ~extra_files:[ F.dir "targets" [ target_dir "per-rule-include" ] ]
            ~extra_args:[ "targets/per-rule-include" ]);
+      (* A file found under a folder target is matched by its path relative
+         to the project root, whatever form the folder target is given in;
+         a file given as a target by its path as given. *)
+      t "rule paths: a file found from a subfolder"
+        (check_rule_paths caps "the files of 'sub' are excluded" ~rule:"exclude-sub"
+           ~dir:"sub" ~expected:(fun _ -> []) (fun _ -> [ "." ]));
+      t "rule paths: a file found from the project root"
+        (check_rule_paths caps "the files outside 'sub' are not excluded"
+           ~rule:"exclude-sub" ~dir:"."
+           ~expected:(fun _ -> [ ".dotdir/proj/a.py"; ".hidden.py"; "a.py" ])
+           (fun _ -> [ "." ]));
+      t "rule paths: a file found under '..'"
+        (check_rule_paths caps "'*' matches a folder of the project, not '..'"
+           ~rule:"include-star-a" ~dir:"sub"
+           ~expected:(fun _ -> [ "../.dotdir/proj/a.py"; "../sub/a.py" ])
+           (fun _ -> [ ".." ]));
+      t "rule paths: a file found under a period-prefixed folder target"
+        (check_rule_paths caps "'*' matches the period-prefixed folder"
+           ~rule:"include-star-proj-a" ~dir:".dotdir/proj"
+           ~expected:(fun _ -> [ "a.py" ])
+           (fun _ -> [ "." ]));
+      t "rule paths: a file found under an absolute folder target"
+        (check_rule_paths caps "'*' does not match the folders above the project"
+           ~rule:"include-star-a" ~dir:"."
+           ~expected:(fun (repo : string) ->
+             [
+               Filename.concat repo ".dotdir/proj/a.py";
+               Filename.concat repo "sub/a.py";
+             ])
+           (fun (repo : string) -> [ repo ]));
+      t "rule paths: a file given as '../a.py'"
+        (check_rule_paths caps "'*' does not match '..'" ~rule:"include-star-a"
+           ~dir:"sub" ~expected:(fun _ -> []) (fun _ -> [ "../a.py" ]));
+      t "rule paths: a file given as '../sub/a.py'"
+        (check_rule_paths caps "'*' matches the folder 'sub'"
+           ~rule:"include-star-a" ~dir:"sub"
+           ~expected:(fun _ -> [ "../sub/a.py" ])
+           (fun _ -> [ "../sub/a.py" ]));
+      t "an --include pattern that is not valid"
+        (check_invalid_cli_pattern caps ~option:"--include" ~pattern:"[abc"
+           ~expected:"--include '[abc' is not a valid pattern (missing ']')");
+      t "a negated --exclude pattern that is not valid"
+        (check_invalid_cli_pattern caps ~option:"--exclude" ~pattern:"![abc"
+           ~expected:"--exclude '![abc' is not a valid pattern (missing ']')");
+      (* A file given as a target is filtered as a given file even when a
+         folder target holds it: a symbolic link given as a target is
+         followed. *)
+      t "a symbolic link given as a target with the folder that holds it"
+        (check_scanned_in_git_repo caps "the link and the other file"
+           ~files:
+             [
+               F.dir "other" [ F.File ("real.js", "MARK\n") ];
+               F.dir "dir"
+                 [
+                   F.File ("plain.js", "MARK\n");
+                   F.Symlink ("link.js", "../other/real.js");
+                 ];
+             ]
+           ~expected:(fun _ -> [ "dir/link.js"; "dir/plain.js" ])
+           (fun _ -> [ "--force-exclude"; "dir"; "dir/link.js" ]));
+      (* Each folder target filters the files git lists for it: the built-in
+         'vendor/' of 'src' skips 'src/vendor', which the other target
+         scans. *)
+      t "a folder target and a folder below it given by its absolute path"
+        (check_scanned_in_git_repo caps "src/vendor scanned once, by its target"
+           ~files:
+             [
+               F.dir "src"
+                 [ F.File ("d.js", "MARK\n"); F.dir "vendor" [ F.File ("e.js", "MARK\n") ] ];
+             ]
+           ~expected:(fun (repo : string) ->
+             [ Filename.concat repo "src/vendor/e.js"; "src/d.js" ])
+           (fun (repo : string) -> [ "src"; Filename.concat repo "src/vendor" ]));
+      t "rule paths: a dot file"
+        (check_rule_paths caps "'*' matches the leading period"
+           ~rule:"include-star-hidden" ~dir:"."
+           ~expected:(fun _ -> [ ".hidden.py" ])
+           (fun _ -> [ "." ]));
     ])

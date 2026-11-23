@@ -48,19 +48,29 @@ let run_test ?(enable_interfile = true) ?(taint_intrafile = true)
       in
       let xlang = Test_engine.first_xlang_of_rules rules in
 
-      let { Find_targets.selected = all_fpaths; _ } =
-        Find_targets.get_target_fpaths Find_targets.default_conf
+      let { Find_targets.selected = found; _ } =
+        Find_targets.get_target_fpaths_with_project_roots
+          Find_targets.default_conf
           [ Scanning_root.of_fpath cwd ]
       in
       (* The scan's own selection of a rule's targets; the annotations are
          read from those files. *)
+      let pl_targets =
+        found
+        |> List.filter (fun ({ target_fpath; _ } : Target_and_root.t) ->
+               Filter_target.filter_target_for_xlang xlang target_fpath)
+      in
       let pl_files =
-        all_fpaths |> List.filter (Filter_target.filter_target_for_xlang xlang)
+        pl_targets
+        |> List_.map (fun ({ target_fpath; _ } : Target_and_root.t) ->
+               target_fpath)
       in
       let targets =
-        pl_files
-        |> List_.map (fun (fpath : Fpath.t) ->
-          Target.mk_target ~project_root:cwd xlang fpath)
+        pl_targets
+        |> List_.map
+             (fun ({ target_fpath; target_proj_path; _ } : Target_and_root.t) ->
+               Target.mk_target ~project_root:cwd ~target_proj_path xlang
+                 target_fpath)
       in
       (* Every case must state its intent: without at least one
          annotation, a case that produces no findings passes even when

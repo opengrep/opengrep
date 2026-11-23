@@ -61,15 +61,19 @@ let test_progress_adds_up (caps : Core_scan.caps) ~(ncores : int) () =
               (spf "failed to parse %s: %s" !!rule_file (Rule_error.show e))
       in
       let xlang = Test_engine.first_xlang_of_rules parsed_rules in
-      let { Find_targets.selected = all_fpaths; _ } =
-        Find_targets.get_target_fpaths Find_targets.default_conf
+      let { Find_targets.selected = found; _ } =
+        Find_targets.get_target_fpaths_with_project_roots
+          Find_targets.default_conf
           [ Scanning_root.of_fpath cwd ]
       in
       let targets =
-        all_fpaths
-        |> List.filter (Filter_target.filter_target_for_xlang xlang)
-        |> List_.map (fun (fpath : Fpath.t) ->
-               Target.mk_target ~project_root:cwd xlang fpath)
+        found
+        |> List.filter (fun ({ target_fpath; _ } : Target_and_root.t) ->
+               Filter_target.filter_target_for_xlang xlang target_fpath)
+        |> List_.map
+             (fun ({ target_fpath; target_proj_path; _ } : Target_and_root.t) ->
+               Target.mk_target ~project_root:cwd ~target_proj_path xlang
+                 target_fpath)
       in
       let started : (int * int) option Atomic.t = Atomic.make None in
       let completed : int Atomic.t = Atomic.make 0 in

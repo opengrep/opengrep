@@ -33,6 +33,18 @@ let with_env_app_token ?(token : string = dummy_app_token) (f : unit -> 'a) : 'a
     =
   Semgrep_envvars.with_envvar "SEMGREP_APP_TOKEN" token f
 
+(* The findings a scan run with [args] reports, from its JSON. *)
+let json_matches (caps : Scan_subcommand.caps) (args : string list) :
+    Semgrep_output_v1_t.cli_match list =
+  let exit_code, out =
+    Testo.with_capture stdout (fun () ->
+        without_settings (fun () ->
+            Scan_subcommand.main caps
+              (Array.of_list ([ "opengrep-scan"; "--json"; "--quiet" ] @ args))))
+  in
+  Exit_code.Check.ok exit_code;
+  (Semgrep_output_v1_j.cli_output_of_string out).results
+
 (* Shared masks for stable snapshots. The tool driver's "semanticVersion" is
  * the engine version and would make snapshots drift every release, and so
  * would the "version" that opens the JSON output, recognisable by the

@@ -95,6 +95,7 @@ type func = {
     ?on_plan:(Scan_plan.t -> unit) ->
     ?on_lang_jobs:(Lang_job.t list -> unit) ->
     ?progress_hook:(Core_scan_config.progress -> unit) ->
+    ?content_path:(Fpath.t -> Fpath.t) ->
     git_repo:bool ->
     scanning_roots:Scanning_root.directory list ->
     conf ->
@@ -251,7 +252,17 @@ let add_typescript_to_javascript_rules_hack (rules : Rule.t list) : Rule.t list
              in
              { r with Rule.target_analyzer = L (l, lset |> Set_.elements) })
 
-let split_jobs_by_language (conf : Find_targets.conf) (rules : Rule.t list)
+(* The file a target's content is read from: [target_fpath], unless
+   [content_path] maps it elsewhere (the baseline replay of a differential
+   scan reads the file at the baseline commit). *)
+let content_of ?(content_path : (Fpath.t -> Fpath.t) option)
+    (target_fpath : Fpath.t) : Fpath.t =
+  match content_path with
+  | None -> target_fpath
+  | Some (content_path : Fpath.t -> Fpath.t) -> content_path target_fpath
+
+let split_jobs_by_language ?(content_path : (Fpath.t -> Fpath.t) option)
+    (conf : Find_targets.conf) (rules : Rule.t list)
     (targets : Target_and_root.t list) : Lang_job.t list =
   let rules = add_typescript_to_javascript_rules_hack rules in
   let extract_languages = detect_extract_languages rules in
@@ -260,31 +271,53 @@ let split_jobs_by_language (conf : Find_targets.conf) (rules : Rule.t list)
          let targets =
            targets
            |> List.filter (fun ({ Target_and_root.target_fpath; _ }) ->
+                  let content = content_of ?content_path target_fpath in
                   (* bypass normal analyzer detection for explicit targets with
                      '--scan-unknown-extensions' *)
                   let bypass_language_detection =
                     conf.always_select_explicit_targets
                     && Find_targets.Explicit_targets.mem conf.explicit_targets
-                         target_fpath
+                         content
                   in
                   bypass_language_detection
-                  || Filter_target.filter_target_for_xlang xlang target_fpath)
+                  || Filter_target.filter_target_for_xlang xlang content)
          in
          if List_.null targets && not (XlangSet.mem xlang extract_languages)
          then None
          else Some ({ xlang; targets; rules } : Lang_job.t))
 
-let targets_of_lang_job (x : Lang_job.t) : Target.t list =
+let targets_of_lang_job ?(content_path : (Fpath.t -> Fpath.t) option)
+    (x : Lang_job.t) : Target.t list =
   x.targets
-  |> List_.map (fun ({ target_fpath; project_root } : Target_and_root.t) : Target.t ->
-         Target.mk_target ?project_root x.xlang target_fpath)
+  |> List_.map
+       (fun ({ target_fpath; project_root; target_proj_path } : Target_and_root.t)
+          : Target.t ->
+         match content_path with
+         | None ->
+             Target.mk_target ?project_root ~target_proj_path x.xlang
+               target_fpath
+         | Some (content_path : Fpath.t -> Fpath.t) ->
+             (* reported and matched by rule paths: as [target_fpath], read
+                from [content] *)
+             let content = content_path target_fpath in
+             assert (UFile.is_reg ~follow_symlinks:true content);
+             let regular =
+               Target.mk_regular ?project_root ~target_proj_path x.xlang
+                 Product.all (File target_fpath)
+             in
+             Regular
+               {
+                 regular with
+                 path =
+                   { origin = File target_fpath; internal_path_to_content = content };
+               })
 
-let targets_and_rules_of_lang_jobs (lang_jobs : Lang_job.t list) :
-    Target.t list * Rule.t list =
+let targets_and_rules_of_lang_jobs ?(content_path : (Fpath.t -> Fpath.t) option)
+    (lang_jobs : Lang_job.t list) : Target.t list * Rule.t list =
   let targets, rules =
     List_.fold_right
       (fun lang_job (acc_targets, acc_rules) ->
-        let targets = targets_of_lang_job lang_job in
+        let targets = targets_of_lang_job ?content_path lang_job in
         let rules = lang_job.rules in
         (List_.append targets acc_targets, List_.append rules acc_rules))
       lang_jobs ([], [])
@@ -327,7 +360,8 @@ let targets_and_rules_for_files (files : Fpath.t list) (rules : Rule.t list) :
   let targets =
     List_.map
       (fun (fpath : Fpath.t) : Target_and_root.t ->
-        { target_fpath = fpath; project_root = None })
+        { target_fpath = fpath; project_root = None;
+          target_proj_path = Not_in_project })
       files
   in
   targets_and_rules_of_lang_jobs (split_jobs_by_language conf rules targets)
@@ -499,6 +533,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
   let run ?file_match_hook ?(on_plan : (Scan_plan.t -> unit) option)
       ?(on_lang_jobs : (Lang_job.t list -> unit) option)
       ?(progress_hook : (Core_scan_config.progress -> unit) option)
+      ?(content_path : (Fpath.t -> Fpath.t) option)
       ~(git_repo : bool)
       ~(scanning_roots : Scanning_root.directory list) (conf : conf)
       (targeting_conf : Find_targets.conf)
@@ -533,7 +568,9 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
        in use, bypassing it without removing it seems complicated.
        See https://www.notion.so/r2cdev/Osemgrep-scanning-algorithm-5962232bfd74433ba50f97c86bd1a0f3
     *)
-    let lang_jobs = split_jobs_by_language targeting_conf valid_rules targets in
+    let lang_jobs =
+      split_jobs_by_language ?content_path targeting_conf valid_rules targets
+    in
     let rules_with_targets =
       lang_jobs |> List.concat_map (fun { Lang_job.rules; _ } -> rules)
     in
@@ -550,11 +587,12 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
                 ~tracked_by_git:(targeting_conf.respect_gitignore && git_repo)
                 lang_jobs));
     let code_targets, applicable_rules =
-      targets_and_rules_of_lang_jobs lang_jobs
+      targets_and_rules_of_lang_jobs ?content_path lang_jobs
     in
     let target_fpaths =
       List_.map
-        (fun ({ target_fpath; _ } : Target_and_root.t) -> target_fpath)
+        (fun ({ target_fpath; _ } : Target_and_root.t) ->
+          content_of ?content_path target_fpath)
         targets
     in
     let lockfiles = find_lockfiles target_fpaths in

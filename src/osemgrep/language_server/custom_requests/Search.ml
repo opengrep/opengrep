@@ -276,6 +276,7 @@ let mk_env (session : Session.t) (params : Request_params.t) =
   let files =
     session.cached_workspace_targets |> Hashtbl.to_seq_values |> List.of_seq
     |> List_.flatten
+    |> List_.map (fun ({ target_fpath; _ } : Target_and_root.t) -> target_fpath)
   in
   let project_root =
     match
