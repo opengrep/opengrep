@@ -35,19 +35,6 @@ val cli_patterns_from_string :
   string ->
   Gitignore.path_selectors
 
-(* Same as from_string but keeping only the patterns that are not anchored
-   to the folder of the file, i.e. those that match at any depth and are
-   therefore meaningful for a path outside that folder. [source_path] is
-   the file the string comes from; its ':include' directives are expanded
-   relative to that file's folder. *)
-val unanchored_from_string :
-  anchor:Glob.Pattern.t ->
-  name:string ->
-  source_kind:string ->
-  source_path:Fpath.t option ->
-  string ->
-  Gitignore.path_selectors
-
 (* Lower-level function that can be used to create custom matchers that
    combine multiple patterns. The list is empty for a pattern that matches
    nothing, such as '/'. *)

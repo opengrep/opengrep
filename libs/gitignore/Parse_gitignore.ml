@@ -217,19 +217,6 @@ let parse_line_gen
         in
         Some { loc; matcher }
 
-(* A line whose pattern is not anchored to the folder of its file matches
-   at any depth, so it still means something for a path outside that
-   folder. Comments and blank lines hold no pattern to parse. *)
-let is_unanchored_line (line : string) : bool =
-  is_ignored_line line
-  ||
-  let pattern_str =
-    match remove_negator line with
-    | None -> line
-    | Some s -> s
-  in
-  not (is_anchored_pattern pattern_str)
-
 (* semgrep-legacy *)
 let get_include_path ~orig_semgrepignore_path relative_include_path =
   let base_dir = Fpath.parent orig_semgrepignore_path in
@@ -265,10 +252,7 @@ let rec expand_includes ~orig_semgrepignore_path lines =
   in
   List.concat_map expand_line lines
 
-(* [keep_line] leaves a line out after the lines are numbered, so that the
-   line numbers of the patterns kept are the ones of the file *)
-and from_lines ?(keep_line : string -> bool = fun (_ : string) -> true)
-    ~compile ~allow_include ~name ~source_kind ~source_path lines =
+and from_lines ~compile ~allow_include ~name ~source_kind ~source_path lines =
   let lines =
     (* Don't allow ':include' when reading exclusion patterns from the
        command line (or not from a file in general) *)
@@ -283,9 +267,7 @@ and from_lines ?(keep_line : string -> bool = fun (_ : string) -> true)
   List_.mapi
     (fun i contents ->
       let linenum = i + 1 in
-      if keep_line contents then
-        parse_line_gen ~compile name source_kind linenum contents
-      else None)
+      parse_line_gen ~compile name source_kind linenum contents)
     lines
   |> List_.filter_map (fun x -> x)
 
@@ -307,20 +289,6 @@ and cli_patterns_from_string ~anchor ~name ~source_kind str =
   from_string_gen
     ~compile:(parse_cli_pattern ~anchor)
     ~allow_include:false ~name ~source_path:None ~source_kind str
-
-and unanchored_from_string ~anchor ~name ~source_kind ~source_path str =
-  (* ':include' is expanded first: the directive is a line of its own and
-     would otherwise survive the filter as a literal pattern *)
-  let lines =
-    let lines = read_lines_from_string str in
-    match source_path with
-    | Some orig_semgrepignore_path ->
-        expand_includes ~orig_semgrepignore_path lines
-    | None -> lines
-  in
-  from_lines ~keep_line:is_unanchored_line
-    ~compile:(parse_pattern ~anchor)
-    ~allow_include:false ~name ~source_path:None ~source_kind lines
 
 and from_file_contents ~anchor ~format ~source_kind path contents =
   from_lines
