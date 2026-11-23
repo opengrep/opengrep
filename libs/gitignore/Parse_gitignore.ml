@@ -48,6 +48,32 @@ let read_lines_from_file_contents (contents : string) : string list =
       (String.sub contents bom_length (String.length contents - bom_length))
   else read_lines_from_string contents
 
+(* Why the contents of an ignore file are left out, if they are: git reads
+   a file in UTF-16 as bytes, and none of its lines matches a path. *)
+let encoding_error (contents : string) : string option =
+  if
+    String.starts_with ~prefix:"\xFF\xFE" contents
+    || String.starts_with ~prefix:"\xFE\xFF" contents
+  then Some "encoded in UTF-16; save it as UTF-8"
+  else None
+
+(* The contents of an ignore file, or the reason they are left out. *)
+let ignore_file_contents (path : Fpath.t) : (string, string) result =
+  match UFile.read_file path with
+  | contents -> (
+      match encoding_error contents with
+      | Some (reason : string) -> Error reason
+      | None -> Ok contents)
+  | exception Sys_error (msg : string) -> Error msg
+  | exception Unix.Unix_error ((err : Unix.error), _, _) ->
+      Error (Unix.error_message err)
+
+(* The warning for an ignore file that is left out. *)
+let warn_ignored_file (path : Fpath.t) (reason : string) : unit =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m "Ignoring the file '%s': %s" (Fpath.to_string path) reason)
+
 (* A blank line or a comment, as in gitignore: the trailing spaces are
    already removed. *)
 let is_ignored_line (str : string) : bool =
@@ -233,43 +259,56 @@ let get_include_path ~orig_semgrepignore_path relative_include_path =
 
    It will not expand includes recursively to avoid cycles and other
    complications.
-*)
-let rec expand_includes ~orig_semgrepignore_path lines =
-  let expand_line line =
-    match parse_maybe_include_line ~orig_semgrepignore_path line with
-    | Some relative_include_path ->
-        let include_path =
-          get_include_path ~orig_semgrepignore_path relative_include_path
-        in
-        if UFile.is_reg ~follow_symlinks:true include_path then
-          include_path |> UFile.read_file |> read_lines_from_file_contents
-        else
-          (* ignore silently
-             (why: git also ignores .gitignore files that are broken
-             symlinks) *)
-          []
-    | None -> [ line ]
-  in
-  List.concat_map expand_line lines
 
-and from_lines ~compile ~allow_include ~name ~source_kind ~source_path lines =
-  let lines =
-    (* Don't allow ':include' when reading exclusion patterns from the
-       command line (or not from a file in general) *)
+   The path and the lines of the file that the ':include' line [line]
+   refers to, or None when [line] is not an ':include' line.
+*)
+let included_file ~orig_semgrepignore_path (line : string) :
+    (Fpath.t * string list) option =
+  match parse_maybe_include_line ~orig_semgrepignore_path line with
+  | Some relative_include_path ->
+      let include_path =
+        get_include_path ~orig_semgrepignore_path relative_include_path
+      in
+      if UFile.is_reg ~follow_symlinks:true include_path then
+        match ignore_file_contents include_path with
+        | Ok (contents : string) ->
+            Some (include_path, read_lines_from_file_contents contents)
+        | Error (reason : string) ->
+            warn_ignored_file include_path reason;
+            Some (include_path, [])
+      else
+        (* ignore silently
+           (why: git also ignores .gitignore files that are broken
+           symlinks) *)
+        Some (include_path, [])
+  | None -> None
+
+let rec from_lines ~compile ~allow_include ~name ~source_kind ~source_path
+    lines =
+  (* Don't allow ':include' when reading exclusion patterns from the
+     command line (or not from a file in general) *)
+  let include_of_line (line : string) : (Fpath.t * string list) option =
     match source_path with
     | Some orig_semgrepignore_path when allow_include ->
-        if allow_include then expand_includes ~orig_semgrepignore_path lines
-        else lines
+        included_file ~orig_semgrepignore_path line
     | Some _
     | None ->
-        lines
+        None
   in
-  List_.mapi
-    (fun i contents ->
-      let linenum = i + 1 in
-      parse_line_gen ~compile name source_kind linenum contents)
-    lines
-  |> List_.filter_map (fun x -> x)
+  lines
+  |> List_.mapi (fun (i : int) (line : string) ->
+         match include_of_line line with
+         (* the patterns of the included file, under its own name and line
+            numbers *)
+         | Some ((include_path : Fpath.t), (included_lines : string list)) ->
+             from_lines ~compile ~allow_include:false
+               ~name:(Fpath.to_string include_path) ~source_kind
+               ~source_path:None included_lines
+         | None ->
+             Option.to_list
+               (parse_line_gen ~compile name source_kind (i + 1) line))
+  |> List_.flatten
 
 and from_string_gen ~compile ~allow_include ~name ~source_path ~source_kind str
     =

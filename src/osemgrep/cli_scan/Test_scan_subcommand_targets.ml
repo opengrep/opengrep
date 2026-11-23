@@ -607,6 +607,23 @@ let tests (caps : < Scan_subcommand.caps >) =
                     ];
                 ]
               ~extra_args:[ "targets/nested_paths" ]));
+      (* the same for the file of an ':include' line *)
+      t "included ignore file without read permission" ?skipped:unless_root
+        (with_one_ignore_file_warning ~reason:"Permission denied"
+           (run_scan caps ~root ~git:false ~format_args:[ "--json" ]
+              ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+              ~extra_files:
+                [
+                  F.dir "targets"
+                    [
+                      target_dir_with "nested_paths"
+                        [
+                          F.File (".semgrepignore", ":include extra.ignore\n");
+                          F.Unreadable ("extra.ignore", "src/\n");
+                        ];
+                    ];
+                ]
+              ~extra_args:[ "targets/nested_paths" ]));
       (* the line 'src/' in UTF-16, with its byte order mark *)
       t "ignore file in UTF-16" ~checked_output:(Testo.stdout ())
         ~normalize:normalise

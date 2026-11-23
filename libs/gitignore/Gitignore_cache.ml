@@ -26,8 +26,7 @@ let warn_unreadable (t : gitignores_cache) (path : Fpath.t) (reason : string) :
   let key = Fpath.to_string path in
   if not (Hashtbl.mem t.unreadable_reported key) then (
     Hashtbl.replace t.unreadable_reported key ();
-    (* nosemgrep: no-logs-in-library *)
-    Logs.warn (fun m -> m "Ignoring the file '%s': %s" key reason))
+    Parse_gitignore.warn_ignored_file path reason)
 
 (* The contents of an ignore file, or None. A path that is not there says
    nothing. One that is there and cannot be read as a file, because it is a
@@ -48,15 +47,9 @@ let read_ignore_file_opt (t : gitignores_cache) (path : Fpath.t) :
   else if not (UFile.is_reg ~follow_symlinks:true path) then
     warn "not a regular file"
   else
-    match UFile.read_file path with
-    | contents
-      when String.starts_with ~prefix:"\xFF\xFE" contents
-           || String.starts_with ~prefix:"\xFE\xFF" contents ->
-        warn "encoded in UTF-16; save it as UTF-8"
-    | contents -> Some contents
-    | exception Sys_error (msg : string) -> warn msg
-    | exception Unix.Unix_error ((err : Unix.error), _, _) ->
-        warn (Unix.error_message err)
+    match Parse_gitignore.ignore_file_contents path with
+    | Ok (contents : string) -> Some contents
+    | Error (reason : string) -> warn reason
 
 let read_ignore_file (t : gitignores_cache) ~(anchor : Glob.Pattern.t)
     ~(format : Gitignore.format) ~(source_kind : string) (path : Fpath.t) :

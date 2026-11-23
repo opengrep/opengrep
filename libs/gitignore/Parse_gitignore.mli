@@ -60,3 +60,10 @@ val cli_pattern_error : string -> string option
    valid glob for the reason given, and which then matches nothing. *)
 val warn_invalid_pattern :
   source_name:string -> line_number:int -> string -> string -> unit
+
+(* The contents of the ignore file [path], or the reason they are left out:
+   the file cannot be read, or it is in UTF-16. *)
+val ignore_file_contents : Fpath.t -> (string, string) result
+
+(* The warning for the ignore file [path], left out for the reason given. *)
+val warn_ignored_file : Fpath.t -> string -> unit

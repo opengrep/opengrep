@@ -222,6 +222,40 @@ let tests =
           Alcotest.(check bool)
             "the line is an include directive" true
             (String_.contains ~term:"Deprecated include directive" output));
+      (* a warning gives the file and the line of its pattern, in the
+         included file and after the ':include' line *)
+      t "legacy semgrepignore with :include, the lines of the warnings"
+        (fun () ->
+          let (), (output : string) =
+            Testo.with_capture stderr
+              (test_filter
+                 [
+                   File
+                     (".semgrepignore", "# c\n:include extra.ignore\nb.js\n[abc\n");
+                   File ("extra.ignore", "x.js\n[bad\n");
+                 ]
+                 [ ("/x.js", false); ("/b.js", false); ("/a.js", true) ])
+          in
+          Alcotest.(check bool)
+            "the line of the included file" true
+            (String_.contains ~term:"extra.ignore, line 2: '[bad'" output);
+          Alcotest.(check bool)
+            "the line after the ':include' line" true
+            (String_.contains ~term:".semgrepignore, line 4: '[abc'" output));
+      (* the line 'x.js' in UTF-16, with its byte order mark *)
+      t "legacy semgrepignore with :include of a file in UTF-16" (fun () ->
+          let (), (output : string) =
+            Testo.with_capture stderr
+              (test_filter
+                 [
+                   File (".semgrepignore", ":include extra.ignore\n");
+                   File ("extra.ignore", "\xFF\xFEx\000.\000j\000s\000\n\000");
+                 ]
+                 [ ("/x.js", true) ])
+          in
+          Alcotest.(check bool)
+            "the included file is left out with a warning" true
+            (String_.contains ~term:"encoded in UTF-16; save it as UTF-8" output));
       t "nested semgrepignore, gitignore is not read"
         (test_filter
            [
