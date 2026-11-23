@@ -736,9 +736,33 @@ let test_two_target_directories (caps : Test_subcommand.caps) () =
             "only one target directory is allowed, got: a b" msg
       | _ -> Alcotest.fail "expected the test run to abort")
 
-(* python: check_rule_id_mismatch. The annotations of a file must name the
-   rules that matched in it, no more and no fewer; otherwise the run exits
-   2 before any report. *)
+(* the exit code of a test run and what it printed on stderr *)
+let run_test_stderr (caps : Test_subcommand.caps) (files : F.t list)
+    (args : string list) : Exit_code.t * string =
+  Testutil_files.with_tempfiles ~chdir:true files (fun _cwd ->
+      Testo.with_capture stderr (fun () ->
+          Test_subcommand.main caps
+            (Array.of_list ("opengrep-test" :: args))))
+
+let unknown_rule_message =
+  "An annotation of a test file refers to a rule id that its rule file does \
+   not define"
+
+let unannotated_match_message =
+  "A rule matched in a test file that has no annotation for it"
+
+let check_failure (exit_code : Exit_code.t) (stderr_output : string)
+    ~(fails_on : string) ~(not_on : string) : unit =
+  Exit_code.Check.fatal exit_code;
+  Alcotest.(check bool)
+    fails_on true
+    (String_.contains stderr_output ~term:fails_on);
+  Alcotest.(check bool)
+    not_on false
+    (String_.contains stderr_output ~term:not_on)
+
+(* a rule that matched in a file must be annotated in it; otherwise the run
+   exits 2 before any report *)
 let test_rule_id_mismatch (caps : Test_subcommand.caps) () =
   let files =
     [
@@ -747,12 +771,76 @@ let test_rule_id_mismatch (caps : Test_subcommand.caps) () =
       F.File ("both.py", "# ruleid: eqeq-is-bad\nx == x\nprint(1)\n");
     ]
   in
-  Testutil_files.with_tempfiles ~chdir:true files (fun _cwd ->
-      let exit_code =
-        Test_subcommand.main caps
-          [| "opengrep-test"; "--config"; "both.yaml"; "both.py" |]
-      in
-      Exit_code.Check.fatal exit_code)
+  let exit_code, stderr_output =
+    run_test_stderr caps files [ "--config"; "both.yaml"; "both.py" ]
+  in
+  check_failure exit_code stderr_output ~fails_on:unannotated_match_message
+    ~not_on:unknown_rule_message
+
+let demo_rule_content =
+  {|
+rules:
+  - id: demo-rule
+    languages: [javascript]
+    message: m
+    severity: WARNING
+    pattern: dangerous(...)
+|}
+
+(* an 'ok:' target with no match passes beside a 'ruleid:' target that
+   matches *)
+let test_ok_target_beside_a_matching_target (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("demo.yaml", demo_rule_content);
+      F.File ("demo.bad.js", "// ruleid: demo-rule\ndangerous();\n");
+      F.File ("demo.good.js", "// ok: demo-rule\nsafe();\n");
+    ]
+  in
+  let exit_code, res = run_test_json caps files [ "." ] in
+  Exit_code.Check.ok exit_code;
+  check_single_result "the 'ruleid:' target" res ~passed:true
+    ~expected_lines:[ 2 ] ~reported_lines:[ 2 ]
+
+(* an 'ok:' that refers to a rule the rule file lacks fails the run beside a
+   target that matches *)
+let test_annotation_of_an_unknown_rule (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("demo.yaml", demo_rule_content);
+      F.File ("demo.bad.js", "// ruleid: demo-rule\ndangerous();\n");
+      F.File ("demo.good.js", "// ok: demo-rul\nsafe();\n");
+    ]
+  in
+  let exit_code, stderr_output = run_test_stderr caps files [ "." ] in
+  check_failure exit_code stderr_output ~fails_on:unknown_rule_message
+    ~not_on:unannotated_match_message
+
+(* an 'ok:' that refers to a rule the rule file lacks fails the run when no
+   rule matches anywhere *)
+let test_annotation_of_an_unknown_rule_without_matches
+    (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("demo.yaml", demo_rule_content);
+      F.File ("demo.good.js", "// ok: demo-rul\nsafe();\n");
+    ]
+  in
+  let exit_code, stderr_output = run_test_stderr caps files [ "." ] in
+  check_failure exit_code stderr_output ~fails_on:unknown_rule_message
+    ~not_on:unannotated_match_message
+
+(* a 'todook:' that refers to a rule the rule file lacks fails the run *)
+let test_todook_of_an_unknown_rule (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("demo.yaml", demo_rule_content);
+      F.File ("demo.good.js", "// todook: demo-rul\nsafe();\n");
+    ]
+  in
+  let exit_code, stderr_output = run_test_stderr caps files [ "." ] in
+  check_failure exit_code stderr_output ~fails_on:unknown_rule_message
+    ~not_on:unannotated_match_message
 
 (* python: test.py built the set it compares from the 'ruleid:',
    'todoruleid:' and 'ok:' lines only, so a 'todook:' naming a rule that never
@@ -1011,6 +1099,14 @@ let tests (caps : < Test_subcommand.caps >) =
           (test_rule_file_keys_of_a_dot_root caps);
         t "a rule that matches without an annotation fails the run"
           (test_rule_id_mismatch caps);
+        t "an 'ok:' target with no match beside a target that matches"
+          (test_ok_target_beside_a_matching_target caps);
+        t "an annotation of a rule the rule file lacks fails the run"
+          (test_annotation_of_an_unknown_rule caps);
+        t "an annotation of a rule the rule file lacks fails a run with no match"
+          (test_annotation_of_an_unknown_rule_without_matches caps);
+        t "a todook: of a rule the rule file lacks fails the run"
+          (test_todook_of_an_unknown_rule caps);
         t "a todook: for a rule that never matches is not a check of its own"
           (test_todook_for_a_rule_that_never_matches caps);
         t "a fixtest beside a rule file with no fix: is run"

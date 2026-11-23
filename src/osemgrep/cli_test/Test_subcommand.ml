@@ -102,9 +102,10 @@ type error =
   | MissingFixtest of Fpath.t (* rule file *)
   (* the rule file could not be loaded, with the message of the loader *)
   | UnparsableRule of Fpath.t (* rule file *) * string (* error message *)
-  (* the rule ids the annotations of a test file name are not the ones that
-     matched in it *)
-  | RuleIdMismatch of Fpath.t (* test file *) * Rule_ID.t list (* unmatched *)
+  (* annotations of a test file refer to rules the rule file lacks *)
+  | AnnotationOfUnknownRule of Fpath.t (* test file *) * Rule_ID.t list
+  (* rules matched in a test file that has no annotation for them *)
+  | MatchWithoutAnnotation of Fpath.t (* test file *) * Rule_ID.t list
   (* an error the scan of the test targets raised: a target that does not
      parse, a rule that timed out, a rule error at match time. The checks of
      the rule file report it too; --strict makes it fail the run. *)
@@ -115,6 +116,9 @@ type env = {
   (* currently processed rule and targets files *)
   rule_file : Fpath.t;
   target_files : Fpath.t list;
+  (* the ids of every rule of the rule file, whatever the languages of the
+   * targets *)
+  rule_ids : Rule_ID.t list;
   (* use a ref so easy to store all the errors returned by different functions.
    * alt: get each functions returning different kind of errors
    *)
@@ -610,7 +614,7 @@ let expected_annots (annots : A.annotations) : A.annotations =
 
 (* The annotations that name a rule the file expects the run to report on:
  * test.py built its 'test_lines' from the 'ruleid:', 'todoruleid:' and 'ok:'
- * lines only, so a 'todook:' for a rule that never fires is not a mismatch.
+ * lines only, so a 'todook:' alone does not annotate a rule that matches.
  *)
 let named_rule_annots (annots : A.annotations) : A.annotations =
   annots
@@ -856,50 +860,71 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
     |> List_.exclude (fun (x : Core_result.processed_match) -> x.is_ignored)
     |> List_.map (fun (x : Core_result.processed_match) -> x.pm)
   in
-  (* python: check_rule_id_mismatch. The rule ids the annotations of a file
-   * name must be the ones that matched in it: a misspelt id, or a rule that
-   * matched without any annotation, fails the run. *)
-  if not (List_.null matches) then
-    files_and_annots
-    |> List.iter (fun ((file : Fpath.t), (annots : A.annotations)) ->
-           let ids (xs : Rule_ID.t list) : Rule_ID.t list =
-             List.sort_uniq Rule_ID.compare xs
-           in
-           let annotated =
-             ids
-               (named_rule_annots annots
-               |> List_.map (fun ((a : A.t), (_ : A.linenb)) -> a.id))
-           in
-           (* python: a file with none of those annotations is not a key of
-            * 'test_lines' and is not compared, so a match in a file with no
-            * annotation fails its check instead of stopping the run *)
-           match annotated with
-           | [] -> ()
-           | _ :: _ ->
-               let reported =
-                 matches
-                 |> List.filter (fun (pm : Core_match.t) ->
-                        Fpath.equal
-                          (Fpath.normalize pm.path.internal_path_to_content)
-                          (Fpath.normalize file))
-                 |> List_.map (fun (pm : Core_match.t) -> pm.rule_id.id)
-                 |> ids
-               in
-               if not (List.equal Rule_ID.equal annotated reported) then (
-                 let unmatched =
-                   List.filter
-                     (fun (id : Rule_ID.t) ->
-                       not (List.exists (Rule_ID.equal id) reported))
-                     annotated
-                 in
+  (* python: check_rule_id_mismatch took, for each file, the symmetric
+   * difference of the rule ids annotated in it and the ones that matched in
+   * it, and only when a rule matched in some file. So an 'ok:' of a rule with
+   * no match failed the run, and an unknown rule id passed when nothing
+   * matched. Opengrep differs: every annotated id must refer to a rule of the
+   * rule file, whether or not anything matched, and a rule that matched in an
+   * annotated file must be annotated in it. *)
+  files_and_annots
+  |> List.iter (fun ((file : Fpath.t), (annots : A.annotations)) ->
+         let ids (xs : Rule_ID.t list) : Rule_ID.t list =
+           List.sort_uniq Rule_ID.compare xs
+         in
+         let not_in (ys : Rule_ID.t list) (xs : Rule_ID.t list) :
+             Rule_ID.t list =
+           List_.exclude
+             (fun (id : Rule_ID.t) -> List.exists (Rule_ID.equal id) ys)
+             xs
+         in
+         let to_string (xs : Rule_ID.t list) : string =
+           String.concat ", " (Rule_ID.to_string_list xs)
+         in
+         let ids_of_all_annotations =
+           ids (annots |> List_.map (fun ((a : A.t), (_ : A.linenb)) -> a.id))
+         in
+         (match not_in env.rule_ids ids_of_all_annotations with
+         | [] -> ()
+         | unknown ->
+             Logs.err (fun m ->
+                 m
+                   "Found rule id mismatch - file=%s annotation with no YAML \
+                    rule in %s=%s"
+                   !!file !!(env.rule_file) (to_string unknown));
+             Stack_.push
+               (AnnotationOfUnknownRule (file, unknown))
+               env.errors);
+         let annotated =
+           ids
+             (named_rule_annots annots
+             |> List_.map (fun ((a : A.t), (_ : A.linenb)) -> a.id))
+         in
+         (* python: a file with none of those annotations is not a key of
+          * 'test_lines' and is not compared, so a match in a file with no
+          * annotation fails its check instead of stopping the run *)
+         match annotated with
+         | [] -> ()
+         | _ :: _ ->
+             let reported =
+               matches
+               |> List.filter (fun (pm : Core_match.t) ->
+                      Fpath.equal
+                        (Fpath.normalize pm.path.internal_path_to_content)
+                        (Fpath.normalize file))
+               |> List_.map (fun (pm : Core_match.t) -> pm.rule_id.id)
+               |> ids
+             in
+             match not_in annotated reported with
+             | [] -> ()
+             | unannotated ->
                  Logs.err (fun m ->
                      m
-                       "Found rule id mismatch - file=%s 'ruleid' annotation \
-                        with no YAML rule=%s"
-                       !!file
-                       (unmatched |> List_.map Rule_ID.to_string
-                      |> String.concat ", "));
-                 Stack_.push (RuleIdMismatch (file, unmatched)) env.errors));
+                       "Found rule id mismatch - file=%s rule of %s with a \
+                        match and no annotation=%s"
+                       !!file !!(env.rule_file) (to_string unannotated));
+                 Stack_.push (MatchWithoutAnnotation (file, unannotated))
+                   env.errors);
   let core_errors : Out.core_error list =
     res.errors |> List_.map Core_json_output.error_to_error
   in
@@ -926,12 +951,13 @@ let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
   (* note that even one target file can result in different targets
    * if the rules contain multiple xlangs.
    *)
+  let rule_ids = rules |> List_.map (fun (rule : Rule.t) -> fst rule.id) in
   let targets, rules = Core_runner.targets_and_rules_for_files target_files rules in
   let files_and_annots : (Fpath.t * A.annotations) list =
     target_files |> List_.map (fun file -> (file, A.annotations file))
   in
 
-  let env = { rule_file; target_files; conf; errors } in
+  let env = { rule_file; target_files; rule_ids; conf; errors } in
   let checks, fixtests = run_engine caps env rules targets files_and_annots in
   ( checks,
     fixtests,
@@ -1009,17 +1035,31 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   Rules_report.warn_rules_run_per_file ~pp_hint:Skin_legacy.pp_hint
     rules_run_per_file;
   (* python: check_rule_id_mismatch exits before any report *)
-  if
+  let annotation_of_unknown_rule =
     !errors
     |> List.exists (function
-         | RuleIdMismatch _ -> true
+         | AnnotationOfUnknownRule _ -> true
          | _ -> false)
-  then (
-    Logs.err (fun m ->
-        m
-          "Failing due to rule id mismatch. There is a test denoted with \
-           'ruleid: <rule name>' where the rule name does not exist or is not \
-           expected in the test file.");
+  in
+  let match_without_annotation =
+    !errors
+    |> List.exists (function
+         | MatchWithoutAnnotation _ -> true
+         | _ -> false)
+  in
+  if annotation_of_unknown_rule || match_without_annotation then (
+    if annotation_of_unknown_rule then
+      Logs.err (fun m ->
+          m
+            "Failing due to rule id mismatch. An annotation of a test file \
+             refers to a rule id that its rule file does not define; correct \
+             the rule id of the annotation.");
+    if match_without_annotation then
+      Logs.err (fun m ->
+          m
+            "Failing due to rule id mismatch. A rule matched in a test file \
+             that has no annotation for it; add an annotation for the rule \
+             to the test file.");
     Exit_code.fatal ~__LOC__)
   else
   (* step3: report the test results *)

@@ -5,29 +5,29 @@ from django.utils.http import is_safe_url
 
 
 def arg(request):
-    # ruleid: open-redirect
+    # ruleid: forcetimeout
     return redirect(request.POST.get("next"))
 
 
 def argh(request):
-    # ruleid: open-redirect
+    # ruleid: forcetimeout
     return redirect(request.get_host())
 
 
 def arghh(request):
-    # ruleid: open-redirect
+    # ruleid: forcetimeout
     return redirect(request.method)
 
 
 def argh2(request):
-    # ruleid: open-redirect
+    # ruleid: forcetimeout
     url = request.get_host()
     print("something")
     return redirect(url)
 
 
 def unsafe(request):
-    # ruleid: open-redirect
+    # ruleid: forcetimeout
     url = request.headers.get("referrer")
     print("something")
     return redirect(url)
@@ -45,7 +45,7 @@ def fine(request):
 
 
 def unsafe2(request):
-    # ruleid: open-redirect
+    # ruleid: forcetimeout
     url = request.POST.get("url")
     return HttpResponseRedirect(url)
 
