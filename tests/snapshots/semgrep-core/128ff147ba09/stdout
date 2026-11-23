@@ -13,6 +13,6 @@ t.py
         ├─ source            9: a = source()
         ├─ through           9: a = source()
         └─ sink in call     10: rec(3, a)
-           ├─ param             2: def rec(i, x):
-           └─ sink              4: sink(x)
+           ├─ param            2: def rec(i, x):
+           └─ sink             4: sink(x)
 

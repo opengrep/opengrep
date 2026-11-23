@@ -13,8 +13,8 @@ r.go
         ├─ source           12: t := T{f: source()}
         ├─ through          12: t := T{f: source()}
         ├─ through call     13: sink(t.Get())
-        │  ├─ param             6: func (r T) Get() string {
-        │  ├─ through           7: v := r.f
-        │  └─ return            8: return v
+        │  ├─ param            6: func (r T) Get() string {
+        │  ├─ through          7: v := r.f
+        │  └─ return           8: return v
         └─ sink             13: sink(t.Get())
 

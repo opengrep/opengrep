@@ -568,6 +568,17 @@ def h(y):
     print(y)
 |}
 
+(* a rule of severity INFO, for the colour of its badge *)
+let info_rule =
+  {|
+rules:
+  - id: print-info
+    pattern: print(...)
+    message: "a print"
+    languages: [python]
+    severity: INFO
+|}
+
 let findings_files : F.t list =
   [
     F.File ("rules.yml", two_rules);
@@ -579,6 +590,9 @@ let taint_files : F.t list =
   [ F.File ("rules.yml", taint_rule); F.File ("t.py", taint_py) ]
 
 let pattern_files : F.t list = [ F.File ("p.py", pattern_py) ]
+
+let info_files : F.t list =
+  [ F.File ("rules.yml", info_rule); F.File ("p.py", pattern_py) ]
 
 let context_files : F.t list =
   [ F.File ("rules.yml", two_rules); F.File ("c.py", context_py) ]
@@ -786,6 +800,37 @@ let captured (caps : Scan_subcommand.caps) ~(skin : string)
 
 let has_escapes (output : string) : bool = String_.contains ~term:"\027[" output
 
+let green : string = "\027[32m"
+let blue : string = "\027[34m"
+let cyan : string = "\027[36m"
+
+(* The text that [style] starts last on [line], up to the reset that ends
+   it, without the escapes inside it and the spaces around it; None when
+   [style] is not on the line. *)
+let styled_text ~(style : string) (line : string) : string option =
+  match
+    Str.search_backward (Str.regexp_string style) line (String.length line)
+  with
+  | exception Not_found -> None
+  | start ->
+      let rest = Str.string_after line (start + String.length style) in
+      let styled =
+        match Str.search_forward (Str.regexp_string "\027[0") rest 0 with
+        | exception Not_found -> rest
+        | reset -> Str.string_before rest reset
+      in
+      Some
+        (Str.global_replace (Str.regexp "\027\\[[0-9;]*m") "" styled
+        |> String.trim)
+
+(* the lines of a run on the interfile finding, with colour, its source in
+   caller.py *)
+let coloured_interfile_output (caps : Scan_subcommand.caps) ~(skin : string)
+    (extra_args : string list) : string list =
+  captured caps ~skin ~files:interfile_files
+    ([ "--enable-interfile"; "--force-color" ] @ extra_args)
+  |> String.split_on_char '\n'
+
 (*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
@@ -800,6 +845,43 @@ let test_vivid_degrades (caps : Scan_subcommand.caps) () =
   Alcotest.(check bool)
     "the stripe remains without colour" true
     (String_.contains ~term:"\u{258C}" plain)
+
+(* In 'simple', the path of a step of a trace in another file is green;
+   'vivid' keeps it cyan. The step is the source, in caller.py. *)
+let test_simple_step_path_green (caps : Scan_subcommand.caps) () =
+  let step_path ~(skin : string) ~(style : string) : string option =
+    coloured_interfile_output caps ~skin [ "--dataflow-traces" ]
+    |> line_containing_all [ "source"; "caller.py" ]
+    |> styled_text ~style
+  in
+  Alcotest.(check (option string))
+    "simple" (Some "caller.py")
+    (step_path ~skin:"simple" ~style:green);
+  Alcotest.(check (option string))
+    "vivid" (Some "caller.py")
+    (step_path ~skin:"vivid" ~style:cyan)
+
+(* In 'simple', the path of a source is green when a trace is drawn under
+   it, and plain otherwise. *)
+let test_simple_source_path_green (caps : Scan_subcommand.caps) () =
+  let source_path (extra_args : string list) : string option =
+    coloured_interfile_output caps ~skin:"simple" extra_args
+    |> line_containing_all [ "from: "; "caller.py" ]
+    |> styled_text ~style:green
+  in
+  Alcotest.(check (option string))
+    "with a trace" (Some "caller.py")
+    (source_path [ "--dataflow-traces" ]);
+  Alcotest.(check (option string)) "without a trace" None (source_path [])
+
+(* In 'simple', the info badge is blue. *)
+let test_simple_info_blue (caps : Scan_subcommand.caps) () =
+  Alcotest.(check (option string))
+    "blue" (Some "info")
+    (captured caps ~skin:"simple" ~files:info_files [ "--force-color" ]
+    |> String.split_on_char '\n'
+    |> line_containing_all [ "print-info" ]
+    |> styled_text ~style:blue)
 
 (* --skin takes precedence over OPENGREP_SKIN, so that a single test can
    select another skin while the suite sets one. *)
@@ -980,6 +1062,11 @@ let tests (caps : caps) =
         ~normalize:normalize_multi_commit
         (test_baseline_plan caps "vivid");
       t "vivid degrades without colour" (test_vivid_degrades narrow);
+      t "simple draws the path of a step in another file green"
+        (test_simple_step_path_green narrow);
+      t "simple draws the path of a source green under its trace"
+        (test_simple_source_path_green narrow);
+      t "simple draws the info badge blue" (test_simple_info_blue narrow);
       t "--skin wins over OPENGREP_SKIN" (test_flag_beats_env narrow);
       t "the skin does not reach --json" (test_json_unaffected narrow);
     ]

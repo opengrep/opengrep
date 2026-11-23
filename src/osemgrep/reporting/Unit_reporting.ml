@@ -280,7 +280,8 @@ let gutter_blank = " |"
 let test_location_highlighted_per_line () =
   let pp ?dedent () =
     Findings_layout.pp_trace_location ?dedent ~first_prefix:"" ~prefix:""
-      ~gutter ~gutter_blank ~highlight:[ `Bold ] ~unhighlighted:[]
+      ~gutter ~gutter_blank ~path_style:[] ~highlight:[ `Bold ]
+      ~unhighlighted:[]
   in
   Alcotest.(check string)
     "ending left of the start" "2|    x = [source(]\n |        [1,]\n |    [)]\n"
@@ -299,7 +300,8 @@ let test_location_highlighted_per_line () =
 let test_unreadable_location_keeps_its_prefix () =
   let pp (ppf : Format.formatter) (loc : Out.location) : unit =
     Findings_layout.pp_trace_location ~first_prefix:"sink " ~prefix:""
-      ~gutter ~gutter_blank ~highlight:[ `Bold ] ~unhighlighted:[] ppf loc
+      ~gutter ~gutter_blank ~path_style:[] ~highlight:[ `Bold ]
+      ~unhighlighted:[] ppf loc
   in
   Alcotest.(check string)
     "unreadable" "sink 4|\u{2026}\n"
@@ -324,9 +326,52 @@ let test_legacy_location_cut_from_joined_lines () =
     "2|    x = [source(1,\n |      ]         2222222222)\n"
     (render_location ~contents:ends_right pp (2, 9) (3, 27))
 
+(* a match whose dataflow trace has a step of each of [kinds], all on line 2
+   of a.py *)
+let match_with_trace (kinds : string list) : Out.cli_match =
+  let step (kind : string) : string =
+    spf
+      {|{"kind": "%s", "content": "x", "children": [],
+         "location": {"path": "a.py",
+                      "start": {"line": 2, "col": 1, "offset": 0},
+                      "end": {"line": 2, "col": 2, "offset": 0}}}|}
+      kind
+  in
+  Semgrep_output_v1_j.cli_match_of_string
+    (spf
+       {|{"check_id": "taint", "path": "a.py",
+          "start": {"line": 2, "col": 1, "offset": 0},
+          "end": {"line": 2, "col": 2, "offset": 0},
+          "extra": {"message": "m", "metadata": {}, "severity": "ERROR",
+                    "fingerprint": "f", "lines": "x",
+                    "dataflow_trace": [%s]}}|}
+       (String.concat ", " (List_.map step kinds)))
+
+(* An origin carries the trace of its finding only when the report draws
+   it: under --dataflow-traces, and when the trace has its source and its
+   sink. *)
+let test_origin_carries_a_drawn_trace () =
+  let has_trace ~(show_dataflow_traces : bool) (kinds : string list) : bool =
+    Findings_layout.origins
+      ~is_interfile:(fun (_ : Rule_ID.t) -> false)
+      ~show_dataflow_traces (match_with_trace kinds) []
+    |> List.exists (fun (o : Findings_layout.origin) -> Option.is_some o.trace)
+  in
+  Alcotest.(check bool)
+    "a source and a sink" true
+    (has_trace ~show_dataflow_traces:true [ "source"; "sink" ]);
+  Alcotest.(check bool)
+    "no sink" false
+    (has_trace ~show_dataflow_traces:true [ "source" ]);
+  Alcotest.(check bool)
+    "without --dataflow-traces" false
+    (has_trace ~show_dataflow_traces:false [ "source"; "sink" ])
+
 let findings_layout_tests =
   Testo.categorize "Findings_layout"
     [
+      t "an origin carries a trace only when it is drawn"
+        test_origin_carries_a_drawn_trace;
       t "a location over several lines is highlighted on each"
         test_location_highlighted_per_line;
       t "an unreadable location keeps its prefix"
