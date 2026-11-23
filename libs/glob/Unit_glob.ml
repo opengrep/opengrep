@@ -171,6 +171,20 @@ let tests =
       t "double slash" (test "//a//b//" "//a//b//" true);
       (* each '/' of a pattern separates two segments, as in git *)
       t "double slash in pattern" (test "//a//b//" "/a/b/" false);
+      (* an escaped '/' separates segments; after '**' it requires a folder,
+         as in git *)
+      t "escaped slash after '**'" (test "**\\/y.js" "x/y.js" true);
+      t "escaped slash after '**' requires a folder" (test "**\\/y.js" "y.js" false);
+      t "escaped slash after '**' matches more than one folder"
+        (test "**\\/y.js" "x/d/y.js" true);
+      t "escaped slash after a middle '**'" (test "x/**\\/y.js" "x/d/y.js" true);
+      t "escaped slash after a middle '**' requires a folder"
+        (test "x/**\\/y.js" "x/y.js" false);
+      t "escaped slash after a middle '**' matches more than one folder"
+        (test "x/**\\/y.js" "x/d/e/y.js" true);
+      t "escaped slash before '*'" (test "x\\/*" "x/y" true);
+      t "escaped slash before '*' does not match the folder" (test "x\\/*" "x/" false);
+      t "escaped slash at the start is a literal '/'" (test "\\/x" "/x" false);
       t "double slash in path" (test "/a/b/" "//a//b//" true);
       t "empty trailing segment" (test "a/*" "a/" false);
       t "empty leading segment" (test "*/a" "/a" false);

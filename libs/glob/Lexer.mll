@@ -54,6 +54,9 @@ rule token = parse
              let complement = (negation <> "") in
              CHAR_CLASS { complement; ranges }
            }
+(* an escaped '/' separates segments too, except at the start of the
+   pattern, where it is a literal '/' that no path starts with, as in git *)
+| "\\/"    { if Int.equal (Lexing.lexeme_start lexbuf) 0 then CHAR '/' else ESC_SLASH }
 | '\\' (_ as c)
            { CHAR c }
 | '\\' eof
