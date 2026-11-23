@@ -65,38 +65,72 @@ let add = Buffer.add_string
 let addc = Buffer.add_char
 let quote_char buf c = add buf (Pcre2_.quote (String.make 1 c))
 
-let translate_frag buf pos (frag : Pattern.segment_fragment) =
+(* A character as a member of a PCRE2 character class: ASCII punctuation
+   behind a backslash, which PCRE2 always reads as the character itself (an
+   unquoted '[:', '[.' or '[=' would start POSIX syntax), letters, digits
+   and space as they are, and other bytes by their code. *)
+let quote_class_char (buf : Buffer.t) (c : char) : unit =
+  match c with
+  | '!' .. '/'
+  | ':' .. '@'
+  | '[' .. '`'
+  | '{' .. '~' ->
+      addc buf '\\';
+      addc buf c
+  | ' ' .. '~' -> addc buf c
+  | _ -> add buf (Printf.sprintf "\\x{%02x}" (Char.code c))
+
+(* With [match_leading_period], a segment that does not begin with a literal
+   '.' matches a leading period but not the segments '.' and '..', which
+   refer to the current and the parent folder, as in a shell with 'dotglob'
+   set. *)
+let not_dot_segment = {|(?!\.\.?(?:/|\z))|}
+
+(* Without [match_leading_period], a segment that does not begin with a
+   literal '.' and every segment that '**' covers do not match a leading
+   period, as in a shell without 'dotglob'. *)
+let no_leading_period = "(?![.])"
+
+let translate_frag (buf : Buffer.t) (frag : Pattern.segment_fragment) : unit =
   match frag with
   | Char c -> quote_char buf c
+  (* A bracket expression never matches '/'. *)
+  | Char_class { complement; ranges = [] } ->
+      add buf (if complement then "[^/]" else "(?!)")
   | Char_class { complement; ranges } ->
-      if complement then add buf "[^" else addc buf '[';
+      add buf (if complement then "[^/" else "(?!/)[");
       ranges
-      |> List.iter (fun range ->
+      |> List.iter (fun (range : Pattern.char_class_range) ->
              match range with
-             | Class_char c -> quote_char buf c
+             | Class_char c -> quote_class_char buf c
+             | Range (a, b) when Char.compare a b > 0 -> quote_class_char buf a
              | Range (a, b) ->
-                 quote_char buf a;
+                 quote_class_char buf a;
                  addc buf '-';
-                 quote_char buf b);
+                 quote_class_char buf b);
       addc buf ']'
-  | Question ->
-      if pos = 0 then (* leading dot must match literally *)
-        add buf "[^/.]"
-      else add buf "[^/]"
-  | Star ->
-      if pos = 0 then (* leading dot must match literally *)
-        add buf "(?![.])";
-      add buf "[^/]*"
+  | Question -> add buf "[^/]"
+  | Star -> add buf "[^/]*"
 
-let translate_seg buf (seg : segment_fragment list) =
+let translate_seg ~(match_leading_period : bool) (buf : Buffer.t)
+    (seg : segment_fragment list) : unit =
   match seg with
   | [] -> ()
-  | _nonempty_segment ->
+  | first :: _ ->
       (* lookahead assertion that checks that the path segment is not empty,
          because pattern 'a/*' should not match path 'a/' which has an
          empty trailing segment. *)
       add buf "(?=[^/])";
-      List.iteri (translate_frag buf) seg
+      (match first with
+      | Char_class _
+      | Question
+      | Star ->
+          if match_leading_period then add buf not_dot_segment
+          else
+            (* leading dot must match literally *)
+            add buf no_leading_period
+      | Char _ -> ());
+      List.iter (translate_frag buf) seg
 
 (* beginning of string *)
 let bos = {|\A|}
@@ -104,39 +138,57 @@ let bos = {|\A|}
 (* end of string *)
 let eos = {|\z|}
 
-let rec translate buf pat =
+let rec translate ~(match_leading_period : bool) (buf : Buffer.t)
+    (pat : Pattern.t) : unit =
   match pat with
   | [ Segment seg ] ->
-      translate_seg buf seg;
+      translate_seg ~match_leading_period buf seg;
       add buf eos
-  | [ Any_subpath ] -> ()
+  (* A trailing '**' matches everything inside the folder before it, not
+     the folder itself: at least one more segment, as in gitignore. *)
+  | [ Any_subpath ] ->
+      if match_leading_period then add buf "(?=[^/])"
+      else
+        (* one or more segments joined by slashes: a slash between two
+           segments is required, so that a segment is never split *)
+        add buf
+          ("/*" ^ no_leading_period ^ "[^/]+(?:/+" ^ no_leading_period
+         ^ "[^/]+)*/*" ^ eos)
   | Segment seg :: pat ->
-      translate_seg buf seg;
+      translate_seg ~match_leading_period buf seg;
       add buf "/+";
-      translate buf pat
+      translate ~match_leading_period buf pat
   | Any_subpath :: pat ->
-      add buf "/*(?:[^/]+/+)*";
-      translate buf pat
+      if match_leading_period then add buf "/*(?:[^/]+/+)*"
+      else add buf ("/*(?:" ^ no_leading_period ^ "[^/]+/+)*");
+      translate ~match_leading_period buf pat
   | [] -> add buf eos
 
 (* Create a pattern that's left-anchored and right-anchored *)
-let translate_root pat =
+let translate_root ~(match_leading_period : bool) (pat : Pattern.t) : string =
   let buf = Buffer.create 128 in
   add buf bos;
-  translate buf pat;
+  translate ~match_leading_period buf pat;
   Buffer.contents buf
 
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)
 
-(* Compile a pattern into an ocaml-re regexp for fast matching *)
+(* Compile a pattern into a PCRE2 regexp for fast matching *)
 (* TODO: For windows, we should probably make lowecase since it's not
  * case sensitive. Then paths should also be transformed in the same
  * way. *)
-let compile ~source pat =
-  let pcre = translate_root pat in
-  let re = Pcre2_.regexp pcre in
+let compile ~(match_leading_period : bool) ~source pat =
+  let pcre = translate_root ~match_leading_period pat in
+  let re =
+    (* a translation that PCRE2 rejects is reported as an invalid pattern,
+       which the callers handle *)
+    (* byte by byte, as git matches its ignore patterns *)
+    try Pcre2_.regexp_bytes pcre with
+    | Pcre2.Error (Pcre2.BadPattern (msg, (_ : int))) ->
+        raise (Lexer.Syntax_error msg)
+  in
   { source; re }
 [@@profiling "Glob.Match.compile"]
 

@@ -1,12 +1,12 @@
 rules:
-  - id: invalid-paths-glob-range
+  - id: invalid-paths-glob
     pattern: $X == $X
-    message: the range of the glob is out of order
+    message: the glob is not valid
     languages: [python]
     severity: WARNING
     paths:
       include:
-        - "[z-a].py"
+        - "[a.py"
   - id: valid-rule
     pattern: $X == $X
     message: the other rule of the file still runs

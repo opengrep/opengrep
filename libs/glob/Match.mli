@@ -20,11 +20,19 @@ type loc = {
 [@@deriving show]
 
 (*
-   Compile the pattern into something efficient (currently uses the
-   ocaml-re library). The source should be the original glob pattern
-   before parsing. It's used only for debugging purposes.
+   Compile the pattern into a PCRE2 regular expression. The source should
+   be the original glob pattern before parsing; it is kept for the logs
+   and for the reason a target is skipped
+   (Find_targets.get_reason_for_exclusion reads its source kind).
+   With [match_leading_period], '*' and '?' at the start of a path segment
+   match a leading period, as in gitignore, and a segment that does not
+   begin with a literal '.' does not match the segments '.' and '..';
+   otherwise a leading period is matched only by a literal '.', as in a
+   shell without 'dotglob'.
+   May raise Glob.Lexer.Syntax_error when PCRE2 rejects the translation.
 *)
-val compile : source:loc -> Pattern.t -> compiled_pattern
+val compile :
+  match_leading_period:bool -> source:loc -> Pattern.t -> compiled_pattern
 
 (*
    Match a path against a pattern:

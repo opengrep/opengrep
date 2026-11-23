@@ -12,7 +12,7 @@
 └─────────────┘
   Scanning 1 file tracked by git with 1 Code rule:
   Scanning 1 file.
-[ERROR] Invalid rule schema at line rules/invalid-paths-glob-range.yaml:8:
+[ERROR] Invalid rule schema at line rules/invalid-paths-glob.yaml:8:
  Invalid glob for include
 
 

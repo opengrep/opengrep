@@ -75,7 +75,9 @@ let parse_globs ~kind (strs : Yojson.Safe.t list) =
                if Fpath.exists_ext (Fpath.v s) then "**/" ^ s
                else "**/" ^ s ^ "/**"
              in
-             Some (Glob.Match.compile ~source:loc (Glob.Parse.parse_string s))
+             Some
+               (Glob.Match.compile ~match_leading_period:false ~source:loc
+                  (Glob.Parse.parse_string s))
            with
            | Glob.Lexer.Syntax_error _ -> None)
        | _ -> None)

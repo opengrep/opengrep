@@ -127,6 +127,18 @@ val regexp :
   t
 
 (*
+   Same as [regexp] without UTF-8: the pattern and the subjects are bytes,
+   so '.' and a character class match one byte and '\x{hh}' is the byte
+   hh. Used for globs, which git matches byte by byte.
+*)
+val regexp_bytes :
+  ?iflags:Pcre2.icflag ->
+  ?flags:Pcre2.cflag list ->
+  ?chtables:Pcre2.chtables ->
+  string ->
+  t
+
+(*
    Same as Pcre2.pmatch but makes errors explicit.
    Option '?pat' was removed so as to force the use of our modified 'regexp'
    function. TODO: add it back for convenience.
