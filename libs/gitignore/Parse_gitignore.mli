@@ -49,12 +49,13 @@ val unanchored_from_string :
   Gitignore.path_selectors
 
 (* Lower-level function that can be used to create custom matchers that
-   combine multiple patterns. *)
+   combine multiple patterns. The list is empty for a pattern that matches
+   nothing, such as '/'. *)
 val parse_pattern :
   source:Glob.Match.loc ->
   anchor:Glob.Pattern.t ->
   string ->
-  Glob.Match.compiled_pattern
+  Glob.Match.compiled_pattern list
 
 (* Same as parse_pattern for a pattern of the command line: it returns the
    patterns any of which selects the path. *)

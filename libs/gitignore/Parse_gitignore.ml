@@ -84,24 +84,32 @@ let parse_maybe_include_line =
   in
   parse
 
-let rec contains_nontrailing_slash (pat : Glob.Pattern.t) =
-  match pat with
-  | Segment [] :: pat -> contains_nontrailing_slash pat
-  | [] -> false
-  | _nonempty :: (* trailing slash *) [ Segment [] ]
-  | [ _nonempty ] ->
-      false
-  | _nonempty1 :: _nonempty2 :: _ -> true
+(* The pattern without one trailing '/', and whether it had one: as in
+   gitignore, that '/' restricts the pattern to folders. *)
+let split_trailing_slash (str : string) : string * bool =
+  if String.ends_with ~suffix:"/" str then
+    (String.sub str 0 (String.length str - 1), true)
+  else (str, false)
 
 (* anchored pattern = relative to the work directory only, as opposed to
-   being relative to any folder in the subtree. *)
-let is_anchored_pattern (pat : Glob.Pattern.t) =
-  match pat with
-  (* /... *)
-  | Segment [] :: _ -> true
-  (* **/ *)
-  | Any_subpath :: _ -> true
-  | pat -> contains_nontrailing_slash pat
+   being relative to any folder in the subtree. As in gitignore, any '/'
+   other than a trailing one anchors a pattern, also inside a bracket
+   expression or after a backslash. *)
+let is_anchored_pattern (str : string) : bool =
+  String.contains (fst (split_trailing_slash str)) '/'
+
+(* The glob of a gitignore pattern, which matches at any depth unless it is
+   anchored. None when the pattern is empty without its trailing '/': it
+   matches nothing, as in gitignore. *)
+let read_pattern (str : string) : Glob.Pattern.t option =
+  let glob, folders_only = split_trailing_slash str in
+  if String.equal glob "" then None
+  else
+    let pat = Glob.Parse.parse_string glob in
+    let pat : Glob.Pattern.t =
+      if is_anchored_pattern str then pat else Any_subpath :: pat
+    in
+    Some (if folders_only then pat @ [ Segment [] ] else pat)
 
 (*
    Parse and compile a gitignore pattern.
@@ -115,13 +123,14 @@ let is_anchored_pattern (pat : Glob.Pattern.t) =
    However a non-anchored pattern such as '*.c' will be expanded into
    '/foo/**/*.c'.
 *)
-let parse_pattern ~source ~anchor str : M.compiled_pattern =
-  let pat = Glob.Parse.parse_string str in
-  let absolute_pattern =
-    if is_anchored_pattern pat then Glob.Pattern.append anchor pat
-    else Glob.Pattern.append anchor (Any_subpath :: pat)
-  in
-  M.compile ~match_leading_period:true ~source absolute_pattern
+let parse_pattern ~source ~anchor str : M.compiled_pattern list =
+  match read_pattern str with
+  | None -> []
+  | Some (pat : Glob.Pattern.t) ->
+      [
+        M.compile ~match_leading_period:true ~source
+          (Glob.Pattern.append anchor pat);
+      ]
 
 (*
    A '--include' or '--exclude' pattern from the command line anchors at
@@ -132,14 +141,13 @@ let parse_pattern ~source ~anchor str : M.compiled_pattern =
    (TargetManager.preprocess_path_patterns of target_manager.py).
 *)
 let parse_cli_pattern ~source ~anchor str : M.compiled_pattern list =
-  let pat = Glob.Parse.parse_string str in
-  let pat : Glob.Pattern.t =
-    if is_anchored_pattern pat then pat else Any_subpath :: pat
-  in
-  [ pat; Glob.Pattern.append pat [ Any_subpath ] ]
-  |> List_.map (fun (pat : Glob.Pattern.t) ->
-         M.compile ~match_leading_period:true ~source
-           (Glob.Pattern.append anchor pat))
+  match read_pattern str with
+  | None -> []
+  | Some (pat : Glob.Pattern.t) ->
+      [ pat; Glob.Pattern.append pat [ Any_subpath ] ]
+      |> List_.map (fun (pat : Glob.Pattern.t) ->
+             M.compile ~match_leading_period:true ~source
+               (Glob.Pattern.append anchor pat))
 
 (* The reason a pattern of the command line is not valid, if it is not:
    the compilation of [parse_cli_pattern], after a leading '!'. *)
@@ -209,10 +217,6 @@ let parse_line_gen
         in
         Some { loc; matcher }
 
-let compile_gitignore_pattern ~anchor ~source (str : string) :
-    M.compiled_pattern list =
-  [ parse_pattern ~source ~anchor str ]
-
 (* A line whose pattern is not anchored to the folder of its file matches
    at any depth, so it still means something for a path outside that
    folder. Comments and blank lines hold no pattern to parse. *)
@@ -224,10 +228,7 @@ let is_unanchored_line (line : string) : bool =
     | None -> line
     | Some s -> s
   in
-  match Glob.Parse.parse_string pattern_str with
-  | pattern -> not (is_anchored_pattern pattern)
-  (* kept, to be reported when the line is parsed *)
-  | exception Glob.Lexer.Syntax_error (_ : string) -> true
+  not (is_anchored_pattern pattern_str)
 
 (* semgrep-legacy *)
 let get_include_path ~orig_semgrepignore_path relative_include_path =
@@ -299,7 +300,7 @@ and from_string_gen ~compile ~allow_include ~name ~source_path ~source_kind str
 
 and from_string ~anchor ~name ~source_kind str =
   from_string_gen
-    ~compile:(compile_gitignore_pattern ~anchor)
+    ~compile:(parse_pattern ~anchor)
     ~allow_include:false ~name ~source_path:None ~source_kind str
 
 and cli_patterns_from_string ~anchor ~name ~source_kind str =
@@ -318,12 +319,12 @@ and unanchored_from_string ~anchor ~name ~source_kind ~source_path str =
     | None -> lines
   in
   from_lines ~keep_line:is_unanchored_line
-    ~compile:(compile_gitignore_pattern ~anchor)
+    ~compile:(parse_pattern ~anchor)
     ~allow_include:false ~name ~source_path:None ~source_kind lines
 
 and from_file_contents ~anchor ~format ~source_kind path contents =
   from_lines
-    ~compile:(compile_gitignore_pattern ~anchor)
+    ~compile:(parse_pattern ~anchor)
     ~allow_include:(format = Legacy_semgrepignore)
     ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind
     (read_lines_from_file_contents contents)

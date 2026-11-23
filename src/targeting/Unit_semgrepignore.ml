@@ -155,6 +155,22 @@ let tests =
            [
              ("/a.js", false); ("/b.js", false); ("/c.js", false); ("/d.js", true);
            ]);
+      t "semgrepignore slash in a bracket expression anchors the pattern"
+        (test_filter
+           [ File (".semgrepignore", "[a/]b.js\n") ]
+           [ ("/ab.js", false); ("/x/ab.js", true) ]);
+      t "semgrepignore escaped slash anchors the pattern"
+        (test_filter
+           [ File (".semgrepignore", "d\\/b.js\n") ]
+           [ ("/d/b.js", false); ("/x/d/b.js", true) ]);
+      t "semgrepignore trailing '**/' ignores the folders inside"
+        (test_filter
+           [ File (".semgrepignore", "x/**/\n") ]
+           [ ("/x/a.js", true); ("/x/d/b.js", false) ]);
+      t "semgrepignore pattern that is empty without its trailing slash"
+        (test_filter
+           [ File (".semgrepignore", "/\n") ]
+           [ ("/a.js", true); ("/x/a.js", true) ]);
       t "semgrepignore pattern that is not a valid glob matches nothing"
         (test_filter
            [ File (".semgrepignore", "[abc\nc.js\n"); file "[abc"; file "c.js" ]
