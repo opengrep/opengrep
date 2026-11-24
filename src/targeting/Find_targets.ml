@@ -264,24 +264,29 @@ type 'a targets = {
 (* Diagnostic *)
 (*************************************************************************)
 
+(* The source kind of the pattern that ignored a path, which the reason the
+   path is skipped is made from. *)
+let deciding_source_kind (sel_events : Gitignore.selection_event list) :
+    string option =
+  match sel_events with
+  | Gitignore.Selected (loc : Glob.Match.loc) :: _ -> loc.source_kind
+  | Gitignore.Deselected _ :: _
+  | [] ->
+      (* shouldn't happen *) None
+
 let get_reason_for_exclusion (sel_events : Gitignore.selection_event list) :
     Out.skip_reason =
   let fallback = Out.Semgrepignore_patterns_match in
-  match sel_events with
-  | Gitignore.Selected loc :: _ -> (
-      match loc.source_kind with
-      | Some str -> (
-          match str with
-          | "include" -> Out.Cli_include_flags_do_not_match
-          | "exclude" -> Out.Cli_exclude_flags_match
-          | "semgrepignore"
-          | "default" ->
-              Out.Semgrepignore_patterns_match
-          | __ -> (* shouldn't happen *) fallback)
-      | None -> (* shouldn't happen *) fallback)
-  | Gitignore.Deselected _ :: _
-  | [] ->
-      (* shouldn't happen *) fallback
+  match deciding_source_kind sel_events with
+  | Some str -> (
+      match str with
+      | "include" -> Out.Cli_include_flags_do_not_match
+      | "exclude" -> Out.Cli_exclude_flags_match
+      | "semgrepignore"
+      | "default" ->
+          Out.Semgrepignore_patterns_match
+      | __ -> (* shouldn't happen *) fallback)
+  | None -> (* shouldn't happen *) fallback
 
 (*************************************************************************)
 (* Filtering *)
@@ -333,53 +338,81 @@ let filter_path ?(kind : Unix.file_kind option) (ign : Gitignore.filter)
   let { fpath; ppath; _ } : Fppath.t = fppath in
   if is_always_skipped ppath then Ignore_silently
   else
-  (* [kind] is what a caller that has already stat'ed the path knows: a
-     scanning root is followed with Unix.stat, so it is filtered as the
-     file it leads to rather than skipped as a symlink. *)
-  let entry_kind : (Unix.file_kind, Unix.error) result =
-    match kind with
-    | Some (kind : Unix.file_kind) -> Ok kind
-    | None -> (
-        try Ok (Unix.lstat !!fpath).st_kind with
-        | Unix.Unix_error (err, _fun, _info) -> Error err)
-  in
   (* A pattern ending with a slash, like 'sub/', applies to directories only
      and matches a path ending with a slash only. A directory is decided and
      reported by the check with its trailing slash, as when it is the parent
      of a path: tested with the slash, the directory is skipped and reported
      once; without it, it would be entered and each file reported. *)
-  let checked_path =
-    match entry_kind with
-    | Ok S_DIR -> Ppath.add_seg ppath ""
-    | Ok (S_REG | S_LNK | S_FIFO | S_CHR | S_BLK | S_SOCK)
-    | Error (_ : Unix.error) ->
-        ppath
+  let select_as_file () : Gitignore.status * Gitignore.selection_event list =
+    Gitignore_filter.select ign ppath
   in
-  let status, selection_events = Gitignore_filter.select ign checked_path in
-  match status with
-  | Ignored -> ignore_path selection_events fpath
-  | Not_ignored -> (
-      (* TODO: check read permission too? *)
+  let select_as_dir () : Gitignore.status * Gitignore.selection_event list =
+    Gitignore_filter.select ign (Ppath.add_seg ppath "")
+  in
+  (* the path filtered as the kind of entry it is, given its selection as a
+     file *)
+  let filter_as (entry_kind : (Unix.file_kind, Unix.error) result)
+      (as_file : Gitignore.status * Gitignore.selection_event list) :
+      filter_result =
+    let status, selection_events =
       match entry_kind with
-      (* skipping symlinks *)
-      | Ok S_LNK -> Ignore_silently
-      | Ok S_REG -> (
-          let status, selection_events =
-            apply_include_filter status selection_events include_filter ppath
-          in
-          match status with
-          | Ignored -> ignore_path selection_events fpath
-          | Not_ignored -> Keep)
-      | Ok S_DIR -> Dir
-      | Ok (S_FIFO | S_CHR | S_BLK | S_SOCK) -> Ignore_silently
-      (* We need to filter those paths ASAP otherwise we can get some exn later
-       * when trying to process targets that actually do not exist.
-       *)
-      | Error (err : Unix.error) ->
-          Log.debug (fun m ->
-              m "lstat: system error on file '%s': %s" !!fpath
-                (Unix.error_message err));
-          Ignore_silently)
+      | Ok S_DIR -> select_as_dir ()
+      | Ok (S_REG | S_LNK | S_FIFO | S_CHR | S_BLK | S_SOCK)
+      | Error (_ : Unix.error) ->
+          as_file
+    in
+    match status with
+    | Ignored -> ignore_path selection_events fpath
+    | Not_ignored -> (
+        (* TODO: check read permission too? *)
+        match entry_kind with
+        (* skipping symlinks *)
+        | Ok S_LNK -> Ignore_silently
+        | Ok S_REG -> (
+            let status, selection_events =
+              apply_include_filter status selection_events include_filter
+                ppath
+            in
+            match status with
+            | Ignored -> ignore_path selection_events fpath
+            | Not_ignored -> Keep)
+        | Ok S_DIR -> Dir
+        | Ok (S_FIFO | S_CHR | S_BLK | S_SOCK) -> Ignore_silently
+        (* We need to filter those paths ASAP otherwise we can get some exn later
+         * when trying to process targets that actually do not exist.
+         *)
+        | Error (err : Unix.error) ->
+            Log.debug (fun m ->
+                m "lstat: system error on file '%s': %s" !!fpath
+                  (Unix.error_message err));
+            Ignore_silently)
+  in
+  match kind with
+  (* [kind] is what a caller that has already stat'ed the path knows: a
+     scanning root is followed with Unix.stat, so it is filtered as the
+     file it leads to rather than skipped as a symlink. *)
+  | Some (kind : Unix.file_kind) -> filter_as (Ok kind) (select_as_file ())
+  | None -> (
+      let lstat_kind () : (Unix.file_kind, Unix.error) result =
+        try Ok (Unix.lstat !!fpath).st_kind with
+        | Unix.Unix_error (err, _fun, _info) -> Error err
+      in
+      (* The patterns are checked before the path is stat'ed: a path that
+         the same source ignores both as a file and as a directory is
+         skipped, with the same reason, whatever its kind. *)
+      match select_as_file () with
+      | (Not_ignored, _) as as_file -> filter_as (lstat_kind ()) as_file
+      | (Ignored, (file_events : Gitignore.selection_event list)) as as_file
+        -> (
+          match select_as_dir () with
+          | Ignored, (dir_events : Gitignore.selection_event list)
+            when Option.equal String.equal
+                   (deciding_source_kind file_events)
+                   (deciding_source_kind dir_events) ->
+              ignore_path file_events fpath
+          | Ignored, _
+          | Not_ignored, _ ->
+              filter_as (lstat_kind ()) as_file))
 
 (*
    Filter a pre-expanded list of target files, such as a list of files

@@ -271,6 +271,11 @@ let tests_with_or_without_git ~with_git =
     test_find_targets ~with_git
       "semgrepignore pattern then negated directory pattern"
       [ F.File (".semgrepignore", "app\n!app/\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'ok.js', not 'app.js': '!app.js/' applies to directories
+       only. *)
+    test_find_targets ~with_git
+      "semgrepignore pattern then negated directory pattern, on a file"
+      [ F.File (".semgrepignore", "app.js\n!app.js/\n"); F.file "app.js"; F.file "ok.js" ];
     (* Select 'ok.js', not 'a/b/x.js' or 'b/y.js': the negation matches 'a',
        not 'a/b'. *)
     test_find_targets ~with_git
