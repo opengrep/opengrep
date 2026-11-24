@@ -145,11 +145,9 @@ let o_exclude : string list Term.t =
     Arg.info [ "exclude" ] ~docv:"PATTERN"
       ~doc:
         (*
-         Note that osemgrep also supports negated "de-ignore" patterns such
-         as used in '--exclude=tests --exclude=!tests/main.c' to
-         re-include tests/main.c.
-         We're a bit evasive about this for now since pysemgrep and osemgrep
-         differ in that respect.
+         A negated pattern does not re-include a file under an excluded
+         folder: after '--exclude=tests', '--exclude=!tests/main.c' leaves
+         tests/main.c excluded, as in gitignore.
       *)
         {|Skip any file or directory whose path that matches $(docv).
 '--exclude=*.py' will ignore the following: 'foo.py', 'src/foo.py',
@@ -240,7 +238,7 @@ let o_use_git : bool Term.t =
         As a result of '--no-git-ignore', gitignored files and git submodules
         will be scanned.
         This flag has no effect if the scanning root is not
-        in a git repository.
+        in a git repository, or with '--project-root'.
         '--use-git-ignore' is opengrep's default behavior.|}
 
 let o_ignore_semgrepignore_files : bool Term.t =
@@ -301,7 +299,8 @@ let o_baseline_commit : string option Term.t =
           {|Only show results that are not found in this commit hash. Aborts run
 if not currently in a git directory, there are unstaged changes, or
 given baseline hash doesn't exist. An empty value means no baseline.
-May also be set with SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
+May also be set with OPENGREP_BASELINE_COMMIT, OPENGREP_BASELINE_REF,
+SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
 |})
 
 (* ------------------------------------------------------------------ *)
@@ -900,7 +899,7 @@ let o_project_root : string option Term.t =
       ~doc:
         {|Opengrep normally determines the type of project (git or novcs)
           and the project root automatically. The project root is then used
-          to locate and use '.gitignore' and '.semgrepignore' files which
+          to locate and use the '.semgrepignore' files which
           determine target files that should be ignored by opengrep.
           This option forces the project root to be a specific folder
           and assumes a local project without version control (novcs).
@@ -1365,6 +1364,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         engine_config;
       }
     in
+    (* a differential scan uses git, which --project-root turns off *)
+    if Option.is_some project_root && Option.is_some baseline_commit then
+      Error.abort
+        "--project-root cannot be used with a baseline commit \
+         (--baseline-commit, OPENGREP_BASELINE_COMMIT, OPENGREP_BASELINE_REF, \
+         SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF)";
     let include_ =
       match include_ with
       | [] -> None

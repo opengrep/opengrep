@@ -1,0 +1,14 @@
+Test name: without git > nested semgrepignore negation against a root directory pattern
+--- Files not added to git ---
+.semgrepignore
+app/y.js
+src/.semgrepignore
+src/app/x.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected .semgrepignore
+selected src/.semgrepignore
+selected src/app/x.js
+--- Skipped targets ---
+ignored app [Semgrep_output_v1_t.Semgrepignore_patterns_match]

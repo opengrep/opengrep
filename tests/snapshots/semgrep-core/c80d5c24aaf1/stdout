@@ -1,0 +1,25 @@
+--- begin input files ---
+.semgrepignore
+build/app/a.js
+eqeq-basic.yaml
+src/s.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 10 insertions(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 build/app/a.js
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 src/s.js
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    src/s.js
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            1┆ 2 == 2
+

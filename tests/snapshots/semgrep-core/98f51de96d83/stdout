@@ -1,0 +1,14 @@
+Test name: without git > exclude directory pattern reported before a semgrepignore pattern
+--- Files not added to git ---
+.semgrepignore
+app/y.js
+ok.js
+--- begin input files ---
+--- end input files ---
+--- '--exclude' patterns ---
+app/
+--- Selected targets ---
+selected .semgrepignore
+selected ok.js
+--- Skipped targets ---
+ignored app [Semgrep_output_v1_t.Cli_exclude_flags_match]

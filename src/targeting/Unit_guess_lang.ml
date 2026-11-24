@@ -156,27 +156,24 @@ let contents_tests : (string * Lang.t * string * string * exec * success) list =
       XFAIL );
   ]
 
-let mkdir path = if not (Sys.file_exists path) then Unix.mkdir path 0o777
-
 (*
-   Create a temporary file with the specified name, in a local tmp folder.
-   We don't delete the files when we're done because it's easier when
-   troubleshooting tests.
+   Create a temporary file with the specified name, in a temporary folder
+   of its own, so that tests running in parallel never write the same file.
 *)
-let with_file name contents exec f =
-  let dir = Fpath.v "tmp" in
-  mkdir !!dir;
-  let path = dir / name in
-  let oc = open_out_bin !!path in
-  (match exec with
-  | Exec -> Unix.chmod !!path 0o755
-  | Nonexec -> ());
-  Common.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () ->
-      output_string oc contents;
-      close_out oc;
-      f path)
+let with_file (name : string) (contents : string) (exec : exec)
+    (f : Fpath.t -> 'a) : 'a =
+  Testutil_files.with_tempdir (fun (dir : Fpath.t) ->
+      let path = dir / name in
+      let oc = open_out_bin !!path in
+      (match exec with
+      | Exec -> Unix.chmod !!path 0o755
+      | Nonexec -> ());
+      Common.protect
+        ~finally:(fun () -> close_out oc)
+        (fun () ->
+          output_string oc contents;
+          close_out oc;
+          f path))
 
 let test_name_only lang path expectation =
   match (expectation, Guess_lang.inspect_file lang path) with

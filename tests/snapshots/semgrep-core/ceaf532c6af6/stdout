@@ -1,0 +1,25 @@
+Test name: with git > nested semgrepignore negation against a root pattern
+--- Files added before 'git add' ---
+.semgrepignore
+app/y.js
+src/.semgrepignore
+src/app/x.js
+--- begin input files ---
+.semgrepignore
+app/y.js
+src/.semgrepignore
+src/app/x.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 2 insertions(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 app/y.js
+ create mode 100644 src/.semgrepignore
+ create mode 100644 src/app/x.js
+--- Selected targets ---
+selected .semgrepignore
+selected src/.semgrepignore
+selected src/app/x.js
+--- Skipped targets ---
+ignored app [Semgrep_output_v1_t.Semgrepignore_patterns_match]

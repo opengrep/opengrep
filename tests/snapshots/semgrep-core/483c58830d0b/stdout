@@ -1,0 +1,12 @@
+Test name: without git > semgrepignore directory pattern then negated directory pattern
+--- Files not added to git ---
+.semgrepignore
+app/y.js
+ok.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected .semgrepignore
+selected app/y.js
+selected ok.js
+--- Skipped targets ---

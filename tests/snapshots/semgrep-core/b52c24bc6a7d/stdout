@@ -16,4 +16,5 @@ Initialized empty Git repository in<MASKED>
 RUN opengrep scan --x-ls .
 .gitignore
 .semgrepignore
+a
 c

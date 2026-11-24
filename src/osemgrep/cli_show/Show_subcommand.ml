@@ -338,7 +338,8 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
               (ast, skipped_tokens)
             in
             let xtarget =
-              Xtarget.resolve parser (Target.mk_regular xlang Product.all (File target_file))
+              Xtarget.resolve parser (Target.mk_regular ~target_proj_path:Not_in_project xlang Product.all
+                   (File target_file))
             in
             let _report, signature_db_opt =
               Match_tainting_mode.check_rule tbl rule Fun.id xconf xtarget

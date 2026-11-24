@@ -142,7 +142,11 @@ let session_targets caps =
     let user_settings = { session.user_settings with only_git_dirty } in
     let session = { session with user_settings; workspace_folders } in
     let session = set_session_targets session workspace_folders in
-    let targets = session |> Session.targets |> List_.map Fpath.to_string in
+    let targets =
+      session |> Session.targets
+      |> List_.map (fun ({ target_fpath; _ } : Target_and_root.t) ->
+             Fpath.to_string target_fpath)
+    in
     let targets = List_.sort targets in
     let expected = List_.sort expected in
     Alcotest.(check (list string)) "targets" expected targets

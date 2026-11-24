@@ -219,7 +219,8 @@ let check_targets_rules (caps : < caps ; .. >)
       (Core_runner.apply_taint_flags core_runner_conf metarules, [])
       (List_.map
         (fun (fpath : Fpath.t) : Target_and_root.t ->
-          { target_fpath = fpath; project_root = None })
+          { target_fpath = fpath; project_root = None;
+            target_proj_path = Not_in_project })
         targets_rules)
   in
 

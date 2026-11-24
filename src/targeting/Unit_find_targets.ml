@@ -33,10 +33,11 @@ module Out = Semgrep_output_v1_t
    scanning_root: may start with "<root>", the absolute path of the workspace
    project_root: a folder of the workspace forced as the project root,
                  like --project-root
+   honor_gitignore: false to commit the files that '.gitignore' lists too
 *)
 let test_find_targets ?expected_outcome ?includes ?(excludes = [])
-    ?(non_git_files : F.t list = []) ~with_git ?(cwd = ".")
-    ?(scanning_root = ".") ?project_root name (files : F.t list) =
+    ?(non_git_files : F.t list = []) ~with_git ?(honor_gitignore = true)
+    ?(cwd = ".") ?(scanning_root = ".") ?project_root name (files : F.t list) =
   let category = if with_git then "with git" else "without git" in
   let test_func () =
     printf "Test name: %s > %s\n" category name;
@@ -55,7 +56,7 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
         printf "--- Files not added to git ---\n";
         F.print_files non_git_files);
 
-    Testutil_git.with_git_repo ~verbose:true ~honor_gitignore:true
+    Testutil_git.with_git_repo ~verbose:true ~honor_gitignore
       ~really_create_git_repo:with_git git_files (fun root ->
         F.write root non_git_files;
 
@@ -113,9 +114,6 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
 let tests_with_or_without_git ~with_git =
   [
     test_find_targets ~with_git "basic test" [ F.File (".gitignore", "") ];
-    (* Select file 'a', not 'b' *)
-    test_find_targets ~with_git "basic gitignore"
-      [ F.File (".gitignore", "b\n"); F.file "a"; F.file "b" ];
     (* Select file 'a', not 'b' *)
     test_find_targets ~with_git "basic semgrepignore"
       [ F.File (".semgrepignore", "b\n"); F.file "a"; F.file "b" ];
@@ -243,23 +241,269 @@ let tests_with_or_without_git ~with_git =
           ];
         F.Symlink ("link", "dir");
       ];
+    (*
+       A directory is decided by the built-in patterns, then the
+       command-line patterns, then the semgrepignore files, read from the
+       project root down as one gitignore. Within each, every pattern is
+       tested on the directory with and without a trailing slash
+       (directory-only patterns need the slash), and the last one that
+       matches decides. A pattern ending with '/**' matches what is inside
+       the directory, not the directory.
+    *)
+    (* Select 'app/y.js' and 'ok.js'. *)
+    test_find_targets ~with_git
+      "semgrepignore directory pattern then negation of the directory"
+      [ F.File (".semgrepignore", "app/\n!app\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'ok.js', not 'app/y.js': 'app/' is the last pattern that
+       matches 'app'. *)
+    test_find_targets ~with_git
+      "semgrepignore negation of the directory then directory pattern"
+      [ F.File (".semgrepignore", "!app\napp/\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'app/y.js' and 'ok.js'. *)
+    test_find_targets ~with_git
+      "semgrepignore directory pattern then negated directory pattern"
+      [ F.File (".semgrepignore", "app/\n!app/\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'ok.js', not 'app/y.js'. *)
+    test_find_targets ~with_git
+      "semgrepignore negated directory pattern then directory pattern"
+      [ F.File (".semgrepignore", "!app/\napp/\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'app/y.js' and 'ok.js': '!app/' is the last pattern that
+       matches 'app'. *)
+    test_find_targets ~with_git
+      "semgrepignore pattern then negated directory pattern"
+      [ F.File (".semgrepignore", "app\n!app/\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'ok.js', not 'app.js': '!app.js/' applies to directories
+       only. *)
+    test_find_targets ~with_git
+      "semgrepignore pattern then negated directory pattern, on a file"
+      [ F.File (".semgrepignore", "app.js\n!app.js/\n"); F.file "app.js"; F.file "ok.js" ];
+    (* Select 'ok.js', not 'a/b/x.js' or 'b/y.js': the negation matches 'a',
+       not 'a/b'. *)
+    test_find_targets ~with_git
+      "semgrepignore directory pattern below a negated directory"
+      [
+        F.File (".semgrepignore", "!a\nb/\n");
+        F.dir "a" [ F.dir "b" [ F.file "x.js" ] ];
+        F.dir "b" [ F.file "y.js" ];
+        F.file "ok.js";
+      ];
+    (* Select 'sub/keep.js' and 'ok.js', not 'sub/drop.js': the
+       semgrepignore of 'sub' applies to the paths under 'sub', not to
+       'sub' itself. *)
+    test_find_targets ~with_git
+      "semgrepignore of a directory matching everything under it"
+      [
+        F.dir "sub"
+          [
+            F.File (".semgrepignore", "**\n!keep.js\n");
+            F.file "keep.js";
+            F.file "drop.js";
+          ];
+        F.file "ok.js";
+      ];
+    (* Select 'frontend/src/app/x.js', not 'app/y.js'. *)
+    test_find_targets ~with_git
+      "semgrepignore negation re-includes a nested directory"
+      [
+        F.File (".semgrepignore", "app/\n!frontend/src/app\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.dir "frontend" [ F.dir "src" [ F.dir "app" [ F.file "x.js" ] ] ];
+      ];
+    (* Select 'src/app/x.js', not 'app/y.js': the '!app' of 'src' comes
+       after the root's 'app/'. *)
+    test_find_targets ~with_git
+      "nested semgrepignore negation against a root directory pattern"
+      [
+        F.File (".semgrepignore", "app/\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.dir "src" [ F.File (".semgrepignore", "!app\n"); F.dir "app" [ F.file "x.js" ] ];
+      ];
+    (* Select 'src/app/x.js', not 'app/y.js': the '!app' of 'src' comes
+       after the root's 'app'. *)
+    test_find_targets ~with_git
+      "nested semgrepignore negation against a root pattern"
+      [
+        F.File (".semgrepignore", "app\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.dir "src" [ F.File (".semgrepignore", "!app\n"); F.dir "app" [ F.file "x.js" ] ];
+      ];
+    (* Select 'app/y.js', not 'src/app/x.js': the 'app/' of 'src' comes
+       after the root's '!src/app'. *)
+    test_find_targets ~with_git
+      "root semgrepignore negation against a nested directory pattern"
+      [
+        F.File (".semgrepignore", "!src/app\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.dir "src" [ F.File (".semgrepignore", "app/\n"); F.dir "app" [ F.file "x.js" ] ];
+      ];
+    (* Select 'frontend/src/app/x.js', not 'app/y.js'. With git, git leaves
+       out 'app/y.js' and lists 'frontend/src/app/x.js', which the filter
+       keeps. *)
+    test_find_targets ~with_git
+      "semgrepignore including a gitignore with a negation"
+      [
+        F.File (".gitignore", "app/\n!frontend/src/app\n");
+        F.File (".semgrepignore", ":include .gitignore\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.dir "frontend" [ F.dir "src" [ F.dir "app" [ F.file "x.js" ] ] ];
+      ];
+    (* Select 'ok.js', not 'app/y.js': a negation does not re-include a
+       file under an ignored directory. *)
+    test_find_targets ~with_git
+      "semgrepignore negation of a file under an ignored directory"
+      [ F.File (".semgrepignore", "app/\n!app/y.js\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'app/keep.js' and 'ok.js', not 'app/drop.js': 'app/**'
+       ignores what is inside 'app', not 'app', so '!app/keep.js' brings
+       'app/keep.js' back. *)
+    test_find_targets ~with_git
+      "semgrepignore negation of a file under 'dir/**'"
+      [
+        F.File (".semgrepignore", "app/**\n!app/keep.js\n");
+        F.dir "app" [ F.file "keep.js"; F.file "drop.js" ];
+        F.file "ok.js";
+      ];
+    (* Select 'ok.js', not 'app/a.js' or 'app/b.js': the files of 'app' are
+       ignored one by one, not 'app'. *)
+    test_find_targets ~with_git
+      "semgrepignore 'dir/**' ignores what is inside the directory"
+      [
+        F.File (".semgrepignore", "app/**\n");
+        F.dir "app" [ F.file "a.js"; F.file "b.js" ];
+        F.file "ok.js";
+      ];
+    (* Select 'ok.js', not 'app/y.js': '!app/**' does not match 'app', which
+       'app' ignores, and nothing under an ignored directory is brought
+       back. *)
+    test_find_targets ~with_git
+      "semgrepignore negation of 'dir/**' under an ignored directory"
+      [
+        F.File (".semgrepignore", "app\n!app/**\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.file "ok.js";
+      ];
+    (* Select 'ok.js', not 'app/y.js': '--exclude' comes before the
+       semgrepignore files. *)
+    test_find_targets ~with_git ~excludes:[ "app" ]
+      "exclude takes precedence over a semgrepignore negation"
+      [ F.File (".semgrepignore", "!app\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'ok.js', not 'src/tests/t.js': without a root semgrepignore
+       the built-in patterns apply, before the nested semgrepignore files. *)
+    test_find_targets ~with_git
+      "built-in patterns take precedence over a nested semgrepignore negation"
+      [
+        F.dir "src"
+          [ F.File (".semgrepignore", "!tests/\n"); F.dir "tests" [ F.file "t.js" ] ];
+        F.file "ok.js";
+      ];
+    (* Select 'ok.js', not 'src/tests/t.js'. *)
+    test_find_targets ~with_git
+      "built-in patterns take precedence over a nested semgrepignore negation \
+       without a trailing slash"
+      [
+        F.dir "src"
+          [ F.File (".semgrepignore", "!tests\n"); F.dir "tests" [ F.file "t.js" ] ];
+        F.file "ok.js";
+      ];
+    (* Select 'build/app/a.js': the built-in patterns apply from the folder
+       given as a target downwards, not to the folders above it. *)
+    test_find_targets ~with_git ~scanning_root:"build/app"
+      "built-in patterns do not apply to the folders above a folder target"
+      [ F.dir "build" [ F.dir "app" [ F.file "a.js" ]; F.file "b.js" ] ];
+    (* Select 'a.js', run from 'build/app'. *)
+    test_find_targets ~with_git ~cwd:"build/app" ~scanning_root:"."
+      "built-in patterns do not apply to the folders above the current folder \
+       as a target"
+      [ F.dir "build" [ F.dir "app" [ F.file "a.js" ]; F.file "b.js" ] ];
+    (* Select 'src/s.js', not 'src/build/b.js'. *)
+    test_find_targets ~with_git ~scanning_root:"src"
+      "built-in patterns apply below a folder target"
+      [ F.dir "src" [ F.dir "build" [ F.file "b.js" ]; F.file "s.js" ] ];
+    (* Select 'ok.js', not 'app/y.js': 'app' is reported once. *)
+    test_find_targets ~with_git ~excludes:[ "app/" ]
+      "exclude directory pattern takes precedence over a semgrepignore negation"
+      [ F.File (".semgrepignore", "!app\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'keep.js', not 'drop.js': the semgrepignore of the scanning
+       root applies to the paths under it, not to the root itself. *)
+    test_find_targets ~with_git
+      "semgrepignore of the scanning root matching everything under it"
+      [
+        F.File (".semgrepignore", "**\n!keep.js\n");
+        F.file "keep.js";
+        F.file "drop.js";
+      ];
+    (* Select 'sub/keep.js', not 'sub/drop.js'. *)
+    test_find_targets ~with_git ~scanning_root:"sub"
+      "semgrepignore of a folder scanning root matching everything under it"
+      [
+        F.dir "sub"
+          [
+            F.File (".semgrepignore", "**\n!keep.js\n");
+            F.file "keep.js";
+            F.file "drop.js";
+          ];
+      ];
+    (* Select 'ok.js', not 'tests/a.js' or 'src/tests/b.js': the built-in
+       patterns come before the command-line patterns. *)
+    test_find_targets ~with_git ~excludes:[ "!tests" ]
+      "built-in patterns take precedence over an exclude negation"
+      [
+        F.dir "tests" [ F.file "a.js" ];
+        F.dir "src" [ F.dir "tests" [ F.file "b.js" ] ];
+        F.file "ok.js";
+      ];
+    (* Select 'ok.js', not 'app/y.js': 'app' is reported as excluded by the
+       command line, which comes before the semgrepignore files. *)
+    test_find_targets ~with_git ~excludes:[ "app/" ]
+      "exclude directory pattern reported before a semgrepignore pattern"
+      [ F.File (".semgrepignore", "app\n"); F.dir "app" [ F.file "y.js" ]; F.file "ok.js" ];
+    (* Select 'ok.txt', not '.hidden.js' or 'sub/.h2.js'. *)
+    test_find_targets ~with_git
+      "semgrepignore wildcard matches a leading period"
+      [
+        F.File (".semgrepignore", "*.js\n");
+        F.file ".hidden.js";
+        F.dir "sub" [ F.file ".h2.js" ];
+        F.file "ok.txt";
+      ];
+    (* Select '.hidden.js' and 'a.js', not 'ok.txt'. *)
+    test_find_targets ~with_git ~includes:[ "*.js" ]
+      "include wildcard matches a leading period"
+      [ F.file ".hidden.js"; F.file "a.js"; F.file "ok.txt" ];
+    (* Select 'a.js', not 'ok.txt': the include pattern that is not valid
+       selects nothing. *)
+    test_find_targets ~with_git ~includes:[ "[abc"; "*.js" ]
+      "include pattern that is not valid selects nothing"
+      [ F.file "a.js"; F.file "ok.txt" ];
   ]
 
 (*
-   '.gitignore' files are consulted only in git projects except
-   for the special kind of projects 'Gitignore_project' which is used
-   only in some tests.
+   '.gitignore' files apply only in git projects, through the files that
+   git lists.
 *)
 let tests_with_git_only =
   let with_git = true in
   [
+    (* Select 'a' and 'b': 'b' is committed although '.gitignore' lists it,
+       and git lists the files it tracks. *)
+    test_find_targets ~with_git ~honor_gitignore:false
+      "a committed file that gitignore lists is selected"
+      [ F.File (".gitignore", "b\n"); F.file "a"; F.file "b" ];
+    (* Select nothing: 'build/app' is in 'build', which the semgrepignore
+       file of the project ignores. Outside any VCS the folder target is
+       its own project and the file is not read. *)
+    test_find_targets ~with_git ~scanning_root:"build/app"
+      "semgrepignore applies to the folders above a folder target"
+      [
+        F.File (".semgrepignore", "build/\n");
+        F.dir "build" [ F.dir "app" [ F.file "a.js" ] ];
+      ];
     (* Select 'a' and 'c', not 'b'. *)
-    test_find_targets ~with_git "gitignore file is always consulted"
+    test_find_targets ~with_git "untracked files that git ignores are not listed"
       ~non_git_files:[ F.file "a"; F.file "b" ]
       [ F.File (".gitignore", "b\n"); F.file "c" ];
     (* Can't select file 'a' via --include when gitignoring its folder. *)
     test_find_targets ~with_git ~includes:[ "a" ]
-      "gitignore file takes precedence over --include"
+      "--include does not select a file that git leaves out"
       [
         F.File (".gitignore", "dir\n");
         F.dir "dir" [ F.file "a"; F.file "b" ];
@@ -275,10 +519,28 @@ let tests_with_git_only =
         F.File (".semgrepignore", "dir/\n");
         F.dir "dir" [ F.dir "sub" [ F.file "a.c" ] ];
       ];
+    (* Select 'frontend/src/app/x.js'. Outside a VCS the scanning root is its
+       own project and the semgrepignore above it is not read. *)
+    test_find_targets ~with_git ~scanning_root:"frontend/src/app"
+      "semgrepignore negation re-includes the scanning root"
+      [
+        F.File (".semgrepignore", "app/\n!frontend/src/app\n");
+        F.dir "app" [ F.file "y.js" ];
+        F.dir "frontend" [ F.dir "src" [ F.dir "app" [ F.file "x.js" ] ] ];
+      ];
+  ]
+
+let tests_without_git_only =
+  let with_git = false in
+  [
+    (* '.gitignore' is not read: select 'a' and 'b'. *)
+    test_find_targets ~with_git "gitignore is not read"
+      [ F.File (".gitignore", "b\n"); F.file "a"; F.file "b" ];
   ]
 
 let tests =
   Testo.categorize "Find_targets"
     (tests_with_or_without_git ~with_git:true
     @ tests_with_git_only
-    @ tests_with_or_without_git ~with_git:false)
+    @ tests_with_or_without_git ~with_git:false
+    @ tests_without_git_only)

@@ -1,0 +1,12 @@
+Test name: without git > semgrepignore negation of 'dir/**' under an ignored directory
+--- Files not added to git ---
+.semgrepignore
+app/y.js
+ok.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected .semgrepignore
+selected ok.js
+--- Skipped targets ---
+ignored app [Semgrep_output_v1_t.Semgrepignore_patterns_match]

@@ -71,11 +71,20 @@ let parse_globs ~kind (strs : Yojson.Safe.t list) =
                 something like `/a`, or even `/b/a`. Essentially, there
                 is allowed to be stuff before and after it.
              *)
-             let s =
-               if Fpath.exists_ext (Fpath.v s) then "**/" ^ s
-               else "**/" ^ s ^ "/**"
+             (* [Glob.Pattern.append] drops the slash where the two
+                patterns meet, so that 'a/' and '/a' give '**/a/**' and
+                not a pattern with '//' *)
+             let pat : Glob.Pattern.t =
+               Glob.Pattern.append [ Glob.Pattern.Any_subpath ]
+                 (Glob.Parse.parse_string s)
              in
-             Some (Glob.Match.compile ~source:loc (Glob.Parse.parse_string s))
+             let pat : Glob.Pattern.t =
+               if Fpath.exists_ext (Fpath.v s) then pat
+               else Glob.Pattern.append pat [ Glob.Pattern.Any_subpath ]
+             in
+             Some
+               (Glob.Match.compile ~match_leading_period:false ~source:loc
+                  pat)
            with
            | Glob.Lexer.Syntax_error _ -> None)
        | _ -> None)
@@ -274,6 +283,7 @@ let mk_env (session : Session.t) (params : Request_params.t) =
   let files =
     session.cached_workspace_targets |> Hashtbl.to_seq_values |> List.of_seq
     |> List_.flatten
+    |> List_.map (fun ({ target_fpath; _ } : Target_and_root.t) -> target_fpath)
   in
   let project_root =
     match

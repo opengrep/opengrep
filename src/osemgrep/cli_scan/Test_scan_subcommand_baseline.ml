@@ -79,27 +79,13 @@ let scan_both (caps : caps) ~(baseline : string) : unit =
 
 let head (caps : caps) : string = String.trim (git caps [ "rev-parse"; "HEAD" ])
 
-(* The findings a scan run with [args] reports, from its JSON. *)
-let json_matches (caps : caps) (args : string list) :
-    Semgrep_output_v1_t.cli_match list =
-  let exit_code, out =
-    Testo.with_capture stdout (fun () ->
-        without_settings (fun () ->
-            Scan_subcommand.main
-              (caps :> Scan_subcommand.caps)
-              (Array.of_list
-                 ([ "opengrep-scan"; "--json"; "--quiet" ]
-                 @ args))))
-  in
-  Exit_code.Check.ok exit_code;
-  (Semgrep_output_v1_j.cli_output_of_string out).results
-
 (* The paths a baseline scan of [root] reports, sorted, from its JSON.
    [unknown_extensions] passes '--scan-unknown-extensions', which makes a
    root named on the command line scanned whatever its extension. *)
 let baseline_paths ?(unknown_extensions : bool = false) (caps : caps)
     ~(baseline : string) (root : string) : string list =
-  json_matches caps
+  json_matches
+    (caps :> Scan_subcommand.caps)
     ([ "-e"; Printf.sprintf "$X = %s" sentinel; "-l"; "python" ]
     @ (if unknown_extensions then [ "--scan-unknown-extensions" ] else [])
     @ [ "--baseline-commit"; baseline; root ])
@@ -617,10 +603,135 @@ let test_head_message_after_baseline (caps : caps) =
       Alcotest.(check (list string))
         "the message of the head's finding, not the baseline's"
         [ "found BBBBBBBB" ]
-        (json_matches caps
+        (json_matches
+           (caps :> Scan_subcommand.caps)
            [ "--config"; "rules.yml"; "--baseline-commit"; baseline; "." ]
         |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                m.extra.message)))
+
+(* A rule for the sentinel whose 'paths:' are [paths]. *)
+let sentinel_rule_with_paths (paths : string) : string =
+  Printf.sprintf
+    "rules:\n\
+    \  - id: sentinel\n\
+    \    languages: [python]\n\
+    \    severity: INFO\n\
+    \    message: m\n\
+    \    pattern: $X = %s\n\
+    \    paths:\n\
+    \      %s\n"
+    sentinel paths
+
+let z_line : string = Printf.sprintf "z = %s\n" sentinel
+
+(* The lines of the findings of a baseline scan of [args] with the rule file
+   [rules], sorted. *)
+let baseline_lines (caps : caps) ~(baseline : string) ~(rules : string)
+    (args : string list) : string list =
+  json_matches
+    (caps :> Scan_subcommand.caps)
+    ([ "--config"; rules; "--baseline-commit"; baseline ] @ args)
+  |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+         String.trim m.extra.lines)
+  |> List.sort String.compare
+
+(* The rule 'paths:' of the baseline scan are matched as in the head scan: a
+   file found under a folder target by its path relative to the project
+   root, a file given as a target by its path as given. Each test has a
+   finding the baseline has and one it does not. *)
+let check_rule_paths_with_baseline (caps : caps) ~(paths : string)
+    ~(dir : string) (args : string -> string list) : unit -> unit =
+  in_repo
+    [
+      F.File ("rules.yml", sentinel_rule_with_paths paths);
+      F.Dir ("sub", [ F.File ("a.py", x_line) ]);
+    ]
+    (fun () ->
+      let baseline = head caps in
+      let repo = Sys.getcwd () in
+      write "sub/a.py" (x_line ^ z_line);
+      let (_ : string) = commit_all caps ~serial:2 "a new finding" in
+      Testutil_files.with_chdir (Fpath.v dir) (fun () ->
+          Alcotest.(check (list string))
+            "only the finding the baseline does not have"
+            [ String.trim z_line ]
+            (baseline_lines caps ~baseline
+               ~rules:(Filename.concat repo "rules.yml")
+               (args repo))))
+
+(* A file renamed in the head is matched in the baseline by the old name's
+   path relative to the project root. *)
+let test_rule_paths_renamed_with_baseline (caps : caps) =
+  let filler = String.concat "" (List.init 100 (fun _ -> "1\n\n")) in
+  in_repo
+    [
+      F.File ("rules.yml", sentinel_rule_with_paths "include: ['sub/*.py']");
+      F.Dir ("sub", [ F.File ("old.py", filler ^ x_line) ]);
+    ]
+    (fun () ->
+      let baseline = head caps in
+      let repo = Sys.getcwd () in
+      let (_ : string) = git caps [ "mv"; "sub/old.py"; "sub/new.py" ] in
+      write "sub/new.py" (filler ^ x_line ^ z_line);
+      let (_ : string) = commit_all caps ~serial:2 "rename and add a finding" in
+      Testutil_files.with_chdir (Fpath.v "sub") (fun () ->
+          Alcotest.(check (list string))
+            "only the finding the baseline does not have"
+            [ String.trim z_line ]
+            (baseline_lines caps ~baseline
+               ~rules:(Filename.concat repo "rules.yml")
+               [ "." ])))
+
+(* An interfile taint rule whose 'paths:' need a folder before the file. *)
+let interfile_rule_with_paths : string =
+  {|
+rules:
+  - id: interfile-sink
+    languages: [python]
+    severity: ERROR
+    message: m
+    mode: taint
+    options:
+      taint_interfile: true
+    paths:
+      include: ['*/store.py', '*/caller.py']
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+|}
+
+(* The interfile replay finds the targets of the command line again in the
+   baseline worktree and matches them by their path as given, as the head
+   scan does. *)
+let test_interfile_given_files_with_baseline (caps : caps) =
+  in_repo
+    [
+      F.File ("rules.yml", interfile_rule_with_paths);
+      F.File ("caller.py", "from store import Store as S\n\n\ndef build():\n    S(source())\n");
+      F.File ("store.py", "class Store:\n    def __init__(self, data):\n        sink(data)\n");
+    ]
+    (fun () ->
+      let baseline = head caps in
+      let repo = Sys.getcwd () in
+      write "store.py"
+        "class Store:\n    def __init__(self, data):\n        sink(data)\n# change\n";
+      let (_ : string) = commit_all caps ~serial:2 "a change below the sink" in
+      let args : string list =
+        [
+          "--config"; "rules.yml"; "--enable-interfile";
+          Filename.concat repo "store.py"; Filename.concat repo "caller.py";
+        ]
+      in
+      Alcotest.(check int)
+        "the finding of a scan without the baseline" 1
+        (List.length (json_matches (caps :> Scan_subcommand.caps) args));
+      Alcotest.(check int)
+        "no finding with the baseline, which has it" 0
+        (List.length
+           (json_matches
+              (caps :> Scan_subcommand.caps)
+              ([ "--baseline-commit"; baseline ] @ args))))
 
 (*****************************************************************************)
 (* Entry point *)
@@ -669,6 +780,21 @@ let tests (caps : caps) =
          (test_cwd_absent_from_baseline caps);
        t "an empty baseline commit scans everything"
          (test_empty_baseline caps);
+       t "rule paths: an absolute folder target with a baseline"
+         (check_rule_paths_with_baseline caps ~paths:"include: ['*/a.py']"
+            ~dir:"sub" (fun (repo : string) -> [ Filename.concat repo "sub" ]));
+       t "rule paths: a folder target in a subfolder with a baseline"
+         (check_rule_paths_with_baseline caps ~paths:"include: ['sub/*.py']"
+            ~dir:"sub" (fun _ -> [ "." ]));
+       t "rule paths: a file given by its absolute path with a baseline"
+         (check_rule_paths_with_baseline caps ~paths:"include: ['*/a.py']"
+            ~dir:"sub" (fun (repo : string) ->
+              [ Filename.concat repo "sub/a.py" ]));
+       t "rule paths: a renamed file with a baseline"
+         (test_rule_paths_renamed_with_baseline caps);
+       t "rule paths: interfile, files given by their absolute paths, with a \
+          baseline"
+         (test_interfile_given_files_with_baseline caps);
        t "the head's message after the baseline scan"
          (test_head_message_after_baseline caps);
      ]

@@ -1,0 +1,23 @@
+Test name: with git > exclude takes precedence over a semgrepignore negation
+--- Files added before 'git add' ---
+.semgrepignore
+app/y.js
+ok.js
+--- begin input files ---
+.semgrepignore
+app/y.js
+ok.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 1 insertion(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 app/y.js
+ create mode 100644 ok.js
+--- '--exclude' patterns ---
+app
+--- Selected targets ---
+selected .semgrepignore
+selected ok.js
+--- Skipped targets ---
+ignored app [Semgrep_output_v1_t.Cli_exclude_flags_match]

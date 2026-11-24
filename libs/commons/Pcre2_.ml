@@ -68,9 +68,9 @@ let extra_flag = `UTF
    the installation of the pcre2 library. We protect ourselves
    from such custom installs.
 *)
-let regexp ?iflags ?(flags = []) ?chtables pat =
+let compile ~(utf : bool) ?iflags ?(flags = []) ?chtables pat =
   (* pcre2 doesn't mind if a flag is duplicated so we just append extra flags *)
-  let flags = extra_flag :: flags in
+  let flags = if utf then extra_flag :: flags else flags in
   (* OCaml's Pcre2 library does not support setting timeouts, and since it's just
    * a wrapper for a C library `Common.set_timeout` doesn't work... So, we set a
    * lower `limit` and `limit_recursion` (default values are 10_000_000) to avoid
@@ -84,6 +84,12 @@ let regexp ?iflags ?(flags = []) ?chtables pat =
       ?iflags ~flags ?chtables pat
   in
   { pattern = pat; regexp }
+
+let regexp ?iflags ?flags ?chtables pat =
+  compile ~utf:true ?iflags ?flags ?chtables pat
+
+let regexp_bytes ?iflags ?flags ?chtables pat =
+  compile ~utf:false ?iflags ?flags ?chtables pat
 
 let pmatch ?iflags ?flags ~rex ?pos ?callout subj =
   try Ok (Pcre2.pmatch ?iflags ?flags ~rex:rex.regexp ?pos ?callout subj) with

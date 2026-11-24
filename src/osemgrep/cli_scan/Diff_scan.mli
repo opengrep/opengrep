@@ -1,10 +1,15 @@
 (* [explicit_targets] replaces the table of the targets named on the command
-   line. The baseline scan names its targets relative to the current
-   directory, another form than the command line's, and passes a table in
-   that form: a target is looked up in it by its path, for the size and
-   '.min.js' bypass and for '--scan-unknown-extensions'. *)
+   line. The baseline scan reads its targets from paths relative to the
+   current directory, another form than the command line's, and passes a
+   table in that form: a target is looked up in it by the path its content
+   is read from, for the size and '.min.js' bypass and for
+   '--scan-unknown-extensions'.
+   [content_path] maps a target to the file its content is read from, when
+   that is not the target itself: the baseline scan reads the files of the
+   baseline worktree and reports and filters its targets as the head scan. *)
 type diff_scan_func =
   ?explicit_targets:Find_targets.Explicit_targets.t ->
+  ?content_path:(Fpath.t -> Fpath.t) ->
   scanning_roots:Scanning_root.directory list ->
   Target_and_root.t list ->
   Rule.rules ->

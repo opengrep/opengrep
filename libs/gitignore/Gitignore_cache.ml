@@ -26,8 +26,7 @@ let warn_unreadable (t : gitignores_cache) (path : Fpath.t) (reason : string) :
   let key = Fpath.to_string path in
   if not (Hashtbl.mem t.unreadable_reported key) then (
     Hashtbl.replace t.unreadable_reported key ();
-    (* nosemgrep: no-logs-in-library *)
-    Logs.warn (fun m -> m "Ignoring the file '%s': %s" key reason))
+    Parse_gitignore.warn_ignored_file path reason)
 
 (* The contents of an ignore file, or None. A path that is not there says
    nothing. One that is there and cannot be read as a file, because it is a
@@ -35,7 +34,9 @@ let warn_unreadable (t : gitignores_cache) (path : Fpath.t) (reason : string) :
    warning and the scan goes on. pysemgrep scanned normally when the path
    was a folder (it tested is_file() and fell back to the built-in patterns)
    and died with a PermissionError, exit code 2, when it was a file it could
-   not open. *)
+   not open. A file that starts with a UTF-16 byte order mark is left out
+   with a warning too: git reads it as bytes, and none of its lines matches
+   a path. *)
 let read_ignore_file_opt (t : gitignores_cache) (path : Fpath.t) :
     string option =
   let warn (reason : string) : string option =
@@ -46,10 +47,9 @@ let read_ignore_file_opt (t : gitignores_cache) (path : Fpath.t) :
   else if not (UFile.is_reg ~follow_symlinks:true path) then
     warn "not a regular file"
   else
-    try Some (UFile.read_file path) with
-    | Sys_error (msg : string) -> warn msg
-    | Unix.Unix_error ((err : Unix.error), _, _) ->
-        warn (Unix.error_message err)
+    match Parse_gitignore.ignore_file_contents path with
+    | Ok (contents : string) -> Some contents
+    | Error (reason : string) -> warn reason
 
 let read_ignore_file (t : gitignores_cache) ~(anchor : Glob.Pattern.t)
     ~(format : Gitignore.format) ~(source_kind : string) (path : Fpath.t) :

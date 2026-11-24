@@ -4,13 +4,12 @@
 open Gitignore
 open Ppath.Operators
 
-let create ?(higher_priority_levels = []) ?(lower_priority_levels = [])
+let create ?(higher_priority_levels = [])
     ~(gitignore_file_cache : Gitignore.gitignores_cache) () =
   {
     project_root = gitignore_file_cache.project_root;
     higher_priority_levels;
     gitignore_file_cache;
-    lower_priority_levels;
     dir_states = Hashtbl.create 1024;
   }
 
@@ -38,79 +37,85 @@ let rec fold_levels func sel_events levels =
         sel_events
       else fold_levels func sel_events levels
 
+(* The events of the patterns of [group] that [event_of] gives for a path,
+   the last first, before [sel_events]. A group is one precedence level:
+   its patterns are read in order, the ignore files from the project root
+   down, and the last matching pattern decides. *)
+let select_in_group (event_of : path_selector -> selection_event option)
+    (sel_events : selection_event list) (group : level list) :
+    selection_event list =
+  List.fold_left
+    (fun (acc : selection_event list) (level : level) ->
+      List.fold_left
+        (fun (acc : selection_event list) (path_selector : path_selector) ->
+          match event_of path_selector with
+          | Some (event : selection_event) -> event :: acc
+          | None -> acc)
+        acc level.patterns)
+    sel_events group
+
 (*
    Filter a path, assuming all its parents were deselected
    (= not gitignored).
 *)
-let select_one acc levels path : Gitignore.selection_event list =
-  fold_levels
-    (fun acc (level : Gitignore.level) ->
-      List.fold_left
-        (fun acc (path_selector : Gitignore.path_selector) ->
-          match path_selector.matcher path with
-          | Some ((Selected _ | Deselected _) as x) -> x :: acc
-          | None -> acc)
-        acc level.patterns)
-    acc levels
+let select_file (path : Ppath.t) (sel_events : selection_event list)
+    (group : level list) : selection_event list =
+  select_in_group
+    (fun (path_selector : path_selector) -> path_selector.matcher path)
+    sel_events group
 [@@profiling]
 
+(* Check the directory [dir_path], given without its trailing slash, against
+   the patterns of [group] in one pass: a pattern matches the directory with
+   or without the trailing slash, which the directory-only patterns need. *)
+let select_directory (dir_path : Ppath.t) (sel_events : selection_event list)
+    (group : level list) : selection_event list =
+  (* add trailing slash to match directory-only patterns *)
+  let dir_path_with_slash = dir_path / "" in
+  select_in_group
+    (fun (path_selector : path_selector) ->
+      match path_selector.matcher dir_path with
+      | Some (event : selection_event) -> Some event
+      | None -> path_selector.matcher dir_path_with_slash)
+    sel_events group
+
 (* Add [segment] to [parent_path] and check whether the partial path is
-   gitignored. [last] is true for the path's final segment, and for a
-   directory queried with a trailing slash, whose own directory-only check
-   is the empty segment that follows. Returns the events and levels to
-   continue from. *)
-let enter opt_gitignore_file_cache sel_events levels parent_path segment
-    ~last =
+   gitignored. [last] is true for the path's final segment. Returns the
+   events and levels to continue from. [priority_levels] are the first
+   levels of [levels], the ones given to the filter: a path is decided by
+   each of them in order, then by the levels of the ignore files together,
+   as one gitignore, and the first of these groups that ignores it
+   decides. *)
+let enter ~(priority_levels : level list)
+    (gitignore_file_cache : Gitignore.gitignores_cache) sel_events levels
+    parent_path segment ~last =
   let levels =
-    match opt_gitignore_file_cache with
-    | Some cache -> (
-        (* load local gitignore file *)
-        match Gitignore_cache.load cache parent_path with
-        | Some additional_level -> levels @ [ additional_level ]
-        | None -> levels)
+    (* load the local ignore file *)
+    match Gitignore_cache.load gitignore_file_cache parent_path with
+    | Some additional_level -> levels @ [ additional_level ]
     | None -> levels
   in
   let file_path = parent_path / segment in
-  let sel_events = select_one sel_events levels file_path in
-  let deselected =
-    match sel_events with
-    | Deselected _ :: _ -> true
-    | _ -> false
+  let groups =
+    List_.map (fun (level : level) -> [ level ]) priority_levels
+    @ [ List_.drop (List.length priority_levels) levels ]
   in
-  (* stop here, don't go deeper as per gitignore spec *)
-  if is_selected sel_events || last then (sel_events, levels)
-  (* If a path has been deselected, don't test for dir-only patterns *)
-  else if deselected then (sel_events, levels)
-  else
-    (* add trailing slash to match directory-only patterns *)
-    let dir_path = file_path / "" in
-    (select_one sel_events levels dir_path, levels)
+  let select_group =
+    if last then select_file file_path else select_directory file_path
+  in
+  (fold_levels select_group sel_events groups, levels)
 
-(* [dir_states], when given, memoises the state after each intermediate
+(* [dir_states] memoises the state after each intermediate
    directory: the events and levels of a directory depend only on the
    directory, and every path below it repeats the same checks otherwise.
-   The last segment, and the directory-only check of a trailing slash, are
-   never memoised. *)
-let select_path ?dir_states opt_gitignore_file_cache sel_events levels
+   A path with a trailing slash is a directory: its state is the one it has
+   as the parent of a path. The last segment of any other path is never
+   memoised. *)
+let select_path
+    ~(dir_states : (string, selection_event list * level list) Hashtbl.t)
+    (gitignore_file_cache : Gitignore.gitignores_cache) sel_events levels
     relative_segments =
-  let rec loop sel_events levels parent_path segments =
-    match segments with
-    | [] -> sel_events
-    | segment :: segments ->
-        let last =
-          match segments with
-          | []
-          | [ "" ] ->
-              true
-          | _ :: _ -> false
-        in
-        let sel_events, levels =
-          enter opt_gitignore_file_cache sel_events levels parent_path segment
-            ~last
-        in
-        if is_selected sel_events then sel_events
-        else loop sel_events levels (parent_path / segment) segments
-  in
+  let priority_levels = levels in
   (* State after the intermediate directories [dirs], memoised per prefix. *)
   let rec dir_state (dirs : string list) : selection_event list * level list =
     match List.rev dirs with
@@ -119,51 +124,48 @@ let select_path ?dir_states opt_gitignore_file_cache sel_events levels
         let parents = List.rev rev_parents in
         let parent_path = Ppath.add_segs Ppath.root parents in
         let key = Ppath.to_string_fast (parent_path / segment) in
-        match Option.bind dir_states (fun tbl -> Hashtbl.find_opt tbl key) with
+        match Hashtbl.find_opt dir_states key with
         | Some state -> state
         | None ->
             let sel_events, levels = dir_state parents in
             let state =
               if is_selected sel_events then (sel_events, levels)
               else
-                enter opt_gitignore_file_cache sel_events levels parent_path
-                  segment ~last:false
+                enter ~priority_levels gitignore_file_cache sel_events levels
+                  parent_path segment ~last:false
             in
-            Option.iter (fun tbl -> Hashtbl.replace tbl key state) dir_states;
+            Hashtbl.replace dir_states key state;
             state)
   in
-  let dirs, tail =
+  let dirs, last_segment =
     match List.rev relative_segments with
-    | "" :: segment :: rev_dirs -> (List.rev rev_dirs, [ segment; "" ])
-    | segment :: rev_dirs -> (List.rev rev_dirs, [ segment ])
-    | [] -> ([], [])
+    | "" :: rev_dirs -> (List.rev rev_dirs, None)
+    | segment :: rev_dirs -> (List.rev rev_dirs, Some segment)
+    | [] -> ([], None)
   in
   let sel_events, levels = dir_state dirs in
-  if is_selected sel_events then sel_events
-  else loop sel_events levels (Ppath.add_segs Ppath.root dirs) tail
+  match last_segment with
+  | Some segment when not (is_selected sel_events) ->
+      fst
+        (enter ~priority_levels gitignore_file_cache sel_events levels
+           (Ppath.add_segs Ppath.root dirs) segment ~last:true)
+  | Some _
+  | None ->
+      sel_events
 
 (*
    Filter a path according to gitignore rules, requiring all the parent paths
    to be deselected (not gitignored).
 
    For a given path, we check the acceptability of all its ancestor folders.
-   Each time we descend into a folder, we read the .gitignore files in
+   Each time we descend into a folder, we read the ignore files in
    that folder which add filters to the existing filters found earlier.
 *)
 let select t (full_git_path : Ppath.t) =
-  let sel_events = [] in
   let rel_segments = Ppath.relative_segments full_git_path in
-  (* higher levels (command-line)
-     and middle levels (gitignore files discovered along the way) *)
-  let sel_events =
-    select_path ~dir_states:t.dir_states (Some t.gitignore_file_cache)
-      sel_events t.higher_priority_levels rel_segments
-  in
-  if is_selected sel_events then result_of_selection_events sel_events
-  else
-    (* lower levels (other sources of gitignore patterns) *)
-    let sel_events =
-      select_path None sel_events t.lower_priority_levels rel_segments
-    in
-    result_of_selection_events sel_events
+  (* the levels given to the filter (built-in and command-line patterns)
+     and the levels of the ignore files found along the way *)
+  select_path ~dir_states:t.dir_states t.gitignore_file_cache []
+    t.higher_priority_levels rel_segments
+  |> result_of_selection_events
 [@@profiling]

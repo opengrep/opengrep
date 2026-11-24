@@ -41,8 +41,6 @@ let filter_target_for_xlang (xlang : Xlang.t) (path : Fpath.t) : bool =
    - write tests specifically to test paths.include and paths.exclude
      in different contexts (absolute target paths, relative target paths,
      git project, non-git project);
-   - make sure that the paths passed to the glob matcher are relative
-     to the project root;
    - use the same rules as for gitignore (forget about Python's wcmatch
      that we're not going to reimplement completely):
      * a slash at the beginning or in the middle of the path makes it
@@ -53,7 +51,7 @@ let filter_target_for_xlang (xlang : Xlang.t) (path : Fpath.t) : bool =
 
    Details:
 
-   Used by Run_semgrep.semgrep_with_rules().
+   Used by [rule_applies].
    See also https://semgrep.dev/docs/writing-rules/rule-syntax/#paths
    TODO: according to the doc,
    "Paths [in include: and exclude: patterns] are relative to the root
@@ -64,8 +62,7 @@ let filter_target_for_xlang (xlang : Xlang.t) (path : Fpath.t) : bool =
    LESS: there used to be a time where semgrep-core was handling the
    include/exclude too. Can we find back this code?
 *)
-let filter_paths (paths : Rule.paths) (path : Fpath.t) : bool =
-  let path_str = Fpath.to_string path in
+let filter_paths (paths : Rule.paths) (path_str : string) : bool =
   (* A glob matches at any depth: see [Rule.glob_of_pattern]. *)
   let match_glob (glob : Rule.glob) : bool =
     glob.matchers
@@ -97,21 +94,28 @@ let filter_paths (paths : Rule.paths) (path : Fpath.t) : bool =
  * and is essentially randomly generated. `paths:` filtering shouldn't apply to
  * this!
  *
- * Note also that `paths:` filters are relative to the root of a project [0],
- * so if the target's file is an absolute path, we don't want to use that for
- * filtering: instead, we'd want the origin to be the desired relative path and
- * use that.
+ * Note also that `paths:` filters are relative to the root of a project [0]:
+ * a file found under a directory target is matched by its path relative to
+ * the project root, whatever form the directory target was given in; a file
+ * given as a target is matched by its origin.
  *
  * [0]: <https://semgrep.dev/docs/writing-rules/rule-syntax/#paths>
  *)
-let rule_applies_to_origin (paths : Rule.paths option) (origin : Origin.t) :
+let matched_paths (target_proj_path : Target_and_root.target_proj_path)
+    (origin : Origin.t) : string list =
+  match target_proj_path with
+  | In_project ppath -> [ String.concat "/" (Ppath.relative_segments ppath) ]
+  | Not_in_project -> (
+      match origin with
+      | File path -> [ Fpath.to_string path ]
+      | GitBlob { paths = target_paths; _ } ->
+          List_.map
+            (fun ((_, path_at_commit) : _ * Fpath.t) ->
+              Fpath.to_string path_at_commit)
+            target_paths)
+
+let rule_applies (paths : Rule.paths option) (matched_paths : string list) :
     bool =
   match paths with
-  | Some paths -> (
-      match origin with
-      | File path -> filter_paths paths path
-      | GitBlob { paths = target_paths; _ } ->
-          target_paths
-          |> List.exists (fun (_, path_at_commit) ->
-                 filter_paths paths path_at_commit))
+  | Some paths -> List.exists (filter_paths paths) matched_paths
   | None -> true

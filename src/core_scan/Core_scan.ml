@@ -607,7 +607,8 @@ let rules_for_analyzer ~analyzer rules =
    or something even better to reduce the time spent on each target in
    case we have a high number of rules and a high fraction of irrelevant
    rules? *)
-let rules_for_target ~analyzer ~products ~origin ~respect_rule_paths rules =
+let rules_for_target ~analyzer ~products ~(matched_paths : string list)
+    ~respect_rule_paths rules =
   let rules = rules_for_analyzer ~analyzer rules in
   let rules =
     rules
@@ -622,7 +623,7 @@ let rules_for_target ~analyzer ~products ~origin ~respect_rule_paths rules =
               * again here for osemgrep which use a different file targeting
               * strategy.
            *)
-           Filter_target.rule_applies_to_origin r.paths origin)
+           Filter_target.rule_applies r.paths matched_paths)
   else rules
 
 (*****************************************************************************)
@@ -646,11 +647,13 @@ let rules_for_lockfile_kind ~lockfile_kind rules =
          then Some (r, formula)
          else None)
 
-let supply_chain_rules ~lockfile_kind ~respect_rule_paths ~origin rules =
+let supply_chain_rules ~lockfile_kind ~respect_rule_paths
+    ~(matched_paths : string list) rules =
   let rules = rules_for_lockfile_kind ~lockfile_kind rules in
   if respect_rule_paths then
     rules
-    |> List.filter (fun ((r : R.rule), _) -> Filter_target.rule_applies_to_origin r.paths origin)
+    |> List.filter (fun ((r : R.rule), _) ->
+           Filter_target.rule_applies r.paths matched_paths)
   else rules
 
 let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
@@ -719,11 +722,16 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
        * never use. We should pass the real manifest here.
        *)
       let lockfile_xtarget = lockfile_xtarget_resolve None lockfile in
-      let origin = Origin.File path in
+      (* a lockfile carries no project path: its rules are matched against
+         its path *)
+      let matched_paths =
+        Filter_target.matched_paths Target_and_root.Not_in_project
+          (Origin.File path)
+      in
       (* only rules with a dependency formula run here, so a dispatched
          interfile rule is never matched against a lockfile *)
       let rules =
-        supply_chain_rules ~lockfile_kind:kind ~origin
+        supply_chain_rules ~lockfile_kind:kind ~matched_paths
           ~respect_rule_paths:config.respect_rule_paths rules
       in
       let dep_matches =
@@ -1144,9 +1152,11 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   let target_rules (target : Target.t) : target_rules =
     match target with
     | Lockfile _ -> Per_target_rules valid_rules
-    | Regular { analyzer; products; path = { origin; _ }; _ } -> (
+    | Regular { analyzer; products; path = { origin; _ }; target_proj_path; _ }
+      -> (
+        let matched_paths = Filter_target.matched_paths target_proj_path origin in
         match
-          rules_for_target ~analyzer ~products ~origin
+          rules_for_target ~analyzer ~products ~matched_paths
             ~respect_rule_paths:config.respect_rule_paths valid_rules
         with
         | [] -> No_applicable_rule

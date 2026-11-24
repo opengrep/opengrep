@@ -1,0 +1,16 @@
+Test name: with git > built-in patterns do not apply to the folders above the current folder as a target
+--- Files added before 'git add' ---
+build/app/a.js
+build/b.js
+--- begin input files ---
+build/app/a.js
+build/b.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 build/app/a.js
+ create mode 100644 build/b.js
+--- Selected targets ---
+selected a.js
+--- Skipped targets ---

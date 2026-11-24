@@ -1,6 +1,5 @@
 (*
-   Parse and interpret '.semgrepignore' files in addition to '.gitignore'
-   files.
+   Parse and interpret '.semgrepignore' files.
 
    The patterns they contain specify file paths to exclude from Semgrep scans.
 
@@ -19,20 +18,17 @@ type default_semgrepignore_patterns = Empty | Semgrep_scan_legacy
 
 val default_semgrepignore_filename : string
 
-type exclusion_mechanism = {
-  use_gitignore_files : bool;
-  use_semgrepignore_files : bool;
-}
+type exclusion_mechanism = { use_semgrepignore_files : bool }
 
 (*
    Initialize the data used to filter paths.
    The project_root path must exist. It is used to
-   locate .gitignore and .semgrepignore files.
+   locate .semgrepignore files.
 
    This is an instantiation of Gitignore_filter.t specific to Semgrep.
 
-   Use Git_project.find_project_root to determine the root of the
-   git project.
+   Use Project.find_any_project_root to determine the root of the
+   project.
 
    The '.semgrepignore' of a folder applies to the paths under that folder,
    like a '.gitignore' does. The folder the command runs from is not
@@ -46,4 +42,9 @@ val create :
   exclusion_mechanism:exclusion_mechanism ->
   project_root:Fpath.t ->
   unit ->
+  builtin_patterns_root:Ppath.t ->
   Gitignore.filter
+(* The function returned gives the filter of a scanning root: the built-in
+   patterns apply from [builtin_patterns_root] downwards, the folder given
+   as a target, or the project root. Its filters share the ignore files of
+   the project. *)

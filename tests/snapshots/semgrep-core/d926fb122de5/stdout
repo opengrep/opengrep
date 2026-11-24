@@ -1,0 +1,14 @@
+Test name: without git > built-in patterns take precedence over an exclude negation
+--- Files not added to git ---
+ok.js
+src/tests/b.js
+tests/a.js
+--- begin input files ---
+--- end input files ---
+--- '--exclude' patterns ---
+!tests
+--- Selected targets ---
+selected ok.js
+--- Skipped targets ---
+ignored src/tests [Semgrep_output_v1_t.Semgrepignore_patterns_match]
+ignored tests [Semgrep_output_v1_t.Semgrepignore_patterns_match]

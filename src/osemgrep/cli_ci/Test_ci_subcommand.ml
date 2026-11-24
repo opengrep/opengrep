@@ -294,6 +294,22 @@ let test_subdir_nonexistent_fatal (caps : Ci_subcommand.caps) () =
     ~extra_args:[ "--subdir"; "no-such-dir"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
+(* an --include or --exclude pattern that is not valid is an error like any
+ * other: the scan stops, suppressed to ok by default (the finding is not
+ * reported), fatal with --no-suppress-errors *)
+let test_invalid_include_suppressed (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "--include"; "[abc" ] ()
+
+let test_invalid_include_fatal (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "--include"; "[abc"; "--no-suppress-errors" ]
+    ~check:Exit_code.Check.fatal ()
+
+let test_invalid_exclude_suppressed (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "--exclude"; "[abc" ] ()
+
 (* a bad output destination is an error like any other: suppressed by
  * default, fatal with --no-suppress-errors *)
 let test_output_conflict_suppressed (caps : Ci_subcommand.caps) () =
@@ -954,6 +970,15 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "nonexistent subdir is fatal without suppression"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_subdir_nonexistent_fatal caps);
+      t "invalid --include is suppressed to ok"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_invalid_include_suppressed caps);
+      t "invalid --include is fatal without suppression"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_invalid_include_fatal caps);
+      t "invalid --exclude is suppressed to ok"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_invalid_exclude_suppressed caps);
       t "output conflict is suppressed to ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_output_conflict_suppressed caps);
       t "output conflict is fatal without suppression"

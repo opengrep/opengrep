@@ -15,11 +15,6 @@ and kind =
   | Mercurial_project
   | Subversion_project
   | Darcs_project
-  (* A gitignore project is a fake git project. It doesn't have a valid
-   *  '.git/' folder but its '.gitignore' files should be read as part
-   * of the semgrepignore mechanism.
-   *)
-  | Gitignore_project
   (* A no-VCS project is any project for which we don't support the
      version-control system or for which it is unknown or purposefully
      ignored with a special option.
@@ -66,7 +61,7 @@ type scanning_root_info = {
    current folder plays no part in this.
 
    'force_root' can be used to impose the project root rather than guessing
-   it. It's useful for testing the gitignore mechanism and stay within
+   it. It's useful for testing the semgrepignore mechanism and stay within
    the confines of the test folder.
 
    Note that this function does not call any external program like

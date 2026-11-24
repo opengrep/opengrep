@@ -7,6 +7,9 @@ val ignore_file_path : filename:string -> Fpath.t -> Fpath.t
    once per file for the life of the cache. *)
 val read_ignore_file_opt : Gitignore.gitignores_cache -> Fpath.t -> string option
 
+(* The anchor of the patterns of an ignore file in the folder [dir]. *)
+val anchor_of_git_path : Ppath.t (* directory *) -> Glob.Pattern.t
+
 (* Initialize the cache for a project defined by the project root folder.
    See the doc in Gitignore.ml about gitignore_filenames for more information
    on the ?gitignore_filenames parameter below.

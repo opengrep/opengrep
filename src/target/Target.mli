@@ -52,6 +52,8 @@ type regular = {
   project_root : Fpath.t option;
       (** Absolute project root, threaded from [Find_targets] during target
           discovery; used by the interfile taint engine to absolutize paths. *)
+  target_proj_path : Target_and_root.target_proj_path;
+      (** The path the [paths:] of a rule are matched against. *)
 }
 (** A regular semgrep target, comprising source code (or, for
    regex/generic, arbitrary text data) to be executed. See also {!Xtarget.t},
@@ -80,7 +82,13 @@ type t = Regular of regular | Lockfile of Lockfile.t [@@deriving show]
 (*****************************************************************************)
 
 val mk_regular :
-  ?lockfile:Lockfile.t -> ?project_root:Fpath.t -> Xlang.t -> Product.t list -> Origin.t -> regular
+  ?lockfile:Lockfile.t ->
+  ?project_root:Fpath.t ->
+  target_proj_path:Target_and_root.target_proj_path ->
+  Xlang.t ->
+  Product.t list ->
+  Origin.t ->
+  regular
 (** [mk_regular analyzer products origin] is a {!regular} target
       originating from [origin] to be analyzed with [analyzer] for [products].
       If [lockfile] is specified then it shall be used as the associated
@@ -92,7 +100,12 @@ val mk_regular :
  *)
 
 (* useful in tests *)
-val mk_target : ?project_root:Fpath.t -> Xlang.t -> Fpath.t -> t
+val mk_target :
+  ?project_root:Fpath.t ->
+  target_proj_path:Target_and_root.target_proj_path ->
+  Xlang.t ->
+  Fpath.t ->
+  t
 
 (*****************************************************************************)
 (* Semgrep_output_v1.target -> Target.t *)

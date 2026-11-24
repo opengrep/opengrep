@@ -3,8 +3,13 @@ val filter_target_for_xlang : Xlang.t -> Fpath.t -> bool
 
 (* Select the file if it satisfies the include: exclude: constraints
  * in a rule paths: field *)
-val filter_paths : Rule.paths -> Fpath.t -> bool
+val filter_paths : Rule.paths -> string -> bool
 
-(* A rule's paths: constraints on a target's origin: the path as the user
- * names it, at the commit for a git blob; no constraints, every origin. *)
-val rule_applies_to_origin : Rule.paths option -> Origin.t -> bool
+(* The paths a rule's paths: constraints are matched against: the path
+ * relative to the project root for a file found under a directory target,
+ * the origin for a file given as a target (at each commit for a git blob). *)
+val matched_paths : Target_and_root.target_proj_path -> Origin.t -> string list
+
+(* A rule's paths: constraints on the paths of [matched_paths]; no
+ * constraints, every target. *)
+val rule_applies : Rule.paths option -> string list -> bool

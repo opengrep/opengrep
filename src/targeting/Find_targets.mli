@@ -47,10 +47,9 @@ type conf = {
   include_ : string list option;
   apply_includes_excludes_to_file_targets: bool;
   max_target_bytes : int;
-  (* Whether to respect what is specified in the '.gitignore' files
-     found in the project and extended by optional '.semgrepignore' files.
-     Note that Git supports other sources of gitignore patterns, making
-     this option confusing. *)
+  (* Whether git leaves out the untracked files that its ignore rules
+     ('.gitignore' files and Git's other sources of ignore patterns)
+     exclude when it lists the files of a git project. *)
   respect_gitignore : bool;
   (* Whether to respect or ignore the '.semgrepignore' files found
      in the project. *)

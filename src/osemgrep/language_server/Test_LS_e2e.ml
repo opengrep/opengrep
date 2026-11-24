@@ -1202,6 +1202,15 @@ let test_search_includes_excludes caps () =
         assert_with_includes_excludes ~includes:[ "a/b/c.py" ] ~matches_c:true
           ~matches_test:false ()
       in
+      (* a folder written with a trailing or a leading slash *)
+      let%lwt () =
+        assert_with_includes_excludes ~includes:[ "a/" ] ~matches_c:true
+          ~matches_test:false ()
+      in
+      let%lwt () =
+        assert_with_includes_excludes ~includes:[ "/b" ] ~matches_c:true
+          ~matches_test:false ()
+      in
       let%lwt info = send_exit info in
       ignore info;
 

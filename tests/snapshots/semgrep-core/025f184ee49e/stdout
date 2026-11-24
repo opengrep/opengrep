@@ -1,0 +1,10 @@
+Test name: without git > built-in patterns apply below a folder target
+--- Files not added to git ---
+src/build/b.js
+src/s.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected src/s.js
+--- Skipped targets ---
+ignored src/build [Semgrep_output_v1_t.Semgrepignore_patterns_match]

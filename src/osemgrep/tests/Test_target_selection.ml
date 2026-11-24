@@ -81,15 +81,6 @@ let repos_with_tests : repo_with_tests list =
       tests = [ test_list_from_project_root; test_cli_list_from_project_root ];
     };
     {
-      repo_name = "gitignore-deignore";
-      repo_files =
-        [
-          gitignore [ "bin/*"; "!bin/ignore-me-not" ];
-          dir "bin" [ file "ignore-me"; file "ignore-me-not" ];
-        ];
-      tests = [ test_list_from_project_root; test_cli_list_from_project_root ];
-    };
-    {
       repo_name = "nested-repo";
       repo_files = [ dir "a" [ dir "b" [ file "target" ] ] ];
       tests =

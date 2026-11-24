@@ -1,0 +1,27 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-c' 'safe.bareRepository=explicit' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][WARNING]: the target 'build/app' is skipped by <TMP>/<MASKED>/.semgrepignore, line 1: 'build/'
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+  Scan skipped: 1 directories matching .semgrepignore patterns
+  For a full list of skipped files, run opengrep with the --verbose flag.
+
+Ran 1 rule on 1 file: 1 finding.
+ASSERT exit code

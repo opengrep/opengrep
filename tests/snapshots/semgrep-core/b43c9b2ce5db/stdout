@@ -1,0 +1,23 @@
+Test name: with git > semgrepignore including a gitignore with a negation
+--- Files added before 'git add' ---
+.gitignore
+.semgrepignore
+app/y.js
+frontend/src/app/x.js
+--- begin input files ---
+.gitignore
+.semgrepignore
+app/y.js
+frontend/src/app/x.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 3 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 .semgrepignore
+ create mode 100644 frontend/src/app/x.js
+--- Selected targets ---
+selected .gitignore
+selected .semgrepignore
+selected frontend/src/app/x.js
+--- Skipped targets ---

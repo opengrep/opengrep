@@ -1,0 +1,14 @@
+Test name: without git > semgrepignore wildcard matches a leading period
+--- Files not added to git ---
+.hidden.js
+.semgrepignore
+ok.txt
+sub/.h2.js
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected .semgrepignore
+selected ok.txt
+--- Skipped targets ---
+ignored .hidden.js [Semgrep_output_v1_t.Semgrepignore_patterns_match]
+ignored sub/.h2.js [Semgrep_output_v1_t.Semgrepignore_patterns_match]

@@ -5,29 +5,86 @@ module M = Glob.Match
 (* Helpers *)
 (*****************************************************************************)
 
-let read_lines_from_string =
+(* The line without its trailing spaces, except the ones a backslash
+   quotes, as in gitignore. *)
+let trim_trailing_spaces (line : string) : string =
+  let length = String.length line in
+  (* [kept]: the length of the line up to its last character that is not
+     a trailing space *)
+  let rec scan (i : int) (kept : int) : int =
+    if i >= length then kept
+    else
+      match line.[i] with
+      | ' ' -> scan (i + 1) kept
+      | '\\' when i + 1 < length -> scan (i + 2) (i + 2)
+      | _ -> scan (i + 1) (i + 1)
+  in
+  String.sub line 0 (scan 0 0)
+
+(* The lines are bytes, as in git, so a line that is not valid UTF-8 is
+   read like any other. *)
+let read_lines_from_string (str : string) : string list =
   (*
-     - eliminate trailing spaces
+     - eliminate trailing spaces that a backslash does not quote
      - support Windows line endings regardless of current platform
   *)
-  let sep = Pcre2_.regexp " *\r?\n" in
-  fun str ->
-    match Pcre2_.split ~rex:sep str with
-    | Ok res -> res
-    | Error err ->
-        (* not sure why it would happen so we let it fail *)
-        raise (Pcre2.Error err)
+  String.split_on_char '\n' str
+  |> List_.map (fun (line : string) ->
+         let line =
+           if String.ends_with ~suffix:"\r" line then
+             String.sub line 0 (String.length line - 1)
+           else line
+         in
+         trim_trailing_spaces line)
 
-let is_ignored_line =
-  let rex = Pcre2_.regexp "^(?:[ \t]$|#.*)$" in
-  fun str -> Pcre2_.pmatch_noerr ~rex str
+let utf8_byte_order_mark = "\xEF\xBB\xBF"
+
+(* The lines of an ignore file. A UTF-8 byte order mark at its start is
+   skipped, as git does. *)
+let read_lines_from_file_contents (contents : string) : string list =
+  if String.starts_with ~prefix:utf8_byte_order_mark contents then
+    let bom_length = String.length utf8_byte_order_mark in
+    read_lines_from_string
+      (String.sub contents bom_length (String.length contents - bom_length))
+  else read_lines_from_string contents
+
+(* Why the contents of an ignore file are left out, if they are: git reads
+   a file in UTF-16 as bytes, and none of its lines matches a path. *)
+let encoding_error (contents : string) : string option =
+  if
+    String.starts_with ~prefix:"\xFF\xFE" contents
+    || String.starts_with ~prefix:"\xFE\xFF" contents
+  then Some "encoded in UTF-16; save it as UTF-8"
+  else None
+
+(* The contents of an ignore file, or the reason they are left out. *)
+let ignore_file_contents (path : Fpath.t) : (string, string) result =
+  match UFile.read_file path with
+  | contents -> (
+      match encoding_error contents with
+      | Some (reason : string) -> Error reason
+      | None -> Ok contents)
+  | exception Sys_error (msg : string) -> Error msg
+  | exception Unix.Unix_error ((err : Unix.error), _, _) ->
+      Error (Unix.error_message err)
+
+(* The warning for an ignore file that is left out. *)
+let warn_ignored_file (path : Fpath.t) (reason : string) : unit =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m "Ignoring the file '%s': %s" (Fpath.to_string path) reason)
+
+(* A blank line or a comment, as in gitignore: the trailing spaces are
+   already removed. *)
+let is_ignored_line (str : string) : bool =
+  String.equal str "" || String.starts_with ~prefix:"#" str
 
 (* semgrep-legacy (deprecated)
 
    Try to parse a line of input as a ':include' instruction
 *)
 let parse_maybe_include_line =
-  let rex = Pcre2_.regexp {|^[ \t]*:include[ \t]*([^ \t]*)[ \t]*$|} in
+  let rex = Pcre2_.regexp_bytes {|^[ \t]*:include[ \t]*([^ \t]*)[ \t]*$|} in
   let parse ~orig_semgrepignore_path line : Fpath.t option =
     match Pcre2_.exec ~rex line with
     | Ok (Some res) -> (
@@ -53,24 +110,32 @@ let parse_maybe_include_line =
   in
   parse
 
-let rec contains_nontrailing_slash (pat : Glob.Pattern.t) =
-  match pat with
-  | Segment [] :: pat -> contains_nontrailing_slash pat
-  | [] -> false
-  | _nonempty :: (* trailing slash *) [ Segment [] ]
-  | [ _nonempty ] ->
-      false
-  | _nonempty1 :: _nonempty2 :: _ -> true
+(* The pattern without one trailing '/', and whether it had one: as in
+   gitignore, that '/' restricts the pattern to folders. *)
+let split_trailing_slash (str : string) : string * bool =
+  if String.ends_with ~suffix:"/" str then
+    (String.sub str 0 (String.length str - 1), true)
+  else (str, false)
 
 (* anchored pattern = relative to the work directory only, as opposed to
-   being relative to any folder in the subtree. *)
-let is_anchored_pattern (pat : Glob.Pattern.t) =
-  match pat with
-  (* /... *)
-  | Segment [] :: _ -> true
-  (* **/ *)
-  | Any_subpath :: _ -> true
-  | pat -> contains_nontrailing_slash pat
+   being relative to any folder in the subtree. As in gitignore, any '/'
+   other than a trailing one anchors a pattern, also inside a bracket
+   expression or after a backslash. *)
+let is_anchored_pattern (str : string) : bool =
+  String.contains (fst (split_trailing_slash str)) '/'
+
+(* The glob of a gitignore pattern, which matches at any depth unless it is
+   anchored. None when the pattern is empty without its trailing '/': it
+   matches nothing, as in gitignore. *)
+let read_pattern (str : string) : Glob.Pattern.t option =
+  let glob, folders_only = split_trailing_slash str in
+  if String.equal glob "" then None
+  else
+    let pat = Glob.Parse.parse_string glob in
+    let pat : Glob.Pattern.t =
+      if is_anchored_pattern str then pat else Any_subpath :: pat
+    in
+    Some (if folders_only then pat @ [ Segment [] ] else pat)
 
 (*
    Parse and compile a gitignore pattern.
@@ -84,13 +149,14 @@ let is_anchored_pattern (pat : Glob.Pattern.t) =
    However a non-anchored pattern such as '*.c' will be expanded into
    '/foo/**/*.c'.
 *)
-let parse_pattern ~source ~anchor str : M.compiled_pattern =
-  let pat = Glob.Parse.parse_string str in
-  let absolute_pattern =
-    if is_anchored_pattern pat then Glob.Pattern.append anchor pat
-    else Glob.Pattern.append anchor (Any_subpath :: pat)
-  in
-  M.compile ~source absolute_pattern
+let parse_pattern ~source ~anchor str : M.compiled_pattern list =
+  match read_pattern str with
+  | None -> []
+  | Some (pat : Glob.Pattern.t) ->
+      [
+        M.compile ~match_leading_period:true ~source
+          (Glob.Pattern.append anchor pat);
+      ]
 
 (*
    A '--include' or '--exclude' pattern from the command line anchors at
@@ -101,13 +167,29 @@ let parse_pattern ~source ~anchor str : M.compiled_pattern =
    (TargetManager.preprocess_path_patterns of target_manager.py).
 *)
 let parse_cli_pattern ~source ~anchor str : M.compiled_pattern list =
-  let pat = Glob.Parse.parse_string str in
-  let pat : Glob.Pattern.t =
-    if is_anchored_pattern pat then pat else Any_subpath :: pat
+  match read_pattern str with
+  | None -> []
+  | Some (pat : Glob.Pattern.t) ->
+      [ pat; Glob.Pattern.append pat [ Any_subpath ] ]
+      |> List_.map (fun (pat : Glob.Pattern.t) ->
+             M.compile ~match_leading_period:true ~source
+               (Glob.Pattern.append anchor pat))
+
+(* The reason a pattern of the command line is not valid, if it is not:
+   the compilation of [parse_cli_pattern], after a leading '!'. *)
+let cli_pattern_error (line : string) : string option =
+  let pattern_str =
+    match remove_negator line with
+    | None -> line
+    | Some s -> s
   in
-  [ pat; Glob.Pattern.append pat [ Any_subpath ] ]
-  |> List_.map (fun (pat : Glob.Pattern.t) ->
-         M.compile ~source (Glob.Pattern.append anchor pat))
+  match
+    parse_cli_pattern
+      ~source:(M.string_loc ~source_kind:None line)
+      ~anchor:Glob.Pattern.root_pattern pattern_str
+  with
+  | (_ : M.compiled_pattern list) -> None
+  | exception Glob.Lexer.Syntax_error (msg : string) -> Some msg
 
 (* whether any of the patterns matches, without allocating a closure per
    call: this runs on every path of the scan *)
@@ -116,51 +198,55 @@ let rec any_match (path : string) (patterns : M.compiled_pattern list) : bool =
   | [] -> false
   | pattern :: patterns -> M.run pattern path || any_match path patterns
 
+(* The warning for a line whose pattern is not a valid glob, which then
+   matches nothing. *)
+let warn_invalid_pattern ~(source_name : string) ~(line_number : int)
+    (line : string) (reason : string) : unit =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m
+        "%s, line %d: '%s' is not a valid pattern and is ignored (%s); \
+         correct or remove the line"
+        source_name line_number line reason)
+
 (* [compile] turns the pattern of a line into the matchers any of which
    selects a path. *)
+let pattern_gen
+    ~(compile : source:M.loc -> string -> M.compiled_pattern list)
+    (source_name : string) (source_kind : string) (line_number : int)
+    (line_contents : string) : path_selector option =
+  let loc : M.loc =
+    {
+      source_name;
+      source_kind = Some source_kind;
+      line_number;
+      line_contents;
+    }
+  in
+  let is_negated, pattern_str =
+    match remove_negator line_contents with
+    | None -> (false, line_contents)
+    | Some s -> (true, s)
+  in
+  (* a pattern that is not a valid glob matches nothing, as in gitignore *)
+  match compile ~source:loc pattern_str with
+  | exception Glob.Lexer.Syntax_error (msg : string) ->
+      warn_invalid_pattern ~source_name ~line_number line_contents msg;
+      None
+  | patterns ->
+      let matcher (ppath : Ppath.t) =
+        match any_match (Ppath.to_string_fast ppath) patterns with
+        | true ->
+            if is_negated then Some (Deselected loc) else Some (Selected loc)
+        | false -> None
+      in
+      Some { loc; matcher }
+
 let parse_line_gen
     ~(compile : source:M.loc -> string -> M.compiled_pattern list) source_name
     source_kind line_number line_contents =
   if is_ignored_line line_contents then None
-  else
-    let loc : M.loc =
-      {
-        source_name;
-        source_kind = Some source_kind;
-        line_number;
-        line_contents;
-      }
-    in
-    let is_negated, pattern_str =
-      match remove_negator line_contents with
-      | None -> (false, line_contents)
-      | Some s -> (true, s)
-    in
-    let patterns = compile ~source:loc pattern_str in
-    let matcher (ppath : Ppath.t) =
-      match any_match (Ppath.to_string_fast ppath) patterns with
-      | true ->
-          if is_negated then Some (Deselected loc) else Some (Selected loc)
-      | false -> None
-    in
-    Some { loc; matcher }
-
-let compile_gitignore_pattern ~anchor ~source (str : string) :
-    M.compiled_pattern list =
-  [ parse_pattern ~source ~anchor str ]
-
-(* A line whose pattern is not anchored to the folder of its file matches
-   at any depth, so it still means something for a path outside that
-   folder. Comments and blank lines hold no pattern to parse. *)
-let is_unanchored_line (line : string) : bool =
-  is_ignored_line line
-  ||
-  let pattern_str =
-    match remove_negator line with
-    | None -> line
-    | Some s -> s
-  in
-  not (is_anchored_pattern (Glob.Parse.parse_string pattern_str))
+  else pattern_gen ~compile source_name source_kind line_number line_contents
 
 (* semgrep-legacy *)
 let get_include_path ~orig_semgrepignore_path relative_include_path =
@@ -178,48 +264,56 @@ let get_include_path ~orig_semgrepignore_path relative_include_path =
 
    It will not expand includes recursively to avoid cycles and other
    complications.
-*)
-let rec expand_includes ~orig_semgrepignore_path lines =
-  let expand_line line =
-    match parse_maybe_include_line ~orig_semgrepignore_path line with
-    | Some relative_include_path ->
-        let include_path =
-          get_include_path ~orig_semgrepignore_path relative_include_path
-        in
-        if UFile.is_reg ~follow_symlinks:true include_path then
-          include_path |> UFile.read_file |> read_lines_from_string
-        else
-          (* ignore silently
-             (why: git also ignores .gitignore files that are broken
-             symlinks) *)
-          []
-    | None -> [ line ]
-  in
-  List.concat_map expand_line lines
 
-(* [keep_line] leaves a line out after the lines are numbered, so that the
-   line numbers of the patterns kept are the ones of the file *)
-and from_lines ?(keep_line : string -> bool = fun (_ : string) -> true)
-    ~compile ~allow_include ~name ~source_kind ~source_path lines =
-  let lines =
-    (* Don't allow ':include' when reading exclusion patterns from the
-       command line (or not from a file in general) *)
+   The path and the lines of the file that the ':include' line [line]
+   refers to, or None when [line] is not an ':include' line.
+*)
+let included_file ~orig_semgrepignore_path (line : string) :
+    (Fpath.t * string list) option =
+  match parse_maybe_include_line ~orig_semgrepignore_path line with
+  | Some relative_include_path ->
+      let include_path =
+        get_include_path ~orig_semgrepignore_path relative_include_path
+      in
+      if UFile.is_reg ~follow_symlinks:true include_path then
+        match ignore_file_contents include_path with
+        | Ok (contents : string) ->
+            Some (include_path, read_lines_from_file_contents contents)
+        | Error (reason : string) ->
+            warn_ignored_file include_path reason;
+            Some (include_path, [])
+      else
+        (* ignore silently
+           (why: git also ignores .gitignore files that are broken
+           symlinks) *)
+        Some (include_path, [])
+  | None -> None
+
+let rec from_lines ~compile ~allow_include ~name ~source_kind ~source_path
+    lines =
+  (* Don't allow ':include' when reading exclusion patterns from the
+     command line (or not from a file in general) *)
+  let include_of_line (line : string) : (Fpath.t * string list) option =
     match source_path with
     | Some orig_semgrepignore_path when allow_include ->
-        if allow_include then expand_includes ~orig_semgrepignore_path lines
-        else lines
+        included_file ~orig_semgrepignore_path line
     | Some _
     | None ->
-        lines
+        None
   in
-  List_.mapi
-    (fun i contents ->
-      let linenum = i + 1 in
-      if keep_line contents then
-        parse_line_gen ~compile name source_kind linenum contents
-      else None)
-    lines
-  |> List_.filter_map (fun x -> x)
+  lines
+  |> List_.mapi (fun (i : int) (line : string) ->
+         match include_of_line line with
+         (* the patterns of the included file, under its own name and line
+            numbers *)
+         | Some ((include_path : Fpath.t), (included_lines : string list)) ->
+             from_lines ~compile ~allow_include:false
+               ~name:(Fpath.to_string include_path) ~source_kind
+               ~source_path:None included_lines
+         | None ->
+             Option.to_list
+               (parse_line_gen ~compile name source_kind (i + 1) line))
+  |> List_.flatten
 
 and from_string_gen ~compile ~allow_include ~name ~source_path ~source_kind str
     =
@@ -232,31 +326,18 @@ and from_string_gen ~compile ~allow_include ~name ~source_path ~source_kind str
 
 and from_string ~anchor ~name ~source_kind str =
   from_string_gen
-    ~compile:(compile_gitignore_pattern ~anchor)
+    ~compile:(parse_pattern ~anchor)
     ~allow_include:false ~name ~source_path:None ~source_kind str
 
-and cli_patterns_from_string ~anchor ~name ~source_kind str =
-  from_string_gen
-    ~compile:(parse_cli_pattern ~anchor)
-    ~allow_include:false ~name ~source_path:None ~source_kind str
-
-and unanchored_from_string ~anchor ~name ~source_kind ~source_path str =
-  (* ':include' is expanded first: the directive is a line of its own and
-     would otherwise survive the filter as a literal pattern *)
-  let lines =
-    let lines = read_lines_from_string str in
-    match source_path with
-    | Some orig_semgrepignore_path ->
-        expand_includes ~orig_semgrepignore_path lines
-    | None -> lines
-  in
-  from_lines ~keep_line:is_unanchored_line
-    ~compile:(compile_gitignore_pattern ~anchor)
-    ~allow_include:false ~name ~source_path:None ~source_kind lines
+and from_cli_pattern ~(anchor : Glob.Pattern.t) ~(name : string)
+    ~(source_kind : string) (str : string) : path_selectors =
+  Option.to_list
+    (pattern_gen ~compile:(parse_cli_pattern ~anchor) name source_kind 1 str)
 
 and from_file_contents ~anchor ~format ~source_kind path contents =
-  from_string_gen
-    ~compile:(compile_gitignore_pattern ~anchor)
+  from_lines
+    ~compile:(parse_pattern ~anchor)
     ~allow_include:(format = Legacy_semgrepignore)
-    ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind contents
+    ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind
+    (read_lines_from_file_contents contents)
 [@@profiling]

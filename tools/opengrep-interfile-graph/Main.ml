@@ -312,10 +312,18 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let roots =
     List.map Scanning_root.of_fpath target_roots
   in
-  let { Find_targets.selected = fpaths; roots = scanning_roots; _ } =
-    Find_targets.get_target_fpaths Find_targets.default_conf roots
+  (* the targeting of a scan of [roots] with the default options *)
+  let targeting_conf : Find_targets.conf =
+    { Find_targets.default_conf with
+      explicit_targets = Find_targets.Explicit_targets.of_list target_roots }
   in
-  let targets, rules = Core_runner.targets_and_rules_for_files fpaths rules in
+  let { Find_targets.selected = found; roots = scanning_roots; _ } =
+    Find_targets.get_target_fpaths_with_project_roots targeting_conf roots
+  in
+  let targets, rules =
+    Core_runner.targets_and_rules_of_lang_jobs
+      (Core_runner.split_jobs_by_language targeting_conf rules found)
+  in
   let config : Core_scan_config.t =
     { Core_scan_config.default with
       rule_source = Core_scan_config.Rules rules;
@@ -327,9 +335,6 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let equivs = Core_scan.parse_equivalences config.equivalences_file in
   let xconf = Core_scan.interfile_xconfig config ~equivs in
   let caps = Cap.fork_and_limits_caps_UNSAFE () in
-  let targeting_conf =
-    Opengrep_project_index.Discover.projidx_default_targeting_conf
-  in
   let rule_states, _langs, _errors, _skipped_tokens_of_target =
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)

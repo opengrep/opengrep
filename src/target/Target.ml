@@ -38,6 +38,7 @@ type regular = {
    *)
   lockfile : Lockfile.t option;
   project_root : Fpath.t option;
+  target_proj_path : Target_and_root.target_proj_path;
 }
 [@@deriving show]
 
@@ -96,14 +97,25 @@ let path_of_origin (origin : Origin.t) : path =
 (* Builders *)
 (*****************************************************************************)
 
-let mk_regular ?lockfile ?project_root analyzer products (origin : Origin.t) : regular =
-  { path = path_of_origin origin; analyzer; products; lockfile; project_root }
+let mk_regular ?lockfile ?project_root
+    ~(target_proj_path : Target_and_root.target_proj_path) analyzer products
+    (origin : Origin.t) : regular =
+  {
+    path = path_of_origin origin;
+    analyzer;
+    products;
+    lockfile;
+    project_root;
+    target_proj_path;
+  }
 
-let mk_target ?(project_root : Fpath.t option) (xlang : Xlang.t) (file : Fpath.t) : t =
+let mk_target ?(project_root : Fpath.t option)
+    ~(target_proj_path : Target_and_root.target_proj_path) (xlang : Xlang.t)
+    (file : Fpath.t) : t =
   let all = Product.all in
   (* TODO: should do the check in the other mk_xxx ? *)
   assert (UFile.is_reg ~follow_symlinks:true file);
-  Regular (mk_regular ?project_root xlang all (Origin.File file))
+  Regular (mk_regular ?project_root ~target_proj_path xlang all (Origin.File file))
 
 (*****************************************************************************)
 (* Semgrep_output_v1.target -> Target.t *)
@@ -113,7 +125,8 @@ let mk_target ?(project_root : Fpath.t option) (xlang : Xlang.t) (file : Fpath.t
 let code_target_location_of_input_to_core
     ({ path; analyzer; products; lockfile_target = lockfile } : Out.code_target)
     : regular =
-  mk_regular ?lockfile analyzer products (File path)
+  mk_regular ?lockfile ~target_proj_path:Target_and_root.Not_in_project analyzer products
+    (File path)
 
 let target_of_target (input : Out.target) : t =
   match input with

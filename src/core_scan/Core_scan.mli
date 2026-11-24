@@ -65,7 +65,7 @@ val rules_of_config :
 val rules_for_target :
   analyzer:Xlang.t ->
   products:Semgrep_output_v1_t.product list ->
-  origin:Origin.t ->
+  matched_paths:string list ->
   respect_rule_paths:bool ->
   Rule.t list ->
   Rule.t list

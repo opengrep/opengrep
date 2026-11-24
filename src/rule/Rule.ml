@@ -462,7 +462,10 @@ let glob_of_pattern (source : string) (pat : Glob.Pattern.t) : glob =
   {
     source;
     matchers =
-      [ Glob.Match.compile ~source:loc pat1; Glob.Match.compile ~source:loc pat2 ];
+      [
+        Glob.Match.compile ~match_leading_period:true ~source:loc pat1;
+        Glob.Match.compile ~match_leading_period:true ~source:loc pat2;
+      ];
   }
 
 (* TODO? should we provide a pattern-filename: Xpattern to combine
