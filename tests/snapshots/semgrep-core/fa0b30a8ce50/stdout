@@ -1,0 +1,21 @@
+Test name: with git > a committed file that gitignore lists is selected
+--- Files added before 'git add' ---
+.gitignore
+a
+b
+--- begin input files ---
+.gitignore
+a
+b
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add all the files (including gitignored files)
+ 3 files changed, 1 insertion(+)
+ create mode 100644 .gitignore
+ create mode 100644 a
+ create mode 100644 b
+--- Selected targets ---
+selected .gitignore
+selected a
+selected b
+--- Skipped targets ---

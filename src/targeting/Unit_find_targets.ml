@@ -33,10 +33,11 @@ module Out = Semgrep_output_v1_t
    scanning_root: may start with "<root>", the absolute path of the workspace
    project_root: a folder of the workspace forced as the project root,
                  like --project-root
+   honor_gitignore: false to commit the files that '.gitignore' lists too
 *)
 let test_find_targets ?expected_outcome ?includes ?(excludes = [])
-    ?(non_git_files : F.t list = []) ~with_git ?(cwd = ".")
-    ?(scanning_root = ".") ?project_root name (files : F.t list) =
+    ?(non_git_files : F.t list = []) ~with_git ?(honor_gitignore = true)
+    ?(cwd = ".") ?(scanning_root = ".") ?project_root name (files : F.t list) =
   let category = if with_git then "with git" else "without git" in
   let test_func () =
     printf "Test name: %s > %s\n" category name;
@@ -55,7 +56,7 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
         printf "--- Files not added to git ---\n";
         F.print_files non_git_files);
 
-    Testutil_git.with_git_repo ~verbose:true ~honor_gitignore:true
+    Testutil_git.with_git_repo ~verbose:true ~honor_gitignore
       ~really_create_git_repo:with_git git_files (fun root ->
         F.write root non_git_files;
 
@@ -482,6 +483,11 @@ let tests_with_or_without_git ~with_git =
 let tests_with_git_only =
   let with_git = true in
   [
+    (* Select 'a' and 'b': 'b' is committed although '.gitignore' lists it,
+       and git lists the files it tracks. *)
+    test_find_targets ~with_git ~honor_gitignore:false
+      "a committed file that gitignore lists is selected"
+      [ F.File (".gitignore", "b\n"); F.file "a"; F.file "b" ];
     (* Select nothing: 'build/app' is in 'build', which the semgrepignore
        file of the project ignores. Outside any VCS the folder target is
        its own project and the file is not read. *)
