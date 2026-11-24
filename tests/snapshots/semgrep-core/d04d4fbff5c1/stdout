@@ -1,0 +1,9 @@
+Test name: without git > a folder that git cannot list is scanned
+--- Files not added to git ---
+.git
+a
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected a
+--- Skipped targets ---

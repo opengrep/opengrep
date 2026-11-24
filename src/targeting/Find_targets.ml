@@ -672,65 +672,64 @@ let walk_skip_and_collect (ign : Gitignore.filter)
 (* Each scanning root comes with the files git lists for it. *)
 let git_list_files ~exclude_standard
     (file_kinds : Git_wrapper.ls_files_kind list)
-    (project_roots : Project.roots) : (Fppath.t * Fppath.t list) list option =
+    (project_roots : Project.roots) :
+    ((Fppath.t * Fppath.t list) list, string) result =
   Log.debug (fun m ->
       m "Find_targets.git_list_files for project %s"
         (Project.show project_roots.project));
   let project = project_roots.project in
-  (* TODO: we should not call git_list_files when the project
-   * is not a Git_project. We should assert it and not return
-   * an option type but an Fppath.t list instead.
-   *)
-  match project.kind with
-  | Git_project ->
-      (* Canonicalise cwd on Windows so its form (case, 8.3 short names)
-         agrees with git's canonical paths; otherwise relativizing against it
-         can emit a '..' walk-up. No-op on case-sensitive filesystems. *)
-      let cwd = Rpath.canonical_if_win (Fpath.v (Sys.getcwd ())) in
-      Some
-        (project_roots.scanning_roots
-        |> List_.map (fun (sc_root : Fppath.t) ->
-               ( sc_root,
-               if UFile.is_reg ~follow_symlinks:true sc_root.fpath then
-                 (* A single-file scanning root is returned as-is: it has no
-                    descendants to relativize, so it never produced the '..'
-                    walk-up. Canonicalising it here would only desync its fpath
-                    from its ppath and double-report the file. *)
-                 [ sc_root ]
-               else if UFile.is_dir ~follow_symlinks:true sc_root.fpath then (
-                 Log.info (fun m ->
-                     m "List git files for scanning root %s"
-                       (Fppath.show sc_root));
-                 let project_root = Rfpath.to_rpath project.root in
-                 (* The path prefix we want for all the target file paths that
-                    we return: the scanning root exactly as the user gave it,
-                    like pyopengrep. *)
-                 let orig_scanning_root_path = sc_root.fpath in
-                 (* On Windows the root as given can differ from git's canonical
-                    paths in case or via 8.3 short names; relativizing it
-                    against git's canonical targets would emit a '..' walk-up.
-                    Canonicalise a copy for the relativize and the git lookup
-                    below so they stay clean, while still prefixing the root as
-                    given onto the result. Canonicalising also resolves the
-                    symlinks of the root as given: git rejects a path that leads
-                    outside the directory it runs in. *)
-                 let canon_scanning_root_path =
-                   Rpath.canonical_exn sc_root.fpath
-                 in
-                 let scanning_root_directory : Scanning_root.directory =
-                   { as_written = orig_scanning_root_path;
-                     canonical = canon_scanning_root_path }
-                 in
-                 (* We can't just cd into the scanning root to obtain paths
-                    relative to it because the scanning root may be a regular
-                    file. It could also be the root of the file system, so we
-                    also can't cd into its parent.
-                    This is why we stay in the same cwd and only later convert
-                    the resulting paths to be relative to the scanning root. *)
-                 Git_wrapper.ls_files_relative ~exclude_standard
-                   ~kinds:file_kinds ~project_root
-                   [ canon_scanning_root_path ]
-                 |> List_.map (fun target_relative_to_cwd_or_absolute ->
+  (* Canonicalise cwd on Windows so its form (case, 8.3 short names)
+     agrees with git's canonical paths; otherwise relativizing against it
+     can emit a '..' walk-up. No-op on case-sensitive filesystems. *)
+  let cwd = Rpath.canonical_if_win (Fpath.v (Sys.getcwd ())) in
+  let listed, failures =
+    project_roots.scanning_roots
+    |> Result_.partition (fun (sc_root : Fppath.t) ->
+           Result.map (fun (files : Fppath.t list) -> (sc_root, files))
+           (if UFile.is_reg ~follow_symlinks:true sc_root.fpath then
+             (* A single-file scanning root is returned as-is: it has no
+                descendants to relativize, so it never produced the '..'
+                walk-up. Canonicalising it here would only desync its fpath
+                from its ppath and double-report the file. *)
+             Ok [ sc_root ]
+           else if UFile.is_dir ~follow_symlinks:true sc_root.fpath then (
+             Log.info (fun m ->
+                 m "List git files for scanning root %s"
+                   (Fppath.show sc_root));
+             let project_root = Rfpath.to_rpath project.root in
+             (* The path prefix we want for all the target file paths that
+                we return: the scanning root exactly as the user gave it,
+                like pyopengrep. *)
+             let orig_scanning_root_path = sc_root.fpath in
+             (* On Windows the root as given can differ from git's canonical
+                paths in case or via 8.3 short names; relativizing it
+                against git's canonical targets would emit a '..' walk-up.
+                Canonicalise a copy for the relativize and the git lookup
+                below so they stay clean, while still prefixing the root as
+                given onto the result. Canonicalising also resolves the
+                symlinks of the root as given: git rejects a path that leads
+                outside the directory it runs in. *)
+             let canon_scanning_root_path =
+               Rpath.canonical_exn sc_root.fpath
+             in
+             let scanning_root_directory : Scanning_root.directory =
+               { as_written = orig_scanning_root_path;
+                 canonical = canon_scanning_root_path }
+             in
+             (* We can't just cd into the scanning root to obtain paths
+                relative to it because the scanning root may be a regular
+                file. It could also be the root of the file system, so we
+                also can't cd into its parent.
+                This is why we stay in the same cwd and only later convert
+                the resulting paths to be relative to the scanning root. *)
+             match
+               Git_wrapper.ls_files_relative ~exclude_standard
+                 ~kinds:file_kinds ~project_root
+                 [ canon_scanning_root_path ]
+             with
+             | exception Git_wrapper.Error (msg : string) -> Error msg
+             | files ->
+                 Ok (files |> List_.map (fun target_relative_to_cwd_or_absolute ->
                         (* Invariant: the target path is a descendant of the
                            scanning root path *)
                         (* Obtain a path whose prefix is the original scanning
@@ -774,13 +773,16 @@ let git_list_files ~exclude_standard
                                   the scanning root: root=%s, cwd=%s, \
                                   path=%s"
                                  !!canon_scanning_root_path !!cwd
-                                 !!target_relative_to_cwd_or_absolute)))
-               else (
-                 (* scanning root is neither a file nor a folder *)
-                 Log.warn (fun m ->
-                     m "invalid scanning root %s" !!(sc_root.fpath));
-                 []) )))
-  | _ -> None
+                                 !!target_relative_to_cwd_or_absolute))))
+           else (
+             (* scanning root is neither a file nor a folder *)
+             Log.warn (fun m ->
+                 m "invalid scanning root %s" !!(sc_root.fpath));
+             Ok [])))
+  in
+  match failures with
+  | [] -> Ok listed
+  | msg :: _ -> Error msg
 
 (*
    Get the list of files being tracked by git, return a list of paths
@@ -795,7 +797,7 @@ let git_list_files ~exclude_standard
    (Mercurial/hg, Subversion/svn, ...)
 *)
 let git_list_tracked_files (project_roots : Project.roots) :
-    (Fppath.t * Fppath.t list) list option =
+    ((Fppath.t * Fppath.t list) list, string) result =
   git_list_files ~exclude_standard:false [ Cached ] project_roots
 
 (*
@@ -807,7 +809,7 @@ let git_list_tracked_files (project_roots : Project.roots) :
    '.git/').
 *)
 let git_list_untracked_files ~respect_gitignore (project_roots : Project.roots)
-    : (Fppath.t * Fppath.t list) list option =
+    : ((Fppath.t * Fppath.t list) list, string) result =
   git_list_files ~exclude_standard:respect_gitignore [ Others ] project_roots
 
 (*************************************************************************)
@@ -1154,40 +1156,50 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
            | None -> Right root)
   in
   let project_roots = { project_roots with scanning_roots } in
+  let walk () =
+    get_targets_from_filesystem ~filter_of include_filter conf project_roots
+  in
   (* Obtain the list of files from git if possible because it does it
      faster than what we can do by scanning the filesystem: *)
-  let git_tracked = git_list_tracked_files project_roots in
-  let git_untracked =
-    git_list_untracked_files ~respect_gitignore:conf.respect_gitignore
-      project_roots
-  in
-  let selected_targets, skipped_targets =
-    match (git_tracked, git_untracked) with
-    (* Git only *)
-    | Some tracked, Some untracked ->
-        let count (listed : (Fppath.t * Fppath.t list) list) : int =
-          List.fold_left
-            (fun (n : int) ((_, files) : Fppath.t * Fppath.t list) ->
-              n + List.length files)
-            0 listed
-        in
-        Log.debug (fun m ->
-            m "target file candidates from git: tracked: %i, untracked: %i"
-              (count tracked) (count untracked));
-        (* both lists follow the scanning roots of the project, in order *)
-        filter_targets ~folder_filters ~project_filter include_filter
-          (List.map2
-             (fun ((root, tracked_files) : Fppath.t * Fppath.t list)
-                  ((_, untracked_files) : Fppath.t * Fppath.t list) ->
-               (root, List.rev_append tracked_files untracked_files))
-             tracked untracked)
+  let (selected_targets, skipped_targets), is_git_repo =
+    match project_roots.project.kind with
+    | Git_project -> (
+        match
+          Result.bind (git_list_tracked_files project_roots) (fun tracked ->
+              git_list_untracked_files ~respect_gitignore:conf.respect_gitignore
+                project_roots
+              |> Result.map (fun untracked -> (tracked, untracked)))
+        with
+        (* Git only *)
+        | Ok (tracked, untracked) ->
+            let count (listed : (Fppath.t * Fppath.t list) list) : int =
+              List.fold_left
+                (fun (n : int) ((_, files) : Fppath.t * Fppath.t list) ->
+                  n + List.length files)
+                0 listed
+            in
+            Log.debug (fun m ->
+                m "target file candidates from git: tracked: %i, untracked: %i"
+                  (count tracked) (count untracked));
+            (* both lists follow the scanning roots of the project, in order *)
+            ( filter_targets ~folder_filters ~project_filter include_filter
+                (List.map2
+                   (fun ((root, tracked_files) : Fppath.t * Fppath.t list)
+                        ((_, untracked_files) : Fppath.t * Fppath.t list) ->
+                     (root, List.rev_append tracked_files untracked_files))
+                   tracked untracked),
+              true )
+        | Error (msg : string) ->
+            (* noopengrep: no-logs-in-library *)
+            Logs.warn (fun m ->
+                m "%s is scanned without git: %s"
+                  !!(Rfpath.to_fpath project_roots.project.root)
+                  msg);
+            (walk (), false))
     (* Non-Git projects *)
-    | None, _
-    | _, None ->
-        get_targets_from_filesystem ~filter_of include_filter conf project_roots
+    | _ -> (walk (), false)
   in
   let skipped_targets = List.rev_append skipped_roots skipped_targets in
-  let is_git_repo = Option.is_some git_tracked in
   let selected_targets, skipped_targets =
     force_select_scanning_roots
       ~apply_includes_excludes_to_files:conf.apply_includes_excludes_to_file_targets
