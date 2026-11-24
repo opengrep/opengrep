@@ -536,6 +536,10 @@ let tests_without_git_only =
     (* '.gitignore' is not read: select 'a' and 'b'. *)
     test_find_targets ~with_git "gitignore is not read"
       [ F.File (".gitignore", "b\n"); F.file "a"; F.file "b" ];
+    (* '.git' is a file that points to a missing folder, which git does not
+       accept as a repository: select 'a' by reading the folder. *)
+    test_find_targets ~with_git "a folder that git cannot list is scanned"
+      [ F.File (".git", "gitdir: missing\n"); F.file "a" ];
   ]
 
 let tests =
