@@ -1,0 +1,10 @@
+rules:
+- id: taint
+  mode: taint
+  languages: [rust]
+  message: "tainted data flows to sink inside an async closure"
+  severity: INFO
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

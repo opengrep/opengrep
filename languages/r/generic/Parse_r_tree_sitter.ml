@@ -507,7 +507,13 @@ and map_function_definition (env : env) ((v1, v2, v3) : CST.function_definition)
   let tk = (* "function" *) token env v1 in
   let fparams = map_formal_parameters env v2 in
   let body = map_expression env v3 in
-  { G.fkind = (LambdaKind, tk); fparams; frettype = None; fbody = FBExpr body }
+  {
+    G.fkind = (LambdaKind, tk);
+    fparams;
+    frettype = None;
+    fbody = FBExpr body;
+    fattrs = [];
+  }
 
 and map_lambda_function (env : env) ((v1, v2, v3) : CST.lambda_function) :
     G.function_definition =
@@ -519,6 +525,7 @@ and map_lambda_function (env : env) ((v1, v2, v3) : CST.lambda_function) :
     fparams = params;
     frettype = None;
     fbody = FBExpr body;
+    fattrs = [];
   }
 
 and map_pipe_rhs (env : env) ((v1, v2, v3, v4) : CST.pipe_rhs) : G.expr =

@@ -253,6 +253,7 @@ let stab_clauses_to_function_definition tk (xs : stab_clause_generic list) :
     frettype = None;
     fkind = (G.Function, tk);
     fbody = G.FBStmt body_stmt;
+    fattrs = [];
   }
 
 let expr_of_body_or_clauses tk (x : body_or_clauses_generic) : G.expr =
@@ -764,6 +765,7 @@ and map_definition env (v : definition) : G.definition =
           fparams;
           frettype = None;
           fbody = G.FBStmt body_stmt;
+          fattrs = [];
         }
       in
       (ent, G.FuncDef fdef)
@@ -821,6 +823,7 @@ and map_definition env (v : definition) : G.definition =
           fparams = synthetic_fparams;
           frettype = None;
           fbody = G.FBStmt body_stmt;
+          fattrs = [];
         }
       in
       (ent, G.FuncDef fdef)
@@ -833,6 +836,7 @@ and map_definition env (v : definition) : G.definition =
           fparams = Tok.unsafe_fake_bracket [];
           frettype = None;
           fbody = G.FBStmt (G.Block (Tok.unsafe_fake_bracket []) |> G.s);
+          fattrs = [];
         }
       in
       (ent, G.FuncDef fdef)

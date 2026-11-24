@@ -47,7 +47,7 @@ let string_of_literal (lit : AST_generic.literal) =
       | Some s -> s)
   | Float (Some f, _) -> string_of_float f
   | Float _ -> "<FLOAT-LIT>"
-  | Char (s, _) -> s
+  | Char ((s, _), _) -> s
   | String (_, (s, _), _) -> s
   | Regexp _ -> "<REGEXP-LIT>"
   | Atom _ -> "<ATOM>"

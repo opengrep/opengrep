@@ -818,6 +818,7 @@ and map_computed_getter (env : env) ((v1, v2, v3) : CST.computed_getter) =
           G.fparams = fb [];
           G.frettype = None;
           G.fbody = v3;
+          G.fattrs = [];
         } )
   |> G.s
 
@@ -840,6 +841,7 @@ and map_computed_modify (env : env) ((v1, v2, v3) : CST.computed_modify) =
           G.fparams = fb [];
           G.frettype = None;
           G.fbody;
+          G.fattrs = [];
         } )
   |> G.s
 
@@ -898,6 +900,7 @@ and map_computed_setter (env : env) ((v1, v2, v3, v4) : CST.computed_setter) =
           G.fparams;
           G.frettype = None;
           G.fbody;
+          G.fattrs = [];
         } )
   |> G.s
 
@@ -1294,6 +1297,7 @@ and map_deinit_declaration (env : env) ((v1, v2, v3) : CST.deinit_declaration) =
         fparams = fb [];
         frettype = None;
         fbody = G.FBStmt v3;
+        fattrs = [];
       }
   in
   G.DefStmt (entity, definition_kind) |> G.s
@@ -1868,6 +1872,7 @@ and map_lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) :
       fparams = params;
       frettype = rettype;
       fbody = body;
+      fattrs = [];
     }
   in
   G.Lambda def |> G.e
@@ -2135,7 +2140,13 @@ and map_modifierless_function_declaration_no_body (env : env) ~in_class
   let kind = if in_class then G.Method else G.Function in
   let definition_kind =
     G.FuncDef
-      { fkind = (kind, snd v1); fparams = fb fparams; frettype; fbody = body }
+      {
+        fkind = (kind, snd v1);
+        fparams = fb fparams;
+        frettype;
+        fbody = body;
+        fattrs = [];
+      }
   in
   G.DefStmt (entity, definition_kind) |> G.s
 
@@ -2732,6 +2743,7 @@ and map_subscript_declaration (env : env)
           fparams = fb fparams;
           frettype;
           fbody = G.FBStmt v7;
+          fattrs = [];
         } )
   |> G.s
 

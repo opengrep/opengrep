@@ -791,8 +791,14 @@ and map_expression (env : env) (x : CST.expression) : expr =
       let s, t = (* float *) str env tok in
       L (G.Float (float_of_string_opt s, t))
   | `Char_a87deb0 tok ->
-      let x = (* pattern \?(.|\\.) *) str env tok in
-      L (G.Char x)
+      let s, t = (* pattern \?(.|\\.) *) str env tok in
+      let code_point =
+        if String.starts_with ~prefix:"?" s then
+          AST_generic_helpers.code_point_of_text
+            (String.sub s 1 (String.length s - 1))
+        else None
+      in
+      L (G.Char ((s, t), code_point))
   | `Bool x ->
       let b = map_boolean env x in
       L (G.Bool b)

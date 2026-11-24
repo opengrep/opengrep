@@ -422,7 +422,7 @@ and map_literal = function
       let v0 = map_tok v0 in
       let v1 = map_wrap map_of_string v1 in
       `Atom (v0, v1)
-  | Char v1 ->
+  | Char (v1, _code_point) ->
       let v1 = map_wrap map_of_string v1 in
       `Char v1
   | String v1 ->
@@ -1131,7 +1131,13 @@ and map_function_kind = function
   | BlockCases -> `BlockCases
 
 and map_function_definition
-    { G.fkind; fparams = v_fparams; frettype = v_frettype; fbody = v_fbody } =
+    {
+      G.fkind;
+      fparams = v_fparams;
+      frettype = v_frettype;
+      fbody = v_fbody;
+      fattrs = _;
+    } =
   let fkind = map_wrap map_function_kind fkind in
   let v_fbody = map_function_body v_fbody in
   let v_frettype = map_of_option map_type_ v_frettype in
@@ -1391,7 +1397,9 @@ and map_any x : B.any =
   | Str v1 ->
       let _, v1, _ = map_bracket (map_wrap map_of_string) v1 in
       `Str v1
-  | Tk v1 ->
+  | Tk v1
+  (* the v1 format has no punctuation token; the token remains *)
+  | Punct (_, v1) ->
       let v1 = map_tok v1 in
       `Tk v1
   | TodoK v1 ->

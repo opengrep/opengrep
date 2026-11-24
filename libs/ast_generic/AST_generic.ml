@@ -178,7 +178,7 @@
  * convenient to correspond mostly to Semgrep versions. So version below
  * can jump from "1.12.1" to "1.20.0" and that's fine.
  *)
-let version = "1.93.0"
+let version = "1.94.0"
 
 (*****************************************************************************)
 (* Some notes on deriving *)
@@ -976,7 +976,9 @@ and literal =
      * this long recursive type. *)
   | Int of (Parsed_int.t[@name "parsed_int"])
   | Float of float option wrap
-  | Char of string wrap
+  (* The text of the literal as the front end keeps it, and the code point of
+   * the character when the front end decodes it. *)
+  | Char of string wrap * int option
   (* String literals:
      The token includes the quotes (if any) but the string value excludes them.
      The value is the escaped string content. For example,
@@ -1901,6 +1903,10 @@ and function_definition = {
   (* TODO: fthrow *)
   (* newscope: *)
   fbody : function_body;
+  (* The keywords written on a lambda, such as 'async' on a Rust closure,
+   * or empty where the front end does not record them. A named function
+   * carries its keywords in the attrs of its entity. *)
+  fattrs : attribute list;
 }
 
 (* We don't really care about the function_kind in semgrep, but who
@@ -2286,6 +2292,9 @@ and any =
   | Dir of directive
   | Pr of program
   | Tk of tok
+  (* A punctuation token of a token tree, such as an operator in a Rust
+   * macro argument. Unlike a Tk, it is compared by its text. *)
+  | Punct of string wrap
   | TodoK of todo_kind
   | Ar of argument
   | Pa of parameter

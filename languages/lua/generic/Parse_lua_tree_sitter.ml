@@ -471,6 +471,7 @@ and map_function_body (env : env) ((v1, v2, v3, v4) : CST.function_body)
     frettype = None;
     fkind = (G.Function, token env name);
     fbody = G.FBStmt body;
+    fattrs = [];
   }
 
 and map_function_call_expr (env : env) (x : CST.function_call_statement) :

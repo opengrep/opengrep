@@ -119,6 +119,7 @@ and predicate_definition (v1, v2, v3, v4) =
           fparams;
           frettype = v1;
           fbody = body;
+          fattrs = [];
         } )
   |> G.s
 

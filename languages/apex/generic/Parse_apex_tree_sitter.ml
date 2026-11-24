@@ -1338,6 +1338,7 @@ and constructor_declaration (env : env) ((v1, v2, v3) : CST.constructor_declarat
       fparams;
       frettype = None;
       fbody;
+      fattrs = [];
     }
   in
   G.DefStmt (ent, def) |> G.s
@@ -1391,7 +1392,8 @@ and declaration (env : env) (x : CST.declaration) : G.stmt =
         { fkind = (G.Function, v1);
           fparams = fb [];
           frettype = None;
-          fbody = G.FBStmt v9
+          fbody = G.FBStmt v9;
+          fattrs = [];
         }
       in
       G.DefStmt (entity, G.FuncDef f) |> G.s
@@ -1717,6 +1719,7 @@ match v4 with
                   frettype = (if has_return then ptype else None);
                   (* TODO Should this be "void"? *)
                   fbody;
+                  fattrs = [];
                 }
             in
             DefStmt (ent, funcdef) |> G.s)
@@ -2240,6 +2243,7 @@ and method_header (env : env) ((v1, v2, v3) : CST.method_header)
     fparams = params;
     frettype = Some (make_type annots v2);
     fbody = G.FBNothing;
+    fattrs = [];
   }
 
 (* NEW *)
@@ -2843,7 +2847,7 @@ and static_initializer (env : env) ((v1, v2) : CST.static_initializer) : G.stmt 
   let ent = basic_entity v1 ~attrs in
   let def =
     G.FuncDef
-      { fkind = (G.Method, t); fparams = fb []; frettype = None; fbody = G.FBStmt v2 }
+      { fkind = (G.Method, t); fparams = fb []; frettype = None; fbody = G.FBStmt v2; fattrs = [] }
   in
   G.DefStmt (ent, def) |> G.s
 

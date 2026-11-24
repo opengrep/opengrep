@@ -34,3 +34,17 @@ async fn main() {
   async { let x = 10; }
   async move {}
 }
+
+/*
+ * ============================================
+ * Async closure
+ * ============================================
+ */
+
+async fn main() {
+  let a = async || { foo() };
+  let b = async move || { foo() };
+  let c = async |x: u64| { foo(x) };
+  let d = async move |x: u64| { foo(x) };
+  let e = async |x| x.await;
+}

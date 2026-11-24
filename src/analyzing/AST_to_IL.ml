@@ -998,6 +998,25 @@ and let_pattern_stmts env ~eorig pat e : stmt list =
  * makes otherwise-decidable conds opaque at call sites. *)
 and pm_conjoin _tok conds = IL_helpers.wrap_and conds
 
+(* [scrutinee op bound] for a bound of a range pattern, a literal or a path
+ * to a constant. *)
+and pm_range_bound env (scrutinee : exp) (op : G.operator) (tok : Tok.t)
+    (bound : G.pattern) : stmts * exp =
+  let bound_expr =
+    match bound with
+    | G.PatConstructor (name, []) -> Some (G.N name |> G.e)
+    | _ -> (
+        try Some (AST_generic_helpers.pattern_to_expr bound) with
+        | AST_generic_helpers.NotAnExpr -> None)
+  in
+  match bound_expr with
+  | Some e ->
+      let ss, bound_il = expr env e in
+      ( ss,
+        mk_e (Operator ((op, tok), [ Unnamed scrutinee; Unnamed bound_il ])) NoOrig
+      )
+  | None -> ([], fixme_exp ToDo (G.P bound) (related_tok tok))
+
 (* [length(e) op n]. *)
 and pm_len_cond tok e op n =
   let len = mk_e (Operator ((G.Length, tok), [ Unnamed e ])) NoOrig in
@@ -1276,6 +1295,24 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
               (Operator ((op, tok), [ Unnamed scrutinee; Unnamed rhs_il ]))
               NoOrig )
       | None -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok)))
+  (* A Rust range pattern: the scrutinee against each bound that the range
+   * has, inclusive or exclusive. A bound is a literal or a path to a
+   * constant. *)
+  | G.OtherPat
+      ( (("RangePatternInclusive" | "RangePatternExclusive" as tag), tok),
+        [ G.P lower; G.P upper ] ) ->
+      let ss_lower, lower_cond = pm_range_bound env scrutinee G.GtE tok lower in
+      let upper_op =
+        if String.equal tag "RangePatternInclusive" then G.LtE else G.Lt
+      in
+      let ss_upper, upper_cond = pm_range_bound env scrutinee upper_op tok upper in
+      (ss_lower @ ss_upper, IL_helpers.wrap_and [ lower_cond; upper_cond ])
+  | G.OtherPat (("RangePatternRightUnbounded", tok), [ G.P lower ]) ->
+      pm_range_bound env scrutinee G.GtE tok lower
+  | G.OtherPat (("RangePatternLeftUnboundedInclusive", tok), [ G.P upper ]) ->
+      pm_range_bound env scrutinee G.LtE tok upper
+  | G.OtherPat (("RangePatternLeftUnboundedExclusive", tok), [ G.P upper ]) ->
+      pm_range_bound env scrutinee G.Lt tok upper
   | G.PatDisj (a, b) ->
       let sa, ca = pattern_match_cond env scrutinee a in
       let sb, cb = pattern_match_cond env scrutinee b in
@@ -2638,17 +2675,20 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
    * Lower as a [RecordOrDict] of [Entry (L (String f), v)] so the
    * shape layer builds per-field [Ostr] cells and caller-side
    * field-sensitivity survives the struct construction — the default
-   * [Composite (Constructor, …)] is positional and collapses fields. *)
+   * [Composite (Constructor, …)] is positional and collapses fields.
+   * A tuple field [S { 0: v }] arrives as [G.Assign (L (Int 0), _, v)] and
+   * is keyed by that integer, as its access [s.0] is. *)
   | G.Constructor (_cname, (_tok1, esorig, _tok2))
     when env.lang =*= Lang.Rust && esorig <> []
          && List.for_all
               (function
-                | { G.e = G.Assign ({ G.e = G.N (G.Id _); _ }, _, _); _ } ->
+                | { G.e = G.Assign ({ G.e = G.N (G.Id _) | G.L (G.Int _); _ }, _, _); _ }
+                  ->
                     true
                 | _ -> false)
               esorig ->
       (* Each element is guaranteed by the [for_all] guard to be a
-       * field-init [Assign (N (Id …), _, _)]; any non-matching shape
+       * field-init [Assign (N (Id …) | L (Int …), _, _)]; any non-matching shape
        * would indicate a parser change, in which case we skip that
        * element rather than assert — a missing [Entry] is a precision
        * loss, not a crash — and emit a warning so the drift is
@@ -2669,6 +2709,13 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                              (Tok.unsafe_fake_bracket (field_name, field_tok))))
                        (related_tok field_tok)
                    in
+                   Some (ss_v, Entry (key, ve))
+               | G.Assign
+                   ( { G.e = G.L (G.Int (_, index_tok) as index); _ },
+                     _,
+                     value_expr ) ->
+                   let ss_v, ve = expr env value_expr in
+                   let key = mk_e (Literal index) (related_tok index_tok) in
                    Some (ss_v, Entry (key, ve))
                | _ ->
                    Log.warn (fun m ->

@@ -1541,7 +1541,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
             | Some x -> attribute_modifier env x
             | None -> []
           in
-          let _v2TODO =
+          let v2 =
             match v2 with
             | Some tok ->
                 (* "async" *) [ G.KeywordAttr (G.Async, token env tok) ]
@@ -1577,6 +1577,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               fparams;
               frettype = return_type;
               fbody = v5;
+              fattrs = v2;
             }
           in
           G.Lambda def |> G.e
@@ -1612,7 +1613,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
           G.OtherExpr (v1, [ G.E v2 ]) |> G.e
       | `Anon_func_exp (v1, v2, v3, v4, v5, v6) ->
           (* TODO: Anon is not the same as Lambda. These are PHP style. *)
-          let _v1TODO =
+          let v1 =
             match v1 with
             | Some tok ->
                 (* "async" *) [ G.KeywordAttr (G.Async, token env tok) ]
@@ -1641,6 +1642,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
               fparams = v3;
               frettype = v4;
               fbody = G.FBStmt v6;
+              fattrs = v1;
             }
           in
           G.Lambda def |> G.e
@@ -1733,6 +1735,7 @@ and function_declaration_header (env : env)
       fbody =
         G.FBDecl G.sc
         (* To be replaced in parent with real statement. Could also replace with passthrough strategy *);
+      fattrs = [];
     },
     identifier,
     type_params )

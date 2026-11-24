@@ -80,7 +80,7 @@ let list_to_tuple_or_expr xs =
   | xs -> G.Container (G.Tuple, Tok.unsafe_fake_bracket xs) |> G.e
 
 let mk_func_def fkind params ret st : G.function_definition =
-  { G.fparams = params; frettype = ret; fbody = st; fkind }
+  { G.fparams = params; frettype = ret; fbody = st; fkind; fattrs = [] }
 
 (* TODO: use CondDecl *)
 let wrap_init_in_block_maybe x v =
@@ -377,7 +377,14 @@ let top_func () =
         G.Imag v1
     | Rune v1 ->
         let v1 = wrap string v1 in
-        G.Char v1
+        (* the tree-sitter parser keeps the quotes of a rune, the Menhir
+         * parser does not *)
+        let code_point =
+          match AST_generic_helpers.code_point_of_quoted_text (fst v1) with
+          | Some _ as code_point -> code_point
+          | None -> AST_generic_helpers.code_point_of_text (fst v1)
+        in
+        G.Char (v1, code_point)
     | String v1 ->
         let v1 = wrap string v1 in
         G.String (fb v1)

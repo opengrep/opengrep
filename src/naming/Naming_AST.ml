@@ -615,7 +615,7 @@ let rec get_resolved_type lang (vinit, vtype) =
       | Some { e = L (Bool (_, tok)); _ } -> make_type "bool" tok
       | Some { e = L (Int (_, tok)); _ } -> make_type "int" tok
       | Some { e = L (Float (_, tok)); _ } -> make_type "float" tok
-      | Some { e = L (Char (_, tok)); _ } -> make_type "char" tok
+      | Some { e = L (Char ((_, tok), _)); _ } -> make_type "char" tok
       | Some { e = L (String (_, (_, tok), _)); _ } ->
           let string_str =
             match lang with

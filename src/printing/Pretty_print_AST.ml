@@ -692,7 +692,7 @@ and literal _env l =
   | Bool (false, t) -> token ~d:"false" t
   | Int (_, tok) -> token tok
   | Float (_, t) -> token t
-  | Char (s, _) -> F.sprintf "'%s'" s
+  | Char ((s, _), _) -> F.sprintf "'%s'" s
   (* TODO: once we will have string wrap bracket in AST_generic,
    * we will be able to print correctly whether '' or "" was used
    * to contain the string

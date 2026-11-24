@@ -236,7 +236,7 @@ and literal = function
       G.String (fb v1)
   | Char v1 ->
       let v1 = wrap string v1 in
-      G.Char v1
+      G.Char (v1, AST_generic_helpers.code_point_of_quoted_text (fst v1))
   | Null v1 ->
       let v1 = tok v1 in
       G.Null v1
@@ -383,6 +383,7 @@ and expr e =
           frettype = None;
           fbody = G.FBStmt v2;
           fkind = (G.Arrow, t);
+          fattrs = [];
         }
   | SwitchE (v0, v1, v2) ->
       let v0 = info v0 in
@@ -667,6 +668,7 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
       frettype = rett;
       fbody;
       fkind = (G.Method, G.fake "");
+      fattrs = [];
     } )
 
 and field v = var_with_init v

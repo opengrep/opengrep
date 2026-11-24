@@ -73,6 +73,7 @@ let range_of_any_opt startp_of_match_range any =
   | Dir _
   | Pr _
   | Tk _
+  | Punct _
   | TodoK _
   | Ar _
   | Pa _

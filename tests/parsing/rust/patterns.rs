@@ -67,3 +67,33 @@ fn main() {
     a @ b..=c => a,
   }
 }
+
+/*
+ * =================================
+ * Exclusive and half-open range patterns, leading bar
+ * =================================
+ */
+
+fn main() {
+  match x {
+    0..10 => {}
+    10.. => {}
+    ..=20 => {}
+    | 21 | 22 => {}
+    _ => {}
+  }
+}
+
+/*
+ * =================================
+ * Generic paths in patterns, match arm attributes
+ * =================================
+ */
+
+fn main() {
+  match y {
+    #[cfg(test)]
+    None::<u8> => {}
+    Some::<u8>(v) => {}
+  }
+}

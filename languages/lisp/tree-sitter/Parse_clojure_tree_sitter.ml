@@ -568,8 +568,8 @@ let map_char (env : env) (tok : Tree_sitter_run.Token.t) : G.expr =
       (* unicode *) char_str_of_unicode s
     | _ -> String.sub s 1 (String.length s - 1)
   in
-  L (G.Char (s_char, t))
-  |> G.e 
+  L (G.Char ((s_char, t), AST_generic_helpers.code_point_of_text s_char))
+  |> G.e
 
 (*****************************************************************************)
 (* Translation                                                               *)
@@ -1348,6 +1348,7 @@ and map_fn_form
         frettype = None;
         fkind = (G.LambdaKind, fn_tok);
         fbody = G.FBStmt body_stmt;
+        fattrs = [];
       }
     |> G.e
   | _ -> raise_parse_error "Invalid fn form."
@@ -1448,6 +1449,7 @@ and map_defn_form (env : env) (forms : CST.form list) =
           frettype = None;
           fkind = (G.Function, defn_tok);
           fbody = G.FBStmt body_stmt;
+          fattrs = [];
         }
     in
     let st = G.DefStmt (entity, def) |> G.s in

@@ -308,6 +308,7 @@ and map_function_definition env v : G.function_definition =
     fparams;
     fbody = G.FBExpr f_body;
     frettype = None;
+    fattrs = [];
   }
 
 and map_parameter env v : G.parameter =

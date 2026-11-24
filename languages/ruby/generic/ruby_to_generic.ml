@@ -188,6 +188,7 @@ let rec expr e =
           frettype = None;
           fbody = G.FBStmt st;
           fkind = (G.LambdaKind, t1);
+          fattrs = [];
         }
       in
       G.Lambda def
@@ -205,6 +206,7 @@ let rec expr e =
           frettype = None;
           fbody = G.FBStmt st;
           fkind = (G.LambdaKind, tok);
+          fattrs = [];
         }
       in
       G.Lambda def
@@ -551,7 +553,16 @@ and literal x =
   | Rational ((s, t1), t2) ->
       let t = Tok.combine_toks t1 [ t2 ] in
       G.L (G.Ratio (s, t))
-  | Char x -> G.L (G.Char (wrap string x))
+  | Char x ->
+      (* a character literal ?c *)
+      let s, t = wrap string x in
+      let code_point =
+        if String.starts_with ~prefix:"?" s then
+          AST_generic_helpers.code_point_of_text
+            (String.sub s 1 (String.length s - 1))
+        else None
+      in
+      G.L (G.Char ((s, t), code_point))
   | Nil t -> G.L (G.Null (tok t))
   | String skind -> (
       match skind with
@@ -818,6 +829,7 @@ and definition def =
           frettype = None;
           fbody = G.FBStmt body;
           fkind = (G.Method, t);
+          fattrs = [];
         }
       in
       match kind with

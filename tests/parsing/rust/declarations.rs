@@ -533,7 +533,7 @@ impl<A> Default for B<A> where *mut A: C + D {}
  * ===================================
  */
 
-pub extern {
+unsafe extern {
   pub fn napi_module_register(mod_: *mut napi_module);
 }
 
@@ -551,3 +551,68 @@ crate mod foo;
 crate struct Foo(crate crate::Bar);
 crate fn foo() { }
 crate const X: u32 = 0;
+
+/*
+ * ===================================
+ * Const parameter defaults
+ * ===================================
+ */
+
+struct S1<const N: i32 = 3>;
+struct S2<const N: i32 = -1>;
+struct S3<const N: usize = { 1 + 2 }>;
+
+/*
+ * ===================================
+ * Attributes and bounds on generic parameters
+ * ===================================
+ */
+
+fn f<#[cfg(test)] T, 'a: 'b, 'b>(x: &'a T) {}
+
+/*
+ * ===================================
+ * Where clauses
+ * ===================================
+ */
+
+trait T1 {
+    type Item<U> where U: Copy;
+}
+fn f9() where {}
+type A1<T> where T: Copy = Vec<T>;
+
+/*
+ * ===================================
+ * Variadic parameter with a pattern
+ * ===================================
+ */
+
+unsafe extern "C" {
+    fn printf(fmt: *const u8, args: ...);
+}
+
+/*
+ * ===================================
+ * Use with a bare wildcard
+ * ===================================
+ */
+
+use ::*;
+
+/*
+ * ===================================
+ * Safe items in an unsafe extern block
+ * ===================================
+ */
+
+unsafe extern "C" {
+    pub safe fn sqrt(x: f64) -> f64;
+    safe static ANSWER: i32;
+    pub unsafe fn free(p: *mut u8);
+}
+
+fn safe_as_a_name() {
+    let safe = true;
+    if safe && safe { safe::check(); }
+}

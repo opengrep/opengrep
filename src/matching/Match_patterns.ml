@@ -722,6 +722,7 @@ let check ~hook ?(has_as_metavariable = false) ?mvar_context
            | Def _
            | Dir _
            | Tk _
+           | Punct _
            | TodoK _
            | Ar _
            | Pa _

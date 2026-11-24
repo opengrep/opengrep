@@ -71,6 +71,7 @@ let cases_to_lambda lb cases : G.function_definition =
     frettype = None;
     fparams = fb [ param ];
     fbody = G.FBStmt body;
+    fattrs = [];
   }
 
 (*****************************************************************************)
@@ -203,7 +204,7 @@ and v_literal = function
       Either.Left (G.Float v1)
   | Char v1 ->
       let v1 = v_wrap v_string v1 in
-      Either.Left (G.Char v1)
+      Either.Left (G.Char (v1, AST_generic_helpers.code_point_of_text (fst v1)))
   | String v1 ->
       let v1 = v_wrap v_string v1 in
       Either.Left (G.String (fb v1))
@@ -1091,6 +1092,7 @@ and v_given_definition { gtok; gattrs; gsig; gkind } : G.definition list =
                 fparams = fb params;
                 frettype = Some ty;
                 fbody;
+                fattrs = [];
               } )
         else
           let attrs =
@@ -1266,6 +1268,7 @@ and v_function_definition
       (match fbody with
       | None -> G.FBDecl G.sc
       | Some st -> st);
+    fattrs = [];
   }
 
 and v_function_kind = function

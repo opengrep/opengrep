@@ -111,3 +111,22 @@ fn main() {
   a as B<C>;
   d as *mut E<<F as E>::G>;
 }
+
+/*
+ * ====================================
+ * Impl and dyn trait alternatives
+ * ====================================
+ */
+
+fn f2(x: impl (Fn() -> u32)) {}
+fn f3(x: &(impl ?Sized + Send)) {}
+fn f4(x: Box<dyn for<'a> Fn(&'a u8)>) {}
+
+/*
+ * ====================================
+ * Associated type bounds and precise capturing
+ * ====================================
+ */
+
+fn f6(x: impl Iterator<Item: Copy>) {}
+fn f7<'a>(x: &'a u8) -> impl Sized + use<'a> { x }

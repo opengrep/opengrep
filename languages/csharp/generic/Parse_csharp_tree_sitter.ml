@@ -137,6 +137,7 @@ let create_lambda lambda_params expr =
       fparams;
       frettype = None;
       fbody = FBExpr expr;
+      fattrs = [];
     }
   |> G.e
 
@@ -156,6 +157,7 @@ let create_join_result_lambda lambda_params ident =
       fparams;
       frettype = None;
       fbody = FBExpr expr;
+      fattrs = [];
     }
   |> G.e
 
@@ -658,7 +660,9 @@ let literal (env : env) (x : CST.literal) : literal =
         (* escape_sequence *)
       in
       let v3 = token env v3 (* "'" *) in
-      Char (s, Tok.combine_toks v1 [ t; v3 ])
+      Char
+        ( (s, Tok.combine_toks v1 [ t; v3 ]),
+          AST_generic_helpers.code_point_of_text s )
   | `Real_lit tok -> real_literal env tok (* real_literal *)
   | `Int_lit tok -> integer_literal env tok (* integer_literal *)
   | `Str_lit (v1, v2, v3, _v4TODO) ->
@@ -1405,7 +1409,7 @@ and expression_statement_expression (env : env)
 and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
   match x with
   | `Anon_meth_exp (v1, v2, v3, v4) ->
-      let _v1TODO = List_.map (map_anon_choice_static_d4628a0 env) v1 in
+      let v1 = List_.map (map_anon_choice_static_d4628a0 env) v1 in
       let tdelegate = token env v2 (* "delegate" *) in
       let fparams =
         match v3 with
@@ -1419,6 +1423,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
           fparams;
           frettype = None;
           fbody = G.FBStmt v4;
+          fattrs = v1;
         }
       |> G.e
   | `Anon_obj_crea_exp (v1, v2, v3, v4, v5) ->
@@ -1541,7 +1546,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
       LetPattern (v3, v1) |> G.e
   | `Lambda_exp ((v1, v2, v3, v4), v5, v6) ->
       let _v1TODO = List_.map (attribute_list_ env) v1 in
-      let _v2TODO = List_.map (map_anon_choice_static_d4628a0 env) v2 in
+      let v2 = List_.map (map_anon_choice_static_d4628a0 env) v2 in
       let v3 =
         match v3 with
         | Some x -> Some (type_pattern env x)
@@ -1554,7 +1559,7 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
         | `Blk x -> G.FBStmt (block env x)
         | `Exp x -> G.FBExpr (expression env x)
       in
-      Lambda { fkind = (Arrow, v5); fparams = v4; frettype = v3; fbody = v6 }
+      Lambda { fkind = (Arrow, v5); fparams = v4; frettype = v3; fbody = v6; fattrs = v2 }
       |> G.e
   | `Make_exp (v1, v2, v3, v4) ->
       let v1 = token env v1 (* "__makeref" *) in
@@ -2044,6 +2049,7 @@ and statement (env : env) (x : CST.statement) =
             fparams = v6;
             frettype = Some v3;
             fbody = v8;
+            fattrs = [];
           }
       in
       G.DefStmt (ent, def) |> G.s
@@ -3594,7 +3600,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       in
       let def =
         G.FuncDef
-          { fkind = (G.Method, tok); fparams = v4; frettype = None; fbody }
+          { fkind = (G.Method, tok); fparams = v4; frettype = None; fbody; fattrs = [] }
       in
       let ctor = KeywordAttr (Ctor, tok) in
       let attrs = (ctor :: v1) @ v2 in
@@ -3642,6 +3648,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
             fparams = v8;
             frettype = Some v7;
             fbody = v9;
+            fattrs = [];
           }
       in
       G.DefStmt (ent, def) |> G.s
@@ -3659,7 +3666,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       let name = ("Finalize", v3) in
       let def =
         G.FuncDef
-          { fkind = (G.Method, v3); fparams = v5; frettype = None; fbody = v6 }
+          { fkind = (G.Method, v3); fparams = v5; frettype = None; fbody = v6; fattrs = [] }
       in
       let dtor = KeywordAttr (Dtor, v3) in
       let ent = basic_entity name ~attrs:((dtor :: v1) @ v2) in
@@ -3711,6 +3718,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                            fparams = fb [ valparam ];
                            frettype = None;
                            fbody;
+                           fattrs = [];
                          }
                      in
                      DefStmt (ent, funcdef) |> G.s)
@@ -3767,6 +3775,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                              fparams = (lbra, params, rbra);
                              frettype = Some v3;
                              fbody;
+                             fattrs = [];
                            }
                        in
                        DefStmt (ent, funcdef) |> G.s
@@ -3789,6 +3798,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                              fparams = (lbra, params @ [ valparam ], rbra);
                              frettype = None;
                              fbody;
+                             fattrs = [];
                            }
                        in
                        DefStmt (ent, funcdef) |> G.s
@@ -3808,6 +3818,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                 fparams = (lbra, params, rbra);
                 frettype = Some v3;
                 fbody;
+                fattrs = [];
               }
           in
           DefStmt (ent, funcdef) |> G.s)
@@ -3835,6 +3846,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
             fparams = (l, v7, r);
             frettype = Some v3;
             fbody = v9;
+            fattrs = [];
           }
       in
       G.DefStmt (ent, def)
@@ -3871,6 +3883,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
             fparams = v8;
             frettype = Some v3;
             fbody = v9;
+            fattrs = [];
           }
       in
       G.DefStmt (ent, def) |> G.s
@@ -3976,6 +3989,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                         frettype = (if has_return then Some v3 else Some (G.TyN (Id (("void", itok), G.empty_id_info ~hidden:true ())) |> G.t));
                         (* TODO Should this be "void"? *)
                         fbody;
+                        fattrs = [];
                       }
                   in
                   let fixed_range =
@@ -4008,6 +4022,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                   fparams = fb [fieldParam (snd v5)] (* (Option.to_list (Option.map (fun f -> f ()) this_param)) *) ;
                   frettype = Some v3;
                   fbody = G.FBStmt (G.Block (fb [ExprStmt (expr, v2) |> G.s]) |> G.s);
+                  fattrs = [];
                 }
             in
             let func =
