@@ -845,6 +845,13 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "a negated --exclude pattern that is not valid"
         (check_scan_aborts caps ~args:[ "--exclude"; "![abc"; "." ]
            ~expected:"--exclude '![abc' is not a valid pattern (missing ']')");
+      (* An --exclude value is one pattern, as an --include value is: a
+         leading '#' is part of it. *)
+      t "an --exclude pattern starting with '#'"
+        (check_scanned_in_git_repo caps "b.js only"
+           ~files:[ F.File ("#a#.js", "MARK\n"); F.File ("b.js", "MARK\n") ]
+           ~expected:(fun _ -> [ "b.js" ])
+           (fun _ -> [ "--exclude"; "#a#.js"; "." ]));
       t "--project-root with a baseline commit"
         (check_scan_aborts caps
            ~args:[ "--project-root"; "."; "--baseline-commit"; "HEAD"; "." ]

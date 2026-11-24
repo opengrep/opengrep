@@ -25,10 +25,10 @@ val from_string :
   string ->
   Gitignore.path_selectors
 
-(* Same as from_string for the '--include' and '--exclude' patterns of the
-   command line, which match anywhere in a path where a gitignore pattern
-   containing a slash is anchored at the folder of its file. *)
-val cli_patterns_from_string :
+(* The pattern of an '--exclude' value of the command line, possibly
+   negated: the value is one pattern, which is not split into lines, and
+   in which neither a leading '#' nor a trailing space is special. *)
+val from_cli_pattern :
   anchor:Glob.Pattern.t ->
   name:string ->
   source_kind:string ->

@@ -95,7 +95,7 @@ let create ?(cli_patterns = [])
   let root_anchor = Glob.Pattern.root_pattern in
   let cli_patterns =
     List.concat_map
-      (Parse_gitignore.cli_patterns_from_string
+      (Parse_gitignore.from_cli_pattern
          ~name:"exclude pattern from command line" ~source_kind:"exclude"
          ~anchor:root_anchor)
       cli_patterns

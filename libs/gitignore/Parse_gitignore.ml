@@ -211,37 +211,42 @@ let warn_invalid_pattern ~(source_name : string) ~(line_number : int)
 
 (* [compile] turns the pattern of a line into the matchers any of which
    selects a path. *)
+let pattern_gen
+    ~(compile : source:M.loc -> string -> M.compiled_pattern list)
+    (source_name : string) (source_kind : string) (line_number : int)
+    (line_contents : string) : path_selector option =
+  let loc : M.loc =
+    {
+      source_name;
+      source_kind = Some source_kind;
+      line_number;
+      line_contents;
+    }
+  in
+  let is_negated, pattern_str =
+    match remove_negator line_contents with
+    | None -> (false, line_contents)
+    | Some s -> (true, s)
+  in
+  (* a pattern that is not a valid glob matches nothing, as in gitignore *)
+  match compile ~source:loc pattern_str with
+  | exception Glob.Lexer.Syntax_error (msg : string) ->
+      warn_invalid_pattern ~source_name ~line_number line_contents msg;
+      None
+  | patterns ->
+      let matcher (ppath : Ppath.t) =
+        match any_match (Ppath.to_string_fast ppath) patterns with
+        | true ->
+            if is_negated then Some (Deselected loc) else Some (Selected loc)
+        | false -> None
+      in
+      Some { loc; matcher }
+
 let parse_line_gen
     ~(compile : source:M.loc -> string -> M.compiled_pattern list) source_name
     source_kind line_number line_contents =
   if is_ignored_line line_contents then None
-  else
-    let loc : M.loc =
-      {
-        source_name;
-        source_kind = Some source_kind;
-        line_number;
-        line_contents;
-      }
-    in
-    let is_negated, pattern_str =
-      match remove_negator line_contents with
-      | None -> (false, line_contents)
-      | Some s -> (true, s)
-    in
-    (* a pattern that is not a valid glob matches nothing, as in gitignore *)
-    match compile ~source:loc pattern_str with
-    | exception Glob.Lexer.Syntax_error (msg : string) ->
-        warn_invalid_pattern ~source_name ~line_number line_contents msg;
-        None
-    | patterns ->
-        let matcher (ppath : Ppath.t) =
-          match any_match (Ppath.to_string_fast ppath) patterns with
-          | true ->
-              if is_negated then Some (Deselected loc) else Some (Selected loc)
-          | false -> None
-        in
-        Some { loc; matcher }
+  else pattern_gen ~compile source_name source_kind line_number line_contents
 
 (* semgrep-legacy *)
 let get_include_path ~orig_semgrepignore_path relative_include_path =
@@ -324,10 +329,10 @@ and from_string ~anchor ~name ~source_kind str =
     ~compile:(parse_pattern ~anchor)
     ~allow_include:false ~name ~source_path:None ~source_kind str
 
-and cli_patterns_from_string ~anchor ~name ~source_kind str =
-  from_string_gen
-    ~compile:(parse_cli_pattern ~anchor)
-    ~allow_include:false ~name ~source_path:None ~source_kind str
+and from_cli_pattern ~(anchor : Glob.Pattern.t) ~(name : string)
+    ~(source_kind : string) (str : string) : path_selectors =
+  Option.to_list
+    (pattern_gen ~compile:(parse_cli_pattern ~anchor) name source_kind 1 str)
 
 and from_file_contents ~anchor ~format ~source_kind path contents =
   from_lines
