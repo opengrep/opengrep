@@ -145,10 +145,12 @@ let create ?(cli_patterns = [])
     exclusion_mechanism.use_semgrepignore_files && not root_semgrepignore_exists
   in
 
-  (* The built-in patterns apply from [builtin_patterns_root] downwards, as
-     if written in a '.semgrepignore' there: a folder given as a target is
-     scanned even when it lies in a folder they skip. The filters of a
-     project share its ignore files. *)
+  (* The built-in patterns are anchored at [builtin_patterns_root] and apply
+     from there downwards: a folder given as a target is scanned even when
+     it lies in a folder they skip. They form a level of their own, ranked
+     above the '.semgrepignore' files, so a negation in one of these files
+     does not bring back what they skip. The filters of a project share its
+     ignore files. *)
   fun ~(builtin_patterns_root : Ppath.t) ->
     (* The '.semgrepignore' of a folder is read as that folder's ignore file,
        with its patterns anchored there, whether or not the command runs from
