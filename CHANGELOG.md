@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.1.0](https://github.com/opengrep/opengrep/releases/tag/v2.1.0) - 25-11-2026
+
+### Language support
+
+* Rust: tree-sitter-rust 0.24.2, async closures and the syntax of current Rust by @corneliuhoffman in #942
+* Typescript: `?.` followed by a decimal digit is a conditional `?` and a numeric literal by @maciejpirog in #945
+
+### Engine
+
+* Dataflow: taint reaches the code after a try with catch or finally by @corneliuhoffman in #924
+* Interfile, taint and constant propagation: faster scans by @corneliuhoffman in #928
+* Matching: a lone metavariable binds the name of a receiver parameter, as of an ordinary parameter by @maciejpirog in #929
+* Process limits: `set_timeout` stops a task at a wall-clock deadline by @corneliuhoffman in #936
+
+### Improvements
+
+* Targeting: `.semgrepignore` files follow gitignore rules, and `.gitignore` files are no longer read by @dimitris-m in #941
+* Targeting: a failed `git ls-files` falls back to the folder walk by @dimitris-m in #944
+* CLI: the `--interfile-depth` flag wins over the `taint_interfile_depth` rule option by @maciejpirog in #930
+* Test: an annotation is checked against the rules of the rule file by @corneliuhoffman in #940
+
+### Infrastructure
+
+* Add AGENTS.md by @dimitris-m in #920
+* Tests: the test executable sets `GIT_CONFIG_GLOBAL` to `/dev/null` by @dimitris-m in #927
+* Comments: correct text typos by @CharoenwitKunna in #938
+
+### New Contributors
+
+* @CharoenwitKunna made their first contribution in #938
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v2.0.0...v2.1.0
+
+
 ## [2.0.0](https://github.com/opengrep/opengrep/releases/tag/v2.0.0) - 13-11-2026
 
 ### Architecture
