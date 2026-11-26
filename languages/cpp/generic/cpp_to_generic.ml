@@ -1975,7 +1975,7 @@ and map_template_parameter env x : G.type_parameter =
       and v3 = map_of_option (map_ident env) v3 in
       match v3 with
       | None -> G.OtherTypeParam (("TPVariadic", v2), [])
-      | Some id -> G.OtherTypeParam (("TPVariadic", v2), [ G.I id ]))
+      | Some id -> G.TPVariadic (v2, G.tparam_classic_of_id id))
   | TPNested (v1, v2, v3) ->
       let v1 = map_tok env v1
       and _, v2, _ = map_template_parameters env v2

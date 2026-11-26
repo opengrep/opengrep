@@ -1855,6 +1855,8 @@ and definition_kind =
 (* template/generics/polymorphic-type *)
 and type_parameter =
   | TP of type_parameter_classic
+  | TPVariadic of tok * type_parameter_classic
+  | TPParamSpec of tok * type_parameter_classic
   (* sgrep-ext: *)
   | TParamEllipsis of tok
   (* e.g., Lifetime in Rust, complex types in OCaml, HasConstructor in C#,
@@ -1876,6 +1878,7 @@ and type_parameter_classic = {
   tp_default : type_ option;
   (* declaration-site variance (Kotlin/Hack/Scala) *)
   tp_variance : variance wrap option;
+  tp_info : id_info;
 }
 
 (* bracket is usually '<>' for C++/.., '()' for OCaml, '[]' for Scala *)
@@ -2585,9 +2588,19 @@ let ty_builtin id = TyN (Id (id, empty_id_info ())) |> t
 (* ------------------------------------------------------------------------- *)
 (* Type parameters *)
 (* ------------------------------------------------------------------------- *)
-let tparam_of_id ?(tp_attrs = []) ?tp_variance ?(tp_bounds = []) ?tp_default
-    tp_id =
-  TP { tp_id; tp_attrs; tp_variance; tp_bounds; tp_default }
+let tparam_classic_of_id ?(tp_attrs = []) ?tp_variance ?(tp_bounds = [])
+    ?tp_default tp_id : type_parameter_classic =
+  {
+    tp_id;
+    tp_attrs;
+    tp_variance;
+    tp_bounds;
+    tp_default;
+    tp_info = empty_id_info ();
+  }
+
+let tparam_of_id ?tp_attrs ?tp_variance ?tp_bounds ?tp_default tp_id =
+  TP (tparam_classic_of_id ?tp_attrs ?tp_variance ?tp_bounds ?tp_default tp_id)
 
 (* ------------------------------------------------------------------------- *)
 (* Statements *)

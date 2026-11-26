@@ -3482,11 +3482,17 @@ and m_signature_definition a b =
 and m_type_parameter a b =
   match (a, b) with
   | G.TP a1, B.TP b1 -> m_type_parameter_classic a1 b1
+  | G.TPVariadic (a0, a1), B.TPVariadic (b0, b1)
+  | G.TPParamSpec (a0, a1), B.TPParamSpec (b0, b1) ->
+      let* () = m_tok a0 b0 in
+      m_type_parameter_classic a1 b1
   | G.OtherTypeParam (a1, a2), B.OtherTypeParam (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
   (* those constructs should be handled in the caller *)
   | G.TParamEllipsis a1, B.TParamEllipsis b1 -> m_tok a1 b1
   | G.TP _, _
+  | G.TPVariadic _, _
+  | G.TPParamSpec _, _
   | G.TParamEllipsis _, _
   | G.OtherTypeParam _, _ ->
       fail ()
@@ -3499,6 +3505,7 @@ and m_type_parameter_classic a b =
         tp_bounds = a3;
         tp_default = a4;
         tp_variance = a5;
+        tp_info = a6;
       },
       {
         B.tp_id = b1;
@@ -3506,8 +3513,9 @@ and m_type_parameter_classic a b =
         tp_bounds = b3;
         tp_default = b4;
         tp_variance = b5;
+        tp_info = b6;
       } ) ->
-      let* () = m_ident a1 b1 in
+      let* () = m_ident_and_id_info (a1, a6) (b1, b6) in
       let* () = m_attributes a2 b2 in
       m_list__m_type_any_order a3 b3 >>= fun () ->
       (m_option m_type_) a4 b4 >>= fun () ->

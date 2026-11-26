@@ -48,3 +48,14 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
 
 let class_rebinds_import = Lang_namespaces.Every_scope
 let class_in_scope_in_its_definition = true
+
+(* an annotation is a modifier, which the scope of the type parameters of its
+   declaration excludes, while the scope of a method's type parameters covers
+   its throws clause, which the generic AST carries as an attribute (JLS 6.3) *)
+let attribute_in_type_parameter_scope (_ : Lang_namespaces.definition_kind)
+    (attribute : AST_generic.attribute) : bool =
+  match attribute with
+  | AST_generic.NamedAttr _ -> false
+  | AST_generic.KeywordAttr _
+  | AST_generic.OtherAttribute _ ->
+      true

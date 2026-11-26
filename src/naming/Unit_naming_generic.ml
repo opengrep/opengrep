@@ -79,6 +79,14 @@ let kind_of_resolution = function
       | AST_generic.ImportedModule _ -> "ImportedModule"
       | _ -> "Other")
 
+(* The line of the definition a use refers to, 0 for an unresolved use. *)
+let definition_line (use : AST_generic.resolved_name option) : int =
+  match use with
+  | Some (_, sid) ->
+      let _, _, line, _ = AST_generic.SId.to_loc sid in
+      line
+  | None -> 0
+
 let check_resolutions ast name expected =
   let actual =
     resolutions_of_name ast name |> List.map kind_of_resolution
@@ -638,6 +646,92 @@ let tests parse_program =
               Alcotest.failf
                 "expected one class and three uses of Foo, found %d and %d"
                 (List.length definitions) (List.length uses));
+      t "python type parameters are in scope in the body, not in decorators"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/python/type_parameter_scope.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment, the uses in the bodies of f,
+             C.m and K.run, the use at the top level. *)
+          check_resolutions ast "T"
+            [ "Global"; "Parameter"; "Parameter"; "Parameter"; "Global" ];
+          Alcotest.(check (list string))
+            "the decorators refer to the global"
+            [ "Global"; "Global"; "Global" ]
+            (attribute_resolutions_of_name ast "T"
+            |> List.map kind_of_resolution));
+      t "python type alias type parameters are in scope in its value"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/python/type_alias_type_parameter.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Occurrences: the global assignment (line 1), the uses in [Pair],
+             which refer to its type parameter (line 3), those in [Plain],
+             which refer to the global. *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T" [ 1; 3; 3; 1; 1 ]
+            (resolutions_of_name ast "T" |> List.map definition_line));
+      t "java annotations are outside the type parameters of their declaration"
+        (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/java/annotation_and_type_parameter.java")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Java ast;
+          (* the annotation of [B] refers to the class (line 1), the type of
+             its field to its type parameter (line 4), the annotation of [m] to
+             the class, the type of the parameter of [m] to the type parameter
+             of [m] (line 10) *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T" [ 1; 4; 1; 10 ]
+            (resolutions_of_name ast "T" @ type_resolutions_of_name ast "T"
+            |> List.map definition_line));
+      t "csharp attributes of a type are outside its type parameters, those \
+         of a method inside" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/csharp/attribute_and_type_parameter.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* the [nameof] in the attribute of [M] refers to the type parameter
+             of [M] (line 10); among the uses in types, the [typeof] in the
+             attribute of [C] refers to the class (line 1), the type of the
+             field of [C] to its type parameter (line 4), the type of the
+             parameter of [M] to the type parameter of [M] *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T" [ 10; 1; 4; 10 ]
+            (resolutions_of_name ast "T" @ type_resolutions_of_name ast "T"
+            |> List.map definition_line));
+      t "cpp template parameters are in scope in an out-of-class member and \
+         in attributes" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/cpp/template_member_out_of_class.cpp")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Cpp ast;
+          (* the uses in the class refer to its template parameter (line 3),
+             those in the out-of-class member and in its qualifier to the
+             member's (line 7), those in [g] to the typedef (line 1), those in
+             [h], its attribute included, to the parameter of [h] (line 15) *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T"
+            [ 3; 3; 7; 7; 7; 1; 1; 15; 15; 15 ]
+            (type_resolutions_of_name ast "T" @ resolutions_of_name ast "T"
+            |> List.map definition_line));
       t "go local type is in scope in its own definition" (fun () ->
           let file =
             Fpath.v

@@ -2607,7 +2607,8 @@ and type_parameter : G.type_parameter parser = fun __n -> (
                   tp_attrs = attrs;
                   tp_bounds = [];
                   tp_default = None;
-                  tp_variance = variance })
+                  tp_variance = variance;
+                  tp_info = G.empty_id_info ~case_insensitive:true () })
     end;
   ]
 ) __n

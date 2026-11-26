@@ -1,0 +1,23 @@
+rules:
+- id: same-type-parameter
+  languages: [java]
+  severity: INFO
+  message: a nested class reuses the type parameter of its enclosing class
+  pattern: |
+    class $C<$T> {
+      ...
+      class $D<$T> { ... }
+      ...
+    }
+- id: same-type-parameter-name
+  languages: [java]
+  severity: INFO
+  message: a nested class reuses the name of the type parameter of its enclosing class
+  options:
+    unify_ids_strictly: false
+  pattern: |
+    class $C<$T> {
+      ...
+      class $D<$T> { ... }
+      ...
+    }

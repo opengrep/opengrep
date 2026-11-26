@@ -3019,13 +3019,7 @@ and type_parameter (env : env) (x : CST.type_parameter) : G.type_parameter =
         | Some xs -> xs
         | None -> []
       in
-      G.TP
-        { tp_id = v2;
-          tp_attrs = v1;
-          tp_bounds = v3;
-          tp_default = None;
-          tp_variance = None;
-        }
+      G.tparam_of_id v2 ~tp_attrs:v1 ~tp_bounds:v3
 
 (* NEW *)
 and type_parameters (env : env) ((v1, v2, v3, v4) : CST.type_parameters)

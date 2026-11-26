@@ -47,3 +47,24 @@ let searched_by : Lang_namespaces.use_position -> t list list = function
 
 let class_rebinds_import = Lang_namespaces.Every_scope
 let class_in_scope_in_its_definition = true
+
+(* an attribute of a generic method can refer to its type parameters through
+   [nameof] (C# 11), while the scope of the type parameters of a type is its
+   base list, its constraints and its body, without its attributes *)
+let attribute_in_type_parameter_scope
+    (kind : Lang_namespaces.definition_kind) (_ : AST_generic.attribute) : bool
+    =
+  match kind with
+  | Function
+  | Method
+  | Constructor ->
+      true
+  | Class
+  | Interface
+  | Type_definition
+  | Type_alias
+  | Type_parameter
+  | Module
+  | Import
+  | Static_import ->
+      false

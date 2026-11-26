@@ -1105,13 +1105,20 @@ and map_type_parameter = function
   | TP v1 ->
       let v1 = map_type_parameter_classic v1 in
       `TP v1
+  | TPVariadic (tk, v1) ->
+      let v1 = map_type_parameter_classic v1 in
+      `OtherTypeParam
+        (map_todo_kind ("VariadicTypeParameter", tk), [ `Tp (`TP v1) ])
+  | TPParamSpec (tk, v1) ->
+      let v1 = map_type_parameter_classic v1 in
+      `OtherTypeParam (map_todo_kind ("ParamSpec", tk), [ `Tp (`TP v1) ])
   | TParamEllipsis tk -> raise (SemgrepConstruct tk)
   | OtherTypeParam (v1, v2) ->
       let v1 = map_todo_kind v1 and v2 = map_of_list map_any v2 in
       `OtherTypeParam (v1, v2)
 
 and map_type_parameter_classic
-    { tp_id; tp_attrs; tp_bounds; tp_default; tp_variance } =
+    { tp_id; tp_attrs; tp_bounds; tp_default; tp_variance; tp_info = _ } =
   let tp_id = map_ident tp_id in
   let tp_attrs = map_of_list map_attribute tp_attrs in
   let tp_bounds = map_of_list map_type_ tp_bounds in

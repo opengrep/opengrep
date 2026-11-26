@@ -1,0 +1,11 @@
+rules:
+- id: field-type-not-class-type-parameter
+  languages: [java]
+  severity: INFO
+  message: the type of a field is not a type parameter of its class
+  patterns:
+    - pattern-not-inside: |
+        class $C<$T> {
+          ...
+        }
+    - pattern: $T $F;

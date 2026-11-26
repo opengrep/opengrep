@@ -328,6 +328,8 @@ type namespaces = {
   searched_by : Lang_namespaces.use_position -> namespace_hash list list;
   class_rebinds_import : Lang_namespaces.import_rebinding;
   class_in_scope_in_its_definition : bool;
+  attribute_in_type_parameter_scope :
+    Lang_namespaces.definition_kind -> attribute -> bool;
 }
 
 type env = {
@@ -395,6 +397,7 @@ let namespaces_of ((module N) : (module Lang_namespaces.NAMESPACES)) :
       | Base_class -> base_class);
     class_rebinds_import = N.class_rebinds_import;
     class_in_scope_in_its_definition = N.class_in_scope_in_its_definition;
+    attribute_in_type_parameter_scope = N.attribute_in_type_parameter_scope;
   }
 
 let default_env (namespaces : namespaces) (lang : Lang.t) (file : string) : env
@@ -1012,6 +1015,18 @@ let resolve_constructors (env : env) (entity : entity)
                  | _ -> ()))
   | _ -> ()
 
+(* The declaration of a type parameter that binds its identifier. *)
+let binding_type_parameter (tparam : type_parameter) :
+    type_parameter_classic option =
+  match tparam with
+  | TP classic
+  | TPVariadic (_, classic)
+  | TPParamSpec (_, classic) ->
+      Some classic
+  | TParamEllipsis _
+  | OtherTypeParam _ ->
+      None
+
 (* Type parameters bind in the current scope, which the caller opens: a use
    in their scope refers to them, not to a type of the same name outside. *)
 let declare_type_parameters (env : env) (tparams : type_parameters option) :
@@ -1020,28 +1035,30 @@ let declare_type_parameters (env : env) (tparams : type_parameters option) :
   | Some (_, tparams, _), (_ :: _ as namespaces) ->
       tparams
       |> List.iter (fun (tparam : type_parameter) ->
-             match tparam with
-             | TP { tp_id; _ } ->
+             match binding_type_parameter tparam with
+             | Some { tp_id; tp_info; _ } ->
                  let sid =
                    SId.of_tok ~binding:(fresh_binding env) ~file:env.file
                      (snd tp_id)
                  in
+                 let resolved = { entname = (Parameter, sid); enttype = None } in
+                 set_resolved env tp_info resolved;
                  namespaces
                  |> List.iter (fun (ns : namespace_hash) ->
-                        add_current_scope ns tp_id
-                          { entname = (Parameter, sid); enttype = None }
-                          env.names)
-             | TParamEllipsis _
-             | OtherTypeParam _ ->
-                 ())
+                        add_current_scope ns tp_id resolved env.names)
+             | None -> ())
   | _ -> ()
 
-(* Runs [f] in a block scope that holds the type parameters of a function,
+(* Runs [f] in a block scope that holds the type parameters of a definition,
    when it has some that bind. *)
 let with_type_parameters (env : env) (tparams : type_parameters option)
     (f : unit -> unit) : unit =
   match (tparams, namespace_of env Type_parameter) with
-  | Some _, _ :: _ ->
+  | Some (_, tparam_list, _), _ :: _
+    when List.exists
+           (fun (tparam : type_parameter) ->
+             Option.is_some (binding_type_parameter tparam))
+           tparam_list ->
       with_new_block_scope env.names (fun () ->
           declare_type_parameters env tparams;
           f ())
@@ -1151,6 +1168,27 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
           self#visit_attributes_and_type_parameters venv attrs tparams
       | _ -> self#visit_entity venv entity
 
+    (* Visits the attributes of [entity] that are outside the scope of its type
+       parameters, and returns it with the others, to be visited once that
+       scope is open. *)
+    method private visit_attributes_outside_type_parameters (venv : unit)
+        (kind : Lang_namespaces.definition_kind) (entity : entity) : entity =
+      let inside, outside =
+        List.partition
+          (env.namespaces.attribute_in_type_parameter_scope kind)
+          entity.attrs
+      in
+      List.iter (self#visit_attribute venv) outside;
+      { entity with attrs = inside }
+
+    method private visit_in_type_parameter_scope (venv : unit)
+        (kind : Lang_namespaces.definition_kind) (entity : entity)
+        (visit : entity -> unit) =
+      let entity =
+        self#visit_attributes_outside_type_parameters venv kind entity
+      in
+      with_type_parameters env entity.tparams (fun () -> visit entity)
+
     method! visit_function_definition venv x =
       (* todo: add the function as a Global. In fact we should do a first
        * pass for some languages to add all of them first, because
@@ -1212,8 +1250,12 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                   with_new_function_scope
                     (parameter_scope env (special_class_params @ class_params))
                     env.names (fun () ->
-                      declare_type_parameters env entity.tparams;
                       declare_class_members env lang c;
+                      let entity =
+                        self#visit_attributes_outside_type_parameters venv
+                          (class_definition_kind c) entity
+                      in
+                      declare_type_parameters env entity.tparams;
                       self#visit_defining_entity venv entity;
                       self#visit_class_definition venv c)));
           resolve_constructors env entity c
@@ -1396,12 +1438,29 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                     and the field's type is what a use of the name carries. *)
                  declare_in_scope env lang namespaces scope add
                    ~keep_type:true id id_info);
-          with_type_parameters env (fst x).tparams (fun () ->
+          self#visit_in_type_parameter_scope venv kind entity (fun entity ->
               match namespace_of env kind with
               | [] ->
                   self#visit_defining_entity venv entity;
                   self#visit_definition_kind venv (snd x)
-              | _ :: _ -> super#visit_definition venv x)
+              | _ :: _ -> super#visit_definition venv (entity, snd x))
+      (* A plain name is visited outside the scope of the function's type
+         parameters, a qualified name such as C++ [A<T>::f] inside it. *)
+      | ({ name = EN (Id _) as name; _ } as entity), (FuncDef def as definition)
+        ->
+          self#visit_entity_name venv name;
+          self#visit_in_type_parameter_scope venv
+            (function_definition_kind env entity def)
+            entity
+            (fun entity ->
+              self#visit_attributes_and_type_parameters venv entity.attrs
+                entity.tparams;
+              self#visit_definition_kind venv definition)
+      | entity, (FuncDef def as definition) ->
+          self#visit_in_type_parameter_scope venv
+            (function_definition_kind env entity def)
+            entity
+            (fun entity -> super#visit_definition venv (entity, definition))
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
           let s = String.lowercase_ascii (Tok.content_of_tok tok) in
@@ -1452,8 +1511,11 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       | entity, (TypeDef def as kind) ->
           with_class_or_type_binding env lang entity (type_definition_kind def)
             (fun () ->
-              self#visit_defining_entity venv entity;
-              self#visit_definition_kind venv kind)
+              self#visit_in_type_parameter_scope venv (type_definition_kind def)
+                entity
+                (fun entity ->
+                  self#visit_defining_entity venv entity;
+                  self#visit_definition_kind venv kind))
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
 
