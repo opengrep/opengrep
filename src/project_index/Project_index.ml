@@ -171,24 +171,38 @@ let build_definitions_by_qn ~(entries : entry list)
    [Memprof_limits]-based memory limit and timeout stay sound (see the
    warning on [Domainslib_.parmap]). *)
 (* Files are sorted by decreasing size before the edge pass, so a batch is
-   a run of similar-sized files; small batches let the pool balance the
-   heavy head of that order instead of handing one domain the 500 largest
-   files (on GitLab that left the pool one third busy). *)
+   a run of similar-sized files. *)
+(* A batch holds at most this many files, and about a quarter of a domain's
+   share of the total weight (see [run_per_file]), so a heavy file is a batch
+   of its own instead of sharing one domain with the next largest files. With
+   equal weights that is a quarter of a domain's share of the files. *)
 let per_file_batch_size =
   match Sys.getenv_opt "OPENGREP_PROJIDX_BATCH" with
   | Some s -> ( try int_of_string s with _ -> 32)
   | None -> 32
 
-(* Split a list into chunks of at most [n] elements. *)
-let rec chunks (n : int) (xs : 'a list) : 'a list list =
-  match xs with
-  | [] -> []
-  | _ ->
-    let len = List.length xs in
-    let take = min n len in
-    let batch = List_.take_safe take xs in
-    let rest = List_.drop take xs in
-    batch :: chunks n rest
+(* Split a list, in order, into batches of at most [max_items] elements
+   whose weights sum to at most [target]; an item heavier than [target] is a
+   batch of its own. *)
+let weighted_chunks ~(weight : 'a -> int) ~(max_items : int) ~(target : int)
+    (xs : 'a list) : 'a list list =
+  let close (batch : 'a list) (batches : 'a list list) : 'a list list =
+    match batch with
+    | [] -> batches
+    | _ :: _ -> List.rev batch :: batches
+  in
+  let batch, _, _, batches =
+    List.fold_left
+      (fun ((batch : 'a list), (items : int), (sum : int),
+            (batches : 'a list list)) (x : 'a) ->
+        let full =
+          items >= max_items || (items > 0 && sum + weight x > target)
+        in
+        if full then ([ x ], 1, weight x, close batch batches)
+        else (x :: batch, items + 1, sum + weight x, batches))
+      ([], 0, 0, []) xs
+  in
+  List.rev (close batch batches)
 
 (* Run [fn] on each item, in parallel when [ncores > 1] and there is
    more than one batch, sequentially otherwise.  Each parallel work
@@ -196,7 +210,7 @@ let rec chunks (n : int) (xs : 'a list) : 'a list list =
    an [Error] for the caller to log and skip, while the fatal trio is
    re-raised. *)
 let run_per_file (caps : < Cap.fork >) ~(ncores : int)
-    (fn : 'a -> 'b) (items : 'a list)
+    ~(weight : 'a -> int) (fn : 'a -> 'b) (items : 'a list)
     : ('b, 'a * Exception.t) Result.t list =
   (* [fn] fixes the type: one [Ok]/[Error] per item; an [Error] carries the
      item so the caller can attribute (and surface) the failure. The whole
@@ -209,7 +223,14 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
       Exception.catch_and_reraise exn
     | exn -> Error (item, Exception.catch exn)
   in
-  let batches = chunks per_file_batch_size items in
+  (* About four batches per domain, so the pool can balance the heavy ones. *)
+  let target =
+    max 1 (List.fold_left (fun (sum : int) (item : 'a) -> sum + weight item) 0 items
+           / max 1 (ncores * 4))
+  in
+  let batches =
+    weighted_chunks ~weight ~max_items:per_file_batch_size ~target items
+  in
   let n = List.length batches in
   if ncores <= 1 || n <= 1 then List_.map run_one items
   else
@@ -397,7 +418,8 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let per_file_funcs =
     timed "call graph: functions per file" @@ fun () ->
-    run_per_file caps ~ncores phase1_per_file file_infos
+    run_per_file caps ~ncores ~weight:(fun (_ : file_info) -> 1)
+      phase1_per_file file_infos
   in
   let all_funcs =
     List.concat_map (function Ok fs -> fs | Error _ -> []) per_file_funcs
@@ -755,7 +777,8 @@ let build_project_call_graph (caps : < Cap.fork >)
       php_global_bindings =
         (match cfg.Index_lang_rules.unqualified_scope with
          | `Per_namespace ->
-           Scope_php.global_function_bindings ~attributes_by_module
+           Scope_binding.bindings_by_name
+             (Scope_php.global_function_bindings ~attributes_by_module)
          | `Per_file
          | `Per_crate
          | `Per_constant_path
@@ -764,7 +787,7 @@ let build_project_call_graph (caps : < Cap.fork >)
          | `Per_module
          | `Per_package
          | `Per_translation_unit
-         | `Per_project -> []);
+         | `Per_project -> Common.SMap.empty);
       include_map =
         timed "call graph: include closures" (fun () ->
           match cfg.Index_lang_rules.unqualified_scope with
@@ -916,15 +939,25 @@ let build_project_call_graph (caps : < Cap.fork >)
     Nonfatal.catch ~default:0 (fun () ->
       (Unix.stat (Fpath.to_string fi.fi_file)).Unix.st_size)
   in
-  let file_infos =
+  let sized_files =
     file_infos
     |> List_.map (fun fi -> (file_size_of fi, fi))
     |> List.sort (fun (a, _) (b, _) -> Int.compare b a)
-    |> List_.map snd
+  in
+  let file_infos = List_.map snd sized_files in
+  let size_by_file : int Common.SMap.t =
+    List.fold_left
+      (fun (sizes : int Common.SMap.t) ((size : int), (fi : file_info)) ->
+        Common.SMap.add (Fpath.to_string fi.fi_file) size sizes)
+      Common.SMap.empty sized_files
   in
   let per_file_edges =
     timed "call graph: edges per file" @@ fun () ->
-    run_per_file caps ~ncores edges_for_file file_infos
+    run_per_file caps ~ncores
+      ~weight:(fun (fi : file_info) ->
+        Option.value ~default:0
+          (Common.SMap.find_opt (Fpath.to_string fi.fi_file) size_by_file))
+      edges_for_file file_infos
   in
   (* stage split of the edge pass, and the shape of the name table it
      resolves calls against *)

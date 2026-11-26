@@ -34,7 +34,7 @@ type ctx = {
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t;
-  php_global_bindings : Scope_binding.positioned_binding list;
+  php_global_bindings : Scope_binding.positioned_binding list Common.SMap.t;
   include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
@@ -80,7 +80,7 @@ val build_scope_table :
   nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
   global_imports:import list ->
   namespace_scope_bindings:Scope_binding.namespace_scope_bindings Common.SMap.t ->
-  php_global_bindings:Scope_binding.positioned_binding list ->
+  php_global_bindings:Scope_binding.positioned_binding list Common.SMap.t ->
   include_map:Include_map.t ->
   module_scope:Scope_module.project_scope ->
   go_packages:Scope_go.package_index ->

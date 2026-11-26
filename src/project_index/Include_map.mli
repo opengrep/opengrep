@@ -9,8 +9,9 @@ val build :
 
 val closure_of_file : t -> string -> unit Common.SMap.t
 
-val bindings_of_file :
-  t -> closure:unit Common.SMap.t -> string ->
-  Scope_binding.positioned_binding list
-
 val files_in_closure : unit Common.SMap.t -> string list
+
+(* The functions of a name visible in a file: its own declarations, then those
+   of the files of its include closure by increasing path. *)
+val visible_functions_of_name :
+  t -> closure:unit Common.SMap.t -> string -> string -> Func_info.t list

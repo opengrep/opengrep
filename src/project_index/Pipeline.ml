@@ -51,7 +51,7 @@ type ctx = {
   extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t;
-  php_global_bindings : Scope_binding.positioned_binding list;
+  php_global_bindings : Scope_binding.positioned_binding list Common.SMap.t;
   include_map : Include_map.t;
   module_scope : Scope_module.project_scope;
   go_packages : Scope_go.package_index;
@@ -262,7 +262,7 @@ let build_scope_table
     ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
     ~(global_imports : import list)
     ~(namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t)
-    ~(php_global_bindings : Scope_binding.positioned_binding list)
+    ~(php_global_bindings : Scope_binding.positioned_binding list Common.SMap.t)
     ~(include_map : Include_map.t)
     ~(module_scope : Scope_module.project_scope)
     ~(go_packages : Scope_go.package_index)
@@ -319,31 +319,31 @@ let build_scope_table
              bound_class_files = []; own_modules;
              module_aliases = None }
     | `Per_namespace ->
-      let bindings, own_modules =
+      let scope_table, own_modules =
         Scope_php.build ~definitions_by_qn ~attributes_by_module
           ~namespace_scope_bindings
           ~global_bindings:php_global_bindings
           ~classes_by_file ~class_parent_paths ~file_funcs_index fi
       in
-      Some { scope_table = Func_lookup.scope_table_of_map bindings;
+      Some { scope_table;
              bound_class_files = []; own_modules;
              module_aliases = None }
     | `Per_translation_unit ->
       let closure =
         Include_map.closure_of_file include_map (Fpath.to_string fi.fi_file)
       in
-      let bindings =
+      let scope_table =
         Scope_c_family.build ~precedence:cfg.Index_lang_rules.precedence
           ~definitions_by_qn ~attributes_by_module
           ~classes_by_file ~class_parent_paths ~resolution_orders
           ~methods_by_class ~namespace_scope_bindings
-          ~include_bindings:
-            (Include_map.bindings_of_file include_map ~closure
+          ~include_functions:
+            (Include_map.visible_functions_of_name include_map ~closure
                (Fpath.to_string fi.fi_file))
           ~included_files:(Include_map.files_in_closure closure)
           ~file_funcs_index fi
       in
-      Some { scope_table = Func_lookup.scope_table_of_map bindings;
+      Some { scope_table;
              bound_class_files = []; own_modules = fi.fi_namespace_scopes;
              module_aliases = None }
     | `Per_crate ->

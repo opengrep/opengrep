@@ -50,23 +50,6 @@ let function_pointer_aliases (ast : G.program) : (string * string) list =
         else None)
     values
 
-let bind_alias (bound : Func_lookup.scope_entry list Common.SMap.t)
-    ((name : string), (target : string))
-    : Func_lookup.scope_entry list Common.SMap.t =
-  match
-    Func_lookup.functions_of_entries
-      (Option.value (Common.SMap.find_opt target bound) ~default:[])
-  with
-  | [] -> bound
-  | (_ :: _) as funcs ->
-    Common.SMap.add name
-      (List.map
-         (fun (func : Func_info.t) ->
-           { Func_lookup.kind = Func_lookup.Scope_function func;
-             parent_path = [] })
-         funcs)
-      bound
-
 type using_clauses = {
   uc_directives : (Names.Module_qn.t * Tok.t) list;
   uc_declarations : (string * Names.Module_qn.t * Tok.t) list;
@@ -173,10 +156,10 @@ let build
     ~(resolution_orders : Func_lookup.resolution_orders)
     ~(methods_by_class : Func_lookup.methods_by_class)
     ~(namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t)
-    ~(include_bindings : Scope_binding.positioned_binding list)
+    ~(include_functions : string -> Func_info.t list)
     ~(included_files : string list)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
-    (fi : file_info) : Func_lookup.scope_entry list Common.SMap.t =
+    (fi : file_info) : Func_lookup.scope_table =
   let fi_file_str = Fpath.to_string fi.fi_file in
   let using = using_clauses_of_file fi.fi_ast in
   let own_classes =
@@ -264,24 +247,59 @@ let build
           (Names.Class_qn.split_last ci.ci_qn))
       included_classes
   in
-  let on_demand =
-    global_bindings_of_includes ~definitions_by_qn include_bindings
-    @ included_type_bindings
-    @ Scope_package.unambiguous_on_demand
-        (List.concat_map
-           (fun (((target : Names.Module_qn.t), (tok : Tok.t))) ->
-             bindings_of_namespace ~pos:(Scope_binding.position_of_tok tok)
-               target)
-           using.uc_directives)
-  in
-  let bindings =
-    Scope_package.of_kind Index_lang_rules.Wildcard_import on_demand
+  (* The functions an include makes visible are many and few are called, so a
+     name's entries are computed when it is looked up; precedence, binding and
+     aliases all act on one name at a time, as on the whole table. *)
+  let eager =
+    Scope_package.of_kind Index_lang_rules.Wildcard_import
+      (included_type_bindings
+       @ Scope_package.unambiguous_on_demand
+           (List.concat_map
+              (fun (((target : Names.Module_qn.t), (tok : Tok.t))) ->
+                bindings_of_namespace ~pos:(Scope_binding.position_of_tok tok)
+                  target)
+              using.uc_directives))
     @ Scope_package.of_kind Index_lang_rules.Own_definition
         (own_namespace_bindings @ function_bindings @ alias_bindings
          @ type_bindings @ member_bindings)
     @ Scope_package.of_kind Index_lang_rules.Single_import imported
   in
-  List.fold_left bind_alias
-    (Scope_binding.bindings_of_positioned
-       (Scope_package.keep_highest_precedence ~precedence bindings))
-    (function_pointer_aliases fi.fi_ast)
+  let eager_by_name : Scope_package.binding_with_kind list Common.SMap.t =
+    Scope_binding.group_in_order
+      ~key:(fun (entry : Scope_package.binding_with_kind) ->
+        entry.binding.Scope_binding.pb_name)
+      eager
+  in
+  let entries_of_name (name : string) : Func_lookup.scope_entry list =
+    let included =
+      Scope_package.of_kind Index_lang_rules.Wildcard_import
+        (global_bindings_of_includes ~definitions_by_qn
+           (Scope_binding.function_binding_of ~pos:None ~parent_path:[] name
+              (include_functions name)))
+    in
+    Scope_binding.bindings_of_positioned
+      (Scope_package.keep_highest_precedence ~precedence
+         (included
+          @ Option.value (Common.SMap.find_opt name eager_by_name) ~default:[]))
+    |> Common.SMap.find_opt name
+    |> Option.value ~default:[]
+  in
+  (* An alias reads the table as the aliases before it left it. *)
+  let rec entries_after (aliases : (string * string) list) (name : string)
+      : Func_lookup.scope_entry list =
+    match aliases with
+    | [] -> entries_of_name name
+    | ((alias : string), (target : string)) :: earlier ->
+      if not (String.equal alias name) then entries_after earlier name
+      else
+        match Func_lookup.functions_of_entries (entries_after earlier target) with
+        | [] -> entries_after earlier name
+        | (_ :: _) as funcs ->
+          List.map
+            (fun (func : Func_info.t) ->
+              { Func_lookup.kind = Func_lookup.Scope_function func;
+                parent_path = [] })
+            funcs
+  in
+  let latest_first = List.rev (function_pointer_aliases fi.fi_ast) in
+  Func_lookup.scope_table_of_lookup (entries_after latest_first)

@@ -44,13 +44,13 @@ let build
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
     ~(namespace_scope_bindings : Scope_binding.namespace_scope_bindings Common.SMap.t)
-    ~(global_bindings : Scope_binding.positioned_binding list)
+    ~(global_bindings : Scope_binding.positioned_binding list Common.SMap.t)
     ~(classes_by_file : class_info list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     (fi : file_info)
-    : Func_lookup.scope_entry list Common.SMap.t * Names.Module_qn.t list =
+    : Func_lookup.scope_table * Names.Module_qn.t list =
   let fi_file_str = Fpath.to_string fi.fi_file in
   let namespace_scopes = own_namespace_scopes fi in
   let keys = namespace_scope_keys namespace_scopes in
@@ -75,25 +75,25 @@ let build
           namespace_scope_bindings)
       namespace_scopes
   in
-  let in_namespace_scopes =
+  let bindings_of_name (name : string)
+      (by_name : Scope_binding.positioned_binding list Common.SMap.t)
+      : Scope_binding.positioned_binding list =
+    Option.value (Common.SMap.find_opt name by_name) ~default:[]
+  in
+  let in_namespace_scopes (name : string)
+      : Scope_binding.positioned_binding list =
     List.concat_map
-      Scope_binding.bindings_in_namespace_scope
-      own_namespace_scope_bindings
-  in
-  let bound_by_namespace_scopes (name : string) : bool =
-    List.exists
       (fun (bound : Scope_binding.namespace_scope_bindings) ->
-        Common.SMap.mem name bound.Scope_binding.rb_names)
+        bindings_of_name name bound.Scope_binding.rb_by_name)
       own_namespace_scope_bindings
   in
-  let from_global =
-    if Common.SMap.mem (Names.Module_qn.to_string Names.Module_qn.empty) keys
-    then []
-    else
-      List.filter
-        (fun (binding : Scope_binding.positioned_binding) ->
-          not (bound_by_namespace_scopes binding.Scope_binding.pb_name))
-        global_bindings
+  let in_global_namespace : bool =
+    Common.SMap.mem (Names.Module_qn.to_string Names.Module_qn.empty) keys
+  in
+  let from_global (name : string) : Scope_binding.positioned_binding list =
+    if in_global_namespace || not (List_.null (in_namespace_scopes name)) then
+      []
+    else bindings_of_name name global_bindings
   in
   let imported =
     List.concat_map
@@ -123,6 +123,17 @@ let build
                     class_qn ]))
       fi.fi_imports
   in
-  ( Scope_binding.bindings_of_positioned
-      (from_global @ in_namespace_scopes @ function_bindings @ type_bindings @ imported),
-    namespace_scopes )
+  let own_by_name =
+    Scope_binding.bindings_by_name (function_bindings @ type_bindings @ imported)
+  in
+  (* The project binds far more names than a file refers to: a name's
+     entries are computed from its own bindings when it is looked up. *)
+  let entries_of_name (name : string) : Func_lookup.scope_entry list =
+    Option.value
+      (Common.SMap.find_opt name
+         (Scope_binding.bindings_of_positioned
+            (from_global name @ in_namespace_scopes name
+           @ bindings_of_name name own_by_name)))
+      ~default:[]
+  in
+  (Func_lookup.scope_table_of_lookup entries_of_name, namespace_scopes)

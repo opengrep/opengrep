@@ -245,9 +245,26 @@ let bindings_of_every_attribute ~(pos : Pos.t option)
     : positioned_binding list =
   bindings_of_attributes ~pos ~keep:(fun _ _ -> true) attributes
 
+(* The items of each key, in the order of the list. *)
+let group_in_order ~(key : 'a -> string) (items : 'a list)
+    : 'a list Common.SMap.t =
+  List.fold_left
+    (fun (by_key : 'a list Common.SMap.t) (item : 'a) ->
+      Common.SMap.update (key item)
+        (fun (later : 'a list option) ->
+          Some (item :: Option.value later ~default:[]))
+        by_key)
+    Common.SMap.empty (List.rev items)
+
+(* The bindings of each name, in the order of the list. *)
+let bindings_by_name (bindings : positioned_binding list)
+    : positioned_binding list Common.SMap.t =
+  group_in_order ~key:(fun (binding : positioned_binding) -> binding.pb_name)
+    bindings
+
 type namespace_scope_bindings = {
   rb_in_namespace_scope : positioned_binding list;
-  rb_names : unit Common.SMap.t;
+  rb_by_name : positioned_binding list Common.SMap.t;
 }
 
 let bindings_in_namespace_scope (bound : namespace_scope_bindings) : positioned_binding list =
@@ -262,11 +279,7 @@ let build_namespace_scope_bindings
         (Func_lookup.attributes_of_module attributes_by_module namespace_scope)
     in
     { rb_in_namespace_scope = in_namespace_scope;
-      rb_names =
-        List.fold_left
-          (fun (names : unit Common.SMap.t) (binding : positioned_binding) ->
-            Common.SMap.add binding.pb_name () names)
-          Common.SMap.empty in_namespace_scope }
+      rb_by_name = bindings_by_name in_namespace_scope }
   in
   List.fold_left
     (fun (by_namespace_scope : namespace_scope_bindings Common.SMap.t)

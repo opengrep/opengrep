@@ -78,9 +78,16 @@ val bindings_of_every_attribute :
   Func_lookup.module_attribute Common.SMap.t ->
   positioned_binding list
 
+(* The items of each key, in the order of the list. *)
+val group_in_order : key:('a -> string) -> 'a list -> 'a list Common.SMap.t
+
+(* The bindings of each name, in the order of the list. *)
+val bindings_by_name :
+  positioned_binding list -> positioned_binding list Common.SMap.t
+
 type namespace_scope_bindings = {
   rb_in_namespace_scope : positioned_binding list;
-  rb_names : unit Common.SMap.t;
+  rb_by_name : positioned_binding list Common.SMap.t;
 }
 
 val bindings_in_namespace_scope : namespace_scope_bindings -> positioned_binding list

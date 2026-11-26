@@ -64,6 +64,10 @@ type scope_table
 
 val scope_table_of_map : scope_entry list Common.SMap.t -> scope_table
 
+(* A table whose entries for a name are computed when it is first looked up
+   and kept. The table is for one domain. *)
+val scope_table_of_lookup : (string -> scope_entry list) -> scope_table
+
 val scope_table_union : front:scope_table -> back:scope_table -> scope_table
 
 val scope_table_shadowing :

@@ -71,11 +71,27 @@ type scope_entry = {
 
 type scope_table =
   | Scope_bindings of scope_entry list Common.SMap.t
+  (* The entries of a name, computed when the name is looked up. *)
+  | Scope_on_demand of (string -> scope_entry list)
   | Scope_union of scope_table * scope_table
   | Scope_shadowing of scope_table * scope_table
 
 let scope_table_of_map (bindings : scope_entry list Common.SMap.t)
     : scope_table = Scope_bindings bindings
+
+(* A name is looked up at every call of it, so its entries are computed at
+   the first lookup. The table belongs to the resolution of one file, which
+   one domain runs. *)
+let scope_table_of_lookup (lookup : string -> scope_entry list) : scope_table =
+  let computed : (string, scope_entry list) Hashtbl.t = Hashtbl.create 64 in
+  Scope_on_demand
+    (fun (name : string) ->
+      match Hashtbl.find_opt computed name with
+      | Some (entries : scope_entry list) -> entries
+      | None ->
+          let entries = lookup name in
+          Hashtbl.replace computed name entries;
+          entries)
 
 let scope_table_union ~(front : scope_table) ~(back : scope_table)
     : scope_table = Scope_union (front, back)
@@ -281,6 +297,8 @@ let resolve_in_scope (t : t) ~(caller_parent_path : IL.name option list)
     | Scope_bindings (bindings : scope_entry list Common.SMap.t) ->
       List.filter visible
         (Option.value (Common.SMap.find_opt name bindings) ~default:[])
+    | Scope_on_demand (lookup : string -> scope_entry list) ->
+      List.filter visible (lookup name)
     | Scope_union (front, back) -> (
       match (entries front, entries back) with
       | found, [] -> found

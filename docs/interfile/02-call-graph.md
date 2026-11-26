@@ -174,9 +174,11 @@ the fixpoint would converge prematurely on a stale type.
 
 Phase 2 runs in parallel across `ncores` Domains via
 `Domainslib_.parmap` with `chunksize = 1`; each work unit is a batch
-of at most 500 files, which amortises Domainslib dispatch overhead
-while keeping one task per thread (so the `Memprof_limits`-based
-memory limit and timeout stay sound).  For each file the task calls
+of files, which amortises Domainslib dispatch overhead while keeping
+one task per thread (so the `Memprof_limits`-based memory limit and
+timeout stay sound).  Files are taken largest first, and a batch closes
+at 32 files or at about a quarter of a domain's share of the total
+size, so a very large file is a batch of its own.  For each file the task calls
 `Pipeline.edges_for_file ctx fi` which:
 
 1. **Augments per-file object mappings** — turns `x = SomeClass()`

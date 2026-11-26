@@ -9,10 +9,13 @@ type include_form =
 type t = {
   im_direct : string list Common.SMap.t;
   im_declared : Func_info.t list Common.SMap.t Common.SMap.t;
+  (* name -> the files that declare it, by increasing path, with the functions *)
+  im_declarers : (string * Func_info.t list) list Common.SMap.t;
 }
 
 let empty : t =
-  { im_direct = Common.SMap.empty; im_declared = Common.SMap.empty }
+  { im_direct = Common.SMap.empty; im_declared = Common.SMap.empty;
+    im_declarers = Common.SMap.empty }
 
 let include_form_of (specifier : string) : include_form =
   let last = String.length specifier - 1 in
@@ -132,13 +135,6 @@ let merge_funcs (kept : Func_info.t list) (added : Func_info.t list)
              kept))
       added
 
-let merge_by_name (kept : Func_info.t list Common.SMap.t)
-    (added : Func_info.t list Common.SMap.t) : Func_info.t list Common.SMap.t =
-  Common.SMap.union
-    (fun _ (first : Func_info.t list) (second : Func_info.t list) ->
-      Some (merge_funcs first second))
-    kept added
-
 let declared_at ~(direct : string list Common.SMap.t)
     ~(declarers : string list Common.SMap.t)
     (exports : (string * Func_info.t) list Common.SMap.t)
@@ -175,19 +171,6 @@ let declared_at ~(direct : string list Common.SMap.t)
 
 let closure_of_file (include_map : t) (file : string) : unit Common.SMap.t =
   reachable_from ~direct:include_map.im_direct file
-
-let visible_in_file (include_map : t) ~(closure : unit Common.SMap.t)
-    (file : string) : Func_info.t list Common.SMap.t =
-  let declared_in (reached : string) : Func_info.t list Common.SMap.t =
-    Option.value
-      (Common.SMap.find_opt reached include_map.im_declared)
-      ~default:Common.SMap.empty
-  in
-  Common.SMap.fold
-    (fun (reached : string) ()
-         (bound : Func_info.t list Common.SMap.t) ->
-      merge_by_name bound (declared_in reached))
-    closure (declared_in file)
 
 let build ~(file_infos : file_info list)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t) : t =
@@ -267,17 +250,39 @@ let build ~(file_infos : file_info list)
   let declared =
     declared_at ~direct ~declarers (Common.SMap.map defined_names exports)
   in
-  { im_direct = direct; im_declared = declared }
+  let declarers_by_name =
+    Common.SMap.fold
+      (fun (file : string) (by_name : Func_info.t list Common.SMap.t)
+           (index : (string * Func_info.t list) list Common.SMap.t) ->
+        Common.SMap.fold
+          (fun (name : string) (funcs : Func_info.t list)
+               (index : (string * Func_info.t list) list Common.SMap.t) ->
+            Common.SMap.update name
+              (fun (earlier : (string * Func_info.t list) list option) ->
+                Some ((file, funcs) :: Option.value earlier ~default:[]))
+              index)
+          by_name index)
+      declared Common.SMap.empty
+    |> Common.SMap.map List.rev
+  in
+  { im_direct = direct; im_declared = declared;
+    im_declarers = declarers_by_name }
 
-let bindings_of_file (include_map : t) ~(closure : unit Common.SMap.t)
-    (file : string) : Scope_binding.positioned_binding list =
-  Common.SMap.fold
-    (fun (name : string) (funcs : Func_info.t list)
-         (bindings : Scope_binding.positioned_binding list) ->
-      Scope_binding.function_binding_of ~pos:None ~parent_path:[] name funcs
-      @ bindings)
-    (visible_in_file include_map ~closure file)
-    []
+(* The functions of the name [name] visible in [file]: its own declarations, then
+   those of the files of [closure] by increasing path, a function declared in
+   several of them once. *)
+let visible_functions_of_name (include_map : t) ~(closure : unit Common.SMap.t)
+    (file : string) (name : string) : Func_info.t list =
+  let own =
+    Option.bind (Common.SMap.find_opt file include_map.im_declared)
+      (Common.SMap.find_opt name)
+  in
+  List.fold_left
+    (fun (kept : Func_info.t list) ((declarer : string), (funcs : Func_info.t list)) ->
+      if Common.SMap.mem declarer closure then merge_funcs kept funcs else kept)
+    (Option.value own ~default:[])
+    (Option.value (Common.SMap.find_opt name include_map.im_declarers)
+       ~default:[])
 
 let files_in_closure (closure : unit Common.SMap.t) : string list =
   Common.SMap.fold
