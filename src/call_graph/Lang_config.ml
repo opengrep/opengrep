@@ -613,6 +613,29 @@ let union_type_constructors (lang : Lang.t) : string list list =
       [ [ "typing"; "Optional" ]; [ "typing"; "Union" ] ]
   | _ -> []
 
+(* Whether a named argument binds a parameter: in PHP the argument 'ids: $v'
+   binds the parameter '$ids', whose name carries the sigil. Elsewhere the
+   argument binds the parameter of the same name. In Swift and Crystal a label
+   can differ from the parameter it binds, and the front ends keep only the
+   parameter, so a labelled argument binds a parameter only when the two are
+   written alike. *)
+let named_argument_binds (lang : Lang.t) ~(argument : string)
+    ~(parameter : string) : bool =
+  match lang with
+  | Lang.Php ->
+      Int.equal (String.length parameter) (String.length argument + 1)
+      && Char.equal parameter.[0] '$'
+      && String.ends_with ~suffix:argument parameter
+  | _ -> String.equal argument parameter
+
+(* Whether the rest parameter also collects the named arguments that bind no
+   parameter: PHP 8.1 collects them into the variadic parameter under their
+   names. *)
+let rest_collects_unbound_named_arguments (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Php -> true
+  | _ -> false
+
 (* The languages for which cross-function (intrafile) taint analysis is
    supported; in the others a taint rule may report only the flows inside
    one function.

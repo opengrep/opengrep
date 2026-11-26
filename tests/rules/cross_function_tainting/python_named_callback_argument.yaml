@@ -1,0 +1,13 @@
+rules:
+  - id: python_named_callback_argument
+    message: taint into the callback that a named argument binds
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

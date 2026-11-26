@@ -431,16 +431,16 @@ let instantiate_taints inst_var inst_trace taints =
           instantiate_taint inst_var inst_trace b.taint
           |> Taints.conjoin_guard g)
 
-(* NOTE: 'a is either:
- * - IL.exp in instantiate_lval_using_actual_exps
- * - Taints.t * shape in instantiate_lval_using_shape *)
 (* [err_ctx] renders the call for log messages; it is a thunk because
    rendering an expression goes through [Format] and this runs once per
    signature instantiation, where it dominated the profiling. *)
-let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
+let find_pos_in_actual_args (type a) ?(err_ctx = fun () -> "???")
     ?(rest_leaves_trailing_args = false)
-    (args : 'a IL.argument list)
-    (fparams : Signature.params) ~(combine_rest_args : 'a list -> 'a) : T.arg -> 'a option =
+    ~(named_argument_binds : argument:string -> parameter:string -> bool)
+    ~(rest_collects_unbound_named_args : bool)
+    (args : a IL.argument list)
+    (fparams : Signature.params)
+    ~(combine_rest_args : a list -> (string * a) list -> a) : T.arg -> a option =
   Log.debug (fun m ->
       m "FIND_POS_IN_ACTUAL_ARGS: err_ctx=%s, num_args=%d, num_fparams=%d, fparams=%s"
         (err_ctx ())
@@ -458,7 +458,7 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
    * positional arguments after the others. *)
   let context_args, args =
     args
-    |> List.partition_map (fun (arg : 'a IL.argument) ->
+    |> List.partition_map (fun (arg : a IL.argument) ->
            match arg with
            | IL.Named (_, v) when IL_helpers.is_context_arg arg -> Left v
            | IL.Named _
@@ -471,19 +471,57 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
       | IL.Unnamed v -> Left v
       | IL.Named ((name, _token), v) -> Right (name, v))
   in
+  (* The parameter that a named argument can bind. Where the rest parameter
+     collects the named arguments that bind no parameter, as in PHP, no named
+     argument binds the rest parameter itself. *)
+  let name_of_named_parameter (param : Signature.param) : string option =
+    match param with
+    | Signature.PRest _ when rest_collects_unbound_named_args -> None
+    | Signature.P name
+    | Signature.POpt name
+    | Signature.PRest name
+    | Signature.PKwd name ->
+        Some name
+    | Signature.PContext _
+    | Signature.Other ->
+        None
+  in
+  let named_arg_of_param (param : Signature.param) : a option =
+    let* param_name = name_of_named_parameter param in
+    named_args
+    |> List.find_map (fun ((arg_name : string), (v : a)) ->
+           if named_argument_binds ~argument:arg_name ~parameter:param_name
+           then Some v
+           else None)
+  in
+  (* the named args that bind no parameter, which the rest parameter
+     collects after the positional ones *)
+  let unbound_named_args () : (string * a) list =
+    named_args
+    |> List.filter (fun ((arg_name : string), (_ : a)) ->
+           not
+             (List.exists
+                (fun (param : Signature.param) ->
+                  match name_of_named_parameter param with
+                  | Some param_name ->
+                      named_argument_binds ~argument:arg_name
+                        ~parameter:param_name
+                  | None -> false)
+                fparams))
+  in
   let rest_context_args, formal_args_with_vals =
     fparams |>
     List.fold_left_map
-      (fun (context_args : 'a list) (param : Signature.param) ->
+      (fun (context_args : a list) (param : Signature.param) ->
         match (param, context_args) with
         | Signature.PContext _, v :: rest -> (rest, Some (param, Some v))
         | Signature.PContext _, [] -> ([], Some (param, None))
-        | ( ( Signature.P name
-            | Signature.POpt name
-            | Signature.PRest name
-            | Signature.PKwd name ),
+        | ( ( Signature.P _
+            | Signature.POpt _
+            | Signature.PRest _
+            | Signature.PKwd _ ),
             _ ) ->
-            (context_args, Some (param, List.assoc_opt name named_args))
+            (context_args, Some (param, named_arg_of_param param))
         | Signature.Other, _ -> (context_args, None))
       context_args
   in
@@ -550,7 +588,13 @@ let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
           else 0
         in
         let n_rest = max 0 (List.length pos_args - n_trailing) in
-        (Some name, Some (combine_rest_args (List_.take n_rest pos_args)))
+        let collected_named_args =
+          if rest_collects_unbound_named_args then unbound_named_args ()
+          else []
+        in
+        (Some name,
+         Some
+           (combine_rest_args (List_.take n_rest pos_args) collected_named_args))
         :: merge ~after_rest:true name_vals (List_.drop n_rest pos_args)
      | Some (Signature.Other, _) :: _, _ ->
          raise Impossible
@@ -586,7 +630,13 @@ let%test _ =
   let named s v = IL.Named ((s, G.fake ""), v) in
   let params = Signature.([P "x"; P "y"; Other; P "z"]) in
   let args = IL.([Unnamed 0; named "x" 1; Unnamed 2; Unnamed 3]) in
-  let func = find_pos_in_actual_args args params ~combine_rest_args:List.hd in
+  let func =
+    find_pos_in_actual_args args params ~combine_rest_args:(fun (positional : int list) (_ : (string * int) list) ->
+          List.hd positional)
+      ~named_argument_binds:(fun ~argument ~parameter ->
+        String.equal argument parameter)
+      ~rest_collects_unbound_named_args:false
+  in
   let open T in
   Option.equal (=|=) (func {name = "x"; index = -1}) (Some 1) &&
   Option.equal (=|=) (func {name = "y"; index = -1}) (Some 0) &&
@@ -604,7 +654,9 @@ let rest_leaves_trailing_args (lang : Lang.t) : bool =
       true
   | _ -> false
 
-let combine_rest_args_exp (es : IL.exp list) : IL.exp =
+let combine_rest_args_exp (positional : IL.exp list)
+    (named : (string * IL.exp) list) : IL.exp =
+  let es = positional @ List_.map snd named in
   let e = IL.Composite (IL.CList, Tok.unsafe_fake_bracket es) in
   let eorig =
     es
@@ -1426,8 +1478,10 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
         find_pos_in_actual_args
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
-          ~combine_rest_args:combine_rest_args_exp
-          args_exps fparams pos
+          ~named_argument_binds:(Lang_config.named_argument_binds lang)
+          ~rest_collects_unbound_named_args:
+            (Lang_config.rest_collects_unbound_named_arguments lang)
+          ~combine_rest_args:combine_rest_args_exp args_exps fparams pos
       in
       match (arg_exp.e, tlval.offset) with
       | Fetch ({ base = Var obj; _ } as arg_lval), _ ->
@@ -1559,15 +1613,25 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
        * return it as a type variable. *)
       Taints.singleton { orig = Var lval; tokens = Taint_trace.Nil }
 
-let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
-  let taints = List.fold_left Taints.union Taints.empty (List.map fst ts) in
-  let shape =
-    Obj (Fields.of_list
-           (List.mapi
-              (fun i (t, s) -> Taint.Oint i, Cell (Xtaint.of_taints t, s))
-              ts))
+(* The value of a rest parameter: the positional arguments at their index
+   and, in PHP, the named arguments that bind no parameter under their
+   name. The taint of the value is that of the positional arguments only, so
+   a read of a key that no named argument provides finds no named taint. *)
+let combine_rest_args_taint (positional : (Taints.t * shape) list)
+    (named : (string * (Taints.t * shape)) list) : Taints.t * shape =
+  let taints =
+    List.fold_left Taints.union Taints.empty (List_.map fst positional)
   in
-  (taints, shape) 
+  let cell ((t, s) : Taints.t * shape) : cell = Cell (Xtaint.of_taints t, s) in
+  let shape =
+    Obj
+      (Fields.of_list
+         (List.mapi (fun i ts -> (Taint.Oint i, cell ts)) positional
+         @ List_.map
+             (fun ((name : string), ts) -> (Taint.Ostr name, cell ts))
+             named))
+  in
+  (taints, shape)
 
 let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
     lval_env fparams
@@ -1603,8 +1667,10 @@ let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
         find_pos_in_actual_args
           ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
-          ~combine_rest_args:combine_rest_args_taint
-          args_taints fparams pos
+          ~named_argument_binds:(Lang_config.named_argument_binds lang)
+          ~rest_collects_unbound_named_args:
+            (Lang_config.rest_collects_unbound_named_arguments lang)
+          ~combine_rest_args:combine_rest_args_taint args_taints fparams pos
     | `Var var ->
         let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
         Some (Xtaint.to_taints xtaints, shape)
@@ -1774,7 +1840,54 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | Some args ->
         find_pos_in_actual_args args taint_sig.params
           ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
+          ~named_argument_binds:(Lang_config.named_argument_binds lang)
+          ~rest_collects_unbound_named_args:
+            (Lang_config.rest_collects_unbound_named_arguments lang)
           ~combine_rest_args:combine_rest_args_exp
+  in
+  (* The position in the call of the actual argument that binds a parameter
+   * of [taint_sig], under the binding of [resolve_arg]; a rest parameter
+   * maps to the first argument that it collects, positional ones first. *)
+  let actual_index_of_param : Taint.arg -> int option =
+    match args with
+    | Some args
+      when List.exists
+             (function
+               | IL.Named _ -> true
+               | IL.Unnamed _ -> false)
+             args ->
+        let indexed =
+          args
+          |> List.mapi (fun (i : int) (arg : IL.exp IL.argument) ->
+                 match arg with
+                 | IL.Unnamed _ -> IL.Unnamed (Some i)
+                 | IL.Named (id, _) -> IL.Named (id, Some i))
+        in
+        let find =
+          find_pos_in_actual_args indexed taint_sig.params
+            ~rest_leaves_trailing_args:(rest_leaves_trailing_args lang)
+            ~named_argument_binds:(Lang_config.named_argument_binds lang)
+            ~rest_collects_unbound_named_args:
+              (Lang_config.rest_collects_unbound_named_arguments lang)
+            ~combine_rest_args:(fun
+                (positional : int option list)
+                (named : (string * int option) list)
+              -> Option.join (List.nth_opt (positional @ List_.map snd named) 0))
+        in
+        fun (param : Taint.arg) -> Option.join (find param)
+    | Some args ->
+        fun (param : Taint.arg) ->
+          if param.index < List.length args then Some param.index else None
+    | None -> fun (_ : Taint.arg) -> None
+  in
+  let actual_arg_of_param (param : Taint.arg) : IL.exp option =
+    match (args, actual_index_of_param param) with
+    | Some args, Some i -> (
+        match List.nth args i with
+        | IL.Unnamed exp
+        | IL.Named (_, exp) ->
+            Some exp)
+    | _ -> None
   in
   (* Lval-side resolver: maps a [T.lval] anchored in [taint_sig] to the
    * triple [(IL.name, offset, tok)] in the caller. Args=Some path goes
@@ -2079,13 +2192,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
            * [arg[i]] in the callee), take the [i]-th element of the caller's
            * composite expression to recover the concrete callback. *)
           let actual_fun_exp, leftover_offset =
-            match args with
-            | Some actual_args when fun_arg.index < List.length actual_args ->
-                let base_exp =
-                  match List.nth actual_args fun_arg.index with
-                  | IL.Unnamed exp -> exp
-                  | IL.Named (_, exp) -> exp
-                in
+            match actual_arg_of_param fun_arg with
+            | Some base_exp ->
                 let consumed, leftover =
                   resolve_callee_expr base_exp fun_arg_offset
                 in
@@ -2197,8 +2305,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         (* Try to get callback from callee's original call expression *)
                         (match callee.eorig with
                         | IL.SameAs { G.e = G.Call (_, (_, orig_args, _)); _ } ->
-                            (* Extract the argument at fun_arg.index from original AST args *)
-                            (match List.nth_opt orig_args fun_arg.index with
+                            (* Extract the argument that binds fun_arg from original AST args *)
+                            (match
+                               Option.bind (actual_index_of_param fun_arg)
+                                 (List.nth_opt orig_args)
+                             with
                             | Some (G.Arg { G.e = G.N (G.Id (id, id_info)); _ }) ->
                                 (* Simple callback: customForEach(arr, n, sink_callback) *)
                                 let callback_name = AST_to_IL.var_of_id_info id id_info in
@@ -2346,12 +2457,9 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                  (* Preserve the ToSinkInCall only if the actual callback maps to
                   * an enclosing param (BArg); else DROP — the inner [fun_arg]
                   * index would alias a wrong param and explode effects. *)
-                 (match args with
-                  | Some actual_args
-                    when fun_arg.index < List.length actual_args -> (
-                      match List.nth actual_args fun_arg.index with
-                      | IL.Unnamed exp | IL.Named (_, exp) ->
-                          (match enclosing_param_of_exp exp with
+                 (match actual_arg_of_param fun_arg with
+                  | Some exp -> (
+                          match enclosing_param_of_exp exp with
                            | Some updated_arg ->
                                Log.debug (fun m ->
                                    m "%s: Could not instantiate signature of '%s', preserving ToSinkInCall effect with actual callee '%s' (arg index=%d)"
@@ -2371,8 +2479,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                      (Display_IL.string_of_exp callee)
                                      (Display_IL.string_of_exp fun_exp)
                                      (Display_IL.string_of_exp exp));
-                               []))
-                  | _ ->
+                               [])
+                  | None ->
                       [ ToSinkInCall
                           { callee = fun_exp;
                             arg = fun_arg;
@@ -2385,11 +2493,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
              * extraction). Preserve the ToSinkInCall effect, but update arg
              * to refer to the enclosing function's parameter. When
              * [rebind_arg_to_outer] set: one effect per outer offset, else [enclosing_param_of_exp], DROP on [None]. *)
-            (match args with
-             | Some actual_args
-               when fun_arg.index < List.length actual_args -> (
-                 match List.nth actual_args fun_arg.index with
-                 | IL.Unnamed exp | IL.Named (_, exp) -> (
+            (match actual_arg_of_param fun_arg with
+             | Some exp -> (
                      match rebind_arg_to_outer with
                      | Some (outer_arg, outer_offsets) ->
                          Log.debug (fun m ->
@@ -2432,8 +2537,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                                     (Display_IL.string_of_exp callee)
                                     (Display_IL.string_of_exp fun_exp)
                                     (Display_IL.string_of_exp exp));
-                              [])))
-             | _ ->
+                              []))
+             | None ->
                  [ ToSinkInCall
                      { callee = fun_exp;
                        arg = fun_arg;
@@ -2697,8 +2802,13 @@ let build_barg_remap (canonical_params : Signature.params)
         canonical_params
     in
     let lookup =
+      (* the synthetic args carry parameter names *)
       find_pos_in_actual_args ~err_ctx:(fun () -> "merge_dispatch") synthetic_args
-        impl_params ~combine_rest_args:List.hd
+        impl_params ~combine_rest_args:(fun (positional : int list) (_ : (string * int) list) ->
+          List.hd positional)
+        ~named_argument_binds:(fun ~argument ~parameter ->
+          String.equal argument parameter)
+        ~rest_collects_unbound_named_args:false
     in
     let canonical_names =
       Array.of_list
