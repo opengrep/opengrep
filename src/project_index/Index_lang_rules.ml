@@ -10,11 +10,16 @@ type project_discovery = {
   module_paths : (string * string list) list;
 }
 
-type parent_position = Prepended | Appended
+(* A [Constraint] parent is a class that a mixin may be applied to: it is
+   in the mixin's own resolution order, not in the order of a class that
+   applies the mixin. *)
+type parent_position = Prepended | Appended | Constraint
 
 type class_parent = {
   cp_path : string list;
   cp_position : parent_position;
+  (* The parent is in the superclass position of a class or an object. *)
+  cp_is_superclass : bool;
 }
 
 type superclass_position =
@@ -44,6 +49,17 @@ type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
 
+(* Which members of a class a bare name in one of its methods refers to. *)
+type method_member_scope =
+  | Members_not_in_method_scope
+  (* Every member along the class's resolution order binds in the class's
+     scope (Solidity). *)
+  | Members_in_class_scope
+  (* The class's own members bind in its scope; an inherited member binds
+     only when no lexical binding exists, and neither a static member nor a
+     member not exported from another file is inherited (Dart). *)
+  | Inherited_members_after_lexical_scope
+
 type binding_kind =
   | Wildcard_import
   | Single_import
@@ -59,7 +75,22 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* The specifiers of the files that the [part] directives of a file add to
+     its library (Dart [part 'x.dart';]). *)
+  library_parts_of_ast : G.program -> string list;
   specifier_candidates : Fpath.t -> string list;
+  (* [import "path";] without an alias binds every top-level name of the
+     file (Solidity). *)
+  path_import_binds_all_names : bool;
+  (* A wildcard import without an explicit export list ([__all__]) leaves out
+     the names that begin with an underscore: Python, and Dart, where such
+     names are private to their library. It holds by default. *)
+  wildcard_import_omits_underscore_names : bool;
+  (* An import binds its names from its statement onward and rebinds a name
+     that an earlier import bound, so of the imports before a class that
+     bind its parent, the last one binds it (Python). Elsewhere two imports
+     that bind the name to different classes bind it through neither. *)
+  imports_bind_in_statement_order : bool;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -67,10 +98,20 @@ type t = {
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
   superclass_position : superclass_position;
+  (* Solidity: [is A, B] lists the most base-like contract first, so the
+     linearisation reads the bases from the right. *)
+  bases_listed_most_base_first : bool;
+  (* The extends clause of a mixin ([G.Trait]) lists the classes it may be
+     applied to (Dart [mixin M on B]), not superclasses. *)
+  mixin_extends_lists_constraints : bool;
+  (* The superclass position takes a class, never a mixin ([G.Trait]); a
+     mixin is applied in the [with] position (Dart). *)
+  superclass_is_never_a_mixin : bool;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
+  method_member_scope : method_member_scope;
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;
@@ -122,8 +163,9 @@ let equal_parent_position (left : parent_position) (right : parent_position)
     : bool =
   match (left, right) with
   | Prepended, Prepended
-  | Appended, Appended -> true
-  | (Prepended | Appended), _ -> false
+  | Appended, Appended
+  | Constraint, Constraint -> true
+  | (Prepended | Appended | Constraint), _ -> false
 
 let decorator_simple_name (attr : G.attribute) : string option =
   match attr with
@@ -304,7 +346,11 @@ let default : t = {
   normalize_import_specifier = (fun s -> s);
   specifiers_name_files = false;
   specifiers_are_uris = false;
+  library_parts_of_ast = (fun _ -> []);
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
+  path_import_binds_all_names = false;
+  wildcard_import_omits_underscore_names = true;
+  imports_bind_in_statement_order = false;
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -312,12 +358,16 @@ let default : t = {
   extract_wrapper = (fun _ -> None);
   wrapper_dunders = (fun _ -> []);
   walks_inheritance = false;
+  method_member_scope = Members_not_in_method_scope;
   has_reexports = false;
   reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = true;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
   superclass_position = Superclass_before_mixins;
+  bases_listed_most_base_first = false;
+  mixin_extends_lists_constraints = false;
+  superclass_is_never_a_mixin = false;
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
   precedence =
@@ -363,6 +413,7 @@ let python : t = { default with
   extract_wrapper = python_extract_wrapper;
   wrapper_dunders = python_wrapper_dunders;
   walks_inheritance = true;
+  imports_bind_in_statement_order = true;
   has_reexports = true;
   reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = false;
@@ -465,7 +516,8 @@ let ruby_class_body_extra_parents (cdef : G.class_definition)
         List.filter_map (fun arg ->
           match arg_to_path arg with
           | Some ((_ :: _) as path) ->
-            Some { cp_path = path; cp_position = position }
+            Some { cp_path = path; cp_position = position;
+                   cp_is_superclass = false }
           | Some []
           | None -> None
         ) args)
@@ -522,7 +574,8 @@ let go_class_body_extra_parents (cdef : G.class_definition) : class_parent list 
       match name_to_path name with
       | [] -> None
       | (path : string list) ->
-        Some { cp_path = path; cp_position = Appended })
+        Some { cp_path = path; cp_position = Appended;
+               cp_is_superclass = false })
     | _ -> None)
 
 let go_method_owner_of_funcdef (fdef : G.function_definition) : string option =
@@ -635,7 +688,8 @@ let php_class_body_extra_parents (cdef : G.class_definition)
         match name_to_path name with
         | [] -> None
         | (path : string list) ->
-          Some { cp_path = path; cp_position = Appended })
+          Some { cp_path = path; cp_position = Appended;
+                 cp_is_superclass = false })
       | _ -> None)
     cdef.G.cmixins
 
@@ -656,7 +710,7 @@ let php : t = { default with
    [ModuleDef], so [walks_inheritance] only affects classes with [extends]
    or [with]; the mixins come before the superclass, in Scala's
    linearisation order. *)
-let scala_mixins_before_superclass (cdef : G.class_definition)
+let mixins_last_applied_first (cdef : G.class_definition)
   : class_parent list =
   List.rev (php_class_body_extra_parents cdef)
 
@@ -672,10 +726,11 @@ let scala : t = { default with
       | Own_definition -> 3);
   own_package_members_kind = Package_member;
   module_path_from_ast = extract_package_decl;
-  class_body_extra_parents = scala_mixins_before_superclass;
+  class_body_extra_parents = mixins_last_applied_first;
   superclass_position = Superclass_after_mixins;
   companion_object_has_own_name = true;
   hiding_alias = Some "_";
+  wildcard_import_omits_underscore_names = false;
 }
 
 let rust_relative_module_names : (string * relative_module) list =
@@ -700,6 +755,7 @@ let package_scoped : t = { default with
   unqualified_scope = `Per_package;
   package_directive_is_namespace = true;
   module_path_from_ast = extract_package_decl;
+  wildcard_import_omits_underscore_names = false;
 }
 
 let java : t = { package_scoped with
@@ -834,6 +890,15 @@ let julia : t = { default with
   unqualified_scope = `Per_project;
 }
 
+let solidity : t = { default with
+  walks_inheritance = true;
+  method_member_scope = Members_in_class_scope;
+  bases_listed_most_base_first = true;
+  specifiers_name_files = true;
+  path_import_binds_all_names = true;
+  wildcard_import_omits_underscore_names = false;
+}
+
 let crystal : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
@@ -842,8 +907,32 @@ let crystal : t = { default with
   parent_resolution = Parent_by_lexical_scope;
 }
 
+let dart_library_parts (ast : G.program) : string list =
+  List.filter_map
+    (fun (stmt : G.stmt) ->
+      match stmt.G.s with
+      | G.DirectiveStmt
+          { G.d =
+              G.OtherDirective
+                ( ("part", _),
+                  [ G.Modn
+                      ( G.DottedName [ ((specifier : string), _) ]
+                      | G.FileName ((specifier : string), _) ) ] );
+            _ } -> Some specifier
+      | _ -> None)
+    ast
+
 let dart : t = { default with
+  library_parts_of_ast = dart_library_parts;
   walks_inheritance = true;
+  method_member_scope = Inherited_members_after_lexical_scope;
+  mixin_extends_lists_constraints = true;
+  superclass_is_never_a_mixin = true;
+  name_is_exported =
+    (fun (name : string) ->
+      String.length name > 0 && not (Char.equal name.[0] '_'));
+  class_body_extra_parents = mixins_last_applied_first;
+  superclass_position = Superclass_after_mixins;
   specifiers_name_files = true;
   specifiers_are_uris = true;
   discover_project = dart_discover;
@@ -855,6 +944,7 @@ let vb : t = { default with
   module_definition_is_namespace = true;
   object_members_bind_in_namespace = true;
   namespaces_nest = true;
+  wildcard_import_omits_underscore_names = false;
 }
 
 let for_lang (lang : Lang.t) : t =
@@ -880,6 +970,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Julia -> julia
   | Lang.Crystal -> crystal
   | Lang.Scala -> scala
+  | Lang.Solidity -> solidity
   | _ -> default
 
 let top_level_scope_is_project (cfg : t) : bool =

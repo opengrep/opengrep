@@ -7,6 +7,13 @@ val build_reexport_map :
   Types.file_info list ->
   (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t
 
+(* The wildcard imports that each module re-exports, by module qn, in
+   source order, from the same imports as [build_reexport_map]. *)
+val build_wildcard_reexports :
+  cfg:Index_lang_rules.t ->
+  Types.file_info list ->
+  Types.import list Common.SMap.t
+
 (* A re-exported name is added to the re-exporting module: the caller
    runs this for a language whose [has_reexports] is true, and
    [cfg.reexport_source] says which imports re-export. Pure: reads
@@ -25,5 +32,14 @@ val build_dunder_all :
   file_infos:Types.file_info list -> (string, unit) Hashtbl.t Common.SMap.t
 
 val star_exported :
+  cfg:Index_lang_rules.t ->
   dunder_all:(string, unit) Hashtbl.t Common.SMap.t ->
   Names.Module_qn.t -> string -> bool
+
+(* Whether the wildcard import [imp] of [target] binds [name] in its file: the
+   import binds names ([import_role]), does not hide [name], and [target]
+   exports [name] to a wildcard import ([star_exported]). *)
+val wildcard_binds :
+  cfg:Index_lang_rules.t ->
+  dunder_all:(string, unit) Hashtbl.t Common.SMap.t ->
+  Types.import -> Names.Module_qn.t -> string -> bool

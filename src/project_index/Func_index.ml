@@ -179,7 +179,7 @@ let build_attributes_by_module
         Common.SMap.fold
           (fun (name : string) (attribute : Func_lookup.module_attribute)
                ((attributes : Func_lookup.module_attributes), (added : int)) ->
-            if not (Reexports.star_exported ~dunder_all target name) then
+            if not (Reexports.star_exported ~cfg ~dunder_all target name) then
               (attributes, added)
             else
               let bound = Common.SMap.find_opt module_key attributes in

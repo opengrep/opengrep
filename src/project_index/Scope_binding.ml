@@ -12,6 +12,53 @@ let position_of_tok (tok : Tok.t) : Pos.t option =
   | Ok (loc : Tok.location) -> Some loc.Tok.pos
   | Error _ -> None
 
+let rec enclosing_namespaces (namespace_scope : Names.Module_qn.t)
+    : Names.Module_qn.t list =
+  match Names.Module_qn.split_last namespace_scope with
+  | None -> []
+  | Some ((enclosing : Names.Module_qn.t), _) ->
+    enclosing :: enclosing_namespaces enclosing
+
+let own_namespaces ~(namespaces_nest : bool) (fi : file_info)
+    : Names.Module_qn.t list =
+  (if namespaces_nest then
+     List.concat_map
+       (fun (namespace_scope : Names.Module_qn.t) ->
+         namespace_scope :: enclosing_namespaces namespace_scope)
+       fi.fi_namespace_scopes
+   else fi.fi_namespace_scopes)
+  |> List.sort_uniq Names.Module_qn.compare
+
+type libraries = Fpath.t Common.SMap.t
+
+let libraries_of_files ~(cfg : Index_lang_rules.t)
+    (file_infos : file_info list) : libraries =
+  List.fold_left
+    (fun (libraries : libraries) (fi : file_info) ->
+      List.fold_left
+        (fun (libraries : libraries) (specifier : string) ->
+          match Fpath.of_string specifier with
+          | Ok (relative : Fpath.t) ->
+            Common.SMap.add
+              (Fpath.to_string
+                 (Fpath.normalize
+                    (Fpath.append (Fpath.parent fi.fi_file) relative)))
+              (Fpath.normalize fi.fi_file) libraries
+          | Error _ -> libraries)
+        libraries
+        (cfg.Index_lang_rules.library_parts_of_ast fi.fi_ast))
+    Common.SMap.empty file_infos
+
+let same_library (libraries : libraries) (first : Fpath.t) (second : Fpath.t)
+    : bool =
+  let library_of (file : Fpath.t) : Fpath.t =
+    let file = Fpath.normalize file in
+    Option.value
+      (Common.SMap.find_opt (Fpath.to_string file) libraries)
+      ~default:file
+  in
+  Fpath.equal (library_of first) (library_of second)
+
 let equal_parent_path (first : IL.name option list)
     (second : IL.name option list) : bool =
   List.equal (Option.equal Function_id.equal_il_name) first second
@@ -82,6 +129,34 @@ let bindings_of_positioned (bindings : positioned_binding list)
                  { Func_lookup.kind; parent_path = entry.bs_parent_path })
                entry.bs_kinds)
            in_name)
+
+let overload_sets (bindings : positioned_binding list)
+    : positioned_binding list =
+  List.stable_sort
+    (fun (first : positioned_binding) (second : positioned_binding) ->
+      Option.compare Pos.compare first.pb_pos second.pb_pos)
+    bindings
+  |> List.fold_left
+       (fun (sets : positioned_binding list Common.SMap.t)
+            (binding : positioned_binding) ->
+         Common.SMap.update binding.pb_name
+           (fun (in_name : positioned_binding list option) ->
+             let in_name = Option.value in_name ~default:[] in
+             match
+               List.partition
+                 (fun (set : positioned_binding) ->
+                   equal_parent_path set.pb_parent_path binding.pb_parent_path)
+                 in_name
+             with
+             | [ (set : positioned_binding) ],
+               (others : positioned_binding list) ->
+               Some ({ set with pb_kinds = set.pb_kinds @ binding.pb_kinds }
+                     :: others)
+             | _, _ -> Some (binding :: in_name))
+           sets)
+       Common.SMap.empty
+  |> Common.SMap.bindings
+  |> List.concat_map snd
 
 let enclosing_scope_of_class
     ~(class_parent_paths :

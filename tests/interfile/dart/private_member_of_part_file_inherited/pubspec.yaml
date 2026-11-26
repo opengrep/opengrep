@@ -1,0 +1,3 @@
+name: private_member_of_part_file_inherited
+environment:
+  sdk: ^3.0.0

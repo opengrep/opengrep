@@ -586,6 +586,29 @@ let construction_method (lang : Lang.t) : string option =
   | Bare_call
   | New_keyword -> None
 
+(* Languages where [super.f] in a class resolves to the next class after it
+   in the linearisation of the receiver's class, not of the class that holds
+   the call: Solidity, and Dart, where [super] in a mixin refers to the
+   superclass of the mixin application, the class after the mixin in the
+   linearisation of the class that applies it. *)
+let super_follows_most_derived_order (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Solidity
+  | Lang.Dart -> true
+  | _ -> false
+
+(* Languages where a class inherits the overloads of a name that it does not
+   override beside its own (Solidity). [Func_lookup.with_inherited_overloads]
+   lets a nearer function hide an inherited one of the same arity: an
+   override has the parameter types, so the arity, of the function it
+   overrides, and an inherited overload of the same arity and other
+   parameter types is hidden too. Elsewhere a class's own function of a
+   name hides the inherited ones. *)
+let inherited_overloads_merge (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Solidity -> true
+  | _ -> false
+
 (* Languages where one scope holds several concrete functions of one name
    and arity told apart by parameter types. Elsewhere such definitions are
    pattern clauses (Elixir, Clojure) or redefinitions, never a group. *)
@@ -598,7 +621,8 @@ let overloads_by_type (lang : Lang.t) : bool =
   | Lang.Swift
   | Lang.Cpp
   | Lang.Dart
-  | Lang.Apex ->
+  | Lang.Apex
+  | Lang.Solidity ->
       true
   | _ -> false
 

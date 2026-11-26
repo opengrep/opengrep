@@ -41,7 +41,8 @@ let reexports_of_file ~(cfg : Index_lang_rules.t) (fi : Types.file_info)
       List.filter
         (fun (imp : Types.import) ->
           match imp.Types.im_role with
-          | Types.Role_reexports -> true
+          | Types.Role_reexports
+          | Types.Role_binds_and_reexports -> true
           | Types.Role_binds -> false)
         fi.Types.fi_imports
 
@@ -69,6 +70,26 @@ let build_reexport_map ~(cfg : Index_lang_rules.t)
     ) file_infos;
     reexport_map
   end
+
+let build_wildcard_reexports ~(cfg : Index_lang_rules.t)
+    (file_infos : Types.file_info list) : Types.import list Common.SMap.t =
+  List.fold_left
+    (fun (by_module : Types.import list Common.SMap.t)
+         (fi : Types.file_info) ->
+      match
+        List.filter
+          (fun (imp : Types.import) ->
+            match Imports.binding_of imp with
+            | Imports.Wildcard_from _ -> true
+            | Imports.Named_binding _ -> false)
+          (reexports_of_file ~cfg fi)
+      with
+      | [] -> by_module
+      | (wildcards : Types.import list) ->
+        Common.SMap.add
+          (Names.Module_qn.to_string fi.Types.fi_module_path) wildcards
+          by_module)
+    Common.SMap.empty file_infos
 
 (* Dedup so wildcard re-export doesn't double-add a func an explicit import brought in. *)
 let merge_dedup ~cur ~newcomers =
@@ -144,13 +165,28 @@ let build_dunder_all ~(file_infos : Types.file_info list)
           (Names.Module_qn.to_string fi.Types.fi_module_path) names declared)
     Common.SMap.empty file_infos
 
-let star_exported ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
+let star_exported ~(cfg : Index_lang_rules.t)
+    ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
     (target : Names.Module_qn.t) (name : string) : bool =
   match
     Common.SMap.find_opt (Names.Module_qn.to_string target) dunder_all
   with
   | Some (names : (string, unit) Hashtbl.t) -> Hashtbl.mem names name
-  | None -> String.length name > 0 && not (Char.equal name.[0] '_')
+  | None ->
+    String.length name > 0
+    && not
+         (cfg.Index_lang_rules.wildcard_import_omits_underscore_names
+          && Char.equal name.[0] '_')
+
+let wildcard_binds ~(cfg : Index_lang_rules.t)
+    ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
+    (imp : Types.import) (target : Names.Module_qn.t) (name : string) : bool =
+  (match imp.Types.im_role with
+   | Types.Role_binds
+   | Types.Role_binds_and_reexports -> true
+   | Types.Role_reexports -> false)
+  && (not (List.exists (String.equal name) imp.Types.im_hidden))
+  && star_exported ~cfg ~dunder_all target name
 
 let resolve_into_module_index ~(cfg : Index_lang_rules.t)
     ~(project_funcs_by_module
@@ -183,7 +219,7 @@ let resolve_into_module_index ~(cfg : Index_lang_rules.t)
           let public = List.filter (fun (func : FA.func_info) ->
             match Func_info.as_free func.FA.fn_id with
             | Some name ->
-              star_exported ~dunder_all target_qn (fst name.IL.ident)
+              star_exported ~cfg ~dunder_all target_qn (fst name.IL.ident)
             | None -> false
           ) (lookup overlay target_qn) in
           if public = [] then acc

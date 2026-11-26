@@ -1,0 +1,12 @@
+rules:
+  - id: on-demand-import-binds-parent
+    languages: [java]
+    message: Tainted data reaches a sink in a parent class imported on demand
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

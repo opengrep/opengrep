@@ -1,0 +1,3 @@
+name: mixin_super_skips_overridden_on_type
+environment:
+  sdk: ^3.0.0

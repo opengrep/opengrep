@@ -1,0 +1,12 @@
+rules:
+  - id: inherited-static-member-not-in-scope
+    languages: [dart]
+    message: Tainted data reaches a static member of a superclass through a bare name
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

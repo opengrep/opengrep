@@ -1,0 +1,12 @@
+rules:
+  - id: package-init-star-reexport-parent
+    languages: [python]
+    severity: ERROR
+    message: Taint reaches a sink through an inherited method
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

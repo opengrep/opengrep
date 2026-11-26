@@ -1,0 +1,12 @@
+rules:
+  - id: star-import-omits-underscore-name
+    languages: [python]
+    message: Tainted data reaches a function that a star import leaves out
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

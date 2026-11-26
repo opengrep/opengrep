@@ -166,7 +166,8 @@ let rows_of_file ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
       (fun (imp : import) ->
         match imp.im_role with
         | Role_binds -> None
-        | Role_reexports -> (
+        | Role_reexports
+        | Role_binds_and_reexports -> (
           match (Imports.binding_of imp, imp.im_binds) with
           | Imports.Wildcard_from (target : Names.Module_qn.t), _ ->
             Some (module_key, Export_star target)
@@ -198,7 +199,8 @@ let import_target_of (fi : file_info) (name : string) : import option =
     (fun (imp : import) ->
       String.equal imp.im_local name
       && (match imp.im_role with
-          | Role_binds -> true
+          | Role_binds
+          | Role_binds_and_reexports -> true
           | Role_reexports -> false))
     fi.fi_imports
 
@@ -595,7 +597,8 @@ let build ~(scope : project_scope)
            (imp : import) ->
         match imp.im_role with
         | Role_reexports -> (imported, class_files, aliases)
-        | Role_binds -> (
+        | Role_binds
+        | Role_binds_and_reexports -> (
           let pos = Scope_binding.position_of_tok imp.im_tok in
           match (Imports.binding_of imp, imp.im_binds) with
           | Imports.Wildcard_from _, _

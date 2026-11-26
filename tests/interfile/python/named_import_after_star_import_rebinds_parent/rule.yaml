@@ -1,0 +1,12 @@
+rules:
+  - id: test-python-named-import-after-star-import
+    languages: [python]
+    message: Tainted data reaches a sink through a parent bound by a star import
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

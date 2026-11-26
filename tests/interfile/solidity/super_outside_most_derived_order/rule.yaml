@@ -1,0 +1,12 @@
+rules:
+  - id: super-outside-most-derived-order
+    languages: [solidity]
+    message: Tainted data reaches a contract that is not in the most derived contract's linearisation
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

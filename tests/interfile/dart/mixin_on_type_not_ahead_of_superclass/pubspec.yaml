@@ -1,0 +1,3 @@
+name: mixin_on_type_not_ahead_of_superclass
+environment:
+  sdk: ^3.0.0

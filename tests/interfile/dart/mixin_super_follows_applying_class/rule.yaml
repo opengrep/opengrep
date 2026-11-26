@@ -1,0 +1,12 @@
+rules:
+  - id: mixin-super-follows-applying-class
+    languages: [dart]
+    message: Tainted data reaches the superclass of the mixin application through super
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

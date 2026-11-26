@@ -12,11 +12,16 @@ type project_discovery = {
   module_paths : (string * string list) list;
 }
 
-type parent_position = Prepended | Appended
+(* A [Constraint] parent is a class that a mixin may be applied to: it is
+   in the mixin's own resolution order, not in the order of a class that
+   applies the mixin. *)
+type parent_position = Prepended | Appended | Constraint
 
 type class_parent = {
   cp_path : string list;
   cp_position : parent_position;
+  (* The parent is in the superclass position of a class or an object. *)
+  cp_is_superclass : bool;
 }
 
 type superclass_position =
@@ -46,6 +51,17 @@ type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
 
+(* Which members of a class a bare name in one of its methods refers to. *)
+type method_member_scope =
+  | Members_not_in_method_scope
+  (* Every member along the class's resolution order binds in the class's
+     scope (Solidity). *)
+  | Members_in_class_scope
+  (* The class's own members bind in its scope; an inherited member binds
+     only when no lexical binding exists, and neither a static member nor a
+     member not exported from another file is inherited (Dart). *)
+  | Inherited_members_after_lexical_scope
+
 type binding_kind =
   | Wildcard_import
   | Single_import
@@ -61,7 +77,22 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* The specifiers of the files that the [part] directives of a file add to
+     its library (Dart [part 'x.dart';]). *)
+  library_parts_of_ast : G.program -> string list;
   specifier_candidates : Fpath.t -> string list;
+  (* [import "path";] without an alias binds every top-level name of the
+     file (Solidity). *)
+  path_import_binds_all_names : bool;
+  (* A wildcard import without an explicit export list ([__all__]) leaves out
+     the names that begin with an underscore: Python, and Dart, where such
+     names are private to their library. It holds by default. *)
+  wildcard_import_omits_underscore_names : bool;
+  (* An import binds its names from its statement onward and rebinds a name
+     that an earlier import bound, so of the imports before a class that
+     bind its parent, the last one binds it (Python). Elsewhere two imports
+     that bind the name to different classes bind it through neither. *)
+  imports_bind_in_statement_order : bool;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -69,10 +100,20 @@ type t = {
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
   superclass_position : superclass_position;
+  (* Solidity: [is A, B] lists the most base-like contract first, so the
+     linearisation reads the bases from the right. *)
+  bases_listed_most_base_first : bool;
+  (* The extends clause of a mixin ([G.Trait]) lists the classes it may be
+     applied to (Dart [mixin M on B]), not superclasses. *)
+  mixin_extends_lists_constraints : bool;
+  (* The superclass position takes a class, never a mixin ([G.Trait]); a
+     mixin is applied in the [with] position (Dart). *)
+  superclass_is_never_a_mixin : bool;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
+  method_member_scope : method_member_scope;
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;

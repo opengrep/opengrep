@@ -1,0 +1,12 @@
+rules:
+  - id: library-function-ahead-of-inherited-member
+    languages: [dart]
+    message: Tainted data reaches the library function that a bare name in a method refers to
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

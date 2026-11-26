@@ -1,0 +1,12 @@
+rules:
+  - id: free-function-overloads-in-one-file
+    languages: [solidity]
+    message: Tainted data reaches the free function overload of the call's arity
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,3 @@
+name: mixin_super_follows_applying_class
+environment:
+  sdk: ^3.0.0

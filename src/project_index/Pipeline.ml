@@ -43,7 +43,9 @@ type ctx = {
   companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
+  libraries : Scope_binding.libraries;
   resolution_orders : Func_lookup.resolution_orders;
+  derived_orders : Func_lookup.derived_orders;
   project_classes : Func_lookup.project_classes;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
@@ -224,7 +226,8 @@ let resolves_by_binding (lang : Lang.t) : bool =
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
   | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
   | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala | Lang.Apex
-  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart | Lang.Julia | Lang.Crystal ->
+  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart | Lang.Julia | Lang.Crystal
+  | Lang.Solidity ->
     true
   | _ -> false
 
@@ -253,6 +256,7 @@ let build_scope_table
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(attributes_by_module : Func_lookup.module_attributes)
     ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
+    ~(libraries : Scope_binding.libraries)
     ~(classes_by_file : class_info list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
@@ -372,8 +376,13 @@ let build_scope_table
     let package =
       Module_paths.enclosing_package ~cfg ~file:fi.fi_file fi.fi_module_path
     in
-    let own_bindings =
+    let own_definitions =
       Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
+    in
+    let own_bindings =
+      if Lang_config.overloads_by_type lang then
+        Scope_binding.overload_sets own_definitions
+      else own_definitions
     in
     let own_classes =
       Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
@@ -382,6 +391,13 @@ let build_scope_table
           String.equal (Names.Class_qn.to_string owner)
             (Names.Module_qn.to_string fi.fi_module_path))
         ~scope_of_owner:(fun _ -> None)
+        (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
+           ~default:[])
+    in
+    let member_bindings, inherited_member_bindings =
+      Scope_package.method_scope_bindings ~lang ~cfg ~libraries
+        ~resolution_orders
+        ~methods_by_class
         (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
            ~default:[])
     in
@@ -397,8 +413,11 @@ let build_scope_table
                 (fun (name : string)
                      (attribute : Func_lookup.module_attribute)
                      (imported : Scope_binding.positioned_binding list) ->
-                  if not (Reexports.star_exported ~dunder_all target name) then
-                    imported
+                  if
+                    not
+                      (Reexports.wildcard_binds ~cfg ~dunder_all imp target
+                         name)
+                  then imported
                   else
                     match attribute with
                     | Func_lookup.Attr_functions (funcs : Func_info.t list) ->
@@ -443,9 +462,16 @@ let build_scope_table
         ([], []) fi.fi_imports
     in
     Some { scope_table =
-             Func_lookup.scope_table_of_map
-               (Scope_binding.bindings_of_positioned
-                  (own_bindings @ own_classes @ List.rev imported));
+             Func_lookup.scope_table_shadowing
+               ~front:
+                 (Func_lookup.scope_table_of_map
+                    (Scope_binding.bindings_of_positioned
+                       (own_bindings @ own_classes @ member_bindings
+                        @ List.rev imported)))
+               ~back:
+                 (Func_lookup.scope_table_of_map
+                    (Scope_binding.bindings_of_positioned
+                       inherited_member_bindings));
            bound_class_files; own_modules = []; module_aliases = None }
 
 let narrow_methods_by_bound_files
@@ -533,8 +559,9 @@ let invocation_resolver ~(func_lookup : Func_lookup.t)
 let edges_for_file (ctx : ctx) (fi : file_info)
   : (Function_id.t * Function_id.t * Tok.t) list =
   let { lang; cfg; type_state; definitions_by_qn; companions;
-        attributes_by_module; dunder_all;
-        resolution_orders; project_classes; class_qn_by_definition;
+        attributes_by_module; dunder_all; libraries;
+        resolution_orders; derived_orders; project_classes;
+        class_qn_by_definition;
         methods_by_class;
         singleton_names;
         extensions_by_module; nested_types_by_class;
@@ -562,8 +589,9 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let file_scope =
       staged "scope table" @@ fun () ->
       build_scope_table ~lang ~cfg ~definitions_by_qn
-        ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
-        ~class_parent_paths ~resolution_orders ~methods_by_class
+        ~file_funcs_index ~attributes_by_module ~dunder_all ~libraries
+        ~classes_by_file ~class_parent_paths ~resolution_orders
+        ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
         ~namespace_scope_bindings ~php_global_bindings ~include_map ~module_scope
         ~go_packages ~top_level_scope ~module_object_by_module
@@ -616,6 +644,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
         ~module_attributes:attributes_by_module
         ~resolution_orders
+        ~derived_orders
         ~project_classes
         ~class_qn_by_definition
         ~methods_by_class
@@ -796,6 +825,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
             (Index_lang_rules.top_level_scope_is_project cfg)
           ~module_attributes:attributes_by_module
           ~resolution_orders
+          ~derived_orders
           ~project_classes
           ~class_qn_by_definition
           ~methods_by_class

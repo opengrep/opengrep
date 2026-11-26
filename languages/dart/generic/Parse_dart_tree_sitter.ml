@@ -4018,38 +4018,37 @@ let map_top_level_definition ~attrs (env : env) (x : CST.top_level_definition) :
   | `Mixin_decl (v1, v2, v3, v4, v5, v6) ->
       (* A mixin is basically a nominative extension of a class.
          https://dart.dev/language/mixins
+         Its [on] types are the classes it may be applied to, so [this] in its
+         body is one of them, as in a class that extends them.
       *)
-      let v1 = (* "mixin" *) str env v1 in
-      let v2 = (* pattern [a-zA-Z_$][\w$]* *) str env v2 in
-      let v3 =
-        match v3 with
-        | Some x ->
-            let _, xs, _ = map_type_parameters env x in
-            [ G.Anys (xs |> List_.map (fun tp -> G.Tp tp)) ]
-        | None -> []
-      in
-      let v4 =
+      let tmixin = (* "mixin" *) token env v1 in
+      let name = (* pattern [a-zA-Z_$][\w$]* *) str env v2 in
+      let tparams = Option.map (map_type_parameters env) v3 in
+      let cextends =
         match v4 with
         | Some (v1, v2) ->
-            [
-              G.Anys
-                (let _v1 = (* "on" *) token env v1 in
-                 let v2 = map_type_not_void_list env v2 in
-                 List_.map (fun ty -> G.T ty) v2);
-            ]
+            let _v1 = (* "on" *) token env v1 in
+            map_type_not_void_list env v2 |> List_.map (fun ty -> (ty, None))
         | None -> []
       in
-      let v5 =
+      let cimplements =
         match v5 with
-        | Some x ->
-            [ G.Anys (List_.map (fun ty -> G.T ty) (map_interfaces env x)) ]
+        | Some x -> map_interfaces env x
         | None -> []
       in
-      let _, v6, _ = map_class_body env v6 in
-      let attrs = Anys (attrs |> List_.map (fun x -> G.At x)) in
+      let cbody = map_class_body env v6 in
       [
-        OtherStmt
-          (OS_Todo, [ attrs; TodoK v1; G.I v2 ] @ v3 @ v4 @ v5 @ [ G.Flds v6 ])
+        DefStmt
+          ( basic_entity ~attrs ?tparams name,
+            ClassDef
+              {
+                ckind = (Trait, tmixin);
+                cextends;
+                cimplements;
+                cparams = fb [];
+                cbody;
+                cmixins = [];
+              } )
         |> G.s;
       ]
   | `Type_alias x -> [ map_type_alias ~attrs env x ]

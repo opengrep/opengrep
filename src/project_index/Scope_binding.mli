@@ -5,6 +5,23 @@ type positioned_binding = {
   pb_kinds : Func_lookup.scope_kind list;
 }
 
+(* The namespaces whose members are in scope in [fi] without an import: the
+   namespace scopes of the file and, where namespaces nest, the namespaces
+   that enclose them. *)
+val own_namespaces :
+  namespaces_nest:bool -> Types.file_info -> Names.Module_qn.t list
+
+(* The library file of each file that a [part] directive adds to a library
+   ([Index_lang_rules.library_parts_of_ast]). *)
+type libraries
+
+val libraries_of_files :
+  cfg:Index_lang_rules.t -> Types.file_info list -> libraries
+
+(* Whether two files belong to one library: a file is its own library unless
+   a [part] directive adds it to another. *)
+val same_library : libraries -> Fpath.t -> Fpath.t -> bool
+
 val function_binding_of :
   pos:Pos.t option ->
   parent_path:IL.name option list ->
@@ -61,6 +78,11 @@ val own_definitions_of_file :
   positioned_binding list
 
 val position_of_tok : Tok.t -> Pos.t option
+
+(* The bindings of one name in one scope as a single binding at the earliest
+   position: the overloads of a scope that holds several functions of a
+   name. *)
+val overload_sets : positioned_binding list -> positioned_binding list
 
 val own_alias_bindings :
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->

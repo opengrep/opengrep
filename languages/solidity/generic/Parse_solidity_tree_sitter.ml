@@ -529,6 +529,14 @@ let map_user_defined_type_definition (env : env)
   let def = { tbody = AliasType (* or NewType? *) ty } in
   (ent, TypeDef def)
 
+(* [super] is a keyword of Solidity that the grammar parses as an
+   identifier. *)
+let map_identifier_expression (env : env) (tok : CST.identifier) :
+    expr =
+  let ((name, tk) as id) = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
+  if String.equal name "super" then IdSpecial (Super, tk) |> G.e
+  else N (H2.name_of_id id) |> G.e
+
 let map_enum_member (env : env) (x : CST.enum_member) : or_type_element =
   match x with
   | `Id tok ->
@@ -1289,9 +1297,7 @@ and map_expression (env : env) (x : CST.expression) : expr =
 and map_anon_choice_exp_97f816a (env : env) (x : CST.anon_choice_exp_97f816a) =
   match x with
   | `Exp x -> map_expression env x
-  | `Id tok ->
-      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-      N (H2.name_of_id id) |> G.e
+  | `Id tok -> map_identifier_expression env tok
 
 and map_member_expression (env : env) ((v1, v2, v3) : CST.member_expression) :
     expr =
@@ -1425,9 +1431,7 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : expr =
         ( ("InlineArray", lb),
           [ Tk lb ] @ (es |> List_.map (fun e -> E e)) @ [ Tk rb ] )
       |> G.e
-  | `Id tok ->
-      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-      N (H2.name_of_id id) |> G.e
+  | `Id tok -> map_identifier_expression env tok
   | `Lit x -> map_literal env x
   | `New_exp (v1, v2, v3) -> (
       let tnew = (* "new" *) token env v1 in

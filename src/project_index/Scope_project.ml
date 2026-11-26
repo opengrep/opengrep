@@ -37,16 +37,8 @@ let build
     Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
   in
   let member_bindings =
-    List.concat_map
-      (fun (ci : class_info) ->
-        let parent_path = [ Some (Scope_binding.class_il_name_of ci) ] in
-        let pos = Scope_binding.position_of_tok (Function_id.tok ci.ci_id) in
-        List.concat_map
-          (fun ((name : string), (funcs : Func_info.t list)) ->
-            Scope_binding.function_binding_of ~pos ~parent_path name funcs)
-          (Scope_package.members_along_order ~resolution_orders
-             ~methods_by_class ci.ci_qn))
-      own_classes
+    Scope_package.member_bindings_of_classes ~resolution_orders
+      ~methods_by_class own_classes
   in
   let module_bindings =
     List.filter_map

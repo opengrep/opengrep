@@ -311,13 +311,32 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let qn_name = if is_companion then name ^ "$" else name in
             let parent_paths =
               let from_extends =
-                List.filter_map (fun (ty, _) ->
-                  match parent_path ty with
-                  | [] -> None
-                  | path ->
-                    Some { Index_lang_rules.cp_path = path;
-                           cp_position = Index_lang_rules.Appended }
-                ) cdef.G.cextends
+                let position =
+                  match fst cdef.G.ckind with
+                  | G.Trait
+                    when cfg.Index_lang_rules.mixin_extends_lists_constraints ->
+                    Index_lang_rules.Constraint
+                  | G.Trait | G.Class | G.Interface | G.Object ->
+                    Index_lang_rules.Appended
+                in
+                let is_superclass =
+                  match fst cdef.G.ckind with
+                  | G.Class | G.Object -> true
+                  | G.Trait | G.Interface -> false
+                in
+                let parents =
+                  List.filter_map (fun (ty, _) ->
+                    match parent_path ty with
+                    | [] -> None
+                    | path ->
+                      Some { Index_lang_rules.cp_path = path;
+                             cp_position = position;
+                             cp_is_superclass = is_superclass }
+                  ) cdef.G.cextends
+                in
+                if cfg.Index_lang_rules.bases_listed_most_base_first
+                then List.rev parents
+                else parents
               in
               let extra = cfg.Index_lang_rules.class_body_extra_parents cdef in
               match cfg.Index_lang_rules.superclass_position with

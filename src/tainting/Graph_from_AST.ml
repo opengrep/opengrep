@@ -522,6 +522,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ~constructors:(Func_lookup.constructor_index_of_funcs ~lang funcs)
       ~module_attributes:Common.SMap.empty
       ~resolution_orders:Common.SMap.empty
+      ~derived_orders:Common.SMap.empty
       ~class_qn_by_definition:Common.SMap.empty
       ~methods_by_class:Func_lookup.Class_qn_map.empty
       ~singleton_names:Func_lookup.Class_qn_map.empty

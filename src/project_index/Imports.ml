@@ -161,7 +161,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       has_keyword G.Public attrs
   in
   let role_of_attrs (attrs : G.attribute list) : import_role =
-    if has_keyword G.Reexport attrs || marks_reexport attrs then Role_reexports
+    if has_keyword G.Reexport attrs then Role_reexports
+    else if marks_reexport attrs then Role_binds_and_reexports
     else Role_binds
   in
   let binds_of_attrs (attrs : G.attribute list) : import_binds =
@@ -250,6 +251,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       (match
          (module_name_of mn, Int.compare (String.length local) 0 > 0)
        with
+       | Some (qn : Names.Module_qn.t), _
+         when Option.is_none alias
+              && cfg.Index_lang_rules.path_import_binds_all_names
+              && (match mn with
+                  | G.FileName _ -> true
+                  | G.DottedName _ -> false) ->
+         (add ~binds ~alias ~hidden:[] ~tok st wildcard_local qn, hiding)
        | Some (qn : Names.Module_qn.t), true ->
          (add ~binds ~alias ~hidden:[] ~tok st local qn, hiding)
        | Some _, false

@@ -23,6 +23,26 @@ val members_along_order :
   Names.Class_qn.t ->
   (string * Func_info.t list) list
 
+(* The members of each class, along its resolution order, bound in the class's
+   own scope. *)
+val member_bindings_of_classes :
+  resolution_orders:Func_lookup.resolution_orders ->
+  methods_by_class:Func_lookup.methods_by_class ->
+  Types.class_info list ->
+  Scope_binding.positioned_binding list
+
+(* The bindings that a bare name in a method of each class may refer to, by
+   the language's [method_member_scope]: those in the class's lexical scope,
+   and the inherited ones that bind only when no lexical binding exists. *)
+val method_scope_bindings :
+  lang:Lang.t ->
+  cfg:Index_lang_rules.t ->
+  libraries:Scope_binding.libraries ->
+  resolution_orders:Func_lookup.resolution_orders ->
+  methods_by_class:Func_lookup.methods_by_class ->
+  Types.class_info list ->
+  Scope_binding.positioned_binding list * Scope_binding.positioned_binding list
+
 val build :
   precedence:(Index_lang_rules.binding_kind -> int) ->
   own_package_members_kind:Index_lang_rules.binding_kind ->

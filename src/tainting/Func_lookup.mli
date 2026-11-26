@@ -26,6 +26,12 @@ type module_attributes = module_attribute Common.SMap.t Common.SMap.t
 
 type resolution_orders = Names.Class_qn.t list Common.SMap.t
 
+(* For each class, the resolution orders of the classes that contain it in
+   their order and that no class inherits from. *)
+type derived_orders = Names.Class_qn.t list list Common.SMap.t
+
+val derived_orders_of : resolution_orders -> derived_orders
+
 module Class_qn_map : Map.S with type key = Names.Class_qn.t
 
 type methods_by_class = Func_info.t list Common.SMap.t Class_qn_map.t
@@ -116,6 +122,7 @@ val create :
   ?project_classes : project_classes ->
   module_attributes : module_attributes ->
   resolution_orders : resolution_orders ->
+  derived_orders : derived_orders ->
   class_qn_by_definition : class_qn_by_definition ->
   methods_by_class : methods_by_class ->
   singleton_names : singleton_names ->
@@ -143,6 +150,8 @@ val companion_of : t -> Names.Class_qn.t -> Names.Class_qn.t option
 
 val resolution_order : t -> Names.Class_qn.t -> Names.Class_qn.t list
 
+val orders_of_most_derived : t -> Names.Class_qn.t -> Names.Class_qn.t list list
+
 val is_known_class : t -> Names.Class_qn.t -> bool
 
 val has_class : t -> Names.Class_qn.t -> bool
@@ -151,8 +160,17 @@ val is_known_module : t -> Names.Module_qn.t -> bool
 
 val class_qn_of_definition : t -> IL.name -> Names.Class_qn.t option
 
+(* [nearer] and the functions of [farther] whose arity no function of
+   [nearer] has: the overloads that a class inherits beside its own. *)
+val with_inherited_overloads :
+  nearer:Func_info.t list -> Func_info.t list -> Func_info.t list
+
+(* The functions of the first class along the order that binds one of the
+   names; with [merges_overloads], also every inherited overload
+   ([with_inherited_overloads]). *)
 val find_along_order :
   t ->
+  merges_overloads:bool ->
   receiver:method_receiver ->
   Names.Class_qn.t list ->
   (Names.Class_qn.t -> string list) ->

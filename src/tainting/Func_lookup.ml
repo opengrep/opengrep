@@ -29,6 +29,36 @@ type module_attributes = module_attribute Common.SMap.t Common.SMap.t
 
 type resolution_orders = Names.Class_qn.t list Common.SMap.t
 
+type derived_orders = Names.Class_qn.t list list Common.SMap.t
+
+let derived_orders_of (orders : resolution_orders) : derived_orders =
+  let bases : unit Common.SMap.t =
+    Common.SMap.fold
+      (fun (_ : string) (order : Names.Class_qn.t list)
+           (bases : unit Common.SMap.t) ->
+        match order with
+        | [] -> bases
+        | _ :: (ancestors : Names.Class_qn.t list) ->
+          List.fold_left
+            (fun (bases : unit Common.SMap.t) (ancestor : Names.Class_qn.t) ->
+              Common.SMap.add (Names.Class_qn.to_string ancestor) () bases)
+            bases ancestors)
+      orders Common.SMap.empty
+  in
+  Common.SMap.fold
+    (fun (class_key : string) (order : Names.Class_qn.t list)
+         (derived : derived_orders) ->
+      if Common.SMap.mem class_key bases then derived
+      else
+        List.fold_left
+          (fun (derived : derived_orders) (member : Names.Class_qn.t) ->
+            Common.SMap.update (Names.Class_qn.to_string member)
+              (fun (earlier : Names.Class_qn.t list list option) ->
+                Some (order :: Option.value earlier ~default:[]))
+              derived)
+          derived order)
+    orders Common.SMap.empty
+
 module Class_qn_map = Map.Make (struct
   type t = Names.Class_qn.t
   let compare = Names.Class_qn.compare
@@ -231,6 +261,7 @@ type t = {
   own_modules : Names.Module_qn.t list;
   module_attributes : module_attributes;
   resolution_orders : resolution_orders;
+  derived_orders : derived_orders;
   class_qn_by_definition : class_qn_by_definition;
   methods_by_class : methods_by_class;
   singleton_names : singleton_names;
@@ -309,6 +340,12 @@ let resolution_order (t : t) (class_qn : Names.Class_qn.t)
        t.resolution_orders)
     ~default:[]
 
+let orders_of_most_derived (t : t) (class_qn : Names.Class_qn.t)
+    : Names.Class_qn.t list list =
+  Option.value
+    (Common.SMap.find_opt (Names.Class_qn.to_string class_qn) t.derived_orders)
+    ~default:[]
+
 let is_known_class (t : t) (class_qn : Names.Class_qn.t) : bool =
   Class_qn_map.mem class_qn t.project_classes
 
@@ -338,8 +375,22 @@ let class_qn_of_definition (t : t) (definition : IL.name)
            Function_id.equal_name id definition)
          classes)
 
-let find_along_order (t : t) ~(receiver : method_receiver)
-    (order : Names.Class_qn.t list)
+let with_inherited_overloads ~(nearer : Func_info.t list)
+    (farther : Func_info.t list) : Func_info.t list =
+  let arity (func : Func_info.t) : int =
+    List.length (Tok.unbracket func.Func_info.fdef.AST_generic.fparams)
+  in
+  nearer
+  @ List.filter
+      (fun (func : Func_info.t) ->
+        not
+          (List.exists
+             (fun (bound : Func_info.t) -> Int.equal (arity bound) (arity func))
+             nearer))
+      farther
+
+let find_along_order (t : t) ~(merges_overloads : bool)
+    ~(receiver : method_receiver) (order : Names.Class_qn.t list)
     (names_of : Names.Class_qn.t -> string list) : Func_info.t list =
   let bound_on
       ~(keep : Names.Class_qn.t -> string -> Func_info.t -> bool)
@@ -362,6 +413,15 @@ let find_along_order (t : t) ~(receiver : method_receiver)
       match bound_on ~keep class_qn with
       | [] -> first_binder ~keep rest
       | (_ :: _) as found -> found)
+  in
+  let first_binder ~(keep : Names.Class_qn.t -> string -> Func_info.t -> bool)
+      (order : Names.Class_qn.t list) : Func_info.t list =
+    if merges_overloads then
+      List.fold_left
+        (fun (found : Func_info.t list) (class_qn : Names.Class_qn.t) ->
+          with_inherited_overloads ~nearer:found (bound_on ~keep class_qn))
+        [] order
+    else first_binder ~keep order
   in
   let every (_ : Names.Class_qn.t) (_ : string) (_ : Func_info.t) : bool =
     true
@@ -402,6 +462,7 @@ let empty = {
   own_modules = [];
   module_attributes = Common.SMap.empty;
   resolution_orders = Common.SMap.empty;
+  derived_orders = Common.SMap.empty;
   class_qn_by_definition = Common.SMap.empty;
   methods_by_class = Class_qn_map.empty;
   singleton_names = Class_qn_map.empty;
@@ -422,6 +483,7 @@ let create
     ?(project_classes : project_classes = Class_qn_map.empty)
     ~(module_attributes : module_attributes)
     ~(resolution_orders : resolution_orders)
+    ~(derived_orders : derived_orders)
     ~(class_qn_by_definition : class_qn_by_definition)
     ~(methods_by_class : methods_by_class)
     ~(singleton_names : singleton_names)
@@ -442,6 +504,7 @@ let create
     own_modules;
     module_attributes;
     resolution_orders;
+    derived_orders;
     class_qn_by_definition;
     methods_by_class;
     singleton_names;
