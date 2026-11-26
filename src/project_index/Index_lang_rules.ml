@@ -62,6 +62,10 @@ type t = {
   (* A specifier without a leading dot names a file relative to the
      importing file before one on the library paths (Circom [include]). *)
   bare_specifiers_relative_first : bool;
+  (* An expression statement that runs a file in the current scope, with the
+     file's specifier (Bash [source f], [. f]); it binds every top-level name
+     of the file. *)
+  file_import_of_expr : G.expr -> (string * Tok.t) option;
   specifier_candidates : Fpath.t -> string list;
   (* [import "path";] without an alias binds every top-level name of the
      file (Solidity). *)
@@ -320,6 +324,7 @@ let default : t = {
   specifiers_name_files = false;
   specifiers_are_uris = false;
   bare_specifiers_relative_first = false;
+  file_import_of_expr = (fun _ -> None);
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
   path_import_binds_all_names = false;
   crate_manifest = None;
@@ -882,6 +887,25 @@ let r : t = { default with
   unqualified_scope = `Per_project;
 }
 
+(* [source f] and [. f] run [f] in the current shell, so its functions are
+   defined there; a literal [f] is resolved from the script's directory. *)
+let shell_source_import (e : G.expr) : (string * Tok.t) option =
+  match e.G.e with
+  | G.Call (callee, (_, args, _)) -> (
+      match AST_generic_helpers.call_of_shell_command callee args with
+      | Some
+          ( { G.e = G.N (G.Id ((("source" | "."), tok), _)); _ },
+            [ G.Arg { G.e = G.L (G.String (_, (spec, _), _)); _ } ] ) ->
+          Some (spec, tok)
+      | _ -> None)
+  | _ -> None
+
+let bash : t = { default with
+  specifiers_name_files = true;
+  bare_specifiers_relative_first = true;
+  file_import_of_expr = shell_source_import;
+}
+
 (* [include "path";] binds every template and function of the file. *)
 let circom : t = { default with
   specifiers_name_files = true;
@@ -950,6 +974,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Circom -> circom
   | Lang.Ocaml -> ocaml
   | Lang.R -> r
+  | Lang.Bash -> bash
   | Lang.Move_on_aptos | Lang.Move_on_sui -> module_scoped
   | _ -> default
 

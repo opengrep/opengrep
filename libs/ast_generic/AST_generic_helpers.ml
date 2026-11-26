@@ -994,3 +994,22 @@ let any_of_function_body (fb : function_body) : any =
   | FBExpr e -> E e
   | FBDecl t -> Tk t
   | FBNothing -> Anys []
+
+(*****************************************************************************)
+(* Shell commands *)
+(*****************************************************************************)
+
+let shell_command_marker = "!sh_cmd!"
+
+(* A shell simple command [f a b] is [Call (N "!sh_cmd!", ["f"; a; b])]. When
+   its first word is a literal, the command calls that name with the other
+   words, as a function call does. The callee shares the marker's [id_info],
+   so what name resolution records on it is seen by every later rewrite. *)
+let call_of_shell_command (callee : expr) (args : argument list) :
+    (expr * argument list) option =
+  match (callee.e, args) with
+  | ( N (Id ((marker, _), marker_info)),
+      Arg { e = L (String (_, (name, tok), _)); _ } :: rest )
+    when String.equal marker shell_command_marker ->
+      Some (N (Id ((name, tok), marker_info)) |> e, rest)
+  | _ -> None

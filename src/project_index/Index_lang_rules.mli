@@ -64,6 +64,10 @@ type t = {
   (* A specifier without a leading dot names a file relative to the
      importing file before one on the library paths (Circom [include]). *)
   bare_specifiers_relative_first : bool;
+  (* An expression statement that runs a file in the current scope, with the
+     file's specifier (Bash [source f], [. f]); it binds every top-level name
+     of the file. *)
+  file_import_of_expr : G.expr -> (string * Tok.t) option;
   specifier_candidates : Fpath.t -> string list;
   (* [import "path";] without an alias binds every top-level name of the
      file (Solidity). *)

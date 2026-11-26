@@ -905,9 +905,7 @@ let initial_sig_db (_rs : rule_state) : Shape_and_sig.signature_database =
 
 let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
     : int =
-  Match_tainting_mode.get_arity
-    (Tok.unbracket info.Match_tainting_mode.fdef.AST_generic.fparams)
-    info rs.lang
+  Match_tainting_mode.arity_of_fun_info rs.lang info
 
 (* The signatures of a rule's functions once the fixpoint is stable. *)
 type rule_signatures = {

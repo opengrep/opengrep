@@ -364,6 +364,16 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         match stmt.G.s with
         | G.DirectiveStmt dir -> on_directive st hiding dir
         | G.DefStmt (ent, G.VarDef vd) -> (on_defstmt st ent vd, hiding)
+        | G.ExprStmt (e, _) -> (
+          match cfg.Index_lang_rules.file_import_of_expr e with
+          | Some ((spec : string), (tok : Tok.t)) -> (
+            match qn_of_specifier spec with
+            | Some (qn : Names.Module_qn.t) ->
+              (add ~tok ~static:false ~global:false ~binds:Binds_any
+                 ~alias:None ~role:Role_binds ~hidden:[] st wildcard_local qn,
+               hiding)
+            | None -> (st, hiding))
+          | None -> (st, hiding))
         | _ -> (st, hiding)) ([], []) ast
   in
   List.rev acc

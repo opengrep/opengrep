@@ -155,7 +155,10 @@ module C = struct
   (* For simple commands, e.g.
        $echo "$@"
   *)
-  let cmd loc = mk loc "cmd"
+  let cmd loc =
+    let id_info = G.empty_id_info ~hidden:true () in
+    G.N (G.Id ((AST_generic_helpers.shell_command_marker, fst loc), id_info))
+    |> G.e
 
   (* Split a string according to whitespace defined by "$IFS".
      This is done on the result of unquoted $ expansions:

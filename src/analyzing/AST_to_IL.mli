@@ -1,3 +1,8 @@
+(* The parameters of a function: those it declares, or for a shell function
+   the positional ones its body reads. *)
+val function_parameters :
+  Lang.t -> AST_generic.function_definition -> AST_generic.parameters
+
 val function_definition :
   Lang.t ->
   AST_generic.function_definition ->

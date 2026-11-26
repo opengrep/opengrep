@@ -1,0 +1,12 @@
+rules:
+  - id: test-bash-source-file
+    languages: [bash]
+    message: Tainted data reaches eval through a function of a sourced file
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $(get_input)
+    pattern-sinks:
+      - pattern: eval ...

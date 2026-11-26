@@ -333,6 +333,40 @@ let is_constructor env ret_ty id_info : bool =
  *
  * Likewise for a conditional expression, 'c ? e1 : e2': the flag is set on
  * the two branches, which are what the last instructions compute. *)
+(* A shell function declares no parameters and reads its arguments as [$1],
+   [$2], ...: it has as many positional parameters as the highest one its
+   body reads ([$0] is the script). *)
+let function_parameters (lang : Lang.t) (fdef : G.function_definition) :
+    G.parameters =
+  match (lang, fdef.G.fparams) with
+  | Lang.Bash, (l, [], r) ->
+      let is_digits (s : string) : bool =
+        String.length s > 0
+        && String.for_all (fun (c : char) -> c >= '0' && c <= '9') s
+      in
+      let highest = ref 0 in
+      let visitor =
+        object
+          inherit [_] G.iter_no_id_info as super
+
+          method! visit_expr () e =
+            (match e.G.e with
+            | G.N (G.Id ((name, _), _)) when is_digits name ->
+                highest := max !highest (int_of_string name)
+            | _ -> ());
+            super#visit_expr () e
+        end
+      in
+      visitor#visit_function_body () fdef.G.fbody;
+      let tok = snd fdef.G.fkind in
+      ( l,
+        List.init !highest (fun (i : int) ->
+            let name = string_of_int (i + 1) in
+            G.Param (G.param_of_id (name, Tok.fake_tok tok name))),
+        r )
+  | _ -> fdef.G.fparams
+
+
 let rec effective_implicit_return env (eorig : G.expr) : bool =
   if eorig.is_implicit_return then true
   else
@@ -2445,9 +2479,12 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       | _ ->
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args)
-  | G.Call (e, args) ->
+  | G.Call (e, ((l, args_list, r) as args)) -> (
       let tok = G.fake "call" in
-      call_generic env ~void tok eorig e args
+      match AST_generic_helpers.call_of_shell_command e args_list with
+      | Some (callee, command_args) ->
+          call_generic env ~void tok eorig callee (l, command_args, r)
+      | None -> call_generic env ~void tok eorig e args)
   | G.L lit -> ([], mk_e (Literal lit) eorig)
   | G.DotAccess ({ e = N (Id (("var", _), _)); _ }, _, FN (Id ((s, t), id_info)))
     when is_hcl env.lang ->
@@ -4993,7 +5030,7 @@ and instance_var_param_assigns env (fparams : G.parameters) : stmts =
          | _ -> [])
 
 and function_definition env fdef : function_definition =
-  let fparams = parameters env fdef.G.fparams in
+  let fparams = parameters env (function_parameters env.lang fdef) in
   let fparams, env =
     match block_of_yielding_method env fdef fparams with
     | None -> (fparams, env)

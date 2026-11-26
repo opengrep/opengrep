@@ -215,3 +215,13 @@ val add_semicolon_to_last_def_and_convert_to_stmts :
 val ident_of_parameter_opt : AST_generic.parameter -> AST_generic.ident option
 
 val any_of_function_body : AST_generic.function_body -> AST_generic.any
+
+(* The identifier of the function a shell simple command is a call of. *)
+val shell_command_marker : string
+
+(* The callee and arguments of a shell simple command whose first word is a
+   literal, as a call of that word. *)
+val call_of_shell_command :
+  AST_generic.expr ->
+  AST_generic.argument list ->
+  (AST_generic.expr * AST_generic.argument list) option

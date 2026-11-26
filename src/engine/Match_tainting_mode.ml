@@ -318,6 +318,10 @@ let get_arity params info lang =
   Receiver.arity lang ~is_method:(Receiver.is_method info.fdef)
     ~is_static:info.is_static params
 
+(* The number of arguments a call of the function passes. *)
+let arity_of_fun_info (lang : Lang.t) (info : fun_info) : int =
+  get_arity (Tok.unbracket (AST_to_IL.function_parameters lang info.fdef)) info lang
+
 (* Drop implicit-receiver IL params. The IL params start with one per G param,
    in the same order; any further ones are synthetic (the block a Ruby or
    Crystal method yields to without declaring it) and are kept. *)
@@ -465,8 +469,8 @@ let extract_signatures
   let to_ext (sig_, arity) : Shape_and_sig.extended_sig =
     { Shape_and_sig.sig_; arity }
   in
-  let params = Tok.unbracket info.fdef.G.fparams in
-  let arity = get_arity params info lang in
+  let params = Tok.unbracket (AST_to_IL.function_parameters lang info.fdef) in
+  let arity = arity_of_fun_info lang info in
   let sig_cfg =
     let filtered_params =
       filter_implicit_receiver_params lang info params info.cfg.IL.params

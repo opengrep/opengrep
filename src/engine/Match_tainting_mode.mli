@@ -32,11 +32,10 @@ val pms_of_effects :
   Shape_and_sig.Effects.t ->
   Core_match.t list
 
-val get_arity :
-  AST_generic.parameter list ->
-  fun_info ->
-  Lang.t ->
-  int
+(* The number of arguments a call of the function passes: its declared
+   parameters (positional ones for a shell function) less an implicit
+   receiver. *)
+val arity_of_fun_info : Lang.t -> fun_info -> int
 (** Effective arity, filtering language-specific implicit parameters. *)
 
 val extract_signatures :
