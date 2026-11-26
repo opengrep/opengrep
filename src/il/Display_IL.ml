@@ -25,6 +25,7 @@ let string_of_offset offset =
       Common.spf "[\"%s\"]" str
   | Index _ -> "[...]"
   | Slice lo -> Common.spf "[%d..]" lo
+  | Append -> "[]"
 
 let string_of_offset_list offset =
   if offset <> [] then

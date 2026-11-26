@@ -1723,8 +1723,10 @@ and check_tainted_lval_offset env offset =
           Taints.empty
       in
       (taints, lval_env)
-  | Slice _ ->
-      (* The slice index is a static int, no expression to check. *)
+  | Slice _
+  | Append ->
+      (* The slice index is a static int and an append has no index: no
+       * expression to check. *)
       (Taints.empty, env.lval_env)
 
 (* Test whether an expression is tainted, and if it is also a sink,

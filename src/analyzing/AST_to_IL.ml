@@ -530,13 +530,12 @@ let rec lval env eorig : stmts * lval =
       let ss_e2, e2 = expr env e2orig in
       let offset' = { o = Index e2; oorig = SameAs eorig } in
       (ss_lv @ ss_e2, { lv1 with rev_offset = offset' :: lv1.rev_offset })
-  (* PHP's array-append shorthand '$x[] = e', treated as an assignment to an
-   * unknown index of $x so that dataflow reaches $x itself. *)
+  (* PHP's array-append shorthand '$x[] = e', treated as an assignment to the
+   * element after the last of $x so that dataflow reaches $x itself. *)
   | G.OtherExpr (("ArrayAppend", tok), [ G.E e1orig ])
     when env.lang =*= Lang.Php ->
       let ss_lv, lv1 = nested_lval env tok e1orig in
-      let idx = mk_e (Fetch (fresh_lval env tok)) NoOrig in
-      let offset' = { o = Index idx; oorig = SameAs eorig } in
+      let offset' = { o = Append; oorig = SameAs eorig } in
       (ss_lv, { lv1 with rev_offset = offset' :: lv1.rev_offset })
   | G.DeRef (_, e1orig) ->
       let ss, e1 = expr env e1orig in

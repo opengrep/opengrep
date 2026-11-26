@@ -162,7 +162,7 @@ let normalize_lval lang lval =
         | Some (offset, { o = IL.Dot var; _ }) -> Some (var, offset)
         (* we do not handle any other case *)
         | None
-        | Some (_, { o = IL.Index _ | IL.Slice _; _ }) ->
+        | Some (_, { o = IL.Index _ | IL.Slice _ | IL.Append; _ }) ->
             None)
     | Mem _ -> None
   in
@@ -348,7 +348,21 @@ let pending_propagation prop_var lval env =
   }
 
 let clean lang lval_env lval =
+  let writes_new_element =
+    List.exists
+      (fun (o : IL.offset) ->
+        match o.o with
+        | IL.Append -> true
+        | IL.Dot _
+        | IL.Index _
+        | IL.Slice _ ->
+            false)
+      lval.IL.rev_offset
+  in
   match normalize_lval lang lval with
+  | _ when writes_new_element ->
+      (* A write to an element that did not exist cleans no element that did. *)
+      lval_env
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)
