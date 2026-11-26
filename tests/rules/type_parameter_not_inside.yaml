@@ -1,8 +1,8 @@
 rules:
-- id: field-outside-generic-class
+- id: field-type-not-class-type-parameter
   languages: [java]
   severity: INFO
-  message: a field of a class without type parameters
+  message: the type of a field is not a type parameter of its class
   patterns:
     - pattern-not-inside: |
         class $C<$T> {

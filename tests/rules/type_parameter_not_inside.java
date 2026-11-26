@@ -1,9 +1,11 @@
 class Box<T> {
-  // ok: field-outside-generic-class
+  // ok: field-type-not-class-type-parameter
   T value;
+  // ruleid: field-type-not-class-type-parameter
+  int count;
 }
 
 class Plain {
-  // ruleid: field-outside-generic-class
+  // ruleid: field-type-not-class-type-parameter
   int count;
 }
