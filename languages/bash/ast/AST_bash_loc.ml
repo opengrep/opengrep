@@ -123,8 +123,8 @@ let _expansion_loc = function
 let variable_name_loc x = variable_name_wrap x |> wrap_loc
 
 let _complex_expansion_loc = function
-  | Variable (loc, _) -> loc
-  | Complex_expansion_TODO loc -> loc
+  | Variable (loc, _, _) -> loc
+  | Complex_expansion_TODO (loc, _) -> loc
 
 let _command_substitution_loc x = bracket_loc x
 

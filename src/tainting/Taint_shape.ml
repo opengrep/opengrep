@@ -852,7 +852,9 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
            * the appropriate composed offset, unify all matches.
            * The composition law lets a coarser sub-slice [Oslice m]
            * (m < n) contribute its tail-from-(n-m):
-           *   Oslice n :: Oslice m :: rest = Oslice (n-m) :: rest. *)
+           *   Oslice n :: Oslice m :: rest = Oslice (n-m) :: rest.
+           * Per INVARIANT(obj), the [Oany] entry carries every index that
+           * is not tracked, some of which are in the slice. *)
           match
             Fields.fold
               (fun key cell acc ->
@@ -863,10 +865,10 @@ and find_in_obj_w_carry ?max ~lang ~taints (offset : T.offset list) obj =
                   | Oslice m ->
                       (* m < n by case order; n - m > 0 *)
                       Some (T.Oslice (n - m) :: offset)
+                  | Oany -> Some offset
                   | Oint _
                   | Ofld _
-                  | Ostr _
-                  | Oany ->
+                  | Ostr _ ->
                       None
                 in
                 match recur_offset with

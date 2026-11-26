@@ -139,7 +139,7 @@ let unary_test_operator (env : env) (tok : ts_tok) : unary_test_operator wrap =
   in
   (op, tok)
 
-let _binary_operator (env : env) (tok : ts_tok) : binary_test_operator wrap =
+let binary_operator (env : env) (tok : ts_tok) : binary_test_operator wrap =
   let s, tok = str env tok in
   let op =
     match s with
@@ -151,6 +151,7 @@ let _binary_operator (env : env) (tok : ts_tok) : binary_test_operator wrap =
     | "!=" -> String_not_equal
     | "<" -> String_lesser_than
     | ">" -> String_greater_than
+    | "=~" -> String_regex_matching
     | "-eq" -> Int_equal
     | "-ne" -> Int_not_equal
     | "-lt" -> Int_lesser_than
@@ -326,41 +327,46 @@ and array_ (env : env) ((v1, v2, v3) : CST.array_) =
 and binary_expression (env : env) (x : CST.binary_expression) : test_expression
     =
   match x with
-  | `Exp_choice_EQ_exp (v1, v2, v3) ->
+  | `Exp_choice_EQ_exp (v1, v2, v3) -> (
       let left = expression env v1 in
-      let _opTODO =
-        match v2 with
-        | `EQ tok -> token env tok (* "=" *)
-        | `EQEQ tok -> token env tok (* "==" *)
-        | `EQTILDE tok -> token env tok (* "=~" *)
-        | `BANGEQ tok -> token env tok (* "!=" *)
-        | `PLUS tok -> token env tok (* "+" *)
-        | `DASH tok -> token env tok (* "-" *)
-        | `PLUSEQ tok -> token env tok (* "+=" *)
-        | `DASHEQ tok -> token env tok (* "-=" *)
-        | `LT tok -> token env tok (* "<" *)
-        | `GT tok -> token env tok (* ">" *)
-        | `LTEQ tok -> token env tok (* "<=" *)
-        | `GTEQ tok -> token env tok (* ">=" *)
-        | `BARBAR tok -> token env tok (* "||" *)
-        | `AMPAMP tok -> token env tok (* "&&" *)
-        | `Test_op tok -> (* test_operator *) token env tok
-      in
       let right = expression env v3 in
-      T_todo
-        (Tok_range.range
-           (AST_bash_loc.test_expression_loc left)
-           (AST_bash_loc.test_expression_loc right))
-  | `Exp_choice_EQEQ_regex (v1, v2, v3) ->
-      let left = expression env v1 in
-      let _op =
-        match v2 with
-        | `EQEQ tok -> token env tok (* "==" *)
-        | `EQTILDE tok -> (* "=~" *) token env tok
+      let loc =
+        Tok_range.range
+          (AST_bash_loc.test_expression_loc left)
+          (AST_bash_loc.test_expression_loc right)
       in
-
-      let right = token env v3 (* regex *) in
-      T_todo (fst (AST_bash_loc.test_expression_loc left), right)
+      match (v2, left, right) with
+      | `AMPAMP tok (* "&&" *), _, _ -> T_and (loc, left, token env tok, right)
+      | `BARBAR tok (* "||" *), _, _ -> T_or (loc, left, token env tok, right)
+      | ( ( `EQ tok (* "=" *)
+          | `EQEQ tok (* "==" *)
+          | `EQTILDE tok (* "=~" *)
+          | `BANGEQ tok (* "!=" *)
+          | `PLUS tok (* "+" *)
+          | `DASH tok (* "-" *)
+          | `PLUSEQ tok (* "+=" *)
+          | `DASHEQ tok (* "-=" *)
+          | `LT tok (* "<" *)
+          | `GT tok (* ">" *)
+          | `LTEQ tok (* "<=" *)
+          | `GTEQ tok (* ">=" *)
+          | `Test_op tok (* test_operator *) ),
+          T_expr (_, left),
+          T_expr (_, right) ) ->
+          T_binop (loc, left, binary_operator env tok, right)
+      | _ -> T_todo loc)
+  | `Exp_choice_EQEQ_regex (v1, v2, v3) -> (
+      let left = expression env v1 in
+      let op =
+        match v2 with
+        | `EQEQ tok -> binary_operator env tok (* "==" *)
+        | `EQTILDE tok -> (* "=~" *) binary_operator env tok
+      in
+      let regex = str env v3 (* regex *) in
+      let loc = (fst (AST_bash_loc.test_expression_loc left), snd regex) in
+      match left with
+      | T_expr (_, left) -> T_binop (loc, left, op, Word regex)
+      | _ -> T_todo loc)
 
 and case_item (env : env) ((v1, v2, v3, v4, v5) : CST.case_item) : case_clause =
   let first_pattern = literal env v1 in
@@ -471,12 +477,18 @@ and command_substitution (env : env) (x : CST.command_substitution) :
       let list = statements env v2 in
       let close = token env v3 (* ")" *) in
       (open_, list, close)
+  (* '$(< file)' substitutes the content of the file: the output of a
+     command made of the redirection of its input alone. *)
   | `DOLLARLPAR_file_redi_RPAR (v1, v2, v3) ->
       let open_ = token env v1 (* "$(" *) in
-      let _v2 = (* TODO: what's this? *) file_redirect env v2 in
+      let redirect = file_redirect env v2 in
       let close = token env v3 (* ")" *) in
-      let loc = (open_, close) in
-      (open_, Empty loc, close)
+      let loc = AST_bash_loc.redirect_loc redirect in
+      let command = Simple_command { loc; assignments = []; arguments = [] } in
+      let cmd_redir : cmd_redir =
+        { loc; command; redirects = [ redirect ] }
+      in
+      (open_, Pipelines (loc, [ Command cmd_redir ]), close)
   | `BQUOT_stmts_BQUOT (v1, v2, v3) ->
       let open_ = token env v1 (* "`" *) in
       let list = statements env v2 in
@@ -559,7 +571,7 @@ and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
   in
   (* TODO: need to handle all the cases other than just a variable
      like ${foo} *)
-  let opt_variable =
+  let opt_variable, words =
     match v3 with
     | Some x -> (
         match x with
@@ -567,20 +579,14 @@ and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
             (* TODO *)
             let var_name = Simple_variable_name (str env v1) in
             let _v2 = token env v2 (* "=" *) in
-            let _v3 =
+            let words =
               match v3 with
-              | Some x -> Some (literal env x)
-              | None -> None
+              | Some x -> [ literal env x ]
+              | None -> []
             in
-            Some var_name
+            (Some var_name, words)
         | `Choice_subs_opt_tok_prec_p1_slash_opt_regex_rep_choice_choice_conc
             (v1, v2, v3) ->
-            let opt_variable =
-              match v1 with
-              | `Subs _x -> (* TODO: subscript env x *) None
-              | `Choice_semg_meta x -> Some (simple_variable_name env x)
-              | `Choice_STAR x -> Some (special_variable_name env x)
-            in
             let _v2_TODO () =
               match v2 with
               | Some (v1, v2) ->
@@ -593,32 +599,40 @@ and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
                   todo env (v1, v2)
               | None -> todo env ()
             in
-            let _v3_TODO () =
-              List_.map
+            let operands =
+              List_.filter_map
                 (fun x ->
                   match x with
-                  | `Choice_conc x -> literal env x
-                  | `COLON tok -> todo env tok (* ":" *)
-                  | `COLONQMARK tok -> todo env tok (* ":?" *)
-                  | `EQ tok -> todo env tok (* "=" *)
-                  | `COLONDASH tok -> todo env tok (* ":-" *)
-                  | `PERC tok -> todo env tok (* "%" *)
-                  | `DASH tok -> todo env tok (* "-" *)
-                  | `HASH tok -> (* "#" *) todo env tok)
+                  | `Choice_conc x -> Some (literal env x)
+                  | `COLON _ (* ":" *)
+                  | `COLONQMARK _ (* ":?" *)
+                  | `EQ _ (* "=" *)
+                  | `COLONDASH _ (* ":-" *)
+                  | `PERC _ (* "%" *)
+                  | `DASH _ (* "-" *)
+                  | `HASH _ (* "#" *) ->
+                      None)
                 v3
             in
-            opt_variable)
-    | None -> None
+            (match v1 with
+            | `Subs x ->
+                let _var, _open, index, _close = subscript env x in
+                (None, index :: operands)
+            | `Choice_semg_meta x ->
+                (Some (simple_variable_name env x), operands)
+            | `Choice_STAR x ->
+                (Some (special_variable_name env x), operands)))
+    | None -> (None, [])
   in
   let close = token env v4 (* "}" *) in
   let complex_expansion =
     match opt_variable with
     | Some var ->
         let loc = AST_bash_loc.variable_name_loc var in
-        Variable (loc, var)
+        Variable (loc, var, words)
     | None ->
         let loc = (open_, close) in
-        Complex_expansion_TODO loc
+        Complex_expansion_TODO (loc, words)
   in
   (open_, complex_expansion, close)
 

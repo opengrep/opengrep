@@ -1,0 +1,12 @@
+rules:
+  - id: test-bash-shift
+    languages: [bash]
+    message: Tainted data reaches eval through a shifted positional parameter
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $(get_input)
+    pattern-sinks:
+      - pattern: eval ...

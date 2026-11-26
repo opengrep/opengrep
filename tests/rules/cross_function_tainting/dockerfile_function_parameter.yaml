@@ -1,0 +1,13 @@
+rules:
+  - id: dockerfile_function_parameter
+    message: taint through a positional parameter of a function in RUN
+    languages:
+      - dockerfile
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: $(get_input)
+    pattern-sinks:
+      - pattern: eval ...

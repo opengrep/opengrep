@@ -215,3 +215,30 @@ val add_semicolon_to_last_def_and_convert_to_stmts :
 val ident_of_parameter_opt : AST_generic.parameter -> AST_generic.ident option
 
 val any_of_function_body : AST_generic.function_body -> AST_generic.any
+
+(* The identifier of the hidden function that represents a shell construct
+   without an equivalent in the generic AST, such as a simple command. *)
+val shell_marker : string -> string
+
+(* The construct a shell simple command is represented by: the command
+   [f a b] is a call of [shell_marker shell_command] with the arguments
+   [f], [a] and [b]. *)
+val shell_command : string
+
+(* The callee and arguments of a shell simple command whose first word is a
+   literal, as a call of that word with one argument, the list of the other
+   words. *)
+val call_of_shell_command :
+  AST_generic.expr ->
+  AST_generic.argument list ->
+  (AST_generic.expr * AST_generic.argument list) option
+
+(* The attribute of a function whose result is the output of the commands
+   its body runs together with its arguments (a shell function: [$(f)]
+   reads what [f] writes). Bash variables have dynamic scope: a command of
+   the body can read and assign the variables of its caller, through which
+   an argument can reach the output. *)
+val command_output_attribute : Tok.t -> AST_generic.attribute
+
+(* Whether the attributes of a function carry [command_output_attribute]. *)
+val returns_command_output : AST_generic.function_definition -> bool

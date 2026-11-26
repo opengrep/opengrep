@@ -112,6 +112,7 @@ type binary_test_operator =
   | String_not_equal (* != *)
   | String_lesser_than (* < within [[ ]] *)
   | String_greater_than (* > within [[ ]] *)
+  | String_regex_matching (* =~ within [[ ]] *)
   (* Comparison of int literals with the 'test' command and of arithmetic
      expressions within [[ ]].
 
@@ -443,9 +444,12 @@ and variable_name =
   | Special_variable_name of string wrap
   | Var_semgrep_metavar of string wrap
 
+(* Each case carries the words within the braces, the index of '${v[i]}'
+   and the words that follow an operator as in '${v:-word}', which have no
+   equivalent in the generic AST. *)
 and complex_expansion =
-  | Variable of loc * variable_name
-  | Complex_expansion_TODO of loc
+  | Variable of loc * variable_name * expression list
+  | Complex_expansion_TODO of loc * expression list
 
 and eq_op = EQTILDE of (* "=~" *) tok | EQEQ of (* "==" *) tok
 and right_eq_operand = Literal of loc * expression | Regexp of string wrap

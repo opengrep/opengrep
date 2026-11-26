@@ -311,8 +311,7 @@ let rec expr_to_pattern e =
   | L l -> PatLiteral l
   | Container ((List | Array), (t1, xs, t2)) ->
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
-  (* JS/TS rest binding [...rest_target] inside a destructure. Recogniser
-   * gating by lang lives downstream in [AST_to_IL.split_trailing_rest]. *)
+  (* JS/TS rest binding [...rest_target] inside a destructure. *)
   | Call ({ e = IdSpecial (Spread, tok); _ }, (_, [ Arg rest_target ], _)) ->
       PatConstructor
         (Id (("...", tok), empty_id_info ()), [ expr_to_pattern rest_target ])
@@ -994,3 +993,67 @@ let any_of_function_body (fb : function_body) : any =
   | FBExpr e -> E e
   | FBDecl t -> Tk t
   | FBNothing -> Anys []
+
+(*****************************************************************************)
+(* Shell commands *)
+(*****************************************************************************)
+
+let shell_marker (name : string) : string = "!sh_" ^ name ^ "!"
+
+let shell_command = "cmd"
+
+let shell_command_marker = shell_marker shell_command
+
+(* The words of a shell command after the first, as one list: the called
+   function receives them as its positional parameters. *)
+let positional_parameters_of_words (words : argument list) : argument option =
+  List.fold_right
+    (fun (word : argument) (acc : expr list option) ->
+      match (word, acc) with
+      | Arg word, Some words -> Some (word :: words)
+      | _ -> None)
+    words (Some [])
+  |> Option.map (fun (words : expr list) ->
+         Arg (Container (List, Tok.unsafe_fake_bracket words) |> e))
+
+(* Bash looks the first word of a command up among functions, builtins and
+   programs, never among variables. The callee is resolved to its own site,
+   so it never refers to a variable of the same name. It keeps the other
+   fields of the marker's [id_info], which every rewrite of the command
+   shares. *)
+let shell_command_callee ((name, tok) : ident) (marker_info : id_info) : expr =
+  let id_info =
+    match Tok.loc_of_tok tok with
+    | Ok loc ->
+        let sid = SId.of_site ~file:(Fpath.to_string loc.pos.file) tok in
+        { marker_info with id_resolved = ref (Some (Global, sid)) }
+    | Error _ -> marker_info
+  in
+  N (Id ((name, tok), id_info)) |> e
+
+(* A shell simple command [f a b] is [Call (N "!sh_cmd!", ["f"; a; b])]. When
+   its first word is a literal, the command calls that name with one
+   argument, the list of the other words. *)
+let call_of_shell_command (callee : expr) (args : argument list) :
+    (expr * argument list) option =
+  match (callee.e, args) with
+  | ( N (Id ((marker, _), marker_info)),
+      Arg { e = L (String (_, id, _)); _ } :: words )
+    when String.equal marker shell_command_marker ->
+      positional_parameters_of_words words
+      |> Option.map (fun (positional_parameters : argument) ->
+             (shell_command_callee id marker_info, [ positional_parameters ]))
+  | _ -> None
+
+let command_output_tag = "CommandOutputAndArguments"
+
+let command_output_attribute (tok : tok) : attribute =
+  OtherAttribute ((command_output_tag, tok), [])
+
+let returns_command_output (fdef : function_definition) : bool =
+  List.exists
+    (fun (attr : attribute) ->
+      match attr with
+      | OtherAttribute ((tag, _), []) -> String.equal tag command_output_tag
+      | _ -> false)
+    fdef.fattrs

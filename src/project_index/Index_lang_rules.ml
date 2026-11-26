@@ -80,6 +80,10 @@ type t = {
   (* A specifier without a leading dot refers to a file relative to the
      importing file before one on the library paths (Circom [include]). *)
   bare_specifiers_relative_first : bool;
+  (* The specifiers of the files that an expression statement runs in the
+     current scope (Bash [source f], [. f]); each binds every top-level name
+     of its file. *)
+  file_imports_of_expr : G.expr -> (string * Tok.t) list;
   (* The specifiers of the files that the [part] directives of a file add to
      its library (Dart [part 'x.dart';]). *)
   library_parts_of_ast : G.program -> string list;
@@ -362,6 +366,7 @@ let default : t = {
   specifiers_name_files = false;
   specifiers_are_uris = false;
   bare_specifiers_relative_first = false;
+  file_imports_of_expr = (fun (_ : G.expr) -> []);
   library_parts_of_ast = (fun _ -> []);
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
   path_import_binds_all_names = false;
@@ -945,6 +950,46 @@ let r : t = { default with
   wildcard_import_omits_underscore_names = false;
 }
 
+(* [source f] and [. f] run [f] in the current shell, so its functions are
+   defined there; a literal [f] is resolved from the script's directory. The
+   operands of [&&] and [||] are commands too: [[ -f f ]] && . f]. [! . f]
+   runs [. f] and inverts only its exit status. *)
+let rec shell_source_imports (e : G.expr) : (string * Tok.t) list =
+  match e.G.e with
+  | G.Call
+      ( { G.e = G.IdSpecial (G.Op (G.And | G.Or), _); _ },
+        (_, [ G.Arg left; G.Arg right ], _) ) ->
+      shell_source_imports left @ shell_source_imports right
+  | G.Call
+      ({ G.e = G.IdSpecial (G.Op G.Not, _); _ }, (_, [ G.Arg command ], _)) ->
+      shell_source_imports command
+  | G.Call (callee, (_, args, _)) -> (
+      match AST_generic_helpers.call_of_shell_command callee args with
+      | Some
+          ( { G.e = G.N (G.Id ((("source" | "."), tok), _)); _ },
+            [
+              G.Arg
+                {
+                  G.e =
+                    G.Container
+                      ( G.List,
+                        ( _,
+                          [ { G.e = G.L (G.String (_, (spec, _), _)); _ } ],
+                          _ ) );
+                  _;
+                };
+            ] ) ->
+          [ (spec, tok) ]
+      | _ -> [])
+  | _ -> []
+
+let bash : t = { default with
+  specifiers_name_files = true;
+  bare_specifiers_relative_first = true;
+  file_imports_of_expr = shell_source_imports;
+  wildcard_import_omits_underscore_names = false;
+}
+
 (* [include "path";] binds every template and function of the file. *)
 let circom : t = { default with
   specifiers_name_files = true;
@@ -1044,6 +1089,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Circom -> circom
   | Lang.Ocaml -> ocaml
   | Lang.R -> r
+  | Lang.Bash -> bash
   | Lang.Ql -> ql
   | Lang.Move_on_aptos | Lang.Move_on_sui -> module_scoped
   | _ -> default

@@ -82,6 +82,10 @@ type t = {
   (* A specifier without a leading dot refers to a file relative to the
      importing file before one on the library paths (Circom [include]). *)
   bare_specifiers_relative_first : bool;
+  (* The specifiers of the files that an expression statement runs in the
+     current scope (Bash [source f], [. f]); each binds every top-level name
+     of its file. *)
+  file_imports_of_expr : G.expr -> (string * Tok.t) list;
   (* The specifiers of the files that the [part] directives of a file add to
      its library (Dart [part 'x.dart';]). *)
   library_parts_of_ast : G.program -> string list;

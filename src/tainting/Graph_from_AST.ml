@@ -340,6 +340,15 @@ let extract_calls ~(lang : Lang.t)
             | Some (sent_callee, sent_args) -> (sent_callee, sent_args)
             | None -> (call_callee, call_args_list)
           in
+          let call_callee, call_args_list =
+            match
+              AST_generic_helpers.call_of_shell_command call_callee
+                call_args_list
+            with
+            | Some (command_callee, command_args) ->
+              (command_callee, command_args)
+            | None -> (call_callee, call_args_list)
+          in
           let call_arity = List.length call_args_list in
           let calls =
             match identify_callee_cached ~call_arity call_callee with
@@ -465,9 +474,13 @@ let extract_toplevel_calls ~(lang : Lang.t)
     match e.G.e with
     | G.Call (callee, args) ->
       let callee = callee_with_member_identifier ~lang callee in
-      let call_arity =
-        let _, args_list, _ = args in List.length args_list
+      let callee, args_list =
+        let _, args_list, _ = args in
+        match AST_generic_helpers.call_of_shell_command callee args_list with
+        | Some (command_callee, command_args) -> (command_callee, command_args)
+        | None -> (callee, args_list)
       in
+      let call_arity = List.length args_list in
       (match identify_callee_cached ~call_arity callee with
        | Some fn_id ->
          let tok =
