@@ -59,10 +59,16 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* A specifier without a leading dot names a file relative to the
+     importing file before one on the library paths (Circom [include]). *)
+  bare_specifiers_relative_first : bool;
   specifier_candidates : Fpath.t -> string list;
   (* [import "path";] without an alias binds every top-level name of the
      file (Solidity). *)
   path_import_binds_all_names : bool;
+  (* The manifest of a crate whose [package] name heads the module path of
+     its files (Rust's [Cargo.toml], Cairo's [Scarb.toml]). *)
+  crate_manifest : string option;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -313,8 +319,10 @@ let default : t = {
   normalize_import_specifier = (fun s -> s);
   specifiers_name_files = false;
   specifiers_are_uris = false;
+  bare_specifiers_relative_first = false;
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
   path_import_binds_all_names = false;
+  crate_manifest = None;
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -696,12 +704,19 @@ let rust_relative_module_names : (string * relative_module) list =
 let rust : t = { default with
   class_def_reshape = Visit_function_defs.class_scope_of_definition;
   unqualified_scope = `Per_crate;
+  crate_manifest = Some "Cargo.toml";
   relative_module_names = rust_relative_module_names;
   import_head_may_be_own_module = true;
   has_reexports = true;
   reexport_source = Reexports_from_public_directives;
   walks_inheritance = true;
   parent_resolution = Parent_in_own_scope;
+}
+
+(* Cairo 1 has Rust's modules, [use] paths and [impl] blocks; a Scarb
+   package is its crate. *)
+let cairo : t = { rust with
+  crate_manifest = Some "Scarb.toml";
 }
 
 (* Package-scoped languages: a type/class lives in a package, resolved by
@@ -846,6 +861,33 @@ let julia : t = { default with
   unqualified_scope = `Per_project;
 }
 
+(* Move: a module ([module 0x1::m { .. }]) is a namespace whose functions
+   call each other by bare name, and [use 0x1::m;] binds [m]. *)
+let module_scoped : t = { default with
+  unqualified_scope = `Per_namespace;
+  module_definition_is_namespace = true;
+  unaliased_import_binds = Last_segment_binds;
+}
+
+(* A compilation unit is a module named after its file, capitalised, in scope
+   in every other file of the project ([A.f] for [dir/a.ml]). *)
+let ocaml : t = { default with
+  rewrite_module_path =
+    (fun (path : string) -> String.capitalize_ascii (Filename.basename path));
+}
+
+(* The files of an R package share one namespace, which [source("f.R")]
+   also extends; a function is a lambda assigned to a name. *)
+let r : t = { default with
+  unqualified_scope = `Per_project;
+}
+
+(* [include "path";] binds every template and function of the file. *)
+let circom : t = { default with
+  specifiers_name_files = true;
+  bare_specifiers_relative_first = true;
+}
+
 let solidity : t = { default with
   walks_inheritance = true;
   class_members_bind_in_methods = true;
@@ -886,7 +928,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Ruby -> ruby
   | Lang.Go -> go
   | Lang.Ts | Lang.Js -> typescript
-  | Lang.Php -> php
+  | Lang.Php | Lang.Hack -> php
   | Lang.Rust -> rust
   | Lang.Java -> java
   | Lang.Kotlin -> kotlin
@@ -904,6 +946,11 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Crystal -> crystal
   | Lang.Scala -> scala
   | Lang.Solidity -> solidity
+  | Lang.Cairo -> cairo
+  | Lang.Circom -> circom
+  | Lang.Ocaml -> ocaml
+  | Lang.R -> r
+  | Lang.Move_on_aptos | Lang.Move_on_sui -> module_scoped
   | _ -> default
 
 let top_level_scope_is_project (cfg : t) : bool =

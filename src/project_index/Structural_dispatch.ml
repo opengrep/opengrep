@@ -79,7 +79,13 @@ let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
         | [ None; Some _ ] -> Some (Func_info.entity_qualifier func)
         | _ -> None
       in
-      let concrete = Func_info.has_body func.FA.fdef in
+      (* A lambda is identified by its position, so it overloads nothing. *)
+      let is_lambda =
+        match fst func.FA.fdef.G.fkind with
+        | G.LambdaKind | G.Arrow -> true
+        | G.Function | G.Method | G.BlockCases -> false
+      in
+      let concrete = Func_info.has_body func.FA.fdef && not is_lambda in
       match (scope, Func_info.bare_name func.FA.fn_id, Func_info.def_file_opt func) with
       | Some scope, Some bare_name, Some file when concrete ->
           let key =

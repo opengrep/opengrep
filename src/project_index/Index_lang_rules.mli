@@ -61,10 +61,16 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* A specifier without a leading dot names a file relative to the
+     importing file before one on the library paths (Circom [include]). *)
+  bare_specifiers_relative_first : bool;
   specifier_candidates : Fpath.t -> string list;
   (* [import "path";] without an alias binds every top-level name of the
      file (Solidity). *)
   path_import_binds_all_names : bool;
+  (* The manifest of a crate whose [package] name heads the module path of
+     its files (Rust's [Cargo.toml], Cairo's [Scarb.toml]). *)
+  crate_manifest : string option;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;

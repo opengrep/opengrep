@@ -9,8 +9,6 @@ type t = {
 
 let empty : t = { crates = [] }
 
-let manifest_name : string = "Cargo.toml"
-
 let source_dir_name : string = "src"
 
 let crate_root_stems : string list = [ "lib"; "main" ]
@@ -27,7 +25,8 @@ let package_name (manifest : Fpath.t) : string option =
       (Otoml.Parser.from_file (Fpath.to_string manifest))
       Otoml.get_string [ "package"; "name" ])
 
-let discover ~(project_root : Fpath.t) (rust_files : Fpath.t list) : t =
+let discover ~(manifest_name : string) ~(project_root : Fpath.t)
+    (files : Fpath.t list) : t =
   let crates =
     List.fold_left
       (fun (crates : crate list) (dir : Fpath.t) ->
@@ -38,7 +37,7 @@ let discover ~(project_root : Fpath.t) (rust_files : Fpath.t list) : t =
             name = crate_name_of_package package }
           :: crates)
       []
-      (Discover.manifest_dirs ~project_root ~manifest:manifest_name rust_files)
+      (Discover.manifest_dirs ~project_root ~manifest:manifest_name files)
   in
   let depth (crate : crate) : int = List.length (Fpath.segs crate.root) in
   { crates =

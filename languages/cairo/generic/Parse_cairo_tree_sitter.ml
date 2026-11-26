@@ -129,6 +129,13 @@ let rec map_qualified_name (env : env) (x : CST.qualified_name) :
     name_info = G.empty_id_info ();
   }
 
+(* A path of one segment without type arguments is a plain identifier. *)
+and map_qualified_name_to_name (env : env) (x : CST.qualified_name) : G.name =
+  match map_qualified_name env x with
+  | { name_last = last_name, None; name_middle = Some (G.QDots []); _ } ->
+      G.Id (last_name, G.empty_id_info ())
+  | qualified -> G.IdQualified qualified
+
 and map_type_arguments (env : env) (x : CST.type_argument_list) :
     G.type_arguments =
   let map_type_argument (x : CST.literal_expression) : G.type_argument =
@@ -161,10 +168,10 @@ and map_pattern (env : env) (x : CST.pattern) : G.pattern =
 
   let map_pattern_enum (x : CST.pattern_enum) =
     let name, _, v1, v2, _, _ = x in
-    let name = map_qualified_name env name in
+    let name = map_qualified_name_to_name env name in
     let values = map_list_1 (map_pattern env) v1 v2 in
 
-    G.PatConstructor (G.IdQualified name, values)
+    G.PatConstructor (name, values)
   in
 
   let map_pattern_struct (x : CST.pattern_struct) =
@@ -199,7 +206,7 @@ and map_type (env : env) (x : CST.type_) : G.type_ =
     let map_type_arg (x : CST.type_) = G.TA (map_type env x) in
 
     let name, args = x in
-    let name = G.TyN (G.IdQualified (map_qualified_name env name)) |> G.t in
+    let name = G.TyN (map_qualified_name_to_name env name) |> G.t in
     match args with
     | Some (lb, v1, v2, rb) ->
         let args = (token env lb, map_list map_type_arg v1 v2, token env rb) in
@@ -238,7 +245,7 @@ and map_expression (env : env) (x : CST.expression) =
   | `Match_exp x -> map_match_expression env x
   | `Sele_exp x -> map_selector_expression env x
   | `Call_exp x -> map_call_expression env x
-  | `Qual_name x -> G.N (G.IdQualified (map_qualified_name env x)) |> G.e
+  | `Qual_name x -> G.N (map_qualified_name_to_name env x) |> G.e
   | `Choice_true x -> G.L (map_literal env x) |> G.e
   | `Ellips x -> G.Ellipsis (token env x) |> G.e
   | `Deep_ellips x -> map_deep_ellipsis env x |> G.e
@@ -253,7 +260,7 @@ and map_simple_expression (env : env) (x : CST.simple_expression) : G.expr =
   | `Match_exp x -> map_match_expression env x
   | `Sele_exp x -> map_selector_expression env x
   | `Call_exp x -> map_call_expression env x
-  | `Qual_name x -> G.N (G.IdQualified (map_qualified_name env x)) |> G.e
+  | `Qual_name x -> G.N (map_qualified_name_to_name env x) |> G.e
   | `Choice_true x -> G.L (map_literal env x) |> G.e
   | `Ellips x -> G.Ellipsis (token env x) |> G.e
   | `Deep_ellips x -> map_deep_ellipsis env x |> G.e
@@ -663,14 +670,16 @@ and map_function_declaration (env : env) (x : CST.function_declaration) :
 and map_import_declaration (env : env) (x : CST.import_declaration) :
     G.directive =
   let use, path, alias, _ = x in
-  let path = G.DottedName (map_path env path) in
-
+  let alias =
+    Option.map (fun (_, alias) -> (map_name env alias, G.empty_id_info ())) alias
+  in
+  (* [use a::b::c;] imports [c] from [a::b], as the Rust front end has it. *)
   let directive =
-    match alias with
-    | Some (_, alias) ->
-        G.ImportAs
-          (token env use, path, Some (map_name env alias, G.empty_id_info ()))
-    | None -> G.ImportAs (token env use, path, None)
+    match List.rev (map_path env path) with
+    | last :: (before : G.dotted_ident) ->
+        G.ImportFrom
+          (token env use, G.DottedName (List.rev before), [ (last, alias) ])
+    | [] -> G.ImportAs (token env use, G.DottedName [], alias)
   in
 
   { d = directive; d_attrs = [] }
@@ -916,7 +925,7 @@ and map_impl_declaration (env : env) (x : CST.impl_declaration) : G.definition =
       }
     in
 
-    let trait_name = G.IdQualified (map_qualified_name env trait) in
+    let trait_name = map_qualified_name_to_name env trait in
 
     let _, body, _ = body in
     let body = List_.map (map_declaration env) body in

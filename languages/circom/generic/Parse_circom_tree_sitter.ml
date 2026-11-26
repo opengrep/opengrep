@@ -2,7 +2,6 @@ open Fpath_.Operators
 module CST = Tree_sitter_circom.CST
 module H = Parse_tree_sitter_helpers
 open AST_generic
-open Common
 module G = AST_generic
 module H2 = AST_generic_helpers
 
@@ -28,8 +27,19 @@ let _fb = Tok.unsafe_fake_bracket
 (* Disable warning against unused 'rec' *)
 [@@@warning "-39"]
 
-let left_strip_space (s, t) =
-  if s =~ "^ +\\(.*\\)$" then (Common.matched1 s, t) else (s, t)
+(* The grammar includes the spaces before a definition's name in its token;
+   strip them from the token as well, so it starts at the name. *)
+let left_strip_space ((s, t) : string * Tok.t) : string * Tok.t =
+  let rec leading_spaces (i : int) : int =
+    if i < String.length s && Char.equal s.[i] ' ' then leading_spaces (i + 1)
+    else i
+  in
+  let spaces = leading_spaces 0 in
+  match Tok.loc_of_tok t with
+  | Ok _ when spaces > 0 ->
+      (String.sub s spaces (String.length s - spaces),
+       snd (Tok.split_tok_at_bytepos spaces t))
+  | Ok _ | Error _ -> (s, t)
 
 let map_signal_visability (env : env) (x : CST.signal_visability) =
   match x with

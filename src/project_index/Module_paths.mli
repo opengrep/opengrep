@@ -7,6 +7,7 @@ and module_files
 val module_of_specifier :
   module_files ->
   uri:bool ->
+  relative_first:bool ->
   current_file:Fpath.t ->
   string ->
   Names.Module_qn.t option

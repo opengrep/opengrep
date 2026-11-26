@@ -78,13 +78,6 @@ let stringify_without_quotes str =
 (*****************************************************************************)
 (* This was started by copying tree-sitter-lang/semgrep-hack/Boilerplate.ml *)
 
-let use_type (env : env) (x : CST.use_type) =
-  match x with
-  | `Name tok -> (* "namespace" *) token env tok
-  | `Func tok -> (* "function" *) token env tok
-  | `Type tok -> (* "type" *) token env tok
-  | `Const tok -> (* "const" *) token env tok
-
 let visibility_modifier (env : env) (x : CST.visibility_modifier) =
   match x with
   | `Public tok -> (* "public" *) G.KeywordAttr (Public, token env tok)
@@ -480,12 +473,19 @@ let _anonymous_function_use_clause (env : env)
   let v6 = (* ")" *) token env v6 in
   todo env (v1, v2, v3, v4, v5, v6)
 
+(* The attributes of an import of this kind, as the PHP front end has them. *)
+let use_kind_attrs (env : env) (x : CST.use_type) : G.attribute list =
+  match x with
+  | `Func tok -> [ G.KeywordAttr (G.Callable, token env tok) ]
+  | `Const tok -> [ G.KeywordAttr (G.Const, token env tok) ]
+  | `Name _
+  | `Type _ -> []
+
 let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
-  (* Q: How to represent `use` type? *)
-  let _v1TODO =
+  let kind_attrs =
     match v1 with
-    | Some x -> Some (use_type env x)
-    | None -> None
+    | Some x -> use_kind_attrs env x
+    | None -> []
   in
   let namespace_ident = namespace_identifier env v2 in
   let v3 : G.alias option =
@@ -504,9 +504,7 @@ let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
             Some (Common.hd_exn "unexpected empty list" (unwrap_qualified_identifier x), G.empty_id_info ())
         | None -> None) *)
   in
-  match namespace_ident with
-  | Some xs -> (Some xs, v3)
-  | None -> (None, v3)
+  (kind_attrs, namespace_ident, v3)
 
 let const_declarator_id (env : env) (x : CST.anon_choice_semg_exte_id_8bbc8de) =
   match x with
@@ -2046,14 +2044,19 @@ and selection_expression (env : env) ((v1, v2, v3) : CST.selection_expression) =
     | `As_exp x -> as_expression env x
   in
   let v2 = selection_expression_selector env v2 in
-  let v3 =
+  (* A member written as a name ([$o->m]) is a named field; one written as a
+     variable or a braced expression ([$o->$m], [$o->{e}]) is computed. *)
+  let named_member, v3 =
     match v3 with
-    | `Choice_var x -> variablish env x
-    | `Braced_exp x -> Tok.unbracket (braced_expression env x)
-    | `Choice_type x -> G.N (G.Id (keyword env x, G.empty_id_info ())) |> G.e
+    | `Choice_var (`Qual_id _ as x) -> (true, variablish env x)
+    | `Choice_var x -> (false, variablish env x)
+    | `Braced_exp x -> (false, Tok.unbracket (braced_expression env x))
+    | `Choice_type x ->
+        (true, G.N (G.Id (keyword env x, G.empty_id_info ())) |> G.e)
   in
-  match v3.e with
-  | G.Ellipsis dots -> G.DotAccessEllipsis (v1, dots) |> G.e
+  match (v3.e, named_member) with
+  | G.Ellipsis dots, _ -> G.DotAccessEllipsis (v1, dots) |> G.e
+  | G.N name, true -> G.DotAccess (v1, v2, G.FN name) |> G.e
   | _ -> G.DotAccess (v1, v2, G.FDynamic v3) |> G.e
 
 and statement (env : env) (x : CST.statement) =
@@ -2140,17 +2143,25 @@ and statement (env : env) (x : CST.statement) =
   | `Use_stmt (v1, v2, v3) ->
       (* Q: What do comma seperated use statements mean? And how do they alias? *)
       let v1 = (* "use" *) token env v1 in
-      let create_directive use_clause prefix_idents =
-        let idents, alias = use_clause in
-        let idents =
+      (* As in PHP: [use A\B\C;] imports [C] from [A\B], and [use A\B\C as D;]
+         binds [D] to [A\B\C]. *)
+      let create_directive ?(group_attrs = []) use_clause prefix_idents =
+        let kind_attrs, idents, alias = use_clause in
+        let path =
           match idents with
-          | Some x -> x
+          | Some x -> prefix_idents @ x
           | None -> raise Common.Impossible
         in
-        G.s
-          (G.DirectiveStmt
-             (G.ImportAs (v1, G.DottedName (prefix_idents @ idents), alias)
-             |> G.d))
+        let d_attrs = group_attrs @ kind_attrs in
+        let d =
+          match (alias, List.rev path) with
+          | None, last :: before ->
+              G.ImportFrom (v1, G.DottedName (List.rev before), [ (last, None) ])
+          | Some _, _
+          | None, [] ->
+              G.ImportAs (v1, G.DottedName path, alias)
+        in
+        G.s (G.DirectiveStmt { G.d; d_attrs })
       in
       let v2 =
         match v2 with
@@ -2175,11 +2186,10 @@ and statement (env : env) (x : CST.statement) =
             G.Block (Tok.unsafe_fake_bracket (v1 :: v2))
         | `Opt_use_type_name_id_LCURL_use_clause_rep_COMMA_use_clause_opt_COMMA_RCURL
             (v1, v2, v3, v4, v5, v6, v7) ->
-            (* Q: How to represent `use` type? We are also possibly passed it up from use_clause. *)
-            let _v1TODO =
+            let group_attrs =
               match v1 with
-              | Some x -> Some (use_type env x)
-              | None -> None
+              | Some x -> use_kind_attrs env x
+              | None -> []
             in
             let v2 = namespace_identifier env v2 in
             let ident_prefix =
@@ -2188,13 +2198,15 @@ and statement (env : env) (x : CST.statement) =
               | None -> []
             in
             let _v3 = (* "{" *) token env v3 in
-            let v4 = create_directive (use_clause env v4) ident_prefix in
+            let v4 =
+              create_directive ~group_attrs (use_clause env v4) ident_prefix
+            in
             let v5 =
               List_.map
                 (fun (v1, v2) ->
                   let _v1 = (* "," *) token env v1 in
                   let v2 = use_clause env v2 in
-                  create_directive v2 ident_prefix)
+                  create_directive ~group_attrs v2 ident_prefix)
                 v5
             in
             let _v6 =

@@ -1,0 +1,12 @@
+rules:
+  - id: test-cairo-module-member
+    languages: [cairo]
+    message: Tainted data reaches a sink through a bare call inside a module
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

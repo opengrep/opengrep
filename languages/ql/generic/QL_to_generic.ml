@@ -52,6 +52,9 @@ let ident x = x
 
 let rec name = function
   | Id id -> G.Id (ident id, G.empty_id_info ())
+  (* A path of one segment without type arguments is a plain identifier. *)
+  | IdQualified { name_last = v1, None; name_middle = [] } ->
+      G.Id (ident v1, G.empty_id_info ())
   | IdQualified x -> G.IdQualified (qualified_info x)
 
 and qualified_info { name_last = v1, v2; name_middle } =
@@ -431,15 +434,15 @@ and stmt = function
         )
       |> G.s
   | ImportAs (v1, v2, v3) ->
-      let alias =
+      let module_name = G.DottedName (H.dotted_ident_of_name (name v2)) in
+      (* [import M] brings every public declaration of [M] into scope;
+         [import M as N] binds [N] to [M]. *)
+      let directive =
         match v3 with
-        | None -> None
-        | Some id -> Some (ident id, G.empty_id_info ())
+        | None -> G.ImportAll (v1, module_name, Tok.fake_tok v1 "")
+        | Some id -> G.ImportAs (v1, module_name, Some (ident id, G.empty_id_info ()))
       in
-      DirectiveStmt
-        (ImportAs (v1, DottedName (H.dotted_ident_of_name (name v2)), alias)
-        |> G.d)
-      |> G.s
+      G.DirectiveStmt (directive |> G.d) |> G.s
   | Select v1 -> select v1
   | ExprStmt v1 -> G.exprstmt (expr v1)
 

@@ -35,6 +35,7 @@ let build
   in
   let function_bindings =
     Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
+    @ Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
   let member_bindings =
     Scope_package.member_bindings_of_classes ~resolution_orders
