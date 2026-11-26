@@ -22,6 +22,19 @@ type t = {
   fdef : G.function_definition;
 }
 
+(* The binding id that name resolution gave the function's name, if any. *)
+let binding_sid (func : t) : G.sid option =
+  match List.rev func.fn_id with
+  | Some (name : IL.name) :: _ when not (G.SId.is_unsafe_default name.IL.sid) ->
+      Some name.IL.sid
+  | _ -> None
+
+(* Whether name resolution bound the function's name with this binding id. *)
+let is_bound_by (sid : G.sid) (func : t) : bool =
+  match binding_sid func with
+  | Some (bound : G.sid) -> G.SId.equal bound sid
+  | None -> false
+
 let entity_qualifier (func : t) : string option =
   Option.bind func.entity (fun (entity : G.entity) ->
       Option.bind

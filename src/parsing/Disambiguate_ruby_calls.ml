@@ -20,7 +20,7 @@ let is_unresolved_method_call (name : ident) (info : id_info) : bool =
 module SIdSet = Set.Make (SId)
 
 let method_bindings (lang : Lang.t) (prog : program) : SIdSet.t =
-  Visit_function_defs.fold_with_parent_path ~lang
+  Visit_function_defs.fold_with_parent_path ~lang ~anonymous_scopes:false
     (fun (acc : SIdSet.t) (opt_ent : entity option) _parent_path (fdef : function_definition) ->
       match (fst fdef.fkind, opt_ent) with
       | ( (Function | Method),

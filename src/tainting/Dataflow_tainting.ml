@@ -1212,6 +1212,25 @@ let rec collect_all_lambdas_innermost_first (fun_cfg : IL.fun_cfg)
     results @ nested @ [(name, lcfg)]
   ) fun_cfg.lambdas []
 
+(* The vertex whose incoming edges hold the calls of a lambda's body: the
+   innermost of the lambda and the lambdas enclosing it that has a vertex in
+   the call graph, else the function that analyses them. *)
+let lambda_call_graph_caller (call_graph : Call_graph.G.t option)
+    ~(enclosing_lambda : IL.name -> IL.name option)
+    ~(analysing : IL.name option) (lambda_name : IL.name) : IL.name option =
+  match call_graph with
+  | None -> analysing
+  | Some (graph : Call_graph.G.t) ->
+      let rec innermost_with_vertex (name : IL.name) : IL.name option =
+        if Call_graph.G.mem_vertex graph (Function_id.of_il_name name) then
+          Some name
+        else
+          match enclosing_lambda name with
+          | Some (parent : IL.name) -> innermost_with_vertex parent
+          | None -> analysing
+      in
+      innermost_with_vertex lambda_name
+
 (*****************************************************************************)
 (* Miscellaneous *)
 (*****************************************************************************)
@@ -2488,7 +2507,9 @@ let call_with_intrafile lval_opt e env args instr =
           | _ -> None)
       | _ -> None)
     in
-    (* Handle implicit lambda pattern FIRST, before trying constructor *)
+    (* Handle implicit lambda pattern FIRST, before trying constructor; a
+       call it does not resolve is handled as any other call. *)
+    let implicit_lambda_result =
     match implicit_lambda_call with
     | Some (inner_e, lambda_exp) ->
         (* Trace back to find the original call expression that was assigned to inner_e.
@@ -2578,29 +2599,33 @@ let call_with_intrafile lval_opt e env args instr =
                         (Taints.empty, S.Bot, env.lval_env)
                         call_effects
                     in
-                    (call_taints, shape, lval_env)
-                | None -> (all_args_taints, S.Bot, lval_env))
+                    Some (call_taints, shape, lval_env)
+                | None -> None)
             | Some (S.Cell (_, _)) ->
                 (* Try signature lookup instead *)
                 (match check_function_call { env with lval_env } inner_e args args_taints () with
                 | Some (call_taints, shape, lval_env) ->
-                    (call_taints, shape, lval_env)
+                    Some (call_taints, shape, lval_env)
                 | None ->
-                    (all_args_taints, S.Bot, lval_env))
+                    None)
             | None ->
                 (* Try signature lookup instead *)
                 (match check_function_call { env with lval_env } inner_e args args_taints () with
                 | Some (call_taints, shape, lval_env) ->
-                    (call_taints, shape, lval_env)
+                    Some (call_taints, shape, lval_env)
                 | None ->
-                    (all_args_taints, S.Bot, lval_env)))
+                    None))
         | _ ->
             (* Try signature lookup instead *)
             (match check_function_call { env with lval_env } inner_e args args_taints () with
             | Some (call_taints, shape, lval_env) ->
-                (call_taints, shape, lval_env)
+                Some (call_taints, shape, lval_env)
             | None ->
-                (all_args_taints, S.Bot, lval_env)))
+                None))
+    | None -> None
+    in
+    match implicit_lambda_result with
+    | Some result -> result
     | None ->
         (* When taint flows through a constructor (e.g., `obj = Foo(tainted)`),
          * the constructor signature may contain ToLval(BThis.field, taint)
@@ -3626,7 +3651,11 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
              lambda_cfg lambda_in_env ?signature_db:env.signature_db
              ?builtin_signature_db:env.builtin_signature_db
              ?call_graph:env.call_graph
-             ~call_graph_caller:env.call_graph_caller ())
+             ~call_graph_caller:
+               (lambda_call_graph_caller env.call_graph
+                  ~enclosing_lambda:(fun (_ : IL.name) -> None)
+                  ~analysing:env.call_graph_caller lambda_name)
+             ())
     |> List_.split
   in
   let effects = Effects.union_list effects_lambdas in
@@ -4007,6 +4036,16 @@ and (fixpoint :
       | Some db ->
           (* Collect all lambdas recursively, innermost first *)
           let all_lambdas_list = collect_all_lambdas_innermost_first fun_cfg in
+          let enclosing_lambdas : IL.name IL.NameMap.t =
+            List.fold_left
+              (fun (parents : IL.name IL.NameMap.t)
+                   ((parent : IL.name), (lambda_cfg : IL.fun_cfg)) ->
+                IL.NameMap.fold
+                  (fun (child : IL.name) (_ : IL.fun_cfg) parents ->
+                    IL.NameMap.add child parent parents)
+                  lambda_cfg.lambdas parents)
+              IL.NameMap.empty all_lambdas_list
+          in
           let needed = needed_lambdas all_lambdas_list in
           let all_lambdas_list =
             List.filter
@@ -4016,14 +4055,6 @@ and (fixpoint :
           List.fold_left
             (fun acc_db (lambda_name, lambda_cfg) ->
               let fn_id = Function_id.of_il_name lambda_name in
-              if Shape_and_sig.FunctionMap.mem fn_id acc_db.Shape_and_sig.signatures then
-                (* An earlier extraction (e.g. [Match_tainting_mode]'s outer
-                   extraction for top-level lambdas) already added a sig at
-                   this key. Adding here would put a second sig in the same
-                   [SignatureSet], which [find_by_arity] cannot disambiguate
-                   when both share an arity. *)
-                acc_db
-              else
               try
                    Log.debug (fun m ->
                        m "Extracting signature for lambda %s"
@@ -4163,13 +4194,17 @@ and (fixpoint :
                      }
                    in
                    let lambda_effects, _lambda_mapping =
-                     (* Lambda body's call_graph_caller is the enclosing named function, not the lambda: projidx emits closure calls as edges to the enclosing method (skip_anon), so the lambda-as-caller misses every edge. *)
                      fixpoint_aux taint_inst lambda_func
                        ~enter_lval_env:combined_env
                        ~in_lambda:(Some lambda_name) ~class_name:None
                        ~signature_db:acc_db ?builtin_signature_db
                        ?call_graph
-                       ~call_graph_caller:name lambda_cfg
+                       ~call_graph_caller:
+                         (lambda_call_graph_caller call_graph
+                            ~enclosing_lambda:(fun (lambda : IL.name) ->
+                              IL.NameMap.find_opt lambda enclosing_lambdas)
+                            ~analysing:name lambda_name)
+                       lambda_cfg
                    in
                    let signature =
                      {
@@ -4181,7 +4216,11 @@ and (fixpoint :
                    let arity =
                      Shape_and_sig.Arity_exact (List.length lambda_cfg.params)
                    in
-                   Shape_and_sig.add_signature acc_db (Function_id.of_il_name lambda_name)
+                   (* The signature built here binds the lambda's captured
+                      variables to this function's; it replaces one of its
+                      arity built for the lambda alone, and two signatures
+                      of one arity under a key cannot be told apart. *)
+                   Shape_and_sig.replace_signature_of_arity acc_db fn_id
                      { sig_ = signature; arity }
                  with
                  | e ->

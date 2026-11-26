@@ -1,0 +1,14 @@
+rules:
+  - id: java-unknown-call-with-lambda
+    languages: [java]
+    severity: ERROR
+    message: >
+      A call of a method without a signature propagates the taint of its
+      receiver when its only argument is a lambda.
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

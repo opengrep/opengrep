@@ -8,17 +8,12 @@ type t = {
 
 let create ~top_level = { top_level }
 
-let emit_call t ~caller_node ~is_toplevel_lambda ~callee ~call_tok : edge list =
+let emit_call (_ : t) ~caller_node ~callee ~call_tok : edge list =
   match FA.fn_id_to_node callee, caller_node with
-  | Some src, Some dst ->
-    let base = [(src, dst, call_tok)] in
-    if is_toplevel_lambda && not (Function_id.equal dst t.top_level)
-    then (src, t.top_level, call_tok) :: base
-    else base
+  | Some src, Some dst -> [(src, dst, call_tok)]
   | _ -> []
 
-let emit_callback t ~caller_node ~is_toplevel_lambda ~callback ~call_tok
-    ~tmp : edge list =
+let emit_callback (_ : t) ~caller_node ~callback ~call_tok ~tmp : edge list =
   match FA.fn_id_to_node callback, caller_node with
   | Some callback_node, Some caller ->
     let tmp_edge, src_to_caller =
@@ -28,13 +23,7 @@ let emit_callback t ~caller_node ~is_toplevel_lambda ~callback ~call_tok
         ([(callback_node, tmp_node, call_tok)], tmp_node)
       | None -> ([], callback_node)
     in
-    let main = (src_to_caller, caller, call_tok) in
-    let lift =
-      if is_toplevel_lambda && not (Function_id.equal caller t.top_level)
-      then [(src_to_caller, t.top_level, call_tok)]
-      else []
-    in
-    tmp_edge @ (main :: lift)
+    tmp_edge @ [(src_to_caller, caller, call_tok)]
   | _ -> []
 
 let emit_toplevel t ~callee ~call_tok : edge list =

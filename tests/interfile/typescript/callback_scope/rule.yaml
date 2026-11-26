@@ -1,0 +1,12 @@
+rules:
+  - id: test-typescript-callback-scope
+    languages: [typescript]
+    message: Tainted data reaches a sink through a function bound inside a callback
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

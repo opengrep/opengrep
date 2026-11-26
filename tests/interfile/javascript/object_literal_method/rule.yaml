@@ -1,0 +1,13 @@
+rules:
+  - id: object-literal-method
+    languages: [js]
+    severity: ERROR
+    message: >
+      A call in a method of an object literal resolves when the enclosing function is analysed.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

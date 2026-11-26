@@ -1,0 +1,14 @@
+rules:
+  - id: local-shadows-function
+    languages: [js]
+    severity: ERROR
+    message: >
+      A local variable that shadows a function refers to its own value, so
+      passing it to a higher-order function does not call the function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

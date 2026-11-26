@@ -1436,6 +1436,24 @@ let replace_signature (db : signature_database) (name : Function_id.t)
   in
   { signatures }
 
+(* Replaces the entries of [name] that have the arity of [signature]; the
+   entries of other arities stay. *)
+let replace_signature_of_arity (db : signature_database) (name : Function_id.t)
+    (signature : extended_sig) : signature_database =
+  let signatures =
+    FunctionMap.update name
+      (fun (existing : SignatureSet.t option) ->
+        let others =
+          SignatureSet.filter
+            (fun (other : extended_sig) ->
+              not (equal_sig_arity other.arity signature.arity))
+            (Option.value existing ~default:SignatureSet.empty)
+        in
+        Some (SignatureSet.add signature others))
+      db.signatures
+  in
+  { signatures }
+
 let show_func_key (key : func_key) : string =
   Function_id.show_debug key
 

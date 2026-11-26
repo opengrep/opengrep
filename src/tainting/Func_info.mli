@@ -22,6 +22,12 @@ val is_method_of : class_name:string -> method_name:string -> fn_id -> bool
 val bare_name : fn_id -> IL.name option
 val name_matches : t -> string -> bool
 val has_body : AST_generic.function_definition -> bool
+(* Whether name resolution bound the function's name with this binding id. *)
+val is_bound_by : AST_generic.sid -> t -> bool
+
+(* The binding id that name resolution gave the function's name, if any. *)
+val binding_sid : t -> AST_generic.sid option
+
 val enclosing_class : fn_id -> IL.name option
 val method_id : cls:IL.name -> meth:IL.name -> fn_id
 val free_id : IL.name -> fn_id

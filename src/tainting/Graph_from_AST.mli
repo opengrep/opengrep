@@ -7,6 +7,28 @@ val uses_new_keyword : Lang.t -> bool
    file path; engine checker and projidx must produce identical ids. *)
 val top_level_name_of_ast : AST_generic.program -> IL.name
 
+(* The nested functions of a file, as call extraction sees them. *)
+type nested_functions = {
+  (* whose calls are extracted on their own visit, so an enclosing
+     function's extraction skips them *)
+  extracted_separately : AST_generic.function_definition -> bool;
+  (* the nested functions with a vertex that an identifier refers to, by
+     its binding and its token; none where the identifier is the one an
+     assignment of a lambda binds *)
+  bound_functions : AST_generic.sid * Tok.t -> Func_info.fn_id list;
+  (* a lambda expression with a vertex not bound to a variable *)
+  lambda_value : AST_generic.function_definition -> Func_info.fn_id option;
+  (* the lambdas of the top-level code with a vertex, at their definition *)
+  top_level_lambdas : (Func_info.fn_id * Tok.t) list;
+}
+
+(* [vertex_fn_id] is the identity of a function that has a vertex. *)
+val nested_functions_of_program :
+  vertex_fn_id:(AST_generic.function_definition -> Func_info.fn_id option) ->
+  extracted_separately:(AST_generic.function_definition -> bool) ->
+  AST_generic.program ->
+  nested_functions
+
 val build_call_graph :
   lang : Lang.t ->
   AST_generic.program ->
@@ -46,6 +68,7 @@ val extract_calls :
   resolve_construction : Callee_resolution.construction_resolver ->
   resolve_invocation : Callee_resolution.invocation_resolver ->
   func_lookup : Func_lookup.t ->
+  nested_functions : nested_functions ->
   ?caller_parent_path : fn_id ->
   AST_generic.function_definition ->
   fdef_edges

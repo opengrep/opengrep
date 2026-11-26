@@ -2,6 +2,8 @@ module FA = Graph_from_AST
 module G = AST_generic
 open Types
 
+module Function_id_set = Set.Make (Function_id)
+
 (* Wall-clock time of the stages of [edges_for_file], summed across every
    file and every domain; [Project_index] logs it after the edge pass. *)
 let edge_stage_secs : (string, float) Hashtbl.t = Hashtbl.create 8
@@ -640,14 +642,58 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         fi.fi_ast);
     let per_fdef_edges =
       staged "extract calls" @@ fun () ->
-      Visit_function_defs.fold_with_parent_path ~lang
-        (fun edges opt_ent parent_path fdef ->
+      (* The functions of the file whose calls are extracted on their own
+         visit, with the identity of each one that has a vertex. *)
+      let extracted : FA.fn_id option CFG_build.Function_orig_table.t =
+        CFG_build.Function_orig_table.create 64
+      in
+      (* The skipped anons of the file: scopes on a path, but no vertex. *)
+      let anon_scopes : Function_id_set.t =
+        Visit_function_defs.fold_with_parent_path ~lang ~anonymous_scopes:true
+          (fun (scopes : Function_id_set.t) (opt_ent : G.entity option)
+               (parent_path : IL.name option list)
+               (fdef : G.function_definition) ->
+            if skip_anon opt_ent then begin
+              CFG_build.Function_orig_table.replace extracted fdef None;
+              Function_id_set.add
+                (Function_id.of_il_name
+                   (Visit_function_defs.synth_lambda_il_name fdef))
+                scopes
+            end
+            else begin
+              (match FA.fn_id_of_entity ~lang opt_ent parent_path fdef with
+               | Some fn_id ->
+                 CFG_build.Function_orig_table.replace extracted fdef
+                   (Some fn_id)
+               | None -> ());
+              scopes
+            end)
+          Function_id_set.empty fi.fi_ast
+      in
+      let nested_functions =
+        FA.nested_functions_of_program
+          ~vertex_fn_id:(fun (fdef : G.function_definition) ->
+            Option.join (CFG_build.Function_orig_table.find_opt extracted fdef))
+          ~extracted_separately:(CFG_build.Function_orig_table.mem extracted)
+          fi.fi_ast
+      in
+      let rec named_ancestor (path : FA.fn_id) : FA.fn_id =
+        match List.rev path with
+        | Some (last : IL.name) :: rest
+          when Function_id_set.mem (Function_id.of_il_name last) anon_scopes ->
+          named_ancestor (List.rev rest)
+        | _ -> path
+      in
+      Visit_function_defs.fold_with_parent_path ~lang ~anonymous_scopes:true
+        (fun (edges : Edge_emitter.edge list) (opt_ent : G.entity option)
+             (parent_path : IL.name option list)
+             (fdef : G.function_definition) ->
         (* A skipped anon attributes calls to its enclosing named ancestor, else the file's [<top_level>] node. *)
         let caller_kind =
           if skip_anon opt_ent then begin
-            match parent_path with
+            match named_ancestor parent_path with
             | [] | [None] -> `Top_anon
-            | _ -> `Named parent_path
+            | (named : FA.fn_id) -> `Named named
           end else
             match FA.fn_id_of_entity ~lang opt_ent parent_path fdef with
             | Some fn_id -> `Named fn_id
@@ -665,12 +711,15 @@ let edges_for_file (ctx : ctx) (fi : file_info)
             | `Top_anon -> Some top_level_node
             | `Skip -> None
           in
-          let is_toplevel_lambda =
-            match (opt_ent, parent_path) with
-            | (None, [None]) | (None, []) -> true
-            | _ -> false
-          in
           let fn_id = fn_id_for_extract in
+          (* A skipped anon is still a scope: names in it resolve from its own
+             path, so a function bound in a callback is local to it, while its
+             calls stay attributed to [caller_node_opt]. *)
+          let scope_path : FA.fn_id =
+            if skip_anon opt_ent then
+              parent_path @ [ Some (Visit_function_defs.synth_lambda_il_name fdef) ]
+            else fn_id
+          in
           let body_stmt = AST_generic_helpers.funcbody_to_stmt fdef.G.fbody in
           let body_program = [body_stmt] in
           (* fdef-scoped facts stamped onto the body only, most specific
@@ -739,22 +788,23 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                    ~type_state:file_type_state)
               ~resolve_construction:
                 (construction_resolver ~lang ~type_state:file_type_state
-                   ~func_lookup ~caller_parent_path:fn_id)
+                   ~func_lookup ~caller_parent_path:scope_path)
               ~resolve_invocation:
                 (invocation_resolver ~func_lookup)
               ~func_lookup
-              ~caller_parent_path:fn_id fdef
+              ~nested_functions
+              ~caller_parent_path:scope_path fdef
           in
           let edges =
             List.fold_left (fun edges (callee, call_tok) ->
               Edge_emitter.emit_call emitter ~caller_node:caller_node_opt
-                ~is_toplevel_lambda ~callee ~call_tok @ edges
+                ~callee ~call_tok @ edges
             ) edges callee_calls
           in
           let edges =
             List.fold_left (fun edges (callback, call_tok, tmp) ->
               Edge_emitter.emit_callback emitter ~caller_node:caller_node_opt
-                ~is_toplevel_lambda ~callback ~call_tok ~tmp @ edges
+                ~callback ~call_tok ~tmp @ edges
             ) edges callback_calls
           in
           (match opt_ent with
@@ -771,9 +821,15 @@ let edges_for_file (ctx : ctx) (fi : file_info)
              in
              List.fold_left (fun edges (callee, call_tok) ->
                Edge_emitter.emit_call emitter ~caller_node:caller_node_opt
-                 ~is_toplevel_lambda ~callee ~call_tok @ edges
+                 ~callee ~call_tok @ edges
              ) edges dec_calls))
-      [] fi.fi_ast
+      (* The top-level code refers to its lambdas. *)
+      (List.concat_map
+         (fun ((lambda_fn_id, definition_tok) : FA.fn_id * Tok.t) ->
+           Edge_emitter.emit_toplevel emitter ~callee:lambda_fn_id
+             ~call_tok:definition_tok)
+         nested_functions.top_level_lambdas)
+      fi.fi_ast
     in
     let toplevel_calls =
       FA.extract_toplevel_calls ~lang

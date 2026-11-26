@@ -140,6 +140,130 @@ let top_level_name_of_ast (ast : G.program) : IL.name =
   IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default;
        id_info = G.empty_id_info () }
 
+module Call_site_set = Set.Make (struct
+  type t = fn_id * Tok.t
+
+  let compare ((fn_id1, tok1) : t) ((fn_id2, tok2) : t) : int =
+    match compare_fn_id fn_id1 fn_id2 with
+    | 0 -> Tok.compare tok1 tok2
+    | order -> order
+end)
+
+type nested_functions = {
+  extracted_separately : G.function_definition -> bool;
+  bound_functions : G.sid * Tok.t -> fn_id list;
+  lambda_value : G.function_definition -> fn_id option;
+  top_level_lambdas : (fn_id * Tok.t) list;
+}
+
+type code_context =
+  | Top_level_code
+  | Class_body
+  | Function_body
+
+(* The binding id name resolution gave an identifier, if any. *)
+let sid_of_id_info (id_info : G.id_info) : G.sid option =
+  match !(id_info.G.id_resolved) with
+  | Some (_, sid) when not (G.SId.is_unsafe_default sid) -> Some sid
+  | Some _
+  | None ->
+      None
+
+(* A function nested in a function body is a value of that body: a
+   declaration or a lambda assigned to a variable is used through the
+   variable's binding, any other lambda where it occurs. Lambdas of the
+   top-level code are values of that code. *)
+let nested_functions_of_program
+    ~(vertex_fn_id : G.function_definition -> fn_id option)
+    ~(extracted_separately : G.function_definition -> bool)
+    (ast : G.program) : nested_functions =
+  let bound_by_sid : (G.sid, fn_id) Hashtbl.t = Hashtbl.create 16 in
+  let bound = CFG_build.Function_orig_table.create 16 in
+  let unbound = CFG_build.Function_orig_table.create 16 in
+  let object_methods = CFG_build.Function_orig_table.create 16 in
+  (* the identifiers that an assignment of a lambda binds *)
+  let binding_occurrences : (Tok.t, unit) Hashtbl.t = Hashtbl.create 16 in
+  let top_level_lambdas = ref [] in
+  (* In a function body a use of the variable refers to the function; two
+     definitions may share one binding. The top-level code reaches a bound
+     lambda through the calls and callbacks of that code. *)
+  let bind (context : code_context) (id_info : G.id_info)
+      (fdef : G.function_definition) : unit =
+    CFG_build.Function_orig_table.replace bound fdef ();
+    match (context, sid_of_id_info id_info, vertex_fn_id fdef) with
+    | Function_body, Some (sid : G.sid), Some (fn_id : fn_id) ->
+        Hashtbl.add bound_by_sid sid fn_id
+    | _ -> ()
+  in
+  let visitor =
+    object
+      inherit [_] G.iter_no_id_info as super
+
+      method! visit_expr (context : code_context) (e : G.expr) =
+        (match (e.G.e, context) with
+        | ( G.Assign
+              ( { G.e = G.N (G.Id ((_, tok), id_info)); _ },
+                _,
+                { G.e = G.Lambda fdef; _ } ),
+            (Function_body | Top_level_code) ) ->
+            Hashtbl.replace binding_occurrences tok ();
+            bind context id_info fdef
+        | G.Lambda fdef, (Function_body | Top_level_code)
+          when not (CFG_build.Function_orig_table.mem bound fdef) -> (
+            match (vertex_fn_id fdef, context) with
+            | Some (fn_id : fn_id), Top_level_code ->
+                top_level_lambdas := (fn_id, snd fdef.G.fkind) :: !top_level_lambdas
+            | Some (fn_id : fn_id), _ ->
+                CFG_build.Function_orig_table.replace unbound fdef fn_id
+            | None, _ -> ())
+        | _ -> ());
+        super#visit_expr context e
+
+      method! visit_stmt (context : code_context) (st : G.stmt) =
+        (match (st.G.s, context) with
+        | G.DefStmt ({ G.name = G.EN (G.Id (_, id_info)); _ }, G.FuncDef fdef),
+          Function_body
+        | ( G.DefStmt
+              ( { G.name = G.EN (G.Id (_, id_info)); _ },
+                G.VarDef { G.vinit = Some { G.e = G.Lambda fdef; _ }; _ } ),
+            (Function_body | Top_level_code) ) ->
+            bind context id_info fdef
+        | _ -> ());
+        super#visit_stmt context st
+
+      method! visit_class_definition (_ : code_context)
+          (cdef : G.class_definition) =
+        super#visit_class_definition Class_body cdef
+
+      (* The IL lowers a method of an object literal to an anonymous lambda
+         of the enclosing code, and taint looks up its calls from that code. *)
+      method! visit_field (context : code_context) (field : G.field) =
+        (match (field, context) with
+        | ( G.F { G.s = G.DefStmt (_, G.FuncDef fdef); _ },
+            (Function_body | Top_level_code) ) ->
+            CFG_build.Function_orig_table.replace object_methods fdef ()
+        | _ -> ());
+        super#visit_field context field
+
+      method! visit_function_definition (_ : code_context)
+          (fdef : G.function_definition) =
+        super#visit_function_definition Function_body fdef
+    end
+  in
+  visitor#visit_program Top_level_code ast;
+  {
+    extracted_separately =
+      (fun (fdef : G.function_definition) ->
+        extracted_separately fdef
+        && not (CFG_build.Function_orig_table.mem object_methods fdef));
+    bound_functions =
+      (fun ((sid : G.sid), (tok : Tok.t)) ->
+        if Hashtbl.mem binding_occurrences tok then []
+        else Hashtbl.find_all bound_by_sid sid);
+    lambda_value = CFG_build.Function_orig_table.find_opt unbound;
+    top_level_lambdas = !top_level_lambdas;
+  }
+
 let class_init_il_name (class_str : string) : IL.name =
   IL.{ ident = ("Class:" ^ class_str, Tok.unsafe_fake_tok ("Class:" ^ class_str));
        sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
@@ -197,6 +321,7 @@ let extract_calls ~(lang : Lang.t)
     ~(resolve_construction : Callee_resolution.construction_resolver)
     ~(resolve_invocation : Callee_resolution.invocation_resolver)
     ~(func_lookup : Func_lookup.t)
+    ~(nested_functions : nested_functions)
     ?(caller_parent_path = [])
     (fdef : G.function_definition) : fdef_edges =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for function");
@@ -304,9 +429,7 @@ let extract_calls ~(lang : Lang.t)
          rest)
     | _ -> None
   in
-  let calls, callbacks =
-    Walker.fold_exprs_in_fdef ~skip_nested_fdefs:skip_nested
-      (fun ((calls, callbacks) as acc) e ->
+  let calls_of_expr ((calls, callbacks) as acc) (e : G.expr) =
         match e.G.e with
         | G.Call ({ e = G.IdSpecial (G.Op _, _); _ }, _) -> acc
         | G.Call (callee, args) ->
@@ -395,17 +518,59 @@ let extract_calls ~(lang : Lang.t)
              in
              ((fn_id, tok) :: calls, callbacks)
            | None -> acc)
-        | _ -> acc) ([], []) fdef
+        | _ -> acc
+  in
+  (* A nested function used as a value: the enclosing function refers to it,
+     as it refers to a callback. *)
+  let references_of_expr (references : (fn_id * Tok.t) list) (e : G.expr)
+      : (fn_id * Tok.t) list =
+    match e.G.e with
+    | G.Lambda fdef -> (
+        match nested_functions.lambda_value fdef with
+        | Some (fn_id : fn_id) -> (fn_id, snd fdef.G.fkind) :: references
+        | None -> references)
+    | G.N (G.Id ((_, tok), id_info)) -> (
+        match sid_of_id_info id_info with
+        | Some (sid : G.sid) ->
+            List.map
+              (fun (fn_id : fn_id) -> (fn_id, tok))
+              (nested_functions.bound_functions (sid, tok))
+            @ references
+        | None -> references)
+    | _ -> references
+  in
+  let call_sites_of_expr (count : int) (e : G.expr) : int =
+    match e.G.e with
+    | G.Call ({ e = G.IdSpecial (G.Op _, _); _ }, _) -> count
+    | G.Call _
+    | G.New _ ->
+        count + 1
+    | _ -> count
+  in
+  (* One walk of the body feeds the calls, the references and the count of
+     call sites, so [total] and [resolved] are commensurable. *)
+  let (calls, callbacks), references, total =
+    Walker.fold_exprs_in_fdef ~skip_nested_fdefs:skip_nested
+      ~skip_nested_fdef:nested_functions.extracted_separately
+      (fun (found, references, total) (e : G.expr) ->
+        ( calls_of_expr found e,
+          references_of_expr references e,
+          call_sites_of_expr total e ))
+      (([], []), [], 0)
+      fdef
+  in
+  let call_sites : Call_site_set.t = Call_site_set.of_list calls in
+  let is_call_site (reference : fn_id * Tok.t) : bool =
+    Call_site_set.mem reference call_sites
+  in
+  let callbacks =
+    (references
+    |> List.filter (fun (reference : fn_id * Tok.t) -> not (is_call_site reference))
+    |> dedup_fn_ids
+    |> List.map (fun ((fn_id, tok) : fn_id * Tok.t) -> (fn_id, tok, None)))
+    @ callbacks
   in
   let resolved = calls |> dedup_fn_ids in
-  (* Same fold scope as [calls] so [total]/[resolved] are commensurable. *)
-  let total =
-    Walker.fold_exprs_in_fdef ~skip_nested_fdefs:skip_nested (fun n e ->
-      match e.G.e with
-      | G.Call ({ e = G.IdSpecial (G.Op _, _); _ }, _) -> n
-      | G.Call _ | G.New _ -> n + 1
-      | _ -> n) 0 fdef
-  in
   { calls = resolved;
     callbacks = callbacks;
     unresolved_call_sites = max 0 (total - List.length resolved) }
@@ -494,28 +659,36 @@ let extract_toplevel_hof_callbacks
 let build_call_graph ~(lang : Lang.t) (ast : G.program)
     : Call_graph.G.t =
   let graph = Call_graph.G.create () in
-  let skip_nested =
-    (Lang_config.get lang).Lang_config.skip_nested_in_extract_calls
-  in
 
   let top_level_node : node =
     Function_id.of_il_name (top_level_name_of_ast ast)
   in
   Call_graph.G.add_vertex graph top_level_node;
 
+  let vertices : fn_id CFG_build.Function_orig_table.t =
+    CFG_build.Function_orig_table.create 64
+  in
   let funcs =
-    Visit_function_defs.fold_with_parent_path ~lang
+    Visit_function_defs.fold_with_parent_path ~lang ~anonymous_scopes:false
       (fun funcs opt_ent parent_path fdef ->
         match fn_id_of_entity ~lang opt_ent parent_path fdef with
         | Some fn_id ->
             let func = { fn_id; entity = opt_ent; fdef } in
             (* Add vertex using the node (last element of fn_id) *)
             (match fn_id_to_node fn_id with
-            | Some node -> Call_graph.G.add_vertex graph node
+            | Some node ->
+                Call_graph.G.add_vertex graph node;
+                CFG_build.Function_orig_table.replace vertices fdef fn_id
             | None -> ());
             func :: funcs
         | None -> funcs)
       [] ast
+  in
+  let nested_functions =
+    nested_functions_of_program
+      ~vertex_fn_id:(CFG_build.Function_orig_table.find_opt vertices)
+      ~extracted_separately:(CFG_build.Function_orig_table.mem vertices)
+      ast
   in
   let func_lookup =
     Func_lookup.create
@@ -530,36 +703,10 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ()
   in
   (* Visit all calls in the AST, tracking the current function context *)
-  Visit_function_defs.visit_with_parent_path ~lang
+  Visit_function_defs.visit_with_parent_path ~lang ~anonymous_scopes:false
     (fun opt_ent parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
-          let is_toplevel_lambda = match (opt_ent, parent_path) with
-            | (None, [None]) | (None, []) -> true
-            | _ -> false
-          in
-          let has_lambda_identity =
-            match fst fdef.G.fkind with
-            | G.LambdaKind
-            | G.Arrow ->
-                true
-            | _ -> Option.is_none opt_ent
-          in
-          let enclosing_node =
-            match fn_id_to_node parent_path with
-            | Some (node : node)
-              when skip_nested && has_lambda_identity
-                   && Call_graph.G.mem_vertex graph node ->
-                Some node
-            | Some _
-            | None ->
-                None
-          in
-          let extra_callers =
-            Option.to_list enclosing_node
-            @ if is_toplevel_lambda then [ top_level_node ] else []
-          in
-
           let { calls = callee_calls; callbacks = callback_calls; _ } =
             extract_calls ~lang
               ~identify_callee:
@@ -574,7 +721,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
               ~resolve_invocation:(fun ~caller_parent_path var_name ->
                 Option.map (fun (f : func_info) -> f.fn_id)
                   (find_func_in_scope funcs caller_parent_path var_name))
-              ~func_lookup
+              ~func_lookup ~nested_functions
               ~caller_parent_path:fn_id fdef
           in
 
@@ -583,11 +730,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
             (fun (callee_fn_id, call_tok) ->
               match fn_id_to_node callee_fn_id, fn_id_to_node fn_id with
               | Some callee_node, Some caller_node ->
-                  Call_graph.add_edge graph ~src:callee_node ~dst:caller_node ~call_tok;
-                  List.iter
-                    (fun (dst : node) ->
-                      Call_graph.add_edge graph ~src:callee_node ~dst ~call_tok)
-                    extra_callers
+                  Call_graph.add_edge graph ~src:callee_node ~dst:caller_node ~call_tok
               | _ -> ())
             callee_calls;
 
@@ -602,11 +745,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
                         tmp_node
                     | None -> callback_node
                   in
-                  Call_graph.add_edge graph ~src:src_to_caller ~dst:caller_node ~call_tok;
-                  List.iter
-                    (fun (dst : node) ->
-                      Call_graph.add_edge graph ~src:src_to_caller ~dst ~call_tok)
-                    extra_callers
+                  Call_graph.add_edge graph ~src:src_to_caller ~dst:caller_node ~call_tok
               | _ -> ())
             callback_calls
       | None -> ())
@@ -628,6 +767,15 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       | None -> ())
     toplevel_calls;
   Log.debug (fun m -> m "CALL_GRAPH: Added %d edges from top-level calls" (List.length toplevel_calls));
+  (* The top-level code refers to its lambdas. *)
+  List.iter
+    (fun ((lambda_fn_id, definition_tok) : fn_id * Tok.t) ->
+      match fn_id_to_node lambda_fn_id with
+      | Some lambda_node ->
+          Call_graph.add_edge graph ~src:lambda_node ~dst:top_level_node
+            ~call_tok:definition_tok
+      | None -> ())
+    nested_functions.top_level_lambdas;
 
   (* Extract HOF callbacks from top-level code and add edges to <top_level> *)
   let toplevel_hof_callbacks =

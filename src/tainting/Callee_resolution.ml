@@ -1508,11 +1508,38 @@ let identify_callee_interfile ~(lang : Lang.t)
     | _ -> None)
   | G.N (G.Id ((id, _), id_info)) -> (
     match !(id_info.G.id_resolved) with
-    | Some ((G.LocalVar | G.Parameter), _) ->
+    | Some (G.Parameter, _) ->
       of_entries
         (List.filter
            (fun (entry : Func_lookup.scope_entry) ->
              equal_with_pos entry.Func_lookup.parent_path caller_parent_path)
+           (entries_in_scope ~func_lookup ~caller_parent_path id))
+    | Some (G.LocalVar, sid) ->
+      (* A local is bound in a function scope that encloses the call (the
+         caller's, or one it is nested in), never at file level. An entry
+         for a function of another name is an alias, a variable that holds
+         the function. An entry for a function of this name is its
+         definition, and the local refers to it when it carries the
+         definition's binding, or when the definition has none. *)
+      let refers_to (kind : Func_lookup.scope_kind) : bool =
+        match kind with
+        | Func_lookup.Scope_function (func : Func_info.t) -> (
+          match (List.rev func.Func_info.fn_id, Func_info.binding_sid func) with
+          | Some (own : IL.name) :: _, Some (bound : G.sid)
+            when String.equal (fst own.IL.ident) id ->
+            G.SId.equal bound sid
+          | _ -> true)
+        | Func_lookup.Scope_class _
+        | Func_lookup.Scope_companion _
+        | Func_lookup.Scope_extension _
+        | Func_lookup.Scope_object _
+        | Func_lookup.Scope_local_value -> true
+      in
+      of_entries
+        (List.filter
+           (fun (entry : Func_lookup.scope_entry) ->
+             List.exists Option.is_some entry.Func_lookup.parent_path
+             && refers_to entry.Func_lookup.kind)
            (entries_in_scope ~func_lookup ~caller_parent_path id))
     | _ -> of_bare_name id)
   | G.N (G.IdQualified

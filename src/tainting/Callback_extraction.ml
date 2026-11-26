@@ -192,9 +192,12 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       let is_bound_value =
         match !(id_info.id_resolved) with
         | Some ((G.Parameter | G.EnclosedVar), _) -> true
-        (* a nested function is a local name, and still a function *)
-        | Some (G.LocalVar, _) ->
-            List_.null (Func_lookup.nested_in_same_file func_lookup (fst id))
+        (* a nested function is a local name, and still a function: the
+           local refers to it when it carries the function's binding *)
+        | Some (G.LocalVar, sid) ->
+            not
+              (List.exists (Func_info.is_bound_by sid)
+                 (Func_lookup.nested_in_same_file func_lookup (fst id)))
         | _ -> false
       in
       let direct =

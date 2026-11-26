@@ -1,0 +1,13 @@
+rules:
+  - id: class-in-callback
+    languages: [js]
+    severity: ERROR
+    message: >
+      A method of a class declared in a callback is a method of that class.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

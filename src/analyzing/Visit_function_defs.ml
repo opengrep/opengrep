@@ -273,12 +273,33 @@ let class_scope_of_definition (ent : G.entity) (def_kind : G.definition_kind)
      | _ -> None)
   | _ -> None
 
-class ['self] visitor_with_parent_path ~(lang : Lang.t) =
+(* The body of a function with an entity, on the path [path]. *)
+let in_named_function (parent_path : IL.name option list ref)
+    (inside_named_function : bool ref) (path : IL.name option list)
+    (body : unit -> unit) : unit =
+  Common.save_excursion_unsafe parent_path path (fun () ->
+      Common.save_excursion_unsafe inside_named_function true body)
+
+(* The body of a class. A method is identified by its class and its name, so
+   a class declared in anonymous scopes only starts a path of its own; a
+   class declared in a function with an entity stays on that function's
+   path. *)
+let in_class (current_class : G.name option ref)
+    (parent_path : IL.name option list ref) (inside_named_function : bool ref)
+    (class_name : G.name option) (body : unit -> unit) : unit =
+  Common.save_excursion_unsafe current_class class_name (fun () ->
+      if !inside_named_function then body ()
+      else Common.save_excursion_unsafe parent_path [] body)
+
+(* With [anonymous_scopes], an anonymous function is a scope: what it binds
+   is on its path. Without, anonymous functions leave the path unchanged. *)
+class ['self] visitor_with_parent_path ~(lang : Lang.t) ~(anonymous_scopes : bool) =
   object (self : 'self)
     inherit [_] G.iter_no_id_info as super
     val lang : Lang.t = lang
     val current_class : G.name option ref = ref None
     val parent_path : IL.name option list ref = ref []
+    val inside_named_function : bool ref = ref false
 
     method! visit_definition f ((ent, def_kind) as def) =
       match class_scope_of_definition ent def_kind with
@@ -298,7 +319,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
             | EN name -> Some name
             | _ -> None
           in
-          Common.save_excursion_unsafe current_class newv (fun () ->
+          in_class current_class parent_path inside_named_function newv (fun () ->
               super#visit_definition f def)
       (* Go [type T interface {...}] is a TypeDef, not a ClassDef; walk its
          fields as a class scope so method decls reach the class-methods index
@@ -310,7 +331,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
             | EN name -> Some name
             | _ -> None
           in
-          Common.save_excursion_unsafe current_class newv (fun () ->
+          in_class current_class parent_path inside_named_function newv (fun () ->
               List.iter (self#visit_field f) fields)
       | G.FuncDef fdef ->
           (* Build fn_id path: [class_option; ...parent_path...; current_func] *)
@@ -324,7 +345,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
           f (Some ent) visitor_parent_path fdef;
 
           (* Push current function onto path stack for nested functions *)
-          Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+          in_named_function parent_path inside_named_function current_fn_id (fun () ->
               let body = H.funcbody_to_stmt fdef.G.fbody in
               super#visit_stmt f body)
       | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
@@ -335,7 +356,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
             append_to_parrent_path !parent_path class_il func_il
           in
           f (Some ent) visitor_parent_path fdef;
-          Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+          in_named_function parent_path inside_named_function current_fn_id (fun () ->
               let body = H.funcbody_to_stmt fdef.G.fbody in
               self#visit_stmt f body)
       | __else__ -> super#visit_definition f def
@@ -351,7 +372,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
                 append_to_parrent_path !parent_path class_il func_il
               in
               f (Some ent) visitor_parent_path fdef;
-              Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+              in_named_function parent_path inside_named_function current_fn_id (fun () ->
                   let body = H.funcbody_to_stmt fdef.G.fbody in
                   self#visit_stmt f body)
           | G.DefStmt
@@ -363,7 +384,7 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
                 append_to_parrent_path !parent_path class_il func_il
               in
               f (Some ent) visitor_parent_path fdef;
-              Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+              in_named_function parent_path inside_named_function current_fn_id (fun () ->
                   let body = H.funcbody_to_stmt fdef.G.fbody in
                   self#visit_stmt f body)
           | _ -> super#visit_field f field)
@@ -376,8 +397,11 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
         else !parent_path
       in
       f None visitor_parent_path fdef;
-      (* No path change for anonymous functions - they don't add to the path *)
-      super#visit_function_definition f fdef
+      if anonymous_scopes then
+        Common.save_excursion_unsafe parent_path
+          (visitor_parent_path @ [ Some (synth_lambda_il_name fdef) ])
+          (fun () -> super#visit_function_definition f fdef)
+      else super#visit_function_definition f fdef
 
     method! visit_expr f e =
       match extract_lambda_assignment ~lang e with
@@ -388,22 +412,22 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
             append_to_parrent_path !parent_path class_il func_il
           in
           f (Some ent) visitor_parent_path fdef;
-          Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+          in_named_function parent_path inside_named_function current_fn_id (fun () ->
               let body = H.funcbody_to_stmt fdef.G.fbody in
               self#visit_stmt f body)
       | None -> super#visit_expr f e
   end
 
 (* Visit all function definitions with parent path context. *)
-let visit_with_parent_path ~(lang : Lang.t)
+let visit_with_parent_path ~(lang : Lang.t) ~(anonymous_scopes : bool)
     (f :
       G.entity option -> IL.name option list -> G.function_definition -> unit)
     (ast : G.program) : unit =
-  let v = new visitor_with_parent_path ~lang in
+  let v = new visitor_with_parent_path ~lang ~anonymous_scopes in
   v#visit_program f ast
 
 (* Fold over all function definitions with parent path context. *)
-let fold_with_parent_path ~(lang : Lang.t)
+let fold_with_parent_path ~(lang : Lang.t) ~(anonymous_scopes : bool)
     (f :
       'acc ->
       G.entity option ->
@@ -411,7 +435,7 @@ let fold_with_parent_path ~(lang : Lang.t)
       G.function_definition ->
       'acc) (init_acc : 'acc) (ast : G.program) : 'acc =
   let acc_ref = ref init_acc in
-  let v = new visitor_with_parent_path ~lang in
+  let v = new visitor_with_parent_path ~lang ~anonymous_scopes in
   v#visit_program
     (fun opt_ent parent_path fdef ->
       acc_ref := f !acc_ref opt_ent parent_path fdef)

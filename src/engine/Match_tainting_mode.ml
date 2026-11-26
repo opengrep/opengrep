@@ -366,7 +366,7 @@ let build_info_map
       file_ast = None; taint_inst = None }
   in
   let info_map =
-    Visit_function_defs.fold_with_parent_path ~lang
+    Visit_function_defs.fold_with_parent_path ~lang ~anonymous_scopes:false
       (fun info_map opt_ent parent_path fdef ->
         match fst fdef.fkind with
         | LambdaKind

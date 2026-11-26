@@ -1,0 +1,13 @@
+rules:
+  - id: local-shadows-called-function
+    languages: [js]
+    severity: ERROR
+    message: >
+      A call of a local variable that shadows a function of an enclosing scope is not a call of that function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
