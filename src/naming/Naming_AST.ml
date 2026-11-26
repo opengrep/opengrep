@@ -328,7 +328,8 @@ type namespaces = {
   searched_by : Lang_namespaces.use_position -> namespace_hash list list;
   class_rebinds_import : Lang_namespaces.import_rebinding;
   class_in_scope_in_its_definition : bool;
-  attribute_in_type_parameter_scope : attribute -> bool;
+  attribute_in_type_parameter_scope :
+    Lang_namespaces.definition_kind -> attribute -> bool;
 }
 
 type env = {
@@ -1171,17 +1172,21 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
        parameters, and returns it with the others, to be visited once that
        scope is open. *)
     method private visit_attributes_outside_type_parameters (venv : unit)
-        (entity : entity) : entity =
+        (kind : Lang_namespaces.definition_kind) (entity : entity) : entity =
       let inside, outside =
-        List.partition env.namespaces.attribute_in_type_parameter_scope
+        List.partition
+          (env.namespaces.attribute_in_type_parameter_scope kind)
           entity.attrs
       in
       List.iter (self#visit_attribute venv) outside;
       { entity with attrs = inside }
 
     method private visit_in_type_parameter_scope (venv : unit)
-        (entity : entity) (visit : entity -> unit) =
-      let entity = self#visit_attributes_outside_type_parameters venv entity in
+        (kind : Lang_namespaces.definition_kind) (entity : entity)
+        (visit : entity -> unit) =
+      let entity =
+        self#visit_attributes_outside_type_parameters venv kind entity
+      in
       with_type_parameters env entity.tparams (fun () -> visit entity)
 
     method! visit_function_definition venv x =
@@ -1248,7 +1253,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                       declare_class_members env lang c;
                       let entity =
                         self#visit_attributes_outside_type_parameters venv
-                          entity
+                          (class_definition_kind c) entity
                       in
                       declare_type_parameters env entity.tparams;
                       self#visit_defining_entity venv entity;
@@ -1433,7 +1438,7 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
                     and the field's type is what a use of the name carries. *)
                  declare_in_scope env lang namespaces scope add
                    ~keep_type:true id id_info);
-          self#visit_in_type_parameter_scope venv entity (fun entity ->
+          self#visit_in_type_parameter_scope venv kind entity (fun entity ->
               match namespace_of env kind with
               | [] ->
                   self#visit_defining_entity venv entity;
@@ -1441,15 +1446,21 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
               | _ :: _ -> super#visit_definition venv (entity, snd x))
       (* A plain name is visited outside the scope of the function's type
          parameters, a qualified name such as C++ [A<T>::f] inside it. *)
-      | ({ name = EN (Id _) as name; _ } as entity), (FuncDef _ as kind) ->
+      | ({ name = EN (Id _) as name; _ } as entity), (FuncDef def as definition)
+        ->
           self#visit_entity_name venv name;
-          self#visit_in_type_parameter_scope venv entity (fun entity ->
+          self#visit_in_type_parameter_scope venv
+            (function_definition_kind env entity def)
+            entity
+            (fun entity ->
               self#visit_attributes_and_type_parameters venv entity.attrs
                 entity.tparams;
-              self#visit_definition_kind venv kind)
-      | entity, (FuncDef _ as kind) ->
-          self#visit_in_type_parameter_scope venv entity (fun entity ->
-              super#visit_definition venv (entity, kind))
+              self#visit_definition_kind venv definition)
+      | entity, (FuncDef def as definition) ->
+          self#visit_in_type_parameter_scope venv
+            (function_definition_kind env entity def)
+            entity
+            (fun entity -> super#visit_definition venv (entity, definition))
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
           let s = String.lowercase_ascii (Tok.content_of_tok tok) in
@@ -1500,7 +1511,9 @@ class ['self] resolve_visitor (env : env) (lang : Lang.t) =
       | entity, (TypeDef def as kind) ->
           with_class_or_type_binding env lang entity (type_definition_kind def)
             (fun () ->
-              self#visit_in_type_parameter_scope venv entity (fun entity ->
+              self#visit_in_type_parameter_scope venv (type_definition_kind def)
+                entity
+                (fun entity ->
                   self#visit_defining_entity venv entity;
                   self#visit_definition_kind venv kind))
       (* general case, just recurse *)

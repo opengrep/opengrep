@@ -54,5 +54,6 @@ let class_in_scope_in_its_definition = true
 
 (* a template parameter is in scope in the whole template declaration
    ([basic.scope.temp]) *)
-let attribute_in_type_parameter_scope (_ : AST_generic.attribute) : bool =
+let attribute_in_type_parameter_scope (_ : Lang_namespaces.definition_kind)
+    (_ : AST_generic.attribute) : bool =
   true

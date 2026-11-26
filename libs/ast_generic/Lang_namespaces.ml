@@ -62,10 +62,11 @@ module type NAMESPACES = sig
      definition; otherwise it binds once its definition is visited. *)
   val class_in_scope_in_its_definition : bool
 
-  (* Whether an attribute of a definition (an annotation, a decorator, or a
-     clause that the generic AST carries as an attribute) is in the scope of
-     the type parameters of the definition. *)
-  val attribute_in_type_parameter_scope : AST_generic.attribute -> bool
+  (* Whether an attribute of a definition of the given kind (an annotation, a
+     decorator, or a clause that the generic AST carries as an attribute) is
+     in the scope of the type parameters of the definition. *)
+  val attribute_in_type_parameter_scope :
+    definition_kind -> AST_generic.attribute -> bool
 end
 
 (* A single namespace for every definition. *)
@@ -78,7 +79,8 @@ module Single : NAMESPACES = struct
   let searched_by (_ : use_position) : t list list = [ [ Value ] ]
   let class_rebinds_import = Every_scope
   let class_in_scope_in_its_definition = true
-  let attribute_in_type_parameter_scope (_ : AST_generic.attribute) : bool =
+  let attribute_in_type_parameter_scope (_ : definition_kind)
+      (_ : AST_generic.attribute) : bool =
     true
 end
 

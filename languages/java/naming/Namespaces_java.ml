@@ -52,8 +52,8 @@ let class_in_scope_in_its_definition = true
 (* an annotation is a modifier, which the scope of the type parameters of its
    declaration excludes, while the scope of a method's type parameters covers
    its throws clause, which the generic AST carries as an attribute (JLS 6.3) *)
-let attribute_in_type_parameter_scope (attribute : AST_generic.attribute) :
-    bool =
+let attribute_in_type_parameter_scope (_ : Lang_namespaces.definition_kind)
+    (attribute : AST_generic.attribute) : bool =
   match attribute with
   | AST_generic.NamedAttr _ -> false
   | AST_generic.KeywordAttr _

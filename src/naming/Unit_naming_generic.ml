@@ -696,6 +696,24 @@ let tests parse_program =
             "the definitions of the uses of T" [ 1; 4; 1; 10 ]
             (resolutions_of_name ast "T" @ type_resolutions_of_name ast "T"
             |> List.map definition_line));
+      t "csharp attributes of a type are outside its type parameters, those \
+         of a method inside" (fun () ->
+          let file =
+            Fpath.v
+              (Filename.concat tests_path
+                 "naming/csharp/attribute_and_type_parameter.cs")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Csharp ast;
+          (* the [nameof] in the attribute of [M] refers to the type parameter
+             of [M] (line 10); among the uses in types, the [typeof] in the
+             attribute of [C] refers to the class (line 1), the type of the
+             field of [C] to its type parameter (line 4), the type of the
+             parameter of [M] to the type parameter of [M] *)
+          Alcotest.(check (list int))
+            "the definitions of the uses of T" [ 10; 1; 4; 10 ]
+            (resolutions_of_name ast "T" @ type_resolutions_of_name ast "T"
+            |> List.map definition_line));
       t "cpp template parameters are in scope in an out-of-class member and \
          in attributes" (fun () ->
           let file =
