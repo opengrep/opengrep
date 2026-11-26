@@ -531,14 +531,9 @@ and type_parameters (env : env) (v : type_parameters) : G.type_parameters =
 and type_parameter (env : env) (v : type_parameter) : G.type_parameter =
   let classic (id : name) (bound : type_ option) (default : type_ option) :
       G.type_parameter_classic =
-    {
-      G.tp_id = name env id;
-      tp_attrs = [];
-      tp_bounds = bound |> Option.to_list |> list (type_ env);
-      tp_default = option (type_ env) default;
-      tp_variance = None;
-      tp_info = G.empty_id_info ();
-    }
+    G.tparam_classic_of_id (name env id)
+      ~tp_bounds:(bound |> Option.to_list |> list (type_ env))
+      ?tp_default:(option (type_ env) default)
   in
   match v with
   | TypeVar (id, bound, default) -> G.TP (classic id bound default)

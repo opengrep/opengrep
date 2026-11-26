@@ -2669,16 +2669,7 @@ and type_parameter (env : env) ((v1, v2, v3, v4) : CST.type_parameter) :
         v2)
       v4
   in
-  let tp_default = None in
-  TP
-    {
-      G.tp_id;
-      tp_attrs;
-      tp_bounds;
-      tp_variance;
-      tp_default;
-      tp_info = G.empty_id_info ();
-    }
+  G.tparam_of_id tp_id ~tp_attrs ~tp_bounds ?tp_variance
 
 and type_parameters (env : env) ((v1, v2, v3, v4, v5) : CST.type_parameters) :
     G.type_parameters =

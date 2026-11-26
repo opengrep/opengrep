@@ -2710,15 +2710,7 @@ and map_type_parameter (env : env) ((v1, v2, v3, v4) : CST.type_parameter) :
     | Some x -> [ map_type_bound env x ]
     | None -> []
   in
-  TP
-    {
-      tp_id;
-      tp_attrs;
-      tp_bounds;
-      tp_default = None;
-      tp_variance = None;
-      tp_info = G.empty_id_info ();
-    }
+  G.tparam_of_id tp_id ~tp_attrs ~tp_bounds
 
 and map_type_parameters (env : env) ((v1, v2, v3, v4) : CST.type_parameters) :
     type_parameters =

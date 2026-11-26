@@ -2588,17 +2588,19 @@ let ty_builtin id = TyN (Id (id, empty_id_info ())) |> t
 (* ------------------------------------------------------------------------- *)
 (* Type parameters *)
 (* ------------------------------------------------------------------------- *)
-let tparam_of_id ?(tp_attrs = []) ?tp_variance ?(tp_bounds = []) ?tp_default
-    tp_id =
-  TP
-    {
-      tp_id;
-      tp_attrs;
-      tp_variance;
-      tp_bounds;
-      tp_default;
-      tp_info = empty_id_info ();
-    }
+let tparam_classic_of_id ?(tp_attrs = []) ?tp_variance ?(tp_bounds = [])
+    ?tp_default tp_id : type_parameter_classic =
+  {
+    tp_id;
+    tp_attrs;
+    tp_variance;
+    tp_bounds;
+    tp_default;
+    tp_info = empty_id_info ();
+  }
+
+let tparam_of_id ?tp_attrs ?tp_variance ?tp_bounds ?tp_default tp_id =
+  TP (tparam_classic_of_id ?tp_attrs ?tp_variance ?tp_bounds ?tp_default tp_id)
 
 (* ------------------------------------------------------------------------- *)
 (* Statements *)

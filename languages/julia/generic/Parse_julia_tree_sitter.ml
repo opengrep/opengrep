@@ -1752,15 +1752,7 @@ and map_named_field_type_parameter (env : env) ((v1, v2, v3) : CST.named_field)
   in
   let _v2 = (* "=" *) token env v2 in
   let v3 = map_anon_choice_exp_91c2553_exp env v3 in
-  TP
-    {
-      tp_id = v1;
-      tp_attrs = [];
-      tp_bounds = [];
-      tp_default = Some (TyExpr v3 |> G.t);
-      tp_variance = None;
-      tp_info = G.empty_id_info ();
-    }
+  G.tparam_of_id v1 ~tp_default:(TyExpr v3 |> G.t)
 
 and map_named_field (env : env) ((v1, v2, v3) : CST.named_field) =
   let v1 = map_anon_choice_id_00cc266 env v1 in

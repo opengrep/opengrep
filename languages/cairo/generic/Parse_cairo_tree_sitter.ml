@@ -549,41 +549,19 @@ and map_attributes (env : env) (x : CST.attribute_list list) : G.attribute list
 and map_type_parameters (env : env) (x : CST.type_parameter_list) :
     G.type_parameters =
   let map_type_name (x : CST.name) : G.type_parameter =
-    G.TP
-      {
-        tp_id = map_name env x;
-        tp_bounds = [];
-        tp_default = None;
-        tp_attrs = [];
-        tp_variance = None;
-        tp_info = G.empty_id_info ();
-      }
+    G.tparam_of_id (map_name env x)
   in
 
   let map_const_type (x : CST.type_const_declaration) : G.type_parameter =
     let const, name, _, ttype = x in
-    G.TP
-      {
-        tp_id = map_name env name;
-        tp_bounds = [ map_type env ttype ];
-        tp_default = None;
-        tp_attrs = [ G.KeywordAttr (G.Const, token env const) ];
-        tp_variance = None;
-        tp_info = G.empty_id_info ();
-      }
+    G.tparam_of_id (map_name env name)
+      ~tp_bounds:[ map_type env ttype ]
+      ~tp_attrs:[ G.KeywordAttr (G.Const, token env const) ]
   in
 
   let map_impl_type (x : CST.type_impl_declaration) : G.type_parameter =
     let _, name, _, ttype = x in
-    G.TP
-      {
-        tp_id = map_name env name;
-        tp_bounds = [ map_type env ttype ];
-        tp_default = None;
-        tp_attrs = [];
-        tp_variance = None;
-        tp_info = G.empty_id_info ();
-      }
+    G.tparam_of_id (map_name env name) ~tp_bounds:[ map_type env ttype ]
   in
 
   let map_type_parameter (x : CST.type_parameter_declaration) : G.type_parameter
