@@ -25,7 +25,7 @@ earlier ones.
 | 1 | [01-architecture.md](01-architecture.md) | The end-to-end pipeline.  How an `--enable-interfile` run goes from a project root to a list of findings. |
 | 2 | [02-call-graph.md](02-call-graph.md) | **projidx** — how the project-wide call graph is built from source.  Discovery, the `Type_state` lattice, the per-file resolver, dispatch edges. |
 | 3 | [03-dispatch.md](03-dispatch.md) | **Interfile_dispatch** — how the taint engine consumes the call graph: relevant subgraph, SCC signature fixpoint, the shared signature database, FBDecl dispatch merge. |
-| 4 | [04-language-quirks.md](04-language-quirks.md) | Per-language hooks: Python `__init__`, Go interface embedding, Ruby `attr_reader` / `include`, TypeScript `tsconfig`, Rust `impl`. |
+| 4 | [04-language-quirks.md](04-language-quirks.md) | The fields of `Index_lang_rules.t` and how each language sets them: Python, Go, Ruby, TypeScript/JavaScript, Rust, PHP, Java/Kotlin, C#, C++, C, Clojure, Solidity, Dart, Bash, Cairo, Move, Circom, Hack, QL, R and OCaml, then the parent class lookup and the HOF callback edges common to all languages. |
 | 5 | [05-cli-and-tools.md](05-cli-and-tools.md) | User-facing CLI surface: `--enable-interfile`, `opengrep-interfile-graph`, `opengrep show dump-interfile-graph`. |
 | 6 | [06-subtleties.md](06-subtleties.md) | Subtle correctness and performance situations the code handles.  Read this **after** the architecture chapters — it presupposes the vocabulary. |
 
