@@ -269,7 +269,7 @@ let own_definitions_of_file
             | _ -> [])))
     own_funcs
 
-let own_alias_bindings
+let alias_bindings ~(binds : AST_generic.entity -> bool)
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(fi_file_str : string) : positioned_binding list =
   Option.value (Hashtbl.find_opt file_funcs_index fi_file_str) ~default:[]
@@ -277,6 +277,7 @@ let own_alias_bindings
        match
          (func.Func_info.entity, List_.init_and_last_opt func.Func_info.fn_id)
        with
+       | Some (ent : AST_generic.entity), _ when not (binds ent) -> []
        | Some (ent : AST_generic.entity),
          Some ((parent_path : IL.name option list),
                Some (bare_name : IL.name)) -> (
@@ -293,6 +294,27 @@ let own_alias_bindings
          | Some _
          | None -> [])
        | _ -> [])
+
+let own_alias_bindings
+    ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
+    ~(fi_file_str : string) : positioned_binding list =
+  alias_bindings ~binds:(fun (_ : AST_generic.entity) -> true)
+    ~file_funcs_index ~fi_file_str
+
+let assigned_function_bindings ~(cfg : Index_lang_rules.t)
+    ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
+    ~(fi_file_str : string) : positioned_binding list =
+  if not cfg.Index_lang_rules.assigned_function_defines_identifier then []
+  else
+    alias_bindings
+      ~binds:(fun (ent : AST_generic.entity) ->
+        match ent.AST_generic.name with
+        | AST_generic.EN (AST_generic.Id _) -> true
+        | AST_generic.EN _
+        | AST_generic.EDynamic _
+        | AST_generic.EPattern _
+        | AST_generic.OtherEntity _ -> false)
+      ~file_funcs_index ~fi_file_str
 
 let bindings_of_attributes ~(pos : Pos.t option)
     ~(keep : string -> Func_lookup.module_attribute -> bool)

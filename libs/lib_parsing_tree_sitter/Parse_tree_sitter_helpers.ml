@@ -100,6 +100,19 @@ let str env (tok : Tree_sitter_run.Token.t) =
   let _, s = tok in
   (s, token env tok)
 
+let left_strip_space ((s, t) : string * Tok.t) : string * Tok.t =
+  let rec leading_spaces (i : int) : int =
+    if i < String.length s && Char.equal s.[i] ' ' then leading_spaces (i + 1)
+    else i
+  in
+  match leading_spaces 0 with
+  | 0 -> (s, t)
+  | spaces -> (
+      let name = String.sub s spaces (String.length s - spaces) in
+      match Tok.loc_of_tok t with
+      | Ok _ -> (name, snd (Tok.split_tok_at_bytepos spaces t))
+      | Error _ -> (name, t))
+
 (* Tree_sitter_run.Loc has no comparison of its own. *)
 let compare_pos (a : Tree_sitter_run.Loc.pos) (b : Tree_sitter_run.Loc.pos) =
   match Int.compare a.row b.row with

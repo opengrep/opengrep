@@ -189,33 +189,32 @@ let rec map_aritylesspredicateexpr (env : env)
   let id = map_literalid env v2 in
   match v1 with
   | Some (v1, v2) ->
-      let v1 = map_moduleexpr ~last:(id, None) env v1 in
-      let v2 = (* "::" *) token env v2 in
-      v1
+      let v1 = map_module_path env v1 in
+      let _v2 = (* "::" *) token env v2 in
+      { name_last = (id, None); name_middle = v1 }
   | None -> name_of_id id
 
-and map_moduleexpr ?last (env : env) (x : CST.moduleexpr) : qualified_info =
+and map_moduleexpr (env : env) (x : CST.moduleexpr) : qualified_info =
+  match List.rev (map_module_path env x) with
+  | last :: rev_middle ->
+      { name_last = last; name_middle = List.rev rev_middle }
+  | [] -> raise Common.Impossible
+
+(* The segments of a module expression, outermost first. *)
+and map_module_path (env : env) (x : CST.moduleexpr) :
+    (ident * type_arguments option) list =
   match x with
-  | `Simp x -> (
-      let id = map_modulename env x in
-      match last with
-      | None -> name_of_id id
-      | Some (id, tyargs) ->
-          { name_last = (id, tyargs); name_middle = [ (id, None) ] })
-  | `Modu x -> { name_last = map_moduleinstantiation env x; name_middle = [] }
-  | `Modu_COLONCOLON_choice_simp (v1, v2, v3) -> (
-      (* doing this first so we can pass it back down to map_moduleexpr*)
+  | `Simp x -> [ (map_modulename env x, None) ]
+  | `Modu x -> [ map_moduleinstantiation env x ]
+  | `Modu_COLONCOLON_choice_simp (v1, v2, v3) ->
+      let v1 = map_module_path env v1 in
+      let _v2 = (* "::" *) token env v2 in
       let v3 =
         match v3 with
         | `Simp x -> (map_modulename env x, None)
         | `Modu x -> map_moduleinstantiation env x
       in
-      let v1 = map_moduleexpr ~last:v3 env v1 in
-      let _v2 = (* "::" *) token env v2 in
-      match last with
-      | None -> v1
-      | Some (id, tyargs) ->
-          { v1 with name_middle = (id, tyargs) :: v1.name_middle })
+      v1 @ [ v3 ]
 
 and map_moduleinstantiation (env : env)
     ((v1, v2, v3, v4, v5) : CST.moduleinstantiation) :
@@ -255,9 +254,9 @@ and map_typeexpr (env : env) (x : CST.typeexpr) : name =
       let id = map_classname env v2 in
       match v1 with
       | Some (v1, v2) ->
-          let v1 = map_moduleexpr ~last:(id, None) env v1 in
-          let v2 = (* "::" *) token env v2 in
-          IdQualified v1
+          let v1 = map_module_path env v1 in
+          let _v2 = (* "::" *) token env v2 in
+          IdQualified { name_last = (id, None); name_middle = v1 }
       | None -> Id id)
   | `Dbtype tok -> Id (str env tok)
   | `Prim x -> Id (map_primitivetype env x)

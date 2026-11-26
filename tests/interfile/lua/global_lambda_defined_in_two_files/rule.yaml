@@ -1,0 +1,12 @@
+rules:
+  - id: global-lambda-defined-in-two-files
+    languages: [lua]
+    message: Tainted data reaches a global function that two files define
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -94,7 +94,7 @@ val rules_run_per_file_without_enable_interfile :
 
 (* The languages of [lang_jobs] that have a target and a taint rule that
    runs the cross-function analysis, but for which that analysis is not
-   supported (Lang_config.supports_intrafile). The rules are those of
+   fully supported (Lang_config.supports_intrafile). The rules are those of
    [apply_taint_flags]. *)
 val intrafile_unsupported_languages : conf -> Lang_job.t list -> Lang.t list
 

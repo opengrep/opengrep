@@ -52,6 +52,9 @@ let ident x = x
 
 let rec name = function
   | Id id -> G.Id (ident id, G.empty_id_info ())
+  (* A path of one segment without type arguments is a plain identifier. *)
+  | IdQualified { name_last = v1, None; name_middle = [] } ->
+      G.Id (ident v1, G.empty_id_info ())
   | IdQualified x -> G.IdQualified (qualified_info x)
 
 and qualified_info { name_last = v1, v2; name_middle } =

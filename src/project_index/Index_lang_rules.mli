@@ -50,6 +50,8 @@ type reexport_source =
 type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
+  (* The import binds every top-level name of the module (QL [import M]). *)
+  | Every_name_binds
 
 (* Which members of a class a bare name in one of its methods refers to. *)
 type method_member_scope =
@@ -77,6 +79,9 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* A specifier without a leading dot refers to a file relative to the
+     importing file before one on the library paths (Circom [include]). *)
+  bare_specifiers_relative_first : bool;
   (* The specifiers of the files that the [part] directives of a file add to
      its library (Dart [part 'x.dart';]). *)
   library_parts_of_ast : G.program -> string list;
@@ -93,6 +98,12 @@ type t = {
      bind its parent, the last one binds it (Python). Elsewhere two imports
      that bind the name to different classes bind it through neither. *)
   imports_bind_in_statement_order : bool;
+  (* The manifest of a crate whose [package] name heads the module path of
+     its files (Rust's [Cargo.toml], Cairo's [Scarb.toml]). *)
+  crate_manifest : string option;
+  (* The stems of the files under [src] that are the root module of a crate
+     (Rust's [lib.rs] and [main.rs], Scarb's [lib.cairo]). *)
+  crate_root_stems : string list;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -117,6 +128,10 @@ type t = {
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;
+  (* Assigning a function value to an identifier ([f <- function(x) ..])
+     defines the function under that identifier in the scope of the
+     assignment, in the per-file and per-project scopes (R). *)
+  assigned_function_defines_identifier : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate

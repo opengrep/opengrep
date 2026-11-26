@@ -1,0 +1,12 @@
+rules:
+  - id: main-file-is-a-module
+    languages: [cairo]
+    message: Tainted data reaches a function of the module in src/main.cairo
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1152,10 +1152,13 @@ let run_pipeline (caps : < Cap.fork >)
     else Go_modules.empty
   in
   let rust_crates =
-    if Lang.equal lang Lang.Rust
-    then Rust_crates.discover ~project_root:project_root_abs
-           (List.map absolutize files)
-    else Rust_crates.empty
+    match cfg.Index_lang_rules.crate_manifest with
+    | Some (manifest_name : string) ->
+      Rust_crates.discover ~manifest_name
+        ~root_stems:cfg.Index_lang_rules.crate_root_stems
+        ~project_root:project_root_abs
+        (List.map absolutize files)
+    | None -> Rust_crates.empty
   in
   let resolution =
     if cfg.Index_lang_rules.specifiers_name_files then

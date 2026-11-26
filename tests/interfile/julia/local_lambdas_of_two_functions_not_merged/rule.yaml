@@ -1,0 +1,12 @@
+rules:
+  - id: local-lambdas-of-two-functions-not-merged
+    languages: [julia]
+    message: Tainted data reaches a local function of another function definition
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

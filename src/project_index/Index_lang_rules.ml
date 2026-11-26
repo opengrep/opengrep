@@ -48,6 +48,8 @@ type reexport_source =
 type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
+  (* The import binds every top-level name of the module (QL [import M]). *)
+  | Every_name_binds
 
 (* Which members of a class a bare name in one of its methods refers to. *)
 type method_member_scope =
@@ -75,6 +77,9 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* A specifier without a leading dot refers to a file relative to the
+     importing file before one on the library paths (Circom [include]). *)
+  bare_specifiers_relative_first : bool;
   (* The specifiers of the files that the [part] directives of a file add to
      its library (Dart [part 'x.dart';]). *)
   library_parts_of_ast : G.program -> string list;
@@ -91,6 +96,12 @@ type t = {
      bind its parent, the last one binds it (Python). Elsewhere two imports
      that bind the name to different classes bind it through neither. *)
   imports_bind_in_statement_order : bool;
+  (* The manifest of a crate whose [package] name heads the module path of
+     its files (Rust's [Cargo.toml], Cairo's [Scarb.toml]). *)
+  crate_manifest : string option;
+  (* The stems of the files under [src] that are the root module of a crate
+     (Rust's [lib.rs] and [main.rs], Scarb's [lib.cairo]). *)
+  crate_root_stems : string list;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -115,6 +126,10 @@ type t = {
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;
+  (* Assigning a function value to an identifier ([f <- function(x) ..])
+     defines the function under that identifier in the scope of the
+     assignment, in the per-file and per-project scopes (R). *)
+  assigned_function_defines_identifier : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
@@ -346,11 +361,14 @@ let default : t = {
   normalize_import_specifier = (fun s -> s);
   specifiers_name_files = false;
   specifiers_are_uris = false;
+  bare_specifiers_relative_first = false;
   library_parts_of_ast = (fun _ -> []);
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
   path_import_binds_all_names = false;
   wildcard_import_omits_underscore_names = true;
   imports_bind_in_statement_order = false;
+  crate_manifest = None;
+  crate_root_stems = [];
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -362,6 +380,7 @@ let default : t = {
   has_reexports = false;
   reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = true;
+  assigned_function_defines_identifier = false;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
   superclass_position = Superclass_before_mixins;
@@ -693,6 +712,7 @@ let php_class_body_extra_parents (cdef : G.class_definition)
       | _ -> None)
     cdef.G.cmixins
 
+(* [use A\B\C;] binds [C], in PHP and in Hack. *)
 let php : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
@@ -703,6 +723,7 @@ let php : t = { default with
   unqualified_scope = `Per_namespace;
   module_path_from_ast = namespace_decl_or_global;
   class_body_extra_parents = php_class_body_extra_parents;
+  unaliased_import_binds = Last_segment_binds;
 }
 
 (* Scala [package a.b] (and nested [package a { package b {..} }]) parse to
@@ -739,12 +760,23 @@ let rust_relative_module_names : (string * relative_module) list =
 let rust : t = { default with
   class_def_reshape = Visit_function_defs.class_scope_of_definition;
   unqualified_scope = `Per_crate;
+  crate_manifest = Some "Cargo.toml";
+  crate_root_stems = [ "lib"; "main" ];
   relative_module_names = rust_relative_module_names;
   import_head_may_be_own_module = true;
   has_reexports = true;
   reexport_source = Reexports_from_public_directives;
   walks_inheritance = true;
   parent_resolution = Parent_in_own_scope;
+}
+
+(* Cairo 1 has Rust's modules, [use] paths and [impl] blocks; a Scarb
+   package is its crate. [use a::b::c;] binds [c]. *)
+let cairo : t = { rust with
+  crate_manifest = Some "Scarb.toml";
+  crate_root_stems = [ "lib" ];
+  unaliased_import_binds = Last_segment_binds;
+  wildcard_import_omits_underscore_names = false;
 }
 
 (* Package-scoped languages: a type/class lives in a package, resolved by
@@ -890,12 +922,49 @@ let julia : t = { default with
   unqualified_scope = `Per_project;
 }
 
+(* Move: a module ([module 0x1::m { .. }]) is a namespace whose functions
+   call each other by bare name, and [use 0x1::m;] binds [m]. *)
+let module_scoped : t = { elixir with
+  wildcard_import_omits_underscore_names = false;
+}
+
+(* A compilation unit is a module whose identifier is its file's basename,
+   capitalised, in scope in every other file of the project ([A.f] for
+   [dir/a.ml]). *)
+let ocaml : t = { default with
+  rewrite_module_path =
+    (fun (path : string) -> String.capitalize_ascii (Filename.basename path));
+  wildcard_import_omits_underscore_names = false;
+}
+
+(* The files of an R package share one namespace; a function is a lambda
+   assigned to a name. *)
+let r : t = { default with
+  unqualified_scope = `Per_project;
+  assigned_function_defines_identifier = true;
+  wildcard_import_omits_underscore_names = false;
+}
+
+(* [include "path";] binds every template and function of the file. *)
+let circom : t = { default with
+  specifiers_name_files = true;
+  bare_specifiers_relative_first = true;
+  wildcard_import_omits_underscore_names = false;
+}
+
 let solidity : t = { default with
   walks_inheritance = true;
   method_member_scope = Members_in_class_scope;
   bases_listed_most_base_first = true;
   specifiers_name_files = true;
   path_import_binds_all_names = true;
+  wildcard_import_omits_underscore_names = false;
+}
+
+(* [import M] without an alias brings every name that [M] declares into
+   scope; [import M as N] binds [N] to [M]. *)
+let ql : t = { default with
+  unaliased_import_binds = Every_name_binds;
   wildcard_import_omits_underscore_names = false;
 }
 
@@ -953,7 +1022,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Ruby -> ruby
   | Lang.Go -> go
   | Lang.Ts | Lang.Js -> typescript
-  | Lang.Php -> php
+  | Lang.Php | Lang.Hack -> php
   | Lang.Rust -> rust
   | Lang.Java -> java
   | Lang.Kotlin -> kotlin
@@ -971,6 +1040,12 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Crystal -> crystal
   | Lang.Scala -> scala
   | Lang.Solidity -> solidity
+  | Lang.Cairo -> cairo
+  | Lang.Circom -> circom
+  | Lang.Ocaml -> ocaml
+  | Lang.R -> r
+  | Lang.Ql -> ql
+  | Lang.Move_on_aptos | Lang.Move_on_sui -> module_scoped
   | _ -> default
 
 let top_level_scope_is_project (cfg : t) : bool =

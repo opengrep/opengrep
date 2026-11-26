@@ -84,7 +84,17 @@ val position_of_tok : Tok.t -> Pos.t option
    name. *)
 val overload_sets : positioned_binding list -> positioned_binding list
 
+(* The names that lambdas of the file are assigned to. *)
 val own_alias_bindings :
+  file_funcs_index:(string, Func_info.t list) Hashtbl.t ->
+  fi_file_str:string ->
+  positioned_binding list
+
+(* Where [assigned_function_defines_identifier] holds, the identifiers that
+   lambdas of the file are assigned to; an assignment to an attribute or an
+   index target defines nothing. *)
+val assigned_function_bindings :
+  cfg:Index_lang_rules.t ->
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->
   fi_file_str:string ->
   positioned_binding list

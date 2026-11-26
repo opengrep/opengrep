@@ -1,4 +1,5 @@
 val build :
+  cfg:Index_lang_rules.t ->
   classes_by_file:Types.class_info list Common.SMap.t ->
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->

@@ -1,0 +1,10 @@
+rules:
+- id: solidity-pragma-version-metavar
+  patterns:
+    - pattern: pragma solidity >= $VER;
+    - metavariable-regex:
+        metavariable: $VER
+        regex: ^0\.8\.
+  message: The minimum compiler version is $VER
+  severity: INFO
+  languages: [solidity]

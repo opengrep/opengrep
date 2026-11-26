@@ -506,6 +506,17 @@ let key_offset_of_pattern (key_pat : G.pattern) : offset option =
 (* lvalue *)
 (*****************************************************************************)
 
+(* Hack keeps the member [m] of [e->m] as an expression, as it keeps a member
+   held in a variable ([e->$m]); a Hack variable begins with [$], so an
+   identifier that does not is the member itself. *)
+let member_of_dynamic_field (lang : Lang.t) (member : G.expr) :
+    (G.ident * G.id_info) option =
+  match (lang, member.G.e) with
+  | Lang.Hack, G.N (G.Id (((name : string), _) as id, id_info))
+    when not (String.starts_with ~prefix:"$" name) ->
+      Some (id, id_info)
+  | _ -> None
+
 let rec lval env eorig : stmts * lval =
   match eorig.G.e with
   | G.N n -> ([], name env n)
@@ -517,9 +528,12 @@ let rec lval env eorig : stmts * lval =
         | G.FN name ->
             let ss, attr = expr env (G.N name |> G.e) in
             (ss, Index attr)
-        | G.FDynamic e2orig ->
-            let ss, attr = expr env e2orig in
-            (ss, Index attr)
+        | G.FDynamic e2orig -> (
+            match member_of_dynamic_field env.lang e2orig with
+            | Some (id, idinfo) -> ([], Dot (var_of_id_info id idinfo))
+            | None ->
+                let ss, attr = expr env e2orig in
+                (ss, Index attr))
       in
       let offset' = { o = offset'; oorig = SameAs eorig } in
       let ss_lv, lv1 = nested_lval env tok e1orig in

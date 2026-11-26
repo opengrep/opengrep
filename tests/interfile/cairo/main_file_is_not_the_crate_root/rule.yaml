@@ -1,0 +1,12 @@
+rules:
+  - id: main-file-is-not-the-crate-root
+    languages: [cairo]
+    message: Tainted data reaches a function of src/main.cairo through the crate root
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

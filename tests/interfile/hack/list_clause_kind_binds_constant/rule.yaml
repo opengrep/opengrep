@@ -1,0 +1,12 @@
+rules:
+  - id: test-hack-list-clause-kind
+    languages: [hack]
+    message: Tainted data reaches a sink through a function imported with use
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

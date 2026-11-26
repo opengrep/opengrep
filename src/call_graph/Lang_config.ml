@@ -661,8 +661,8 @@ let rest_collects_unbound_named_arguments (lang : Lang.t) : bool =
   | _ -> false
 
 (* The languages for which cross-function (intrafile) taint analysis is
-   supported; in the others a taint rule may report only the flows inside
-   one function.
+   fully supported; in the others it runs, but the call graph may miss calls
+   and the scan warns that results may be incomplete.
    coupling: the help text of --taint-intrafile in CLI_common *)
 let supports_intrafile (lang : Lang.t) : bool =
   match lang with

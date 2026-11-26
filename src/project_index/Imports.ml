@@ -218,7 +218,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
              | Index_lang_rules.Last_segment_binds ->
                (match List.rev segs with
                 | ((last_seg : string), _) :: _ -> last_seg
-                | [] -> first_seg))
+                | [] -> first_seg)
+             | Index_lang_rules.Every_name_binds -> wildcard_local)
            | G.DottedName [] -> ""
            (* Unaliased path import: dir-scoped langs (Go) use the path's last
               segment as local; other langs keep the raw specifier. *)

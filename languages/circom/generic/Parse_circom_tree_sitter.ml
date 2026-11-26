@@ -2,7 +2,6 @@ open Fpath_.Operators
 module CST = Tree_sitter_circom.CST
 module H = Parse_tree_sitter_helpers
 open AST_generic
-open Common
 module G = AST_generic
 module H2 = AST_generic_helpers
 
@@ -27,9 +26,6 @@ let _fb = Tok.unsafe_fake_bracket
 
 (* Disable warning against unused 'rec' *)
 [@@@warning "-39"]
-
-let left_strip_space (s, t) =
-  if s =~ "^ +\\(.*\\)$" then (Common.matched1 s, t) else (s, t)
 
 let map_signal_visability (env : env) (x : CST.signal_visability) =
   match x with
@@ -137,7 +133,7 @@ let map_parameter (env : env) (x : CST.parameter) =
   match x with
   | `Id v1 ->
       let name =
-        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
+        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> H.left_strip_space
       in
       let param =
         {
@@ -568,7 +564,7 @@ let map_array_definition (env : env) (xs : CST.array_definition) ty =
 let map_variable_initialization (env : env)
     ((v1, v2, v3, v4, v5) : CST.variable_initialization) ty =
   let id =
-    (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
+    (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> H.left_strip_space
   in
   let v2TODO =
     List_.map
@@ -762,7 +758,7 @@ let map_definition (env : env) (x : CST.definition) =
   | `Func_defi (v1, v2, v3, v4) ->
       let tfunc = (* "function" *) token env v1 in
       let id =
-        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v2 |> left_strip_space
+        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v2 |> H.left_strip_space
       in
       let params = map_parameter_list env v3 in
       let fbody = map_function_body env v4 in
@@ -779,7 +775,7 @@ let map_definition (env : env) (x : CST.definition) =
         | None -> []
       in
       let id =
-        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v3 |> left_strip_space
+        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v3 |> H.left_strip_space
       in
       let params = map_parameter_list env v4 in
       let fbody = map_template_body env v5 in

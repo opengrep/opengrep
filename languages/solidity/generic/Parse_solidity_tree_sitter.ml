@@ -58,10 +58,6 @@ let stmt_of_def_or_dir = function
   | Either_.Right3 dir -> DirectiveStmt dir |> G.s
   | Either_.Middle3 ellipsis_tok -> G.exprstmt (G.e (Ellipsis ellipsis_tok))
 
-(* TODO: we should also adjust the pos for 't' *)
-let left_strip_space (s, t) =
-  if s =~ "^ +\\(.*\\)$" then (Common.matched1 s, t) else (s, t)
-
 (*****************************************************************************)
 (* Boilerplate converter *)
 (*****************************************************************************)
@@ -402,7 +398,7 @@ let map_pragma_version_constraint (env : env)
   match v with
   | `Opt_soli_vers_comp_op_soli_vers (v1, v2) -> (
       let ver =
-        (* pattern \d+(.\d+(.\d+)?)? *) str env v2 |> left_strip_space
+        (* pattern \d+(.\d+(.\d+)?)? *) str env v2 |> H.left_strip_space
       in
       let e = G.L (G.String (fb ver)) |> G.e in
       match v1 with
@@ -414,7 +410,7 @@ let map_pragma_version_constraint (env : env)
       (* TODO? not sure why we need those left_strip_space here; the grammar seems
        * ok but in practice the identifier has a leading space
        *)
-      let id = str env v2 |> left_strip_space in
+      let id = str env v2 |> H.left_strip_space in
       let e = G.N (H2.name_of_id id) |> G.e in
       match v1 with
       | Some x ->

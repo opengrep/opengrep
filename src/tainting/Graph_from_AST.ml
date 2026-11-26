@@ -153,6 +153,18 @@ type fdef_edges = {
 (* Tables are per-fdef / per-file top-level, so callee shape + arity suffice. *)
 type callee_memo = (string * int, Func_info.fn_id option) Hashtbl.t
 
+(* The callee [e->m] with its member as an identifier ([G.FN]) where the IL
+   lowering takes a dynamic member for the member itself (Hack). *)
+let callee_with_member_identifier ~(lang : Lang.t) (callee : G.expr) : G.expr =
+  match callee.G.e with
+  | G.DotAccess (receiver, dot, G.FDynamic member) -> (
+      match AST_to_IL.member_of_dynamic_field lang member with
+      | Some ((id : G.ident), (id_info : G.id_info)) ->
+          { callee with
+            G.e = G.DotAccess (receiver, dot, G.FN (G.Id (id, id_info))) }
+      | None -> callee)
+  | _ -> callee
+
 let callee_bare_name_id_info (callee : G.expr) : G.id_info option =
   match callee.G.e with
   | G.N (G.Id (_, ii)) -> Some ii
@@ -310,6 +322,7 @@ let extract_calls ~(lang : Lang.t)
         match e.G.e with
         | G.Call ({ e = G.IdSpecial (G.Op _, _); _ }, _) -> acc
         | G.Call (callee, args) ->
+          let callee = callee_with_member_identifier ~lang callee in
           let (_, args_list, _) = args in
           let cbs = collect_callbacks e.G.e callee args in
           let callbacks = cbs @ callbacks in
@@ -451,6 +464,7 @@ let extract_toplevel_calls ~(lang : Lang.t)
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
     match e.G.e with
     | G.Call (callee, args) ->
+      let callee = callee_with_member_identifier ~lang callee in
       let call_arity =
         let _, args_list, _ = args in List.length args_list
       in

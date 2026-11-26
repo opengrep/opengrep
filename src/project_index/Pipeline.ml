@@ -220,17 +220,6 @@ let build_alias_to_module_qn
     if Int.equal (Hashtbl.length tbl) 0 then None else Some tbl
   | _ -> None
 
-let resolves_by_binding (lang : Lang.t) : bool =
-  match lang with
-  | Lang.Python | Lang.Python2 | Lang.Python3
-  | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
-  | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
-  | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala | Lang.Apex
-  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart | Lang.Julia | Lang.Crystal
-  | Lang.Solidity ->
-    true
-  | _ -> false
-
 let definition_of_target
     ~(definitions_by_qn : definition Common.SMap.t)
     ~(package : Names.Module_qn.t)
@@ -275,10 +264,7 @@ let build_scope_table
     ~(namespace_object_members :
         Scope_binding.positioned_binding list Common.SMap.t)
     (fi : file_info) : file_scope option =
-  if
-    not (resolves_by_binding lang)
-    || cfg.Index_lang_rules.is_stub_file fi.fi_file
-  then None
+  if cfg.Index_lang_rules.is_stub_file fi.fi_file then None
   else
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package ->
@@ -305,7 +291,7 @@ let build_scope_table
              module_aliases = Some module_aliases }
     | `Per_project ->
       Some { scope_table =
-               Scope_project.build ~classes_by_file ~class_parent_paths
+               Scope_project.build ~cfg ~classes_by_file ~class_parent_paths
                  ~file_funcs_index ~resolution_orders ~methods_by_class
                  ~module_object_by_module ~top_level_scope fi;
              bound_class_files = []; own_modules = [];
@@ -380,9 +366,11 @@ let build_scope_table
       Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
     in
     let own_bindings =
-      if Lang_config.overloads_by_type lang then
-        Scope_binding.overload_sets own_definitions
-      else own_definitions
+      (if Lang_config.overloads_by_type lang then
+         Scope_binding.overload_sets own_definitions
+       else own_definitions)
+      @ Scope_binding.assigned_function_bindings ~cfg ~file_funcs_index
+          ~fi_file_str
     in
     let own_classes =
       Scope_binding.own_class_bindings ~companion:Scope_binding.no_companion
