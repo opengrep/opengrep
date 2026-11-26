@@ -164,7 +164,8 @@ and pp_lval { base; rev_offset } =
       match off.o with
       | Dot name -> acc ^ "." ^ pp_name name
       | Index e -> Printf.sprintf "%s[%s]" acc (pp_exp e)
-      | Slice lo -> Printf.sprintf "%s[%d..]" acc lo)
+      | Slice lo -> Printf.sprintf "%s[%d..]" acc lo
+      | Append -> acc ^ "[]")
     base_str offsets
 
 and pp_composite ck exps =
@@ -249,7 +250,8 @@ let pp_exp_bounded ~(max : int) (e : exp) : string =
             emit "[";
             go e;
             emit "]"
-        | Slice lo -> emit (Printf.sprintf "[%d..]" lo))
+        | Slice lo -> emit (Printf.sprintf "[%d..]" lo)
+        | Append -> emit "[]")
       (List.rev rev_offset)
   and go_composite ck exps =
     let lb, rb =

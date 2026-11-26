@@ -1,0 +1,13 @@
+rules:
+  - id: php_named_argument
+    message: taint into the parameter that a named argument binds
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

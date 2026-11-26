@@ -208,7 +208,9 @@ match o.o with
     | _ -> Ostr s)
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
 | IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
-| IL.Index _ -> Oany
+| IL.Index _
+| IL.Append ->
+    Oany
 | IL.Slice n -> Oslice n
 
 let offset_of_rev_IL_offset lang ~rev_offset =

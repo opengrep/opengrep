@@ -339,6 +339,9 @@ and offset_kind =
    * engine collapses [Index k :: Slice n :: rest] to [Index (n+k) :: rest]
    * and [Slice b :: Slice a :: rest] to [Slice (a+b) :: rest]. *)
   | Slice of int
+  (* The element that a write such as PHP's '$a[] = e' adds after the last
+   * one, which no existing element is. *)
+  | Append
 
 (* transpile at some point? *)
 and var_special = This | Super | Self | Parent

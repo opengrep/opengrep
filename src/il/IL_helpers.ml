@@ -130,10 +130,13 @@ and compare_offset (o1 : offset) (o2 : offset) : int =
   | Dot n1, Dot n2 -> compare_name n1 n2
   | Index e1, Index e2 -> compare_exp e1 e2
   | Slice i1, Slice i2 -> Int.compare i1 i2
+  | Append, Append -> 0
   | Dot _, _ -> -1
   | _, Dot _ -> 1
   | Index _, _ -> -1
   | _, Index _ -> 1
+  | Slice _, _ -> -1
+  | _, Slice _ -> 1
 
 and compare_arg (a1 : exp argument) (a2 : exp argument) : int =
   match (a1, a2) with
@@ -203,6 +206,7 @@ and hash_offset (fuel : int) (o : offset) : int =
   | Dot n -> Stdlib.Hashtbl.hash (0, hash_name n)
   | Index e -> Stdlib.Hashtbl.hash (1, hash_exp_fuel (fuel - 1) e)
   | Slice i -> Stdlib.Hashtbl.hash (2, i)
+  | Append -> Stdlib.Hashtbl.hash 3
 
 let hash_exp (e : exp) : int = hash_exp_fuel 4 e
 
@@ -276,7 +280,9 @@ let offset_is_resolvable (off : IL.offset) : bool =
   | IL.Index { e = IL.Literal (AST_generic.Int _ | AST_generic.String _); _ }
     ->
       true
-  | IL.Index _ -> false
+  | IL.Index _
+  | IL.Append ->
+      false
   | IL.Slice _ -> true
 
 let param_index (params : IL.param list) (name : IL.name) : int option =
@@ -416,8 +422,10 @@ and lvals_in_lval lval =
       (fun offset ->
         match offset.o with
         | Index e -> lvals_of_exp e
-        | Dot _ -> []
-        | Slice _ -> [])
+        | Dot _
+        | Slice _
+        | Append ->
+            [])
       lval.rev_offset
   in
   base_lvals @ offset_lvals
@@ -465,7 +473,8 @@ let is_dots_offset offset =
          match o.o with
          | Dot _ -> true
          | Index _
-         | Slice _ ->
+         | Slice _
+         | Append ->
              false)
 
 let lval_of_instr_opt x =

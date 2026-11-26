@@ -1,0 +1,11 @@
+rules:
+  - id: taint-php-array-append
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: taint reaches the sink after an append to the array
+    languages:
+      - php
+    severity: WARNING

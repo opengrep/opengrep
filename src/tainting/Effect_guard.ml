@@ -485,7 +485,8 @@ let atom_has_frozen_fetch (params : IL.param list) (atom : IL.exp) : bool =
              match o.IL.o with
              | IL.Index e -> go e
              | IL.Dot _
-             | IL.Slice _ ->
+             | IL.Slice _
+             | IL.Append ->
                  false)
     in
     offset_exps_frozen
