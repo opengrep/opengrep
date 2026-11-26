@@ -87,7 +87,11 @@ let test_dfg_svalue ~parse_program file =
       method! visit_function_definition _ def =
         let fun_cfg = CFG_build.cfg_of_gfdef lang def in
         UCommon.pr2 "Constness";
-        let mapping = Dataflow_svalue.fixpoint lang fun_cfg in
+        let mapping =
+          Dataflow_svalue.fixpoint
+            ~analysed_in_place:(CFG_build.Function_orig_table.create 16)
+            lang fun_cfg
+        in
         Dataflow_svalue.update_svalue fun_cfg.cfg mapping;
         DataflowY.display_mapping fun_cfg.cfg mapping
           (Dataflow_var_env.env_to_str (Pretty_print_AST.svalue_to_string lang));

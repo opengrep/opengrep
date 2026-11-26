@@ -1,0 +1,8 @@
+rules:
+  - id: implicit-return-same-name-nested-defs
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      The last expression of each of two nested functions of one name is an
+      implicit return.
+    pattern: return foo($X)

@@ -627,32 +627,12 @@ let propagate_basic lang prog =
   ()
 [@@profiling] [@@trace_trace]
 
-let propagate_dataflow_one_function lang fun_cfg =
+let propagate_dataflow_one_function
+    ~(analysed_in_place : IL.fun_cfg CFG_build.Function_orig_table.t)
+    (lang : Lang.t) (fun_cfg : IL.fun_cfg) : unit =
   (* Exposed to help DeepSemgrep *)
-  let mapping = Dataflow_svalue.fixpoint lang fun_cfg in
+  let mapping = Dataflow_svalue.fixpoint ~analysed_in_place lang fun_cfg in
   Dataflow_svalue.update_svalue fun_cfg.cfg mapping
-
-(* Lambda CFGs by the AST function definition they are lowered from,
-   compared physically: the IL function definition carries it in [forig]. *)
-module Function_orig_table = Hashtbl.Make (struct
-  type t = G.function_definition
-
-  let equal = ( == )
-
-  (* From immutable parts only: constant propagation writes to the [id_info]
-     of the definitions while they are in the table. *)
-  let hash (fdef : t) : int =
-    let body_key =
-      match fdef.fbody with
-      | G.FBStmt { s = G.Block (open_tok, _, _); _ } -> Hashtbl.hash open_tok
-      | G.FBExpr _
-      | G.FBStmt _
-      | G.FBDecl _
-      | G.FBNothing ->
-          0
-    in
-    Hashtbl.hash (Hashtbl.hash (snd fdef.fkind), body_key)
-end)
 
 let propagate_dataflow lang ast =
   Log.debug (fun m -> m ~tags "Constant_propagation.propagate_dataflow program");
@@ -664,7 +644,10 @@ let propagate_dataflow lang ast =
       in
       (* Top-level function. No need to use CFG_build.cfg_of_gfdef here. *)
       let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-      propagate_dataflow_one_function lang IL.{ params = []; cfg; lambdas }
+      propagate_dataflow_one_function
+        ~analysed_in_place:(CFG_build.Function_orig_table.create 16)
+        lang
+        IL.{ params = []; cfg; lambdas }
   | _ ->
       (* We consider the top-level function the interior of a degenerate function,
          and simply run constant propagation on that.
@@ -678,32 +661,23 @@ let propagate_dataflow lang ast =
       let top = IL.{ params = []; cfg; lambdas } in
       (* A function is lowered once: a lambda gets the CFG that lowering its
          enclosing function or the top level built for it. *)
-      let lambda_cfgs : IL.fun_cfg Function_orig_table.t =
-        Function_orig_table.create 64
-      in
-      let rec add_lambda_cfgs (fun_cfg : IL.fun_cfg) : unit =
-        fun_cfg.cfg.graph#nodes#iter (fun ((_ : int), (node : IL.node)) ->
-            match node.n with
-            | NInstr { i = AssignAnon (lval, Lambda fdef); _ } -> (
-                match IL_helpers.lval_is_lambda fun_cfg.lambdas lval with
-                | Some (_name, lambda_cfg) ->
-                    Function_orig_table.replace lambda_cfgs fdef.forig
-                      lambda_cfg;
-                    add_lambda_cfgs lambda_cfg
-                | None -> ())
-            | _ -> ())
-      in
-      add_lambda_cfgs top;
+      let lambda_cfgs = CFG_build.Function_orig_table.create 64 in
+      CFG_build.add_lambda_cfgs lambda_cfgs top;
+      (* A function whose own CFG was analysed inside the code that encloses
+         it, from the environment at its definition, is not analysed again on
+         its own. The enclosing code comes first. *)
+      let analysed_in_place = CFG_build.Function_orig_table.create 64 in
+      propagate_dataflow_one_function ~analysed_in_place lang top;
       ast
-      |> Visit_function_defs.visit (fun _ent fdef ->
-             let fun_cfg =
-               match Function_orig_table.find_opt lambda_cfgs fdef with
-               | Some fun_cfg -> fun_cfg
-               | None ->
-                   let fun_cfg = CFG_build.cfg_of_gfdef lang fdef in
-                   add_lambda_cfgs fun_cfg;
-                   fun_cfg
-             in
-             propagate_dataflow_one_function lang fun_cfg);
-      propagate_dataflow_one_function lang top
+      |> Visit_function_defs.visit
+           (fun (_ : G.entity option) (fdef : G.function_definition) ->
+             let fun_cfg = CFG_build.cfg_of_gfdef_once lambda_cfgs lang fdef in
+             match
+               CFG_build.Function_orig_table.find_opt analysed_in_place fdef
+             with
+             | Some (analysed : IL.fun_cfg) when Common.phys_equal analysed fun_cfg ->
+                 ()
+             | Some _
+             | None ->
+                 propagate_dataflow_one_function ~analysed_in_place lang fun_cfg)
 [@@trace_trace]

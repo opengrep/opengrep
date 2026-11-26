@@ -456,3 +456,75 @@ and cfg_of_fdef fdef =
 let cfg_of_gfdef lang fdef =
   let fdef_il = AST_to_IL.function_definition lang fdef in
   cfg_of_fdef fdef_il
+
+(* Lambda CFGs by the AST function definition they are lowered from,
+   compared physically: the IL function definition carries it in [forig]. *)
+module Function_orig_table = Hashtbl.Make (struct
+  type t = AST_generic.function_definition
+
+  let equal = phys_equal
+
+  (* From immutable parts only: constant propagation writes to the [id_info]
+     of the definitions while they are in the table. *)
+  let hash (fdef : t) : int =
+    let body_key =
+      match fdef.fbody with
+      | AST_generic.FBStmt { s = AST_generic.Block (open_tok, _, _); _ } -> Hashtbl.hash open_tok
+      | AST_generic.FBExpr (body : AST_generic.expr) -> body.e_id
+      | AST_generic.FBStmt _
+      | AST_generic.FBDecl _
+      | AST_generic.FBNothing ->
+          0
+    in
+    Hashtbl.hash (Hashtbl.hash (snd fdef.fkind), body_key)
+end)
+
+(* A function's lambdas are kept by the variable they are assigned to, so
+   two definitions that assign one variable share the CFG of the later one:
+   a definition is recorded only when its variable is assigned one lambda. *)
+let rec add_lambda_cfgs (table : IL.fun_cfg Function_orig_table.t)
+    (fun_cfg : IL.fun_cfg) : unit =
+  let definitions : (IL.name * AST_generic.function_definition) list =
+    List.filter_map
+      (fun ((_ : int), (node : IL.node)) ->
+        match node.n with
+        | NInstr
+            { i = AssignAnon ({ base = Var name; rev_offset = [] }, Lambda fdef);
+              _ } ->
+            Some (name, fdef.forig)
+        | _ -> None)
+      fun_cfg.cfg.graph#nodes#tolist
+  in
+  let assigned_once (name : IL.name) : bool =
+    match
+      List.filter
+        (fun ((other : IL.name), (_ : AST_generic.function_definition)) ->
+          Int.equal (IL.compare_name name other) 0)
+        definitions
+    with
+    | [ _ ] -> true
+    | _ -> false
+  in
+  List.iter
+    (fun ((name : IL.name), (forig : AST_generic.function_definition)) ->
+      if assigned_once name then
+        Option.iter
+          (fun (lambda_cfg : IL.fun_cfg) ->
+            Function_orig_table.replace table forig lambda_cfg)
+          (IL.NameMap.find_opt name fun_cfg.lambdas))
+    definitions;
+  IL.NameMap.iter
+    (fun (_ : IL.name) (lambda_cfg : IL.fun_cfg) ->
+      add_lambda_cfgs table lambda_cfg)
+    fun_cfg.lambdas
+
+(* A lambda gets the CFG that lowering its enclosing function built for it,
+   when that CFG is its own. *)
+let cfg_of_gfdef_once (table : IL.fun_cfg Function_orig_table.t) (lang : Lang.t)
+    (fdef : AST_generic.function_definition) : IL.fun_cfg =
+  match Function_orig_table.find_opt table fdef with
+  | Some (fun_cfg : IL.fun_cfg) -> fun_cfg
+  | None ->
+      let fun_cfg = cfg_of_gfdef lang fdef in
+      add_lambda_cfgs table fun_cfg;
+      fun_cfg

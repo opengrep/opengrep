@@ -152,9 +152,27 @@ type scope_info = {
   enttype : type_ option;
 }
 
+(* The bindings of one namespace of a scope, by name, the most recent first:
+   a lookup reads only the bindings of its name. *)
+type entries = scope_info list Common.SMap.t
+
 (* A scope binds names per namespace of the language, by the namespace's hash
    (see [Lang_namespaces]): a lookup reads only the namespaces it searches. *)
-type scope = (namespace_hash * (string, scope_info) Assoc.t) list
+type scope = (namespace_hash * entries) list
+
+let add_entry (s : string) (resolved : scope_info) (entries : entries) : entries =
+  Common.SMap.update s
+    (fun (bound : scope_info list option) ->
+      Some (resolved :: Option.value bound ~default:[]))
+    entries
+
+(* The entries of an association list, where the first binding of a name is
+   the one a lookup finds. *)
+let entries_of_assoc (bindings : (string, scope_info) Assoc.t) : entries =
+  List.fold_right
+    (fun ((s : string), (resolved : scope_info)) (entries : entries) ->
+      add_entry s resolved entries)
+    bindings Common.SMap.empty
 
 type scopes = {
   global : scope ref;
@@ -184,15 +202,14 @@ let with_new_block_scope scopes f =
 let rec add_to_scope (ns : namespace_hash) (s : string) (resolved : scope_info)
     (scope : scope) : scope =
   match scope with
-  | [] -> [ (ns, [ (s, resolved) ]) ]
+  | [] -> [ (ns, add_entry s resolved Common.SMap.empty) ]
   | (entry_ns, entries) :: scope when Int.equal ns entry_ns ->
-      (entry_ns, (s, resolved) :: entries) :: scope
+      (entry_ns, add_entry s resolved entries) :: scope
   | namespace :: scope -> namespace :: add_to_scope ns s resolved scope
 
-let rec entries_of (ns : namespace_hash) (scope : scope) :
-    (string, scope_info) Assoc.t =
+let rec entries_of (ns : namespace_hash) (scope : scope) : entries =
   match scope with
-  | [] -> []
+  | [] -> Common.SMap.empty
   | (entry_ns, entries) :: scope ->
       if Int.equal ns entry_ns then entries else entries_of ns scope
 
@@ -217,13 +234,9 @@ let add_global_scope (ns : namespace_hash) (id : ident) (resolved : scope_info)
 let _add_ident_function_scope _id _resolved _scopes = raise Todo
 let untyped_ent name = { entname = name; enttype = None }
 
-let rec find_entry (s : string) (p : scope_info -> bool)
-    (entries : (string, scope_info) Assoc.t) : scope_info option =
-  match entries with
-  | [] -> None
-  | (entry_s, res) :: entries ->
-      if String.equal s entry_s && p res then Some res
-      else find_entry s p entries
+let find_entry (s : string) (p : scope_info -> bool) (entries : entries) :
+    scope_info option =
+  Option.bind (Common.SMap.find_opt s entries) (List.find_opt p)
 
 let find_in_scope_where (ns : namespace_hash) (s : string)
     (p : scope_info -> bool) (xs : scope) : scope_info option =
@@ -789,7 +802,7 @@ let params_of_parameters (env : env) (params : parameters) :
 (* the scope of a function's parameters *)
 let parameter_scope (env : env) (params : (string, scope_info) Assoc.t) : scope
     =
-  [ (variables env, params) ]
+  [ (variables env, entries_of_assoc params) ]
 
 let js_get_angular_constructor_args env attrs defs =
   let is_injectable =

@@ -357,8 +357,9 @@ let rec transfer :
     lang:Lang.t ->
     enter_env:G.svalue Var_env.t ->
     fun_cfg:F.fun_cfg ->
+    analysed_in_place:IL.fun_cfg CFG_build.Function_orig_table.t ->
     G.svalue Var_env.transfn =
- fun ~lang ~enter_env ~fun_cfg
+ fun ~lang ~enter_env ~fun_cfg ~analysed_in_place
      (* the transfer function to update the mapping at node index ni *)
        mapping ni ->
   let flow = fun_cfg.cfg in
@@ -466,18 +467,25 @@ let rec transfer :
             | None -> inp'
             | Some lvar -> VarMap.remove (IL.str_of_name lvar) inp'))
   in
-  let out' = do_lambdas lang fun_cfg.lambdas out' node in
+  let out' = do_lambdas ~analysed_in_place lang fun_cfg.lambdas out' node in
   { D.in_env = inp'; out_env = out' }
 
-and do_lambdas lang lambdas in_env node =
+and do_lambdas
+    ~(analysed_in_place : IL.fun_cfg CFG_build.Function_orig_table.t)
+    (lang : Lang.t) (lambdas : IL.lambdas_cfgs) (in_env : G.svalue Var_env.t)
+    (node : F.node) : G.svalue Var_env.t =
   (* In svalue-analysis we only need to visit lambdas at definition site,
    * we simply propagate svalues into the lambda's body, but whatever
    * happens inside the lambda is not visible outside it. *)
   match node.F.n with
-  | NInstr { i = AssignAnon (lval, Lambda _); _ } -> (
+  | NInstr { i = AssignAnon (lval, Lambda fdef); _ } -> (
       match LV.lval_is_lambda lambdas lval with
       | Some (_name, lambda_cfg) ->
-          let mapping = fixpoint_with_env lang in_env lambda_cfg in
+          CFG_build.Function_orig_table.replace analysed_in_place fdef.forig
+            lambda_cfg;
+          let mapping =
+            fixpoint_with_env ~analysed_in_place lang in_env lambda_cfg
+          in
           update_svalue lambda_cfg.cfg mapping;
           let lambda_env =
             mapping.(lambda_cfg.cfg.exit).Dataflow_core.out_env
@@ -510,13 +518,16 @@ and do_lambdas lang lambdas in_env node =
       | None -> in_env)
   | __else__ -> in_env
 
-and fixpoint_with_env lang enter_env fun_cfg =
+and fixpoint_with_env
+    ~(analysed_in_place : IL.fun_cfg CFG_build.Function_orig_table.t)
+    (lang : Lang.t) (enter_env : G.svalue Var_env.t) (fun_cfg : F.fun_cfg)
+    : mapping =
   let flow = fun_cfg.cfg in
   let mapping, status =
     DataflowX.fixpoint ~iteration:Dataflow_core.Weak_topological_order
       ~eq_env:(Var_env.eq_env Eval.eq)
       ~init:(DataflowX.new_node_array flow (Var_env.empty_inout ()))
-      ~trans:(transfer ~lang ~enter_env ~fun_cfg)
+      ~trans:(transfer ~lang ~enter_env ~fun_cfg ~analysed_in_place)
         (* svalue is a forward analysis! *)
       ~forward:true ~flow
   in
@@ -531,10 +542,14 @@ and fixpoint_with_env lang enter_env fun_cfg =
 (* Entry point *)
 (*****************************************************************************)
 
-and (fixpoint : Lang.t -> IL.fun_cfg -> mapping) =
- fun lang fun_cfg ->
+and (fixpoint :
+      analysed_in_place:IL.fun_cfg CFG_build.Function_orig_table.t ->
+      Lang.t ->
+      IL.fun_cfg ->
+      mapping) =
+ fun ~analysed_in_place lang fun_cfg ->
   let enter_env = VarMap.empty in
-  fixpoint_with_env lang enter_env fun_cfg
+  fixpoint_with_env ~analysed_in_place lang enter_env fun_cfg
 
 and update_svalue (flow : F.cfg) mapping =
   flow.graph#nodes#keys

@@ -96,25 +96,29 @@ let mark_implicit_return_nodes (cfg : IL.cfg) =
    *)
   mark_first_instr_ancestor cfg cfg.exit
 
-let mark_implicit_return_fdef lang ~tok fdef =
-  let fdef_il = AST_to_IL.function_definition lang fdef in
-  let fcfg, _flambdas = CFG_build.cfg_of_stmts ~tok fdef_il.fbody in
-  (* Lambdas are separately visited by 'mark_implicit_return',
-   * see 'LambdaKind' case. *)
-  mark_implicit_return_nodes fcfg
+(* Lambdas are separately visited by 'mark_implicit_return', see 'LambdaKind'
+   case; a lambda takes the CFG that lowering its enclosing function built
+   for it, and the table gives it up once it is marked. *)
+let mark_implicit_return_fdef
+    (lambda_cfgs : IL.fun_cfg CFG_build.Function_orig_table.t) (lang : Lang.t)
+    (fdef : function_definition) : unit =
+  mark_implicit_return_nodes
+    (CFG_build.cfg_of_gfdef_once lambda_cfgs lang fdef).cfg;
+  CFG_build.Function_orig_table.remove lambda_cfgs fdef
 
 let mark_implicit_return lang ast =
+  let lambda_cfgs = CFG_build.Function_orig_table.create 64 in
   ast
   |> Visit_function_defs.visit (fun _ent fdef ->
-         let fkind, tok = fdef.fkind in
+         let fkind, _tok = fdef.fkind in
          match fkind with
          | __any__ when lang_supports_implicit_return lang ->
-             mark_implicit_return_fdef lang ~tok fdef
+             mark_implicit_return_fdef lambda_cfgs lang fdef
          | LambdaKind ->
              (* Lambdas expressions tend to always support implicit returns,
               * even in languages that require explicit returns like Java.
               * An [Arrow] is not marked: a block body returns only what it
               * says, and an expression body comes from the parser as a
               * [Return] (JS, PHP). *)
-             mark_implicit_return_fdef lang ~tok fdef
+             mark_implicit_return_fdef lambda_cfgs lang fdef
          | __else__ -> ())

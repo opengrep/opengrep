@@ -8,7 +8,14 @@ val eq : AST_generic.svalue -> AST_generic.svalue -> bool
 val union : AST_generic.svalue -> AST_generic.svalue -> AST_generic.svalue
 *)
 
-val fixpoint : Lang.t -> IL.fun_cfg -> mapping
+(* Analyses a function and, where their definitions are reached, the lambdas
+   nested in it, each from the environment at its definition; each definition
+   reached is added to [analysed_in_place] with the CFG analysed for it. *)
+val fixpoint :
+  analysed_in_place:IL.fun_cfg CFG_build.Function_orig_table.t ->
+  Lang.t ->
+  IL.fun_cfg ->
+  mapping
 (** Flow-sensitive constant-propagation.
  * !Note that this assumes Naming_AST.resolve has been called before!
 *)
