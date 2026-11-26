@@ -209,6 +209,17 @@ let top_func () =
         let e = G.special spec [ G.N name |> G.e ] in
         let st = G.exprstmt e in
         G.F st
+    | EmbeddedGenericField (pointer, name, arguments) ->
+        let name = name_of_qualified_ident (qualified_ident name) in
+        let name = H.add_type_args_to_name name (type_arguments arguments) in
+        let instance = G.e (G.N name) in
+        let instance =
+          match pointer with
+          | None -> instance
+          | Some t -> G.e (G.DeRef (t, instance))
+        in
+        let spec = (G.Spread, unsafe_fake "...") in
+        G.F (G.exprstmt (G.special spec [ instance ]))
     | FieldEllipsis t -> G.field_ellipsis t
   and tag v =
     let attr = G.(E (e (L (String (fb v))))) in

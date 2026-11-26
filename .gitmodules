@@ -8,7 +8,7 @@ url = https://github.com/opengrep/semgrep-c-sharp
 
 [submodule "OSS/languages/go/tree-sitter/semgrep-go"]
 path = languages/go/tree-sitter/semgrep-go
-url = https://github.com/opengrep/semgrep-go
+	url = https://github.com/diegosempreboni/semgrep-go
 
 [submodule "OSS/languages/java/tree-sitter/semgrep-java"]
 path = languages/java/tree-sitter/semgrep-java
