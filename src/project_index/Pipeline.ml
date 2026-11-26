@@ -224,7 +224,8 @@ let resolves_by_binding (lang : Lang.t) : bool =
   | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
   | Lang.Js | Lang.Ts | Lang.Go | Lang.Ruby | Lang.Rust | Lang.C
   | Lang.Cpp | Lang.Elixir | Lang.Clojure | Lang.Scala | Lang.Apex
-  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart | Lang.Julia | Lang.Crystal ->
+  | Lang.Swift | Lang.Vb | Lang.Lua | Lang.Dart | Lang.Julia | Lang.Crystal
+  | Lang.Solidity ->
     true
   | _ -> false
 
@@ -385,6 +386,14 @@ let build_scope_table
         (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
            ~default:[])
     in
+    let member_bindings =
+      if cfg.Index_lang_rules.class_members_bind_in_methods then
+        Scope_package.member_bindings_of_classes ~resolution_orders
+          ~methods_by_class
+          (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
+             ~default:[])
+      else []
+    in
     let imported, bound_class_files =
       List.fold_left
         (fun ((imported : Scope_binding.positioned_binding list),
@@ -445,7 +454,8 @@ let build_scope_table
     Some { scope_table =
              Func_lookup.scope_table_of_map
                (Scope_binding.bindings_of_positioned
-                  (own_bindings @ own_classes @ List.rev imported));
+                  (own_bindings @ own_classes @ member_bindings
+                   @ List.rev imported));
            bound_class_files; own_modules = []; module_aliases = None }
 
 let narrow_methods_by_bound_files

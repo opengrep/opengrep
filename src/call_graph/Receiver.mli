@@ -33,3 +33,8 @@ val self_names : Lang.t -> string list
     is named by each method. *)
 
 val is_self_name : Lang.t -> string -> bool
+
+val is_super_name : Lang.t -> string -> bool
+(** Whether an identifier receiver refers to the next class along the
+    resolution order, for languages whose front end keeps [super] as an
+    identifier (Solidity). *)

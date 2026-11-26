@@ -250,6 +250,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       (match
          (module_name_of mn, Int.compare (String.length local) 0 > 0)
        with
+       | Some (qn : Names.Module_qn.t), _
+         when Option.is_none alias
+              && cfg.Index_lang_rules.path_import_binds_all_names
+              && (match mn with
+                  | G.FileName _ -> true
+                  | G.DottedName _ -> false) ->
+         (add ~binds ~alias ~hidden:[] ~tok st wildcard_local qn, hiding)
        | Some (qn : Names.Module_qn.t), true ->
          (add ~binds ~alias ~hidden:[] ~tok st local qn, hiding)
        | Some _, false

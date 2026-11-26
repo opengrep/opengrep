@@ -60,6 +60,9 @@ type t = {
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
   specifier_candidates : Fpath.t -> string list;
+  (* [import "path";] without an alias binds every top-level name of the
+     file (Solidity). *)
+  path_import_binds_all_names : bool;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -67,10 +70,16 @@ type t = {
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
   superclass_position : superclass_position;
+  (* Solidity: [is A, B] lists the most base-like contract first, so the
+     linearisation reads the bases from the right. *)
+  bases_listed_most_base_first : bool;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
+  (* A bare name in a method binds the members of its class and of the
+     classes it inherits from (Dart, Solidity), not only lexical names. *)
+  class_members_bind_in_methods : bool;
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;
@@ -305,6 +314,7 @@ let default : t = {
   specifiers_name_files = false;
   specifiers_are_uris = false;
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
+  path_import_binds_all_names = false;
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -312,12 +322,14 @@ let default : t = {
   extract_wrapper = (fun _ -> None);
   wrapper_dunders = (fun _ -> []);
   walks_inheritance = false;
+  class_members_bind_in_methods = false;
   has_reexports = false;
   reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = true;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
   superclass_position = Superclass_before_mixins;
+  bases_listed_most_base_first = false;
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
   precedence =
@@ -656,7 +668,7 @@ let php : t = { default with
    [ModuleDef], so [walks_inheritance] only affects classes with [extends]
    or [with]; the mixins come before the superclass, in Scala's
    linearisation order. *)
-let scala_mixins_before_superclass (cdef : G.class_definition)
+let mixins_last_applied_first (cdef : G.class_definition)
   : class_parent list =
   List.rev (php_class_body_extra_parents cdef)
 
@@ -672,7 +684,7 @@ let scala : t = { default with
       | Own_definition -> 3);
   own_package_members_kind = Package_member;
   module_path_from_ast = extract_package_decl;
-  class_body_extra_parents = scala_mixins_before_superclass;
+  class_body_extra_parents = mixins_last_applied_first;
   superclass_position = Superclass_after_mixins;
   companion_object_has_own_name = true;
   hiding_alias = Some "_";
@@ -834,6 +846,14 @@ let julia : t = { default with
   unqualified_scope = `Per_project;
 }
 
+let solidity : t = { default with
+  walks_inheritance = true;
+  class_members_bind_in_methods = true;
+  bases_listed_most_base_first = true;
+  specifiers_name_files = true;
+  path_import_binds_all_names = true;
+}
+
 let crystal : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
@@ -844,6 +864,9 @@ let crystal : t = { default with
 
 let dart : t = { default with
   walks_inheritance = true;
+  class_members_bind_in_methods = true;
+  class_body_extra_parents = mixins_last_applied_first;
+  superclass_position = Superclass_after_mixins;
   specifiers_name_files = true;
   specifiers_are_uris = true;
   discover_project = dart_discover;
@@ -880,6 +903,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Julia -> julia
   | Lang.Crystal -> crystal
   | Lang.Scala -> scala
+  | Lang.Solidity -> solidity
   | _ -> default
 
 let top_level_scope_is_project (cfg : t) : bool =

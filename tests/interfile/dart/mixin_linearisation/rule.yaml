@@ -1,0 +1,12 @@
+rules:
+  - id: test-mixin-linearisation
+    languages: [dart]
+    message: Tainted data reaches a sink in the method of the last mixin applied
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -112,6 +112,20 @@ let members_along_order
     Common.SMap.empty order
   |> Common.SMap.bindings
 
+let member_bindings_of_classes
+    ~(resolution_orders : Func_lookup.resolution_orders)
+    ~(methods_by_class : Func_lookup.methods_by_class)
+    (classes : class_info list) : Scope_binding.positioned_binding list =
+  List.concat_map
+    (fun (ci : class_info) ->
+      let parent_path = [ Some (Scope_binding.class_il_name_of ci) ] in
+      let pos = Scope_binding.position_of_tok (Function_id.tok ci.ci_id) in
+      List.concat_map
+        (fun ((name : string), (funcs : Func_info.t list)) ->
+          Scope_binding.function_binding_of ~pos ~parent_path name funcs)
+        (members_along_order ~resolution_orders ~methods_by_class ci.ci_qn))
+    classes
+
 let build
     ~(precedence : Index_lang_rules.binding_kind -> int)
     ~(own_package_members_kind : Index_lang_rules.binding_kind)
@@ -176,15 +190,7 @@ let build
     Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
   let member_bindings =
-    List.concat_map
-      (fun (ci : class_info) ->
-        let parent_path = [ Some (Scope_binding.class_il_name_of ci) ] in
-        let pos = Scope_binding.position_of_tok (Function_id.tok ci.ci_id) in
-        List.concat_map
-          (fun ((name : string), (funcs : Func_info.t list)) ->
-            Scope_binding.function_binding_of ~pos ~parent_path name funcs)
-          (members_along_order ~resolution_orders ~methods_by_class ci.ci_qn))
-      own_classes
+    member_bindings_of_classes ~resolution_orders ~methods_by_class own_classes
   in
   let bindings_of_class_members ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)

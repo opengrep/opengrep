@@ -48,3 +48,11 @@ let self_names (lang : Lang.t) : string list =
 
 let is_self_name (lang : Lang.t) (name : string) : bool =
   List.exists (String.equal name) (self_names lang)
+
+let super_names (lang : Lang.t) : string list =
+  match lang with
+  | Lang.Solidity -> [ "super" ]
+  | _ -> []
+
+let is_super_name (lang : Lang.t) (name : string) : bool =
+  List.exists (String.equal name) (super_names lang)

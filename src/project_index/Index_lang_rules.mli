@@ -62,6 +62,9 @@ type t = {
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
   specifier_candidates : Fpath.t -> string list;
+  (* [import "path";] without an alias binds every top-level name of the
+     file (Solidity). *)
+  path_import_binds_all_names : bool;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -69,10 +72,16 @@ type t = {
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
   superclass_position : superclass_position;
+  (* Solidity: [is A, B] lists the most base-like contract first, so the
+     linearisation reads the bases from the right. *)
+  bases_listed_most_base_first : bool;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
+  (* A bare name in a method binds the members of its class and of the
+     classes it inherits from (Dart, Solidity), not only lexical names. *)
+  class_members_bind_in_methods : bool;
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;

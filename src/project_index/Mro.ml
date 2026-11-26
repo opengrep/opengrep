@@ -25,6 +25,14 @@ let resolve_parent_qn ~(imports : import list)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t)
     (path : string list) : Names.Module_qn.t option =
+  let is_known (mod_qn : Names.Module_qn.t) : bool =
+    Hashtbl.mem known_class_qns
+      (Names.Class_qn.of_string (Names.Module_qn.to_string mod_qn))
+  in
+  let within (target : Names.Module_qn.t) (parts : string list)
+      : Names.Module_qn.t =
+    List.fold_left Names.Module_qn.concat target parts
+  in
   match path with
   | [] -> None
   | head :: rest ->
@@ -32,21 +40,17 @@ let resolve_parent_qn ~(imports : import list)
        List.find_opt
          (fun (imp : import) -> String.equal imp.im_local head) imports
      with
-     | None -> None
      | Some (imp : import) ->
-       let target = imp.im_target in
-       let candidate =
-         if rest = [] then target
-         else
-           Names.Module_qn.of_string
-             (Names.Module_qn.to_string target ^ "."
-              ^ String.concat "." rest)
-       in
-       let is_known (mod_qn : Names.Module_qn.t) : bool =
-         Hashtbl.mem known_class_qns
-           (Names.Class_qn.of_string (Names.Module_qn.to_string mod_qn))
-       in
-       chase_reexport ~reexport_map ~is_known candidate)
+       chase_reexport ~reexport_map ~is_known (within imp.im_target rest)
+     | None ->
+       (* A wildcard import binds the class when its module defines it. *)
+       List.find_map
+         (fun (imp : import) ->
+           if String.equal imp.im_local Imports.wildcard_local then
+             chase_reexport ~reexport_map ~is_known
+               (within imp.im_target path)
+           else None)
+         imports)
 
 let resolve_parent_by_scope
     ~(by_qn : (Names.Class_qn.t, class_info) Hashtbl.t)

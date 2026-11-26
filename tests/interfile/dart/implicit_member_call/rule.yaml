@@ -1,0 +1,12 @@
+rules:
+  - id: test-implicit-member-call
+    languages: [dart]
+    message: Tainted data reaches a sink through a bare call to an inherited method
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

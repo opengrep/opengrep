@@ -1443,10 +1443,11 @@ let extension_functions ~(func_lookup : Func_lookup.t)
            Names.Class_qn.equal declared receiver_qn
          | None -> false))
 
-let is_super_call (e : G.expr) : bool =
+let is_super_call ~(lang : Lang.t) (e : G.expr) : bool =
   match e.G.e with
   | G.Call ({ G.e = G.N (G.Id (("super", _), _)); _ }, _) -> true
   | G.IdSpecial ((G.Super | G.Parent), _) -> true
+  | G.N (G.Id ((name, _), _)) -> Receiver.is_super_name lang name
   | _ -> false
 
 let identify_callee_interfile ~(lang : Lang.t)
@@ -1519,7 +1520,7 @@ let identify_callee_interfile ~(lang : Lang.t)
            { name_last = ((id, _), _typeargs); name_middle = None;
              name_top = None; _ }) -> of_bare_name id
   | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _)))
-    when is_super_call receiver -> (
+    when is_super_call ~lang receiver -> (
     match enclosing_class_qn ~func_lookup caller_parent_path with
     | None -> None
     | Some (class_qn : Names.Class_qn.t) -> (
