@@ -14,11 +14,32 @@ type t = {
   key : string * string * int * int;
 }
 
+let has_dot_segment (path : string) : bool =
+  let length = String.length path in
+  let separator : char = Fpath.dir_sep.[0] in
+  (* [start] is where the current segment begins *)
+  let rec scan (start : int) (pos : int) : bool =
+    if pos >= length || Char.equal path.[pos] separator then
+      let segment_length = pos - start in
+      let is_dots =
+        (Int.equal segment_length 1 && Char.equal path.[start] '.')
+        || Int.equal segment_length 2
+           && Char.equal path.[start] '.'
+           && Char.equal path.[start + 1] '.'
+      in
+      is_dots || (pos < length && scan (pos + 1) (pos + 1))
+    else scan start (pos + 1)
+  in
+  scan 0 0
+
 (* Helper to extract normalized key for node comparison.
    Resolves file paths to canonical form to handle different representations
    of the same file (e.g., /foo/bar vs /foo/baz/../bar). *)
+(* A path without a [.] or [..] segment is its own normal form: a key is
+   built at every call site, and normalising splits the path each time. *)
 let normalize_file (file : Fpath.t) : string =
-  Fpath.to_string (Fpath.normalize file)
+  let path = Fpath.to_string file in
+  if has_dot_segment path then Fpath.to_string (Fpath.normalize file) else path
 
 let fake_tok_keeps_location (id : string) : bool =
   String.starts_with ~prefix:"_tmp_lambda" id || String.equal id "<top_level>"
