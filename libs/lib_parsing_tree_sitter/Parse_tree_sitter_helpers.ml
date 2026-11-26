@@ -40,35 +40,31 @@ type 'a env = {
 (* API *)
 (*****************************************************************************)
 
-(* coupling: mostly a copy-paste of Pos.full_charpos_to_pos_large *)
-let line_col_to_pos file =
-  let size = UFile.filesize file + 2 in
-  let h = Hashtbl.create size in
-  UFile.with_open_in file (fun chan ->
-      let charpos = ref 0 in
-      let line = ref 0 in
+(* The offset of each line of a file's contents, followed by the offset
+   where one more line would start. A last line without a newline counts as
+   ended by one. *)
+let line_starts (contents : string) : int array =
+  let length = String.length contents in
+  let rec starts (pos : int) (earlier : int list) : int list =
+    if pos >= length then List.rev (pos :: earlier)
+    else
+      match String.index_from_opt contents pos '\n' with
+      | Some (newline : int) -> starts (newline + 1) (pos :: earlier)
+      | None -> List.rev ((length + 1) :: pos :: earlier)
+  in
+  Array.of_list (starts 0 [])
 
-      let full_charpos_to_pos_aux () =
-        try
-          while true do
-            let s = input_line chan in
-            (* we are using 1-based lines *)
-            incr line;
-
-            (* '... +1 do'  cos input_line does not return the trailing \n *)
-            for i = 0 to String.length s - 1 + 1 do
-              Hashtbl.add h (!line, i) (!charpos + i)
-            done;
-            charpos := !charpos + String.length s + 1
-          done
-        with
-        | End_of_file ->
-            (* We need to add this in case there is a trailing \n in the
-               end of the file *)
-            Hashtbl.add h (!line + 1, 0) !charpos
-      in
-      full_charpos_to_pos_aux ());
-  Hashtbl.find h
+let line_col_to_pos (file : Fpath.t) : int * int -> int =
+  let starts = line_starts (UFile.read_file file) in
+  let lines = Array.length starts - 1 in
+  (* we are using 1-based lines; a column may be the one of the newline *)
+  fun ((line, col) : int * int) ->
+    if line >= 1 && line <= lines then
+      let start = starts.(line - 1) in
+      if col >= 0 && start + col < starts.(line) then start + col
+      else raise Not_found
+    else if Int.equal line (lines + 1) && Int.equal col 0 then starts.(lines)
+    else raise Not_found
 
 (* Patterns are given as a one line string with '\n' characters (huh?)
    TODO: Explain the desired behavior *)

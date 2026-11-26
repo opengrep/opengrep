@@ -1309,7 +1309,7 @@ let ensure_trailing_newline str =
    at or after the last real token on each line (trailing whitespace, comment
    text, the escape character itself).  The (line, col) of every real token
    is therefore unchanged between the original file and the preprocessed
-   content, so the position table remains valid.  line_continuation tokens
+   content, so the position mapping remains valid.  line_continuation tokens
    live in the tree-sitter extras bucket; the OCaml callback discards them
    via the `_extras` parameter and never calls conv on their positions, so
    the synthetic '\' we insert on replaced comment lines is also harmless.
