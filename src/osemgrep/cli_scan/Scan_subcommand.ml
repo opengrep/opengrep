@@ -639,8 +639,7 @@ let check_targets_with_rules ?(print_summary = true)
                Logs.warn (fun m ->
                    m
                      "cross-function taint analysis (--taint-intrafile) not \
-                      fully supported for %s: results may be limited to \
-                      intraprocedural analysis only"
+                      fully supported for %s: results may be incomplete"
                      (Lang.to_string lang));
                warning_before_plan := true)
       in

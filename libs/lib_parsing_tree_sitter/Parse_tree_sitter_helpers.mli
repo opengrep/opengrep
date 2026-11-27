@@ -25,6 +25,11 @@ val line_col_to_pos_pattern : string (* contents *) -> int * int -> int
 val token : 'a env -> Tree_sitter_run.Token.t -> Tok.t
 val str : 'a env -> Tree_sitter_run.Token.t -> string * Tok.t
 
+(* Some grammars (Circom, Solidity) include the spaces before a name in its
+   token: the name without them, and the token from the name on when the
+   token has a location. *)
+val left_strip_space : string * Tok.t -> string * Tok.t
+
 (* Row first, then column. *)
 val compare_pos : Tree_sitter_run.Loc.pos -> Tree_sitter_run.Loc.pos -> int
 val equal_loc : Tree_sitter_run.Loc.t -> Tree_sitter_run.Loc.t -> bool

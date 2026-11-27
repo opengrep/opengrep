@@ -58,10 +58,6 @@ let stmt_of_def_or_dir = function
   | Either_.Right3 dir -> DirectiveStmt dir |> G.s
   | Either_.Middle3 ellipsis_tok -> G.exprstmt (G.e (Ellipsis ellipsis_tok))
 
-(* TODO: we should also adjust the pos for 't' *)
-let left_strip_space (s, t) =
-  if s =~ "^ +\\(.*\\)$" then (Common.matched1 s, t) else (s, t)
-
 (*****************************************************************************)
 (* Boilerplate converter *)
 (*****************************************************************************)
@@ -402,7 +398,7 @@ let map_pragma_version_constraint (env : env)
   match v with
   | `Opt_soli_vers_comp_op_soli_vers (v1, v2) -> (
       let ver =
-        (* pattern \d+(.\d+(.\d+)?)? *) str env v2 |> left_strip_space
+        (* pattern \d+(.\d+(.\d+)?)? *) str env v2 |> H.left_strip_space
       in
       let e = G.L (G.String (fb ver)) |> G.e in
       match v1 with
@@ -414,7 +410,7 @@ let map_pragma_version_constraint (env : env)
       (* TODO? not sure why we need those left_strip_space here; the grammar seems
        * ok but in practice the identifier has a leading space
        *)
-      let id = str env v2 |> left_strip_space in
+      let id = str env v2 |> H.left_strip_space in
       let e = G.N (H2.name_of_id id) |> G.e in
       match v1 with
       | Some x ->
@@ -528,6 +524,14 @@ let map_user_defined_type_definition (env : env)
   let ent = G.basic_entity id in
   let def = { tbody = AliasType (* or NewType? *) ty } in
   (ent, TypeDef def)
+
+(* [super] is a keyword of Solidity that the grammar parses as an
+   identifier. *)
+let map_identifier_expression (env : env) (tok : CST.identifier) :
+    expr =
+  let ((name, tk) as id) = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
+  if String.equal name "super" then IdSpecial (Super, tk) |> G.e
+  else N (H2.name_of_id id) |> G.e
 
 let map_enum_member (env : env) (x : CST.enum_member) : or_type_element =
   match x with
@@ -1289,9 +1293,7 @@ and map_expression (env : env) (x : CST.expression) : expr =
 and map_anon_choice_exp_97f816a (env : env) (x : CST.anon_choice_exp_97f816a) =
   match x with
   | `Exp x -> map_expression env x
-  | `Id tok ->
-      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-      N (H2.name_of_id id) |> G.e
+  | `Id tok -> map_identifier_expression env tok
 
 and map_member_expression (env : env) ((v1, v2, v3) : CST.member_expression) :
     expr =
@@ -1425,9 +1427,7 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : expr =
         ( ("InlineArray", lb),
           [ Tk lb ] @ (es |> List_.map (fun e -> E e)) @ [ Tk rb ] )
       |> G.e
-  | `Id tok ->
-      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-      N (H2.name_of_id id) |> G.e
+  | `Id tok -> map_identifier_expression env tok
   | `Lit x -> map_literal env x
   | `New_exp (v1, v2, v3) -> (
       let tnew = (* "new" *) token env v1 in

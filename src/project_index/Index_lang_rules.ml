@@ -10,11 +10,16 @@ type project_discovery = {
   module_paths : (string * string list) list;
 }
 
-type parent_position = Prepended | Appended
+(* A [Constraint] parent is a class that a mixin may be applied to: it is
+   in the mixin's own resolution order, not in the order of a class that
+   applies the mixin. *)
+type parent_position = Prepended | Appended | Constraint
 
 type class_parent = {
   cp_path : string list;
   cp_position : parent_position;
+  (* The parent is in the superclass position of a class or an object. *)
+  cp_is_superclass : bool;
 }
 
 type superclass_position =
@@ -43,6 +48,19 @@ type reexport_source =
 type unaliased_import_local =
   | First_segment_binds
   | Last_segment_binds
+  (* The import binds every top-level name of the module (QL [import M]). *)
+  | Every_name_binds
+
+(* Which members of a class a bare name in one of its methods refers to. *)
+type method_member_scope =
+  | Members_not_in_method_scope
+  (* Every member along the class's resolution order binds in the class's
+     scope (Solidity). *)
+  | Members_in_class_scope
+  (* The class's own members bind in its scope; an inherited member binds
+     only when no lexical binding exists, and neither a static member nor a
+     member not exported from another file is inherited (Dart). *)
+  | Inherited_members_after_lexical_scope
 
 type binding_kind =
   | Wildcard_import
@@ -59,7 +77,35 @@ type t = {
   normalize_import_specifier : string -> string;
   specifiers_name_files : bool;
   specifiers_are_uris : bool;
+  (* A specifier without a leading dot refers to a file relative to the
+     importing file before one on the library paths (Circom [include]). *)
+  bare_specifiers_relative_first : bool;
+  (* The specifiers of the files that an expression statement runs in the
+     current scope (Bash [source f], [. f]); each binds every top-level name
+     of its file. *)
+  file_imports_of_expr : G.expr -> (string * Tok.t) list;
+  (* The specifiers of the files that the [part] directives of a file add to
+     its library (Dart [part 'x.dart';]). *)
+  library_parts_of_ast : G.program -> string list;
   specifier_candidates : Fpath.t -> string list;
+  (* [import "path";] without an alias binds every top-level name of the
+     file (Solidity). *)
+  path_import_binds_all_names : bool;
+  (* A wildcard import without an explicit export list ([__all__]) leaves out
+     the names that begin with an underscore: Python, Elixir ([import M]),
+     and Dart, where such names are private to their library. *)
+  wildcard_import_omits_underscore_names : bool;
+  (* An import binds its names from its statement onward and rebinds a name
+     that an earlier import bound, so of the imports before a class that
+     bind its parent, the last one binds it (Python). Elsewhere two imports
+     that bind the name to different classes bind it through neither. *)
+  imports_bind_in_statement_order : bool;
+  (* The manifest of a crate whose [package] name heads the module path of
+     its files (Rust's [Cargo.toml], Cairo's [Scarb.toml]). *)
+  crate_manifest : string option;
+  (* The stems of the files under [src] that are the root module of a crate
+     (Rust's [lib.rs] and [main.rs], Scarb's [lib.cairo]). *)
+  crate_root_stems : string list;
   class_dunders_from_decorators : G.attribute list -> string list;
   class_dunders_from_extends : G.class_definition -> string list;
   synth_call_dunders : G.expr -> string list option;
@@ -67,13 +113,27 @@ type t = {
   class_body_synth_methods : G.class_definition -> (string * Tok.t) list;
   class_body_extra_parents : G.class_definition -> class_parent list;
   superclass_position : superclass_position;
+  (* Solidity: [is A, B] lists the most base-like contract first, so the
+     linearisation reads the bases from the right. *)
+  bases_listed_most_base_first : bool;
+  (* The extends clause of a mixin ([G.Trait]) lists the classes it may be
+     applied to (Dart [mixin M on B]), not superclasses. *)
+  mixin_extends_lists_constraints : bool;
+  (* The superclass position takes a class, never a mixin ([G.Trait]); a
+     mixin is applied in the [with] position (Dart). *)
+  superclass_is_never_a_mixin : bool;
   class_body_singleton_methods : G.class_definition -> singleton_exposure;
   extract_wrapper : G.entity -> wrapper option;
   wrapper_dunders : wrapper -> string list;
   walks_inheritance : bool;
+  method_member_scope : method_member_scope;
   has_reexports : bool;
   reexport_source : reexport_source;
   include_anonymous_funcs : bool;
+  (* Assigning a function value to an identifier ([f <- function(x) ..])
+     defines the function under that identifier in the scope of the
+     assignment, in the per-file and per-project scopes (R). *)
+  assigned_function_defines_identifier : bool;
   unqualified_scope :
     [ `Per_file | `Per_directory | `Per_package | `Per_namespace
     | `Per_module | `Per_go_package | `Per_constant_path | `Per_crate
@@ -122,8 +182,9 @@ let equal_parent_position (left : parent_position) (right : parent_position)
     : bool =
   match (left, right) with
   | Prepended, Prepended
-  | Appended, Appended -> true
-  | (Prepended | Appended), _ -> false
+  | Appended, Appended
+  | Constraint, Constraint -> true
+  | (Prepended | Appended | Constraint), _ -> false
 
 let decorator_simple_name (attr : G.attribute) : string option =
   match attr with
@@ -304,7 +365,15 @@ let default : t = {
   normalize_import_specifier = (fun s -> s);
   specifiers_name_files = false;
   specifiers_are_uris = false;
+  bare_specifiers_relative_first = false;
+  file_imports_of_expr = (fun (_ : G.expr) -> []);
+  library_parts_of_ast = (fun _ -> []);
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
+  path_import_binds_all_names = false;
+  wildcard_import_omits_underscore_names = false;
+  imports_bind_in_statement_order = false;
+  crate_manifest = None;
+  crate_root_stems = [];
   class_dunders_from_decorators = (fun _ -> []);
   class_dunders_from_extends = (fun _ -> []);
   synth_call_dunders = (fun _ -> None);
@@ -312,12 +381,17 @@ let default : t = {
   extract_wrapper = (fun _ -> None);
   wrapper_dunders = (fun _ -> []);
   walks_inheritance = false;
+  method_member_scope = Members_not_in_method_scope;
   has_reexports = false;
   reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = true;
+  assigned_function_defines_identifier = false;
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
   superclass_position = Superclass_before_mixins;
+  bases_listed_most_base_first = false;
+  mixin_extends_lists_constraints = false;
+  superclass_is_never_a_mixin = false;
   class_body_singleton_methods = (fun _ -> No_singleton_exposure);
   unqualified_scope = `Per_file;
   precedence =
@@ -353,6 +427,7 @@ let default : t = {
 }
 
 let python : t = { default with
+  wildcard_import_omits_underscore_names = true;
   is_init_file = python_is_init_file;
   is_stub_file = python_is_stub_file;
   rewrite_module_path = python_rewrite_module_path;
@@ -363,6 +438,7 @@ let python : t = { default with
   extract_wrapper = python_extract_wrapper;
   wrapper_dunders = python_wrapper_dunders;
   walks_inheritance = true;
+  imports_bind_in_statement_order = true;
   has_reexports = true;
   reexport_source = Reexports_from_init_file;
   include_anonymous_funcs = false;
@@ -465,7 +541,8 @@ let ruby_class_body_extra_parents (cdef : G.class_definition)
         List.filter_map (fun arg ->
           match arg_to_path arg with
           | Some ((_ :: _) as path) ->
-            Some { cp_path = path; cp_position = position }
+            Some { cp_path = path; cp_position = position;
+                   cp_is_superclass = false }
           | Some []
           | None -> None
         ) args)
@@ -522,7 +599,8 @@ let go_class_body_extra_parents (cdef : G.class_definition) : class_parent list 
       match name_to_path name with
       | [] -> None
       | (path : string list) ->
-        Some { cp_path = path; cp_position = Appended })
+        Some { cp_path = path; cp_position = Appended;
+               cp_is_superclass = false })
     | _ -> None)
 
 let go_method_owner_of_funcdef (fdef : G.function_definition) : string option =
@@ -635,10 +713,12 @@ let php_class_body_extra_parents (cdef : G.class_definition)
         match name_to_path name with
         | [] -> None
         | (path : string list) ->
-          Some { cp_path = path; cp_position = Appended })
+          Some { cp_path = path; cp_position = Appended;
+                 cp_is_superclass = false })
       | _ -> None)
     cdef.G.cmixins
 
+(* [use A\B\C;] binds [C], in PHP and in Hack. *)
 let php : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
@@ -649,6 +729,7 @@ let php : t = { default with
   unqualified_scope = `Per_namespace;
   module_path_from_ast = namespace_decl_or_global;
   class_body_extra_parents = php_class_body_extra_parents;
+  unaliased_import_binds = Last_segment_binds;
 }
 
 (* Scala [package a.b] (and nested [package a { package b {..} }]) parse to
@@ -656,7 +737,7 @@ let php : t = { default with
    [ModuleDef], so [walks_inheritance] only affects classes with [extends]
    or [with]; the mixins come before the superclass, in Scala's
    linearisation order. *)
-let scala_mixins_before_superclass (cdef : G.class_definition)
+let mixins_last_applied_first (cdef : G.class_definition)
   : class_parent list =
   List.rev (php_class_body_extra_parents cdef)
 
@@ -672,7 +753,7 @@ let scala : t = { default with
       | Own_definition -> 3);
   own_package_members_kind = Package_member;
   module_path_from_ast = extract_package_decl;
-  class_body_extra_parents = scala_mixins_before_superclass;
+  class_body_extra_parents = mixins_last_applied_first;
   superclass_position = Superclass_after_mixins;
   companion_object_has_own_name = true;
   hiding_alias = Some "_";
@@ -684,12 +765,22 @@ let rust_relative_module_names : (string * relative_module) list =
 let rust : t = { default with
   class_def_reshape = Visit_function_defs.class_scope_of_definition;
   unqualified_scope = `Per_crate;
+  crate_manifest = Some "Cargo.toml";
+  crate_root_stems = [ "lib"; "main" ];
   relative_module_names = rust_relative_module_names;
   import_head_may_be_own_module = true;
   has_reexports = true;
   reexport_source = Reexports_from_public_directives;
   walks_inheritance = true;
   parent_resolution = Parent_in_own_scope;
+}
+
+(* Cairo 1 has Rust's modules, [use] paths and [impl] blocks; a Scarb
+   package is its crate. [use a::b::c;] binds [c]. *)
+let cairo : t = { rust with
+  crate_manifest = Some "Scarb.toml";
+  crate_root_stems = [ "lib" ];
+  unaliased_import_binds = Last_segment_binds;
 }
 
 (* Package-scoped languages: a type/class lives in a package, resolved by
@@ -735,6 +826,7 @@ let clojure : t = { default with
 }
 
 let elixir : t = { default with
+  wildcard_import_omits_underscore_names = true;
   unqualified_scope = `Per_namespace;
   module_definition_is_namespace = true;
   unaliased_import_binds = Last_segment_binds;
@@ -834,6 +926,86 @@ let julia : t = { default with
   unqualified_scope = `Per_project;
 }
 
+(* Move: a module ([module 0x1::m { .. }]) is a namespace whose functions
+   call each other by bare name, and [use 0x1::m;] binds [m]. *)
+let module_scoped : t = { elixir with
+  wildcard_import_omits_underscore_names = false;
+}
+
+(* A compilation unit is a module whose identifier is its file's basename,
+   capitalised, in scope in every other file of the project ([A.f] for
+   [dir/a.ml]). *)
+let ocaml : t = { default with
+  rewrite_module_path =
+    (fun (path : string) -> String.capitalize_ascii (Filename.basename path));
+}
+
+(* The files of an R package share one namespace; a function is a lambda
+   assigned to a name. *)
+let r : t = { default with
+  unqualified_scope = `Per_project;
+  assigned_function_defines_identifier = true;
+}
+
+(* [source f] and [. f] run [f] in the current shell, so its functions are
+   defined there; a literal [f] is resolved from the script's directory. The
+   operands of [&&] and [||] are commands too: [[ -f f ]] && . f]. [! . f]
+   runs [. f] and inverts only its exit status. *)
+let rec shell_source_imports (e : G.expr) : (string * Tok.t) list =
+  match e.G.e with
+  | G.Call
+      ( { G.e = G.IdSpecial (G.Op (G.And | G.Or), _); _ },
+        (_, [ G.Arg left; G.Arg right ], _) ) ->
+      shell_source_imports left @ shell_source_imports right
+  | G.Call
+      ({ G.e = G.IdSpecial (G.Op G.Not, _); _ }, (_, [ G.Arg command ], _)) ->
+      shell_source_imports command
+  | G.Call (callee, (_, args, _)) -> (
+      match AST_generic_helpers.call_of_shell_command callee args with
+      | Some
+          ( { G.e = G.N (G.Id ((("source" | "."), tok), _)); _ },
+            [
+              G.Arg
+                {
+                  G.e =
+                    G.Container
+                      ( G.List,
+                        ( _,
+                          [ { G.e = G.L (G.String (_, (spec, _), _)); _ } ],
+                          _ ) );
+                  _;
+                };
+            ] ) ->
+          [ (spec, tok) ]
+      | _ -> [])
+  | _ -> []
+
+let bash : t = { default with
+  specifiers_name_files = true;
+  bare_specifiers_relative_first = true;
+  file_imports_of_expr = shell_source_imports;
+}
+
+(* [include "path";] binds every template and function of the file. *)
+let circom : t = { default with
+  specifiers_name_files = true;
+  bare_specifiers_relative_first = true;
+}
+
+let solidity : t = { default with
+  walks_inheritance = true;
+  method_member_scope = Members_in_class_scope;
+  bases_listed_most_base_first = true;
+  specifiers_name_files = true;
+  path_import_binds_all_names = true;
+}
+
+(* [import M] without an alias brings every name that [M] declares into
+   scope; [import M as N] binds [N] to [M]. *)
+let ql : t = { default with
+  unaliased_import_binds = Every_name_binds;
+}
+
 let crystal : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
@@ -842,8 +1014,33 @@ let crystal : t = { default with
   parent_resolution = Parent_by_lexical_scope;
 }
 
+let dart_library_parts (ast : G.program) : string list =
+  List.filter_map
+    (fun (stmt : G.stmt) ->
+      match stmt.G.s with
+      | G.DirectiveStmt
+          { G.d =
+              G.OtherDirective
+                ( ("part", _),
+                  [ G.Modn
+                      ( G.DottedName [ ((specifier : string), _) ]
+                      | G.FileName ((specifier : string), _) ) ] );
+            _ } -> Some specifier
+      | _ -> None)
+    ast
+
 let dart : t = { default with
+  wildcard_import_omits_underscore_names = true;
+  library_parts_of_ast = dart_library_parts;
   walks_inheritance = true;
+  method_member_scope = Inherited_members_after_lexical_scope;
+  mixin_extends_lists_constraints = true;
+  superclass_is_never_a_mixin = true;
+  name_is_exported =
+    (fun (name : string) ->
+      String.length name > 0 && not (String.starts_with ~prefix:"_" name));
+  class_body_extra_parents = mixins_last_applied_first;
+  superclass_position = Superclass_after_mixins;
   specifiers_name_files = true;
   specifiers_are_uris = true;
   discover_project = dart_discover;
@@ -863,7 +1060,7 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Ruby -> ruby
   | Lang.Go -> go
   | Lang.Ts | Lang.Js -> typescript
-  | Lang.Php -> php
+  | Lang.Php | Lang.Hack -> php
   | Lang.Rust -> rust
   | Lang.Java -> java
   | Lang.Kotlin -> kotlin
@@ -880,6 +1077,14 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Julia -> julia
   | Lang.Crystal -> crystal
   | Lang.Scala -> scala
+  | Lang.Solidity -> solidity
+  | Lang.Cairo -> cairo
+  | Lang.Circom -> circom
+  | Lang.Ocaml -> ocaml
+  | Lang.R -> r
+  | Lang.Bash -> bash
+  | Lang.Ql -> ql
+  | Lang.Move_on_aptos | Lang.Move_on_sui -> module_scoped
   | _ -> default
 
 let top_level_scope_is_project (cfg : t) : bool =

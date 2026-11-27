@@ -1,0 +1,12 @@
+rules:
+  - id: export-star-does-not-bind-parent
+    languages: [typescript]
+    message: Tainted data reaches a sink in a class that an export star directive does not bind
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

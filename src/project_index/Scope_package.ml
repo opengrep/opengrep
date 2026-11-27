@@ -84,16 +84,13 @@ let keep_highest_precedence ~(precedence : Index_lang_rules.binding_kind -> int)
         | None -> None)
     bindings
 
-let members_along_order
-    ~(resolution_orders : Func_lookup.resolution_orders)
+(* A name binds the functions of the first class along [order] that has
+   functions of that name [keep] admits; with [merges_overloads], also the
+   overloads that later classes add ([Func_lookup.with_inherited_overloads]). *)
+let members_of_order ~(merges_overloads : bool)
+    ~(keep : Names.Class_qn.t -> Func_info.t -> bool)
     ~(methods_by_class : Func_lookup.methods_by_class)
-    (class_qn : Names.Class_qn.t) : (string * Func_info.t list) list =
-  let order =
-    Option.value
-      (Common.SMap.find_opt (Names.Class_qn.to_string class_qn)
-         resolution_orders)
-      ~default:[]
-  in
+    (order : Names.Class_qn.t list) : (string * Func_info.t list) list =
   let bound_on (ancestor : Names.Class_qn.t)
     : Func_info.t list Common.SMap.t =
     Option.value
@@ -106,11 +103,102 @@ let members_along_order
       Common.SMap.fold
         (fun (name : string) (funcs : Func_info.t list)
              (members : Func_info.t list Common.SMap.t) ->
-          if Common.SMap.mem name members then members
-          else Common.SMap.add name funcs members)
+          match
+            (List.filter (keep ancestor) funcs,
+             Common.SMap.find_opt name members)
+          with
+          | [], _ -> members
+          | (kept : Func_info.t list), None -> Common.SMap.add name kept members
+          | (kept : Func_info.t list), Some (nearer : Func_info.t list) ->
+            if merges_overloads then
+              Common.SMap.add name
+                (Func_lookup.with_inherited_overloads ~nearer kept)
+                members
+            else members)
         (bound_on ancestor) members)
     Common.SMap.empty order
   |> Common.SMap.bindings
+
+let every_member (_ : Names.Class_qn.t) (_ : Func_info.t) : bool = true
+
+let members_along_order
+    ~(resolution_orders : Func_lookup.resolution_orders)
+    ~(methods_by_class : Func_lookup.methods_by_class)
+    (class_qn : Names.Class_qn.t) : (string * Func_info.t list) list =
+  members_of_order ~merges_overloads:false ~keep:every_member
+    ~methods_by_class
+    (Func_lookup.resolution_order_in resolution_orders class_qn)
+
+let bindings_in_class_scope (ci : class_info)
+    (members : (string * Func_info.t list) list)
+    : Scope_binding.positioned_binding list =
+  Scope_binding.bindings_in_class ci (fun ~pos ~parent_path ->
+    List.concat_map
+      (fun ((name : string), (funcs : Func_info.t list)) ->
+        Scope_binding.function_binding_of ~pos ~parent_path name funcs)
+      members)
+
+let member_bindings_of_classes
+    ~(resolution_orders : Func_lookup.resolution_orders)
+    ~(methods_by_class : Func_lookup.methods_by_class)
+    (classes : class_info list) : Scope_binding.positioned_binding list =
+  List.concat_map
+    (fun (ci : class_info) ->
+      bindings_in_class_scope ci
+        (members_along_order ~resolution_orders ~methods_by_class ci.ci_qn))
+    classes
+
+let method_scope_bindings ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
+    ~(libraries : Scope_binding.libraries)
+    ~(resolution_orders : Func_lookup.resolution_orders)
+    ~(methods_by_class : Func_lookup.methods_by_class)
+    (classes : class_info list)
+    : Scope_binding.positioned_binding list
+      * Scope_binding.positioned_binding list =
+  match cfg.Index_lang_rules.method_member_scope with
+  | Index_lang_rules.Members_not_in_method_scope -> ([], [])
+  | Index_lang_rules.Members_in_class_scope ->
+    ( List.concat_map
+        (fun (ci : class_info) ->
+          bindings_in_class_scope ci
+            (members_of_order
+               ~merges_overloads:(Lang_config.inherited_overloads_merge lang)
+               ~keep:every_member ~methods_by_class
+               (Func_lookup.resolution_order_in resolution_orders ci.ci_qn)))
+        classes,
+      [] )
+  | Index_lang_rules.Inherited_members_after_lexical_scope ->
+    let inherited_by (ci : class_info) (_ : Names.Class_qn.t)
+        (func : Func_info.t) : bool =
+      (not (Receiver.is_static func.Func_info.entity))
+      &&
+      match
+        (Func_info.def_file_opt func, Func_info.bare_name func.Func_info.fn_id)
+      with
+      | Some (file : Fpath.t), Some (name : IL.name) ->
+        Scope_binding.same_library libraries file ci.ci_file
+        || cfg.Index_lang_rules.name_is_exported (fst name.IL.ident)
+      | None, _
+      | _, None -> false
+    in
+    List.fold_left
+      (fun ((lexical : Scope_binding.positioned_binding list),
+            (inherited : Scope_binding.positioned_binding list))
+           (ci : class_info) ->
+        let ancestors =
+          match Func_lookup.resolution_order_in resolution_orders ci.ci_qn with
+          | _ :: (ancestors : Names.Class_qn.t list) -> ancestors
+          | [] -> []
+        in
+        ( bindings_in_class_scope ci
+            (members_of_order ~merges_overloads:false ~keep:every_member
+               ~methods_by_class [ ci.ci_qn ])
+          @ lexical,
+          bindings_in_class_scope ci
+            (members_of_order ~merges_overloads:false ~keep:(inherited_by ci)
+               ~methods_by_class ancestors)
+          @ inherited ))
+      ([], []) classes
 
 let build
     ~(precedence : Index_lang_rules.binding_kind -> int)
@@ -176,15 +264,7 @@ let build
     Scope_binding.own_alias_bindings ~file_funcs_index ~fi_file_str
   in
   let member_bindings =
-    List.concat_map
-      (fun (ci : class_info) ->
-        let parent_path = [ Some (Scope_binding.class_il_name_of ci) ] in
-        let pos = Scope_binding.position_of_tok (Function_id.tok ci.ci_id) in
-        List.concat_map
-          (fun ((name : string), (funcs : Func_info.t list)) ->
-            Scope_binding.function_binding_of ~pos ~parent_path name funcs)
-          (members_along_order ~resolution_orders ~methods_by_class ci.ci_qn))
-      own_classes
+    member_bindings_of_classes ~resolution_orders ~methods_by_class own_classes
   in
   let bindings_of_class_members ~(pos : Pos.t option)
       (class_qn : Names.Class_qn.t)
@@ -298,21 +378,8 @@ let build
         | Imports.Named_binding _ -> [])
       global_imports
   in
-  let rec enclosing_namespaces (namespace_scope : Names.Module_qn.t)
-      : Names.Module_qn.t list =
-    match Names.Module_qn.split_last namespace_scope with
-    | None -> []
-    | Some ((enclosing : Names.Module_qn.t), _) ->
-      enclosing :: enclosing_namespaces enclosing
-  in
   let own_namespaces : Names.Module_qn.t list =
-    (if namespaces_nest then
-       List.concat_map
-         (fun (namespace_scope : Names.Module_qn.t) ->
-           namespace_scope :: enclosing_namespaces namespace_scope)
-         fi.fi_namespace_scopes
-     else fi.fi_namespace_scopes)
-    |> List.sort_uniq Names.Module_qn.compare
+    Scope_binding.own_namespaces ~namespaces_nest fi
   in
   let own_namespace_scope_bindings =
     List.concat_map

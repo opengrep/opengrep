@@ -1,0 +1,12 @@
+rules:
+  - id: class-body-lambda-not-bound-in-method
+    languages: [python]
+    message: Tainted data reaches the imported function that a class body lambda does not shadow in a method
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

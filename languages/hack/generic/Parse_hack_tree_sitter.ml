@@ -38,6 +38,11 @@ module H2 = AST_generic_helpers
 type mode = Pattern | Target
 type env = mode H.env
 
+let parsing_pattern (env : env) : bool =
+  match env.extra with
+  | Pattern -> true
+  | Target -> false
+
 let token = H.token
 let str = H.str
 let fk tok = Tok.fake_tok tok ""
@@ -77,13 +82,6 @@ let stringify_without_quotes str =
 (* Boilerplate converter *)
 (*****************************************************************************)
 (* This was started by copying tree-sitter-lang/semgrep-hack/Boilerplate.ml *)
-
-let use_type (env : env) (x : CST.use_type) =
-  match x with
-  | `Name tok -> (* "namespace" *) token env tok
-  | `Func tok -> (* "function" *) token env tok
-  | `Type tok -> (* "type" *) token env tok
-  | `Const tok -> (* "const" *) token env tok
 
 let visibility_modifier (env : env) (x : CST.visibility_modifier) =
   match x with
@@ -480,13 +478,19 @@ let _anonymous_function_use_clause (env : env)
   let v6 = (* ")" *) token env v6 in
   todo env (v1, v2, v3, v4, v5, v6)
 
-let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
-  (* Q: How to represent `use` type? *)
-  let _v1TODO =
-    match v1 with
-    | Some x -> Some (use_type env x)
-    | None -> None
-  in
+(* The attributes of an import of this kind; [use function] and [use const]
+   have the attributes of the PHP front end. [use namespace] and [use type]
+   have none, as a plain [use] imports both the namespace and the type. *)
+let use_kind_attrs (env : env) (x : CST.use_type) : G.attribute list =
+  match x with
+  | `Func tok -> [ G.KeywordAttr (G.Callable, token env tok) ]
+  | `Const tok -> [ G.KeywordAttr (G.Const, token env tok) ]
+  | `Name _tok (* "namespace" *)
+  | `Type _tok (* "type" *) ->
+      []
+
+let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) :
+    CST.use_type option * G.dotted_ident option * G.alias option =
   let namespace_ident = namespace_identifier env v2 in
   let v3 : G.alias option =
     match v3 with
@@ -504,9 +508,7 @@ let use_clause (env : env) ((v1, v2, v3) : CST.use_clause) =
             Some (Common.hd_exn "unexpected empty list" (unwrap_qualified_identifier x), G.empty_id_info ())
         | None -> None) *)
   in
-  match namespace_ident with
-  | Some xs -> (Some xs, v3)
-  | None -> (None, v3)
+  (v1, namespace_ident, v3)
 
 let const_declarator_id (env : env) (x : CST.anon_choice_semg_exte_id_8bbc8de) =
   match x with
@@ -1869,7 +1871,7 @@ and parameters (env : env) ((v1, v2, v3) : CST.parameters) : G.parameters =
                 pdefault = None;
               }
             in
-            if env.extra =*= Pattern then [ G.ParamEllipsis (token env tok) ]
+            if parsing_pattern env then [ G.ParamEllipsis (token env tok) ]
               (* Q: TODO: Even though not from Semgrep, can I use ParamEllipsis here? *)
             else [ G.ParamRest (token env tok, empty_param) ]
         | `Param_rep_COMMA_param_opt_COMMA (v1, v2, v3) ->
@@ -2140,29 +2142,42 @@ and statement (env : env) (x : CST.statement) =
   | `Use_stmt (v1, v2, v3) ->
       (* Q: What do comma seperated use statements mean? And how do they alias? *)
       let v1 = (* "use" *) token env v1 in
-      let create_directive use_clause prefix_idents =
-        let idents, alias = use_clause in
-        let idents =
+      (* Every clause imports its whole path; the kind of the clause, or else
+         the kind of its list or group, is an attribute of the directive. *)
+      let create_directive (group_kind : CST.use_type option)
+          ((clause_kind, idents, alias) :
+            CST.use_type option * G.dotted_ident option * G.alias option)
+          (prefix_idents : G.dotted_ident) : G.stmt =
+        let path =
           match idents with
-          | Some x -> x
+          | Some x -> prefix_idents @ x
           | None -> raise Common.Impossible
+        in
+        let kind =
+          match clause_kind with
+          | Some _ -> clause_kind
+          | None -> group_kind
+        in
+        let d_attrs =
+          List.concat_map (use_kind_attrs env) (Option.to_list kind)
         in
         G.s
           (G.DirectiveStmt
-             (G.ImportAs (v1, G.DottedName (prefix_idents @ idents), alias)
-             |> G.d))
+             { G.d = G.ImportAs (v1, G.DottedName path, alias); d_attrs })
       in
       let v2 =
         match v2 with
         | `Use_clause_rep_COMMA_use_clause_opt_COMMA (v1, v2, v3) ->
-            let v1 = create_directive (use_clause env v1) [] in
+            (* the kind after [use] applies to every clause of the list *)
+            let ((statement_kind, _, _) as first_clause) = use_clause env v1 in
+            let v1 = create_directive None first_clause [] in
             let v2 =
               List_.map
                 (fun (v1, v2) ->
                   let _v1 = (* "," *) token env v1 in
                   let v2 = use_clause env v2 in
                   (* Q: Module name vs identifier? What's the difference? *)
-                  create_directive v2 [])
+                  create_directive statement_kind v2 [])
                 v2
             in
             let _v3 =
@@ -2174,13 +2189,7 @@ and statement (env : env) (x : CST.statement) =
             (* Lua seems to get around this by return statement lists here and flattening way up *)
             G.Block (Tok.unsafe_fake_bracket (v1 :: v2))
         | `Opt_use_type_name_id_LCURL_use_clause_rep_COMMA_use_clause_opt_COMMA_RCURL
-            (v1, v2, v3, v4, v5, v6, v7) ->
-            (* Q: How to represent `use` type? We are also possibly passed it up from use_clause. *)
-            let _v1TODO =
-              match v1 with
-              | Some x -> Some (use_type env x)
-              | None -> None
-            in
+            (group_kind, v2, v3, v4, v5, v6, v7) ->
             let v2 = namespace_identifier env v2 in
             let ident_prefix =
               match v2 with
@@ -2188,13 +2197,15 @@ and statement (env : env) (x : CST.statement) =
               | None -> []
             in
             let _v3 = (* "{" *) token env v3 in
-            let v4 = create_directive (use_clause env v4) ident_prefix in
+            let v4 =
+              create_directive group_kind (use_clause env v4) ident_prefix
+            in
             let v5 =
               List_.map
                 (fun (v1, v2) ->
                   let _v1 = (* "," *) token env v1 in
                   let v2 = use_clause env v2 in
-                  create_directive v2 ident_prefix)
+                  create_directive group_kind v2 ident_prefix)
                 v5
             in
             let _v6 =

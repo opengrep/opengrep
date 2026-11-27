@@ -153,6 +153,18 @@ type fdef_edges = {
 (* Tables are per-fdef / per-file top-level, so callee shape + arity suffice. *)
 type callee_memo = (string * int, Func_info.fn_id option) Hashtbl.t
 
+(* The callee [e->m] with its member as an identifier ([G.FN]) where the IL
+   lowering takes a dynamic member for the member itself (Hack). *)
+let callee_with_member_identifier ~(lang : Lang.t) (callee : G.expr) : G.expr =
+  match callee.G.e with
+  | G.DotAccess (receiver, dot, G.FDynamic member) -> (
+      match AST_to_IL.member_of_dynamic_field lang member with
+      | Some ((id : G.ident), (id_info : G.id_info)) ->
+          { callee with
+            G.e = G.DotAccess (receiver, dot, G.FN (G.Id (id, id_info))) }
+      | None -> callee)
+  | _ -> callee
+
 let callee_bare_name_id_info (callee : G.expr) : G.id_info option =
   match callee.G.e with
   | G.N (G.Id (_, ii)) -> Some ii
@@ -310,6 +322,7 @@ let extract_calls ~(lang : Lang.t)
         match e.G.e with
         | G.Call ({ e = G.IdSpecial (G.Op _, _); _ }, _) -> acc
         | G.Call (callee, args) ->
+          let callee = callee_with_member_identifier ~lang callee in
           let (_, args_list, _) = args in
           let cbs = collect_callbacks e.G.e callee args in
           let callbacks = cbs @ callbacks in
@@ -325,6 +338,15 @@ let extract_calls ~(lang : Lang.t)
           let call_callee, call_args_list =
             match named_by_send call_callee call_args_list with
             | Some (sent_callee, sent_args) -> (sent_callee, sent_args)
+            | None -> (call_callee, call_args_list)
+          in
+          let call_callee, call_args_list =
+            match
+              AST_generic_helpers.call_of_shell_command call_callee
+                call_args_list
+            with
+            | Some (command_callee, command_args) ->
+              (command_callee, command_args)
             | None -> (call_callee, call_args_list)
           in
           let call_arity = List.length call_args_list in
@@ -451,9 +473,14 @@ let extract_toplevel_calls ~(lang : Lang.t)
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
     match e.G.e with
     | G.Call (callee, args) ->
-      let call_arity =
-        let _, args_list, _ = args in List.length args_list
+      let callee = callee_with_member_identifier ~lang callee in
+      let callee, args_list =
+        let _, args_list, _ = args in
+        match AST_generic_helpers.call_of_shell_command callee args_list with
+        | Some (command_callee, command_args) -> (command_callee, command_args)
+        | None -> (callee, args_list)
       in
+      let call_arity = List.length args_list in
       (match identify_callee_cached ~call_arity callee with
        | Some fn_id ->
          let tok =
@@ -522,6 +549,7 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       ~constructors:(Func_lookup.constructor_index_of_funcs ~lang funcs)
       ~module_attributes:Common.SMap.empty
       ~resolution_orders:Common.SMap.empty
+      ~derived_orders:Common.SMap.empty
       ~class_qn_by_definition:Common.SMap.empty
       ~methods_by_class:Func_lookup.Class_qn_map.empty
       ~singleton_names:Func_lookup.Class_qn_map.empty

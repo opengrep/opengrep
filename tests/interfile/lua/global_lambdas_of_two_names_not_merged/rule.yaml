@@ -1,0 +1,12 @@
+rules:
+  - id: global-lambdas-of-two-names-not-merged
+    languages: [lua]
+    message: Tainted data reaches only the global function that is called
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

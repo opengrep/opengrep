@@ -1,0 +1,12 @@
+rules:
+  - id: mixin-super-skips-overridden-on-type
+    languages: [dart]
+    message: Tainted data reaches the mixin's on type member that the superclass of the application overrides
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

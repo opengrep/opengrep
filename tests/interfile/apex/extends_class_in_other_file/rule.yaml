@@ -1,0 +1,12 @@
+rules:
+  - id: extends-class-in-other-file
+    languages: [apex]
+    severity: ERROR
+    message: Taint reaches a sink through an inherited method
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

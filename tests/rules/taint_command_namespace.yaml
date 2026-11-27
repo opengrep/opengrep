@@ -1,0 +1,10 @@
+rules:
+  - id: taint-command-namespace
+    languages: [dockerfile]
+    severity: ERROR
+    message: Tainted data reaches eval through a command
+    mode: taint
+    pattern-sources:
+      - pattern: $(get_input)
+    pattern-sinks:
+      - pattern: eval ...

@@ -1,0 +1,4 @@
+[package]
+name = "closure_parameter_pattern"
+version = "0.1.0"
+edition = "2021"

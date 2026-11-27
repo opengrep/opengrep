@@ -1,0 +1,12 @@
+rules:
+  - id: later-star-import-binds-parent
+    languages: [python]
+    message: Tainted data reaches a sink in the parent class that the later star import binds
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

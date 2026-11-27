@@ -1,0 +1,12 @@
+rules:
+  - id: test-bash-set-option-cluster
+    languages: [bash]
+    message: Tainted data reaches eval through a positional parameter that set options keep
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: $(get_input)
+    pattern-sinks:
+      - pattern: eval ...

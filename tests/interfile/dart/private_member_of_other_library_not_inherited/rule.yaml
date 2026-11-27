@@ -1,0 +1,12 @@
+rules:
+  - id: private-member-of-other-library-not-inherited
+    languages: [dart]
+    message: Tainted data reaches a member private to another library through a bare name
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

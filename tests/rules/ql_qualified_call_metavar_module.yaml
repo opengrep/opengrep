@@ -1,0 +1,10 @@
+rules:
+- id: ql-qualified-call-metavar-module
+  patterns:
+    - pattern: $M::localFlow(...)
+    - metavariable-regex:
+        metavariable: $M
+        regex: ^DataFlow$
+  message: A call of localFlow from the module DataFlow
+  severity: INFO
+  languages: [ql]

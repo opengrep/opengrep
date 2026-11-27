@@ -96,6 +96,10 @@ type env = {
    * the consumer sends in, which no argument of the method says anything
    * about. *)
   yield_block : name option;
+  (* The variable that the output of each command of the function being
+   * lowered is appended to, and that the function returns, when its result
+   * is that output (see [AST_generic_helpers.command_output_attribute]). *)
+  command_output : name option;
 }
 
 let empty_env (lang : Lang.t) (file : string) : env =
@@ -106,6 +110,7 @@ let empty_env (lang : Lang.t) (file : string) : env =
     inside_function = false;
     pattern_binds_lvals = false;
     yield_block = None;
+    command_output = None;
     file;
     idx_counter = Atomic.make 1;
     lang }
@@ -506,6 +511,17 @@ let key_offset_of_pattern (key_pat : G.pattern) : offset option =
 (* lvalue *)
 (*****************************************************************************)
 
+(* Hack keeps the member [m] of [e->m] as an expression, as it keeps a member
+   held in a variable ([e->$m]); a Hack variable begins with [$], so an
+   identifier that does not is the member itself. *)
+let member_of_dynamic_field (lang : Lang.t) (member : G.expr) :
+    (G.ident * G.id_info) option =
+  match (lang, member.G.e) with
+  | Lang.Hack, G.N (G.Id (((name : string), _) as id, id_info))
+    when not (String.starts_with ~prefix:"$" name) ->
+      Some (id, id_info)
+  | _ -> None
+
 let rec lval env eorig : stmts * lval =
   match eorig.G.e with
   | G.N n -> ([], name env n)
@@ -517,9 +533,12 @@ let rec lval env eorig : stmts * lval =
         | G.FN name ->
             let ss, attr = expr env (G.N name |> G.e) in
             (ss, Index attr)
-        | G.FDynamic e2orig ->
-            let ss, attr = expr env e2orig in
-            (ss, Index attr)
+        | G.FDynamic e2orig -> (
+            match member_of_dynamic_field env.lang e2orig with
+            | Some (id, idinfo) -> ([], Dot (var_of_id_info id idinfo))
+            | None ->
+                let ss, attr = expr env e2orig in
+                (ss, Index attr))
       in
       let offset' = { o = offset'; oorig = SameAs eorig } in
       let ss_lv, lv1 = nested_lval env tok e1orig in
@@ -686,9 +705,12 @@ and pattern env pat : stmts * lval * stmts =
               when env.lang =*= Lang.Elixir ->
                 (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1), [])
             (* JS/TS rest binding: [a, b, ...rest] → trailing
-             * PatConstructor("...", [rest_pat]); rest covers [i..]. *)
-            | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
-              when Lang.is_js env.lang ->
+             * PatConstructor("...", [rest_pat]); rest covers [i..]. Every
+             * front end emits this form for a rest only: a spread in a
+             * destructure ([H.expr_to_pattern]), a Dart rest element, the
+             * positional parameters of a Bash function after a shift
+             * ([Bash_to_generic]). *)
+            | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ] ->
                 (List.rev acc, Some (rest_pat, i), [])
             (* Scala sequence wildcard: [rest*] and [rest @ _*] as the
              * last argument pattern -> trailing
@@ -1024,7 +1046,8 @@ and pm_len_cond tok e op n =
 
 (* Split a [PatList] body into [(fixed_pat, slot_index)] prefix and an
  * optional rest-position. Mirrors the lang-specific split in [pattern]:
- * Clojure [&], Elixir [|], JS [...], Dart [...] (anywhere in the list). *)
+ * Clojure [&], Elixir [|], a trailing [...], Dart [...] (anywhere in the
+ * list). *)
 and pm_split_rest env pats =
   let rec go acc i = function
     | [] -> (List.rev acc, None)
@@ -1034,8 +1057,7 @@ and pm_split_rest env pats =
     | [ G.PatConstructor (G.Id (("|", _), _), [ last_fixed; _tail ]) ]
       when env.lang =*= Lang.Elixir ->
         (List.rev ((last_fixed, i) :: acc), Some (i + 1))
-    | [ G.PatConstructor (G.Id (("...", _), _), [ _rest ]) ]
-      when Lang.is_js env.lang ->
+    | [ G.PatConstructor (G.Id (("...", _), _), [ _rest ]) ] ->
         (List.rev acc, Some i)
     (* Dart rest element, with or without a pattern, anywhere in the list:
      * the slots before it are exact; those after it are end-relative and
@@ -1377,7 +1399,7 @@ and assign env ~g_expr lhs tok rhs_exp : stmts * exp =
       (* Body destructure [a, b, ...rest] = RHS shares its lowering
        * with parameter destructure: convert the LHS into a [PatList] and
        * dispatch through [pattern]. The trailing-rest recogniser
-       * (gated by [Lang.is_js]) lives in [split_trailing_rest]. *)
+       * lives in [split_trailing_rest]. *)
       try
         let pat = H.expr_to_pattern lhs in
         let pre_ss, tmp_lval, post_ss = pattern (assign_pattern_env env) pat in
@@ -2444,9 +2466,14 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       | _ ->
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args)
-  | G.Call (e, args) ->
+  | G.Call (e, ((l, args_list, r) as args)) -> (
       let tok = G.fake "call" in
-      call_generic env ~void tok eorig e args
+      match AST_generic_helpers.call_of_shell_command e args_list with
+      | Some (callee, command_args) ->
+          call_with_callee env ~void tok eorig
+            (shell_command_callee env callee)
+            (l, command_args, r)
+      | None -> call_generic env ~void tok eorig e args)
   | G.L lit -> ([], mk_e (Literal lit) eorig)
   | G.DotAccess ({ e = N (Id (("var", _), _)); _ }, _, FN (Id ((s, t), id_info)))
     when is_hcl env.lang ->
@@ -2992,7 +3019,22 @@ and expr_lazy_op env op tok arg0 args eorig : stmts * exp =
   (ss0 @ acc_ss, mk_e (Operator ((op, tok), arg0' :: args')) eorig)
 
 and call_generic env ?(void = false) tok eorig e args : stmts * exp =
-  let ss_e, e = expr env e in
+  call_with_callee env ~void tok eorig (expr env e) args
+
+(* Bash looks the first word of a command up among functions, builtins and
+   programs, never among variables, and IL has one namespace for both: the
+   callee is identified by the site of its word, so it is not the variable
+   of the same identifier. *)
+and shell_command_callee env (callee : G.expr) : stmts * exp =
+  match callee.G.e with
+  | G.N (G.Id (((_, word_tok) as id), id_info)) ->
+      let name =
+        { ident = id; sid = G.SId.of_site ~file:env.file word_tok; id_info }
+      in
+      ([], mk_e (Fetch { base = Var name; rev_offset = [] }) (SameAs callee))
+  | _ -> expr env callee
+
+and call_with_callee env ~void tok eorig (ss_e, e) args : stmts * exp =
   let ss_args, args = arguments env (Tok.unbracket args) in
   let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, e, args)) in
   (ss_e @ ss_args @ call_ss, call_exp)
@@ -4211,6 +4253,28 @@ and implicit_return env eorig tok : stmts =
   let ret = mk_s (Return (tok, e)) in
   ss @ [ ret ]
 
+(* [output = output . e], with the value of [e], the output of a command. *)
+and command_output_stmt (env : env) (output : name) (eorig : G.expr)
+    (tok : G.tok) : stmts =
+  let ss, e = expr env ~void:false eorig in
+  ss @ append_command_output output e tok
+
+and append_command_output (output : name) (e : exp) (tok : G.tok) : stmts =
+  let output_lval = lval_of_base (Var output) in
+  let concat =
+    Operator
+      ( (G.Concat, tok),
+        [ Unnamed (mk_e (Fetch output_lval) NoOrig); Unnamed e ] )
+  in
+  [ mk_s (Instr (mk_i (Assign (output_lval, mk_e concat NoOrig)) NoOrig)) ]
+
+(* The statements that append the value of a condition to the output of the
+   function, when its result is that output: a condition is a command. *)
+and condition_output (env : env) (cond_e : exp) (tok : G.tok) : stmts =
+  match env.command_output with
+  | Some output -> append_command_output output cond_e tok
+  | None -> []
+
 and expr_stmt env (eorig : G.expr) tok : IL.stmt list =
   (* optimize? pass context to expr when no need for return value? *)
   let ss, e = expr env ~void:true eorig in
@@ -4318,7 +4382,13 @@ and stmt_aux env st : stmts =
          sake. *)
       | { e = Yield (_, Some e, _); _ } when env.lang =*= Lang.Python ->
           implicit_return env e tok
-      | _ -> expr_stmt env eorig tok)
+      | _ -> (
+          match (env.command_output, eorig.e) with
+          (* An assignment writes no output. *)
+          | Some _, (G.Assign _ | G.AssignOp _)
+          | None, _ ->
+              expr_stmt env eorig tok
+          | Some output, _ -> command_output_stmt env output eorig tok))
   | G.DefStmt
       ( { name = EN obj; _ },
         G.VarDef
@@ -4447,7 +4517,7 @@ and stmt_aux env st : stmts =
       let ss, e' = cond env cond_e in
       let st1 = stmt env st1 in
       let st2 = List.concat_map (stmt env) (Option.to_list st2) in
-      ss @ [ mk_s (If (tok, e', st1, st2)) ]
+      ss @ condition_output env e' tok @ [ mk_s (If (tok, e', st1, st2)) ]
   | G.Switch (tok, switch_expr_opt, cases_and_bodies) ->
       let ss, translate_cases, switch_expr_opt' =
         match switch_expr_opt with
@@ -4474,6 +4544,7 @@ and stmt_aux env st : stmts =
         break_continue_labels env tok
       in
       let ss, e' = cond env e in
+      let ss = ss @ condition_output env e' tok in
       let st = stmt st_env st in
       ss @ [ mk_s (Loop (tok, e', st @ cont_label_s @ ss)) ] @ break_label_s
   | G.DoWhile (tok, st, e) ->
@@ -5010,7 +5081,12 @@ and function_definition env fdef : function_definition =
       rec_point_label_stmts
     | _ -> env, []
   in
-  let env = { env with inside_function = true } in
+  let command_output =
+    if H.returns_command_output fdef then
+      Some (fresh_var env ~str:"output" (snd fdef.G.fkind))
+    else None
+  in
+  let env = { env with inside_function = true; command_output } in
   (* ParamPattern destructuring is expressed declaratively: the
    * parameter_classic's implicit binder is the signature's Arg slot,
    * and each leaf of the pattern is pre-seeded at taint-env setup
@@ -5024,8 +5100,42 @@ and function_definition env fdef : function_definition =
    * falsely match enclosing-sink ranges via
    * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
+  (* The output starts with the arguments (see
+   * [AST_generic_helpers.command_output_attribute]). *)
+  let output_of_arguments =
+    match command_output with
+    | Some output ->
+        let arguments =
+          fparams
+          |> List.filter_map (fun (param : param) ->
+                 match param with
+                 | Param { pname; _ }
+                 | ParamPattern ({ pname; _ }, _) ->
+                     Some (Unnamed (mk_e (Fetch (lval_of_base (Var pname)))
+                                      NoOrig))
+                 | ParamRest _
+                 | ParamKwd _
+                 | ParamContext _
+                 | ParamReceiver _
+                 | ParamFixme ->
+                     None)
+        in
+        let tok = snd output.ident in
+        let value = mk_e (Operator ((G.Concat, tok), arguments)) NoOrig in
+        [ mk_s (Instr (mk_i (Assign (lval_of_base (Var output), value))
+                         NoOrig)) ]
+    | None -> []
+  in
+  let return_output =
+    match command_output with
+    | Some output ->
+        let tok = snd output.ident in
+        [ mk_s (Return (tok, mk_e (Fetch (lval_of_base (Var output))) NoOrig)) ]
+    | None -> []
+  in
   let fbody =
-    rec_point_label_stmts @ instance_var_param_assigns env fdef.G.fparams @ fbody
+    rec_point_label_stmts @ instance_var_param_assigns env fdef.G.fparams
+    @ output_of_arguments @ fbody @ return_output
   in
   { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody;
     forig = fdef }

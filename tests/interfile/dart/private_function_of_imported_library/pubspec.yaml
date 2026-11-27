@@ -1,0 +1,3 @@
+name: private_function_of_imported_library
+environment:
+  sdk: ^3.0.0

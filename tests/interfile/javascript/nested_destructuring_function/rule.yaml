@@ -1,0 +1,12 @@
+rules:
+  - id: nested_destructuring_function
+    languages: [js]
+    severity: ERROR
+    message: Tainted data reaches sink through a nested function with a destructuring parameter
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

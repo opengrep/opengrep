@@ -470,10 +470,13 @@ let build_project_call_graph (caps : < Cap.fork >)
       | None -> state
     ) type_state all_funcs
   in
+  let dunder_all = Reexports.build_dunder_all ~file_infos in
+  let libraries = Scope_binding.libraries_of_files ~cfg file_infos in
   let type_state, inherited_by_class, override_pairs, class_resolution_orders =
     timed "call graph: inheritance (Mro)" @@ fun () ->
     if cfg.Index_lang_rules.walks_inheritance then
-      Mro.inherit_into_type_state ~lang ~cfg ~reexport_map
+      Mro.inherit_into_type_state ~lang ~cfg ~reexport_map ~dunder_all
+        ~file_infos
         ~class_infos:indexed_classes
         ~func_def_file:Type_augment.func_def_file type_state
     else (type_state, [], [], [])
@@ -583,7 +586,6 @@ let build_project_call_graph (caps : < Cap.fork >)
   Log.debug (fun m -> m "Per-module func index: %d modules (Per_file only)"
     (Hashtbl.length project_funcs_by_module));
 
-  let dunder_all = Reexports.build_dunder_all ~file_infos in
 
   (* Re-export pass for the languages whose imports re-export.  See
      [Reexports]. *)
@@ -853,7 +855,12 @@ let build_project_call_graph (caps : < Cap.fork >)
              attributes_by_module
          else Common.SMap.empty);
       dunder_all;
+      libraries;
       resolution_orders;
+      derived_orders =
+        (if Lang_config.super_follows_most_derived_order lang then
+           Func_lookup.derived_orders_of resolution_orders
+         else Common.SMap.empty);
       project_classes;
       class_qn_by_definition;
       methods_by_class;
@@ -1145,10 +1152,13 @@ let run_pipeline (caps : < Cap.fork >)
     else Go_modules.empty
   in
   let rust_crates =
-    if Lang.equal lang Lang.Rust
-    then Rust_crates.discover ~project_root:project_root_abs
-           (List.map absolutize files)
-    else Rust_crates.empty
+    match cfg.Index_lang_rules.crate_manifest with
+    | Some (manifest_name : string) ->
+      Rust_crates.discover ~manifest_name
+        ~root_stems:cfg.Index_lang_rules.crate_root_stems
+        ~project_root:project_root_abs
+        (List.map absolutize files)
+    | None -> Rust_crates.empty
   in
   let resolution =
     if cfg.Index_lang_rules.specifiers_name_files then

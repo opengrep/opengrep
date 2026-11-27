@@ -3276,9 +3276,11 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
               let acc = go (Taint.Oint i :: offset) last_fixed acc in
               go (Taint.Oslice (i + 1) :: offset) tail_pat acc
           (* JS/TS: [a, b, ...rest] → trailing PatConstructor("...", [r]);
-           * rest covers positions [i..]. *)
-          | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
-            when Lang.is_js lang ->
+           * rest covers positions [i..]. Bash binds "$@" after a shift by
+           * [i] in the same form (see [Bash_to_generic]), also in the
+           * shell commands of a Dockerfile. As in [AST_to_IL.pattern],
+           * the form is a rest in every language that emits it. *)
+          | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ] ->
               go (Taint.Oslice i :: offset) rest_pat acc
           | p :: rest ->
               let acc = go (Taint.Oint i :: offset) p acc in
@@ -3348,63 +3350,42 @@ let mk_lambda_in_env env lcfg =
          base_env
   in
   (* Destructuring ParamPatterns: the top-level pass above seeded only
-   * the implicit binder. Each leaf inside the pattern also needs its
-   * own env entry so body references to destructured names pick up
-   * taint. Seed each leaf with both a [Var (BArg taint_arg, offset)]
-   * taint (so body references propagate the caller's taint
-   * conservatively when no structural shape is available) and an
-   * [Arg (taint_arg, offset_path)] shape (so the shape system can
-   * project the caller's actual argument down to the leaf at HOF
-   * call-site instantiation). Also merge in any source taints from
-   * rules that focus on leaf positions via [check_tainted_var]. *)
-  let _, lval_env =
-    lcfg.params
-    |> List.fold_left
-         (fun (i, lval_env) param ->
-           match param with
-           | IL.ParamPattern ({ pname; _ }, pat) ->
-               let taint_arg : Taint.arg =
-                 { name = fst pname.ident; index = i }
-               in
-               let lval_env =
-                 pattern_leaves_with_offsets ~lang:env.taint_inst.lang pat
-                 |> List.fold_left
-                      (fun lval_env (leaf_name, offset) ->
-                        let leaf_lval : IL.lval =
-                          { base = Var leaf_name; rev_offset = [] }
-                        in
-                        let lval_env =
-                          Lval_env.clean env.taint_inst.lang lval_env leaf_lval
-                        in
-                        let source_taints, _shape, lval_env =
-                          check_tainted_var { env with lval_env } leaf_name
-                        in
-                        let leaf_shape = S.Arg (taint_arg, [ offset ]) in
-                        let leaf_taint_lval : T.lval =
-                          { base = BArg taint_arg; offset }
-                        in
-                        let leaf_taint =
-                          T.{ orig = Var leaf_taint_lval; tokens = Taint_trace.Nil }
-                        in
-                        let leaf_taints =
-                          T.Taint_set.add_taint leaf_taint source_taints
-                        in
-                        Lval_env.add_lval_shape env.taint_inst.lang leaf_lval
-                          leaf_taints leaf_shape lval_env)
-                      lval_env
-               in
-               (i + 1, lval_env)
-           | IL.Param _
-           | IL.ParamRest _
-           | IL.ParamKwd _
-           | IL.ParamContext _
-           | IL.ParamFixme ->
-               (i + 1, lval_env)
-           (* Receivers aren't call-site args: no env update, no arg slot. *)
-           | IL.ParamReceiver _ -> (i, lval_env))
-         (0, lval_env)
-  in
-  lval_env
+   * the implicit binder. Each leaf inside the pattern is a new variable
+   * too, seeded like a parameter: cleaned, then given the taint of a
+   * source that matches it. The lambda's own arguments are not the
+   * enclosing function's, so no leaf carries a [BArg] taint: the effects
+   * of the lambda flow up into the enclosing function's signature, whose
+   * [BArg]s refer to that function's parameters. *)
+  lcfg.params
+  |> List.fold_left
+       (fun (lval_env : Lval_env.t) (param : IL.param) ->
+         match param with
+         | IL.ParamPattern (_, pat) ->
+             pattern_leaves_with_offsets ~lang:env.taint_inst.lang pat
+             |> List.fold_left
+                  (fun (lval_env : Lval_env.t)
+                       ((leaf_name, _offset) : IL.name * Taint.offset list) ->
+                    let leaf_lval : IL.lval =
+                      { base = Var leaf_name; rev_offset = [] }
+                    in
+                    let lval_env =
+                      Lval_env.clean env.taint_inst.lang lval_env leaf_lval
+                    in
+                    let source_taints, shape, lval_env =
+                      check_tainted_var { env with lval_env } leaf_name
+                    in
+                    Lval_env.add_lval_shape env.taint_inst.lang leaf_lval
+                      source_taints shape lval_env)
+                  lval_env
+         | IL.Param _
+         | IL.ParamRest _
+         | IL.ParamKwd _
+         | IL.ParamContext _
+         | IL.ParamFixme ->
+             lval_env
+         (* Receivers aren't call-site args: no env update, no arg slot. *)
+         | IL.ParamReceiver _ -> lval_env)
+       lval_env
 
 (* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean
  * that contradicts the branch direction, the branch is unreachable. Mark

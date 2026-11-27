@@ -190,11 +190,11 @@ let o_taint_intrafile : bool Term.t =
   let info =
     Arg.info [ "taint-intrafile" ]
       ~doc:
-        "Enable intra-file inter-procedural taint analysis. Supported \
+        "Enable intra-file inter-procedural taint analysis. Fully supported \
          languages: Apex, C, Clojure, C#, C++, Crystal, Dart, Elixir, Go, \
          Java, JavaScript, Julia, Kotlin, Lua, PHP, Python, Ruby, Rust, \
-         Scala, Swift, TypeScript, Visual Basic. Other languages will fall \
-         back to intraprocedural analysis only."
+         Scala, Swift, TypeScript, Visual Basic. In other languages the \
+         analysis runs, but its results may be incomplete."
   in
   Arg.value (Arg.flag info)
 

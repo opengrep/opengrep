@@ -79,14 +79,37 @@ let emit_overload_edges ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
         | [ None; Some _ ] -> Some (Func_info.entity_qualifier func)
         | _ -> None
       in
+      (* A lambda is identified by its position, so it overloads only under
+         the name it is assigned to; an anonymous lambda overloads nothing. *)
+      let bound_name (bare_name : IL.name) : string option =
+        match fst func.FA.fdef.G.fkind with
+        | G.LambdaKind
+        | G.Arrow -> (
+          match
+            Option.bind func.FA.entity Index_lang_rules.entity_simple_name
+          with
+          | Some (alias : string)
+            when not (String.equal alias (fst bare_name.IL.ident)) -> Some alias
+          | Some _
+          | None -> None)
+        | G.Function
+        | G.Method
+        | G.BlockCases -> Some (fst bare_name.IL.ident)
+      in
       let concrete = Func_info.has_body func.FA.fdef in
-      match (scope, Func_info.bare_name func.FA.fn_id, Func_info.def_file_opt func) with
-      | Some scope, Some bare_name, Some file when concrete ->
+      match
+        ( scope,
+          Func_info.bare_name func.FA.fn_id,
+          Option.bind (Func_info.bare_name func.FA.fn_id) bound_name,
+          Func_info.def_file_opt func )
+      with
+      | Some scope, Some bare_name, Some (name : string), Some file
+        when concrete ->
           let key =
             Printf.sprintf "%s\000%b\000%s\000%s\000%d"
               (file_in_key func file) (Option.is_some scope)
               (Option.value scope ~default:"")
-              (fst bare_name.IL.ident)
+              name
               (List.length (Tok.unbracket func.FA.fdef.G.fparams))
           in
           let node = Function_id.of_il_name bare_name in

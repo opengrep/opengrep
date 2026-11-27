@@ -1,0 +1,3 @@
+name: superclass_is_not_a_mixin_of_same_identifier
+environment:
+  sdk: ^3.0.0

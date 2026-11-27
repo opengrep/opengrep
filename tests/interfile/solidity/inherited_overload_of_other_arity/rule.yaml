@@ -1,0 +1,12 @@
+rules:
+  - id: inherited-overload-of-other-arity
+    languages: [solidity]
+    message: Tainted data reaches an inherited overload of another arity
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

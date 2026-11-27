@@ -1,0 +1,3 @@
+name: mixin_linearisation
+environment:
+  sdk: ^3.0.0

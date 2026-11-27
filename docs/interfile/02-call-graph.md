@@ -280,27 +280,36 @@ hooks and what each language overrides.
 
 The key entries:
 
-- `discover_excludes` — Phase 0 extra excludes.
-- `class_def_reshape` — coerce Go `type T interface { ... }` and
-  Rust `impl Foo { ... }` into `ClassDef` shape so the visitor can
-  treat them uniformly (Rust's reshape is also applied to the
-  stored AST).
-- `class_body_synth_methods` — Ruby `attr_reader` / `attr_accessor`
+- `discover_project`: reads the project's configuration files for
+  excluded paths and module path mappings (TypeScript `tsconfig`, Dart
+  `pubspec.yaml`).
+- `class_def_reshape`: coerces Go `type T struct/interface { ... }`
+  (and every other Go `type T ...`) and Rust `impl Foo { ... }` into
+  `ClassDef` shape for the symbol collector (`Symbols`).  The stored
+  AST is not rewritten: `Visit_function_defs` and `Graph_from_AST`
+  apply the Rust rewrite
+  (`Visit_function_defs.class_scope_of_definition`) to each definition
+  they visit.
+- `class_body_synth_methods`: Ruby `attr_reader` / `attr_accessor`
   declare accessor methods that have no AST FuncDef.
-- `class_body_extra_parents` — Ruby `include Foo`, `extend Foo`,
-  `prepend Foo` add Foo's methods to the class's MRO.
-- `walks_inheritance` — gate the inheritance pass (Python yes,
-  Go no).
-- `include_anonymous_funcs` — gate adding lambdas/blocks as
-  call-graph vertices.  Ruby: false (every `do |x| ... end` block
-  becomes a function; vertex count and per-file work explode by 10×
-  while adding little signal).
-- `unqualified_scope` — `Per_file` (Python, Ruby, JS, Clojure),
-  `Per_directory` (Go, C — sibling files share a scope keyed on
-  the parent directory), or `Per_package` (Java, Kotlin, C#, C++ —
-  sibling files share a scope keyed on the `(package x.y.z)` /
-  `(namespace X.Y)` declaration in their AST, regardless of disk
-  layout).
+- `class_body_extra_parents`: Ruby `include Foo`, `extend Foo`,
+  `prepend Foo` add Foo's methods to the class's MRO; Go embedded
+  types are parents too.
+- `walks_inheritance`: gates the inheritance pass.  Python and Go set
+  it, among others (see 04); C and Clojure do not.
+- `include_anonymous_funcs`: gates adding lambdas/blocks as
+  call-graph vertices.  False for Ruby, where every
+  `do |x| ... end` block is a function in the generic AST.
+- `unqualified_scope`: the scope builder for the unqualified
+  identifiers of a file.  `Per_file` is the default (Python, Clojure
+  and others); Ruby and Crystal use `Per_constant_path`, Go
+  `Per_go_package` (the files of one directory with one `package`
+  clause), TypeScript/JavaScript `Per_module`, PHP, Hack, Elixir and
+  Move `Per_namespace`, Java, Kotlin, C#, Scala and VB `Per_package`
+  (keyed on the `package` / `namespace` declaration, whatever the disk
+  layout), Rust and Cairo `Per_crate`, C and C++
+  `Per_translation_unit`, and Apex, Swift, Lua, Julia and R
+  `Per_project`.  No entry sets `Per_directory`.
 - `module_path_from_ast` — extract the file's module/namespace
   identifier from the AST as an override to the file-path-derived
   module key.  Java/Kotlin `package x.y.z;`, C# file-scoped

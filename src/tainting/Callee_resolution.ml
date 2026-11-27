@@ -1058,7 +1058,8 @@ let attribute_of ~(func_lookup : Func_lookup.t) ~(position : name_position)
     | None -> None)
   | Bound_class (class_qn : Names.Class_qn.t) -> (
     match
-      Func_lookup.find_along_order func_lookup ~receiver:Func_lookup.On_class
+      Func_lookup.find_along_order func_lookup ~merges_overloads:false
+        ~receiver:Func_lookup.On_class
         (Func_lookup.resolution_order func_lookup class_qn)
         (fun _ -> [ segment ])
     with
@@ -1194,7 +1195,8 @@ let follow_chain ~(func_lookup : Func_lookup.t)
 
 let constructor_of_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     (class_qn : Names.Class_qn.t) : func_info list =
-  Func_lookup.find_along_order func_lookup ~receiver:Func_lookup.On_any
+  Func_lookup.find_along_order func_lookup ~merges_overloads:false
+    ~receiver:Func_lookup.On_any
     (Func_lookup.resolution_order func_lookup class_qn)
     (fun (ancestor : Names.Class_qn.t) ->
       Object_initialization.constructor_names_of_class ~lang
@@ -1449,6 +1451,24 @@ let is_super_call (e : G.expr) : bool =
   | G.IdSpecial ((G.Super | G.Parent), _) -> true
   | _ -> false
 
+(* The classes after [class_qn] in each resolution order that can hold the
+   call: [class_qn]'s own order, or, where [super] follows the receiver's
+   linearisation, the order of every most derived class that contains
+   [class_qn]. *)
+let orders_after_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
+    (class_qn : Names.Class_qn.t) : Names.Class_qn.t list list =
+  let after_class (order : Names.Class_qn.t list) : Names.Class_qn.t list =
+    List.drop_while
+      (fun (member : Names.Class_qn.t) ->
+        not (Names.Class_qn.equal member class_qn))
+      order
+    |> List.drop 1
+  in
+  if Lang_config.super_follows_most_derived_order lang then
+    List.map after_class
+      (Func_lookup.orders_of_most_derived func_lookup class_qn)
+  else [ after_class (Func_lookup.resolution_order func_lookup class_qn) ]
+
 let identify_callee_interfile ~(lang : Lang.t)
     ~(type_state : Type_state.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
@@ -1463,12 +1483,13 @@ let identify_callee_interfile ~(lang : Lang.t)
         (Func_lookup.top_level_scope_is_project func_lookup)
       ~lang call_arity matches
   in
+  let merges_overloads = Lang_config.inherited_overloads_merge lang in
   let along_order ~(receiver : Func_lookup.method_receiver)
       (class_qn : Names.Class_qn.t) (method_name : string) : fn_id option =
     pick
-      (Func_lookup.find_along_order func_lookup ~receiver
+      (Func_lookup.find_along_order func_lookup ~merges_overloads ~receiver
          (Func_lookup.resolution_order func_lookup class_qn)
-         (fun _ -> [ method_name ]))
+         (fun (_ : Names.Class_qn.t) -> [ method_name ]))
   in
   let of_target (target : binding_target option) : fn_id option =
     match target with
@@ -1502,7 +1523,7 @@ let identify_callee_interfile ~(lang : Lang.t)
       | [ _ ] -> None
       | _ :: after_self ->
         pick
-          (Func_lookup.find_along_order func_lookup
+          (Func_lookup.find_along_order func_lookup ~merges_overloads
              ~receiver:Func_lookup.On_any after_self
              (fun _ -> [ fst method_il.IL.ident ])))
     | _ -> None)
@@ -1522,13 +1543,15 @@ let identify_callee_interfile ~(lang : Lang.t)
     when is_super_call receiver -> (
     match enclosing_class_qn ~func_lookup caller_parent_path with
     | None -> None
-    | Some (class_qn : Names.Class_qn.t) -> (
-      match Func_lookup.resolution_order func_lookup class_qn with
-      | [] | [ _ ] -> None
-      | _ :: after_self ->
-        pick (Func_lookup.find_along_order func_lookup
-                ~receiver:Func_lookup.On_any after_self
-                (fun _ -> [ method_name ]))))
+    | Some (class_qn : Names.Class_qn.t) ->
+      orders_after_class ~lang ~func_lookup class_qn
+      |> List.concat_map (fun (after_self : Names.Class_qn.t list) ->
+             Func_lookup.find_along_order func_lookup ~merges_overloads
+               ~receiver:Func_lookup.On_any after_self
+               (fun (_ : Names.Class_qn.t) -> [ method_name ]))
+      |> List_.uniq_by (fun (left : func_info) (right : func_info) ->
+             Func_info.equal_fn_id left.fn_id right.fn_id)
+      |> pick)
   | G.DotAccess
       (({ G.e = G.IdSpecial ((G.This | G.Self | G.LateStatic), _); _ }
        | { G.e =

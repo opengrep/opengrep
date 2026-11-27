@@ -26,7 +26,9 @@ type ctx = {
   companions : Func_lookup.companion_index;
   attributes_by_module : Func_lookup.module_attributes;
   dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
+  libraries : Scope_binding.libraries;
   resolution_orders : Func_lookup.resolution_orders;
+  derived_orders : Func_lookup.derived_orders;
   project_classes : Func_lookup.project_classes;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
@@ -71,6 +73,7 @@ val build_scope_table :
   file_funcs_index:(string, Func_info.t list) Hashtbl.t ->
   attributes_by_module:Func_lookup.module_attributes ->
   dunder_all:(string, unit) Hashtbl.t Common.SMap.t ->
+  libraries:Scope_binding.libraries ->
   classes_by_file:class_info list Common.SMap.t ->
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->

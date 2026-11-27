@@ -1,0 +1,12 @@
+rules:
+  - id: subclass-of-class-in-other-file
+    languages: [swift]
+    severity: ERROR
+    message: Taint reaches a sink through an inherited method
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

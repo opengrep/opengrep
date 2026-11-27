@@ -1,0 +1,3 @@
+name: inherited_static_member_not_in_scope
+environment:
+  sdk: ^3.0.0

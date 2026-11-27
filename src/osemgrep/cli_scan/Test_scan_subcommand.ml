@@ -735,7 +735,7 @@ let test_interfile_rule_run_per_file_warning (caps : Scan_subcommand.caps) ()
   Alcotest.(check (list string))
     "under --quiet" [] (warning six_rules [ "--quiet" ])
 
-(* A language whose cross-function analysis is not supported is reported
+(* A language whose cross-function analysis is not fully supported is reported
    once, however many of its targets a taint rule analyses across functions:
    under --taint-intrafile, or by the rule's own option, and not without
    either, nor under --disable-intrafile, nor for a supported language. *)
@@ -779,7 +779,7 @@ let test_intrafile_unsupported_language_warning (caps : Scan_subcommand.caps)
   in
   let bash_warning =
     "cross-function taint analysis (--taint-intrafile) not fully supported \
-     for Bash: results may be limited to intraprocedural analysis only"
+     for Bash: results may be incomplete"
   in
   let count (lines : string list) : int =
     lines
@@ -3671,7 +3671,8 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "the interfile rules with a target are reported in one warning as \
          run per file without --enable-interfile"
         (test_interfile_rule_run_per_file_warning caps);
-      t "a language without cross-function taint analysis is reported once"
+      t "a language whose cross-function taint analysis is not fully supported \
+         is reported once"
         (test_intrafile_unsupported_language_warning caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize

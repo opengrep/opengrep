@@ -30,7 +30,11 @@ type import_binds =
   | Binds_type
   | Binds_module
 
-type import_role = Role_binds | Role_reexports
+(* [Role_reexports] is a directive that re-exports names without binding
+   them in its file (JavaScript [export * from]); [Role_binds_and_reexports]
+   is an import that binds the names in its file and re-exports them (Rust
+   [pub use]). *)
+type import_role = Role_binds | Role_reexports | Role_binds_and_reexports
 
 type import = {
   im_local : string;

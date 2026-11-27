@@ -1,0 +1,12 @@
+rules:
+  - id: override-hides-inherited-function
+    languages: [solidity]
+    message: Tainted data reaches an overridden function
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

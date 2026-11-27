@@ -1,0 +1,3 @@
+name: library_function_ahead_of_inherited_member
+environment:
+  sdk: ^3.0.0

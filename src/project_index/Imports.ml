@@ -161,7 +161,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       has_keyword G.Public attrs
   in
   let role_of_attrs (attrs : G.attribute list) : import_role =
-    if has_keyword G.Reexport attrs || marks_reexport attrs then Role_reexports
+    if has_keyword G.Reexport attrs then Role_reexports
+    else if marks_reexport attrs then Role_binds_and_reexports
     else Role_binds
   in
   let binds_of_attrs (attrs : G.attribute list) : import_binds =
@@ -217,7 +218,8 @@ let collect_imports ~(cfg : Index_lang_rules.t)
              | Index_lang_rules.Last_segment_binds ->
                (match List.rev segs with
                 | ((last_seg : string), _) :: _ -> last_seg
-                | [] -> first_seg))
+                | [] -> first_seg)
+             | Index_lang_rules.Every_name_binds -> wildcard_local)
            | G.DottedName [] -> ""
            (* Unaliased path import: dir-scoped langs (Go) use the path's last
               segment as local; other langs keep the raw specifier. *)
@@ -250,6 +252,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       (match
          (module_name_of mn, Int.compare (String.length local) 0 > 0)
        with
+       | Some (qn : Names.Module_qn.t), _
+         when Option.is_none alias
+              && cfg.Index_lang_rules.path_import_binds_all_names
+              && (match mn with
+                  | G.FileName _ -> true
+                  | G.DottedName _ -> false) ->
+         (add ~binds ~alias ~hidden:[] ~tok st wildcard_local qn, hiding)
        | Some (qn : Names.Module_qn.t), true ->
          (add ~binds ~alias ~hidden:[] ~tok st local qn, hiding)
        | Some _, false
@@ -357,6 +366,20 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         match stmt.G.s with
         | G.DirectiveStmt dir -> on_directive st hiding dir
         | G.DefStmt (ent, G.VarDef vd) -> (on_defstmt st ent vd, hiding)
+        | G.ExprStmt (e, _) ->
+          let st =
+            cfg.Index_lang_rules.file_imports_of_expr e
+            |> List.fold_left
+                 (fun (st : import list) ((spec : string), (tok : Tok.t)) ->
+                   match qn_of_specifier spec with
+                   | Some (qn : Names.Module_qn.t) ->
+                     add ~tok ~static:false ~global:false ~binds:Binds_any
+                       ~alias:None ~role:Role_binds ~hidden:[] st
+                       wildcard_local qn
+                   | None -> st)
+                 st
+          in
+          (st, hiding)
         | _ -> (st, hiding)) ([], []) ast
   in
   List.rev acc

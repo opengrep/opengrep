@@ -148,14 +148,14 @@ let mk_var_expr (var : variable_name) : G.expr =
 
 module C = struct
   let mk (loc : loc) (name : string) =
-    let id = "!sh_" ^ name ^ "!" in
+    let id = AST_generic_helpers.shell_marker name in
     let id_info = G.empty_id_info ~hidden:true () in
     G.N (G.Id ((id, fst loc), id_info)) |> G.e
 
   (* For simple commands, e.g.
        $echo "$@"
   *)
-  let cmd loc = mk loc "cmd"
+  let cmd (loc : loc) = mk loc AST_generic_helpers.shell_command
 
   (* Split a string according to whitespace defined by "$IFS".
      This is done on the result of unquoted $ expansions:
@@ -217,6 +217,337 @@ let todo_expr (loc : loc) : G.expr =
   G.e (G.OtherExpr (("BashTodo", t), todo_tokens loc))
 
 let todo_expr2 (loc : loc) : stmt_or_expr = Expr (loc, todo_expr loc)
+
+(*****************************************************************************)
+(* Positional parameters *)
+(*****************************************************************************)
+
+(*
+   A shell function declares no parameters: a call 'f a b' sets its
+   positional parameters to (a b), which its body reads as $1, $2, ... and
+   all at once as "$@" or "$*". 'shift' and 'set -- ...' renumber them.
+
+   The function takes one argument, the list of the words of the call (see
+   AST_generic_helpers.call_of_shell_command), destructured by a pattern
+   that binds each positional parameter the body reads to its element of
+   the list. A name read where the position is not known statically is
+   bound to the whole list.
+*)
+
+(* The variables a command expands, and whether it runs a command that
+   renumbers the positional parameters, outside the functions it defines. *)
+type parameter_use = { expanded : string list; renumbers : bool }
+
+let no_parameter_use = { expanded = []; renumbers = false }
+
+(* A word of single-letter options of 'set', such as '-eu' or '+x'. *)
+let is_set_option_cluster (word : string) : bool =
+  String.length word > 1
+  && (String.starts_with ~prefix:"-" word
+     || String.starts_with ~prefix:"+" word)
+
+(* 'set' replaces the positional parameters when an argument follows its
+   options, when '--' ends them (with no argument, it unsets them), or when
+   '-' ends them and an argument follows. Each 'o' of an option cluster
+   takes the next word as an option name: 'set -euo pipefail'. *)
+let rec sets_positional_parameters (words : expression list) : bool =
+  match words with
+  | [] -> false
+  | Word ("--", _) :: _ -> true
+  | Word ("-", _) :: rest -> not (List_.null rest)
+  | Word (word, _) :: rest when is_set_option_cluster word ->
+      let option_names =
+        String.fold_left
+          (fun (count : int) (c : char) ->
+            if Char.equal c 'o' then count + 1 else count)
+          0 word
+      in
+      sets_positional_parameters (List.drop option_names rest)
+  | _ :: _ -> true
+
+let renumbers_positional_parameters (arguments : expression list) : bool =
+  match arguments with
+  | Word ("shift", _) :: _ -> true
+  | Word ("set", _) :: words -> sets_positional_parameters words
+  | _ -> false
+
+let rec use_of_blist (acc : parameter_use) (l : blist) : parameter_use =
+  match l with
+  | Seq (_loc, left, right) -> use_of_blist (use_of_blist acc left) right
+  | Pipelines (_loc, pl) -> List.fold_left use_of_pipeline acc pl
+  | Empty _loc -> acc
+
+and use_of_pipeline (acc : parameter_use) (x : pipeline) : parameter_use =
+  match x with
+  | Command cmd_r -> use_of_cmd_redir acc cmd_r
+  | Pipeline (_loc, pip, _bar, cmd_r) ->
+      use_of_cmd_redir (use_of_pipeline acc pip) cmd_r
+  | Control_operator (_loc, pip, _op) -> use_of_pipeline acc pip
+
+and use_of_cmd_redir (acc : parameter_use) (x : cmd_redir) : parameter_use =
+  List.fold_left use_of_redirect (use_of_command acc x.command) x.redirects
+
+and use_of_redirect (acc : parameter_use) (x : redirect) : parameter_use =
+  match x with
+  | File_redirect (_loc, (Read (_, File e) | Write (_, _, File e))) ->
+      use_of_expression acc e
+  | Read_heredoc _
+  | Read_herestring _
+  | File_redirect _ ->
+      acc
+
+and use_of_command (acc : parameter_use) (cmd : command) : parameter_use =
+  match cmd with
+  | Simple_command { loc = _; assignments; arguments } ->
+      let acc = List.fold_left use_of_assignment acc assignments in
+      let acc = List.fold_left use_of_expression acc arguments in
+      if renumbers_positional_parameters arguments then
+        { acc with renumbers = true }
+      else acc
+  | And (_loc, left, _tok, right)
+  | Or (_loc, left, _tok, right) ->
+      use_of_pipeline (use_of_pipeline acc left) right
+  | Subshell (_loc, (_, bl, _))
+  | Command_group (_loc, (_, bl, _)) ->
+      use_of_blist acc bl
+  | Sh_test (_loc, (_, test, _))
+  | Bash_test (_loc, (_, test, _)) ->
+      use_of_test acc test
+  | Arithmetic_expression _ -> acc
+  | For_loop_c_style (_loc, bl) -> use_of_blist acc bl
+  | For_loop (_loc, _for, _var, opt_in, _do, body, _done)
+  | Select (_loc, _for, _var, opt_in, _do, body, _done) ->
+      use_of_loop acc opt_in body
+  | Case (_loc, _case, subject, _in, clauses, _esac) ->
+      List.fold_left
+        (fun (acc : parameter_use)
+             ((_loc, patterns, _paren, body, _term) : case_clause) ->
+          use_of_blist (List.fold_left use_of_expression acc patterns) body)
+        (use_of_expression acc subject)
+        clauses
+  | If (_loc, _if, cond, _then, body, elifs, else_, _fi) ->
+      let acc = use_of_blist (use_of_blist acc cond) body in
+      let acc =
+        List.fold_left
+          (fun (acc : parameter_use)
+               ((_loc, _elif, cond, _then, body) : elif) ->
+            use_of_blist (use_of_blist acc cond) body)
+          acc elifs
+      in
+      (match else_ with
+      | Some (_loc, _else, body) -> use_of_blist acc body
+      | None -> acc)
+  | While_loop (_loc, _, cond, _do, body, _done)
+  | Until_loop (_loc, _, cond, _do, body, _done) ->
+      use_of_blist (use_of_blist acc cond) body
+  | Coprocess (_loc, _, cmd)
+  | Negated_command (_loc, _, cmd) ->
+      use_of_command acc cmd
+  | Assignment ass -> use_of_assignment acc ass
+  (* The conversion drops the arguments of a declaration that are not
+     assignments. *)
+  | Declaration x ->
+      let acc = List.fold_left use_of_assignment acc x.assignments in
+      List.fold_left use_of_expression acc x.unknowns
+  (* A function defined here has positional parameters of its own. *)
+  | Function_definition _ -> acc
+
+and use_of_loop (acc : parameter_use)
+    (opt_in : (tok * expression list) option) (body : blist) : parameter_use =
+  let acc =
+    match opt_in with
+    | Some (_in, values) -> List.fold_left use_of_expression acc values
+    (* Without 'in', the loop iterates over "$@". *)
+    | None -> { acc with expanded = "@" :: acc.expanded }
+  in
+  use_of_blist acc body
+
+and use_of_assignment (acc : parameter_use) (ass : assignment) : parameter_use =
+  use_of_expression acc ass.rhs
+
+and use_of_test (acc : parameter_use) (x : test_expression) : parameter_use =
+  match x with
+  | T_expr (_loc, e)
+  | T_unop (_loc, _, e) ->
+      use_of_expression acc e
+  | T_binop (_loc, left, _, right) ->
+      use_of_expression (use_of_expression acc left) right
+  | T_not (_loc, _, test) -> use_of_test acc test
+  | T_and (_loc, left, _, right)
+  | T_or (_loc, left, _, right) ->
+      use_of_test (use_of_test acc left) right
+  | T_todo _loc -> acc
+
+and use_of_expression (acc : parameter_use) (e : expression) : parameter_use =
+  match e with
+  | Word _
+  | Special_character _
+  | Raw_string _
+  | Ansii_c_string _
+  | Expr_semgrep_ellipsis _
+  | Expr_semgrep_metavar _
+  | Empty_expression _
+  | Equality_test (_, _, Regexp _) ->
+      acc
+  | String (_, frags, _) -> List.fold_left use_of_string_fragment acc frags
+  | String_fragment (_loc, frag) -> use_of_string_fragment acc frag
+  | Concatenation (_loc, el)
+  | Array (_loc, (_, el, _)) ->
+      List.fold_left use_of_expression acc el
+  | Expr_semgrep_deep_ellipsis (_, (_, e, _))
+  | Equality_test (_, _, Literal (_, e)) ->
+      use_of_expression acc e
+  | Process_substitution (_loc, (_, bl, _)) -> use_of_blist acc bl
+
+and use_of_string_fragment (acc : parameter_use) (frag : string_fragment) :
+    parameter_use =
+  match frag with
+  | String_content _
+  | Frag_semgrep_metavar _
+  | Frag_semgrep_named_ellipsis _ ->
+      acc
+  | Expansion (_loc, Simple_expansion (_, var)) -> use_of_variable acc var
+  | Expansion (_loc, Complex_expansion (_, Variable (_, var, words), _)) ->
+      List.fold_left use_of_expression (use_of_variable acc var) words
+  | Expansion
+      (_loc, Complex_expansion (_, Complex_expansion_TODO (_, words), _)) ->
+      List.fold_left use_of_expression acc words
+  | Command_substitution (_, bl, _) -> use_of_blist acc bl
+
+and use_of_variable (acc : parameter_use) (var : variable_name) :
+    parameter_use =
+  match var with
+  | Simple_variable_name (name, _)
+  | Special_variable_name (name, _) ->
+      { acc with expanded = name :: acc.expanded }
+  | Var_semgrep_metavar _ -> acc
+
+(* $1 to $9; $0 is the script, not a positional parameter. *)
+let single_digit_position (name : string) : int option =
+  match name with
+  | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ->
+      int_of_string_opt name
+  | _ -> None
+
+(* A name that reads the positional parameters: a position, "@" or "*". A
+   name that begins with a digit and has more than one character, such as
+   the "10" of '${10}' or the "10" and "1x" of '$10' and '$1x', which bash
+   reads as '${1}0' and '${1}x', is not a single-digit position. *)
+let is_positional_name (name : string) : bool =
+  match name with
+  | "@"
+  | "*" ->
+      true
+  | "0" -> false
+  | _ -> String.length name > 0 && Char.Ascii.is_digit name.[0]
+
+(* How the positional parameters the body reads relate to the arguments of
+   the call: shifted by a number of positions when every 'shift' precedes
+   every read at the top level of the body, or not known statically. *)
+type renumbering = Shifted_by of int | Not_static
+
+let top_level_pipelines (body : command) : pipeline list =
+  let rec pipelines (l : blist) (acc : pipeline list) : pipeline list =
+    match l with
+    | Seq (_loc, left, right) -> pipelines left (pipelines right acc)
+    | Pipelines (_loc, pl) -> pl @ acc
+    | Empty _loc -> acc
+  in
+  match body with
+  | Command_group (_loc, (_, bl, _)) -> pipelines bl []
+  | _ ->
+      let loc = AST_bash_loc.command_loc body in
+      [ Command { loc; command = body; redirects = [] } ]
+
+(* 'shift' or 'shift N' with N a single digit. *)
+let rec literal_shift (x : pipeline) : int option =
+  match x with
+  | Control_operator (_loc, pip, (Foreground _, _)) -> literal_shift pip
+  | Command { command = Simple_command { arguments; _ }; _ } -> (
+      match arguments with
+      | [ Word ("shift", _) ] -> Some 1
+      | [ Word ("shift", _); Word (count, _) ] -> single_digit_position count
+      | _ -> None)
+  | _ -> None
+
+let renumbering_of_body (body : command) : renumbering =
+  let renumbering, _read =
+    List.fold_left
+      (fun ((renumbering, read) : renumbering * bool) (x : pipeline) ->
+        match (renumbering, literal_shift x) with
+        | Not_static, _ -> (Not_static, read)
+        | Shifted_by _, Some _ when read -> (Not_static, read)
+        | Shifted_by offset, Some count -> (Shifted_by (offset + count), read)
+        | Shifted_by _, None ->
+            let use = use_of_pipeline no_parameter_use x in
+            if use.renumbers then (Not_static, read)
+            else
+              ( renumbering,
+                read || List.exists is_positional_name use.expanded ))
+      (Shifted_by 0, false) (top_level_pipelines body)
+  in
+  renumbering
+
+(* The pattern the list of the arguments of a call is destructured by. Each
+   single-digit position read is bound to its element; "@", "*", the other
+   names that begin with a digit, and every position when the renumbering is
+   not static, are bound to the whole list. After a static shift by N, when no
+   single-digit position is read, the names bound to the whole list are
+   bound instead to the list without its first N elements, in a rest
+   pattern [...] (see Dataflow_tainting.pattern_leaves_with_offsets). *)
+let positional_parameters_pattern (body : command) : G.pattern =
+  let names =
+    (use_of_command no_parameter_use body).expanded
+    |> List.filter is_positional_name
+    |> List.sort_uniq String.compare
+  in
+  let pat_id (name : string) : G.ident * G.id_info =
+    ((name, Tok.unsafe_fake_tok name), G.empty_id_info ())
+  in
+  let bind_names (pat : G.pattern) (names : string list) : G.pattern =
+    List.fold_left
+      (fun (pat : G.pattern) (name : string) -> G.PatAs (pat, pat_id name))
+      pat names
+  in
+  let elements, whole_list_names =
+    match renumbering_of_body body with
+    | Shifted_by offset -> (
+        let highest =
+          List.fold_left
+            (fun (highest : int) (name : string) ->
+              match single_digit_position name with
+              | Some position -> Int.max highest position
+              | None -> highest)
+            0 names
+        in
+        let shifted =
+          List.init offset (fun (_ : int) ->
+              G.PatWildcard (Tok.unsafe_fake_tok "_"))
+        in
+        let read =
+          List.init highest (fun (i : int) ->
+              let id, id_info = pat_id (string_of_int (i + 1)) in
+              G.PatId (id, id_info))
+        in
+        let list_names =
+          List.filter
+            (fun (name : string) -> Option.is_none (single_digit_position name))
+            names
+        in
+        match list_names with
+        | first :: others when offset > 0 && Int.equal highest 0 ->
+            let id, id_info = pat_id first in
+            let rest_tok = Tok.unsafe_fake_tok "..." in
+            let rest =
+              G.PatConstructor
+                ( G.Id (("...", rest_tok), G.empty_id_info ()),
+                  [ bind_names (G.PatId (id, id_info)) others ] )
+            in
+            (shifted @ [ rest ], [])
+        | _ -> (shifted @ read, list_names))
+    | Not_static -> ([], names)
+  in
+  bind_names (G.PatList (fb elements)) whole_list_names
 
 (*****************************************************************************)
 (* Converter from bash AST to generic AST *)
@@ -429,14 +760,28 @@ and command (env : env) (cmd : command) : stmt_or_expr =
         | Some function_tok -> function_tok
         | None -> fst (AST_bash_loc.variable_name_loc def.name)
       in
+      (* A pattern does not constrain the positional parameters, which the
+         source never declares, nor the output of the function, which
+         depends on the body. *)
+      let fparams, fattrs =
+        match env with
+        | Program ->
+            ( [
+                G.ParamPattern
+                  ( positional_parameters_pattern def.body,
+                    G.implicit_param_classic first_tok );
+              ],
+              [ AST_generic_helpers.command_output_attribute first_tok ] )
+        | Pattern -> ([ G.ParamEllipsis (Tok.fake_tok first_tok "...") ], [])
+      in
       let def_kind =
         G.FuncDef
           {
             G.fkind = (G.Function, first_tok);
-            fparams = fb [];
+            fparams = fb fparams;
             frettype = None;
             fbody = G.FBStmt (command env def.body |> as_stmt);
-            fattrs = [];
+            fattrs;
           }
       in
       (* Function names are in another namespace than ordinary variables.
@@ -529,8 +874,8 @@ and expansion (_env : env) (x : expansion) : G.expr =
   | Simple_expansion (loc, var_name) -> expand loc (mk_var_expr var_name)
   | Complex_expansion (_open_, x, _close) -> (
       match x with
-      | Variable (loc, var) -> expand loc (mk_var_expr var)
-      | Complex_expansion_TODO loc -> todo_expr loc)
+      | Variable (loc, var, _words) -> expand loc (mk_var_expr var)
+      | Complex_expansion_TODO (loc, _words) -> todo_expr loc)
 
 and expand loc (var_expr : G.expr) : G.expr = call loc C.expand [ var_expr ]
 

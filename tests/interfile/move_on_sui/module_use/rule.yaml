@@ -1,0 +1,12 @@
+rules:
+  - id: test-move_on_sui-module-use
+    languages: [move_on_sui]
+    message: Tainted data reaches a sink through a function of a used module
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

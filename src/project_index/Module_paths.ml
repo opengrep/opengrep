@@ -84,13 +84,17 @@ let module_of_bare (files : module_files) (specifier : string)
     files.mf_paths
 
 let module_of_specifier (files : module_files) ~(uri : bool)
-    ~(current_file : Fpath.t) (specifier : string)
+    ~(relative_first : bool) ~(current_file : Fpath.t) (specifier : string)
     : Names.Module_qn.t option =
   if String.length specifier = 0 then None
   else if Char.equal specifier.[0] '.' then
     module_of_relative files ~current_file specifier
   else if uri && not (String.contains specifier ':') then
     module_of_relative files ~current_file specifier
+  else if relative_first then
+    match module_of_relative files ~current_file specifier with
+    | Some _ as found -> found
+    | None -> module_of_bare files specifier
   else module_of_bare files specifier
 
 let module_qn_of_file ~(cfg : Index_lang_rules.t)
@@ -227,7 +231,9 @@ let module_name_string ~(cfg : Index_lang_rules.t)
            (cfg.Index_lang_rules.normalize_import_specifier spec))
     | Specifier_names_file (files : module_files) ->
       module_of_specifier files
-        ~uri:cfg.Index_lang_rules.specifiers_are_uris ~current_file spec)
+        ~uri:cfg.Index_lang_rules.specifiers_are_uris
+        ~relative_first:cfg.Index_lang_rules.bare_specifiers_relative_first
+        ~current_file spec)
   | G.DottedName (((head : string), _) :: (rest : G.ident list) as parts) -> (
     match relative_head ~cfg head with
     | Some (relative : Index_lang_rules.relative_module) ->
@@ -247,7 +253,8 @@ let module_name_string ~(cfg : Index_lang_rules.t)
             | _ :: _ ->
               head ^ ":" ^ String.concat "/" (List.map fst rest)
           in
-          module_of_specifier files ~uri:true ~current_file uri
+          module_of_specifier files ~uri:true ~relative_first:false
+            ~current_file uri
         | true, Specifier_is_module_name
         | false, _ -> of_dotted parts)
   | G.DottedName ([] as parts) -> of_dotted parts
