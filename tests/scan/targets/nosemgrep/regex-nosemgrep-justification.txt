@@ -1,0 +1,11 @@
+aws_account_id = 123456789012  # nosemgrep: detected-aws-account-id -- sample data, not a real account
+# nosemgrep -- generated fixture
+aws_account_id = 210987654321
+aws_account_id = 111111111111  /* nosemgrep -- inside a block comment */
+aws_account_id = 444444444444  (* nosemgrep -- inside an OCaml comment *)
+aws_account_id = 666666666666  <!-- nosemgrep -- inside an HTML comment -->
+aws_account_id = 777777777777  <!-- nosemgrep -->
+aws_account_id = 222222222222  # nosemgrep
+# nosemgrep: detected-aws-account-id -- reason from the line above
+aws_account_id = 555555555555  # nosemgrep: another-rule -- reason for another rule
+aws_account_id:333333333333
