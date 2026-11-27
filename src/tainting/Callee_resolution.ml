@@ -1457,11 +1457,12 @@ let is_super_call (e : G.expr) : bool =
    [class_qn]. *)
 let orders_after_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     (class_qn : Names.Class_qn.t) : Names.Class_qn.t list list =
-  let rec after_class (order : Names.Class_qn.t list) : Names.Class_qn.t list =
-    match order with
-    | [] -> []
-    | member :: (after : Names.Class_qn.t list) ->
-      if Names.Class_qn.equal member class_qn then after else after_class after
+  let after_class (order : Names.Class_qn.t list) : Names.Class_qn.t list =
+    List.drop_while
+      (fun (member : Names.Class_qn.t) ->
+        not (Names.Class_qn.equal member class_qn))
+      order
+    |> List.drop 1
   in
   if Lang_config.super_follows_most_derived_order lang then
     List.map after_class

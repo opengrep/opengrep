@@ -148,6 +148,9 @@ val module_attribute :
 
 val companion_of : t -> Names.Class_qn.t -> Names.Class_qn.t option
 
+val resolution_order_in :
+  resolution_orders -> Names.Class_qn.t -> Names.Class_qn.t list
+
 val resolution_order : t -> Names.Class_qn.t -> Names.Class_qn.t list
 
 val orders_of_most_derived : t -> Names.Class_qn.t -> Names.Class_qn.t list list

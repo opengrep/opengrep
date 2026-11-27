@@ -121,19 +121,13 @@ let members_of_order ~(merges_overloads : bool)
 
 let every_member (_ : Names.Class_qn.t) (_ : Func_info.t) : bool = true
 
-let resolution_order_of ~(resolution_orders : Func_lookup.resolution_orders)
-    (class_qn : Names.Class_qn.t) : Names.Class_qn.t list =
-  Option.value
-    (Common.SMap.find_opt (Names.Class_qn.to_string class_qn)
-       resolution_orders)
-    ~default:[]
-
 let members_along_order
     ~(resolution_orders : Func_lookup.resolution_orders)
     ~(methods_by_class : Func_lookup.methods_by_class)
     (class_qn : Names.Class_qn.t) : (string * Func_info.t list) list =
   members_of_order ~merges_overloads:false ~keep:every_member
-    ~methods_by_class (resolution_order_of ~resolution_orders class_qn)
+    ~methods_by_class
+    (Func_lookup.resolution_order_in resolution_orders class_qn)
 
 let bindings_in_class_scope (ci : class_info)
     (members : (string * Func_info.t list) list)
@@ -170,7 +164,7 @@ let method_scope_bindings ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
             (members_of_order
                ~merges_overloads:(Lang_config.inherited_overloads_merge lang)
                ~keep:every_member ~methods_by_class
-               (resolution_order_of ~resolution_orders ci.ci_qn)))
+               (Func_lookup.resolution_order_in resolution_orders ci.ci_qn)))
         classes,
       [] )
   | Index_lang_rules.Inherited_members_after_lexical_scope ->
@@ -192,7 +186,7 @@ let method_scope_bindings ~(lang : Lang.t) ~(cfg : Index_lang_rules.t)
             (inherited : Scope_binding.positioned_binding list))
            (ci : class_info) ->
         let ancestors =
-          match resolution_order_of ~resolution_orders ci.ci_qn with
+          match Func_lookup.resolution_order_in resolution_orders ci.ci_qn with
           | _ :: (ancestors : Names.Class_qn.t list) -> ancestors
           | [] -> []
         in

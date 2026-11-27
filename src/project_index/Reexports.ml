@@ -176,7 +176,7 @@ let star_exported ~(cfg : Index_lang_rules.t)
     String.length name > 0
     && not
          (cfg.Index_lang_rules.wildcard_import_omits_underscore_names
-          && Char.equal name.[0] '_')
+          && String.starts_with ~prefix:"_" name)
 
 let wildcard_binds ~(cfg : Index_lang_rules.t)
     ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)

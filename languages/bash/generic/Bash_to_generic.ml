@@ -243,18 +243,8 @@ let no_parameter_use = { expanded = []; renumbers = false }
 (* A word of single-letter options of 'set', such as '-eu' or '+x'. *)
 let is_set_option_cluster (word : string) : bool =
   String.length word > 1
-  &&
-  match word.[0] with
-  | '-'
-  | '+' ->
-      true
-  | _ -> false
-
-let rec drop_option_names (count : int) (words : expression list) :
-    expression list =
-  match words with
-  | _ :: rest when count > 0 -> drop_option_names (count - 1) rest
-  | _ -> words
+  && (String.starts_with ~prefix:"-" word
+     || String.starts_with ~prefix:"+" word)
 
 (* 'set' replaces the positional parameters when an argument follows its
    options, when '--' ends them (with no argument, it unsets them), or when
@@ -272,7 +262,7 @@ let rec sets_positional_parameters (words : expression list) : bool =
             if Char.equal c 'o' then count + 1 else count)
           0 word
       in
-      sets_positional_parameters (drop_option_names option_names rest)
+      sets_positional_parameters (List.drop option_names rest)
   | _ :: _ -> true
 
 let renumbers_positional_parameters (arguments : expression list) : bool =
@@ -432,11 +422,6 @@ and use_of_variable (acc : parameter_use) (var : variable_name) :
       { acc with expanded = name :: acc.expanded }
   | Var_semgrep_metavar _ -> acc
 
-let is_digit (c : char) : bool =
-  match c with
-  | '0' .. '9' -> true
-  | _ -> false
-
 (* $1 to $9; $0 is the script, not a positional parameter. *)
 let single_digit_position (name : string) : int option =
   match name with
@@ -454,7 +439,7 @@ let is_positional_name (name : string) : bool =
   | "*" ->
       true
   | "0" -> false
-  | _ -> String.length name > 0 && is_digit name.[0]
+  | _ -> String.length name > 0 && Char.Ascii.is_digit name.[0]
 
 (* How the positional parameters the body reads relate to the arguments of
    the call: shifted by a number of positions when every 'shift' precedes

@@ -32,23 +32,23 @@ type resolution_orders = Names.Class_qn.t list Common.SMap.t
 type derived_orders = Names.Class_qn.t list list Common.SMap.t
 
 let derived_orders_of (orders : resolution_orders) : derived_orders =
-  let bases : unit Common.SMap.t =
+  let bases : Common.SSet.t =
     Common.SMap.fold
       (fun (_ : string) (order : Names.Class_qn.t list)
-           (bases : unit Common.SMap.t) ->
+           (bases : Common.SSet.t) ->
         match order with
         | [] -> bases
         | _ :: (ancestors : Names.Class_qn.t list) ->
           List.fold_left
-            (fun (bases : unit Common.SMap.t) (ancestor : Names.Class_qn.t) ->
-              Common.SMap.add (Names.Class_qn.to_string ancestor) () bases)
+            (fun (bases : Common.SSet.t) (ancestor : Names.Class_qn.t) ->
+              Common.SSet.add (Names.Class_qn.to_string ancestor) bases)
             bases ancestors)
-      orders Common.SMap.empty
+      orders Common.SSet.empty
   in
   Common.SMap.fold
     (fun (class_key : string) (order : Names.Class_qn.t list)
          (derived : derived_orders) ->
-      if Common.SMap.mem class_key bases then derived
+      if Common.SSet.mem class_key bases then derived
       else
         List.fold_left
           (fun (derived : derived_orders) (member : Names.Class_qn.t) ->
@@ -333,12 +333,15 @@ let companion_of (t : t) (class_qn : Names.Class_qn.t)
     : Names.Class_qn.t option =
   Class_qn_map.find_opt class_qn t.companions
 
+let resolution_order_in (orders : resolution_orders)
+    (class_qn : Names.Class_qn.t) : Names.Class_qn.t list =
+  Option.value
+    (Common.SMap.find_opt (Names.Class_qn.to_string class_qn) orders)
+    ~default:[]
+
 let resolution_order (t : t) (class_qn : Names.Class_qn.t)
     : Names.Class_qn.t list =
-  Option.value
-    (Common.SMap.find_opt (Names.Class_qn.to_string class_qn)
-       t.resolution_orders)
-    ~default:[]
+  resolution_order_in t.resolution_orders class_qn
 
 let orders_of_most_derived (t : t) (class_qn : Names.Class_qn.t)
     : Names.Class_qn.t list list =

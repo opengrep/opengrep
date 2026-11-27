@@ -1038,7 +1038,7 @@ let dart : t = { default with
   superclass_is_never_a_mixin = true;
   name_is_exported =
     (fun (name : string) ->
-      String.length name > 0 && not (Char.equal name.[0] '_'));
+      String.length name > 0 && not (String.starts_with ~prefix:"_" name));
   class_body_extra_parents = mixins_last_applied_first;
   superclass_position = Superclass_after_mixins;
   specifiers_name_files = true;

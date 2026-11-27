@@ -195,10 +195,9 @@ let rec map_aritylesspredicateexpr (env : env)
   | None -> name_of_id id
 
 and map_moduleexpr (env : env) (x : CST.moduleexpr) : qualified_info =
-  match List.rev (map_module_path env x) with
-  | last :: rev_middle ->
-      { name_last = last; name_middle = List.rev rev_middle }
-  | [] -> raise Common.Impossible
+  match List_.init_and_last_opt (map_module_path env x) with
+  | Some (middle, last) -> { name_last = last; name_middle = middle }
+  | None -> raise Common.Impossible
 
 (* The segments of a module expression, outermost first. *)
 and map_module_path (env : env) (x : CST.moduleexpr) :
