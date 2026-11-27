@@ -92,8 +92,8 @@ type t = {
      file (Solidity). *)
   path_import_binds_all_names : bool;
   (* A wildcard import without an explicit export list ([__all__]) leaves out
-     the names that begin with an underscore: Python, and Dart, where such
-     names are private to their library. It holds by default. *)
+     the names that begin with an underscore: Python, Elixir ([import M]),
+     and Dart, where such names are private to their library. *)
   wildcard_import_omits_underscore_names : bool;
   (* An import binds its names from its statement onward and rebinds a name
      that an earlier import bound, so of the imports before a class that
@@ -370,7 +370,7 @@ let default : t = {
   library_parts_of_ast = (fun _ -> []);
   specifier_candidates = (fun (base : Fpath.t) -> [ Fpath.to_string base ]);
   path_import_binds_all_names = false;
-  wildcard_import_omits_underscore_names = true;
+  wildcard_import_omits_underscore_names = false;
   imports_bind_in_statement_order = false;
   crate_manifest = None;
   crate_root_stems = [];
@@ -427,6 +427,7 @@ let default : t = {
 }
 
 let python : t = { default with
+  wildcard_import_omits_underscore_names = true;
   is_init_file = python_is_init_file;
   is_stub_file = python_is_stub_file;
   rewrite_module_path = python_rewrite_module_path;
@@ -756,7 +757,6 @@ let scala : t = { default with
   superclass_position = Superclass_after_mixins;
   companion_object_has_own_name = true;
   hiding_alias = Some "_";
-  wildcard_import_omits_underscore_names = false;
 }
 
 let rust_relative_module_names : (string * relative_module) list =
@@ -781,7 +781,6 @@ let cairo : t = { rust with
   crate_manifest = Some "Scarb.toml";
   crate_root_stems = [ "lib" ];
   unaliased_import_binds = Last_segment_binds;
-  wildcard_import_omits_underscore_names = false;
 }
 
 (* Package-scoped languages: a type/class lives in a package, resolved by
@@ -792,7 +791,6 @@ let package_scoped : t = { default with
   unqualified_scope = `Per_package;
   package_directive_is_namespace = true;
   module_path_from_ast = extract_package_decl;
-  wildcard_import_omits_underscore_names = false;
 }
 
 let java : t = { package_scoped with
@@ -828,6 +826,7 @@ let clojure : t = { default with
 }
 
 let elixir : t = { default with
+  wildcard_import_omits_underscore_names = true;
   unqualified_scope = `Per_namespace;
   module_definition_is_namespace = true;
   unaliased_import_binds = Last_segment_binds;
@@ -939,7 +938,6 @@ let module_scoped : t = { elixir with
 let ocaml : t = { default with
   rewrite_module_path =
     (fun (path : string) -> String.capitalize_ascii (Filename.basename path));
-  wildcard_import_omits_underscore_names = false;
 }
 
 (* The files of an R package share one namespace; a function is a lambda
@@ -947,7 +945,6 @@ let ocaml : t = { default with
 let r : t = { default with
   unqualified_scope = `Per_project;
   assigned_function_defines_identifier = true;
-  wildcard_import_omits_underscore_names = false;
 }
 
 (* [source f] and [. f] run [f] in the current shell, so its functions are
@@ -987,14 +984,12 @@ let bash : t = { default with
   specifiers_name_files = true;
   bare_specifiers_relative_first = true;
   file_imports_of_expr = shell_source_imports;
-  wildcard_import_omits_underscore_names = false;
 }
 
 (* [include "path";] binds every template and function of the file. *)
 let circom : t = { default with
   specifiers_name_files = true;
   bare_specifiers_relative_first = true;
-  wildcard_import_omits_underscore_names = false;
 }
 
 let solidity : t = { default with
@@ -1003,14 +998,12 @@ let solidity : t = { default with
   bases_listed_most_base_first = true;
   specifiers_name_files = true;
   path_import_binds_all_names = true;
-  wildcard_import_omits_underscore_names = false;
 }
 
 (* [import M] without an alias brings every name that [M] declares into
    scope; [import M as N] binds [N] to [M]. *)
 let ql : t = { default with
   unaliased_import_binds = Every_name_binds;
-  wildcard_import_omits_underscore_names = false;
 }
 
 let crystal : t = { default with
@@ -1037,6 +1030,7 @@ let dart_library_parts (ast : G.program) : string list =
     ast
 
 let dart : t = { default with
+  wildcard_import_omits_underscore_names = true;
   library_parts_of_ast = dart_library_parts;
   walks_inheritance = true;
   method_member_scope = Inherited_members_after_lexical_scope;
@@ -1058,7 +1052,6 @@ let vb : t = { default with
   module_definition_is_namespace = true;
   object_members_bind_in_namespace = true;
   namespaces_nest = true;
-  wildcard_import_omits_underscore_names = false;
 }
 
 let for_lang (lang : Lang.t) : t =

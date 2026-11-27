@@ -2470,7 +2470,9 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let tok = G.fake "call" in
       match AST_generic_helpers.call_of_shell_command e args_list with
       | Some (callee, command_args) ->
-          call_generic env ~void tok eorig callee (l, command_args, r)
+          call_with_callee env ~void tok eorig
+            (shell_command_callee env callee)
+            (l, command_args, r)
       | None -> call_generic env ~void tok eorig e args)
   | G.L lit -> ([], mk_e (Literal lit) eorig)
   | G.DotAccess ({ e = N (Id (("var", _), _)); _ }, _, FN (Id ((s, t), id_info)))
@@ -3017,7 +3019,22 @@ and expr_lazy_op env op tok arg0 args eorig : stmts * exp =
   (ss0 @ acc_ss, mk_e (Operator ((op, tok), arg0' :: args')) eorig)
 
 and call_generic env ?(void = false) tok eorig e args : stmts * exp =
-  let ss_e, e = expr env e in
+  call_with_callee env ~void tok eorig (expr env e) args
+
+(* Bash looks the first word of a command up among functions, builtins and
+   programs, never among variables, and IL has one namespace for both: the
+   callee is identified by the site of its word, so it is not the variable
+   of the same identifier. *)
+and shell_command_callee env (callee : G.expr) : stmts * exp =
+  match callee.G.e with
+  | G.N (G.Id (((_, word_tok) as id), id_info)) ->
+      let name =
+        { ident = id; sid = G.SId.of_site ~file:env.file word_tok; id_info }
+      in
+      ([], mk_e (Fetch { base = Var name; rev_offset = [] }) (SameAs callee))
+  | _ -> expr env callee
+
+and call_with_callee env ~void tok eorig (ss_e, e) args : stmts * exp =
   let ss_args, args = arguments env (Tok.unbracket args) in
   let call_ss, call_exp = call_instr env tok eorig ~void (fun res -> Call (res, e, args)) in
   (ss_e @ ss_args @ call_ss, call_exp)

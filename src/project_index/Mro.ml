@@ -36,7 +36,7 @@ let within (target : Names.Module_qn.t) (parts : string list)
 let single_binding ~(cfg : Index_lang_rules.t)
     (bindings : Names.Module_qn.t list) : Names.Module_qn.t option =
   if cfg.Index_lang_rules.imports_bind_in_statement_order then
-    List.nth_opt (List.rev bindings) 0
+    List_.last_opt bindings
   else
     match List.sort_uniq Names.Module_qn.compare bindings with
     | [ (bound : Names.Module_qn.t) ] -> Some bound
@@ -405,7 +405,7 @@ let inherit_into_type_state
                 else None)
             imports
         in
-        Option.join (List.nth_opt (List.rev bindings) 0)
+        Option.join (List_.last_opt bindings)
       else
         match
           resolve_parent_through_wildcard ~cfg ~dunder_all ~imports ~chase

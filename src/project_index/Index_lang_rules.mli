@@ -94,8 +94,8 @@ type t = {
      file (Solidity). *)
   path_import_binds_all_names : bool;
   (* A wildcard import without an explicit export list ([__all__]) leaves out
-     the names that begin with an underscore: Python, and Dart, where such
-     names are private to their library. It holds by default. *)
+     the names that begin with an underscore: Python, Elixir ([import M]),
+     and Dart, where such names are private to their library. *)
   wildcard_import_omits_underscore_names : bool;
   (* An import binds its names from its statement onward and rebinds a name
      that an earlier import bound, so of the imports before a class that

@@ -1016,20 +1016,10 @@ let positional_parameters_of_words (words : argument list) : argument option =
   |> Option.map (fun (words : expr list) ->
          Arg (Container (List, Tok.unsafe_fake_bracket words) |> e))
 
-(* Bash looks the first word of a command up among functions, builtins and
-   programs, never among variables. The callee is resolved to its own site,
-   so it never refers to a variable of the same name. It keeps the other
-   fields of the marker's [id_info], which every rewrite of the command
-   shares. *)
-let shell_command_callee ((name, tok) : ident) (marker_info : id_info) : expr =
-  let id_info =
-    match Tok.loc_of_tok tok with
-    | Ok loc ->
-        let sid = SId.of_site ~file:(Fpath.to_string loc.pos.file) tok in
-        { marker_info with id_resolved = ref (Some (Global, sid)) }
-    | Error _ -> marker_info
-  in
-  N (Id ((name, tok), id_info)) |> e
+(* The first word of a command as the callee. It keeps the marker's
+   [id_info], which every rewrite of the command shares. *)
+let shell_command_callee (id : ident) (marker_info : id_info) : expr =
+  N (Id (id, marker_info)) |> e
 
 (* A shell simple command [f a b] is [Call (N "!sh_cmd!", ["f"; a; b])]. When
    its first word is a literal, the command calls that name with one

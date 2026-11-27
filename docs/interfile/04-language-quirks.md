@@ -30,7 +30,7 @@ Rust sets.
 | `library_parts_of_ast` | The specifiers of the files that the `part` directives of a file add to its library. | Dart |
 | `specifier_candidates` | The file paths that a specifier may refer to. | TypeScript/JavaScript (source extensions, `index` files), Lua (dots as directory separators, `.lua`, `init.lua`) |
 | `path_import_binds_all_names` | `import "path";` without an alias binds every top-level definition of the file. | Solidity |
-| `wildcard_import_omits_underscore_names` | A wildcard import of a module without `__all__` leaves out the definitions whose identifier begins with an underscore.  Default `true`. | `false`: Bash, Circom, Solidity, Cairo, Move, OCaml, R, QL, Java, Kotlin, C#, C++, Scala, VB |
+| `wildcard_import_omits_underscore_names` | A wildcard import of a module without `__all__` leaves out the definitions whose identifier begins with an underscore.  Default `false`. | Python, Elixir, Dart |
 | `imports_bind_in_statement_order` | An import binds from its statement onward and rebinds an identifier that an earlier import bound: of the imports before a class that bind its parent through a wildcard import or through re-exports, the last one binds it, and of the wildcard re-exports of a module that bind a class, the last one binds it.  Elsewhere imports that bind the identifier to different classes bind it through neither. | Python |
 | `crate_manifest` | The manifest whose `[package]` name heads the module path of the files under it. | Rust (`Cargo.toml`), Cairo (`Scarb.toml`) |
 | `crate_root_stems` | The stems of the files directly under `src` that are the root module of a crate. | Rust (`lib`, `main`), Cairo (`lib`) |
@@ -693,8 +693,8 @@ sibling namespaces visible without `:require`, so Clojure uses
 
 Solidity sets `walks_inheritance = true`, `method_member_scope =
 Members_in_class_scope`, `bases_listed_most_base_first = true`,
-`specifiers_name_files = true`, `path_import_binds_all_names = true` and
-`wildcard_import_omits_underscore_names = false`.  Three `Lang_config`
+`specifiers_name_files = true` and `path_import_binds_all_names = true`.
+Three `Lang_config`
 facts hold for Solidity: `overloads_by_type`, `inherited_overloads_merge`
 and `super_follows_most_derived_order`.
 
@@ -706,7 +706,7 @@ underscore.  The front end emits `ImportAs (FileName "./Base.sol",
 None)`.  `specifiers_name_files` resolves the specifier against the
 files of the project, and `path_import_binds_all_names` makes
 `collect_imports` record the import as a wildcard import of that file.
-Because `wildcard_import_omits_underscore_names` is `false`,
+`wildcard_import_omits_underscore_names` is `false`, so
 `Reexports.star_exported` keeps a function such as `_leak` in the
 binding.  Fixtures: `tests/interfile/solidity/path_import_binds_all_names/`
 (a control file with the same definitions that no file imports stays
@@ -897,9 +897,8 @@ line of `pubspec.yaml` and maps `package:<name>/*` to `lib/*`
 ## Bash
 
 Bash sets `specifiers_name_files = true`, `bare_specifiers_relative_first
-= true`, `file_imports_of_expr = shell_source_imports` and
-`wildcard_import_omits_underscore_names = false`.  Its unqualified
-scope is `Per_file`.
+= true` and `file_imports_of_expr = shell_source_imports`.  Its
+unqualified scope is `Per_file`.
 
 ### A command is a call
 
@@ -909,8 +908,10 @@ simple command `f a b` as `Call (N "!sh_cmd!", ["f"; a; b])`.
 `AST_generic_helpers.call_of_shell_command` turns a command whose first
 word is a literal into a call of that word with one argument, the list
 of the remaining words; `AST_to_IL` and `Graph_from_AST` both apply it.
-The callee identifier is resolved to its own site, so it never refers to
-a variable with the same identifier: in
+IL has one namespace for variables and functions, so
+`AST_to_IL.shell_command_callee` identifies the callee by the site of
+its word, and it never refers to a variable with the same identifier.
+The callee carries no `id_resolved` in the generic AST: in
 `tests/interfile/bash/command_namespace/`, `$(date +%s)` runs the
 command `date` although a variable `date` holds tainted data.
 
@@ -1047,9 +1048,8 @@ Limits:
 
 Cairo 1 has Rust's modules, `use` paths and `impl` blocks, and a Scarb
 package is its crate.  The Cairo entry extends the Rust entry with
-`crate_manifest = Some "Scarb.toml"`, `crate_root_stems = ["lib"]`,
-`unaliased_import_binds = Last_segment_binds` and
-`wildcard_import_omits_underscore_names = false`.  `Rust_crates` reads the
+`crate_manifest = Some "Scarb.toml"`, `crate_root_stems = ["lib"]` and
+`unaliased_import_binds = Last_segment_binds`.  `Rust_crates` reads the
 `[package] name` of each `Scarb.toml` and puts it at the head of the
 module path of the files under it.
 
@@ -1083,8 +1083,8 @@ after `use 0x1::sinks;` and `use pkg::sinks;`.
 into scope.  The front end emits `ImportAll (FileName "lib.circom")`.
 The Circom entry sets `specifiers_name_files`.  It also sets
 `bare_specifiers_relative_first`, so a specifier is looked up relative
-to the including file first, and `wildcard_import_omits_underscore_names
-= false`, so definitions whose identifier begins with an underscore are
+to the including file first.  `wildcard_import_omits_underscore_names`
+is `false`, so definitions whose identifier begins with an underscore are
 bound (`tests/interfile/circom/include_file/`,
 `tests/interfile/circom/include_underscore_function/`).
 
@@ -1138,6 +1138,15 @@ identifier without `$` to a field offset (`Dot`), and
 resolves as a method call (`$box->put(...)` in
 `tests/interfile/hack/namespace_use/`).
 
+The front end does not emit `FN m` for the identifier.  The matcher
+reads a `DotAccess` whose members are identifiers as a qualified name,
+so with `FN m` the pattern `$O->m(...)` matches the static call
+`C::m()` and the call `A\B\m()` of a function in a namespace, and
+`$C::m(...)` matches `$o->m()`
+(`tests/patterns/hack/member_call_not_static`).  A write to `$o->a`
+does not taint a read of `$o->b`
+(`tests/interfile/hack/member_write_other_member/`).
+
 ## QL
 
 `import M` without an alias brings every top-level declaration of `M`
@@ -1160,8 +1169,7 @@ also sets `assigned_function_defines_identifier = true`, so
 
 ## OCaml
 
-The OCaml entry sets `rewrite_module_path` and
-`wildcard_import_omits_underscore_names = false`.  A compilation unit is
+The OCaml entry sets `rewrite_module_path`.  A compilation unit is
 a module whose identifier is the basename of its file, capitalised
 (`Lib` for `dir/lib.ml`).  The directory is not part of the module path,
 and the unqualified scope is `Per_file`.

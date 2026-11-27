@@ -1,0 +1,12 @@
+rules:
+  - id: closure-parameter-pattern
+    languages: [rust]
+    message: Tainted data reaches a sink through a closure parameter
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
