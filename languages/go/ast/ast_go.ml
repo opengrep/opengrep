@@ -108,6 +108,8 @@ and struct_field = struct_field_kind * tag option
 and struct_field_kind =
   | Field of ident * type_ (* could factorize with entity *)
   | EmbeddedField of tok option (* * *) * qualified_ident
+  | EmbeddedGenericField of
+      tok option (* * *) * qualified_ident * type_arguments
   (* sgrep-ext: *)
   | FieldEllipsis of tok
 

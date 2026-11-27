@@ -423,17 +423,16 @@ and field_declaration (env : env) ((v1, v2) : CST.field_declaration) :
         let xs = v1 :: v2 in
         xs |> List_.map (fun id -> Field (id, v3))
     | `Opt_STAR_choice_id (v1, v2) ->
-        let v1 =
-          match v1 with
-          | Some tok -> Some (token env tok) (* "*" *)
-          | None -> None
-        in
-        let v2 =
+        let pointer = Option.map (token env) v1 (* "*" *) in
+        let field =
           match v2 with
-          | `Id tok -> [ identifier env tok ] (* identifier *)
-          | `Qual_type x -> qualified_type env x
+          | `Id tok -> (* identifier *) EmbeddedField (pointer, [ identifier env tok ])
+          | `Qual_type x -> EmbeddedField (pointer, qualified_type env x)
+          | `Gene_type x ->
+              let name, arguments = generic_type_parts env x in
+              EmbeddedGenericField (pointer, name, arguments)
         in
-        [ EmbeddedField (v1, v2) ]
+        [ field ]
   in
   let v2 =
     match v2 with
@@ -569,10 +568,15 @@ and simple_type (env : env) (x : CST.simple_type) : type_ =
       in
       TFunc { ftok; fparams = v2; fresults = v3 }
 
-and generic_type (env : env) ((v1, v2) : CST.generic_type) : type_ =
+and generic_type_parts (env : env) ((v1, v2) : CST.generic_type) :
+    qualified_ident * type_arguments =
   let name = interface_type_name env v1 in
-  let targs = type_arguments env v2 in
-  TGeneric (name, targs)
+  let arguments = type_arguments env v2 in
+  (name, arguments)
+
+and generic_type (env : env) (x : CST.generic_type) : type_ =
+  let name, arguments = generic_type_parts env x in
+  TGeneric (name, arguments)
 
 and type_arguments (env : env) ((v1, v2, v3, v4, v5) : CST.type_arguments) =
   let lbra = (* "[" *) token env v1 in
