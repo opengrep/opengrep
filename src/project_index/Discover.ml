@@ -12,7 +12,8 @@ let read_pyrefly_includes_excludes (path : string)
 (* The scan's own test of a file for a language: the index covers exactly
    the files the rule's targets are drawn from. *)
 let lang_matches (lang : Lang.t) (file : Fpath.t) : bool =
-  Nonfatal.catch ~default:false (fun () -> Guess_lang.inspect_file_p lang file)
+  Nonfatal.catch_info ~default:false (fun () ->
+    Guess_lang.inspect_file_p lang file)
 
 (* Matching a compiled [Re.re] mutates its lazily-built DFA cache, so a
    shared pattern must not be matched from parallel domains. Safe here:
